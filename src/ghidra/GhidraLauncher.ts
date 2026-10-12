@@ -214,10 +214,18 @@ const ghidraLaunchCommandOutput = (
 
 /**
  * A pre-imported Ghidra project opened with -process so import and
- * auto-analysis costs paid outside this session are reused.
+ * auto-analysis costs paid outside this session are reused. The headless
+ * open selects the fixed project name `rea-project`, so `projectPath` must
+ * hold `rea-project.grez` or `rea-project.rep`; the owned copy keeps that
+ * name and any other project layout is rejected with its reason before
+ * Ghidra starts.
  */
 export interface GhidraExistingProject {
-  /** Directory holding the pre-imported project files (.grez/.rep). */
+  /**
+   * Directory holding the pre-imported project as `rea-project.grez` or
+   * `rea-project.rep`. The copy opens under the fixed project name, so a
+   * directory without that naming fails the launch.
+   */
   readonly projectPath: string;
   /** Imported program name selected with -process. */
   readonly programName: string;
@@ -1003,6 +1011,9 @@ const createGhidraRuntimeDirectories = async (
 /**
  * Copy a caller-owned pre-imported project into the owned runtime's project
  * root so the headless open reads the copy and never mutates the original.
+ * The invocation selects the fixed project name `rea-project`, so a caller
+ * directory without `rea-project.grez` or `rea-project.rep` is rejected here
+ * with its reason instead of failing inside Ghidra with an opaque message.
  */
 export const copyExistingGhidraProject = async (
   sourcePath: string,
@@ -1013,8 +1024,16 @@ export const copyExistingGhidraProject = async (
     throw new Error(
       `Existing Ghidra project directory does not exist: ${sourcePath}`,
     );
+  const entries = await readdir(sourcePath);
+  if (
+    !entries.includes("rea-project.grez") &&
+    !entries.includes("rea-project.rep")
+  )
+    throw new Error(
+      `Existing Ghidra project directory must hold rea-project.grez or rea-project.rep: ${sourcePath}`,
+    );
   await Promise.all(
-    (await readdir(sourcePath)).map((entry) =>
+    entries.map((entry) =>
       cp(join(sourcePath, entry), join(destinationRoot, entry), {
         recursive: true,
       }),

@@ -2,6 +2,7 @@ import {
   access,
   chmod,
   mkdir,
+  readdir,
   readFile,
   stat,
   writeFile,
@@ -528,65 +529,65 @@ describe("Ghidra existing project", () => {
   });
 });
 
+const fakeSpawnedProcess = (runId: string): SpawnedOwnedProviderProcess => {
+  const handle: ProviderProcessHandle = Object.assign(new EventEmitter(), {
+    pid: 4242,
+    stdout: null,
+    stdin: null,
+    stderr: null,
+    exitCode: null,
+    signalCode: null,
+    kill: () => true,
+  });
+  return {
+    process: handle,
+    ownership: { runId, leaderPid: 4242, processGroupId: 4242 },
+  };
+};
+
+const createFakeJavaHome = async (parent: string): Promise<string> => {
+  const javaHome = join(parent, "jdk");
+  await mkdir(join(javaHome, "bin"), { recursive: true });
+  // LaunchSupport only consults this helper; an empty report is valid.
+  await writeFile(join(javaHome, "bin", "java"), "#!/bin/sh\nexit 0\n", {
+    mode: 0o755,
+  });
+  return javaHome;
+};
+
+const launchExistingProject = async (
+  runtimeRoot: string,
+  parent: string,
+  projectPath: string,
+  spawned: OwnedProviderProcessSpawnOptions[],
+) => {
+  const javaHome = await createFakeJavaHome(parent);
+  const launcher = new GhidraHeadlessLauncher({
+    environment: process.env,
+    analyzeHeadlessPath: fixturePath,
+    platform: "linux",
+    javaHome,
+    bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
+    existingProject: { projectPath, programName: "game.exe" },
+    spawnProcess: async (options) => {
+      spawned.push(options);
+      return fakeSpawnedProcess(options.runId);
+    },
+  });
+  return launcher.launch({
+    runtimeRoot,
+    transport: "unix-socket",
+    endpointPath: join(runtimeRoot, "bridge.sock"),
+    token: "secret-token-that-must-not-leak",
+    runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
+    targetPath: "/tmp/target",
+    targetSha256: "b".repeat(64),
+    providerVersion: "12.1.4",
+    profileDigest: "a".repeat(64),
+  });
+};
+
 describe("Ghidra existing project launcher", () => {
-  const fakeSpawnedProcess = (runId: string): SpawnedOwnedProviderProcess => {
-    const handle: ProviderProcessHandle = Object.assign(new EventEmitter(), {
-      pid: 4242,
-      stdout: null,
-      stdin: null,
-      stderr: null,
-      exitCode: null,
-      signalCode: null,
-      kill: () => true,
-    });
-    return {
-      process: handle,
-      ownership: { runId, leaderPid: 4242, processGroupId: 4242 },
-    };
-  };
-
-  const createFakeJavaHome = async (parent: string): Promise<string> => {
-    const javaHome = join(parent, "jdk");
-    await mkdir(join(javaHome, "bin"), { recursive: true });
-    // LaunchSupport only consults this helper; an empty report is valid.
-    await writeFile(join(javaHome, "bin", "java"), "#!/bin/sh\nexit 0\n", {
-      mode: 0o755,
-    });
-    return javaHome;
-  };
-
-  const launchExistingProject = async (
-    runtimeRoot: string,
-    parent: string,
-    projectPath: string,
-    spawned: OwnedProviderProcessSpawnOptions[],
-  ) => {
-    const javaHome = await createFakeJavaHome(parent);
-    const launcher = new GhidraHeadlessLauncher({
-      environment: process.env,
-      analyzeHeadlessPath: fixturePath,
-      platform: "linux",
-      javaHome,
-      bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
-      existingProject: { projectPath, programName: "game.exe" },
-      spawnProcess: async (options) => {
-        spawned.push(options);
-        return fakeSpawnedProcess(options.runId);
-      },
-    });
-    return launcher.launch({
-      runtimeRoot,
-      transport: "unix-socket",
-      endpointPath: join(runtimeRoot, "bridge.sock"),
-      token: "secret-token-that-must-not-leak",
-      runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
-      targetPath: "/tmp/target",
-      targetSha256: "b".repeat(64),
-      providerVersion: "12.1.4",
-      profileDigest: "a".repeat(64),
-    });
-  };
-
   it.skipIf(process.platform === "win32")(
     "copies the caller's project into the owned runtime before launching",
     async () => {
@@ -659,6 +660,37 @@ describe("Ghidra existing project launcher", () => {
       // The launcher wraps the copy failure; the reason stays on the cause.
       expect(String(launched.error.cause)).toMatch(/does not exist/u);
       expect(spawned).toHaveLength(0);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a project without the fixed rea-project name before copying",
+    async () => {
+      const parent = await createTestTempDirectory("rea-launcher-test-");
+      const runtime = await createGhidraTestRuntime(parent);
+      runtimes.push(runtime);
+      // The headless open selects the project by the fixed name; a caller
+      // directory holding any other project file must fail with its reason
+      // instead of spawning into an opaque Ghidra error.
+      const sourceProject = join(parent, "user-project");
+      await mkdir(sourceProject, { recursive: true });
+      await writeFile(join(sourceProject, "other-project.grez"), "mislabeled");
+      const spawned: OwnedProviderProcessSpawnOptions[] = [];
+      const launched = await launchExistingProject(
+        runtime.path,
+        parent,
+        sourceProject,
+        spawned,
+      );
+      expect(launched.ok).toBe(false);
+      if (launched.ok) throw new Error("launch unexpectedly succeeded");
+      expect(String(launched.error.cause)).toMatch(/rea-project\.grez/u);
+      expect(spawned).toHaveLength(0);
+      // Nothing from the rejected project was copied into the owned runtime.
+      await expect(
+        access(join(runtime.path, "project")),
+      ).resolves.toBeUndefined();
+      expect(await readdir(join(runtime.path, "project"))).toEqual([]);
     },
   );
 });
