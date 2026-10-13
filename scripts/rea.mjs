@@ -80,7 +80,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   writeStdout(result.output);
   process.exitCode = result.exitCode;
 } else {
-  const { cliConfigurationError, createCli } =
+  const { cliConfigurationError, createCli, environmentWithUserConfig } =
     await import("../dist/cli-runtime/cli.js");
   const { createCliResultOutput } =
     await import("../dist/cli-runtime/cliResultOutput.js");
@@ -93,9 +93,12 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   guardClosedStdout();
   const cliArgs = normalizeCliArguments(args);
   const outputArguments = validateCliOutputArguments(cliArgs);
-  const configurationError = cliConfigurationError(process.env);
-  // Doctor is the readiness report for this failure. Other commands still stop
-  // here so they do not run with an unusable log level.
+  const userConfig = await environmentWithUserConfig(process.env);
+  const configurationError = userConfig.ok
+    ? cliConfigurationError(process.env)
+    : userConfig.error;
+  // Doctor is the readiness report for these failures. Other commands still stop
+  // here so they do not run with an unusable configuration.
   if (configurationError !== undefined && !isDoctorCommand(cliArgs)) {
     process.stderr.write(`${configurationError}\n`);
     process.exitCode = 1;
@@ -105,8 +108,11 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   } else {
     let wroteOutput = false;
     const resultOutput = createCliResultOutput(cliArgs, process.stdout);
+    // Doctor keeps running on a broken config file so it can report the problem;
+    // it then falls back to the raw environment, like createCli's own default.
+    const cliEnvironment = userConfig.ok ? userConfig.environment : process.env;
     try {
-      await createCli(process.env, resultOutput).serve(cliArgs, {
+      await createCli(cliEnvironment, resultOutput).serve(cliArgs, {
         stdout: (output) => {
           if (resultOutput?.handled) {
             if (resultOutput.failed && !stdoutClosed)
