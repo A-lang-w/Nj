@@ -709,7 +709,9 @@ describe("Ghidra Windows launcher", () => {
     expect(args).not.toContain("/package/bridge/ReaGhidraNoReturnFix.java");
     expect(args).toContain("/package/bridge/ReaGhidraBridge.java");
   });
+});
 
+describe("Ghidra Windows batch command construction", () => {
   it("wraps the Windows batch launcher without enabling a Node shell", () => {
     const command = ghidraHeadlessCommand({
       environment: {},
@@ -755,12 +757,18 @@ describe("Ghidra Windows launcher", () => {
   });
 });
 
-describe("Ghidra Windows launcher runtime", () => {
-  it
-    .skipIf(process.platform !== "win32")
-    .each(["ghidra_12.1.4_PUBLIC", "ghidra_12.1.2_DEV"])(
-    "prepares the inspected release directory through the Windows runtime (%s)",
-    async (release) => {
+describe("Ghidra Windows release configuration", () => {
+  it.skipIf(process.platform !== "win32").each([
+    {
+      properties:
+        "application.version=12.1.4\napplication.release.name=PUBLIC\n",
+      release: "ghidra_12.1.4_PUBLIC",
+    },
+    { properties: undefined, release: "renamed-install" },
+    { properties: "application.version=12.1.4\n", release: "renamed-install" },
+  ])(
+    "prepares the release directory through the Windows runtime ($release)",
+    async ({ properties, release }) => {
       const parent = await createTestTempDirectory("rea-launch-config-");
       const installRoot = join(parent, "renamed-install");
       const runtime = await createGhidraTestRuntime(parent);
@@ -808,7 +816,9 @@ describe("Ghidra Windows launcher runtime", () => {
       ).toBe(true);
     },
   );
+});
 
+describe("Ghidra Windows launcher process ownership", () => {
   it.skipIf(process.platform !== "win32")(
     "keeps authority in a private descriptor and isolates Ghidra state through the batch launcher",
     async () => {
