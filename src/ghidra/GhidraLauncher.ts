@@ -216,15 +216,16 @@ const ghidraLaunchCommandOutput = (
  * A pre-imported Ghidra project opened with -process so import and
  * auto-analysis costs paid outside this session are reused. The headless
  * open selects the fixed project name `rea-project`, so `projectPath` must
- * hold `rea-project.grez` or `rea-project.rep`; the owned copy keeps that
- * name and any other project layout is rejected with its reason before
+ * hold both the regular `rea-project.gpr` marker and `rea-project.rep`
+ * directory of an expanded project; the owned copy keeps that name.
+ * Archives and incomplete layouts are rejected with their reason before
  * Ghidra starts.
  */
 export interface GhidraExistingProject {
   /**
-   * Directory holding the pre-imported project as `rea-project.grez` or
-   * `rea-project.rep`. The copy opens under the fixed project name, so a
-   * directory without that naming fails the launch.
+   * Directory holding the expanded pre-imported project's `rea-project.gpr`
+   * marker and `rea-project.rep` data directory. Saved `.grez` archives must
+   * be restored outside REA before selecting this read-only workflow.
    */
   readonly projectPath: string;
   /** Imported program name selected with -process. */
@@ -1039,8 +1040,8 @@ const createGhidraRuntimeDirectories = async (
  * Copy a caller-owned pre-imported project into the owned runtime's project
  * root so the headless open reads the copy and never mutates the original.
  * The invocation selects the fixed project name `rea-project`, so a caller
- * directory without `rea-project.grez` or `rea-project.rep` is rejected here
- * with its reason instead of failing inside Ghidra with an opaque message.
+ * directory without the expanded `rea-project.gpr` / `rea-project.rep` pair
+ * is rejected here with its reason instead of an opaque Ghidra failure.
  */
 export const copyExistingGhidraProject = async (
   sourcePath: string,
@@ -1054,15 +1055,20 @@ export const copyExistingGhidraProject = async (
     throw new Error(
       `Existing Ghidra project directory does not exist: ${sourcePath}`,
     );
+  const marker = await lstat(join(sourcePath, "rea-project.gpr")).catch(
+    () => undefined,
+  );
+  signal?.throwIfAborted();
+  const data = await lstat(join(sourcePath, "rea-project.rep")).catch(
+    () => undefined,
+  );
+  signal?.throwIfAborted();
+  if (!marker?.isFile() || !data?.isDirectory())
+    throw new Error(
+      `Existing Ghidra project requires a regular rea-project.gpr marker and rea-project.rep directory; restore saved .grez archives before selecting the project: ${sourcePath}`,
+    );
   const entries = await readdir(sourcePath);
   signal?.throwIfAborted();
-  if (
-    !entries.includes("rea-project.grez") &&
-    !entries.includes("rea-project.rep")
-  )
-    throw new Error(
-      `Existing Ghidra project directory must hold rea-project.grez or rea-project.rep: ${sourcePath}`,
-    );
   const copyEntry = async (
     source: string,
     destination: string,
