@@ -6,7 +6,7 @@ import {
 } from "./GhidraAnalysisSeeds.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import { cp, mkdir, readdir, realpath, stat } from "node:fs/promises";
+import { cp, lstat, mkdir, readdir, realpath } from "node:fs/promises";
 import { basename, dirname, join, posix, win32 } from "node:path";
 
 import writeFileAtomic from "write-file-atomic";
@@ -303,10 +303,11 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           "Ghidra configuration directory identity is unresolved; restore application.version and application.release.name in the selected installation's application.properties.",
         );
       const psp = this.options.pspExtension;
-      if (existingProject !== undefined && psp !== undefined)
-        throw new GhidraLaunchError(
-          "An existing Ghidra project cannot be combined with a PSP ELF import.",
-        );
+      validateExistingProjectOptions({
+        ...this.options,
+        platform,
+        ...(psp === undefined ? {} : { psp: true as const }),
+      });
       if (psp !== undefined) {
         const installedRoot = await realpath(
           join(
@@ -347,6 +348,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         await copyExistingGhidraProject(
           existingProject.projectPath,
           paths.projectRoot,
+          options.signal,
         );
       let seedPath: string | undefined;
       let extensions: readonly GhidraExtension[] = [];
@@ -735,22 +737,31 @@ export interface GhidraHeadlessArgumentOptions {
   readonly seedPath?: string;
 }
 
-/** Build the complete read-only headless invocation in deterministic order. */
-export const ghidraHeadlessArguments = (
-  options: GhidraHeadlessArgumentOptions,
-): readonly string[] => {
-  // Bridge script paths use the target platform's syntax, which differs from
-  // the host when building a cross-platform invocation.
-  const scriptPath =
-    (options.platform ?? process.platform) === "win32" ? win32 : posix;
-  const bridgeDirectory = scriptPath.dirname(options.bridgeScriptPath);
-  const override = options.languageOverride;
-  const rawBinary = options.rawBinary;
+type ExistingProjectOptions = Pick<
+  GhidraHeadlessArgumentOptions,
+  | "platform"
+  | "existingProject"
+  | "psp"
+  | "dosMz"
+  | "dosCom"
+  | "rawBinary"
+  | "languageOverride"
+  | "mipsSoftFloat"
+  | "seedPath"
+  | "disabledAnalyzers"
+> & { readonly analysisSeeds?: GhidraSeedCommitment };
+
+/** Admit existing-project compatibility before any runtime writes. */
+const validateExistingProjectOptions = (
+  options: ExistingProjectOptions,
+): void => {
   const existing = options.existingProject;
+  const rawBinary = options.rawBinary;
+  const override = options.languageOverride;
   if (existing !== undefined) {
     // The pre-imported project carries its own analysis; every import-time
     // selection is therefore rejected instead of silently ignored.
-    if (options.platform === "win32")
+    if ((options.platform ?? process.platform) === "win32")
       throw new Error(
         "An existing Ghidra project cannot be opened on the Windows launch path.",
       );
@@ -780,12 +791,28 @@ export const ghidraHeadlessArguments = (
       );
     if (
       options.seedPath !== undefined ||
+      options.analysisSeeds !== undefined ||
       (options.disabledAnalyzers?.length ?? 0) > 0
     )
       throw new Error(
         "An existing project opens without analysis; analysis seeds and analyzer overrides do not apply.",
       );
   }
+};
+
+/** Build the complete read-only headless invocation in deterministic order. */
+export const ghidraHeadlessArguments = (
+  options: GhidraHeadlessArgumentOptions,
+): readonly string[] => {
+  // Bridge script paths use the target platform's syntax, which differs from
+  // the host when building a cross-platform invocation.
+  const scriptPath =
+    (options.platform ?? process.platform) === "win32" ? win32 : posix;
+  const bridgeDirectory = scriptPath.dirname(options.bridgeScriptPath);
+  const override = options.languageOverride;
+  const rawBinary = options.rawBinary;
+  const existing = options.existingProject;
+  validateExistingProjectOptions(options);
   if (
     options.psp === true &&
     (options.dosMz === true ||
@@ -1018,13 +1045,17 @@ const createGhidraRuntimeDirectories = async (
 export const copyExistingGhidraProject = async (
   sourcePath: string,
   destinationRoot: string,
+  signal?: AbortSignal,
 ): Promise<void> => {
-  const source = await stat(sourcePath).catch(() => undefined);
+  signal?.throwIfAborted();
+  const source = await lstat(sourcePath).catch(() => undefined);
+  signal?.throwIfAborted();
   if (source === undefined || !source.isDirectory())
     throw new Error(
       `Existing Ghidra project directory does not exist: ${sourcePath}`,
     );
   const entries = await readdir(sourcePath);
+  signal?.throwIfAborted();
   if (
     !entries.includes("rea-project.grez") &&
     !entries.includes("rea-project.rep")
@@ -1032,13 +1063,42 @@ export const copyExistingGhidraProject = async (
     throw new Error(
       `Existing Ghidra project directory must hold rea-project.grez or rea-project.rep: ${sourcePath}`,
     );
-  await Promise.all(
-    entries.map((entry) =>
-      cp(join(sourcePath, entry), join(destinationRoot, entry), {
-        recursive: true,
-      }),
-    ),
-  );
+  const copyEntry = async (
+    source: string,
+    destination: string,
+  ): Promise<void> => {
+    signal?.throwIfAborted();
+    const metadata = await lstat(source);
+    signal?.throwIfAborted();
+    if (metadata.isSymbolicLink())
+      throw new GhidraLaunchError(
+        `Existing Ghidra project contains a symbolic link: ${source}`,
+      );
+    if (metadata.isDirectory()) {
+      await mkdir(destination, { mode: 0o700 });
+      signal?.throwIfAborted();
+      const children = await readdir(source);
+      signal?.throwIfAborted();
+      for (const child of children)
+        await copyEntry(join(source, child), join(destination, child));
+    } else if (metadata.isFile()) {
+      // Finish each owned write before checking cancellation or allowing cleanup.
+      // Dereferencing also prevents a raced source replacement from leaving a
+      // live symbolic link in the runtime copy.
+      await cp(source, destination, {
+        dereference: true,
+        errorOnExist: true,
+        force: false,
+      });
+    } else {
+      throw new GhidraLaunchError(
+        `Existing Ghidra project contains a non-regular entry: ${source}`,
+      );
+    }
+    signal?.throwIfAborted();
+  };
+  for (const entry of entries)
+    await copyEntry(join(sourcePath, entry), join(destinationRoot, entry));
 };
 
 const writeGhidraRuntimeFile = async (
