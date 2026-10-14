@@ -34,6 +34,7 @@ export default defineConfig({
           { text: "Rust dependencies", link: "/rust-binaries" },
           { text: "PE certificates", link: "/pe-certificates" },
           { text: "ELF notes", link: "/elf-notes" },
+          { text: "CPython pyc files", link: "/python-pyc" },
           {
             text: "JavaScript and Electron",
             link: "/javascript-artifact-reconstruction",
