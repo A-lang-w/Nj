@@ -226,6 +226,10 @@ const staticConcatenation = (
   return text.startsWith("/") ? posix.join(".", text) : undefined;
 };
 
+// Only proven node:path join helpers; array .join / bare join stay unknown.
+// path.resolve is recognized earlier via nodePathResolve, not by name.
+const POSIX_PATH_JOIN_NAMES = new Set(["path.join", "path.posix.join"]);
+
 const staticCallPath = (
   node: t.CallExpression | t.NewExpression,
   nodePathResolve?: JavaScriptStaticPathIntrinsicQuery,
@@ -237,7 +241,7 @@ const staticCallPath = (
     return staticFileUrlPath(node, nodePathResolve);
   }
   if (name.endsWith(".resolve")) return undefined;
-  if (!name.endsWith(".join") && name !== "join") return undefined;
+  if (!POSIX_PATH_JOIN_NAMES.has(name)) return undefined;
   const parts: string[] = [];
   for (const argument of node.arguments) {
     if (isDirectoryPath(argumentNode(argument), nodePathResolve)) {
