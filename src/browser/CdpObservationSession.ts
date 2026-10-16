@@ -140,6 +140,11 @@ class TimelineCapture {
   finalUrl: string | null;
   #sequence = 0;
   #pendingReload = false;
+  /**
+   * Network.loadingFailed carries no frame, so a failure is attributed to the
+   * main frame only through its main-frame Document request.
+   */
+  readonly #mainFrameDocumentRequestIds = new Set<string>();
   #scopeExcluded = false;
   #endReason: EndReason | undefined;
   readonly #listeners = new Set<(reason: EndReason) => void>();
@@ -168,7 +173,11 @@ class TimelineCapture {
         this.#sameDocument(event, params);
         break;
       case "Network.requestWillBeSent":
+        this.#trackDocumentRequest(params);
         this.#redirect(params);
+        break;
+      case "Network.loadingFinished":
+        this.#loadingFinished(params);
         break;
       case "Network.loadingFailed":
         this.#loadingFailed(params);
@@ -278,11 +287,18 @@ class TimelineCapture {
     }
   }
 
-  #redirect(params: UnknownRecord): void {
+  /** A request without a reported resource type is treated as a document. */
+  #isMainFrameDocumentRequest(params: UnknownRecord): boolean {
     const resourceType = cdpStringValue(params.type);
-    if (resourceType !== undefined && resourceType !== "Document") return;
+    return (
+      (resourceType === undefined || resourceType === "Document") &&
+      cdpStringValue(params.frameId) === this.mainFrameId
+    );
+  }
+
+  #redirect(params: UnknownRecord): void {
     if (
-      cdpStringValue(params.frameId) !== this.mainFrameId ||
+      !this.#isMainFrameDocumentRequest(params) ||
       recordValue(params.redirectResponse) === undefined
     )
       return;
@@ -302,14 +318,30 @@ class TimelineCapture {
     }
   }
 
+  #trackDocumentRequest(params: UnknownRecord): void {
+    const requestId = cdpStringValue(params.requestId);
+    if (requestId !== undefined && this.#isMainFrameDocumentRequest(params))
+      this.#mainFrameDocumentRequestIds.add(requestId);
+  }
+
+  #loadingFinished(params: UnknownRecord): void {
+    const requestId = cdpStringValue(params.requestId);
+    if (requestId !== undefined)
+      this.#mainFrameDocumentRequestIds.delete(requestId);
+  }
+
   #loadingFailed(params: UnknownRecord): void {
-    const frame = cdpStringValue(params.frameId);
-    if (frame !== undefined && frame !== this.mainFrameId) return;
+    const requestId = cdpStringValue(params.requestId);
+    if (
+      requestId === undefined ||
+      !this.#mainFrameDocumentRequestIds.delete(requestId)
+    )
+      return;
     this.#add({
       type: "load_failed",
       params,
       rawUrl: null,
-      requestId: cdpStringValue(params.requestId) ?? null,
+      requestId,
       detail: safeNetworkError(params.errorText),
     });
   }
