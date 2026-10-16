@@ -140,3 +140,56 @@ describe("IDA provider target support", () => {
     });
   });
 });
+
+describe("IDA provider analysis profile", () => {
+  const target = {
+    path: "/tmp/target",
+    sha256: "a".repeat(64),
+    kind: "executable",
+    format: "elf",
+    architecture: "x86_64",
+    availableArchitectures: ["x86_64"],
+    entryPoint: null,
+    entryPointSource: null,
+  } as const;
+
+  const registrationDigest = async (
+    registration: Record<string, unknown>,
+  ): Promise<unknown> => {
+    const root = await createTestTempDirectory("rea-ida-profile-");
+    const path = join(root, "registration.json");
+    await writeFile(path, JSON.stringify(registration));
+    const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
+    if (!config.ok) throw config.error;
+    const profile = await new IdaProvider(config.value, {}, () => {
+      throw new Error("Unexpected provider startup");
+    }).resolveAnalysisProfile(target);
+    if (!profile.ok) throw profile.error;
+    return profile.value.profile.parameters.registration_digest;
+  };
+
+  it("commits HTTP header names but not header values", async () => {
+    const http = (headers: Record<string, string>) =>
+      registrationDigest({
+        url: "http://127.0.0.1:8745/mcp",
+        mode: "headless",
+        headers,
+      });
+
+    const bearer = await http({ Authorization: "Bearer first-token" });
+    expect(bearer).toMatch(/^[a-f0-9]{64}$/u);
+    expect(await http({ Authorization: "Bearer second-token" })).toBe(bearer);
+    expect(await http({ Cookie: "Bearer first-token" })).not.toBe(bearer);
+    expect(await http({})).not.toBe(bearer);
+  });
+
+  it("commits stdio environment names but not environment values", async () => {
+    const stdio = (args: readonly string[], env: Record<string, string>) =>
+      registrationDigest({ command: "ida-mcp", args, env });
+
+    const token = await stdio(["--stdio"], { IDA_MCP_TOKEN: "first" });
+    expect(await stdio(["--stdio"], { IDA_MCP_TOKEN: "second" })).toBe(token);
+    expect(await stdio(["--stdio"], { IDA_MCP_KEY: "first" })).not.toBe(token);
+    expect(await stdio(["--sse"], { IDA_MCP_TOKEN: "first" })).not.toBe(token);
+  });
+});

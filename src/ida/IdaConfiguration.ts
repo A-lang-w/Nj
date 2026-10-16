@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
+import canonicalize from "canonicalize";
 import { z } from "zod";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
@@ -72,6 +74,29 @@ export type IdaConfiguration = z.infer<typeof registrationSchema>;
 /** Select a protocol without changing existing attached/headless registrations. */
 export const idaProtocol = (config: IdaConfiguration) =>
   config.protocol ?? (config.mode === "attached" ? "legacy" : "modern");
+
+const REDACTED_REGISTRATION_VALUE = "[REDACTED]";
+
+const redactedValues = (
+  values: Readonly<Record<string, string>>,
+): Record<string, string> =>
+  Object.fromEntries(
+    Object.keys(values).map((name) => [name, REDACTED_REGISTRATION_VALUE]),
+  );
+
+/** Digest the registration without header or environment values.
+ * Their names stay committed, so adding or removing one changes the digest.
+ */
+export const idaRegistrationDigest = (config: IdaConfiguration): string =>
+  createHash("sha256")
+    .update(
+      canonicalize(
+        "url" in config
+          ? { ...config, headers: redactedValues(config.headers) }
+          : { ...config, env: redactedValues(config.env) },
+      ) ?? "",
+    )
+    .digest("hex");
 
 /** Read one explicit registration without starting or installing a provider. */
 export const readIdaConfiguration = (
