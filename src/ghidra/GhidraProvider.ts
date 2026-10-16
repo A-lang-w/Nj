@@ -63,6 +63,7 @@ import {
   isGhidraPspTarget,
 } from "./GhidraPspProfile.js";
 import { resolveGhidraExtensions } from "./extensions/GhidraExtensions.js";
+import { resolveGhidraTransport } from "./GhidraTransport.js";
 import {
   CAPABILITIES,
   loopbackTransportCapabilities,
@@ -445,6 +446,10 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       target,
       installation.platform,
       this.#inspectionResources,
+      resolveGhidraTransport(
+        installation.platform,
+        this.config.ghidraBridgeTransport,
+      ),
       options?.signal,
     );
     if (!extensions.ok) return extensions;
@@ -486,6 +491,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         target,
         profile,
         this.installationHost?.platform ?? process.platform,
+        this.config,
       );
       if (!admitted.ok) throw admitted.error;
       const installation = await this.#observeInstallation(
