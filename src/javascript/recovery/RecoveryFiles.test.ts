@@ -1,9 +1,12 @@
 import { execFile } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { mkdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { expect, it, vi } from "vitest";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisOutputError,
+} from "../../domain/analysisErrorCore.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import {
   openRegularFile,
@@ -11,7 +14,7 @@ import {
 } from "../../filesystem/RegularFile.js";
 import { readWithoutFifoWriter } from "../../../tests/fixtures/fifoInput.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { readRecoveryFile } from "./RecoveryFiles.js";
+import { readRecoveryFile, snapshotRecoveryInputs } from "./RecoveryFiles.js";
 
 vi.mock("../../filesystem/RegularFile.js", async (importOriginal) => {
   const actual =
@@ -52,4 +55,34 @@ it("keeps a failed admission close owned when cancellation is also requested", a
   await expect(
     readRecoveryFile("/selected.js", 1024, controller.signal),
   ).rejects.toBe(failure);
+});
+
+it("reports one file selected under two letter cases as an input error", async (context) => {
+  const root = await createTestTempDirectory("rea-recovery-case-");
+  const lower = join(root, "bundle.js");
+  const upper = join(root, "BUNDLE.js");
+  await writeFile(lower, "module.exports = 1;\n");
+  // Only a case-insensitive filesystem, such as the default Windows and macOS
+  // ones, resolves both spellings to the selected file.
+  if (
+    !(await stat(upper).then(
+      () => true,
+      () => false,
+    ))
+  )
+    context.skip();
+  const snapshots = join(root, "snapshots");
+  await mkdir(snapshots);
+
+  const failure = await snapshotRecoveryInputs([lower, upper], snapshots).catch(
+    (cause: unknown) => cause,
+  );
+
+  expect(failure).toBeInstanceOf(AnalysisInputError);
+  expect((failure as AnalysisInputError).issues).toEqual([
+    expect.objectContaining({
+      path: ["additional_paths"],
+      message: expect.stringContaining(upper),
+    }),
+  ]);
 });
