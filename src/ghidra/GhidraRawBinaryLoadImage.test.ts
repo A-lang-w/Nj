@@ -12,6 +12,13 @@ describe("raw-binary Ghidra language binding", () => {
       defaultAddressSpace: "ram",
     });
   });
+  it("maps ARM7TDMI firmware to Ghidra's little-endian ARMv4T language", () => {
+    expect(ghidraRawBinaryLanguage("armv4t")).toEqual({
+      languageId: "ARM:LE:32:v4t",
+      compilerSpecId: "default",
+      defaultAddressSpace: "ram",
+    });
+  });
   it("maps the big-endian m68k family to the default 68000 language", () => {
     expect(ghidraRawBinaryLanguage("m68k")).toEqual({
       languageId: "68000:BE:32:default",

@@ -93,6 +93,22 @@ describe("raw-binary admission", () => {
       },
     });
   });
+  it("admits a raw ARMv4T firmware image without widening header detection", () => {
+    expect(
+      admitRawBinary({
+        architecture: "armv4t",
+        entryPoint: "0x0",
+        fileBytes: 4,
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        architecture: "armv4t",
+        entryPoint: "0x0",
+        entryPointSource: "0x0",
+      },
+    });
+  });
   it("rejects an empty file as a target refusal while naming the extent", () => {
     expect(validateRawBinaryLength(0).ok).toBe(false);
     const result = admitRawBinary({
@@ -128,7 +144,7 @@ describe("raw-binary admission", () => {
       }).ok,
     ).toBe(true);
   });
-  it.each(["arm", "arm64"])(
+  it.each(["arm", "armv4t", "arm64"])(
     "rejects unaligned %s entries before provider selection",
     (architecture) => {
       for (const entryPoint of ["0x8000001", "0x8000002", "0x8000003"]) {

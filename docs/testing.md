@@ -1000,7 +1000,10 @@ through the compiled CLI and stdio MCP server. With the same Ghidra/JDK
 prerequisites, it checks preparation and bridge startup, verified load mappings,
 instruction and byte readback, canonical-entry session reuse, replacement when
 the entry changes without `provider_id`, unchanged source bytes, and owned
-cleanup. Six-byte x86 and x86_64 controls also verify supported compiler
+cleanup. The same source-owned `bx lr` image is reopened through the distinct
+raw-only `armv4t` profile to verify `ARM:LE:32:v4t`, architecture identity,
+decoded instruction access, and a profile digest distinct from ARMv7. Six-byte
+x86 and x86_64 controls also verify supported compiler
 specifications, independent mappings, unchanged bytes, and decompilation of a
 known return value. AArch64 remains covered by deterministic tests rather than
 this real-provider lane. See [raw binary analysis](raw-binary.md).

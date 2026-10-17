@@ -25,11 +25,11 @@ rea inspect-native-load-image /absolute/path/to/ecu.bin --target-format raw-bina
 }
 ```
 
-`architecture` is one of `x86`, `x86_64`, `arm`, `arm64`, `6502`, `m68k`, or
-`sh4`. `entry_point` is a
+`architecture` is one of `x86`, `x86_64`, `arm`, `armv4t`, `arm64`, `6502`,
+`m68k`, or `sh4`. `entry_point` is a
 hexadecimal address of the form `0x…`. The complete file is mapped starting at
 that address, and Ghidra seeds an `entry` function there before auto-analysis.
-ARM and AArch64 entries must be 4-byte aligned; m68k and SH-4 entries must be
+ARM, ARMv4T, and AArch64 entries must be 4-byte aligned; m68k and SH-4 entries must be
 2-byte aligned; x86 and 6502 entries may be byte-aligned.
 For 6502, the entry and complete mapped file must fit within `0x0000..0xffff`;
 images that cross the 16-bit boundary are rejected before provider startup.
@@ -48,6 +48,7 @@ m68k is big-endian and the others are little-endian.
 | x86          | `x86:LE:32:default`     | `gcc`            |
 | x86_64       | `x86:LE:64:default`     | `gcc`            |
 | arm          | `ARM:LE:32:v7`          | `default`        |
+| armv4t       | `ARM:LE:32:v4t`         | `default`        |
 | arm64        | `AARCH64:LE:64:v8A`     | `default`        |
 | 6502         | `6502:LE:16:default`    | `default`        |
 | m68k         | `68000:BE:32:default`   | `default`        |
@@ -56,6 +57,12 @@ m68k is big-endian and the others are little-endian.
 Compiler specifications select analysis conventions; they do not identify the
 original compiler or ABI of a headerless target. Ghidra's x86 languages do not
 provide a compiler specification named `default`.
+
+Choose `armv4t` for little-endian ARM7TDMI-class firmware whose instruction
+set is ARMv4T. It is deliberately distinct from generic `arm`, which selects
+ARMv7; using `arm` for older firmware can admit instructions the target CPU
+cannot execute. The profile starts in ARM state at the aligned entry point;
+REA does not infer a Thumb-only entry convention from raw bytes.
 
 Those settings, the caller-supplied entry, and `language_selection:
 caller-supplied-v1` are committed in the analysis profile. A different entry

@@ -57,6 +57,12 @@ export const ghidraRawBinaryLanguage = (
         compilerSpecId: "default",
         defaultAddressSpace: "ram",
       };
+    case "armv4t":
+      return {
+        languageId: "ARM:LE:32:v4t",
+        compilerSpecId: "default",
+        defaultAddressSpace: "ram",
+      };
     case "arm64":
       return {
         languageId: "AARCH64:LE:64:v8A",

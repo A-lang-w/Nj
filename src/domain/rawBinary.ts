@@ -13,6 +13,7 @@ export const BINARY_ARCHITECTURES = [
   "x86",
   "x86_64",
   "arm",
+  "armv4t",
   "arm64",
   "6502",
   "m68k",
@@ -82,6 +83,7 @@ const addressWidth = (architecture: BinaryArchitecture): bigint =>
     ? 0xffffn
     : architecture === "x86" ||
         architecture === "arm" ||
+        architecture === "armv4t" ||
         architecture === "m68k" ||
         architecture === "sh4"
       ? 0xffffffffn
@@ -97,7 +99,7 @@ export const admitRawBinary = (input: {
   if (!architecture.success)
     return err({
       reason:
-        "raw-binary format requires architecture (x86, x86_64, arm, arm64, 6502, m68k, or sh4)",
+        "raw-binary format requires architecture (x86, x86_64, arm, armv4t, arm64, 6502, m68k, or sh4)",
       constraint: "load_selection_rejected",
     });
   if (typeof input.entryPoint !== "string")
@@ -113,7 +115,9 @@ export const admitRawBinary = (input: {
       constraint: "load_selection_rejected",
     });
   if (
-    (architecture.data === "arm" || architecture.data === "arm64") &&
+    (architecture.data === "arm" ||
+      architecture.data === "armv4t" ||
+      architecture.data === "arm64") &&
     entry.value.value % 4n !== 0n
   )
     return err({

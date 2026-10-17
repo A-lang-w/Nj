@@ -11,7 +11,6 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { inspectGhidraInstallation } from "../dist/ghidra/GhidraInstallation.js";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
@@ -25,15 +24,6 @@ if (process.env.GHIDRA_INSTALL_DIR === undefined)
   throw new Error(
     "Set GHIDRA_INSTALL_DIR to a bring-your-own Ghidra installation.",
   );
-const installation = inspectGhidraInstallation({
-  environment: process.env,
-  installDir: process.env.GHIDRA_INSTALL_DIR,
-  ...(process.env.JAVA_HOME === undefined
-    ? {}
-    : { javaHome: process.env.JAVA_HOME }),
-});
-assert.equal(installation.status, "available", JSON.stringify(installation));
-
 const run = createVerifierRun();
 const workspace = await mkdtemp(join(tmpdir(), "rea-raw-proof-"));
 const runtime = join(workspace, "runtime");
@@ -159,6 +149,24 @@ try {
   const unchanged = await call("binary_session");
   assert.equal(unchanged.analysis_run.run_id, sessions[2]);
   assert.equal(unchanged.entry_point, "0x9000000");
+  const armv4tOpened = await call("open_binary", {
+    path,
+    format: "raw-binary",
+    architecture: "armv4t",
+    entry_point: "0x08000000",
+  });
+  assert.equal(armv4tOpened.entry_point, "0x8000000");
+  const armv4tImage = await call("inspect_native_load_image");
+  assert.equal(armv4tImage.subject.architecture, "armv4t");
+  assert.equal(
+    armv4tImage.normalized_result.observations.language_id,
+    "ARM:LE:32:v4t",
+  );
+  assert.notEqual(armv4tImage.analysis_profile.digest, profiles[0]);
+  const armv4tInstruction = await call("inspect_native_instruction", {
+    address: "0x8000000",
+  });
+  assert.equal(armv4tInstruction.normalized_result.address, "0x8000000");
   await call("close_binary");
 
   const { stdout } = await promisify(execFile)(
@@ -295,7 +303,10 @@ try {
     mocked: false,
     lane: "ghidra-raw",
     host: process.platform,
-    provider: { id: "ghidra", version: installation.providerVersion },
+    provider: {
+      id: "ghidra",
+      version: cli.analysis_profile.provider.version,
+    },
     target: {
       format: "raw-binary",
       architecture: "arm",
@@ -306,6 +317,7 @@ try {
     canonical_entry_reuses_session: true,
     changed_entry_replaces_session: true,
     lifecycle_entry_preserved: true,
+    armv4t_verified: true,
     invalid_entry_preserves_active_session: true,
     load_images_verified: true,
     original_unchanged: true,
