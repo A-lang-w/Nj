@@ -20,6 +20,90 @@ import { clientRegistrationEnvironmentDetails } from "../../../src/application/C
 import { snapshotEnvironment } from "../../../src/process/snapshotEnvironment.js";
 import { npxRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 
+it.each(["win32", "linux"] as const)(
+  "uses the selected %s identity when inspecting lowercase registration settings",
+  async (platform) => {
+    const home = await createTestTempDirectory("rea-selected-platform-env-");
+    const path = join(home, ".cursor/mcp.json");
+    await mkdir(join(home, ".cursor"));
+    await writeFile(
+      path,
+      JSON.stringify({
+        mcpServers: {
+          rea: clientRegistrationEntry(
+            "json",
+            npxRegistrationCommand(platform),
+            { rea_analysis_provider: "invalid provider" },
+          ),
+        },
+      }),
+    );
+    const statuses = await readClientRegistrationStatuses(home, "rea", {
+      platform,
+      environment: {},
+    });
+    expect(statuses.find(({ client }) => client === "cursor")).toMatchObject({
+      state: platform === "win32" ? "invalid" : "aligned",
+    });
+  },
+);
+
+it.skipIf(process.platform !== "win32").each([
+  {
+    key: "rea_analysis_provider",
+    override: "REA_ANALYSIS_PROVIDER",
+    value: "ghidra",
+    duplicate: false,
+  },
+  { key: "true", override: "TRUE", value: "chosen", duplicate: false },
+  {
+    key: "rea_analysis_provider",
+    override: "REA_ANALYSIS_PROVIDER",
+    value: "ghidra",
+    duplicate: true,
+  },
+])(
+  "preserves DSH scalar-key identity and comments when replacing $key",
+  async ({ key, override, value, duplicate }) => {
+    const root = await createTestTempDirectory("rea-dsh-alias-comments-");
+    const configPath = join(root, "cordis.patch.yml");
+    const source = `- insert:\n    - id: rea-mcp\n      name: "@deepseek-ai/dsh-mcp-client"\n      config:\n        serverName: rea\n        transport: stdio\n        command: old-rea\n        args: [mcp]\n        env:\n          # retain preceding rationale\n          ${key}: "hopper" # retain inline rationale\n${duplicate ? `          ${override}: "ghidra" # retain winning rationale\n` : ""}          CUSTOM: !!js caller.custom\n`;
+    await writeFile(configPath, source);
+    const client = { name: "dsh", format: "dsh", configPath } as const;
+    const result = await configureClientConfiguration(
+      client,
+      { [override]: value },
+      ["rea", "mcp"],
+    );
+    expect(result, JSON.stringify(result)).toMatchObject({
+      status: "configured",
+    });
+    const text = await readFile(configPath, "utf8");
+    expect(text).toContain("# retain preceding rationale");
+    expect(text).toContain("# retain inline rationale");
+    if (duplicate) expect(text).toContain("# retain winning rationale");
+    expect(text).toContain("!!js caller.custom");
+    const env = clientRegistrationEnvironmentDetails(
+      parseClientConfiguration(text, "dsh"),
+    );
+    expect(env.ok).toBe(true);
+    if (!env.ok) throw env.error;
+    expect(env.value.values).toHaveProperty(override, value);
+    expect(
+      Object.keys(env.value.values).filter(
+        (name) => name.toUpperCase() === override,
+      ),
+    ).toEqual([override]);
+    expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(source);
+    expect(
+      await configureClientConfiguration(client, { [override]: value }, [
+        "rea",
+        "mcp",
+      ]),
+    ).toEqual({ status: "unchanged" });
+  },
+);
+
 it.skipIf(process.platform !== "win32")(
   "preserves a lowercase explicit Kimi schema profile instead of inserting a conflicting default",
   async () => {

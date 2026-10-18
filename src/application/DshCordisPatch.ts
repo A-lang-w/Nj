@@ -189,6 +189,7 @@ export class DshCordisDocument {
   environment(
     overrides: Readonly<Record<string, string>> = {},
     validation: "fragment" | "effective" = "effective",
+    platform: NodeJS.Platform = process.platform,
   ): Result<Readonly<Record<string, string>>, ConfigurationError> {
     const config = this.#field("config");
     if (config instanceof CordisExpression)
@@ -225,7 +226,7 @@ export class DshCordisDocument {
     const literals: Record<string, string> = {};
     const unresolvedSettings = new Set<string>();
     for (const [key, value] of Object.entries(
-      mergeEnvironmentOverrides<unknown>(raw ?? {}, overrides),
+      mergeEnvironmentOverrides<unknown>(raw ?? {}, overrides, platform),
     )) {
       if (value instanceof CordisExpression) {
         unresolvedSettings.add(key);
@@ -246,11 +247,12 @@ export class DshCordisDocument {
       literals[key] = value;
     }
     const environment = literals;
-    const runtimeEnvironment = snapshotEnvironment(environment);
+    const runtimeEnvironment = snapshotEnvironment(environment, platform);
     const unresolved = new Set(
       Object.keys(
         snapshotEnvironment(
           Object.fromEntries([...unresolvedSettings].map((key) => [key, ""])),
+          platform,
         ),
       ),
     );
@@ -388,9 +390,16 @@ export class DshCordisDocument {
       if (!isMap(nextEnv))
         throw new ConfigurationError("Cordis environment is not a mapping");
       for (const pair of [...nextEnv.items]) {
-        const key = this.#yaml.value(pair.key);
-        if (typeof key === "string" && !Object.hasOwn(desiredEnv, key))
-          nextEnv.delete(pair.key);
+        const key = this.#yaml.key(pair.key);
+        if (Object.hasOwn(desiredEnv, key)) continue;
+        const alias =
+          process.platform === "win32"
+            ? Object.keys(desiredEnv).find(
+                (name) => name.toUpperCase() === key.toUpperCase(),
+              )
+            : undefined;
+        if (alias === undefined) nextEnv.delete(pair.key);
+        else this.#yaml.renameKey(nextEnv, pair, alias);
       }
       for (const [key, value] of Object.entries(desiredEnv)) {
         this.#yaml.setValue(nextEnv, key, value);

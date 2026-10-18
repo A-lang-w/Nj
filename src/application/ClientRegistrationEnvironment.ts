@@ -35,13 +35,20 @@ export const clientRegistrationEnvironment = (
   parsed: ClientConfigurationDocument | undefined,
   overrides: Readonly<Record<string, string>> = {},
   validation: "fragment" | "effective" = "effective",
+  platform: NodeJS.Platform = process.platform,
 ): Result<Readonly<Record<string, string>>, ConfigurationError> => {
   if (parsed?.dialect === "dsh")
-    return dshDocument(parsed.document).environment(overrides, validation);
+    return dshDocument(parsed.document).environment(
+      overrides,
+      validation,
+      platform,
+    );
   const details = clientRegistrationEnvironmentDetails(
     parsed,
     overrides,
     validation,
+    undefined,
+    platform,
   );
   return details.ok ? ok(details.value.values) : details;
 };
@@ -52,17 +59,20 @@ export const clientRegistrationEnvironmentDetails = (
   overrides: Readonly<Record<string, string>> = {},
   validation: "fragment" | "effective" = "effective",
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
+  platform: NodeJS.Platform = process.platform,
 ): Result<ClientRegistrationEnvironmentDetails, ConfigurationError> => {
   if (parsed?.dialect === "dsh") {
     const environment = dshDocument(parsed.document).environment(
       overrides,
       validation,
+      platform,
     );
     if (!environment.ok) return environment;
     return validatedDetails(
       environment.value,
       validation,
       resolveProviderRequestBudget,
+      platform,
     );
   }
   const key =
@@ -92,11 +102,16 @@ export const clientRegistrationEnvironmentDetails = (
     );
   // Validate known settings with the runtime's parser, but retain the original
   // string overrides, including unknown client-specific keys and no defaults.
-  const environment = mergeEnvironmentOverrides(existing.data, overrides);
+  const environment = mergeEnvironmentOverrides(
+    existing.data,
+    overrides,
+    platform,
+  );
   return validatedDetails(
     environment,
     validation,
     resolveProviderRequestBudget,
+    platform,
   );
 };
 
@@ -104,8 +119,9 @@ const validatedDetails = (
   environment: Readonly<Record<string, string>>,
   validation: "fragment" | "effective",
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
+  platform: NodeJS.Platform = process.platform,
 ): Result<ClientRegistrationEnvironmentDetails, ConfigurationError> => {
-  const runtimeEnvironment = snapshotEnvironment(environment);
+  const runtimeEnvironment = snapshotEnvironment(environment, platform);
   const validated =
     validation === "fragment"
       ? parseEnvironmentValues(runtimeEnvironment)

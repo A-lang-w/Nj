@@ -186,6 +186,7 @@ export const readClientRegistrationInspections = async (
       const configuration = await readEffectiveClientRegistrationConfiguration(
         client,
         options.resources,
+        options.platform,
       );
       if (!configuration.ok) {
         if (
@@ -266,6 +267,7 @@ export const readClientRegistrationInspections = async (
               {},
               "effective",
               options.resolveProviderRequestBudget,
+              options.platform,
             )
           : undefined;
       if (
@@ -298,8 +300,10 @@ export const readClientRegistrationInspections = async (
         platform: options.platform ?? process.platform,
         kimiInputSchemaProfileSelected:
           registrationEnvironment?.ok === true &&
-          snapshotEnvironment(registrationEnvironment.value.values)
-            .REA_MCP_INPUT_SCHEMA_PROFILE !== undefined,
+          snapshotEnvironment(
+            registrationEnvironment.value.values,
+            options.platform,
+          ).REA_MCP_INPUT_SCHEMA_PROFILE !== undefined,
       });
       record(
         configuredStatus(
