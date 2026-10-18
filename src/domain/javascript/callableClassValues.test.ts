@@ -41,3 +41,44 @@ it.each([
     analyzeJavaScriptStaticSource(`${setup}${LOAD}`).electron.browser_windows,
   ).toHaveLength(1);
 });
+
+it.each([
+  "class C{static{this.__proto__.call=other}}",
+  "class C{static field=(this.__proto__.call=other)}",
+  "class C{static #field=(this.__proto__.call=other)}",
+  "class C{static{this.call.call=other}}",
+  "class C{static field=(this.call.call=other)}",
+  "class C{static{(()=>{this.call.call=other})()}}",
+  "class C{static field=(()=>{this.call.call=other})()}",
+  "class C extends Function{static{this.__proto__.prototype.call=other}}",
+])(
+  "tracks shared helper writes through static class receivers: %s",
+  (setup) => {
+    expect(
+      analyzeJavaScriptStaticSource(`${setup}${LOAD}`).electron.browser_windows,
+    ).toEqual([]);
+  },
+);
+
+it.each([
+  "class C{static{this.call=other}}",
+  "class C{static field=(this.call=other)}",
+  "class B{}class C extends B{static{this.__proto__.call=other}}",
+  "class B{}class C extends B{static field=(this.__proto__.call=other)}",
+  "class C{static{this.extra={};this.extra.call=other}}",
+])("keeps static receiver own properties separate: %s", (setup) => {
+  expect(
+    analyzeJavaScriptStaticSource(`${setup}${LOAD}`).electron.browser_windows,
+  ).toHaveLength(1);
+});
+
+it.each([
+  "class C extends null{}C.__proto__.call=other;",
+  "class C extends null{}const bound=C.bind(null);bound.__proto__.call=other;",
+  "class C extends null{static{this.__proto__.call=other}}",
+  "class C extends null{static field=(this.__proto__.call=other)}",
+])("keeps Function.prototype on a null-heritage constructor: %s", (setup) => {
+  expect(
+    analyzeJavaScriptStaticSource(`${setup}${LOAD}`).electron.browser_windows,
+  ).toEqual([]);
+});

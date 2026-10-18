@@ -431,6 +431,20 @@ export const createSemanticReceiverReferences = (
     const owner = lexicalOwner(node);
     if (t.isProgram(owner))
       return javaScriptRuntimeContext(owner) === "unknown" ? [owner] : [];
+    if (
+      t.isStaticBlock(owner) ||
+      ((t.isClassProperty(owner) ||
+        t.isClassPrivateProperty(owner) ||
+        t.isClassAccessorProperty(owner)) &&
+        owner.static)
+    ) {
+      // Static initialization uses the declaring constructor, including in
+      // lexical arrows. Its inherited helpers can still be shared intrinsics.
+      const body = state.parentsByNode.get(owner);
+      const declaring =
+        body === undefined ? undefined : state.parentsByNode.get(body);
+      return t.isClass(declaring) ? [declaring] : [];
+    }
     if (!t.isFunction(owner)) return inheritedReceiver(owner);
     if (receivers === undefined) indexReceivers();
     const known = receivers?.get(owner);

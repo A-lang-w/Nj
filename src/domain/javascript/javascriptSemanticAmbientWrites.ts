@@ -490,6 +490,7 @@ export const createAmbientPathResolver = (
         if (
           t.isClass(root) &&
           root.superClass != null &&
+          !t.isNullLiteral(unwrapJavaScriptExpression(root.superClass).node) &&
           suffix?.[0] === "__proto__"
         )
           continueWith(root.superClass, suffix.slice(1), captures.slice(1));
@@ -675,6 +676,9 @@ export const createAmbientPathResolver = (
               if (
                 t.isClass(target) &&
                 target.superClass != null &&
+                !t.isNullLiteral(
+                  unwrapJavaScriptExpression(target.superClass).node,
+                ) &&
                 suffix?.[0] === "__proto__"
               )
                 continueWith(

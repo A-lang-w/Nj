@@ -50,3 +50,42 @@ cliTest(
     }
   },
 );
+
+cliTest(
+  "distinguishes static class receiver writes from owned helpers through CLI and MCP",
+  async ({ cli }) => {
+    const load =
+      'new (require.call.call(require,null,"electron").BrowserWindow)({});';
+    const connection = await connectLocalToolsMcp();
+    for (const [setup, windows] of [
+      ["class C{static{this.call.call=other}}", 0],
+      ["class C{static{this.call=other}}", 1],
+    ] as const) {
+      const root = await createTestTempDirectory(
+        "rea-electron-class-receiver-",
+      );
+      await writeFixtureFiles(root, {
+        "package.json": JSON.stringify({
+          name: "class-fixture",
+          main: "main.cjs",
+        }),
+        "main.cjs": `${setup}${load}`,
+      });
+      for (const surface of ["CLI", "stdio MCP"] as const) {
+        const result = await analyzeJavaScriptDirectory(
+          surface,
+          cli,
+          root,
+          connection.call,
+        );
+        expect(result.statistics).toMatchObject({
+          parsed_javascript_files: 1,
+          parse_failures: 0,
+        });
+        expect(result.summary.browser_windows, `${surface}: ${setup}`).toBe(
+          windows,
+        );
+      }
+    }
+  },
+);
