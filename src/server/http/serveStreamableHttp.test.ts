@@ -762,3 +762,22 @@ it("closes the connection when a route read only part of the body and keeps it a
     agent.destroy();
   }
 });
+
+it("does not let a zero-quality Accept range qualify a session takeover", async () => {
+  const { served } = await start();
+  const { client } = await connect(served.url);
+  const url = new URL(served.url);
+  const refused = await rawHttpRequest(url, {
+    method: "POST",
+    headers: {
+      host: `127.0.0.1:${url.port}`,
+      "content-type": "application/json",
+      accept: "application/json;q=0, text/event-stream",
+    },
+    body: await initializeRequest().text(),
+  });
+  expect(refused.status).toBeGreaterThanOrEqual(400);
+  expect(refused.status).toBeLessThan(500);
+  expect(await echo(client, "kept")).toEqual([{ type: "text", text: "kept" }]);
+  await client.close();
+});

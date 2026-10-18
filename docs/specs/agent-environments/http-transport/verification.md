@@ -288,3 +288,10 @@ keep-alive socket. The close decision now uses the incoming message's end of
 stream (test: a route that reads one chunk of a 256 KiB upload is answered
 with `Connection: close` and a closed socket; a route that reads it all keeps
 the connection).
+
+A thirteenth round (Codex): an `Accept` range with `q=0` no longer counts toward
+the takeover guard (test: `application/json;q=0, text/event-stream` is refused
+while the connected client keeps echoing). The same round noted that a failed
+startup leaves cleanup of the already opened session and providers to a single
+attempt; that path is the pre-existing stdio startup-failure cleanup, which the
+HTTP mode now reaches on `EADDRINUSE`, and is left for the maintainers to decide.
