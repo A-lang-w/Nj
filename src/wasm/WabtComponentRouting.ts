@@ -1,13 +1,12 @@
 import { constants } from "node:fs";
-import { open } from "node:fs/promises";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { open, type FileHandle } from "node:fs/promises";
+import { withArtifactFileHandle } from "../artifacts/ArtifactFileOperation.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisUnsupportedTargetError } from "../domain/analysisErrorCore.js";
 import {
   isWasmComponent,
   readWasmPreamble,
 } from "../domain/wasm/wasmPreamble.js";
-import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { wabtFailure } from "./WabtFailures.js";
 
 /** WABT decodes core modules only; components route to their own decoder. */
@@ -24,10 +23,10 @@ export const wasmComponentSelected = (
     },
   );
 
-const probeHeader = async (handle: OwnedFileHandle): Promise<boolean> => {
+const probeHeader = async (file: FileHandle): Promise<boolean> => {
   try {
     const header = Buffer.alloc(8);
-    const { bytesRead } = await handle.handle.read(header, 0, header.length, 0);
+    const { bytesRead } = await file.read(header, 0, header.length, 0);
     return isWasmComponent(readWasmPreamble(header.subarray(0, bytesRead)));
   } catch (cause: unknown) {
     // Unreadable content is left to the authoritative stable read.
@@ -39,39 +38,35 @@ const probeHeader = async (handle: OwnedFileHandle): Promise<boolean> => {
 /**
  * Reject a component before any WABT configuration or command. An unreadable
  * path is left to the stable read, which reports it after tool checks. The
- * probe handle is owned by `scope`, so a failed release stays retryable.
+ * probe descriptor is owned like every stable read, so a failed close stays
+ * retained by `scope` and its error resolves once a later close succeeds.
  */
 export const rejectWasmComponent = async (
   path: string,
   scope: ArtifactResourceScope,
 ): Promise<void> => {
-  let handle: OwnedFileHandle;
+  let file: FileHandle;
   try {
-    handle = new OwnedFileHandle(
-      await open(
-        path,
-        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-      ),
+    file = await open(
+      path,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     );
   } catch (cause: unknown) {
     // The authoritative stable read classifies inaccessible selections.
     void cause;
     return;
   }
-  const component = await probeHeader(handle);
-  const cleanup = await scope.release({
-    kind: "file-handle",
-    resource: path,
-    handle,
-  });
-  if (cleanup.kind === "failed")
-    throw wabtFailure(
-      ArtifactReaderFailure.withCleanup(
-        cleanup.cause,
-        ArtifactReaderFailure.cleanupObservation(cleanup.cause, path),
-      ),
-      "artifact",
+  let component: boolean;
+  try {
+    component = await withArtifactFileHandle(
       path,
+      file,
+      scope,
+      undefined,
+      probeHeader,
     );
+  } catch (cause: unknown) {
+    throw wabtFailure(cause, "artifact", path);
+  }
   if (component) throw wasmComponentSelected(path);
 };
