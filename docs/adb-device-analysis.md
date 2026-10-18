@@ -135,8 +135,15 @@ uiautomator reported `could not get idle state` (common on screens with
 continuous animation), and `unavailable` when neither was observed. The two
 non-captured states mean the hierarchy is unknown, not empty. Nodes reflect
 what the accessibility service exposes: Jetpack Compose content without
-semantics, and other content without accessibility nodes, is absent. Bounds
-are screen pixels; `inspect_adb_display` reports the density to convert them.
+semantics, and other content without accessibility nodes, is absent. Compose
+nodes with semantics do appear, usually without a `resource_id`. Bounds are
+screen pixels; `inspect_adb_display` reports the density to convert them.
+
+The hierarchy is whatever is on screen, which is not always the foreground
+app. With the screen off (including always-on display) or locked, nodes come
+from the system UI, for example `com.android.systemui`, rather than the app
+behind it. Check each node's `package`, or pair the call with
+`inspect_adb_window`.
 
 For `install_adb_package`, `replace_requested` records whether `-r` was sent.
 The `replaced` result is `null`: the successful install response does not say
