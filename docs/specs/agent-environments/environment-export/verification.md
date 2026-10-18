@@ -183,7 +183,13 @@ sandbox.") but the first form of the leak check counted the helper and failed.
 The check now lists containers with their names, excludes
 `agentenv-registry[-<port>]` and reports it under `image_store_helpers`; the
 local receipt gained `image_store_helpers: []` because the helper already
-existed before the run here. Removing that helper (`docker rm -f
+existed before the run here. Public ECR's anonymous pull quota refused the
+framework's `postgres:16-alpine` pull with `429 Too Many Requests, Data limit
+exceeded` on two hosted runs out of six (the second and, after the stack was
+rebuilt, the sixth); the verifier now retries the run once, after 90 seconds,
+when the failure carries that registry's signature, and records
+`attempts: 2` with `retried_for` in the receipt. The local receipt reports
+`attempts: 1`. Removing that helper (`docker rm -f
 agentenv-registry`) and running the verifier again reproduced the fresh-host
 path locally: the run recreated it and the receipt passed with
 `image_store_helpers: ["agentenv-registry"]`, `new_containers: []`

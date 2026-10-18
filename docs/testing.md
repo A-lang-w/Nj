@@ -1567,7 +1567,12 @@ nothing. Its disposable CI runner creates the virtual environment in runner
 storage, exports both paths and uses the runner's own Docker; no developer host
 configuration changes. The `agent-env run` itself is bounded to 15 minutes
 inside the 30-minute job, so a hung run ends with the verifier's failed receipt
-rather than the runner's kill.
+rather than the runner's kill. The framework builds its gateway and service-db
+images from `public.ecr.aws` on every fresh runner, and hosted runners share
+that registry's anonymous pull quota; when the run fails with that registry's
+`429 Too Many Requests`, the verifier waits 90 seconds and runs once more,
+recording `attempts: 2` and `retried_for` in the receipt. Any other failure
+ends the lane at once.
 
 The verifier writes the Grafana-shaped HAR the view tests own, inspects it and
 projects the `environment-manifest` view with all three template rules through

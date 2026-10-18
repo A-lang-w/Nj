@@ -4,13 +4,22 @@ import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { setTimeout as pause } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
-import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
+import {
+  OwnedCommandFailure,
+  runOwnedCommand,
+} from "../dist/process/OwnedCommand.js";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
 const AGENTENV_PIN = "agentenv-framework 0.9.1334";
+// The framework builds its infra images from public ECR, whose anonymous pull quota hosted
+// runners share; that one external refusal earns one retry, anything else fails at once.
+const PUBLIC_ECR_QUOTA =
+  /public\.ecr\.aws[\s\S]{0,400}?(?:429 Too Many Requests|toomanyrequests)/u;
+const QUOTA_RETRY_PAUSE_MS = 90_000;
 const TEMPLATE_RULES = [
   "after-uid-literal",
   "opaque-token",
@@ -139,19 +148,38 @@ try {
   // The agentenv runner builds the image, deploys it on the local sandbox and runs the verifier.
   // Bounded well under the 30-minute job so a hung run ends with this receipt, not the runner's kill.
   const started = Date.now();
-  const snapshot = await runOwnedCommand(
-    {
-      command: agentEnv,
-      arguments: ["run", bundle, "--sandbox", "local"],
-      cwd: runtime.path,
-      runId: `rea-agentenv-run-${randomUUID()}`,
-      hostEnvironment: environment,
-    },
-    { timeoutMs: 15 * 60_000, diagnosticBytes: 4 * 1024 * 1024 },
-  );
+  const runBundle = () =>
+    runOwnedCommand(
+      {
+        command: agentEnv,
+        arguments: ["run", bundle, "--sandbox", "local"],
+        cwd: runtime.path,
+        runId: `rea-agentenv-run-${randomUUID()}`,
+        hostEnvironment: environment,
+      },
+      { timeoutMs: 15 * 60_000, diagnosticBytes: 4 * 1024 * 1024 },
+    );
+  let attempts = 1;
+  let snapshot;
+  try {
+    snapshot = await runBundle();
+  } catch (cause) {
+    if (
+      !(cause instanceof OwnedCommandFailure) ||
+      !PUBLIC_ECR_QUOTA.test(cause.snapshot?.stderr.text ?? "")
+    )
+      throw cause;
+    attempts = 2;
+    await pause(QUOTA_RETRY_PAUSE_MS);
+    snapshot = await runBundle();
+  }
   receipt.agent_env_run = {
     exit_code: snapshot.exitCode,
     seconds: Math.round((Date.now() - started) / 1000),
+    attempts,
+    ...(attempts > 1
+      ? { retried_for: "public ECR anonymous pull quota (429)" }
+      : {}),
     stdout_tail: snapshot.stdout.text.trim().split("\n").slice(-6),
   };
   assert.equal(snapshot.exitCode, 0);
