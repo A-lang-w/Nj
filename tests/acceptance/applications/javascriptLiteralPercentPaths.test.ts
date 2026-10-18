@@ -18,12 +18,20 @@ const fixtureImports = (loader: string) => {
       return { "#entry": "fixture-window" };
     case "builtin alias":
       return { "#entry": "fs" };
+    case "electron alias":
+      return { "#entry": "electron" };
+    case "electron main alias":
+      return { "#entry": "electron/main" };
     default:
       return { "#entry": null };
   }
 };
 
 const unprovenLoaderSources: Readonly<Record<string, string>> = {
+  "fallback module alias":
+    'const { loader = module } = options; loader.require("../shared/window.cjs");',
+  "inactive fallback":
+    'const { loader = module } = { loader: {} }; loader.require("../shared/window.cjs");',
   "absolute ESM": 'import "/shared/window.cjs";',
   "absolute dynamic import": 'import("/shared/window.cjs");',
   "createRequire base":
@@ -77,6 +85,8 @@ cliTest.for(
       "recursive alias",
       "external-package alias",
       "builtin alias",
+      "electron alias",
+      "electron main alias",
       "blocked alias",
       "local module",
       "projected module",
@@ -95,6 +105,9 @@ cliTest.for(
     const percent = single || loader === "percent main";
     const inert = [
       "builtin alias",
+      "electron alias",
+      "electron main alias",
+      "inactive fallback",
       "blocked alias",
       "local module",
       "projected module",
@@ -103,14 +116,17 @@ cliTest.for(
       "earlier reassigned module alias",
     ].includes(loader);
     const absolute = loader === "absolute main";
-    const main =
-      unprovenLoaderSources[loader] !== undefined
-        ? "main.mjs"
-        : absolute
-          ? "/opt/app/main.cjs"
-          : percent
-            ? "main%2Fentry.cjs"
-            : "main.cjs";
+    const main = [
+      "absolute ESM",
+      "absolute dynamic import",
+      "createRequire base",
+    ].includes(loader)
+      ? "main.mjs"
+      : absolute
+        ? "/opt/app/main.cjs"
+        : percent
+          ? "main%2Fentry.cjs"
+          : "main.cjs";
     const imports = fixtureImports(loader);
     const load = fixtureLoaderSource(loader);
     await writeFixtureFiles(root, {
@@ -185,6 +201,7 @@ cliTest.for(
         "module alias",
         "later reassigned module alias",
         "conditional module alias",
+        "fallback module alias",
       ].includes(loader)
     )
       expect(graph.edges).toEqual(

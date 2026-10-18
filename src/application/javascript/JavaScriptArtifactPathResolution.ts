@@ -1,5 +1,6 @@
 import { isBuiltin } from "node:module";
 import { posix, win32 } from "node:path";
+import { ELECTRON_MODULE } from "../../domain/javascript/javascriptElectronMemberWrites.js";
 
 import {
   normalizeJoinedLogicalPath,
@@ -899,7 +900,9 @@ const resolvePackageImportAlias = (
     // Unsupported lookup may still reach a selected module and another launch
     // owner. Only a known builtin establishes that no local imports follow.
     return unresolvedCandidate(
-      isBuiltin(selected.value) ? "external" : "unavailable",
+      isBuiltin(selected.value) || ELECTRON_MODULE.test(selected.value)
+        ? "external"
+        : "unavailable",
       [
         target.kind === "recursive"
           ? `Recursive package import aliases remain unresolved; package metadata ${metadata.path} maps ${specifier} to ${JSON.stringify(target.target)}.`

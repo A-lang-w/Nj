@@ -10,6 +10,26 @@ const expressionWrappers = [
 ] as const;
 
 it.each([
+  ["const { api = module } = options;", true],
+  ["const { api = module } = {};", true],
+  ["const { api = module } = { api: {} };", false],
+  ["const { api = module.exports } = options;", false],
+  ["const { ...api } = module;", false],
+])(
+  "tracks active direct module defaults: %s",
+  (declaration, possibleModule) => {
+    const analysis = analyzeJavaScriptStaticSource(
+      `${declaration} api.require("./shared.cjs");`,
+    );
+    expect(analysis.references).toEqual(
+      possibleModule
+        ? [expect.objectContaining({ kind: "require", specifier: null })]
+        : [],
+    );
+  },
+);
+
+it.each([
   "const { exports: api } = module;",
   "const { exports: { api } } = module;",
   "const [api] = module;",

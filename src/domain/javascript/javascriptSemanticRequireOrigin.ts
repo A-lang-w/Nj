@@ -23,6 +23,7 @@ import {
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
 
 export interface JavaScriptRequireOrigin {
   readonly origin: JavaScriptModuleOrigin;
@@ -296,6 +297,13 @@ const isCommonJsModuleObject = (
     // members (such as module.exports) are separate object identities.
     for (const initializer of read.binding.initializers)
       if (initializer.projection.length === 0) pending.push(initializer.node);
+    for (const initializer of read.binding.referenceInitializers)
+      if (
+        initializer.projection.length === 0 &&
+        initializer.copyKind === undefined &&
+        !semanticReferenceSourcesInactive(initializer, state)
+      )
+        pending.push(initializer.node);
   }
   return false;
 };
