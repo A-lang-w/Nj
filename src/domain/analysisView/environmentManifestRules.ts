@@ -406,17 +406,26 @@ export const toolName = (
     ) || "tool";
   const truncate = (text: string, limit: number): string =>
     text.slice(0, limit).replace(/_+$/u, "");
-  // Bases that differ only past the limit share one candidate, so the counter is keyed by it.
-  const namespace = truncate(base, TOOL_NAME_LIMIT);
-  let candidate = namespace;
+  let candidate = truncate(base, TOOL_NAME_LIMIT);
   if (registry.used.has(candidate)) {
-    let suffix = registry.nextSuffix.get(namespace) ?? 2;
-    for (; ; suffix += 1) {
+    let suffix = 2;
+    for (;;) {
       const tail = `_${String(suffix)}`;
-      candidate = `${truncate(base, TOOL_NAME_LIMIT - tail.length)}${tail}`;
+      const prefix = truncate(base, TOOL_NAME_LIMIT - tail.length);
+      // Suffixes can truncate distinct full names to the same prefix. Share
+      // progress for that actual candidate family, separately for each width:
+      // a longer suffix can change the prefix and must not skip free short names.
+      const namespace = compositeKey([prefix, tail.length]);
+      const next = registry.nextSuffix.get(namespace) ?? suffix;
+      if (next > suffix) {
+        suffix = next;
+        continue;
+      }
+      candidate = `${prefix}${tail}`;
+      registry.nextSuffix.set(namespace, suffix + 1);
       if (!registry.used.has(candidate)) break;
+      suffix += 1;
     }
-    registry.nextSuffix.set(namespace, suffix + 1);
   }
   registry.used.add(candidate);
   return candidate;
