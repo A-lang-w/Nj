@@ -265,3 +265,13 @@ comes from the incoming message's own body declaration, so a `GET` or `HEAD`
 that carries a body also closes, and the regression uses a keep-alive agent
 and checks that the socket actually closes after the early reply while a
 bodiless `GET` keeps its socket.
+
+A tenth round (Codex, three findings): the takeover guard now requires a lone
+`initialize`, mirroring the transport (test: a batch of `initialize` plus
+`notifications/initialized` is refused while the connected client keeps
+echoing); the shutdown hook records completion only after it returns, so a
+hook that threw stays eligible for the next close (test: a hook that throws
+once runs twice across two closes and then no more); and the bridge joins the
+request target onto the listener's origin verbatim, refusing absolute-form
+targets (test: `//attacker.example/card` is a 404 for that path, a plain route
+sees the bound host only, and `http://attacker.example/card` gets `400`).

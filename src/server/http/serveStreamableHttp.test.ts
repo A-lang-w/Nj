@@ -609,3 +609,100 @@ it("answers a method Fetch refuses instead of letting it escape the request guar
   ]);
   await client.close();
 });
+
+/** One request with a caller-controlled request target, which URL-based clients normalize away. */
+const rawTargetRequest = (
+  served: URL,
+  target: string,
+): Promise<{ status: number; body: string }> =>
+  new Promise((resolve, reject) => {
+    const request = httpRequest(
+      {
+        host: served.hostname,
+        port: Number(served.port),
+        path: target,
+        method: "GET",
+        agent: false,
+        headers: { host: `127.0.0.1:${served.port}` },
+      },
+      (response) => {
+        let body = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk: string) => {
+          body += chunk;
+        });
+        response.on("end", () =>
+          resolve({ status: response.statusCode ?? 0, body }),
+        );
+      },
+    );
+    request.on("error", reject);
+    request.end();
+  });
+
+it("keeps a network-path request target as a path and refuses absolute-form targets", async () => {
+  const seen: string[] = [];
+  const { served } = await start({
+    routes: [
+      {
+        method: "GET",
+        path: "/card",
+        handle: (request) => {
+          seen.push(new URL(request.url).host);
+          return Response.json({ ok: true });
+        },
+      },
+    ],
+  });
+  const url = new URL(served.url);
+  const networkPath = await rawTargetRequest(url, "//attacker.example/card");
+  expect(networkPath.status).toBe(404);
+  expect(networkPath.body).toContain(
+    "No route for GET //attacker.example/card",
+  );
+  const absolute = await rawTargetRequest(url, "http://attacker.example/card");
+  expect(absolute.status).toBe(400);
+  const plain = await rawTargetRequest(url, "/card");
+  expect(plain.status).toBe(200);
+  expect(seen).toEqual([`127.0.0.1:${url.port}`]);
+});
+
+it("lets only a lone initialize replace a session, not a batch that carries one", async () => {
+  const { served } = await start();
+  const { client } = await connect(served.url);
+  const url = new URL(served.url);
+  const single = JSON.parse(await initializeRequest().text()) as unknown;
+  const batch = await rawHttpRequest(url, {
+    method: "POST",
+    headers: {
+      host: `127.0.0.1:${url.port}`,
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify([
+      single,
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+    ]),
+  });
+  expect(batch.status).toBeGreaterThanOrEqual(400);
+  expect(batch.status).toBeLessThan(500);
+  expect(await echo(client, "not evicted")).toEqual([
+    { type: "text", text: "not evicted" },
+  ]);
+  await client.close();
+});
+
+it("retries a shutdown hook that threw instead of marking it complete", async () => {
+  let attempts = 0;
+  const slot = new McpSessionSlot(
+    createEchoServer(() => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("hook failed once");
+    }),
+    undefined,
+  );
+  await expect(slot.close()).rejects.toThrow("hook failed once");
+  await expect(slot.close()).resolves.toBeUndefined();
+  await slot.close();
+  expect(attempts).toBe(2);
+});

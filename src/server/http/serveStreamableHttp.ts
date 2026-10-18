@@ -19,7 +19,11 @@ import {
 import { isIPv4, isIPv6 } from "node:net";
 import type { Logger } from "pino";
 
-import { toWebRequest, writeWebResponse } from "./nodeHttpBridge.js";
+import {
+  toWebRequest,
+  UnsupportedRequestTargetError,
+  writeWebResponse,
+} from "./nodeHttpBridge.js";
 import { StreamableHttpListenError } from "./streamableHttpListenError.js";
 
 /** MCP endpoint path shared by `rea mcp --http` and agent environment servers. */
@@ -136,8 +140,9 @@ const isInitializePost = async (request: Request): Promise<boolean> => {
     const read = await readRequestBody(probe);
     if (read.tooLarge) return false;
     const body: unknown = JSON.parse(read.text);
+    // The transport accepts only a lone initialize, so only that may evict a session.
     return Array.isArray(body)
-      ? body.some((message) => isInitializeRequest(message))
+      ? body.length === 1 && isInitializeRequest(body[0])
       : isInitializeRequest(body);
   } catch {
     return false;
@@ -168,10 +173,17 @@ export class McpSessionSlot {
   ) {
     const protocol = protocolOf(instance);
     const captured = protocol.onclose ?? NO_SHUTDOWN_HOOK;
+    let running = false;
+    // Completion is recorded only after the hook returns, so a hook that threw stays eligible for a retry.
     this.#shutdownHook = () => {
-      if (this.#hookRan) return;
-      this.#hookRan = true;
-      captured();
+      if (this.#hookRan || running) return;
+      running = true;
+      try {
+        captured();
+        this.#hookRan = true;
+      } finally {
+        running = false;
+      }
     };
     protocol.onclose = this.#shutdownHook;
   }
@@ -398,10 +410,18 @@ const serveNodeRequest = async (
   try {
     try {
       webRequest = toWebRequest(request, response, origin());
-    } catch {
-      // Fetch refuses methods such as TRACE that node:http accepts; answer instead of throwing.
+    } catch (cause: unknown) {
+      // Fetch refuses methods such as TRACE that node:http accepts, and the bridge refuses
+      // targets that are not origin-form paths; both are answered instead of thrown.
+      const target = cause instanceof UnsupportedRequestTargetError;
       await writeWebResponse(
-        jsonError(405, -32600, `Unsupported method ${request.method ?? ""}`),
+        jsonError(
+          target ? 400 : 405,
+          -32600,
+          target
+            ? "Unsupported request target"
+            : `Unsupported method ${request.method ?? ""}`,
+        ),
         response,
         { closeConnection: true },
       );

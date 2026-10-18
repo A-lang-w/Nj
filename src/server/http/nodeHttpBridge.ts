@@ -5,6 +5,20 @@ import { pipeline } from "node:stream/promises";
 /** Fetch rejects a body on these methods, so their request streams are not forwarded. */
 const BODYLESS_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD"]);
 
+/** The request target was not an origin-form path; the bridge serves an origin server only. */
+export class UnsupportedRequestTargetError extends Error {
+  override readonly name = "UnsupportedRequestTargetError";
+  constructor(target: string) {
+    super(`Unsupported request target ${target}`);
+  }
+}
+
+/** Join an origin-form target onto the listener's origin verbatim, so `//host/path` stays a path. */
+const requestUrl = (target: string, origin: string): URL => {
+  if (!target.startsWith("/")) throw new UnsupportedRequestTargetError(target);
+  return new URL(`${origin}${target}`);
+};
+
 const toHeaders = (incoming: IncomingMessage["headers"]): Headers => {
   const headers = new Headers();
   for (const [name, value] of Object.entries(incoming)) {
@@ -27,7 +41,7 @@ export const toWebRequest = (
     if (!response.writableFinished) controller.abort();
   });
   const method = request.method ?? "GET";
-  return new Request(new URL(request.url ?? "/", origin), {
+  return new Request(requestUrl(request.url ?? "/", origin), {
     method,
     headers: toHeaders(request.headers),
     signal: controller.signal,
