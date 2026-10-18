@@ -451,7 +451,15 @@ const webSocketBindingCompletion = (
     },
     (node) => webSocketExecutionContexts(node, state, true),
   );
-  return { phase, suspension: phase === "suspended" ? suspension : undefined };
+  // Keep a wait already completed before an uncertain write. Reaching a body
+  // proves that write finished; this does not credit any work after uncertainty.
+  return {
+    phase,
+    suspension:
+      phase === "suspended" || phase === "suspended-unproven"
+        ? suspension
+        : undefined,
+  };
 };
 
 const webSocketCatchBinding = (
@@ -494,8 +502,9 @@ const webSocketCompletedSuspension = (
     if (t.isCatchClause(current)) {
       const binding = webSocketCatchBinding(current, state);
       if (
-        binding?.phase === "blocked" ||
-        binding?.phase === "suspended-blocked"
+        binding !== undefined &&
+        binding.phase !== "completed" &&
+        binding.phase !== "suspended"
       )
         continue;
       if (binding?.suspension !== undefined) {

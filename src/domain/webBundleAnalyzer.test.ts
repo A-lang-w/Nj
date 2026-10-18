@@ -4367,6 +4367,71 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "failed catch getter cannot credit handler wait",
+    "(async()=>{try{throw{get x(){throw 0}}}catch({x}){await 0}new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "completed catch data permits handler wait",
+    "(async()=>{try{throw{x:1}}catch({x}){await 0}new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "failed catch binding after key wait cannot complete handler",
+    "(async()=>{try{throw{get x(){throw 0}}}catch({[await 0]:a,x}){await 0}new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "completed catch getter permits handler wait",
+    "(async()=>{try{throw{get x(){return 1}}}catch({x}){await 0}new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "loop const write blocks later default wait",
+    "const fixed=0;(async()=>{let x;for([fixed,x=await 0]of[[0,void 0]]){new Socket(URL);break}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "loop writable write permits later default wait",
+    "let fixed=0;(async()=>{let x;for([fixed,x=await 0]of[[0,void 0]]){new Socket(URL);break}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "object loop const write blocks later default wait",
+    "const fixed=0;(async()=>{let x;for({a:fixed,b:x=await 0}of[{__proto__:null,a:0}]){new Socket(URL);break}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "object loop writable write permits later default wait",
+    "let fixed=0;(async()=>{let x;for({a:fixed,b:x=await 0}of[{__proto__:null,a:0}]){new Socket(URL);break}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "loop null member target blocks later default wait",
+    "(async()=>{let x;for([null.x,x=await 0]of[[0,void 0]]){new Socket(URL);break}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "loop own data target permits later default wait",
+    "const target={x:0};(async()=>{let x;for([target.x,x=await 0]of[[0,void 0]]){new Socket(URL);break}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "loop throwing setter cannot credit later default wait",
+    "const target={set x(value){throw 0}};(async()=>{let x;for([target.x,x=await 0]of[[0,void 0]]){new Socket(URL);break}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "loop declaration initializes fresh const bindings",
+    "(async()=>{for(const[fixed,x=await 0]of[[0,void 0]]){new Socket(URL);break}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "loop const write after wait cannot credit body",
+    "const fixed=0;(async()=>{let x;for([x=await 0,fixed]of[[void 0,0]]){new Socket(URL);break}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
     "mandatory catch default shares missing slot wait",
     "(async()=>{try{throw{__proto__:null}}catch({x=await 0}){}new Socket(URL)})();const Socket=globalThis.WebSocket;",
     true,

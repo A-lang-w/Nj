@@ -7,6 +7,7 @@ import {
   unwrapJavaScriptExpression,
   javaScriptExactResultOperand,
   semanticDirectFunctionResult,
+  semanticValueWriteSite,
 } from "./javascriptAstValues.js";
 import {
   syntaxEvaluationCannotThrow,
@@ -514,15 +515,14 @@ const patternCompletedSuspension = (
         patternExpressionCompletion(pattern, suspended),
       );
     if (patternStopped(phase)) return phase;
-    let owner: t.Node | undefined = pattern;
-    while (
-      owner !== undefined &&
-      !t.isAssignmentExpression(owner) &&
-      !t.isVariableDeclarator(owner) &&
-      !t.isFunction(owner)
-    )
-      owner = state.parentsByNode.get(owner);
-    if (t.isAssignmentExpression(owner)) {
+    // Classify target roles once: loop assignments write existing bindings;
+    // declarations and catch/function parameters initialize fresh bindings.
+    const owner = semanticValueWriteSite(pattern, state.parentsByNode);
+    if (
+      t.isAssignmentExpression(owner) ||
+      t.isForOfStatement(owner) ||
+      t.isForInStatement(owner)
+    ) {
       const completion = semanticAssignmentTargetCompletion(
         pattern,
         pattern,
