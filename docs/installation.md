@@ -276,14 +276,14 @@ Register with the variable unset:
 <!-- x-release-please-start-version -->
 
 ```bash
-claude mcp add --scope local rea -- npx -y rea-agents@6.5.0 mcp
+claude mcp add --scope local rea -- npx -y rea-agents@6.7.0 mcp
 ```
 
 On native Windows, use the same project directory and wrap the package-runner
 shim so the stdio client can launch it:
 
 ```powershell
-claude mcp add --scope local rea -- cmd.exe /d /c npx -y rea-agents@6.5.0 mcp
+claude mcp add --scope local rea -- cmd.exe /d /c npx -y rea-agents@6.7.0 mcp
 ```
 
 <!-- x-release-please-end -->
@@ -598,6 +598,20 @@ mount namespace with a private mode-1777 tmpfs over that directory only. The
 host mount and the rest of `/tmp` remain unchanged; this fallback never invokes
 `sudo`. `rea doctor --provider hopper --json` reports the selected
 strategy and both host and effective mount facts.
+
+Hopper also embeds Python; the Python executable and standard library alone
+are insufficient on Ubuntu. Approved setup checks the system interpreter
+at `/usr/bin/python3` and, when necessary, installs its matching
+`libpython3.X` package, then verifies that its shared library can load.
+APT resolves the concrete package (for example, `libpython3.12t64` on Ubuntu
+24.04). Doctor includes these fresh observations in the `embedded_python`
+details of its `hopper-demo-runtime` check, alongside the private-display
+diagnostic. Failed inspections remain unknown rather than proving a library
+absent. Run `rea setup --yes --install-hopper` to repair a supported install.
+This prerequisite check does not launch the bridge or validate a custom Python
+interpreter configured inside Hopper; that interpreter needs its own matching
+shared runtime. Custom installation prefixes or shared-library ABIs require
+manual dependency repair.
 
 When the package-manager step fails, setup reports the failing command and its
 captured output, so a package conflict is distinguishable from an authorization
@@ -1187,7 +1201,7 @@ For a client that requires manual configuration, use:
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@6.5.0", "mcp"]
+      "args": ["-y", "rea-agents@6.7.0", "mcp"]
     }
   }
 }
