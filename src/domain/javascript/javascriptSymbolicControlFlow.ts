@@ -5,12 +5,14 @@ import {
   unwrapJavaScriptExpression,
   javaScriptUnaryAlwaysThrows,
   javaScriptClassField,
+  readExactJavaScriptNormalResult,
 } from "./javascriptAstValues.js";
 import { javaScriptOptionalOperandsMayBeSkipped } from "./javascriptSemanticEvaluationOrder.js";
 import {
   symbolicTruth,
   type SymbolicValue,
 } from "./javascriptSymbolicValues.js";
+import { childNodes } from "./javascriptSemanticTraversal.js";
 
 /** Whether short-circuit evaluation reaches the right operand; unknown stays unknown. */
 export const symbolicLogicalRight = (
@@ -52,7 +54,11 @@ export const syntaxUnconditionalOperands = (
   node: t.Node,
 ): readonly t.Node[] | undefined => {
   if (t.isConditionalExpression(node)) {
-    const branch = javaScriptExactResultOperand(node);
+    const branch = javaScriptExactResultOperand(
+      node,
+      undefined,
+      syntaxEvaluationCannotThrow,
+    );
     return branch === undefined ? [node.test] : [node.test, branch];
   }
   if (t.isIfStatement(node)) {
@@ -65,7 +71,11 @@ export const syntaxUnconditionalOperands = (
     return branch == null ? [node.test] : [node.test, branch];
   }
   if (t.isLogicalExpression(node)) {
-    return javaScriptExactResultOperand(node) === node.right
+    return javaScriptExactResultOperand(
+      node,
+      undefined,
+      syntaxEvaluationCannotThrow,
+    ) === node.right
       ? [node.left, node.right]
       : [node.left];
   }
@@ -120,6 +130,7 @@ export const syntaxEvaluationOperands = (
   if (t.isReturnStatement(node) || t.isThrowStatement(node))
     return node.argument == null ? [] : [node.argument];
   if (t.isVariableDeclaration(node)) return node.declarations;
+  if (t.isForOfStatement(node) || t.isForInStatement(node)) return [node.right];
   if (t.isVariableDeclarator(node))
     return t.isNode(node.init) ? [node.init, node.id] : [];
   if (t.isObjectPattern(node)) return node.properties;
@@ -164,6 +175,90 @@ export const syntaxEvaluationOperands = (
     return [node.source, node.options].filter((item) => item != null);
   if (t.isNewExpression(node)) return [node.callee, ...node.arguments];
   return undefined;
+};
+
+/** Possible evaluation paths, excluding syntax-proven skipped or abrupt tails. */
+export const syntaxReachableOperands = (node: t.Node): readonly t.Node[] => {
+  if (t.isAssignmentPattern(node))
+    return syntaxEvaluationAlwaysThrows(node.right)
+      ? [node.right]
+      : [node.right, node.left];
+  if (t.isVariableDeclarator(node))
+    return [node.init, node.id].filter((item) => item != null);
+  if (t.isFunction(node))
+    return (t.isObjectMethod(node) || t.isClassMethod(node)) && node.computed
+      ? [node.key]
+      : [];
+  if (t.isIfStatement(node) || t.isConditionalExpression(node)) {
+    if (syntaxEvaluationAlwaysThrows(node.test)) return [node.test];
+    const test = readExactJavaScriptNormalResult(
+      node.test,
+      syntaxEvaluationCannotThrow,
+    );
+    return test.found
+      ? [node.test, test.value ? node.consequent : node.alternate].filter(
+          (item) => item != null,
+        )
+      : [node.test, node.consequent, node.alternate].filter(
+          (item) => item != null,
+        );
+  }
+  if (t.isLogicalExpression(node)) {
+    if (syntaxEvaluationAlwaysThrows(node.left)) return [node.left];
+    const selected = javaScriptExactResultOperand(
+      node,
+      undefined,
+      syntaxEvaluationCannotThrow,
+    );
+    return selected === undefined
+      ? [node.left, node.right]
+      : selected === node.right
+        ? [node.left, node.right]
+        : [node.left];
+  }
+  if (t.isWhileStatement(node) || t.isForStatement(node)) {
+    const test =
+      node.test == null
+        ? undefined
+        : readExactJavaScriptNormalResult(
+            node.test,
+            syntaxEvaluationCannotThrow,
+          );
+    return (node.test != null && syntaxEvaluationAlwaysThrows(node.test)) ||
+      (test?.found && !test.value)
+      ? [t.isForStatement(node) ? node.init : undefined, node.test].filter(
+          (item) => item != null,
+        )
+      : childNodes(node);
+  }
+  if (t.isLoop(node)) return childNodes(node);
+  if (t.isTryStatement(node))
+    return [
+      node.block,
+      syntaxCompletion(node.block, 0).abrupt.some(
+        (exit) => exit.kind === "throw" || exit.kind === "unknown",
+      )
+        ? node.handler?.body
+        : undefined,
+      node.finalizer,
+    ].filter((item) => item != null);
+  const operands =
+    syntaxUnconditionalOperands(node) ??
+    syntaxEvaluationOperands(node) ??
+    childNodes(node);
+  const reachable: t.Node[] = [];
+  for (const operand of operands) {
+    reachable.push(operand);
+    if (
+      syntaxEvaluationAlwaysThrows(operand) ||
+      ((t.isBlockStatement(node) ||
+        t.isStaticBlock(node) ||
+        t.isProgram(node)) &&
+        !syntaxMayCompleteNormally(operand))
+    )
+      break;
+  }
+  return reachable;
 };
 
 type SyntaxAbruptCompletion =

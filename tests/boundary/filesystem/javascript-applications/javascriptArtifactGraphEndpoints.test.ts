@@ -682,6 +682,114 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "prior-wait-cannot-bypass-failed-async-iterator-acquisition.js",
+    source:
+      '(async()=>{await 0;for await(const x of null){}new Socket("wss://example.test/review-latest")})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "rest-target-receiver-wait-cannot-bypass-throwing-copied-getter.js",
+    source:
+      '(async()=>{({...({before:await 0,set run(v){new Socket("wss://example.test/review-latest")}}).run}={get x(){throw 0}})})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "own-data-update-preserves-writable-slot.js",
+    source:
+      'const box={x:0};box.x++;const Socket=(box.x=globalThis.WebSocket);new Socket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "own-data-compound-write-preserves-writable-slot.js",
+    source:
+      'const box={x:0};box.x+=1;const Socket=(box.x=globalThis.WebSocket);new Socket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "structured-setter-receiver-finishes-wait.js",
+    source:
+      '(async()=>{[({before:await 0,set run(v){new Socket("wss://example.test/review-latest")}}).run]=[0]})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "structured-setter-receiver-failure-blocks-write.js",
+    source:
+      '(async()=>{[({before:(await 0,null.x),set run(v){new Socket("wss://example.test/review-latest")}}).run]=[0]})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "void-function-selects-mandatory-nullish-wait.js",
+    source:
+      '(async()=>{(void(()=>{}))??(await 0);new Socket("wss://example.test/review-latest")})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "null-import-options-reject-module-origin.js",
+    source:
+      "(async()=>{const{WebSocket:Socket}=await import('ws',null);new Socket(\"wss://example.test/review-latest\")})();",
+    present: false,
+  },
+  {
+    file: "null-import-attributes-reject-module-origin.js",
+    source:
+      "(async()=>{const{WebSocket:Socket}=await import('ws',{with:null});new Socket(\"wss://example.test/review-latest\")})();",
+    present: false,
+  },
+  {
+    file: "empty-import-attributes-preserve-module-origin.js",
+    source:
+      "(async()=>{const{WebSocket:Socket}=await import('ws',{with:{}});new Socket(\"wss://example.test/review-latest\")})();",
+    present: true,
+  },
+  {
+    file: "for-await-failed-iterable-cannot-invent-suspension.js",
+    source:
+      '(async()=>{for await(const x of null.value){}new Socket("wss://example.test/review-latest")})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "for-await-plain-object-cannot-invent-suspension.js",
+    source:
+      '(async()=>{for await(const x of {}){}new Socket("wss://example.test/review-latest")})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "for-await-empty-array-completes-asynchronous-step.js",
+    source:
+      '(async()=>{for await(const x of []){}new Socket("wss://example.test/review-latest")})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "false-consumer-branch-cannot-defer-next-step.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){if(false)await 0}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "true-consumer-branch-defers-next-step.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){if(true)await 0}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "failed-class-key-blocks-later-key-wait.js",
+    source:
+      '(async()=>{class C{static [null.x];static [await 0];static x=new Socket("wss://example.test/review-latest")}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "failed-static-value-discards-earlier-key-wait.js",
+    source:
+      '(async()=>{class C{[await 0](){}static a=null.x;static c=new Socket("wss://example.test/review-latest")}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "completed-class-key-retains-static-wait.js",
+    source:
+      '(async()=>{class C{static [await 0];static x=new Socket("wss://example.test/review-latest")}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
     file: "own-data-hides-replacement-prototype-setter.js",
     source:
       'const box={x:0};box.__proto__={set x(v){throw 0}};const Socket=(box.x=globalThis.WebSocket);new Socket("wss://example.test/review-latest");',

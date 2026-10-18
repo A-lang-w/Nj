@@ -4,6 +4,7 @@ import {
   semanticPatternSuspendsBeforeTarget,
   semanticGeneratorReadInCleanup,
   semanticGeneratorReadAfterYield,
+  semanticIteratorAcquisitionAlwaysFails,
 } from "./javascriptGeneratorConsumerPhases.js";
 
 import {
@@ -40,6 +41,7 @@ import {
   syntaxEvaluationAlwaysThrows,
   syntaxStaticInitializers,
   syntaxBeforeDefiniteThrow,
+  syntaxReachableOperands,
 } from "./javascriptSymbolicControlFlow.js";
 import { childNodes } from "./javascriptSemanticTraversal.js";
 
@@ -87,7 +89,11 @@ const webSocketOuterExpression = (
       // Invocation order is conditional on reaching the body, not on proving
       // that every prefix or target write can finish. A reached call retains
       // this frame independently of the stricter completed-value proof.
-      javaScriptExactResultOperand(parent, () => true) === current
+      javaScriptExactResultOperand(
+        parent,
+        () => true,
+        syntaxEvaluationCannotThrow,
+      ) === current
     ) {
       current = parent;
       identity = parent;
@@ -379,7 +385,6 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
       webSocketMandatoryHandler(node),
       node.finalizer,
     ].filter((item) => item != null);
-  if (t.isForOfStatement(node) || t.isForInStatement(node)) return [node.right];
   if (t.isForStatement(node))
     return [node.init, node.test].filter((element) => element != null);
   // Conditional/short-circuit branches, nested functions and try/catch do not
@@ -397,7 +402,12 @@ const webSocketCompletedSuspension = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): WebSocketSuspension | undefined => {
-  if (syntaxEvaluationAlwaysThrows(node)) return undefined;
+  if (
+    syntaxEvaluationAlwaysThrows(node) ||
+    (t.isForOfStatement(node) &&
+      semanticIteratorAcquisitionAlwaysFails(node.right, state))
+  )
+    return undefined;
   let cached = webSocketCompletedSuspensions.get(state);
   if (cached === undefined) {
     cached = new WeakMap();
@@ -429,7 +439,9 @@ const webSocketCompletedSuspension = (
     if (
       (t.isAwaitExpression(current) &&
         !syntaxEvaluationAlwaysThrows(current.argument)) ||
-      (t.isForOfStatement(current) && current.await) ||
+      (t.isForOfStatement(current) &&
+        current.await &&
+        !semanticIteratorAcquisitionAlwaysFails(current.right, state)) ||
       (t.isYieldExpression(current) &&
         (!current.delegate ||
           // Async delegation awaits the iterator result even when it is done;
@@ -519,7 +531,9 @@ const webSocketPrecedingSuspension = (
     parent.await &&
     (child === parent.body || child === parent.left)
   )
-    return parent;
+    return semanticIteratorAcquisitionAlwaysFails(parent.right, state)
+      ? undefined
+      : parent;
   if (
     (t.isForOfStatement(parent) || t.isForInStatement(parent)) &&
     (child === parent.body || child === parent.left)
@@ -560,7 +574,12 @@ const webSocketPrecedingSuspension = (
         : webSocketOrderedEvaluation(parent);
     for (const node of operands) {
       if (awaited !== undefined) indexed.set(node, awaited);
-      if (syntaxEvaluationAlwaysThrows(node)) break;
+      if (
+        syntaxEvaluationAlwaysThrows(node) ||
+        (t.isForOfStatement(node) &&
+          semanticIteratorAcquisitionAlwaysFails(node.right, state))
+      )
+        break;
       awaited = webSocketCompletedSuspension(node, state) ?? awaited;
     }
     byParent.set(parent, indexed);
@@ -632,7 +651,11 @@ interface WebSocketParameterResume {
 const webSocketSelectedCallee = (raw: t.Node): t.Node => {
   let node = unwrapJavaScriptExpression(raw).node;
   for (;;) {
-    const selected = javaScriptExactResultOperand(node, () => true);
+    const selected = javaScriptExactResultOperand(
+      node,
+      () => true,
+      syntaxEvaluationCannotThrow,
+    );
     if (selected === undefined) return node;
     node = unwrapJavaScriptExpression(selected).node;
   }
@@ -829,33 +852,61 @@ const webSocketGeneratorResume = (
     : undefined;
 };
 
-const bodySuspensionFacts = new WeakMap<t.Node, boolean>();
+const bodySuspensionFacts = new WeakMap<
+  t.Node,
+  {
+    readonly effects: JavaScriptSemanticAnalysisState["literalMemberEffects"];
+    readonly phase: JavaScriptSemanticAnalysisState["memberMutationFactsPhase"];
+    readonly value: boolean;
+  }
+>();
 /** A synchronous iterator resumes in-turn unless its consumer body can await. */
-const webSocketBodyMaySuspend = (body: t.Node): boolean => {
+const webSocketBodyMaySuspend = (
+  body: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
   const known = bodySuspensionFacts.get(body);
-  if (known !== undefined) return known;
+  if (
+    known !== undefined &&
+    known.effects === state.literalMemberEffects &&
+    known.phase === state.memberMutationFactsPhase
+  )
+    return known.value;
+  const remember = (value: boolean): boolean => {
+    bodySuspensionFacts.set(body, {
+      effects: state.literalMemberEffects,
+      phase: state.memberMutationFactsPhase,
+      value,
+    });
+    return value;
+  };
   const pending = [body];
   while (pending.length > 0) {
     const node = pending.pop();
     if (node === undefined) continue;
     if (
-      t.isAwaitExpression(node) ||
-      t.isYieldExpression(node) ||
-      (t.isForOfStatement(node) && node.await) ||
+      (t.isAwaitExpression(node) &&
+        !syntaxEvaluationAlwaysThrows(node.argument)) ||
+      (t.isYieldExpression(node) &&
+        (node.argument == null ||
+          !syntaxEvaluationAlwaysThrows(node.argument))) ||
+      (t.isForOfStatement(node) &&
+        node.await &&
+        !semanticIteratorAcquisitionAlwaysFails(node.right, state)) ||
       (t.isVariableDeclaration(node) && node.kind === "await using")
     ) {
-      bodySuspensionFacts.set(body, true);
-      return true;
+      return remember(true);
     }
-    if (t.isFunction(node)) {
-      if ((t.isObjectMethod(node) || t.isClassMethod(node)) && node.computed)
-        pending.push(node.key);
+    if (
+      t.isForOfStatement(node) &&
+      semanticIteratorAcquisitionAlwaysFails(node.right, state)
+    ) {
+      pending.push(node.right);
       continue;
     }
-    pending.push(...childNodes(node));
+    pending.push(...syntaxReachableOperands(node));
   }
-  bodySuspensionFacts.set(body, false);
-  return false;
+  return remember(false);
 };
 
 type WebSocketConsumerPhase = "same-turn" | "after-wait" | "unknown";
@@ -881,7 +932,7 @@ const webSocketGeneratorConsumerPhase = (
       state,
       ...(ownedResultEscape === undefined ? {} : { ownedResultEscape }),
       ordered: webSocketOrderedEvaluation,
-      maySuspend: webSocketBodyMaySuspend,
+      maySuspend: (node) => webSocketBodyMaySuspend(node, state),
       completedSuspension: (node) =>
         webSocketCompletedSuspension(node, state) !== undefined,
     })
@@ -896,7 +947,7 @@ const webSocketGeneratorConsumerPhase = (
       body,
       state,
       webSocketOrderedEvaluation,
-      webSocketBodyMaySuspend,
+      (node) => webSocketBodyMaySuspend(node, state),
     ) &&
       (invocation.await ||
         (t.isBlockStatement(invocation.body) &&
@@ -905,8 +956,8 @@ const webSocketGeneratorConsumerPhase = (
       : "same-turn";
   if (t.isForOfStatement(invocation))
     return !invocation.await &&
-      !webSocketBodyMaySuspend(invocation.left) &&
-      !webSocketBodyMaySuspend(invocation.body)
+      !webSocketBodyMaySuspend(invocation.left, state) &&
+      !webSocketBodyMaySuspend(invocation.body, state)
       ? "same-turn"
       : "after-wait";
   if (t.isYieldExpression(invocation) && invocation.delegate) {
@@ -1031,23 +1082,32 @@ const webSocketClassPrefix = (
   if (prefixes === undefined) {
     const keys = new Map<t.Node, WebSocketSuspension | null>();
     const statics = new Map<t.Node, WebSocketSuspension | null>();
-    let suspended = t.isNode(declaration.superClass)
-      ? webSocketCompletedSuspension(declaration.superClass, state)
-      : undefined;
+    let suspended: WebSocketSuspension | undefined;
+    let failed = false;
+    const advance = (operand: t.Node): void => {
+      if (failed) return;
+      if (syntaxEvaluationAlwaysThrows(operand)) {
+        failed = true;
+        suspended = undefined;
+      } else
+        suspended = webSocketCompletedSuspension(operand, state) ?? suspended;
+    };
+    if (declaration.superClass != null) advance(declaration.superClass);
     for (const item of declaration.body.body) {
+      if (failed) break;
       keys.set(item, suspended ?? null);
       if (
         (javaScriptClassField(item) || t.isClassMethod(item)) &&
         "computed" in item &&
         item.computed
       )
-        suspended = webSocketCompletedSuspension(item.key, state) ?? suspended;
+        advance(item.key);
     }
     for (const item of declaration.body.body) {
+      if (failed) break;
       statics.set(item, suspended ?? null);
       for (const initializer of syntaxStaticInitializers(item))
-        suspended =
-          webSocketCompletedSuspension(initializer, state) ?? suspended;
+        advance(initializer);
     }
     prefixes = { keys, statics };
     byClass.set(declaration, prefixes);
@@ -1213,7 +1273,7 @@ export const webSocketExecutionContexts = (
             parent.body,
             state,
             webSocketOrderedEvaluation,
-            webSocketBodyMaySuspend,
+            (node) => webSocketBodyMaySuspend(node, state),
           )
         )
           suspendedOwner = parent;

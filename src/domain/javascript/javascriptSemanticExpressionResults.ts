@@ -192,7 +192,8 @@ const memberAssignmentCanComplete = (
       ownData &&
       effect.path.length === 1 &&
       effect.path[0] === key &&
-      !t.isAssignmentExpression(effect.node, { operator: "=" })
+      !t.isAssignmentExpression(effect.node) &&
+      !t.isUpdateExpression(effect.node)
     )
       return false;
     if (effect.path[0] !== "__proto__") return true;
@@ -287,5 +288,6 @@ export const semanticExactResultOperand = (
         state,
         executionFrames,
       ) === "completed",
+    syntaxEvaluationCannotThrow,
   );
 };

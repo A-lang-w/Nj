@@ -57,11 +57,15 @@ export const unwrapJavaScriptExpression = (
 export const javaScriptExactResultOperand = (
   node: t.Node,
   assignmentCompletes?: (node: t.AssignmentExpression) => boolean,
+  evaluationCompletes?: (node: t.Node) => boolean,
 ): t.Node | undefined => {
   node = unwrapJavaScriptExpression(node).node;
   if (t.isSequenceExpression(node)) return node.expressions.at(-1);
   if (t.isConditionalExpression(node)) {
-    const test = readExactJavaScriptNormalResult(node.test);
+    const test = readExactJavaScriptNormalResult(
+      node.test,
+      evaluationCompletes,
+    );
     return test.found
       ? test.value
         ? node.consequent
@@ -69,7 +73,10 @@ export const javaScriptExactResultOperand = (
       : undefined;
   }
   if (t.isLogicalExpression(node)) {
-    const left = readExactJavaScriptNormalResult(node.left);
+    const left = readExactJavaScriptNormalResult(
+      node.left,
+      evaluationCompletes,
+    );
     if (!left.found) return undefined;
     const right =
       node.operator === "??"
@@ -112,8 +119,9 @@ export const readExactJavaScriptLiteral = (
 };
 
 /** Undefined is an exact control result, not a serializable constant-lattice value. */
-const readExactJavaScriptNormalResult = (
+export const readExactJavaScriptNormalResult = (
   raw: t.Node,
+  evaluationCompletes?: (node: t.Node) => boolean,
 ):
   | {
       readonly found: true;
@@ -123,9 +131,10 @@ const readExactJavaScriptNormalResult = (
   const node = unwrapJavaScriptExpression(raw).node;
   const literal = readExactJavaScriptLiteral(node);
   if (literal.found) return literal;
-  // Only a literal operand proves that void itself completes, without executing it.
+  // Richer consumers supply the shared completion owner; literal syntax is the fallback.
   return t.isUnaryExpression(node, { operator: "void" }) &&
-    readExactJavaScriptLiteral(node.argument).found
+    (evaluationCompletes?.(node.argument) ??
+      readExactJavaScriptLiteral(node.argument).found)
     ? { found: true, value: undefined }
     : { found: false };
 };

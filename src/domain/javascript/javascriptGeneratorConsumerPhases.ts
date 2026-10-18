@@ -33,6 +33,8 @@ interface PatternWaitCache {
 }
 
 interface GeneratorPrefixFacts {
+  readonly effects: JavaScriptSemanticAnalysisState["literalMemberEffects"];
+  readonly phase: JavaScriptSemanticAnalysisState["memberMutationFactsPhase"];
   readonly before: WeakMap<t.Node, number>;
   readonly yielded: readonly t.YieldExpression[];
   readonly cleanup: WeakSet<t.Node>;
@@ -48,7 +50,12 @@ const generatorPrefixes = (
   state: JavaScriptSemanticAnalysisState,
 ): GeneratorPrefixFacts => {
   const cached = prefixes.get(body);
-  if (cached !== undefined) return cached;
+  if (
+    cached !== undefined &&
+    cached.effects === state.literalMemberEffects &&
+    cached.phase === state.memberMutationFactsPhase
+  )
+    return cached;
   const before = new WeakMap<t.Node, number>();
   const yielded: t.YieldExpression[] = [];
   const cleanup = new WeakSet<t.Node>();
@@ -120,6 +127,8 @@ const generatorPrefixes = (
       });
   }
   const facts = {
+    effects: state.literalMemberEffects,
+    phase: state.memberMutationFactsPhase,
     before,
     yielded,
     cleanup,
@@ -141,7 +150,11 @@ type PatternValue = {
 const patternValueNode = (raw: t.Node): t.Node => {
   let node = unwrapJavaScriptExpression(raw).node;
   for (;;) {
-    const result = javaScriptExactResultOperand(node);
+    const result = javaScriptExactResultOperand(
+      node,
+      undefined,
+      syntaxEvaluationCannotThrow,
+    );
     if (result === undefined) return node;
     node = unwrapJavaScriptExpression(result).node;
   }
@@ -242,6 +255,14 @@ const noniterablePatternValue = (
     })()
   );
 };
+
+/** Shared iterator acquisition failure for nested patterns and loop consumers. */
+export const semanticIteratorAcquisitionAlwaysFails = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  syntaxEvaluationAlwaysThrows(node) ||
+  noniterablePatternValue({ known: true, node }, state, node);
 
 /** Use the same mutation and iterator proof as ordinary literal projections. */
 const patternPropertyValue = (
@@ -359,7 +380,8 @@ const patternCompletedSuspension = (
   executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
 ): PatternCompletion => {
   if (depth >= 128 || value.completionUnknown) return "unproven";
-  if (pattern === target) return "completed";
+  if (pattern === target)
+    return patternExpressionCompletion(pattern, suspended);
   if (t.isAssignmentPattern(pattern)) {
     const selectsDefault = undefinedPatternValue(value, state);
     const prefix = selectsDefault

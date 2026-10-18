@@ -4367,6 +4367,151 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "prior wait cannot bypass failed async iterator acquisition",
+    "(async()=>{await 0;for await(const x of null){}new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "rest target receiver wait cannot bypass throwing copied getter",
+    "(async()=>{({...({before:await 0,set run(v){new Socket(URL)}}).run}={get x(){throw 0}})})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "own data update preserves writable slot",
+    "const box={x:0};box.x++;const Socket=(box.x=globalThis.WebSocket);new Socket(URL);",
+    true,
+  ],
+  [
+    "own data compound write preserves writable slot",
+    "const box={x:0};box.x+=1;const Socket=(box.x=globalThis.WebSocket);new Socket(URL);",
+    true,
+  ],
+  [
+    "structured setter receiver finishes wait",
+    "(async()=>{[({before:await 0,set run(v){new Socket(URL)}}).run]=[0]})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "structured setter receiver failure blocks write",
+    "(async()=>{[({before:(await 0,null.x),set run(v){new Socket(URL)}}).run]=[0]})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "structured setter computed target finishes wait",
+    "(async()=>{[({set run(v){new Socket(URL)}})[(await 0,'run')]]=[0]})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "void function selects mandatory nullish wait",
+    "(async()=>{(void(()=>{}))??(await 0);new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "void object selects mandatory nullish wait",
+    "(async()=>{(void {})??(await 0);new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "void safe sequence selects mandatory nullish wait",
+    "(async()=>{(void(1,2))??(await 0);new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "void throwing class cannot select nullish wait",
+    "(async()=>{(void class{static x=null.value})??(await 0);new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "null import options reject module origin",
+    "(async()=>{const{WebSocket:Socket}=await import('ws',null);new Socket(URL)})();",
+    false,
+  ],
+  [
+    "numeric import options reject module origin",
+    "(async()=>{const{WebSocket:Socket}=await import('ws',1);new Socket(URL)})();",
+    false,
+  ],
+  [
+    "null import attributes reject module origin",
+    "(async()=>{const{WebSocket:Socket}=await import('ws',{with:null});new Socket(URL)})();",
+    false,
+  ],
+  [
+    "throwing import attributes getter rejects module origin",
+    "(async()=>{const{WebSocket:Socket}=await import('ws',{get with(){throw 0}});new Socket(URL)})();",
+    false,
+  ],
+  [
+    "empty import attributes preserve module origin",
+    "(async()=>{const{WebSocket:Socket}=await import('ws',{with:{}});new Socket(URL)})();",
+    true,
+  ],
+  [
+    "undefined import options preserve module origin",
+    "(async()=>{const{WebSocket:Socket}=await import('ws',void 0);new Socket(URL)})();",
+    true,
+  ],
+  [
+    "for await failed iterable cannot invent suspension",
+    "(async()=>{for await(const x of null.value){}new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "for await null cannot invent suspension",
+    "(async()=>{for await(const x of null){}new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "for await plain object cannot invent suspension",
+    "(async()=>{for await(const x of {}){}new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "for await empty array completes asynchronous step",
+    "(async()=>{for await(const x of []){}new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "false consumer branch cannot defer next step",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){if(false)await 0}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "true consumer branch defers next step",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){if(true)await 0}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "skipped logical consumer wait cannot defer next step",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){false&&(await 0)}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "skipped loop consumer wait cannot defer next step",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){while(false){await 0}}}) ();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "failed class key blocks later key wait",
+    "(async()=>{class C{static [null.x];static [await 0];static x=new Socket(URL)}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "failed class key discards earlier key wait for statics",
+    "(async()=>{class C{static [await 0];static [null.x];static x=new Socket(URL)}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "failed static value discards earlier key wait",
+    "(async()=>{class C{[await 0](){}static a=null.x;static c=new Socket(URL)}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "completed class key retains static wait",
+    "(async()=>{class C{static [await 0];static x=new Socket(URL)}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
     "explicit class static throw stops carried wait",
     "(async()=>{await 0;class C{static{throw 0}};new Socket(URL)})();const Socket=globalThis.WebSocket;",
     false,
