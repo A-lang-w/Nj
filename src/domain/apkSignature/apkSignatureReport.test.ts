@@ -124,7 +124,7 @@ describe("deriveApkPosture", () => {
     expect(p.schemes_agree_on_signer).toBeNull();
   });
 
-  it("compares signer sets, so an extra signer in one scheme is disagreement", () => {
+  it("compares signer sets, so an extra signer in one scheme is a disagreement", () => {
     const p = derive({
       v2Present: true,
       v3Present: true,

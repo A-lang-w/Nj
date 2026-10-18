@@ -76,7 +76,7 @@ rea inspect-apk-signature /path/app.apk
   DER** (the same value `apksigner --print-certs` prints), plus subject, issuer,
   serial, ISO 8601 validity and public-key algorithm when the X.509 parser can
   read them (each is `null` otherwise); declared digest algorithms; and for
-  v3/v3.1 the bound min/max SDK.
+  v3/v3.1 the signer's declared min/max SDK.
 - **Key rotation (v3/v3.1):** the declared proof-of-rotation lineage, oldest
   first. Each node carries its certificate and the capability flags **retained
   by that node's own certificate** after rotation (installed data, shared UID,
