@@ -279,13 +279,16 @@ const resolvePath = (input: ResolveArtifactPathInput): CandidateResolution => {
         input.moduleKind !== undefined)) &&
     input.runtimePathKind !== "url-resource" &&
     (posix.isAbsolute(input.declaredPath) ||
-      win32.isAbsolute(input.declaredPath))
+      win32.isAbsolute(input.declaredPath) ||
+      (input.context === "module-specifier" &&
+        /^file:/iu.test(input.declaredPath)))
   )
     // Host syntax is not a canonical logical path. In particular, Windows
     // separators and drive letters must not be reclassified as invalid/URLs.
-    return input.declaredPath.includes("\0")
+    return input.declaredPath.includes("\0") ||
+      fileUrlPath(input.declaredPath) === null
       ? unresolvedCandidate("rejected", [
-          "NUL is not admitted in a runtime path.",
+          "NUL or unsafe file URL path syntax is not admitted in a runtime path.",
         ])
       : unresolvedCandidate("unavailable", [
           "An absolute runtime host path has no established mapping to the selected logical artifact root.",
@@ -1545,17 +1548,24 @@ const findFileCandidate = (
   const source = input.files.get(input.sourcePath);
   const target = input.files.get(path);
   // Electron's archive filesystem normalizes a relative module path before
-  // opening it. An inventoried sibling outside this exact ASAR occurrence is
-  // reachable after the existing artifact-root confinement check.
-  const archiveEnd = input.sourcePath.lastIndexOf(".asar/");
-  const leavesArchive =
+  // opening it, including entry into an inventoried archive occurrence and
+  // escape from one, after the existing artifact-root confinement check.
+  const sourceArchiveEnd = input.sourcePath.lastIndexOf(".asar/");
+  const targetArchiveEnd = path.lastIndexOf(".asar/");
+  const crossesArchive =
     input.context === "module-specifier" &&
     input.moduleKind !== undefined &&
-    archiveEnd >= 0 &&
-    !path.startsWith(input.sourcePath.slice(0, archiveEnd + ".asar/".length));
+    ((sourceArchiveEnd >= 0 &&
+      !path.startsWith(
+        input.sourcePath.slice(0, sourceArchiveEnd + ".asar/".length),
+      )) ||
+      (targetArchiveEnd >= 0 &&
+        !input.sourcePath.startsWith(
+          path.slice(0, targetArchiveEnd + ".asar/".length),
+        )));
   if (
     target !== undefined &&
-    (leavesArchive ||
+    (crossesArchive ||
       (input.runtimePathKind === "application-file" &&
         input.applicationRootIsProven === true) ||
       source === undefined ||
@@ -1578,7 +1588,7 @@ const findFileCandidate = (
   const unanalyzed = input.unanalyzedFiles?.get(path);
   if (
     unanalyzed !== undefined &&
-    (leavesArchive ||
+    (crossesArchive ||
       (input.runtimePathKind === "application-file" &&
         input.applicationRootIsProven === true) ||
       source === undefined ||

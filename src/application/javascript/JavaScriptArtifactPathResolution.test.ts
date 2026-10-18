@@ -1021,7 +1021,7 @@ describe("ESM module URL path decoding", () => {
 });
 
 describe("JavaScript file URL resolution", () => {
-  it("resolves file URL paths without interpreting query bytes as path syntax", () => {
+  it("keeps absolute file URL modules unavailable without a host mapping", () => {
     const files = fileMap([file("assets/app.js", "root")]);
     for (const declaredPath of [
       "file:///assets/app.js#entry",
@@ -1037,8 +1037,8 @@ describe("JavaScript file URL resolution", () => {
         }),
       ).toMatchObject({
         declared_path: declaredPath,
-        resolution_status: "resolved",
-        resolved_path: "assets/app.js",
+        resolution_status: "unavailable",
+        resolved_path: null,
       });
     }
 
@@ -1065,7 +1065,7 @@ describe("JavaScript file URL resolution", () => {
         moduleKind: "import",
         files,
       }),
-    ).toMatchObject({ resolution_status: "external", resolved_path: null });
+    ).toMatchObject({ resolution_status: "unavailable", resolved_path: null });
   });
 });
 

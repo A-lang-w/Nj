@@ -34,6 +34,8 @@ const unprovenLoaderSources: Readonly<Record<string, string>> = {
     'const { loader = module } = { loader: {} }; loader.require("../shared/window.cjs");',
   "absolute ESM": 'import "/shared/window.cjs";',
   "absolute dynamic import": 'import("/shared/window.cjs");',
+  "absolute file URL": 'import "file:///shared/window.cjs";',
+  "dynamic file URL": 'import("file:///shared/window.cjs");',
   "createRequire base":
     'import { createRequire } from "node:module"; const require = createRequire(new URL("../other/nested/main.cjs", import.meta.url)); require("../shared/window.cjs");',
 };
@@ -119,6 +121,8 @@ cliTest.for(
     const main = [
       "absolute ESM",
       "absolute dynamic import",
+      "absolute file URL",
+      "dynamic file URL",
       "createRequire base",
     ].includes(loader)
       ? "main.mjs"
@@ -240,6 +244,66 @@ cliTest.for(
         )
         .map(({ properties }) => properties.resolved_path),
     ).toEqual(target === null ? [] : [target]);
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "propagates the application owner into an inventoried ASAR through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-asar-inward-");
+    const source = join(root, "source");
+    const application = join(root, "application");
+    await writeFixtureFiles(source, {
+      "window.cjs":
+        'const { BrowserWindow } = require("electron"); new BrowserWindow().loadFile("index.html");',
+      "index.html": "archive-root decoy",
+    });
+    await writeFixtureFiles(application, {
+      "a/package.json": JSON.stringify({ main: "main.cjs" }),
+      "a/main.cjs": 'require("../resources/code.asar/window.cjs");',
+      "a/index.html": "proven application page",
+    });
+    await createPackageWithOptions(
+      source,
+      join(application, "resources/code.asar"),
+      {},
+    );
+    const { graph } = await analyzeJavaScriptDirectory(
+      surface,
+      cli,
+      application,
+    );
+    const role = graph.nodes.find(({ kind }) => kind === "electron-renderer");
+    expect(role?.observations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            resolution_status: "resolved",
+            resolved_path: "a/index.html",
+          }),
+        }),
+      ]),
+    );
+    expect(graph.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          relation: "imports",
+          properties: expect.objectContaining({
+            specifier: "../resources/code.asar/window.cjs",
+            resolution_status: "resolved",
+            resolved_path: "resources/code.asar/window.cjs",
+          }),
+        }),
+      ]),
+    );
+    expect(
+      graph.edges
+        .filter(
+          ({ source_node_id, relation }) =>
+            source_node_id === role?.node_id && relation === "maps_to",
+        )
+        .map(({ properties }) => properties.resolved_path),
+    ).toEqual(["a/index.html"]);
   },
 );
 
