@@ -12,6 +12,7 @@ import {
   clientConfigurationValuesEqual,
   clientServerListedDisabled,
   clientServerPath,
+  codexServerToolsSchema,
   legacyClientServerPath,
   OMP_DISABLED_SERVERS_KEY,
   parseClientConfiguration,
@@ -773,6 +774,8 @@ const clientConfigurationDesired = (
     registrationEnvironment,
   );
   const previous = parsed?.servers[PRODUCT_IDENTITY.mcpServerKey];
+  const previousCodexTools =
+    client.name === "codex" ? codexTools(previous) : undefined;
   if (
     client.name === "kimi" &&
     typeof previous === "object" &&
@@ -796,6 +799,9 @@ const clientConfigurationDesired = (
           tool_timeout_sec:
             positiveTimeout(previous, "tool_timeout_sec") ??
             recommendedMcpToolTimeoutSeconds(validated.value.timeoutInputs),
+          ...(previousCodexTools === undefined
+            ? {}
+            : { tools: previousCodexTools }),
         }
       : {}),
     ...(client.name === "kimi"
@@ -809,6 +815,21 @@ const clientConfigurationDesired = (
         }
       : {}),
   };
+};
+
+const codexTools = (
+  registration: unknown,
+): Record<string, Record<string, unknown>> | undefined => {
+  if (
+    typeof registration !== "object" ||
+    registration === null ||
+    !Object.hasOwn(registration, "tools")
+  )
+    return undefined;
+  const parsed = codexServerToolsSchema.safeParse(
+    Reflect.get(registration, "tools"),
+  );
+  return parsed.success ? parsed.data : undefined;
 };
 
 const positiveTimeout = (
