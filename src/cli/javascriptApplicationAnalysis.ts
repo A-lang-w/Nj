@@ -21,12 +21,13 @@ const OPERATION = "analyze_javascript_application";
 export const cliJavaScriptSourcePaths = async (
   sourcePath: readonly string[] | undefined,
   sourcePathsJson: string | undefined,
+  signal?: AbortSignal,
 ): Promise<
   | { readonly ok: true; readonly value: readonly string[] | undefined }
   | { readonly ok: false; readonly error: JsonValue }
 > => {
   if (sourcePathsJson === undefined) return { ok: true, value: sourcePath };
-  const input = await parseCliJsonInput(sourcePathsJson, OPERATION);
+  const input = await parseCliJsonInput(sourcePathsJson, OPERATION, signal);
   if (!input.ok) return input;
   const parsed = javaScriptSourcePathsSchema.safeParse(input.value);
   if (!parsed.success)

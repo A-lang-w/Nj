@@ -10,10 +10,14 @@ import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import { safeParseJson } from "./domain/safeJson.js";
 
-/** Parse inline JSON or one local JSON file for a CLI workflow. */
+/**
+ * Parse inline JSON or one local JSON file for a CLI workflow. A cancelled
+ * file read propagates its abort instead of reporting a file failure.
+ */
 export const parseCliJsonInput = async (
   value: string,
   operation: string,
+  signal?: AbortSignal,
 ): Promise<
   | { readonly ok: true; readonly value: unknown }
   | { readonly ok: false; readonly error: JsonValue }
@@ -21,7 +25,7 @@ export const parseCliJsonInput = async (
   const inline = safeParseJson(value);
   if (inline.ok) return { ok: true, value: inline.value };
   try {
-    const parsed = await readJsonInputFile(value, operation);
+    const parsed = await readJsonInputFile(value, operation, signal);
     return parsed.ok
       ? { ok: true, value: parsed.value }
       : {
@@ -37,6 +41,7 @@ export const parseCliJsonInput = async (
           },
         };
   } catch (cause: unknown) {
+    if (signal?.aborted === true) throw cause;
     const systemCode = accessDeniedSystemCode(cause);
     if (systemCode !== undefined)
       return jsonAccessDeniedError(value, operation, systemCode, cause);

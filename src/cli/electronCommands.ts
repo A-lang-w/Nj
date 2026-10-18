@@ -286,6 +286,7 @@ const registerJavaScriptApplicationCommand = (
             const sourcePaths = await cliJavaScriptSourcePaths(
               options.sourcePath,
               options.sourcePathsJson,
+              signal,
             );
             if (!sourcePaths.ok) return sourcePaths.error;
             return runCliJavaScriptApplicationAnalysis(
