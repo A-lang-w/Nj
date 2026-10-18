@@ -7,6 +7,7 @@ import {
   readExactJavaScriptNormalResult,
   semanticFinalObjectMember,
   semanticStaticPropertyKey,
+  semanticDirectFunctionResult,
 } from "./javascriptAstValues.js";
 import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 import {
@@ -122,9 +123,26 @@ const importOptionsCanComplete = (
     ? semanticFinalObjectMember(node, "with")
     : undefined;
   if (attributes !== undefined) {
-    if (!t.isObjectProperty(attributes)) return false;
+    // Get(options, "with") invokes an own getter before validating attributes.
+    // Only a direct normal result is evidence; arbitrary getter bodies stay unknown.
+    const getter = t.isObjectMethod(attributes, { kind: "get" })
+      ? semanticDirectFunctionResult(attributes)
+      : undefined;
+    if (getter?.kind === "undefined") return true;
+    const rawValue = t.isObjectProperty(attributes)
+      ? attributes.value
+      : getter?.kind === "value"
+        ? getter.node
+        : undefined;
+    if (
+      rawValue === undefined ||
+      (getter !== undefined &&
+        !syntaxEvaluationCannotThrow(rawValue) &&
+        !isUnshadowedGlobal(rawValue, state, "undefined"))
+    )
+      return false;
     const value = importOptionValue(
-      attributes.value,
+      rawValue,
       capture,
       state,
       true,

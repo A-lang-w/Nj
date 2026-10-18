@@ -682,6 +682,78 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "r43-0.js",
+    source:
+      'const resource=null;(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){await 0;await using r=resource;}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r43-1.js",
+    source:
+      'const resource=null;(async()=>{for await(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){await using r=resource;}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r43-2.js",
+    source:
+      'new (({__proto__:null})[void null.x]=globalThis.WebSocket)("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "r43-3.js",
+    source:
+      'new (({__proto__:null})[void(()=>{})]=globalThis.WebSocket)("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "r43-5.js",
+    source:
+      '(async()=>{const[a=await 0,b]=(function*(){yield void(()=>{});new Socket("wss://example.test/review-latest");yield 1;})()})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r43-8.js",
+    source:
+      '(async()=>{await 0;(1)();new Socket("wss://example.test/review-latest")})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r43-12.js",
+    source:
+      '(async()=>{await 0;(1)(new Socket("wss://example.test/review-latest"))})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r43-14.js",
+    source:
+      '(async()=>{const{WebSocket:Socket}=await import("ws",{get with(){return undefined}});new Socket("wss://example.test/review-latest")})();',
+    present: true,
+  },
+  {
+    file: "r43-17.js",
+    source:
+      '(async()=>{const{WebSocket:Socket}=await import("ws",{get with(){return void null.x}});new Socket("wss://example.test/review-latest")})();',
+    present: false,
+  },
+  {
+    file: "r43-19.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{class C{accessor x}}catch{await 0;continue}break;}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r43-20.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{class C{static accessor x=0}}catch{await 0;continue}break;}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r43-21.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{class C{static accessor x=null.x}}catch{await 0;continue}break;}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
     file: "failed-optional-member-receiver.js",
     source:
       '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){null.value?.[await 0]}})();const Socket=globalThis.WebSocket;',

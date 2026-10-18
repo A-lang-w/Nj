@@ -733,6 +733,36 @@ const syntaxSpreadAcquisitionAlwaysFails = (
   return value.found && (value.value === null || value.value === undefined);
 };
 
+/** Primitive call targets cannot become callable through prototype mutation. */
+const syntaxCallOnPrimitiveAlwaysFails = (node: t.Node): boolean => {
+  if (
+    !(
+      t.isCallExpression(node) ||
+      t.isOptionalCallExpression(node) ||
+      t.isNewExpression(node)
+    )
+  )
+    return false;
+  const callee = unwrapJavaScriptExpression(node.callee).node;
+  const value = readExactJavaScriptNormalResult(
+    callee,
+    syntaxEvaluationCannotThrow,
+  );
+  if (
+    t.isOptionalCallExpression(node) &&
+    node.optional &&
+    value.found &&
+    (value.value === null || value.value === undefined)
+  )
+    return false;
+  return (
+    value.found ||
+    t.isBigIntLiteral(callee) ||
+    (t.isUnaryExpression(callee, { operator: "-" }) &&
+      t.isBigIntLiteral(callee.argument))
+  );
+};
+
 export const syntaxOperandAlwaysThrows = (
   owner: t.Node,
   operand: t.Node,
@@ -756,6 +786,7 @@ export const syntaxEvaluationAlwaysThrows = (raw: t.Node): boolean => {
     if (
       t.isThrowStatement(node) ||
       javaScriptUnaryAlwaysThrows(node) ||
+      syntaxCallOnPrimitiveAlwaysFails(node) ||
       ((t.isNullLiteral(object) ||
         t.isUnaryExpression(object, { operator: "void" })) &&
         (t.isMemberExpression(node) ||
@@ -842,11 +873,10 @@ export const syntaxEvaluationCannotThrow = (node: t.Node): boolean => {
           ? syntaxEvaluationCannotThrow(member)
           : (t.isClassMethod(member) ||
               t.isClassPrivateMethod(member) ||
-              t.isClassProperty(member) ||
-              t.isClassPrivateProperty(member)) &&
+              javaScriptClassField(member)) &&
             (!("computed" in member) || !member.computed) &&
             (member.decorators?.length ?? 0) === 0 &&
-            (!(t.isClassProperty(member) || t.isClassPrivateProperty(member)) ||
+            (!javaScriptClassField(member) ||
               !member.static ||
               member.value == null ||
               syntaxEvaluationCannotThrow(member.value)),

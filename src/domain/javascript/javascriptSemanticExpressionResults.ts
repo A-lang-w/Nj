@@ -158,6 +158,8 @@ const memberAssignmentCanComplete = (
   state: JavaScriptSemanticAnalysisState,
   executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
 ): boolean => {
+  if (target.computed && !syntaxEvaluationCannotThrow(target.property))
+    return false;
   const key = semanticStaticPropertyKey(target.property, target.computed);
   if (key === null || key === "__proto__") return false;
   const receiver = unwrapJavaScriptExpression(target.object).node;

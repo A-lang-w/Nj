@@ -4367,6 +4367,121 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "explicit body wait survives unknown resource binding",
+    "(async()=>{for(await using x of(function*(){yield null;new Socket(URL)})()){await 0}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "explicit wait survives unknown resource acquisition",
+    "const resource=null;(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){await 0;await using r=resource;}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "implicit for await survives unknown resource acquisition",
+    "const resource=null;(async()=>{for await(const x of(function*(){yield 0;new Socket(URL)})()){await using r=resource;}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "computed member key fails before assignment result",
+    "new (({__proto__:null})[void null.x]=globalThis.WebSocket)(URL);",
+    false,
+  ],
+  [
+    "completed void key permits assignment result",
+    "new (({__proto__:null})[void(()=>{})]=globalThis.WebSocket)(URL);",
+    true,
+  ],
+  [
+    "computed member key fails before stored result",
+    "const holder={__proto__:null};new (holder[void null.x]=globalThis.WebSocket)(URL);",
+    false,
+  ],
+  [
+    "completed void function yield triggers pattern default wait",
+    "(async()=>{const[a=await 0,b]=(function*(){yield void(()=>{});new Socket(URL);yield 1;})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "completed void object yield triggers pattern default wait",
+    "(async()=>{const[a=await 0,b]=(function*(){yield void({});new Socket(URL);yield 1;})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "throwing void yield cannot trigger pattern default wait",
+    "(async()=>{const[a=await 0,b]=(function*(){yield void null.x;new Socket(URL);yield 1;})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "proven numeric callee stops resumed continuation",
+    "(async()=>{await 0;(1)();new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "proven string callee stops resumed continuation",
+    '(async()=>{await 0;("")();new Socket(URL)})();const Socket=globalThis.WebSocket;',
+    false,
+  ],
+  [
+    "proven void callee stops resumed continuation",
+    "(async()=>{await 0;(void(()=>{}))();new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "optional null callee does not stop continuation",
+    "(async()=>{await 0;null?.();new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "noncallable callee still evaluates constructor argument",
+    "(async()=>{await 0;(1)(new Socket(URL))})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "noncallable callee argument wait precedes iterator cleanup",
+    "(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket(URL)}})()){(1)(await 0)}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "import options getter returns undefined normally",
+    '(async()=>{const{WebSocket:Socket}=await import("ws",{get with(){return undefined}});new Socket(URL)})();',
+    true,
+  ],
+  [
+    "empty import options getter returns undefined normally",
+    '(async()=>{const{WebSocket:Socket}=await import("ws",{get with(){}});new Socket(URL)})();',
+    true,
+  ],
+  [
+    "import options getter returns completed void normally",
+    '(async()=>{const{WebSocket:Socket}=await import("ws",{get with(){return void(()=>{})}});new Socket(URL)})();',
+    true,
+  ],
+  [
+    "throwing import options getter rejects import",
+    '(async()=>{const{WebSocket:Socket}=await import("ws",{get with(){return void null.x}});new Socket(URL)})();',
+    false,
+  ],
+  [
+    "null import options getter rejects import",
+    '(async()=>{const{WebSocket:Socket}=await import("ws",{get with(){return null}});new Socket(URL)})();',
+    false,
+  ],
+  [
+    "safe instance auto accessor cannot invent catch wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{class C{accessor x}}catch{await 0;continue}break;}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "safe static auto accessor cannot invent catch wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{class C{static accessor x=0}}catch{await 0;continue}break;}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "throwing static auto accessor reaches catch wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{class C{static accessor x=null.x}}catch{await 0;continue}break;}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
     "switch jump skips later wait in selected case",
     "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){switch(0){case 0:break;await 0}}}) ();const Socket=globalThis.WebSocket;",
     false,

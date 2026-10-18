@@ -2,6 +2,7 @@ import * as t from "@babel/types";
 
 import {
   readExactJavaScriptLiteral,
+  readExactJavaScriptNormalResult,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
   javaScriptExactResultOperand,
@@ -14,6 +15,7 @@ import {
 } from "./javascriptSymbolicControlFlow.js";
 import {
   resolveSemanticBindingState,
+  isUnshadowedGlobal,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import {
@@ -164,17 +166,19 @@ const undefinedPatternValue = (
   value: PatternValue,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
+  if (!value.known) return false;
   const argument =
     value.node === undefined ? undefined : patternValueNode(value.node);
-  return (
-    value.known &&
-    (argument === undefined ||
-      (t.isIdentifier(argument, { name: "undefined" }) &&
-        resolveSemanticBindingState(state, argument, "undefined") ===
-          undefined) ||
-      (t.isUnaryExpression(argument, { operator: "void" }) &&
-        readExactJavaScriptLiteral(argument.argument).found))
+  if (
+    argument === undefined ||
+    isUnshadowedGlobal(argument, state, "undefined")
+  )
+    return true;
+  const result = readExactJavaScriptNormalResult(
+    argument,
+    syntaxEvaluationCannotThrow,
   );
+  return result.found && result.value === undefined;
 };
 
 /** Both object coercion and iterator acquisition reject nullish slot values. */

@@ -931,7 +931,9 @@ const webSocketBodyMaySuspend = (
     }
     pending.push(...syntaxReachableOperands(node));
   }
-  return remember(unknownResource ? undefined : maySuspend);
+  // An uncertain acquisition does not erase an independently reachable wait.
+  // If acquisition fails there is no next step; if it completes, that wait remains.
+  return remember(maySuspend ? true : unknownResource ? undefined : false);
 };
 
 type WebSocketConsumerPhase =
@@ -984,10 +986,12 @@ const webSocketGeneratorConsumerPhase = (
       ? "after-wait"
       : "same-turn";
   if (t.isForOfStatement(invocation)) {
+    if (invocation.await) return "after-wait";
     const left = webSocketBodyMaySuspend(invocation.left, state);
     const body = webSocketBodyMaySuspend(invocation.body, state);
+    if (left === true || body === true) return "after-wait";
     if (left === undefined || body === undefined) return "unknown-resource";
-    return !invocation.await && !left && !body ? "same-turn" : "after-wait";
+    return "same-turn";
   }
   if (t.isYieldExpression(invocation) && invocation.delegate) {
     const owner = webSocketSuspensionOwner(invocation, state);
