@@ -11,7 +11,8 @@ export interface JvmFixtureLocal {
  * Build a class `Example` with one static method `run(J)V` whose Code
  * attribute (code_length 1, `return`) carries a LineNumberTable, the given
  * LocalVariableTable rows and, optionally, LocalVariableTypeTable rows.
- * `trailingBytes` appends bytes after the class-file structure.
+ * `trailingBytes` appends bytes after the class-file structure; `majorVersion`
+ * sets the class-file version (default 52).
  */
 export const jvmDebugClass = (
   options: {
@@ -20,6 +21,7 @@ export const jvmDebugClass = (
     readonly typedLocals?: readonly JvmFixtureLocal[];
     readonly linePc?: number;
     readonly trailingBytes?: number;
+    readonly majorVersion?: number;
   } = {},
 ): Buffer => {
   const out: number[] = [];
@@ -53,7 +55,7 @@ export const jvmDebugClass = (
   ];
   u4(0xcafebabe);
   u2(0);
-  u2(52);
+  u2(options.majorVersion ?? 52);
   u2(14);
   for (const text of utf8) {
     u1(1);

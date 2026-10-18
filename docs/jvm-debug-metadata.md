@@ -104,13 +104,13 @@ The normalized result binds every fact to exact identity:
 
 ### Method debugging state
 
-| `state`          | Meaning                                                                                      |
-| ---------------- | -------------------------------------------------------------------------------------------- |
-| `present`        | both line and local-variable tables decoded; or line numbers decoded and `max_locals` is 0   |
-| `partial`        | one table present, the other absent                                                          |
-| `stripped`       | a body exists but carries neither table (e.g. `javac -g:none`)                               |
-| `malformed`      | a present table failed to decode or violates a constraint HotSpot enforces; entries are kept |
-| `not-applicable` | no `Code` attribute (native/abstract, or no body)                                            |
+| `state`          | Meaning                                                                                                    |
+| ---------------- | ---------------------------------------------------------------------------------------------------------- |
+| `present`        | both line and local-variable tables decoded; or line numbers decoded and `max_locals` is 0                 |
+| `partial`        | one table present, the other absent                                                                        |
+| `stripped`       | a body exists but carries neither table (e.g. `javac -g:none`)                                             |
+| `malformed`      | a present table failed to decode or violates one of the HotSpot constraints listed below; entries are kept |
+| `not-applicable` | no `Code` attribute (native/abstract, or no body)                                                          |
 
 A method with `max_locals` 0 has no local at all (not even `this` or a
 parameter), so `javac -g` emits no `LocalVariableTable` for it; that absent table
@@ -133,7 +133,11 @@ because which body is meant is unknown.
 A table entry HotSpot rejects the class for also makes its table `malformed`,
 with the raw values kept: a line `start_pc` or local-variable scope flagged
 `out_of_range`, or a local-variable `slot` at or past `max_locals` (for a `J` or
-`D` `LocalVariableTable` descriptor, the second slot `slot + 1` too).
+`D` `LocalVariableTable` descriptor, the second slot `slot + 1` too). HotSpot reads `LocalVariableTypeTable` only from class version 49, so in
+older classes its entries keep the `out_of_range` flag without making the
+table `malformed`. REA stays more lenient than HotSpot on two rules: a
+`LocalVariableTypeTable` row with no matching `LocalVariableTable` row, and
+duplicate `LocalVariableTable` rows, are not checked.
 
 A table whose declared entry count exceeds its bytes is reported `malformed` with
 the entries recovered before the short read. A `Code` attribute with bytes left after its declared

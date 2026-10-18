@@ -92,6 +92,17 @@ cliTest(
         lvt: "present",
         lvtt: "malformed",
       },
+      // HotSpot reads LocalVariableTypeTable only from version 49: it loads
+      // the same table in a version 48 class.
+      {
+        name: "typed-slot-v48",
+        options: {
+          majorVersion: 48,
+          typedLocals: [{ slot: 2, descriptor: "I" }],
+        },
+        lvt: "present",
+        lvtt: "present",
+      },
     ] as const;
     for (const { name, options, lvt, lvtt } of cases) {
       const path = join(root, `${name}.class`);
@@ -103,7 +114,7 @@ cliTest(
           methods: [
             {
               state:
-                lvt === "present" && lvtt === "absent"
+                lvt === "present" && lvtt !== "malformed"
                   ? "present"
                   : "malformed",
               max_locals: 2,

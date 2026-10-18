@@ -301,6 +301,7 @@ const decodeLocalVariableTypeTable = (
   pool: readonly ConstantPoolEntry[],
   codeLength: number,
   maxLocals: number,
+  hotSpotChecked: boolean,
 ): DebugTable<LocalVariableTypeEntry> =>
   decodeTable(
     infos,
@@ -323,11 +324,13 @@ const decodeLocalVariableTypeTable = (
       };
     },
     // A signature names no wide primitive, so only the entry's own slot is
-    // checked (as HotSpot checks a LocalVariableTypeTable).
+    // checked (as HotSpot checks a LocalVariableTypeTable). HotSpot reads the
+    // table only from class version 49 on, so older classes keep the
+    // out_of_range flag without becoming malformed.
     (entry) =>
-      !entry.outOfRange &&
       namesResolve(entry) &&
-      slotInFrame(entry.slot, maxLocals),
+      (!hotSpotChecked ||
+        (!entry.outOfRange && slotInFrame(entry.slot, maxLocals))),
   );
 
 /** Advance past the fixed Code header and exception table to its sub-attributes, keeping max_locals and code_length. */
@@ -392,9 +395,13 @@ const classifyMethod = (
 };
 
 /** Decode one method's debug tables from its `Code` attribute, if any. */
+/** HotSpot parses LocalVariableTypeTable only from class version 49 (Java 5). */
+const LOCAL_VARIABLE_TYPE_TABLE_MIN_MAJOR = 49;
+
 export const decodeMethodDebugMetadata = (
   method: JavaMember,
   pool: readonly ConstantPoolEntry[],
+  majorVersion: number,
 ): MethodDebugMetadata => {
   const codeAttribute = singleAttribute(method.attributes, "Code");
   const absentTable = <T>(
@@ -472,6 +479,7 @@ export const decodeMethodDebugMetadata = (
       pool,
       codeLength,
       maxLocals,
+      majorVersion >= LOCAL_VARIABLE_TYPE_TABLE_MIN_MAJOR,
     ),
   );
 
@@ -640,7 +648,7 @@ export const decodeClassDebugMetadata = (
     sourceFile,
     sourceDebugExtension,
     methods: cls.methods.map((method) =>
-      decodeMethodDebugMetadata(method, cls.constantPool),
+      decodeMethodDebugMetadata(method, cls.constantPool, cls.majorVersion),
     ),
   };
 };
