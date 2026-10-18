@@ -225,6 +225,7 @@ describe("decodeClassDebugMetadata — states and edge cases", () => {
           ]),
         ),
       ).parts,
+      2, // max_locals: slot 1 is in the frame
     );
     const cls = parseJavaClassFile(
       classWith(new Blob().u2(1).attr(3, code), new Blob().u2(0)),

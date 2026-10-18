@@ -68,3 +68,52 @@ cliTest(
   },
   30000,
 );
+
+cliTest(
+  "reports a local outside max_locals as malformed over CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-jvm-slots-");
+    const { client, call } = await connectLocalToolsMcp();
+    // run(J)V with max_locals 2: the long parameter fills slots 0 and 1.
+    const cases = [
+      { name: "valid", options: {}, lvt: "present", lvtt: "absent" },
+      // HotSpot: "Invalid index 1 in LocalVariableTable" (a J's second slot).
+      {
+        name: "wide-second-slot",
+        options: { locals: [{ slot: 1, descriptor: "J" }] },
+        lvt: "malformed",
+        lvtt: "absent",
+      },
+      // HotSpot: "Invalid index 2 in LocalVariableTypeTable".
+      {
+        name: "typed-slot",
+        options: { typedLocals: [{ slot: 2, descriptor: "I" }] },
+        lvt: "present",
+        lvtt: "malformed",
+      },
+    ] as const;
+    for (const { name, options, lvt, lvtt } of cases) {
+      const path = join(root, `${name}.class`);
+      await writeFile(path, jvmDebugClass(options));
+      const outcome = await inspectBoth(cli, call, { path });
+      if (!outcome.ok) throw new Error(JSON.stringify(outcome.error));
+      expect(outcome.evidence).toMatchObject({
+        normalized_result: {
+          methods: [
+            {
+              state:
+                lvt === "present" && lvtt === "absent"
+                  ? "present"
+                  : "malformed",
+              max_locals: 2,
+              local_variable_table: { presence: lvt },
+              local_variable_type_table: { presence: lvtt },
+            },
+          ],
+        },
+      });
+    }
+    await client.ping();
+  },
+  30000,
+);

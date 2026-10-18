@@ -235,6 +235,7 @@ const decodeLocalVariableTable = (
   infos: readonly Uint8Array[],
   pool: readonly ConstantPoolEntry[],
   codeLength: number,
+  maxLocals: number,
 ): DebugTable<LocalVariableEntry> =>
   decodeTable(
     infos,
@@ -256,8 +257,23 @@ const decodeLocalVariableTable = (
         outOfRange: scopeOutOfRange(startPc, length, codeLength),
       };
     },
-    namesResolve,
+    (entry) =>
+      namesResolve(entry) &&
+      slotInFrame(
+        entry.slot +
+          (entry.descriptor === "J" || entry.descriptor === "D" ? 1 : 0),
+        maxLocals,
+      ),
   );
+
+/**
+ * JVMS §4.7.13: a local's slot, and for a `J` or `D` local also the next slot,
+ * must index the frame's `max_locals` local variables. HotSpot rejects a class
+ * that violates this ("Invalid index ... in LocalVariableTable"), so the table
+ * is malformed while the raw slot is kept.
+ */
+const slotInFrame = (lastSlot: number, maxLocals: number): boolean =>
+  lastSlot < maxLocals;
 
 /**
  * JVMS §4.7.13–14: name_index and descriptor/signature_index must each name a
@@ -275,6 +291,7 @@ const decodeLocalVariableTypeTable = (
   infos: readonly Uint8Array[],
   pool: readonly ConstantPoolEntry[],
   codeLength: number,
+  maxLocals: number,
 ): DebugTable<LocalVariableTypeEntry> =>
   decodeTable(
     infos,
@@ -296,7 +313,9 @@ const decodeLocalVariableTypeTable = (
         outOfRange: scopeOutOfRange(startPc, length, codeLength),
       };
     },
-    namesResolve,
+    // A signature names no wide primitive, so only the entry's own slot is
+    // checked (as HotSpot checks a LocalVariableTypeTable).
+    (entry) => namesResolve(entry) && slotInFrame(entry.slot, maxLocals),
   );
 
 /** Advance past the fixed Code header and exception table to its sub-attributes, keeping max_locals and code_length. */
@@ -415,6 +434,7 @@ export const decodeMethodDebugMetadata = (
     (framed?.error ?? null) !== null ||
     seeked.cursor.remaining !== 0;
   const codeLength = seeked?.codeLength ?? 0;
+  const maxLocals = seeked?.maxLocals ?? 0;
   const orUnread = <T>(table: DebugTable<T>): DebugTable<T> =>
     codeMalformed && table.presence === "absent"
       ? { ...table, presence: "unread" }
@@ -431,6 +451,7 @@ export const decodeMethodDebugMetadata = (
       collectAttributes(attributes, "LocalVariableTable"),
       pool,
       codeLength,
+      maxLocals,
     ),
   );
   const localVariableTypes = orUnread(
@@ -438,6 +459,7 @@ export const decodeMethodDebugMetadata = (
       collectAttributes(attributes, "LocalVariableTypeTable"),
       pool,
       codeLength,
+      maxLocals,
     ),
   );
 
