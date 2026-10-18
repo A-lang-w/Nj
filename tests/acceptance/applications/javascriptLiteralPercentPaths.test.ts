@@ -23,6 +23,45 @@ const fixtureImports = (loader: string) => {
   }
 };
 
+const unprovenLoaderSources: Readonly<Record<string, string>> = {
+  "absolute ESM": 'import "/shared/window.cjs";',
+  "absolute dynamic import": 'import("/shared/window.cjs");',
+  "createRequire base":
+    'import { createRequire } from "node:module"; const require = createRequire(new URL("../other/nested/main.cjs", import.meta.url)); require("../shared/window.cjs");',
+};
+
+const fixtureLoaderSource = (loader: string): string =>
+  unprovenLoaderSources[loader] ??
+  (loader === "resolve-only"
+    ? 'require.resolve("../shared/window.cjs");'
+    : loader === "missing wildcard alias"
+      ? 'require("#missing/*");'
+      : loader === "absolute require"
+        ? 'require("/shared/window.cjs");'
+        : loader === "projected module"
+          ? 'const { exports: api } = module; api.require = () => {}; api.require("../shared/window.cjs");'
+          : loader === "absolute main"
+            ? 'require("../../shared/window.cjs");'
+            : loader === "later reassigned module alias"
+              ? 'let current = module; current.require("../shared/window.cjs"); current = other;'
+              : loader === "earlier reassigned module alias"
+                ? 'let current = module; current = { require() {} }; current.require("../shared/window.cjs");'
+                : loader === "conditional module alias"
+                  ? 'let current = module; if (flag) current = other; current.require("../shared/window.cjs");'
+                  : loader === "module.require"
+                    ? 'module.require("../shared/window.cjs");'
+                    : loader === "computed module.require"
+                      ? 'module["require"]("../shared/window.cjs");'
+                      : loader === "module alias"
+                        ? 'const current = module; current.require("../shared/window.cjs");'
+                        : loader === "local module"
+                          ? 'function local(module) { module.require("../shared/window.cjs"); }'
+                          : loader === "pattern alias"
+                            ? 'require("#window/window");'
+                            : loader.endsWith("alias")
+                              ? 'require("#entry");'
+                              : 'require("../shared/window.cjs");');
+
 cliTest.for(
   (["CLI", "stdio MCP"] as const).flatMap((surface) =>
     [
@@ -44,6 +83,7 @@ cliTest.for(
       "resolve-only",
       "missing wildcard alias",
       "absolute require",
+      ...Object.keys(unprovenLoaderSources),
       "single percent main",
     ].map((loader) => ({ surface, loader })),
   ),
@@ -63,42 +103,16 @@ cliTest.for(
       "earlier reassigned module alias",
     ].includes(loader);
     const absolute = loader === "absolute main";
-    const main = absolute
-      ? "/opt/app/main.cjs"
-      : percent
-        ? "main%2Fentry.cjs"
-        : "main.cjs";
+    const main =
+      unprovenLoaderSources[loader] !== undefined
+        ? "main.mjs"
+        : absolute
+          ? "/opt/app/main.cjs"
+          : percent
+            ? "main%2Fentry.cjs"
+            : "main.cjs";
     const imports = fixtureImports(loader);
-    const load =
-      loader === "resolve-only"
-        ? 'require.resolve("../shared/window.cjs");'
-        : loader === "missing wildcard alias"
-          ? 'require("#missing/*");'
-          : loader === "absolute require"
-            ? 'require("/shared/window.cjs");'
-            : loader === "projected module"
-              ? 'const { exports: api } = module; api.require = () => {}; api.require("../shared/window.cjs");'
-              : loader === "absolute main"
-                ? 'require("../../shared/window.cjs");'
-                : loader === "later reassigned module alias"
-                  ? 'let current = module; current.require("../shared/window.cjs"); current = other;'
-                  : loader === "earlier reassigned module alias"
-                    ? 'let current = module; current = { require() {} }; current.require("../shared/window.cjs");'
-                    : loader === "conditional module alias"
-                      ? 'let current = module; if (flag) current = other; current.require("../shared/window.cjs");'
-                      : loader === "module.require"
-                        ? 'module.require("../shared/window.cjs");'
-                        : loader === "computed module.require"
-                          ? 'module["require"]("../shared/window.cjs");'
-                          : loader === "module alias"
-                            ? 'const current = module; current.require("../shared/window.cjs");'
-                            : loader === "local module"
-                              ? 'function local(module) { module.require("../shared/window.cjs"); }'
-                              : loader === "pattern alias"
-                                ? 'require("#window/window");'
-                                : loader.endsWith("alias")
-                                  ? 'require("#entry");'
-                                  : 'require("../shared/window.cjs");';
+    const load = fixtureLoaderSource(loader);
     await writeFixtureFiles(root, {
       "a/package.json": JSON.stringify({ main: "main.cjs" }),
       "a/main.cjs":
@@ -121,7 +135,11 @@ cliTest.for(
       "index.html": "artifact-root decoy",
     });
     const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
-    if (loader === "absolute require")
+    if (
+      ["absolute require", "absolute ESM", "absolute dynamic import"].includes(
+        loader,
+      )
+    )
       expect(graph.edges).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -129,6 +147,19 @@ cliTest.for(
             properties: expect.objectContaining({
               specifier: "/shared/window.cjs",
               resolution_status: "unavailable",
+              resolved_path: null,
+            }),
+          }),
+        ]),
+      );
+    if (loader === "createRequire base")
+      expect(graph.edges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            relation: "imports",
+            properties: expect.objectContaining({
+              kind: "require",
+              specifier: null,
               resolved_path: null,
             }),
           }),
@@ -192,6 +223,65 @@ cliTest.for(
         )
         .map(({ properties }) => properties.resolved_path),
     ).toEqual(target === null ? [] : [target]);
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "retains possible owners for a module across a nested ASAR boundary through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-asar-module-gap-");
+    const source = join(root, "source");
+    const application = join(root, "application");
+    await writeFixtureFiles(source, {
+      "package.json": JSON.stringify({ main: "main.cjs" }),
+      "main.cjs": 'require("../window.cjs");',
+    });
+    await writeFixtureFiles(application, {
+      "other/package.json": JSON.stringify({ main: "main.cjs" }),
+      "other/main.cjs": 'require("../resources/window.cjs");',
+      "resources/window.cjs":
+        'const { BrowserWindow } = require("electron"); new BrowserWindow().loadFile("index.html");',
+      "other/index.html": "false unique owner decoy",
+    });
+    await createPackageWithOptions(
+      source,
+      join(application, "resources/app.asar"),
+      {},
+    );
+    const { graph } = await analyzeJavaScriptDirectory(
+      surface,
+      cli,
+      application,
+    );
+    const role = graph.nodes.find(({ kind }) => kind === "electron-renderer");
+    expect(role?.observations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            resolution_status: "unavailable",
+            resolved_path: null,
+          }),
+        }),
+      ]),
+    );
+    expect(graph.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          relation: "imports",
+          properties: expect.objectContaining({
+            specifier: "../window.cjs",
+            resolution_status: "resolved",
+            resolved_path: "resources/window.cjs",
+          }),
+        }),
+      ]),
+    );
+    expect(
+      graph.edges.filter(
+        ({ source_node_id, relation }) =>
+          source_node_id === role?.node_id && relation === "maps_to",
+      ),
+    ).toEqual([]);
   },
 );
 

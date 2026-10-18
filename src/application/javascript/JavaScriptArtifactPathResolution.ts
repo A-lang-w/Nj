@@ -275,7 +275,7 @@ const resolvePath = (input: ResolveArtifactPathInput): CandidateResolution => {
   if (
     (input.runtimePathKind !== undefined ||
       (input.context === "module-specifier" &&
-        input.moduleKind === "require")) &&
+        input.moduleKind !== undefined)) &&
     input.runtimePathKind !== "url-resource" &&
     (posix.isAbsolute(input.declaredPath) ||
       win32.isAbsolute(input.declaredPath))
@@ -1541,19 +1541,43 @@ const findFileCandidate = (
 ): CandidateResolution | null => {
   const source = input.files.get(input.sourcePath);
   const target = input.files.get(path);
+  // Electron's archive filesystem normalizes a relative module path before
+  // opening it. An inventoried sibling outside this exact ASAR occurrence is
+  // reachable after the existing artifact-root confinement check.
+  const archiveEnd = input.sourcePath.lastIndexOf(".asar/");
+  const leavesArchive =
+    input.context === "module-specifier" &&
+    input.moduleKind !== undefined &&
+    archiveEnd >= 0 &&
+    !path.startsWith(input.sourcePath.slice(0, archiveEnd + ".asar/".length));
   if (
     target !== undefined &&
-    ((input.runtimePathKind === "application-file" &&
-      input.applicationRootIsProven === true) ||
+    (leavesArchive ||
+      (input.runtimePathKind === "application-file" &&
+        input.applicationRootIsProven === true) ||
       source === undefined ||
       target.container_sha256 === source.container_sha256)
   )
     return { resolvedPath: path, status: "resolved", limitations: [] };
+  if (
+    target !== undefined &&
+    input.context === "module-specifier" &&
+    input.moduleKind !== undefined
+  )
+    return {
+      resolvedPath: null,
+      status: "unavailable",
+      candidatePath: path,
+      limitations: [
+        "The inventoried module crosses an artifact container boundary; its runtime loader mapping has not been established.",
+      ],
+    };
   const unanalyzed = input.unanalyzedFiles?.get(path);
   if (
     unanalyzed !== undefined &&
-    ((input.runtimePathKind === "application-file" &&
-      input.applicationRootIsProven === true) ||
+    (leavesArchive ||
+      (input.runtimePathKind === "application-file" &&
+        input.applicationRootIsProven === true) ||
       source === undefined ||
       unanalyzed.container_sha256 === source.container_sha256)
   )

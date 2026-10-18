@@ -3397,7 +3397,7 @@ it("resolves Node runtime entrypoints without substituting emitted TypeScript so
     file("directory/index.js", "root"),
   ]);
   for (const [declaredPath, status, path, candidatePath] of [
-    ["./worker.js", "not-found", null, "worker.js"],
+    ["./worker.js", "unavailable", null, "worker.js"],
     ["./runtime", "resolved", "runtime.js", undefined],
     ["./directory", "resolved", "directory/index.js", undefined],
   ] as const)

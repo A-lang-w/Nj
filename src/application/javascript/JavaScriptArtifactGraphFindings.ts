@@ -167,7 +167,6 @@ const addReference = (
     resolved !== null &&
     resolved.path !== null &&
     resolved.file !== null &&
-    resolved.file.container_sha256 === input.file.container_sha256 &&
     (input.value.kind === "static-import" ||
       input.value.kind === "dynamic-import" ||
       input.value.kind === "require")

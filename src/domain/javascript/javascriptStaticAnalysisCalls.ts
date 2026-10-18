@@ -264,10 +264,25 @@ const requireCallSpecifier = (
       context.accumulator.factoryRequireBindingIds,
     );
     if (loader === "local") return null;
-    if (loader === "unknown") context.accumulator.unknownFindings += 1;
+    const binding =
+      loader === "create-require"
+        ? resolveSemanticBindingState(bindings, node.callee, "require")
+        : undefined;
+    const initializer =
+      binding === undefined
+        ? undefined
+        : semanticStableInitializer(binding, bindings)?.node;
+    const unknownBase =
+      loader === "create-require" &&
+      (!t.isCallExpression(initializer) ||
+        !isUnmodifiedImportMetaUrl(initializer.arguments[0], bindings));
+    if (loader === "unknown" || unknownBase)
+      context.accumulator.unknownFindings += 1;
     return {
       specifier:
-        loader === "unknown" ? undefined : argumentValue(node.arguments[0]),
+        loader === "unknown" || unknownBase
+          ? undefined
+          : argumentValue(node.arguments[0]),
     };
   }
   const factoryLoader = semanticFactoryRequireLoaderAt(
