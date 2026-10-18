@@ -277,10 +277,14 @@ it.each([
   ],
   [
     "sibling-variance",
-    ["/api/plugins/{plugin_id}/settings", "/api/folders/{folder_id}"],
+    ["/api/plugins/{plugin_id}/settings"],
     [
       "/api/dashboards/uid/acb4v6",
       "/api/datasources/uid/dg1jo96tern5sb/health",
+      // `general` is not identifier-like, so on its own the rule leaves both folder literals alone;
+      // with opaque-token selected the token's parameter absorbs it instead.
+      "/api/folders/fg1jo91e57e2ob",
+      "/api/folders/general",
     ],
   ],
 ] as const)(
@@ -963,4 +967,32 @@ it("refuses a parent whose subject is absent or names another path or digest", (
     ),
   ).toMatchObject(refusal);
   expect(projectAnalysisView(parent, view()).ok).toBe(true);
+});
+
+it("merges only the identifier-like siblings and keeps the other literals as their own tools", () => {
+  const projected = manifest(
+    ["sibling-variance"],
+    syntheticCapture([
+      ["GET", "https://s.test/api/items/a1"],
+      ["GET", "https://s.test/api/items/b2"],
+      ["GET", "https://s.test/api/items/mine"],
+      ["GET", "https://s.test/api/items/search"],
+      ["GET", "https://s.test/api/widgets/red-one"],
+      ["GET", "https://s.test/api/widgets/blue-two"],
+      ["GET", "https://s.test/api/widgets/green-three"],
+      ["GET", "https://s.test/api/widgets/shared"],
+    ]),
+  );
+  expect(projected.tools.map((tool) => tool.path_template)).toEqual([
+    "/api/items/mine",
+    "/api/items/search",
+    "/api/items/{item_id}",
+    "/api/widgets/shared",
+    "/api/widgets/{widget_id}",
+  ]);
+  expect(
+    projected.tools.find(
+      (tool) => tool.path_template === "/api/items/{item_id}",
+    )?.params[0]?.observed_values,
+  ).toEqual(["a1", "b2"]);
 });

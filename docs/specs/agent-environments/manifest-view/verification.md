@@ -163,3 +163,14 @@ on `#append` predate the change); `npx knip` no findings; `npm run jscpd`
 files once; `vitest run` over the view, accumulator, JSON-shape and contract
 example tests 32 passed in 4 files; `vitest run` over the service, CLI and
 MCP boundary tests for analysis views 73 passed in 3 files.
+
+A sixth automated finding (Codex) was addressed after the collaborator's
+merge of main: `sibling-variance` merged a whole bucket when any one literal
+carried a digit, so `/api/items/mine` could be folded into `{item_id}`. The
+rule now partitions the bucket and merges only the identifier-like siblings
+(each with a digit or colon, or three or more hyphenated names under a plural
+literal), leaving the other literals as their own tools; with the rule alone
+the fixture therefore keeps `/api/folders/general` and
+`/api/folders/fg1jo91e57e2ob` separate, while all three rules still fold
+`general` into `/api/folders/{uid}` through the opaque-token parameter. Tests:
+the new partition case and the updated single-rule table.

@@ -174,35 +174,42 @@ const literalAt = (group: ToolGroup, position: number): string => {
   return part?.kind === "literal" ? part.value : "";
 };
 
-/** Values look like identifiers: digits or colons, or three-plus hyphenated names under a plural literal. */
-const identifierLike = (
-  values: readonly string[],
-  previous: RoutePart | undefined,
-): boolean =>
-  values.some((value) => /[\d:]/u.test(value)) ||
-  (values.length >= 3 &&
-    values.every((value) => value.includes("-")) &&
+/** The siblings whose literal looks like an identifier: each carries a digit or colon, or three or more are hyphenated names under a plural literal. Stop words never qualify. */
+const identifierLikeSiblings = (
+  literal: readonly ToolGroup[],
+  position: number,
+): ToolGroup[] => {
+  const candidates = literal.filter(
+    (group) => !STOP_WORDS.has(literalAt(group, position)),
+  );
+  const coded = candidates.filter((group) =>
+    /[\d:]/u.test(literalAt(group, position)),
+  );
+  if (coded.length >= 2) return coded;
+  const previous = literal[0]?.parts[position - 1];
+  const hyphenated = candidates.filter((group) =>
+    literalAt(group, position).includes("-"),
+  );
+  return hyphenated.length >= 3 &&
     previous?.kind === "literal" &&
-    previous.value.endsWith("s"));
+    previous.value.endsWith("s")
+    ? hyphenated
+    : [];
+};
 
 const optInParamAt = (group: ToolGroup, position: number): boolean => {
   const part = group.parts[position];
   return part?.kind === "param" && OPT_IN_RULES.has(part.rule);
 };
 
-/** Merge literal siblings into one sibling-variance parameter when every value is identifier-like. */
+/** Merge the identifier-like literal siblings into one sibling-variance parameter; other literals stay their own tools. */
 const mergeLiteralSiblings = (
   literal: readonly ToolGroup[],
   position: number,
 ): ToolGroup[] => {
-  const values = literal.map((group) => literalAt(group, position));
-  if (
-    literal.length < 2 ||
-    values.some((value) => STOP_WORDS.has(value)) ||
-    !identifierLike(values, literal[0]!.parts[position - 1])
-  )
-    return [...literal];
-  const first = earliest(literal);
+  const eligible = new Set(identifierLikeSiblings(literal, position));
+  if (eligible.size < 2) return [...literal];
+  const first = earliest([...eligible]);
   const shape = withParts(
     first,
     first.parts.map((part, index) =>
@@ -213,9 +220,10 @@ const mergeLiteralSiblings = (
   );
   return [
     mergeGroups(
-      literal.map((group) => (group === first ? shape : group)),
+      [...eligible].map((group) => (group === first ? shape : group)),
       shape,
     ),
+    ...literal.filter((group) => !eligible.has(group)),
   ];
 };
 
