@@ -35,6 +35,21 @@ const reference = z
     { message: "Reference requires a positive safe byte span" },
   );
 
+const linkReference = reference.refine(
+  (value) =>
+    value.source_unit !== null &&
+    value.library_name !== null &&
+    value.immutable_id === null,
+  { message: "Link reference requires source/library identity only" },
+);
+const immutableReference = reference.refine(
+  (value) =>
+    value.source_unit === null &&
+    value.library_name === null &&
+    value.immutable_id !== null,
+  { message: "Immutable reference requires immutable identity only" },
+);
+
 export const solcCompilerDiagnosticsSchema = z
   .array(
     z.strictObject({
@@ -57,8 +72,8 @@ export const solcArtifactSchema = z
     object: z.string().nullable(),
     status: z.enum(["concrete", "unlinked", "absent"]),
     reference_bounds: z.enum(["verified", "unavailable"]),
-    link_references: z.array(reference).nullable(),
-    immutable_references: z.array(reference).nullable(),
+    link_references: z.array(linkReference).nullable(),
+    immutable_references: z.array(immutableReference).nullable(),
     placeholders: z.array(
       z.strictObject({
         start: coordinate,
@@ -93,6 +108,26 @@ export const solcArtifactSchema = z
         code: "custom",
         message: "Bytecode range is outside selected contract",
       });
+    for (const facet of ["link_references", "immutable_references"] as const) {
+      const references = value[facet];
+      if (references === null) continue;
+      if (value.bytecode_range === null) {
+        context.addIssue({
+          code: "custom",
+          path: [facet],
+          message: "Reference facet requires a selected bytecode node",
+        });
+        continue;
+      }
+      for (const [index, reference] of references.entries()) {
+        if (!contains(value.bytecode_range, reference.source_range))
+          context.addIssue({
+            code: "custom",
+            path: [facet, index, "source_range"],
+            message: "Reference source range is outside selected bytecode",
+          });
+      }
+    }
     if (
       value.object_range !== null &&
       (value.bytecode_range === null ||

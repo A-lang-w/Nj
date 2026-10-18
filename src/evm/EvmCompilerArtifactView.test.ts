@@ -330,3 +330,79 @@ it.each([
   expect(solcArtifactSchema.safeParse(compiler).success).toBe(false);
   expect(projectAnalysisView(parent, { kind: "summary" }).ok).toBe(false);
 });
+
+it.each(["link_references", "immutable_references"] as const)(
+  "rejects imported %s with the other owner's identity",
+  (facet) => {
+    const parent = compilerParent("6000");
+    const report = parent.normalizedResult as EvmInterface;
+    const compiler = report.compiler_artifact!;
+    const reference = {
+      source_unit: facet === "link_references" ? null : "lib.sol",
+      library_name: facet === "link_references" ? null : "L",
+      immutable_id: facet === "link_references" ? "1" : null,
+      start: 0,
+      length: 1,
+      source_range: compiler.object_range!,
+    };
+    const importedResult = {
+      ...report,
+      compiler_artifact: { ...compiler, [facet]: [reference] },
+    };
+    expect(
+      projectAnalysisView(
+        { ...parent, normalizedResult: importedResult },
+        { kind: "summary" },
+      ).ok,
+    ).toBe(false);
+  },
+);
+
+it.each(["link_references", "immutable_references"] as const)(
+  "rejects imported %s without a bytecode node, including empty facets",
+  (facet) => {
+    const parent = compilerParent();
+    const report = parent.normalizedResult as EvmInterface;
+    const compiler = report.compiler_artifact!;
+    const importedResult = {
+      ...report,
+      compiler_artifact: { ...compiler, bytecode_range: null, [facet]: [] },
+    };
+    expect(
+      projectAnalysisView(
+        { ...parent, normalizedResult: importedResult },
+        { kind: "summary" },
+      ).ok,
+    ).toBe(false);
+  },
+);
+
+it.each(["link_references", "immutable_references"] as const)(
+  "rejects imported %s with source coordinates outside the bytecode node",
+  (facet) => {
+    const parent = compilerParent("6000");
+    const report = parent.normalizedResult as EvmInterface;
+    const compiler = report.compiler_artifact!;
+    const reference = {
+      source_unit: facet === "link_references" ? "lib.sol" : null,
+      library_name: facet === "link_references" ? "L" : null,
+      immutable_id: facet === "immutable_references" ? "1" : null,
+      start: 0,
+      length: 1,
+      source_range: {
+        ...compiler.contract_range,
+        end: compiler.bytecode_range!.start,
+      },
+    };
+    const importedResult = {
+      ...report,
+      compiler_artifact: { ...compiler, [facet]: [reference] },
+    };
+    expect(
+      projectAnalysisView(
+        { ...parent, normalizedResult: importedResult },
+        { kind: "summary" },
+      ).ok,
+    ).toBe(false);
+  },
+);
