@@ -261,6 +261,23 @@ Mach-O fixtures check each case against source-owned return values.
 
 ## Static inspection
 
+`inspect_plist.format` describes the selected source, not plutil's conversion
+format. Sources explicitly identified as XML, binary or JSON retain those
+labels. For generic text, a bounded source-prefix probe recognizes leading XML
+markup, including UTF-8 and BOM-marked UTF-16 sources. Unidentified text and
+OpenStep plists, including a data-only value such as `<deadbeef>`, report
+`unknown` even when plutil decodes their values through an XML conversion.
+
+A plist explicitly selected through the path input or as the active plist target
+reports an unreadable or malformed selection as `invalid_request`. A missing or
+unreadable default plist of another target reports `capability_unavailable`.
+Permission failures remain `access_denied`; output and cleanup failures retain
+their own error categories.
+
+A plist decode refusal includes plutil's diagnostic from either output stream.
+`details.captured_output` retains bounded stdout/stderr excerpts, observed byte
+totals and exit status. `truncated: true` means those excerpts are incomplete.
+
 `inspect_macho.selected_architecture` identifies the exact selected lipo slice
 and its `container_file_offset` in the input file. A thin Mach-O has a known
 offset of zero; an unknown universal-slice offset stays null. The Evidence
@@ -317,12 +334,22 @@ complete observation.
   shared/cyclic references, class descriptors, raw serialized fields and
   malformed/unresolved/nil references. Missing fields stay absent; unknown
   classes are preserved. Select `root`, `offset` and `limit` explicitly.
+  Object `kind` describes the decoded archive value: data, dates and numbers
+  remain `scalar` when their JSON value uses a `$plist_type` wrapper. An actual
+  dictionary with the same fields remains `dictionary`.
+  XML must be well-formed. Data literals use
+  [CoreFoundation's raw ASCII quartet rules](https://github.com/swiftlang/swift-corelibs-foundation/blob/384ff680be7c7445fee6ce0c55e9ae11a46e07c5/Sources/CoreFoundation/CFPropertyList.c#L1588):
+  non-alphabet ASCII characters are ignored and an incomplete final quartet
+  emits no bytes. Character references retain their source spelling for data
+  decoding. Non-ASCII content, child markup and self-closing `<data/>` are format
+  failures; explicit `<data></data>` represents empty data.
   UID 0 cannot distinguish conditional nil from ordinary nil. Limits are
   64 MiB of input, 200,000 objects/references and 128 nesting levels.
   XML dictionary entries decoded as `__proto__` are omitted with an explicit
   count because REA results cannot represent that key. XML tag whitespace and
-  comments do not change that handling. Other values and the original archive
-  digest are preserved; key interpretation follows the pinned plist decoder.
+  comments do not change that handling. XML key names combine their text and
+  CDATA segments without trimming or expanding literal CDATA entities. Other
+  values and the original archive digest are preserved.
 - `decode_interface_builder` / `rea decode-interface-builder <app>` reads
   compiled storyboard and nib resources into objects, outlets, actions,
   connections and controller/class names. A full app graph is often several
@@ -398,6 +425,16 @@ complete observation.
   coroutine tables, and inherited overrides, have explicit unsupported or
   partial coverage. Other providers retain the
   existing symbol-based inventory with its narrower coverage.
+  Symbols without a reported location remain in that inventory: Swift symbol
+  `address` and Objective-C `implementation_address` are null. An empty provider
+  address is retained as `reported_address` in the symbol's evidence, whose
+  location also remains unknown. Nonempty provider address syntax is preserved.
+
+  Session discovery reports this workflow available when the bound provider
+  offers direct metadata inspection or a `list_names` symbol inventory. The
+  workflow tries direct metadata first and uses the symbol fallback only when
+  that operation is unavailable; runtime failures remain failures rather than
+  being replaced by symbol-only results.
 
 ## Native desktop observation
 
@@ -414,7 +451,11 @@ decrement scrolling and text-value entry, or bounded waits. No global event
 injection is used. Unsupported AX actions fail explicitly. The result preserves
 ordered before/after captures and gaps; an action may have occurred before a
 post-action capture fails. Application state is left as-is; REA does not attempt
-to restore it.
+to restore it. Failed or cancelled scenarios return a typed error with the
+collected report in `partial_observation`, including ordered step outcomes.
+Cancellation preserves the caller's reason and remains observable through helper
+cleanup. A later abort does not replace an earlier helper or output failure.
+Cleanup failures retain their runtime owner until a confirmed cleanup retry.
 
 Scenarios accept caller-selected action lists and accessibility node counts.
 Individual waits cannot exceed the operation's 180-second deadline, and the
@@ -568,6 +609,12 @@ digests identify the original serialized bytes.
 ## Keyed archive integer precision
 
 The archive reader observes XML number element types and binary number markers.
+XML values and their number facts are interpreted together from the validated
+DOM and its original scalar source spans. Hexadecimal `<integer>` text, including
+an optional sign, retains its value;
+`<real>` text and CDATA segments are combined without inferring text from nested
+elements. Real character references expand outside CDATA; integer and date
+literals use raw source text.
 Integers beyond the exact range of a JSON number are reported with the original
 decimal text as `{ "$plist_type": "integer", "decimal": "<exact digits>" }` when
 that source value can be associated unambiguously. Integral real values remain
@@ -576,9 +623,9 @@ markers remain decoded with an explicit precision limitation. The limitation
 also counts observed unsafe integer literals, including observations outside the
 selected object page. Incomplete supplemental metadata produces an explicit
 precision note without rejecting an archive accepted by the byte decoder.
-Mixed XML number content (comments, CDATA, processing instructions or child
-elements) and integer text the supplemental reader cannot classify disable exact
-association and retain decoded numbers with that precision note. Nonnumeric
+Malformed XML scalar content becomes an explicit unknown rather than a prefix
+number, guessed timestamp, or tag-only boolean. These unknowns do not disable
+exact association for unrelated observed numbers. Nonnumeric
 `UID` and `CF$UID` dictionary values remain ordinary data and are projected
 recursively; numeric reference markers retain their original representation.
 
@@ -599,11 +646,45 @@ decode budget reserves estimated room for number metadata and attribute
 projection; these estimates are not a hard process-memory bound. Native
 NIBArchive decoding is unchanged by this plist-specific representation.
 
-Dates are reported as `{ "$plist_type": "date", "iso8601": "<timestamp>" }`. A
-date the decoder cannot represent, such as an XML date with a year beyond 9999
-or a negative year, is reported as `{ "$plist_type": "date", "iso8601": null }`
-with a counted limitation; the rest of the plist or archive is still decoded.
-`inspect_plist` and Interface Builder decoding use the same projection.
+Dates are reported as `{ "$plist_type": "date", "iso8601": "<timestamp>" }`.
+XML dates require a complete UTC spelling with fixed two-digit month, day and
+time fields; short, negative and extended years are interpreted as UTC year
+fields within JavaScript's date range. Unsupported calendar fields (including
+leap seconds) and out-of-range dates remain explicit unknowns. REA does not
+emulate CoreFoundation's normalization of overflowing calendar fields. Invalid
+dates returned by other decoders retain `{ "$plist_type": "date", "iso8601": null }`
+with a counted limitation. `inspect_plist` and Interface Builder decoding use
+the same projection.
+
+A negative-zero real is reported as `{ "$plist_type": "real", "value": "-0" }`
+because a JSON number cannot carry the sign of zero. `inspect_plist` and
+`inspect_keyed_archive` count these values in a limitation, and Interface
+Builder node attributes use the same value. Positive zero and integer zero,
+including an `<integer>-0</integer>` literal, remain the number `0`.
+
+Known non-finite reals are reported as
+`{ "$plist_type": "real", "value": "nan" | "+infinity" | "-infinity" }`.
+These are canonical numeric labels, not a claim about original source spelling.
+Binary IEEE reals retain NaN versus signed infinity; NaN payload bits and sign
+are not represented in the JSON value, and the original bytes remain the source
+for those details. XML CFPropertyList literals (`nan`, `+infinity`, `-infinity`,
+`infinity`, `inf`, `+inf`, `-inf`, case-insensitively) decode to the same known
+values. Case and aliases normalize; original archive bytes retain source text.
+
+XML scalars whose identity cannot be established use
+`{ "$plist_type": "unknown", "element": "integer" | "real" | "date" | "true" | "false", "literal": "<original content>", "reason": "invalid-literal" | "unsupported-markup" | "unrepresentable" }`.
+A counted limitation accompanies these wrappers. Literal content retains its
+original entity spelling, markup and line endings. Whole XML documents must
+still pass strict well-formedness checks. Empty integer, real and date elements
+are unknown scalars; boolean elements must be empty. Complete decimal/exponent
+reals and signed decimal/hexadecimal integers accept their respective native
+leading whitespace but reject trailing text. Arbitrary-precision integers
+remain an intentional REA extension beyond CoreFoundation's integer range.
+Finite real spellings that overflow the numeric representation remain unknown,
+rather than becoming observed infinities. Known non-finite and unresolved scalar
+values have separate counts. This replaces the former prefix-number and
+incomplete-metadata fallback for malformed XML numeric content. Native
+`inspect_plist` uses the same projection for plutil's XML conversion.
 
 ## Locate a byte signature
 
