@@ -662,6 +662,10 @@ it("keeps a network-path request target as a path and refuses absolute-form targ
   );
   const absolute = await rawTargetRequest(url, "http://attacker.example/card");
   expect(absolute.status).toBe(400);
+  // Dot segments would route a different path than the one requested; they are refused, not canonicalized.
+  for (const target of ["/public/../mcp", "/public/%2e%2e/mcp", "/./mcp"])
+    expect((await rawTargetRequest(url, target)).status).toBe(400);
+  expect((await rawTargetRequest(url, "/card?x=1")).status).toBe(200);
   const plain = await rawTargetRequest(url, "/card");
   expect(plain.status).toBe(200);
   expect(seen).toEqual([`127.0.0.1:${url.port}`]);

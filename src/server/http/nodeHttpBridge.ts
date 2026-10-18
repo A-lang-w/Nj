@@ -13,10 +13,13 @@ export class UnsupportedRequestTargetError extends Error {
   }
 }
 
-/** Join an origin-form target onto the listener's origin verbatim, so `//host/path` stays a path. */
+/** Join an origin-form target onto the listener's origin verbatim, so `//host/path` stays a path and a path that URL parsing would rewrite (dot segments) is refused rather than routed elsewhere. */
 const requestUrl = (target: string, origin: string): URL => {
   if (!target.startsWith("/")) throw new UnsupportedRequestTargetError(target);
-  return new URL(`${origin}${target}`);
+  const url = new URL(`${origin}${target}`);
+  const rawPath = target.split("?")[0] ?? "";
+  if (url.pathname !== rawPath) throw new UnsupportedRequestTargetError(target);
+  return url;
 };
 
 const toHeaders = (incoming: IncomingMessage["headers"]): Headers => {
