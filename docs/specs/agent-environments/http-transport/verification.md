@@ -256,3 +256,12 @@ hold the socket. The bridge now closes the connection after any reply whose
 request body was never read (test: an unknown-route POST and a foreign-Host
 POST are answered with `Connection: close`, while a keep-alive GET without a
 body keeps its connection).
+
+A ninth round (Greptile and Codex): request conversion ran outside the guard,
+so a method Fetch refuses (`TRACE`) could crash the process; the conversion is
+now guarded and answered with `405` and a closed connection (test: `TRACE`
+gets `405` and the next client still echoes). The unread-body decision now
+comes from the incoming message's own body declaration, so a `GET` or `HEAD`
+that carries a body also closes, and the regression uses a keep-alive agent
+and checks that the socket actually closes after the early reply while a
+bodiless `GET` keeps its socket.

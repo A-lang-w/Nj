@@ -6,6 +6,7 @@ import {
   McpServer,
   WebStandardStreamableHTTPServerTransport,
 } from "@modelcontextprotocol/server";
+import { Agent, request as httpRequest } from "node:http";
 import pino from "pino";
 import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -82,6 +83,50 @@ const echo = async (client: Client, text: string): Promise<unknown> => {
   const result = await client.callTool({ name: "echo", arguments: { text } });
   return result.content;
 };
+
+/** One keep-alive request; reports whether the server closed the socket after the reply. */
+const keepAliveRequest = (
+  agent: Agent,
+  url: URL,
+  options: {
+    readonly method: string;
+    readonly headers?: Readonly<Record<string, string>>;
+    readonly body?: string;
+  },
+): Promise<{
+  status: number;
+  headers: Record<string, string | string[] | undefined>;
+  socketClosed: boolean;
+}> =>
+  new Promise((resolve, reject) => {
+    const request = httpRequest(
+      url,
+      { method: options.method, headers: { ...options.headers }, agent },
+      (response) => {
+        const socket = response.socket;
+        let closed = false;
+        socket?.once("close", () => {
+          closed = true;
+        });
+        response.resume();
+        response.once("end", () => {
+          // Give a closing server one turn to end the socket after the reply.
+          setTimeout(
+            () =>
+              resolve({
+                status: response.statusCode ?? 0,
+                headers: response.headers,
+                socketClosed: closed || (socket?.destroyed ?? false),
+              }),
+            50,
+          );
+        });
+        response.once("error", reject);
+      },
+    );
+    request.once("error", reject);
+    request.end(options.body);
+  });
 
 /** A new client's initialize as the bridge hands it to the slot: no session id yet. */
 const initializeRequest = (): Request =>
@@ -516,27 +561,51 @@ it("answers an oversized sessionless POST promptly instead of stalling on the pr
   await client.close();
 }, 20_000);
 
-it("closes the connection after a reply sent before the request body was read", async () => {
+it("closes the connection after a reply sent before the request body was read, on a keep-alive client", async () => {
   const { served } = await start();
   const url = new URL(served.url);
-  const host = `127.0.0.1:${url.port}`;
-  const unread = await rawHttpRequest(new URL("/nowhere", url), {
-    method: "POST",
-    headers: { host, "content-type": "application/json" },
-    body: '{"never":"read"}',
+  const agent = new Agent({ keepAlive: true, maxSockets: 1 });
+  try {
+    const unread = await keepAliveRequest(agent, new URL("/nowhere", url), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: '{"never":"read"}',
+    });
+    expect(unread.status).toBe(404);
+    expect(unread.headers.connection).toBe("close");
+    expect(unread.socketClosed).toBe(true);
+    // Node's parser refuses a chunked GET body itself; a declared Content-Length reaches the bridge.
+    const bodyOnGet = await keepAliveRequest(agent, new URL("/nowhere", url), {
+      method: "GET",
+      headers: { "content-type": "text/plain", "content-length": "15" },
+      body: "a body on a GET",
+    });
+    expect(bodyOnGet.status).toBe(404);
+    expect(bodyOnGet.headers.connection).toBe("close");
+    expect(bodyOnGet.socketClosed).toBe(true);
+    const bodiless = await keepAliveRequest(agent, new URL("/nowhere", url), {
+      method: "GET",
+    });
+    expect(bodiless.status).toBe(404);
+    expect(bodiless.headers.connection).not.toBe("close");
+    expect(bodiless.socketClosed).toBe(false);
+  } finally {
+    agent.destroy();
+  }
+});
+
+it("answers a method Fetch refuses instead of letting it escape the request guard", async () => {
+  const { served } = await start();
+  const url = new URL(served.url);
+  const trace = await rawHttpRequest(url, {
+    method: "TRACE",
+    headers: { host: `127.0.0.1:${url.port}` },
   });
-  expect(unread.status).toBe(404);
-  expect(unread.headers.connection).toBe("close");
-  const foreign = await rawHttpRequest(url, {
-    method: "POST",
-    headers: { host: "attacker.example", "content-type": "application/json" },
-    body: '{"never":"read"}',
-  });
-  expect(foreign.status).toBe(403);
-  expect(foreign.headers.connection).toBe("close");
-  // A keep-alive client shows the server does not close after a bodiless reply.
-  const bodiless = await fetch(new URL("/nowhere", url));
-  expect(bodiless.status).toBe(404);
-  expect(bodiless.headers.get("connection")).not.toBe("close");
-  await bodiless.body?.cancel();
+  expect(trace.status).toBe(405);
+  expect(trace.headers.connection).toBe("close");
+  const { client } = await connect(served.url);
+  expect(await echo(client, "still alive")).toEqual([
+    { type: "text", text: "still alive" },
+  ]);
+  await client.close();
 });

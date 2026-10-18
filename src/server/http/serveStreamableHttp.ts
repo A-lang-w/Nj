@@ -386,12 +386,27 @@ const serveNodeRequest = async (
   response: ServerResponse,
 ): Promise<void> => {
   const { route, origin, logger } = target;
-  const webRequest = toWebRequest(request, response, origin());
-  // A reply sent before the body was read leaves that body unread on the socket, which the
-  // bridged stream keeps paused; closing the connection after the reply releases it.
+  // A reply sent before an incoming body was read leaves that body on the socket, which the
+  // bridged stream keeps paused; closing the connection after the reply releases it. The
+  // incoming message decides, so a GET or HEAD that carried a body closes too.
+  const declaresBody =
+    request.headers["content-length"] !== undefined ||
+    request.headers["transfer-encoding"] !== undefined;
+  let webRequest: Request | undefined;
   const unreadBody = (): boolean =>
-    webRequest.body !== null && !webRequest.bodyUsed;
+    declaresBody && !(webRequest?.bodyUsed ?? false);
   try {
+    try {
+      webRequest = toWebRequest(request, response, origin());
+    } catch {
+      // Fetch refuses methods such as TRACE that node:http accepts; answer instead of throwing.
+      await writeWebResponse(
+        jsonError(405, -32600, `Unsupported method ${request.method ?? ""}`),
+        response,
+        { closeConnection: true },
+      );
+      return;
+    }
     const webResponse = await route(webRequest);
     await writeWebResponse(webResponse, response, {
       closeConnection: unreadBody(),
