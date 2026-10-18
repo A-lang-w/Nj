@@ -4,6 +4,7 @@ import pino from "pino";
 
 import { createShutdown } from "../main/shutdown.js";
 import {
+  createExitStatus,
   latchSignalShutdown,
   registerProcessShutdown,
   registerSignalShutdown,
@@ -236,4 +237,18 @@ it("latches the first startup signal, exits at once on a second, and hands the s
   expect(signals.listenerCount("SIGTERM")).toBe(0);
   const quiet = latchSignalShutdown(signals, (status) => exits.push(status));
   expect(quiet.release()).toBeUndefined();
+});
+
+it("keeps a signal's exit status through the entry's normal return and yields to a real failure", () => {
+  const codes: number[] = [];
+  const exit = createExitStatus((code) => codes.push(code));
+  exit.set(0);
+  exit.signal(143);
+  exit.set(0);
+  expect(codes).toEqual([0, 143, 143]);
+  exit.set(1);
+  expect(codes.at(-1)).toBe(1);
+  const plain = createExitStatus((code) => codes.push(code));
+  plain.set(0);
+  expect(codes.at(-1)).toBe(0);
 });

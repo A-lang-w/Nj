@@ -243,3 +243,9 @@ lifecycle owner picks the recorded signal up as soon as it registers, and a
 second signal during startup exits at once (test: the latch records `143`,
 exits on the second signal, hands the status over on release and leaves no
 listeners behind).
+
+Both reviewers then noted that the latched signal's status was overwritten by
+the entry's normal `0` return: the HTTP entry now owns its exit status through
+`createExitStatus`, where a `0` after a recorded signal keeps the signal's
+status and a real failure still wins (unit test), and a process test sends the
+signal the moment the listening line appears and asserts the signal status.

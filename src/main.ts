@@ -22,9 +22,11 @@ import {
 import { createToolResultDelivery } from "./server/toolResult.js";
 import { createShutdown } from "./main/shutdown.js";
 import {
+  createExitStatus,
   latchSignalShutdown,
   registerProcessShutdown,
   registerSignalShutdown,
+  type ExitStatus,
   type SignalLatch,
 } from "./main/processShutdown.js";
 import {
@@ -46,10 +48,12 @@ const runtimeDependencies = (): RuntimeDependencies => ({
 const httpRuntimeDependencies = (
   endpoint: McpHttpEndpoint,
   latch: SignalLatch,
+  exit: ExitStatus,
 ): RuntimeDependencies => {
   const base = runtimeDependencies();
   return {
     ...base,
+    setExitCode: exit.set,
     serve: async (factory, options) => {
       // Loaded here so the default stdio entry never loads the HTTP listener.
       const { serveStreamableHttp } =
@@ -64,13 +68,14 @@ const httpRuntimeDependencies = (
     },
     registerShutdown: (request) => {
       const unregister = registerSignalShutdown((exitStatus) => {
-        base.setExitCode(exitStatus);
+        exit.signal(exitStatus);
         request();
       });
-      // A signal that arrived during startup is honoured now that the lifecycle owner exists.
+      // A signal that arrived during startup is honoured now that the lifecycle owner exists;
+      // its status outlives the entry's own `0`, which startup returns right after this.
       const pending = latch.release();
       if (pending !== undefined) {
-        base.setExitCode(pending);
+        exit.signal(pending);
         request();
       }
       return unregister;
@@ -190,11 +195,12 @@ export const runMcpHttpEntrypoint = async (
   }
   // Latched before any asynchronous startup so a signal cannot end the process without cleanup.
   const latch = latchSignalShutdown();
+  const exit = createExitStatus(io.setExitCode);
   try {
     await runEntrypoint(
-      () => run(httpRuntimeDependencies(endpoint.value, latch)),
+      () => run(httpRuntimeDependencies(endpoint.value, latch, exit)),
       io.writeStderr,
-      io.setExitCode,
+      exit.set,
     );
   } finally {
     latch.release();

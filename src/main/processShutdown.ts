@@ -90,3 +90,28 @@ export const latchSignalShutdown = (
     },
   };
 };
+
+/** The exit status an entry reports: a signal's status survives the entry's normal `0` return. */
+export interface ExitStatus {
+  /** The entry's own result; a `0` after a recorded signal keeps the signal's status. */
+  readonly set: (code: number) => void;
+  /** Record the exit status of a signal-requested shutdown. */
+  readonly signal: (status: number) => void;
+}
+
+export const createExitStatus = (
+  setExitCode: (code: number) => void,
+): ExitStatus => {
+  let signalStatus: number | undefined;
+  return {
+    set: (code) => {
+      setExitCode(
+        code === 0 && signalStatus !== undefined ? signalStatus : code,
+      );
+    },
+    signal: (status) => {
+      signalStatus = status;
+      setExitCode(status);
+    },
+  };
+};
