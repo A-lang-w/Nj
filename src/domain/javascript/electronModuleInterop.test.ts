@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import {
+  analyzeJavaScriptStaticSource,
+  analyzeParsedJavaScriptStaticSource,
+} from "./javascriptStaticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { ROLLDOWN_MODULE_INTEROP } from "./javascriptModuleInterop.fixture.js";
 
 const WINDOW =
@@ -622,13 +626,18 @@ describe("Electron module interop capture and scope", () => {
   });
 
   it("preserves captured intrinsics across later vendor polyfills and callable writes", () => {
-    const analysis = analyzeJavaScriptStaticSource(`${ROLLDOWN_MODULE_INTEROP}
+    const source = `${ROLLDOWN_MODULE_INTEROP}
       Object.create = customCreate;
       ${IMPORT} ${WRAP}
       function runLoop(key) { globalThis[key] = this; }
       function polyfill() { Object.create = customCreate; }
       ${WINDOW}
-    `);
+    `;
+    // The runtime fixture comes from main.cjs: these helper vars are local to
+    // the wrapper, while the deferred wildcard write addresses global slots.
+    const parsed = parseJavaScriptSource(source, "vendor-main.cjs");
+    expect(parsed).not.toBeNull();
+    const analysis = analyzeParsedJavaScriptStaticSource(source, parsed!);
     expect(analysis.electron.browser_windows).toHaveLength(1);
   });
 

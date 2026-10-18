@@ -3,6 +3,7 @@ import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import {
   createSemanticModuleStorageQuery,
   semanticAmbientBindingPaths,
+  semanticAmbientEscapeEffects,
   semanticAmbientIdentitySourcesReady,
   type SemanticModuleProjection as ModuleProjection,
 } from "./javascriptSemanticAmbientWrites.js";
@@ -37,6 +38,7 @@ import {
 } from "./javascriptSemanticPropertyPaths.js";
 import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 import {
+  createSemanticPrecedingEffectIndex,
   semanticBindingAtRead,
   semanticEffectFollowsInitialCapture,
   semanticTopLevelEffectFollowsCapture,
@@ -48,6 +50,7 @@ import {
 import {
   INVOCATION_HELPERS,
   semanticFunctionValueIdentity,
+  semanticFunctionValueReadDependencies,
 } from "./javascriptSemanticFunctionValues.js";
 import {
   semanticGlobalBindingReadMayHaveChanged,
@@ -295,16 +298,22 @@ const moduleRequireWrites = new WeakMap<
   {
     readonly ambientCount: number;
     readonly ambientSourcesReady: boolean;
+    readonly escapeEffects: ReturnType<typeof semanticAmbientEscapeEffects>;
     readonly freshObjectFactsReady: boolean;
     readonly opaqueScopeCount: number;
     readonly writes: readonly ModuleDelegateWrite[];
   }
 >();
 
-interface ModuleDelegateWrite {
-  readonly node: t.Node;
+interface ModuleDelegateOwner {
   readonly delegate: "require" | "_load";
   readonly shared: boolean;
+}
+
+interface ModuleDelegateWrite extends ModuleDelegateOwner {
+  readonly node: t.Node;
+  /** Deleting the wrapper's inherited require is inert until its own slot can change. */
+  readonly deletesInitiallyAbsentOwnSlot?: true;
 }
 
 const writesModuleRequire = (
@@ -313,11 +322,13 @@ const writesModuleRequire = (
   const cached = moduleRequireWrites.get(state);
   const ambientCount = state.ambientWriteEffects.length;
   const ambientSourcesReady = semanticAmbientIdentitySourcesReady(state);
+  const escapeEffects = semanticAmbientEscapeEffects(state);
   const freshObjectFactsReady = semanticFreshObjectFactsReady(state);
   const opaqueScopeCount = state.opaqueEffects.byScope.size;
   if (
     cached?.ambientCount === ambientCount &&
     cached.ambientSourcesReady === ambientSourcesReady &&
+    cached.escapeEffects === escapeEffects &&
     cached.freshObjectFactsReady === freshObjectFactsReady &&
     cached.opaqueScopeCount === opaqueScopeCount
   )
@@ -327,18 +338,28 @@ const writesModuleRequire = (
   moduleRequireWrites.set(state, {
     ambientCount,
     ambientSourcesReady,
+    escapeEffects,
     freshObjectFactsReady,
     opaqueScopeCount,
     writes: [],
   });
   const writes: ModuleDelegateWrite[] = [];
-  const interop = createSemanticModuleInterop(state);
+  const interop = createSemanticModuleInterop(state, {
+    intrinsicWriteFacts: {
+      ambientWrites: state.ambientWrites,
+      ambientWriteEffects: state.ambientWriteEffects,
+      complete: freshObjectFactsReady,
+    },
+  });
+  const retain = (path: JavaScriptSemanticPropertyPath, node: t.Node): void => {
+    const owner = semanticModuleDelegateWriteOwner(path, node, interop);
+    if (owner !== undefined) writes.push({ node, ...owner });
+  };
   // Ambient indexing owns container stores and intrinsic prototype aliases.
   // Queries made during indexing must be refreshed when those facts arrive.
   for (const { node, path } of state.ambientWriteEffects) {
     if (node === undefined) continue;
-    const owner = moduleDelegateWriteOwner(path, node, interop);
-    if (owner !== undefined) writes.push({ node, ...owner });
+    retain(path, node);
   }
   const projectionMayAliasModule = createSemanticModuleStorageQuery(
     state,
@@ -461,8 +482,16 @@ const writesModuleRequire = (
         !visibleBindings().some((binding) =>
           semanticAmbientBindingPaths(binding, effect, state).some(
             (path) =>
-              moduleDelegateWriteOwner([...path, "require"], effect, interop) ||
-              moduleDelegateWriteOwner([...path, "_load"], effect, interop),
+              semanticModuleDelegateWriteOwner(
+                [...path, "require"],
+                effect,
+                interop,
+              ) ||
+              semanticModuleDelegateWriteOwner(
+                [...path, "_load"],
+                effect,
+                interop,
+              ),
           ),
         )
       )
@@ -487,17 +516,11 @@ const writesModuleRequire = (
         isModuleObject(target.object)
       ) {
         const key = semanticStaticPropertyKey(target.property, target.computed);
-        if (
-          key === null ||
-          key === "require" ||
-          (key === "__proto__" && t.isAssignmentExpression(node))
-        )
-          writes.push({ node, delegate: "require", shared: false });
+        retain(["commonjs-module", key], node);
       }
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
         const invocation = interop.intrinsicInvocation(node);
         const mutation = semanticIntrinsicMutation(invocation);
-        const args = invocation?.arguments;
         if (
           invocation !== undefined &&
           mutation !== undefined &&
@@ -506,38 +529,49 @@ const writesModuleRequire = (
             interop.isFreshObject,
           ).some((target) => target !== undefined && isModuleObject(target))
         ) {
-          if ("key" in mutation) {
-            const key = interop.staticString(mutation.key);
-            if (
-              key === "require" ||
-              key === undefined ||
-              (key === "__proto__" && mutation.kind === "set")
-            )
-              writes.push({ node, delegate: "require", shared: false });
-          } else if (mutation.kind === "set-prototype") {
-            // The CommonJS delegate can be inherited from Module.prototype.
-            writes.push({ node, delegate: "require", shared: false });
-          } else if (mutation.kind === "define-properties") {
-            if (objectMayDefineDelegate(args?.[1]))
-              writes.push({ node, delegate: "require", shared: false });
-          } else if (
-            args
-              ?.slice(1)
-              .some((source) => objectMayDefineDelegate(source, true))
-          )
-            writes.push({ node, delegate: "require", shared: false });
+          const key =
+            "key" in mutation
+              ? (interop.staticString(mutation.key) ?? null)
+              : null;
+          retain(["commonjs-module", key], node);
         }
       }
     },
   });
+  // Node's wrapper starts without an own require property. Deletion alone
+  // cannot hide its inherited delegate, but any earlier possible definition,
+  // escape, or replacement removes that absence proof. Keep this decision on
+  // the canonical owner facts shared by ambient writes and the AST fallback.
+  let effectiveWrites = writes;
+  if (
+    escapeEffects !== undefined &&
+    writes.some((write) => write.deletesInitiallyAbsentOwnSlot)
+  ) {
+    const possibleDefinitions = createSemanticPrecedingEffectIndex(
+      state.parentsByNode,
+      (capture, effect) =>
+        semanticEffectFollowsInitialCapture(capture, effect, state),
+    );
+    for (const write of writes)
+      if (!write.deletesInitiallyAbsentOwnSlot) possibleDefinitions.add(write);
+    for (const escape of escapeEffects)
+      if (moduleDelegateOwner(escape.path) !== undefined)
+        possibleDefinitions.add(escape);
+    effectiveWrites = writes.filter(
+      (write) =>
+        !write.deletesInitiallyAbsentOwnSlot ||
+        possibleDefinitions.mayPrecede(write.node),
+    );
+  }
   moduleRequireWrites.set(state, {
     ambientCount,
     ambientSourcesReady,
+    escapeEffects,
     freshObjectFactsReady,
     opaqueScopeCount,
-    writes,
+    writes: effectiveWrites,
   });
-  return writes;
+  return effectiveWrites;
 };
 
 /** Unknown keys and spreads cannot prove the loader delegate was untouched. */
@@ -677,11 +711,10 @@ export const semanticHostRequireModuleWritesIntact = (
       !semanticEffectFollowsInitialCapture(capture, write, state),
   );
 
-const moduleDelegateWriteOwner = (
+/** Select the delegate owner independently of how its identity was exposed. */
+const moduleDelegateOwner = (
   path: JavaScriptSemanticPropertyPath,
-  node: t.Node,
-  interop: ReturnType<typeof createSemanticModuleInterop>,
-): Omit<ModuleDelegateWrite, "node"> | undefined => {
+): ModuleDelegateOwner | undefined => {
   if (path[0] !== "commonjs-module") return undefined;
   // Ambient value normalization already selects the shared Module owners.
   // Module.prototype owns require: changing its parent cannot replace that
@@ -700,10 +733,41 @@ const moduleDelegateWriteOwner = (
     !(wrapper && key === "__proto__")
   )
     return undefined;
+  return owner;
+};
+
+/** Initial data descriptors are owner facts, independent of loader validity. */
+export const semanticInitialModuleDelegateDataProperty = (
+  path: readonly string[],
+): ReturnType<typeof semanticFunctionValueReadDependencies> | undefined => {
+  const owner = moduleDelegateOwner(path);
+  return owner !== undefined && path.at(-1) === owner.delegate
+    ? semanticFunctionValueReadDependencies(path)
+    : undefined;
+};
+
+/** Classify a canonical write; initial absence still needs prior-effect proof. */
+export const semanticModuleDelegateWriteOwner = (
+  path: JavaScriptSemanticPropertyPath,
+  node: t.Node,
+  interop: ReturnType<typeof createSemanticModuleInterop>,
+): Omit<ModuleDelegateWrite, "node"> | undefined => {
+  const owner = moduleDelegateOwner(path);
+  if (owner === undefined || path.length === 1) return owner;
+  const wrapper = !owner.shared;
+  const { delegate } = owner;
+  const key = path.at(-1)!;
   if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
     const invocation = interop.intrinsicInvocation(node);
     const mutation = semanticIntrinsicMutation(invocation);
     const args = invocation?.arguments;
+    if (
+      wrapper &&
+      key === "require" &&
+      invocation?.kind === "known" &&
+      mutation?.kind === "delete"
+    )
+      return { ...owner, deletesInitiallyAbsentOwnSlot: true };
     if (mutation?.kind === "set-prototype") return wrapper ? owner : undefined;
     if (mutation?.kind === "assign")
       return args === undefined ||
@@ -719,6 +783,12 @@ const moduleDelegateWriteOwner = (
     // Defining an own __proto__ property does not invoke the legacy setter.
     return key !== "__proto__" || mutation?.kind === "set" ? owner : undefined;
   }
+  if (
+    wrapper &&
+    key === "require" &&
+    t.isUnaryExpression(node, { operator: "delete" })
+  )
+    return { ...owner, deletesInitiallyAbsentOwnSlot: true };
   return key !== "__proto__" || t.isAssignmentExpression(node)
     ? owner
     : undefined;

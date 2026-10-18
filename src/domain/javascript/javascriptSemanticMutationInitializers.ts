@@ -51,6 +51,12 @@ interface ExpressionAncestry {
  * result for as long as its parent map is reachable.
  */
 interface InitializerPositionCache {
+  readonly topLevel: WeakMap<t.Node, StatementPosition | null>;
+  readonly statementIndexes: WeakMap<t.Node, ReadonlyMap<t.Statement, number>>;
+  readonly declaratorIndexes: WeakMap<
+    t.VariableDeclaration,
+    ReadonlyMap<t.VariableDeclarator, number>
+  >;
   readonly direct: WeakMap<t.Node, StatementPosition | null>;
   readonly mutation: WeakMap<t.Node, StatementPosition | null>;
   readonly reference: WeakMap<t.Node, StatementPosition | null>;
@@ -75,6 +81,9 @@ const initializerPositionCache = (
   const cached = initializerPositionCaches.get(parents);
   if (cached !== undefined) return cached;
   const created: InitializerPositionCache = {
+    topLevel: new WeakMap(),
+    statementIndexes: new WeakMap(),
+    declaratorIndexes: new WeakMap(),
     direct: new WeakMap(),
     mutation: new WeakMap(),
     reference: new WeakMap(),
@@ -98,16 +107,30 @@ const statementPosition = (
     !t.isStaticBlock(parent)
   )
     return null;
-  const index = parent.body.indexOf(statement);
-  return index < 0
+  const cache = initializerPositionCache(parents);
+  let indexes = cache.statementIndexes.get(parent);
+  if (indexes === undefined) {
+    indexes = new Map(parent.body.map((node, index) => [node, index]));
+    cache.statementIndexes.set(parent, indexes);
+  }
+  const index = indexes.get(statement);
+  let declaratorIndex = -1;
+  if (t.isVariableDeclaration(statement) && declarator !== undefined) {
+    let declarations = cache.declaratorIndexes.get(statement);
+    if (declarations === undefined) {
+      declarations = new Map(
+        statement.declarations.map((node, index) => [node, index]),
+      );
+      cache.declaratorIndexes.set(statement, declarations);
+    }
+    declaratorIndex = declarations.get(declarator) ?? -1;
+  }
+  return index === undefined
     ? null
     : {
         body: parent.body,
         index,
-        declaratorIndex:
-          t.isVariableDeclaration(statement) && declarator !== undefined
-            ? statement.declarations.indexOf(declarator)
-            : -1,
+        declaratorIndex,
       };
 };
 
@@ -156,13 +179,17 @@ export const semanticLiteralActivationIsImmediate = (
         parent.callee === expression;
 };
 
-/** Order effects only in a non-repeating top-level activation. */
-export const semanticTopLevelEffectFollowsCapture = (
-  capture: t.Node,
-  effect: t.Node | undefined,
+/** Positions are valid only in one non-repeating top-level activation. */
+const topLevelEffectPosition = (
+  source: t.Node | undefined,
   parents: WeakMap<t.Node, t.Node>,
-): boolean => {
-  const position = (node: t.Node | undefined): StatementPosition | null => {
+): StatementPosition | null => {
+  if (source === undefined) return null;
+  const positions = initializerPositionCache(parents).topLevel;
+  const cached = positions.get(source);
+  if (cached !== undefined) return cached;
+  const position = (): StatementPosition | null => {
+    let node: t.Node | undefined = source;
     let selected: StatementPosition | null = null;
     let declarator: t.VariableDeclarator | undefined;
     let child: t.Node | undefined;
@@ -180,8 +207,19 @@ export const semanticTopLevelEffectFollowsCapture = (
     }
     return null;
   };
-  const before = position(capture);
-  const after = position(effect);
+  const selected = position();
+  positions.set(source, selected);
+  return selected;
+};
+
+/** Order effects only in a non-repeating top-level activation. */
+export const semanticTopLevelEffectFollowsCapture = (
+  capture: t.Node,
+  effect: t.Node | undefined,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  const before = topLevelEffectPosition(capture, parents);
+  const after = topLevelEffectPosition(effect, parents);
   if (before === null || after === null) return false;
   if (positionPrecedes(before, after)) return true;
   if (
@@ -291,6 +329,107 @@ export const semanticEffectTiming = (
   if (semanticEffectFollowsReference(effect, site, state.parentsByNode))
     return "before";
   return "unknown";
+};
+
+/** Index sibling statement order; uncertain positions retain canonical timing.
+ * The caller's timing rule must preserve ordinary top-level statement order.
+ * Active buckets and lazily discarded generations retain O(effects) storage. */
+export const createSemanticPrecedingEffectIndex = <
+  Effect extends { readonly node: t.Node | undefined },
+>(
+  parents: WeakMap<t.Node, t.Node>,
+  followsCapture: (capture: t.Node, effect: t.Node | undefined) => boolean,
+) => {
+  interface Bucket {
+    readonly index: number;
+    readonly effects: Set<Effect>;
+  }
+  const effects = new Map<Effect, Bucket | null>();
+  const unordered = new Set<Effect>();
+  const buckets = new Map<number, Bucket>();
+  const heap: Bucket[] = [];
+  let body: readonly t.Statement[] | undefined;
+  const add = (effect: Effect): void => {
+    if (effects.has(effect)) return;
+    const position = topLevelEffectPosition(effect.node, parents);
+    body ??= position?.body;
+    if (position === null || position.body !== body) {
+      effects.set(effect, null);
+      unordered.add(effect);
+      return;
+    }
+    let bucket = buckets.get(position.index);
+    if (bucket === undefined) {
+      bucket = { index: position.index, effects: new Set() };
+      buckets.set(position.index, bucket);
+      let child = heap.length;
+      heap.push(bucket);
+      while (child > 0) {
+        const parent = (child - 1) >> 1;
+        if (heap[parent]!.index <= bucket.index) break;
+        heap[child] = heap[parent]!;
+        child = parent;
+      }
+      heap[child] = bucket;
+    }
+    bucket.effects.add(effect);
+    effects.set(effect, bucket);
+  };
+  const remove = (effect: Effect): void => {
+    const bucket = effects.get(effect);
+    effects.delete(effect);
+    if (bucket === null) unordered.delete(effect);
+    else if (bucket !== undefined) {
+      bucket.effects.delete(effect);
+      if (bucket.effects.size === 0) buckets.delete(bucket.index);
+    }
+  };
+  const first = (): Bucket | undefined => {
+    // A retired bucket can be recreated at the same statement. Compare bucket
+    // identity so stale entries cannot remove the replacement generation.
+    while (heap[0] !== undefined && buckets.get(heap[0].index) !== heap[0]) {
+      const last = heap.pop()!;
+      if (heap.length === 0) break;
+      let parent = 0;
+      for (;;) {
+        const left = parent * 2 + 1;
+        if (left >= heap.length) break;
+        const right = left + 1;
+        const child =
+          right < heap.length && heap[right]!.index < heap[left]!.index
+            ? right
+            : left;
+        if (heap[child]!.index >= last.index) break;
+        heap[parent] = heap[child]!;
+        parent = child;
+      }
+      heap[parent] = last;
+    }
+    return heap[0];
+  };
+  const mayPrecede = (capture: t.Node): boolean => {
+    const position = topLevelEffectPosition(capture, parents);
+    if (position === null || position.body !== body) {
+      for (const effect of effects.keys())
+        if (!followsCapture(capture, effect.node)) return true;
+      return false;
+    }
+    for (const effect of unordered)
+      if (!followsCapture(capture, effect.node)) return true;
+    const earliest = first();
+    if (earliest === undefined || earliest.index > position.index) return false;
+    if (earliest.index < position.index) return true;
+    // Same-statement captures, nested arguments, and declarator order retain
+    // the canonical timing rule instead of acquiring a second syntax parser.
+    for (const effect of earliest.effects)
+      if (!followsCapture(capture, effect.node)) return true;
+    return false;
+  };
+  return {
+    add,
+    delete: remove,
+    mayPrecede,
+  };
 };
 
 const initialCapturePrefixes = new WeakMap<

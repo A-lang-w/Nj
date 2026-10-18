@@ -68,7 +68,6 @@ describe("Electron namespace identity around direct eval", () => {
 describe("host require delegate identity", () => {
   it.each([
     'Reflect.set(module,"require",other)',
-    'Reflect.deleteProperty(module,"require")',
     'Reflect.set({},"require",other,module)',
     "Object.assign(module,{...{require:other}})",
     "Object.assign(module,{require(){return other}})",
@@ -87,6 +86,94 @@ describe("host require delegate identity", () => {
     }
   });
 
+  it.each([
+    "delete module.require",
+    'Reflect.deleteProperty(module,"require")',
+    "const target=module;delete target.require",
+    "const {missing:target=module}=module;delete target.require",
+  ])("preserves the inherited delegate after %s", (deletion) => {
+    for (const loader of ["require", "Q"]) {
+      expect(
+        electronOf(
+          `${SHIM}${deletion};new (${loader}("electron").BrowserWindow)({});`,
+        ).browser_windows,
+      ).toHaveLength(1);
+    }
+  });
+
+  it.each([
+    'Reflect.set(module,"require",other,Object.create(module));delete module.require;',
+    'delete module.require;Reflect.set(module,"require",other,Object.create(module));delete module.require;',
+    'Reflect.deleteProperty(module,"require");Reflect.set(module,"require",other,Object.create(module));delete module.require;',
+    'Reflect.set(module,"require",other,Object.create(module));Reflect.set(module,"require",other,Object.create(module));delete module.require;',
+    'const del=Reflect.deleteProperty.bind(null,module,"require");del();',
+    'Reflect.deleteProperty(module,"require");Reflect.deleteProperty(module,"require");',
+  ])(
+    "preserves the inherited delegate through modeled intrinsic captures: %s",
+    (setup) => {
+      for (const loader of ["require", "Q"])
+        expect(
+          electronOf(
+            `${SHIM}${setup}new (${loader}("electron").BrowserWindow)({});`,
+          ).browser_windows,
+        ).toHaveLength(1);
+    },
+  );
+
+  it.each([
+    "Object.create=unknown;Object.create(module);delete module.require;",
+    'Reflect.set=unknown;Reflect.set(module,"require",other,Object.create(module));delete module.require;',
+    'Function.prototype.bind=unknown;const del=Reflect.deleteProperty.bind(null,module,"require");del();',
+    'Reflect.deleteProperty=unknown;Reflect.deleteProperty(module,"require");delete module.require;',
+    "const receiver=Object.create(module);external(receiver);delete module.require;",
+    "const key=unknown;const receiver=Object.create(module);external(receiver[key]);delete module.require;",
+    'const del=Reflect.deleteProperty.bind(null,module,"require");external(del);delete module.require;',
+    'const change=Reflect.set.bind(null,module,"require",other);external(change);delete module.require;',
+    "const run=Object.assign.bind(null,foreign,{value:module});run();delete module.require;",
+    'const run=Reflect.set.bind(null,foreign,"value",module);run();delete module.require;',
+    'var key="require";globalThis.key="x";Reflect.set(module,key,other,Object.create(module));delete module.require;',
+    'var target=module;globalThis.target=foreign;Reflect.set(target,"require",other,{target:module});delete module.require;',
+    "Object.create(...module);delete module.require;",
+    'module.require=other;delete module.require;Reflect.set(module,"require",other,Object.create(module));delete module.require;',
+    'external(module);delete module.require;Reflect.set(module,"require",other,Object.create(module));delete module.require;',
+    'delete module.__proto__.require;Reflect.set(module,"require",other,Object.create(module));delete module.require;',
+    'Reflect.set(foreign,"x",other,Object.create(module));delete module.require;',
+    "const descriptors={get x(){external(module);return {value:1}}};Object.create(null,descriptors);delete module.require;",
+    "const receiver=Object.create(null,{value:{value:module}});external(receiver);delete module.require;",
+  ])(
+    "retains unknown intrinsic and retained-reference exposure: %s",
+    (setup) => {
+      expect(
+        electronOf(`${SHIM}${setup}${DIRECT_CONSUMER}`).browser_windows,
+      ).toEqual([]);
+    },
+  );
+
+  it("preserves a load before the module can escape after deletion", () => {
+    expect(
+      electronOf(
+        `${SHIM}delete module.require;${DIRECT_CONSUMER}external(module);`,
+      ).browser_windows,
+    ).toHaveLength(1);
+  });
+
+  it.each([
+    "module.require=other;delete module.require;",
+    'Object.defineProperty(module,"require",{value:other});delete module.require;',
+    "external(module);delete module.require;",
+    "Object.assign(foreign,{value:module});delete module.require;",
+    "module.__proto__=other;delete module.require;",
+    "delete module.__proto__.require;",
+    'Reflect.deleteProperty(module.constructor,"_load");',
+    'Reflect.deleteProperty=other;Reflect.deleteProperty(module,"require");',
+  ])("retains possible delegate changes before deletion: %s", (write) => {
+    expect(
+      electronOf(`${SHIM}${write}${DIRECT_CONSUMER}`).browser_windows,
+    ).toEqual([]);
+  });
+});
+
+describe("host require delegate targets", () => {
   it("preserves loaders beside writes to known unrelated module properties", () => {
     for (const loader of ["require", "Q"]) {
       expect(
@@ -234,6 +321,36 @@ describe("Electron identity through esbuild's __require shim", () => {
           'new (Q("electron").BrowserWindow)({webPreferences:{preload:"./p.js"}});',
       ).browser_windows,
     ).toMatchObject([{ preload_path: "./p.js" }]);
+  });
+
+  it("follows optional calls through a proven captured shim", () => {
+    const electron = electronOf(
+      `${SHIM}require=other;const E=Q?.("electron");new E.BrowserWindow({webPreferences:{preload:"./optional.js"}});Q?.("electron").ipcMain.handle("optional",()=>{});`,
+    );
+    expect(electron.browser_windows).toMatchObject([
+      { preload_path: "./optional.js" },
+    ]);
+    expect(electron.ipc).toMatchObject([{ channel: "optional", side: "main" }]);
+  });
+
+  it.each([
+    `const E=Q?.("electron");${SHIM}`,
+    `if(flag){${SHIM}}const E=Q?.("electron");`,
+    `${SHIM}Q=other;const E=Q?.("electron");`,
+    `${SHIM}module.require=other;const E=Q?.("electron");`,
+    'const Q=unknown;const E=Q?.("electron");',
+  ])("keeps an unproven optional shim unresolved: %s", (source) => {
+    expect(
+      electronOf(`${source}new E.BrowserWindow({});`).browser_windows,
+    ).toEqual([]);
+  });
+
+  it("checks the delegate when an optional shim call runs in a deferred body", () => {
+    expect(
+      electronOf(
+        `${SHIM}function load(){const E=Q?.("electron");new E.BrowserWindow({});}module.require=other;load();`,
+      ).browser_windows,
+    ).toEqual([]);
   });
 
   it.each([

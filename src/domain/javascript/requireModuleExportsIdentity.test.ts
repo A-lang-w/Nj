@@ -242,6 +242,73 @@ describe("cached Module instance identity", () => {
   });
 });
 
+describe("process object and callable prototype ownership", () => {
+  it.each([
+    [
+      "required object",
+      'const proc=require("node:process");proc.__proto__.call=other;',
+    ],
+    [
+      "bare process specifier",
+      'const proc=require("process");proc.__proto__.call=other;',
+    ],
+    ["global object", "process.__proto__.call=other;"],
+    ["own process slot", 'const proc=require("node:process");proc.call=other;'],
+    ["constructor prototype", "process.constructor.prototype.call=other;"],
+    ["EventEmitter prototype", "process.__proto__.__proto__.call=other;"],
+    [
+      "EventEmitter constructor prototype",
+      "process.__proto__.__proto__.constructor.prototype.call=other;",
+    ],
+    ["Object prototype", "process.__proto__.__proto__.__proto__.call=other;"],
+    [
+      "reflected prototype",
+      'const proc=require("node:process");const proto=Object.getPrototypeOf(proc);proto.call=other;',
+    ],
+    [
+      "captured prototype",
+      'let proc=require("node:process");const proto=proc.__proto__;proc={};proto.call=other;',
+    ],
+    [
+      "default import",
+      'import proc from "node:process";proc.__proto__.call=other;',
+    ],
+    [
+      "namespace default",
+      'import * as ns from "node:process";ns.default.__proto__.call=other;',
+    ],
+    ["shim input", 'const proc=Q("node:process");proc.__proto__.call=other;'],
+    [
+      "converted default",
+      `${ROLLDOWN_MODULE_INTEROP}const ns=__toESM(Q("node:process"),1);ns.default.__proto__.call=other;`,
+    ],
+  ])("keeps %s writes separate from Function.prototype", (_name, setup) => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${SHIM}${setup}new (require.call(null,"electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toHaveLength(1);
+  });
+
+  it.each([
+    "process.constructor.__proto__.call=other;",
+    "process.__proto__.constructor.__proto__.call=other;",
+    "process.__proto__.__proto__.constructor.__proto__.call=other;",
+    "process.__proto__.__proto__.__proto__.constructor.__proto__.call=other;",
+    'const proc=require("node:process");proc.nextTick.__proto__.call=other;',
+    'const proc=require("node:process");proc.mainModule.constructor._load=other;',
+  ])(
+    "retains shared callable mutations selected through process: %s",
+    (setup) => {
+      expect(
+        analyzeJavaScriptStaticSource(
+          `${setup}new (require.call(null,"electron").BrowserWindow)({});`,
+        ).electron.browser_windows,
+      ).toEqual([]);
+    },
+  );
+});
+
 describe("process main Module instance identity", () => {
   it.each([
     ["main constructor", "process.mainModule.constructor._load=other;"],

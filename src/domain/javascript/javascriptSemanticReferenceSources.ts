@@ -20,6 +20,7 @@ import {
   semanticSlotAtPath,
 } from "./javascriptSemanticSlots.js";
 import { semanticExpressionEvaluationOrder } from "./javascriptSemanticMutationInitializers.js";
+import { semanticSourceFunctionOwnPropertyDefined } from "./javascriptSemanticFunctionValues.js";
 import {
   childNodes,
   traverseJavaScriptAst,
@@ -273,6 +274,8 @@ const syntaxDataSource = (root: t.Node): boolean => {
         readExactJavaScriptLiteral(node).found ||
         t.isFunctionExpression(node) ||
         t.isArrowFunctionExpression(node) ||
+        (t.isObjectMethod(node, { kind: "method" }) &&
+          semanticStaticPropertyKey(node.key, node.computed) !== null) ||
         t.isRegExpLiteral(node)
       ) {
         for (const child of childNodes(node)) skipped.add(child);
@@ -408,38 +411,78 @@ const selectedDefaultInput = (
   return semanticSlotAtPath(value, path);
 };
 
-interface SyntaxDataObject {
+interface LiteralObjectReferenceSource {
+  readonly node: t.Node;
+  readonly key: string | null;
+  readonly kind: "data" | "spread" | "get" | "set" | "method";
+  readonly capture: t.Node;
+}
+
+interface LiteralObjectReferenceSources {
   readonly properties: ReadonlyMap<string, t.Node>;
+  readonly sources: readonly LiteralObjectReferenceSource[];
+  readonly unknownKeys: boolean;
   readonly prototype: t.Node | undefined;
 }
 
-const syntaxDataObjects = new WeakMap<t.ObjectExpression, SyntaxDataObject>();
+const literalObjectReferenceSources = new WeakMap<
+  t.ObjectExpression,
+  LiteralObjectReferenceSources
+>();
 
 /** Keep the prototype initializer separate from own data named `__proto__`. */
-const syntaxDataObject = (node: t.ObjectExpression): SyntaxDataObject => {
-  const cached = syntaxDataObjects.get(node);
+export const semanticLiteralObjectReferenceSources = (
+  node: t.ObjectExpression,
+): LiteralObjectReferenceSources => {
+  const cached = literalObjectReferenceSources.get(node);
   if (cached !== undefined) return cached;
   const properties = new Map<string, t.Node>();
+  const sources: LiteralObjectReferenceSource[] = [];
+  let unknownKeys = false;
   let prototype: t.Node | undefined;
-  // The complete syntaxDataSource proof excludes spreads, accessors and
-  // effectful values before any of these literal slots are consulted.
   for (const property of node.properties) {
-    if (!t.isObjectProperty(property)) continue;
+    if (t.isSpreadElement(property)) {
+      sources.push({
+        node: property.argument,
+        key: null,
+        kind: "spread",
+        capture: property,
+      });
+      unknownKeys = true;
+      continue;
+    }
     const key = semanticStaticPropertyKey(property.key, property.computed);
-    if (key === null) continue;
-    if (key === "__proto__" && !property.computed && !property.shorthand)
+    if (
+      key === "__proto__" &&
+      t.isObjectProperty(property) &&
+      !property.computed &&
+      !property.shorthand
+    ) {
       prototype = property.value;
-    else properties.set(key, property.value);
+      continue;
+    }
+    const value = t.isObjectProperty(property) ? property.value : property;
+    sources.push({
+      node: value,
+      key,
+      kind: t.isObjectProperty(property) ? "data" : property.kind,
+      capture: property,
+    });
+    if (key === null) unknownKeys = true;
+    else properties.set(key, value);
   }
-  const result = { properties, prototype };
-  syntaxDataObjects.set(node, result);
+  const result = { properties, sources, unknownKeys, prototype };
+  literalObjectReferenceSources.set(node, result);
   return result;
 };
 
-const syntaxDataProperty = (root: t.Node, key: string): t.Node | undefined => {
+const syntaxDataProperty = (
+  root: t.Node,
+  key: string,
+): t.Node | "defined" | undefined => {
   let node = root;
   while (t.isObjectExpression(node)) {
-    const source = syntaxDataObject(node);
+    const source = semanticLiteralObjectReferenceSources(node);
     const property = source.properties.get(key);
     if (property !== undefined) return property;
     if (source.prototype === undefined) return undefined;
@@ -449,6 +492,8 @@ const syntaxDataProperty = (root: t.Node, key: string): t.Node | undefined => {
     const index = semanticArrayIndex(key);
     return index === null ? undefined : (node.elements[index] ?? undefined);
   }
+  if (t.isFunction(node) && semanticSourceFunctionOwnPropertyDefined(node, key))
+    return "defined";
   // Primitive prototype initializers are ignored at runtime, and neither they
   // nor an unmodeled intrinsic prototype establish a selected data value.
   return undefined;
@@ -460,18 +505,19 @@ const syntaxReferenceSourceDefined = (
 ): boolean => {
   if (!syntaxDataSource(source.node)) return false;
   let node = unwrapJavaScriptExpression(source.node).node;
-  for (const key of source.projection) {
+  for (const [index, key] of source.projection.entries()) {
     if (key === null || typeof key === "object") return false;
     const selected = syntaxDataProperty(node, String(key));
     if (selected === undefined) return false;
+    // Own metadata/prototype presence does not prove properties beneath it.
+    if (selected === "defined") return index === source.projection.length - 1;
     node = unwrapJavaScriptExpression(selected).node;
   }
   return (
     readExactJavaScriptLiteral(node).found ||
     t.isObjectExpression(node) ||
     t.isArrayExpression(node) ||
-    t.isFunctionExpression(node) ||
-    t.isArrowFunctionExpression(node)
+    t.isFunction(node)
   );
 };
 

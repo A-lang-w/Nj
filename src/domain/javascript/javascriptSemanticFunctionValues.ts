@@ -227,6 +227,37 @@ const MODULE_INSTANCE_MEMBERS = {
   require: MODULE_REQUIRE,
 };
 
+// The process singleton is an EventEmitter instance, not a callable global.
+// Keep each prototype owner distinct while its constructors still share the
+// ordinary function helpers. Canonical paths also join constructor.prototype
+// with the corresponding __proto__ selection.
+const PROCESS_CONSTRUCTOR = ordinary(["global", "process", "constructor"]);
+const PROCESS_EVENT_EMITTER_CONSTRUCTOR = ordinary([
+  "global",
+  "process",
+  "__proto__",
+  "__proto__",
+  "constructor",
+]);
+const PROCESS_EVENT_EMITTER_PROTOTYPE: FunctionValue = {
+  path: ["global", "process", "__proto__", "__proto__"],
+  kind: "instance-prototype",
+  owner: PROCESS_EVENT_EMITTER_CONSTRUCTOR,
+  external: true,
+};
+const PROCESS_PROTOTYPE: FunctionValue = {
+  path: ["global", "process", "__proto__"],
+  kind: "instance-prototype",
+  owner: PROCESS_CONSTRUCTOR,
+  external: true,
+};
+const PROCESS_INSTANCE: FunctionValue = {
+  path: ["global", "process"],
+  kind: "object-instance",
+  owner: PROCESS_CONSTRUCTOR,
+  external: true,
+};
+
 // Typed slots and inherited aliases are not ordinary functions at their nominal
 // path. Exact and wildcard selections consume this same member inventory.
 const VALUE_MEMBERS: Readonly<
@@ -234,6 +265,13 @@ const VALUE_MEMBERS: Readonly<
 > = {
   "global.require": { main: MODULE_INSTANCE, cache: MODULE_CACHE },
   "global.process": { mainModule: MODULE_INSTANCE },
+  "global.process.constructor": { prototype: PROCESS_PROTOTYPE },
+  "global.process.__proto__": {
+    ["__proto__"]: PROCESS_EVENT_EMITTER_PROTOTYPE,
+  },
+  "global.process.__proto__.__proto__.constructor": {
+    prototype: PROCESS_EVENT_EMITTER_PROTOTYPE,
+  },
   "commonjs-module": MODULE_INSTANCE_MEMBERS,
   "module-instance": {
     ...MODULE_INSTANCE_MEMBERS,
@@ -436,6 +474,7 @@ const rootValue = (
     const name = path[1];
     if (name === "Function") return { value: FUNCTION, length: 2 };
     if (name === "Object") return { value: OBJECT, length: 2 };
+    if (name === "process") return { value: PROCESS_INSTANCE, length: 2 };
     if (NAMESPACES.has(name))
       return {
         value: { path: ["global", name], kind: "namespace", external: true },
@@ -662,6 +701,19 @@ const sourceFunctionValue = (
     ...(family === undefined ? {} : { family }),
   };
 };
+
+/** Initial own callable metadata only; source-written slots and capture timing
+ * remain with the caller. Classes can execute static writes to their metadata. */
+export const semanticSourceFunctionOwnPropertyDefined = (
+  node: t.Function,
+  key: string,
+  bound = false,
+): boolean =>
+  key === "name" ||
+  key === "length" ||
+  (key === "prototype" &&
+    sourceFunctionValue(node, bound, ["source-function"]).ownsPrototype ===
+      true);
 
 export const semanticSourceFunctionValueIdentities = (
   node: t.Function | t.Class,

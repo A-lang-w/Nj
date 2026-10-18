@@ -24,11 +24,14 @@ import {
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
+  type JavaScriptSemanticMemberEffect,
 } from "./javascriptSemanticState.js";
 import { isImportMetaUrl } from "./javascriptStaticAnalysisHelpers.js";
 import {
   semanticRequireOrigin,
   semanticRequireFunctionValue,
+  semanticInitialModuleDelegateDataProperty,
+  semanticModuleDelegateWriteOwner,
 } from "./javascriptSemanticRequireOrigin.js";
 import {
   semanticCallableValueIdentity,
@@ -40,12 +43,14 @@ import {
 import { semanticRequireShimOrigin } from "./javascriptRequireShimOrigin.js";
 import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
 import {
+  createSemanticPrecedingEffectIndex,
   semanticBindingAtRead,
   semanticDefiniteMutationPrecedesRead,
   semanticEffectTiming,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticCopiedReferencePath,
+  semanticLiteralObjectReferenceSources,
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
 import {
@@ -60,6 +65,7 @@ import {
 import { createSemanticReceiverReferences } from "./javascriptSemanticReceiverReferences.js";
 import {
   semanticArrayIndex,
+  semanticPropertyPathMayAffect,
   SemanticPropertyPathCoverage,
 } from "./javascriptSemanticPropertyPaths.js";
 import {
@@ -151,8 +157,8 @@ interface AmbientReferenceFacts {
   /** A completed conservative binding snapshot may refine constructor results. */
   readonly definiteObject?: (node: t.Node) => boolean;
   readonly intrinsicWriteFacts?: SemanticGlobalBindingFacts;
-  readonly ownStaticSlotUnchanged?: (
-    owner: t.Class,
+  readonly ownSlotUnchanged?: (
+    owner: t.Node,
     key: string,
     read: t.Node,
   ) => boolean;
@@ -496,12 +502,11 @@ export const createAmbientPathResolver = (
         classRead !== undefined &&
         classSlot.owners.every(
           (owner, index) =>
-            facts?.ownStaticSlotUnchanged?.(owner, classKey, classRead) ===
-              true &&
+            facts?.ownSlotUnchanged?.(owner, classKey, classRead) === true &&
             // Inherited selection also depends on every crossed prototype
             // link. The declaring owner's own slot needs no such proof.
             (index === classSlot.owners.length - 1 ||
-              facts?.ownStaticSlotUnchanged?.(owner, "__proto__", classRead) ===
+              facts?.ownSlotUnchanged?.(owner, "__proto__", classRead) ===
                 true),
         );
       if (
@@ -537,7 +542,8 @@ export const createAmbientPathResolver = (
         typeof suffix[0] === "string" &&
         ((t.isObjectExpression(root) &&
           staticObjectProperty(root, suffix[0]).status === "missing" &&
-          staticObjectProperty(root, "__proto__").status === "missing") ||
+          semanticLiteralObjectReferenceSources(root).prototype ===
+            undefined) ||
           (t.isArrayExpression(root) &&
             suffix[0] !== "length" &&
             semanticArrayIndex(suffix[0]) === null))
@@ -819,16 +825,14 @@ export const createAmbientPathResolver = (
       // Container escapes reuse the finite worklist, including alias cycles.
       if (escapedContents && suffix?.length === 0) {
         if (t.isObjectExpression(root)) {
-          for (const property of root.properties)
-            if (t.isSpreadElement(property))
-              continueWith(property.argument, []);
-            else if (
-              t.isObjectProperty(property) &&
-              t.isExpression(property.value)
-            )
-              continueWith(property.value, []);
-            else if (t.isObjectMethod(property) && property.kind === "get")
-              continueReturned(property, [], []);
+          const source = semanticLiteralObjectReferenceSources(root);
+          if (source.prototype !== undefined)
+            continueWith(source.prototype, []);
+          for (const property of source.sources)
+            if (property.kind === "data" || property.kind === "spread")
+              continueWith(property.node, []);
+            else if (property.kind === "get")
+              continueReturned(property.node, [], []);
           continue;
         }
         if (t.isArrayExpression(root)) {
@@ -840,37 +844,47 @@ export const createAmbientPathResolver = (
       }
       if (suffix !== undefined && key === undefined) continue;
       if (t.isObjectExpression(root)) {
+        const source = semanticLiteralObjectReferenceSources(root);
         if (possibleWrites) {
-          for (const property of root.properties) {
-            if (t.isSpreadElement(property))
-              continueWith(property.argument, suffix, [
-                property,
+          const read = captures[0];
+          const ownUnchanged =
+            typeof key === "string" &&
+            source.properties.has(key) &&
+            read !== undefined &&
+            facts?.ownSlotUnchanged?.(root, key, read) === true;
+          if (source.prototype !== undefined && !ownUnchanged) {
+            // Inherited reads keep their selected key and capture. Reading the
+            // prototype itself consumes one segment, as any other reference.
+            if (key !== "__proto__") continueWith(source.prototype);
+            if (suffix === undefined || key === null || key === "__proto__")
+              continueWith(
+                source.prototype,
+                suffix?.slice(1),
+                captures.slice(1),
+              );
+          }
+          for (const property of source.sources) {
+            if (property.kind === "spread")
+              continueWith(property.node, suffix, [
+                property.capture,
                 ...captures.slice(1),
               ]);
-            else if (
-              (t.isObjectProperty(property) &&
-                t.isExpression(property.value)) ||
-              (t.isObjectMethod(property) && property.kind === "get")
-            ) {
-              const ownKey = semanticStaticPropertyKey(
-                property.key,
-                property.computed,
-              );
+            else if (property.kind === "data" || property.kind === "get") {
               if (
                 suffix === undefined ||
                 key === null ||
-                ownKey === null ||
-                ownKey === key
+                property.key === null ||
+                property.key === key
               )
-                if (t.isObjectMethod(property))
+                if (property.kind === "get")
                   continueReturned(
-                    property,
+                    property.node,
                     suffix?.slice(1),
                     captures.slice(1),
                   );
-                else if (t.isExpression(property.value))
+                else
                   continueWith(
-                    property.value,
+                    property.node,
                     suffix?.slice(1),
                     captures.slice(1),
                   );
@@ -879,21 +893,12 @@ export const createAmbientPathResolver = (
         } else if (
           suffix !== undefined &&
           key !== null &&
-          root.properties.every(
-            (property) =>
-              t.isObjectProperty(property) &&
-              semanticStaticPropertyKey(property.key, property.computed) !==
-                null,
-          )
+          !source.unknownKeys &&
+          source.sources.every((property) => property.kind === "data")
         ) {
-          const property = root.properties.findLast(
-            (property) =>
-              t.isObjectProperty(property) &&
-              semanticStaticPropertyKey(property.key, property.computed) ===
-                key,
-          );
-          if (t.isObjectProperty(property) && t.isExpression(property.value))
-            continueWith(property.value, suffix.slice(1), captures.slice(1));
+          const property = source.properties.get(key!);
+          if (property !== undefined)
+            continueWith(property, suffix.slice(1), captures.slice(1));
         }
       } else if (t.isArrayExpression(root)) {
         if (suffix === undefined) {
@@ -943,6 +948,22 @@ const completedAmbientResolvers = new WeakMap<
   JavaScriptSemanticAnalysisState,
   ReturnType<typeof createAmbientPathResolver>
 >();
+
+interface AmbientEscapeEffect {
+  readonly node: t.Node;
+  readonly path: AmbientPath;
+}
+
+const completedAmbientEscapeEffects = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  readonly AmbientEscapeEffect[]
+>();
+
+/** Final escape paths retain their sites for consumers with capture timing. */
+export const semanticAmbientEscapeEffects = (
+  state: JavaScriptSemanticAnalysisState,
+): readonly AmbientEscapeEffect[] | undefined =>
+  completedAmbientEscapeEffects.get(state);
 
 type OwnSlotUnchanged = (owner: t.Node, key: string, read: t.Node) => boolean;
 const completedOwnSlots = new WeakMap<
@@ -1190,7 +1211,11 @@ export function* indexJavaScriptAmbientWritesSteps(
     target: t.Node;
     browserReceiver: boolean;
     projection?: AmbientProjection;
+    argument?: true;
   }[] = [];
+  const invocationSites = new Set<
+    t.CallExpression | t.OptionalCallExpression
+  >();
   const stores = new WeakMap<
     t.Node,
     Map<SemanticIterationSource, AmbientProjection>
@@ -1203,13 +1228,13 @@ export function* indexJavaScriptAmbientWritesSteps(
         : undefined;
     },
   });
-  let ownStaticSlotUnchanged: AmbientReferenceFacts["ownStaticSlotUnchanged"];
+  let completedOwnSlotUnchanged: AmbientReferenceFacts["ownSlotUnchanged"];
   const referenceFacts: AmbientReferenceFacts = {
     stores,
     replacements,
     freshObject: interop.isFreshObject,
-    ownStaticSlotUnchanged: (owner, key, read) =>
-      ownStaticSlotUnchanged?.(owner, key, read) === true,
+    ownSlotUnchanged: (owner, key, read) =>
+      completedOwnSlotUnchanged?.(owner, key, read) === true,
     prototypeTarget: (node) => {
       if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
         return undefined;
@@ -1292,6 +1317,8 @@ export function* indexJavaScriptAmbientWritesSteps(
       });
     },
     (node, selectedInvocation) => {
+      if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
+        invocationSites.add(node);
       // A possible inherited helper supplies only mutation recipients. It
       // cannot suppress the receiver escape of an unresolved actual callable.
       const invocation = accessorMutations.candidates.has(node)
@@ -1299,8 +1326,17 @@ export function* indexJavaScriptAmbientWritesSteps(
         : selectedInvocation;
       opaqueCalls?.add(node);
       // Escaping objects can change contents without replacing their identity.
-      const retainEscape = (target: t.Node, browserReceiver = false) => {
-        escapes.push({ target, node, browserReceiver });
+      const retainEscape = (
+        target: t.Node,
+        browserReceiver = false,
+        argument = false,
+      ) => {
+        escapes.push({
+          target,
+          node,
+          browserReceiver,
+          ...(argument ? { argument: true } : {}),
+        });
       };
       for (const argument of t.isTaggedTemplateExpression(node)
         ? node.quasi.expressions
@@ -1308,6 +1344,8 @@ export function* indexJavaScriptAmbientWritesSteps(
         if (t.isNode(argument))
           retainEscape(
             t.isSpreadElement(argument) ? argument.argument : argument,
+            false,
+            true,
           );
       const callee = unwrapJavaScriptExpression(
         t.isTaggedTemplateExpression(node) ? node.tag : node.callee,
@@ -1400,13 +1438,7 @@ export function* indexJavaScriptAmbientWritesSteps(
       ordinary = t.isArrayExpression(root)
         ? !root.elements.some(t.isSpreadElement)
         : t.isObjectExpression(root) &&
-          !root.properties.some(
-            (property) =>
-              t.isObjectProperty(property) &&
-              !property.computed &&
-              !property.shorthand &&
-              semanticStaticPropertyKey(property.key, false) === "__proto__",
-          );
+          semanticLiteralObjectReferenceSources(root).prototype === undefined;
       ordinaryContainers.set(root, ordinary);
     }
     if (!ordinary) return "unknown";
@@ -1484,6 +1516,7 @@ export function* indexJavaScriptAmbientWritesSteps(
   const bindingFacts = completedBindingFacts();
   const proofInterop = createSemanticModuleInterop(state, {
     intrinsicPath: interop.intrinsicPath,
+    intrinsicWriteFacts: bindingFacts,
     bindingReadMayHaveChanged: (binding, read) =>
       semanticOpaqueBindingReadMayHaveChanged(binding, read, state) ||
       (semanticBindingCanBeRebound(binding) &&
@@ -1502,7 +1535,6 @@ export function* indexJavaScriptAmbientWritesSteps(
     definiteObject: proofInterop.isDefinitelyObject,
     intrinsicWriteFacts: bindingFacts,
   });
-  observeOpaqueInvocation = createOpaqueObserver?.(ambientWrites);
   // Early recipient candidates remain in weak proof inputs. Refine the parsed
   // invocation once before publishing or interpreting its possible writes.
   const selectedRecipients = new WeakMap<
@@ -1523,6 +1555,184 @@ export function* indexJavaScriptAmbientWritesSteps(
     }
     return selected.has(recipient.target);
   });
+  const descriptorWrites: JavaScriptSemanticMemberEffect[] = [];
+  for (const { node, path } of activeWrites) {
+    const target =
+      path[0] === "pending-target"
+        ? completedTargets()[Number(path[1])]
+        : undefined;
+    for (const identity of target === undefined
+      ? [path]
+      : target.paths.map((identity) => [...identity, ...path.slice(2)])) {
+      // A deletion cannot replace the initial inherited data descriptor while
+      // the wrapper's own slot remains absent. Every other preceding write and
+      // escape is still checked below, independently of these candidates.
+      if (
+        semanticModuleDelegateWriteOwner(identity, node, proofInterop)
+          ?.deletesInitiallyAbsentOwnSlot
+      )
+        continue;
+      descriptorWrites.push({ node, path: identity });
+    }
+  }
+  const refineArgumentEscapes = (
+    sources: typeof escapes,
+    dataPropertyIntact?: (node: t.Node, target: t.Node, key: string) => boolean,
+    replace?: (node: t.Node, selected: readonly t.Node[]) => void,
+  ): typeof escapes => {
+    const argumentsByCall = new Map<t.Node, typeof escapes>();
+    const refined = sources.filter((escape) => {
+      if (
+        !escape.argument ||
+        (!t.isCallExpression(escape.node) &&
+          !t.isOptionalCallExpression(escape.node))
+      )
+        return true;
+      const arguments_ = argumentsByCall.get(escape.node) ?? [];
+      arguments_.push(escape);
+      argumentsByCall.set(escape.node, arguments_);
+      return false;
+    });
+    for (const node of invocationSites) {
+      const selected = proofInterop.callArgumentEscapes(
+        node,
+        dataPropertyIntact === undefined
+          ? undefined
+          : (target, key) => dataPropertyIntact(node, target, key),
+      );
+      if (selected === undefined) {
+        refined.push(...(argumentsByCall.get(node) ?? []));
+      } else {
+        replace?.(node, selected);
+        for (const target of selected)
+          refined.push({
+            node,
+            target,
+            browserReceiver: false,
+            argument: true,
+          });
+      }
+    }
+    return refined;
+  };
+  // Retain the complete weak inputs above for intrinsic proof. These first
+  // refinements need no descriptor assumptions: allocation/binding stores a
+  // reference, and reflective deletion is already represented by its write.
+  const retainedEscapes = refineArgumentEscapes(escapes);
+  const escapeFacts = new Set<JavaScriptSemanticMemberEffect>();
+  const descriptorDependencies = new Map<
+    string,
+    {
+      readonly path: readonly string[];
+      readonly effects: ReturnType<
+        typeof createSemanticPrecedingEffectIndex<JavaScriptSemanticMemberEffect>
+      >;
+    }
+  >();
+  const descriptorDependencyIntact = (
+    path: readonly string[],
+    node: t.Node,
+  ): boolean => {
+    const key = JSON.stringify(path);
+    let dependency = descriptorDependencies.get(key);
+    if (dependency === undefined) {
+      const effects =
+        createSemanticPrecedingEffectIndex<JavaScriptSemanticMemberEffect>(
+          state.parentsByNode,
+          (capture, effect) =>
+            semanticEffectTiming(capture, effect, state) === "after",
+        );
+      for (const effect of [...descriptorWrites, ...escapeFacts])
+        if (semanticPropertyPathMayAffect(effect.path, path))
+          effects.add(effect);
+      dependency = { path, effects };
+      descriptorDependencies.set(key, dependency);
+    }
+    return !dependency.effects.mayPrecede(node);
+  };
+  const originalEscapes = new WeakMap<
+    t.Node,
+    JavaScriptSemanticMemberEffect[]
+  >();
+  const retainEscapeFacts = (
+    escape: (typeof escapes)[number],
+    original: boolean,
+  ): void => {
+    for (const path of ambientWrites(
+      escape.target,
+      escape.node,
+      true,
+      escape.projection,
+    )) {
+      const escaped = [...path, null];
+      const effect = { node: escape.node, path: escaped };
+      escapeFacts.add(effect);
+      for (const dependency of descriptorDependencies.values())
+        if (semanticPropertyPathMayAffect(escaped, dependency.path))
+          dependency.effects.add(effect);
+      if (original && escape.argument) {
+        const effects = originalEscapes.get(escape.node) ?? [];
+        effects.push(effect);
+        originalEscapes.set(escape.node, effects);
+      }
+    }
+  };
+  for (const escape of retainedEscapes) retainEscapeFacts(escape, true);
+  const opaqueModuleEffects = [...state.opaqueEffects.byScope.values()].flat();
+  const dataPropertyIntact = (
+    node: t.Node,
+    target: t.Node,
+    key: string,
+  ): boolean => {
+    const prior = (effect: t.Node | undefined) =>
+      semanticEffectTiming(node, effect, state) !== "after";
+    if (
+      !isUnshadowedGlobal(
+        unwrapJavaScriptExpression(target).node,
+        state,
+        "module",
+      ) ||
+      bindingFacts.complete !== true ||
+      opaqueModuleEffects.some(prior) ||
+      weakGlobalSites.some(prior) ||
+      (state.ambientBindingWrites.get("module") ?? []).some(prior)
+    )
+      return false;
+    const paths = ambientReads(target);
+    return (
+      paths.length > 0 &&
+      paths.every((path) => {
+        if (!path.every((segment): segment is string => segment !== null))
+          return false;
+        const dependencies = semanticInitialModuleDelegateDataProperty([
+          ...path,
+          key,
+        ]);
+        return (
+          dependencies !== undefined &&
+          dependencies.every(({ path }) =>
+            descriptorDependencyIntact(path, node),
+          )
+        );
+      })
+    );
+  };
+  const activeEscapes = refineArgumentEscapes(
+    retainedEscapes,
+    dataPropertyIntact,
+    (node, selected) => {
+      // Retire only the proven call's argument effects, preserving receiver
+      // records at the same node. Later calls consume the updated timing index.
+      for (const effect of originalEscapes.get(node) ?? []) {
+        escapeFacts.delete(effect);
+        for (const dependency of descriptorDependencies.values())
+          dependency.effects.delete(effect);
+      }
+      for (const target of selected)
+        retainEscapeFacts({ node, target, browserReceiver: false }, false);
+    },
+  );
+  observeOpaqueInvocation = createOpaqueObserver?.(ambientWrites);
   const activeTargetIds = new Set(
     activeWrites.flatMap(({ path }) =>
       path[0] === "pending-target" ? [Number(path[1])] : [],
@@ -1749,7 +1959,7 @@ export function* indexJavaScriptAmbientWritesSteps(
       paths,
     });
   };
-  for (const escape of escapes) resolveEscape(escape);
+  for (const escape of activeEscapes) resolveEscape(escape);
   if (hasReceiverProofs) {
     // Existing write targets also own delete/prototype evidence. Resolve each
     // target once here, rather than scanning all writes for every stored slot.
@@ -1842,7 +2052,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     !writesToMember(owner, key).some(
       (site) => semanticEffectTiming(read, site, state) !== "after",
     );
-  ownStaticSlotUnchanged = ownSlotUnchanged;
+  completedOwnSlotUnchanged = ownSlotUnchanged;
   completedOwnSlots.set(state, ownSlotUnchanged);
   // Resolve possible identities against one completed store snapshot before
   // publishing any writes. Incremental publication would invalidate loader
@@ -1863,6 +2073,7 @@ export function* indexJavaScriptAmbientWritesSteps(
       state.ambientWriteEffects.push({ path: resolved, node });
     }
   }
+  const ambientEscapeEffects: AmbientEscapeEffect[] = [];
   for (const { node, paths, browserReceiver } of resolvedEscapes)
     for (const path of paths) {
       if (path[0] === "callable-value") {
@@ -1871,16 +2082,27 @@ export function* indexJavaScriptAmbientWritesSteps(
         state.ambientWriteEffects.push({ path: escaped, node });
       }
       // Only proven browser APIs keep their global receiver from user code.
-      if (!(browserReceiver && path.length === 1 && path[0] === "global"))
-        state.ambientEscapes.retain([...path, null]);
+      if (!(browserReceiver && path.length === 1 && path[0] === "global")) {
+        const escaped = [...path, null];
+        state.ambientEscapes.retain(escaped);
+        ambientEscapeEffects.push({ node, path: escaped });
+      }
     }
   // A function may call a browser method replaced later in source order.
   if (
     [...browserReceiverMethods].some((method) =>
       state.ambientWrites.covers(["global", method]),
     )
-  )
+  ) {
     state.ambientEscapes.retain(["global", null]);
+    for (const { node, paths, browserReceiver } of resolvedEscapes)
+      if (
+        browserReceiver &&
+        paths.some((path) => path.length === 1 && path[0] === "global")
+      )
+        ambientEscapeEffects.push({ node, path: ["global", null] });
+  }
+  completedAmbientEscapeEffects.set(state, ambientEscapeEffects);
   // Opaque callees can be stored after container creation. Resolve them with
   // the completed store facts instead of a second resolver without those facts.
   for (const node of opaqueCalls ?? []) observeOpaqueInvocation?.(node);

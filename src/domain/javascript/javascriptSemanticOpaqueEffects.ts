@@ -4,7 +4,7 @@ import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import type { createAmbientPathResolver } from "./javascriptSemanticAmbientWrites.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
-import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
+import { semanticPropertyPathMayAffect } from "./javascriptSemanticPropertyPaths.js";
 import {
   semanticEffectTiming,
   semanticBindingEffectFollowsCapture,
@@ -290,7 +290,7 @@ export const semanticOpaqueBindingReadMayHaveChanged = (
   semanticOpaqueNameMayHaveChanged(read, state, binding);
 
 /** Global eval can rebind mutable script bindings, including lexical lets.
- * Script vars also share storage with own global properties. Consume the
+ * Script vars and functions share storage with own global properties. Consume the
  * ambient owner's canonical writes; CommonJS and module bindings are local. */
 export type SemanticGlobalBindingFacts = Pick<
   JavaScriptSemanticAnalysisState,
@@ -353,11 +353,7 @@ export const semanticAmbientWriteMayMatch = (
     }
   }
   const matches = (effect: JavaScriptSemanticMemberEffect) =>
-    effect.path.length <= path.length &&
-    effect.path.every((key, index) =>
-      semanticPropertyPathKeyMatches(key, path[index]!),
-    ) &&
-    predicate(effect);
+    semanticPropertyPathMayAffect(effect.path, path) && predicate(effect);
   const group =
     path[0] === undefined ? undefined : candidates.roots.get(path[0]);
   return (
@@ -380,9 +376,12 @@ export const semanticGlobalBindingReadMayHaveChanged = (
     javaScriptRuntimeContext(state.program) !== "unknown"
   )
     return false;
+  const ownsGlobalSlot =
+    binding.declarationKinds.has("var") ||
+    binding.initializers.some(({ node }) => t.isFunctionDeclaration(node));
   if (
     facts.complete === false &&
-    (binding.declarationKinds.has("var") ||
+    (ownsGlobalSlot ||
       (possibleGlobalEvalRoots
         .get(state)
         ?.some((root) => semanticEffectTiming(read, root, state) !== "after") ??
@@ -395,10 +394,7 @@ export const semanticGlobalBindingReadMayHaveChanged = (
     )
   )
     return true;
-  if (
-    !binding.declarationKinds.has("var") ||
-    !facts.ambientWrites.covers(["global", binding.name])
-  )
+  if (!ownsGlobalSlot || !facts.ambientWrites.covers(["global", binding.name]))
     return false;
   const initializer =
     binding.initializers.length === 1
@@ -413,7 +409,9 @@ export const semanticGlobalBindingReadMayHaveChanged = (
       // Initialization replaces earlier assigned values. Reflective writes may
       // instead change a descriptor and prevent that initialization, so keep
       // them without trying to infer the host property's descriptor state.
+      // Function declarations initialize at scope entry, before source writes.
       (initializer === undefined ||
+        t.isFunctionDeclaration(initializer) ||
         !t.isAssignmentExpression(node) ||
         semanticEffectTiming(initializer, node, state) !== "before"),
   );

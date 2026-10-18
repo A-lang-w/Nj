@@ -47,7 +47,7 @@ export const semanticRequireShimOrigin = (
   const current = chain?.root;
   if (
     chain === undefined ||
-    !t.isCallExpression(current) ||
+    (!t.isCallExpression(current) && !t.isOptionalCallExpression(current)) ||
     !t.isIdentifier(current.callee) ||
     current.arguments.length !== 1
   )
