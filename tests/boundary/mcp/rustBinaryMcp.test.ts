@@ -8,6 +8,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   createRustImage,
   createRustHashOverflowImage,
+  createRustWasmModule,
 } from "../../fixtures/rust/image.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
@@ -65,6 +66,24 @@ mcpTest(
         "inspect_rust_binary",
       ).outputSchema.parse(absent.structuredContent);
       expect(absentEvidence.normalized_result.auditable_metadata).toBeNull();
+      // The listed tools let the client check WebAssembly's null word size
+      // against the advertised output schema, not only the source contract.
+      const module = join(root, "sample.wasm");
+      await writeFile(module, createRustWasmModule());
+      const wasm = await client.callTool({
+        name: "inspect_rust_binary",
+        arguments: { path: module },
+      });
+      expect(wasm.isError, JSON.stringify(wasm.content)).not.toBe(true);
+      expect(
+        toolContract("inspect_rust_binary").outputSchema.parse(
+          wasm.structuredContent,
+        ).normalized_result,
+      ).toMatchObject({
+        format: "wasm",
+        bits: null,
+        auditable_metadata: { section_name: ".dep-v0", root_package_index: 1 },
+      });
     } finally {
       await session.close();
     }
