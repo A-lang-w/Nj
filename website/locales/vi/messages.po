@@ -13836,16 +13836,6 @@ msgstr ""
 " Trên Linux, trình thiết lập chuẩn bị bản demo được hỗ trợ cùng màn hình "
 "riêng của nó."
 
-#: website/public/get-started/index.html:1039
-msgctxt "page:get-started/index.html"
-msgid ""
-"Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
-"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
-msgstr ""
-"Host Linux: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS hoặc "
-"Omarchy. Hopper là phần mềm thương mại; bản demo có các giới hạn do nhà cung"
-" cấp quy định."
-
 #: website/public/get-started/index.html:1058
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -15150,6 +15140,22 @@ msgstr "Về đầu trang"
 msgctxt "runtime"
 msgid "Contributors: {count}"
 msgstr "Người đóng góp: {count}"
+
+#: website/public/get-started/index.html:1039
+msgctxt "page:get-started/index.html"
+msgid ""
+"Linux hosts: Ubuntu 24.04, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+msgstr ""
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+#~ "Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+#~ msgstr ""
+#~ "Host Linux: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS hoặc "
+#~ "Omarchy. Hopper là phần mềm thương mại; bản demo có các giới hạn do nhà cung"
+#~ " cấp quy định."
 
 #, python-brace-format
 #~ msgctxt "runtime"

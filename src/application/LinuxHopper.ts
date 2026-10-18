@@ -170,6 +170,7 @@ export type LinuxHopperInstallResult =
         | "launcher_missing"
         | "runtime_dependencies"
         | "unsupported_hopper_build"
+        | "unsupported_hopper_runtime"
         | "publisher_verification_failed"
         | "verification_unavailable"
         | "cleanup_failed"
@@ -233,7 +234,14 @@ export const linuxHopperEmbeddedPythonPackage = (
 ): string | undefined => {
   if (linuxHopperEmbeddedPythonRuntime(hopperVersion) === undefined)
     return undefined;
-  if (distribution?.packageFamily === "rpm") return "python3.12-libs";
+  if (
+    distribution?.packageFamily === "rpm" &&
+    ((distribution.id === "fedora" &&
+      versionAtLeast(distribution.versionId, 41)) ||
+      (distribution.id === "nobara" &&
+        versionAtLeast(distribution.versionId, 44)))
+  )
+    return "python3.12-libs";
   if (
     distribution?.packageFamily === "deb" &&
     distribution.id === "ubuntu" &&
@@ -333,9 +341,9 @@ export const installLinuxHopper = async (
       if (linuxHopperEmbeddedPythonRuntime(release.version) === undefined)
         return {
           status: "failed",
-          reason: "unsupported_hopper_build",
+          reason: "unsupported_hopper_runtime",
           verificationFailure: new HopperReleaseError(
-            "unsupported_hopper_build",
+            "unsupported_hopper_runtime",
             `Hopper ${release.version} has no verified embedded Python runtime mapping.`,
           ),
         };
@@ -627,14 +635,7 @@ export const linuxPackageManagerCommands = (
             "xorg-x11-server-Xvfb",
             "xorg-x11-xauth",
             "python3",
-            ...(linuxHopperEmbeddedPythonPackage(
-              {
-                id: "fedora",
-                packageFamily: "rpm",
-                hopperSetupSupported: true,
-              },
-              hopperVersion,
-            )
+            ...(linuxHopperEmbeddedPythonRuntime(hopperVersion) !== undefined
               ? ["python3.12-libs"]
               : []),
             "libX11",

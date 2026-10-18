@@ -20,6 +20,15 @@ describe("macOS Hopper setup failure projection", () => {
         "The mounted package did not contain the expected Hopper application bundle. Retry setup; if it repeats, update REA before installing.",
     });
   });
+
+  it("does not describe an unmapped runtime as a launcher mismatch", () => {
+    expect(setupInstallFailure("unsupported_hopper_runtime")).toEqual({
+      status: "failed",
+      code: "unsupported_hopper_runtime",
+      remediation:
+        "This Hopper release has no verified embedded Python runtime mapping. Update REA before installing it, or configure an existing supported Hopper provider.",
+    });
+  });
 });
 
 describe("Linux package-manager setup failure projection", () => {

@@ -13933,16 +13933,6 @@ msgstr ""
 "або активуйте ліцензію. У Linux налаштування готує підтримувану демоверсію "
 "та окремий дисплей для неї."
 
-#: website/public/get-started/index.html:1039
-msgctxt "page:get-started/index.html"
-msgid ""
-"Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
-"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
-msgstr ""
-"Хости Linux: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS або "
-"Omarchy. Hopper — комерційна програма; обмеження демоверсії визначає "
-"розробник."
-
 #: website/public/get-started/index.html:1058
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -15260,6 +15250,22 @@ msgstr "Нагору"
 msgctxt "runtime"
 msgid "Contributors: {count}"
 msgstr "Учасники: {count}"
+
+#: website/public/get-started/index.html:1039
+msgctxt "page:get-started/index.html"
+msgid ""
+"Linux hosts: Ubuntu 24.04, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+msgstr ""
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+#~ "Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+#~ msgstr ""
+#~ "Хости Linux: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS або "
+#~ "Omarchy. Hopper — комерційна програма; обмеження демоверсії визначає "
+#~ "розробник."
 
 #, python-brace-format
 #~ msgctxt "runtime"

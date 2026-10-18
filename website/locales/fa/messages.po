@@ -13698,16 +13698,6 @@ msgstr ""
 "فعال کنید. در Linux، راه‌اندازی نسخهٔ آزمایشی پشتیبانی‌شده و نمایشگر اختصاصی"
 " آن را آماده می‌کند."
 
-#: website/public/get-started/index.html:1039
-msgctxt "page:get-started/index.html"
-msgid ""
-"Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
-"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
-msgstr ""
-"میزبان‌های Linux: ‏Ubuntu 24.04+، Fedora 41+، Nobara 44+، Arch Linux، "
-"CachyOS یا Omarchy. Hopper نرم‌افزار تجاری است؛ نسخهٔ آزمایشی محدودیت‌هایی "
-"دارد که فروشنده تعیین می‌کند."
-
 #: website/public/get-started/index.html:1058
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -15013,6 +15003,22 @@ msgstr "بازگشت به بالا"
 msgctxt "runtime"
 msgid "Contributors: {count}"
 msgstr "مشارکت‌کنندگان: {count}"
+
+#: website/public/get-started/index.html:1039
+msgctxt "page:get-started/index.html"
+msgid ""
+"Linux hosts: Ubuntu 24.04, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+msgstr ""
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+#~ "Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+#~ msgstr ""
+#~ "میزبان‌های Linux: ‏Ubuntu 24.04+، Fedora 41+، Nobara 44+، Arch Linux، "
+#~ "CachyOS یا Omarchy. Hopper نرم‌افزار تجاری است؛ نسخهٔ آزمایشی محدودیت‌هایی "
+#~ "دارد که فروشنده تعیین می‌کند."
 
 #, python-brace-format
 #~ msgctxt "runtime"

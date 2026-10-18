@@ -5026,7 +5026,7 @@ msgstr ""
 #: website/public/get-started/index.html:1039
 msgctxt "page:get-started/index.html"
 msgid ""
-"Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or Omarchy. "
+"Linux hosts: Ubuntu 24.04, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or Omarchy. "
 "Hopper is commercial software; its demo has vendor-defined limits."
 msgstr ""
 

@@ -324,6 +324,14 @@ it("only selects the verified Ubuntu 24.04 embedded runtime package", () => {
       hopperSetupSupported: true,
     }),
   ).toBe("python3.12-libs");
+  expect(
+    linuxHopperEmbeddedPythonPackage({
+      id: "rhel",
+      versionId: "9",
+      packageFamily: "rpm",
+      hopperSetupSupported: false,
+    }),
+  ).toBeUndefined();
   expect(linuxHopperEmbeddedPythonRuntime("6.6.0")).toEqual({
     soname: "libpython3.12.so.1.0",
   });
@@ -370,7 +378,7 @@ describe("Linux Hopper package installation", () => {
     host.releaseVersion = "99.2.1";
     await expect(installLinuxHopper(host)).resolves.toMatchObject({
       status: "failed",
-      reason: "unsupported_hopper_build",
+      reason: "unsupported_hopper_runtime",
     });
     expect(host.downloads).toEqual([]);
     expect(host.verifiedBeforeInstall).toBe(false);

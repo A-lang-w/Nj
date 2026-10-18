@@ -14232,16 +14232,6 @@ msgstr ""
 "όταν ανοίξει για πρώτη φορά το Hopper. Στο Linux, η ρύθμιση προετοιμάζει την"
 " υποστηριζόμενη έκδοση επίδειξης και το ιδιωτικό περιβάλλον οθόνης της."
 
-#: website/public/get-started/index.html:1039
-msgctxt "page:get-started/index.html"
-msgid ""
-"Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
-"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
-msgstr ""
-"Συστήματα Linux: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS "
-"ή Omarchy. Το Hopper είναι εμπορικό λογισμικό· η έκδοση επίδειξής του έχει "
-"περιορισμούς που ορίζει ο κατασκευαστής."
-
 #: website/public/get-started/index.html:1058
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -15438,6 +15428,22 @@ msgstr "Επιστροφή στην κορυφή"
 msgctxt "runtime"
 msgid "Contributors: {count}"
 msgstr "Συνεισφέροντες: {count}"
+
+#: website/public/get-started/index.html:1039
+msgctxt "page:get-started/index.html"
+msgid ""
+"Linux hosts: Ubuntu 24.04, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+msgstr ""
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+#~ "Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+#~ msgstr ""
+#~ "Συστήματα Linux: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS "
+#~ "ή Omarchy. Το Hopper είναι εμπορικό λογισμικό· η έκδοση επίδειξής του έχει "
+#~ "περιορισμούς που ορίζει ο κατασκευαστής."
 
 #, python-brace-format
 #~ msgctxt "runtime"

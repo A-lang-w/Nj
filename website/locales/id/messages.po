@@ -13919,16 +13919,6 @@ msgstr ""
 "dibuka. Di Linux, penyiapan menyiapkan demo yang didukung beserta tampilan "
 "privatnya."
 
-#: website/public/get-started/index.html:1039
-msgctxt "page:get-started/index.html"
-msgid ""
-"Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
-"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
-msgstr ""
-"Host Linux: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, atau"
-" Omarchy. Hopper adalah perangkat lunak komersial; demonya memiliki batas "
-"yang ditentukan vendor."
-
 #: website/public/get-started/index.html:1058
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -15247,6 +15237,22 @@ msgstr "Kembali ke atas"
 msgctxt "runtime"
 msgid "Contributors: {count}"
 msgstr "Kontributor: {count}"
+
+#: website/public/get-started/index.html:1039
+msgctxt "page:get-started/index.html"
+msgid ""
+"Linux hosts: Ubuntu 24.04, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+msgstr ""
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+#~ "Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+#~ msgstr ""
+#~ "Host Linux: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, atau"
+#~ " Omarchy. Hopper adalah perangkat lunak komersial; demonya memiliki batas "
+#~ "yang ditentukan vendor."
 
 #, python-brace-format
 #~ msgctxt "runtime"

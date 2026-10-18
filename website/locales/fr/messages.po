@@ -14069,16 +14069,6 @@ msgstr ""
 " licence à la première ouverture de Hopper. Sur Linux, la configuration "
 "prépare la démo prise en charge et son affichage privé."
 
-#: website/public/get-started/index.html:1039
-msgctxt "page:get-started/index.html"
-msgid ""
-"Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
-"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
-msgstr ""
-"Hôtes Linux : Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS ou "
-"Omarchy. Hopper est un logiciel commercial ; sa démo a des limites définies "
-"par l’éditeur."
-
 #: website/public/get-started/index.html:1058
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -15416,6 +15406,22 @@ msgstr "Haut de page"
 msgctxt "runtime"
 msgid "Contributors: {count}"
 msgstr "Contributeurs: {count}"
+
+#: website/public/get-started/index.html:1039
+msgctxt "page:get-started/index.html"
+msgid ""
+"Linux hosts: Ubuntu 24.04, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+msgstr ""
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+#~ "Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+#~ msgstr ""
+#~ "Hôtes Linux : Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS ou "
+#~ "Omarchy. Hopper est un logiciel commercial ; sa démo a des limites définies "
+#~ "par l’éditeur."
 
 #, python-brace-format
 #~ msgctxt "runtime"
