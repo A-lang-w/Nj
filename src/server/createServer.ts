@@ -6,10 +6,8 @@ import { createSignalRecordingService } from "../composition/signals.js";
 import { registerSignalTools } from "./registerSignalTools.js";
 import type { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
 import type { WasmComponentService } from "../application/wasm/WasmComponentService.js";
-import {
-  createWasmComponentService,
-  wasmArtifactModule,
-} from "../composition/wasm.js";
+import { wasmArtifactModule } from "../composition/wasm.js";
+import { createWasmComponentService } from "../composition/wasmComponent.js";
 import {
   registerWasmComponentTool,
   registerWasmTools,

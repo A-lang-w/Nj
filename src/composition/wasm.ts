@@ -1,7 +1,5 @@
 import { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
-import { WasmComponentService } from "../application/wasm/WasmComponentService.js";
 import { WabtArtifactProvider } from "../wasm/WabtArtifactProvider.js";
-import { WasmComponentProvider } from "../wasm/WasmComponentProvider.js";
 import { INSPECT_WASM_ARTIFACT_CONTRACT } from "../contracts/wasm/wasmToolContracts.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 /** Compose the caller-supplied offline toolchain without acquisition or import-time I/O. */
@@ -9,10 +7,6 @@ export const createWasmArtifactService = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): WasmArtifactService =>
   new WasmArtifactService(new WabtArtifactProvider(environment));
-
-/** Compose the bundled component decoder without acquisition or import-time I/O. */
-export const createWasmComponentService = (): WasmComponentService =>
-  new WasmComponentService(new WasmComponentProvider());
 
 /**
  * Internal static descriptor for one named domain operation and its lifetime.

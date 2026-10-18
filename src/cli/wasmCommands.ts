@@ -2,10 +2,7 @@ import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparis
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { z } from "incur";
-import {
-  createWasmComponentService,
-  wasmArtifactModule,
-} from "../composition/wasm.js";
+import { wasmArtifactModule } from "../composition/wasm.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
@@ -92,6 +89,9 @@ export const registerWasmCommands = (
     }),
     run: ({ args }) =>
       withCommandCancellation(async (signal) => {
+        // The decoder and its result schema load only when this command runs.
+        const { createWasmComponentService } =
+          await import("../composition/wasmComponent.js");
         const service = createWasmComponentService();
         return await logCliCommand(
           logger,
