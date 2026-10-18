@@ -12,6 +12,13 @@ import { createTestTempDirectory } from "./temporaryDirectory.js";
 const EXACT_INTEGER = { $plist_type: "integer", decimal: "9007199254740993" };
 const ROUNDED = 9007199254740992;
 
+const unknownInteger = (literal: string) => ({
+  $plist_type: "unknown",
+  element: "integer",
+  literal,
+  reason: literal.includes("<") ? "unsupported-markup" : "invalid-literal",
+});
+
 /** Accepted decoder representations whose supplemental metadata needs care. */
 export const mixedArchiveNumberElements = [
   "<integer>9007199254740992<!-- split -->3</integer>",
@@ -46,7 +53,12 @@ export const archiveNumberMetadataCases = [
     name: element,
     source: { first: "__INTEGER__", other: "__OTHER__" },
     element,
-    expected: { first: ROUNDED, other: ROUNDED },
+    expected: {
+      first: EXACT_INTEGER,
+      other: unknownInteger(
+        element.slice("<integer>".length, -"</integer>".length),
+      ),
+    },
     incomplete: true,
     malformedReference: false,
   })),
@@ -80,8 +92,8 @@ export const archiveNumberMetadataCases = [
     name: "entity-encoded integer text",
     source: { amount: "__INTEGER__" },
     element: "",
-    expected: { amount: EXACT_INTEGER },
-    incomplete: false,
+    expected: { amount: unknownInteger("&#57;007199254740993") },
+    incomplete: true,
     malformedReference: false,
     integerElement: "<integer>&#57;007199254740993</integer>",
   },
@@ -147,10 +159,12 @@ export const expectKeyedArchiveNumberMetadata = (
   });
   if (item.incomplete) {
     expect(result.limitations).toContainEqual(
-      expect.stringMatching(/metadata.*completely observed.*precision/u),
+      expect.stringMatching(
+        /^1 XML scalar value\(s\) could not be established/u,
+      ),
     );
     expect(
-      result.limitations.some((note) => note.includes("unambiguous integer")),
+      result.limitations.some((note) => note.includes("completely observed")),
     ).toBe(false);
   } else if (item.malformedReference) {
     expect(result.references).toContainEqual({
