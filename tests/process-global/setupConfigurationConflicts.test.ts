@@ -17,19 +17,32 @@ const writers = vi.hoisted(() => ({
   duringRead: undefined as undefined | (() => Promise<void>),
 }));
 
-vi.mock("write-file-atomic", async (importOriginal) => {
-  const actual = await importOriginal<{
-    default: typeof import("write-file-atomic");
-  }>();
-  return {
-    ...actual,
-    default: async (...args: Parameters<typeof actual.default>) => {
-      await writers.before?.(args[0]);
-      await actual.default(...args);
-      await writers.after?.(args[0]);
-    },
-  };
-});
+vi.mock(
+  "../../src/application/ClientConfigurationPublication.js",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("../../src/application/ClientConfigurationPublication.js")
+      >();
+    return {
+      ...actual,
+      ClientConfigurationPublication: {
+        write: async (
+          ...args: Parameters<
+            typeof actual.ClientConfigurationPublication.write
+          >
+        ) => {
+          await writers.before?.(args[0]);
+          const publication = await actual.ClientConfigurationPublication.write(
+            ...args,
+          );
+          await writers.after?.(args[0]);
+          return publication;
+        },
+      },
+    };
+  },
+);
 
 vi.mock("../../src/process/BoundedFileBytes.js", async (importOriginal) => {
   const actual =
