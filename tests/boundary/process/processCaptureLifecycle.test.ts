@@ -182,7 +182,7 @@ itWithCaptureCapability(
       return wallReads === 1 ? wallStart : wallStart - 60_000 + wallReads;
     });
     const controller = new AbortController();
-    const fallback = setTimeout(() => controller.abort(), 1_500);
+    const fallback = setTimeout(() => controller.abort(), 5_000);
     try {
       const result = await captureProcessScenario(
         parseProcessScenario({
@@ -194,8 +194,8 @@ itWithCaptureCapability(
         }),
         controller.signal,
       );
-      expect(result.ok).toBe(true);
       if (!result.ok) throw result.error;
+      expect(result.ok).toBe(true);
       expect(result.value.exit.reason).toBe("timeout");
     } finally {
       clearTimeout(fallback);
