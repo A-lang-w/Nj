@@ -391,7 +391,10 @@ export class DshCordisDocument {
         throw new ConfigurationError("Cordis environment is not a mapping");
       for (const pair of [...nextEnv.items]) {
         const key = this.#yaml.key(pair.key);
-        if (Object.hasOwn(desiredEnv, key)) continue;
+        if (Object.hasOwn(desiredEnv, key)) {
+          this.#yaml.renameKey(nextEnv, pair, key);
+          continue;
+        }
         const alias =
           process.platform === "win32"
             ? Object.keys(desiredEnv).find(

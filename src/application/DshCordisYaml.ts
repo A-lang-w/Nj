@@ -104,7 +104,9 @@ export class DshCordisYaml {
 
   /** A case-only rename retains source key/value comments on the chosen alias. */
   renameKey(map: YAMLMap, pair: Pair, key: string): void {
-    const existing = map.items.find((item) => this.key(item.key) === key);
+    const existing = map.items.find(
+      (item) => item !== pair && this.key(item.key) === key,
+    );
     const replacement = existing ?? pair;
     const carry = (source: unknown, target: unknown): void => {
       if (!isNode(source) || !isNode(target) || source === target) return;
@@ -119,7 +121,7 @@ export class DshCordisYaml {
       carry(pair.key, existing.key);
       carry(pair.value, existing.value);
       map.items = map.items.filter((item) => item !== pair);
-    } else {
+    } else if (this.key(pair.key) !== key) {
       const renamed = this.document.createNode(key);
       carry(pair.key, renamed);
       replacement.key = renamed;
@@ -132,7 +134,8 @@ export class DshCordisYaml {
 
   /** Preserve unchanged nodes and carry their comments when replacing values. */
   setValue(map: YAMLMap, key: string, value: unknown): void {
-    const original = this.field(map, key);
+    const pair = map.items.findLast((item) => this.key(item.key) === key);
+    const original = pair?.value;
     if (isDeepStrictEqual(this.value(original), value)) return;
     const replacement = this.document.createNode(value);
     if (isNode(original) && isNode(replacement)) {
@@ -141,7 +144,8 @@ export class DshCordisYaml {
       if (original.commentBefore !== undefined)
         replacement.commentBefore = original.commentBefore;
     }
-    map.set(key, replacement);
+    if (pair === undefined) map.set(key, replacement);
+    else pair.value = replacement;
   }
 
   /** Copy from the source before edits; materialized nodes own no anchors. */

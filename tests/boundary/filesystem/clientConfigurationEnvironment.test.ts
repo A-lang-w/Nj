@@ -56,6 +56,7 @@ it.skipIf(process.platform !== "win32").each([
     duplicate: false,
   },
   { key: "true", override: "TRUE", value: "chosen", duplicate: false },
+  { key: '"true"', override: "true", value: "chosen", duplicate: true },
   {
     key: "rea_analysis_provider",
     override: "REA_ANALYSIS_PROVIDER",
@@ -91,7 +92,7 @@ it.skipIf(process.platform !== "win32").each([
     expect(env.value.values).toHaveProperty(override, value);
     expect(
       Object.keys(env.value.values).filter(
-        (name) => name.toUpperCase() === override,
+        (name) => name.toUpperCase() === override.toUpperCase(),
       ),
     ).toEqual([override]);
     expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(source);
