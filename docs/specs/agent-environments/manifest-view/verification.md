@@ -174,3 +174,13 @@ the fixture therefore keeps `/api/folders/general` and
 `/api/folders/fg1jo91e57e2ob` separate, while all three rules still fold
 `general` into `/api/folders/{uid}` through the opaque-token parameter. Tests:
 the new partition case and the updated single-rule table.
+
+Follow-up mixed-cohort regressions reproduced two omissions on `dd87f54e`
+with main `8307ea37`: two coded siblings prevented three qualifying hyphenated
+siblings from joining the parameter, and one coded sibling was omitted when
+three hyphenated siblings merged. Eligibility now belongs to one Set that
+combines both qualifying cohorts before the minimum group size is checked.
+The consumer reuses that Set and materializes its merge order once. Three
+cases cover both omissions and preserve the three-hyphen minimum when only
+two hyphenated siblings accompany coded identifiers; `mine` and `search`
+remain literal and every source record remains represented.

@@ -178,23 +178,20 @@ const literalAt = (group: ToolGroup, position: number): string => {
 const identifierLikeSiblings = (
   literal: readonly ToolGroup[],
   position: number,
-): ToolGroup[] => {
-  const candidates = literal.filter(
-    (group) => !STOP_WORDS.has(literalAt(group, position)),
-  );
-  const coded = candidates.filter((group) =>
-    /[\d:]/u.test(literalAt(group, position)),
-  );
-  if (coded.length >= 2) return coded;
+): ReadonlySet<ToolGroup> => {
+  const eligible = new Set<ToolGroup>();
   const previous = literal[0]?.parts[position - 1];
-  const hyphenated = candidates.filter((group) =>
-    literalAt(group, position).includes("-"),
-  );
-  return hyphenated.length >= 3 &&
-    previous?.kind === "literal" &&
-    previous.value.endsWith("s")
-    ? hyphenated
-    : [];
+  const plural = previous?.kind === "literal" && previous.value.endsWith("s");
+  const hyphenated: ToolGroup[] = [];
+  for (const group of literal) {
+    const value = literalAt(group, position);
+    if (STOP_WORDS.has(value)) continue;
+    if (/[\d:]/u.test(value)) eligible.add(group);
+    if (plural && value.includes("-")) hyphenated.push(group);
+  }
+  if (hyphenated.length >= 3)
+    for (const group of hyphenated) eligible.add(group);
+  return eligible;
 };
 
 const optInParamAt = (group: ToolGroup, position: number): boolean => {
@@ -207,9 +204,10 @@ const mergeLiteralSiblings = (
   literal: readonly ToolGroup[],
   position: number,
 ): ToolGroup[] => {
-  const eligible = new Set(identifierLikeSiblings(literal, position));
+  const eligible = identifierLikeSiblings(literal, position);
   if (eligible.size < 2) return [...literal];
-  const first = earliest([...eligible]);
+  const groups = [...eligible];
+  const first = earliest(groups);
   const shape = withParts(
     first,
     first.parts.map((part, index) =>
@@ -220,7 +218,7 @@ const mergeLiteralSiblings = (
   );
   return [
     mergeGroups(
-      [...eligible].map((group) => (group === first ? shape : group)),
+      groups.map((group) => (group === first ? shape : group)),
       shape,
     ),
     ...literal.filter((group) => !eligible.has(group)),

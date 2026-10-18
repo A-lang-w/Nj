@@ -996,3 +996,49 @@ it("merges only the identifier-like siblings and keeps the other literals as the
     )?.params[0]?.observed_values,
   ).toEqual(["a1", "b2"]);
 });
+
+it.each([
+  {
+    coded: ["a1", "b2"],
+    hyphenated: ["red-one", "blue-two", "green-three"],
+    eligible: ["a1", "b2", "red-one", "blue-two", "green-three"],
+    literal: ["mine", "search"],
+  },
+  {
+    coded: ["a1"],
+    hyphenated: ["red-one", "blue-two", "green-three"],
+    eligible: ["a1", "red-one", "blue-two", "green-three"],
+    literal: ["mine", "search"],
+  },
+  {
+    coded: ["a1", "b2"],
+    hyphenated: ["red-one", "blue-two"],
+    eligible: ["a1", "b2"],
+    literal: ["mine", "search", "red-one", "blue-two"],
+  },
+])(
+  "combines qualifying sibling cohorts without promoting a short hyphenated cohort: $coded / $hyphenated",
+  ({ coded, hyphenated, eligible, literal }) => {
+    const values = [...coded, ...hyphenated, "mine", "search"];
+    const projected = manifest(
+      ["sibling-variance"],
+      syntheticCapture(
+        values.map(
+          (value) => ["GET", `https://s.test/api/items/${value}`] as const,
+        ),
+      ),
+    );
+    expect(
+      projected.tools.find(
+        (tool) => tool.path_template === "/api/items/{item_id}",
+      )?.params[0]?.observed_values,
+    ).toEqual([...eligible].sort());
+    expect(
+      projected.tools
+        .filter((tool) => tool.params.length === 0)
+        .map((tool) => tool.path_template)
+        .sort(),
+    ).toEqual(literal.map((value) => `/api/items/${value}`).sort());
+    expect(projected.records).toHaveLength(values.length);
+  },
+);
