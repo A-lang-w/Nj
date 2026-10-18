@@ -308,7 +308,12 @@ export const installLinuxHopper = async (
       const archiveDownload = await host.download(release.filename, options);
       if (!archiveDownload.ok) return { status: "failed", reason: "download" };
       temporary = await host.createTemporaryDirectory();
-      const archive = join(temporary, `hopper.${distribution.packageFamily}`);
+      // Linux package paths stay POSIX even when this host is exercised from
+      // a non-Linux test process.
+      const archive = posix.join(
+        temporary,
+        `hopper.${distribution.packageFamily}`,
+      );
       await host.writeArchive(archive, archiveDownload.bytes);
       const verified = await host.verifyArchive(
         distribution.packageFamily,
