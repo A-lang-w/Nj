@@ -45,7 +45,7 @@ npm pack rea-agents@<matching-version>
 tar -xzf rea-agents-<matching-version>.tgz package/native/windows/build
 New-Item -ItemType Directory -Force -Path native/windows/build
 Copy-Item package/native/windows/build/* native/windows/build/ -Force
-Remove-Item -Recurse -Force package, rea-agents-*.tgz
+Remove-Item -Recurse -Force package, rea-agents-<matching-version>.tgz
 ```
 
 In POSIX shell (Git Bash / WSL):
