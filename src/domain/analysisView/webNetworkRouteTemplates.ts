@@ -86,6 +86,12 @@ export const mediaTypeEssence = (reported: string): string | null => {
   return MEDIA_TYPE_ESSENCE.test(essence) ? essence.toLowerCase() : null;
 };
 
+/** Route parts of a template: one more than its separators. */
+export const routePartCount = (template: string): number => {
+  let count = 1;
+  for (const character of template) if (character === "/") count += 1;
+  return count;
+};
 /** The first exact format rule a recorded path segment satisfies, if any. */
 export const segmentRule = (value: string): RouteRule | null => {
   if (/^[0-9]+$/u.test(value)) return "numeric";

@@ -95,3 +95,16 @@ it("charges every literal route part so a path of many short segments fails clos
   });
   expect(finished(accumulator).tools).toHaveLength(1);
 });
+
+it("charges a request media type before scanning it so an oversized one fails closed", () => {
+  const accumulator = new EnvironmentManifestAccumulator(64 * 1024);
+  const record = sample(0, "/api/items", "{}");
+  (
+    record.reported as { request: { postData: { mimeType: string } } }
+  ).request.postData.mimeType = `application/json${"x".repeat(100_000)}`;
+  expect(accumulator.add(record)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisResourceConstraintError", resource: "memory" },
+  });
+  expect(finished(accumulator).tools).toHaveLength(0);
+});

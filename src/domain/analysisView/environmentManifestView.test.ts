@@ -861,3 +861,37 @@ it("does not compare routes beyond the sibling-variance segment limit and says s
     "Routes with more than 32 segments are not compared by sibling-variance; they keep their grouped templates.",
   );
 });
+
+it("shares collision suffixes across bases that differ only past the name limit", () => {
+  const stem = "x".repeat(70);
+  const projected = manifest(
+    [],
+    syntheticCapture(
+      Array.from(
+        { length: 200 },
+        (_, index) =>
+          ["GET", `https://s.test/api/${stem}${String(index)}`] as const,
+      ),
+    ),
+  );
+  const names = projected.tools.map((tool) => tool.name);
+  expect(new Set(names).size).toBe(200);
+  expect(names.every((name) => name.length <= 60)).toBe(true);
+  expect(names.filter((name) => /_\d+$/u.test(name))).toHaveLength(199);
+});
+
+it("folds many literal siblings into one opt-in parameter", () => {
+  const projected = manifest(
+    ["opaque-token", "sibling-variance"],
+    syntheticCapture([
+      ["GET", "https://s.test/api/items/abc123def456ghi"],
+      ...Array.from(
+        { length: 300 },
+        (_, index) =>
+          ["GET", `https://s.test/api/items/name-${String(index)}`] as const,
+      ),
+    ]),
+  );
+  expect(projected.tools).toHaveLength(1);
+  expect(projected.tools[0]?.params[0]?.observed_values).toHaveLength(301);
+});

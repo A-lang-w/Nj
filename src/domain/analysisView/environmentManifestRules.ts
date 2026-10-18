@@ -235,13 +235,13 @@ const mergeSiblings = (
   if (targets.length === 0)
     return [...templated, ...mergeLiteralSiblings(literal, position)];
   const target = earliest(targets);
-  const foldable = literal.filter(
-    (group) => !STOP_WORDS.has(literalAt(group, position)),
+  const foldable = new Set(
+    literal.filter((group) => !STOP_WORDS.has(literalAt(group, position))),
   );
   return [
     mergeGroups([target, ...foldable], target),
     ...templated.filter((group) => group !== target),
-    ...literal.filter((group) => !foldable.includes(group)),
+    ...literal.filter((group) => !foldable.has(group)),
   ];
 };
 
@@ -368,7 +368,7 @@ export const pathTemplate = (
     .join("/")}`;
 };
 
-/** Names assigned in one manifest and the next suffix to try for each colliding base. */
+/** Names assigned in one manifest and the next suffix to try for each colliding truncated base. */
 export interface ToolNameRegistry {
   readonly used: Set<string>;
   readonly nextSuffix: Map<string, number>;
@@ -406,15 +406,17 @@ export const toolName = (
     ) || "tool";
   const truncate = (text: string, limit: number): string =>
     text.slice(0, limit).replace(/_+$/u, "");
-  let candidate = truncate(base, TOOL_NAME_LIMIT);
+  // Bases that differ only past the limit share one candidate, so the counter is keyed by it.
+  const namespace = truncate(base, TOOL_NAME_LIMIT);
+  let candidate = namespace;
   if (registry.used.has(candidate)) {
-    let suffix = registry.nextSuffix.get(base) ?? 2;
+    let suffix = registry.nextSuffix.get(namespace) ?? 2;
     for (; ; suffix += 1) {
       const tail = `_${String(suffix)}`;
       candidate = `${truncate(base, TOOL_NAME_LIMIT - tail.length)}${tail}`;
       if (!registry.used.has(candidate)) break;
     }
-    registry.nextSuffix.set(base, suffix + 1);
+    registry.nextSuffix.set(namespace, suffix + 1);
   }
   registry.used.add(candidate);
   return candidate;

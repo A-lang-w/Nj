@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { jsonValueType } from "../jsonShape.js";
+import { jsonValueType, parseJsonObject } from "../jsonShape.js";
 import { ok, type Result } from "../result.js";
 import {
   compareUnicodeCodePoints as compare,
@@ -25,7 +25,6 @@ import {
   type JsonTypeName,
   type LiteralPart,
   type ManifestRule,
-  type RoutePart,
   type TemplateRule,
   type ToolGroup,
 } from "./environmentManifestRules.js";
@@ -37,6 +36,7 @@ import {
   mediaTypeEssence,
   readQueryParameterNames,
   readRecordedRequestLine,
+  routePartCount,
   scanRouteTemplate,
   textBytes,
   type RecordedRequestLine,
@@ -129,26 +129,6 @@ const UNKNOWNS: Manifest["unknowns"] = [
   },
 ];
 
-/** Parse text as a JSON object; anything else, including invalid JSON, is null. */
-const parseJsonObject = (
-  text: string,
-): Readonly<Record<string, unknown>> | null => {
-  let root: unknown;
-  try {
-    root = JSON.parse(text);
-  } catch {
-    return null;
-  }
-  return typeof root === "object" && root !== null && !Array.isArray(root)
-    ? (root as Readonly<Record<string, unknown>>)
-    : null;
-};
-/** Route parts of a template: one more than its separators. */
-const routePartCount = (template: string): number => {
-  let count = 1;
-  for (const character of template) if (character === "/") count += 1;
-  return count;
-};
 const isJson = (essence: string | null): boolean =>
   essence === "application/json" || (essence?.endsWith("+json") ?? false);
 
@@ -265,10 +245,13 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
       body === undefined ||
       body === null ||
       typeof body.text !== "string" ||
-      typeof body.mimeType !== "string" ||
-      !isJson(mediaTypeEssence(body.mimeType))
+      typeof body.mimeType !== "string"
     )
       return ok(null);
+    // The media type is scanned and lowercased before it is known to be JSON; charge it first.
+    if (!this.scratch(textBytes(body.mimeType.length)))
+      return this.overBudget();
+    if (!isJson(mediaTypeEssence(body.mimeType))) return ok(null);
     // The parsed tree is linear in the text and coexists with it and the key entries.
     if (!this.scratch(RECORD_SCRATCH_BYTES + textBytes(body.text.length) * 3))
       return this.overBudget();
