@@ -33,6 +33,7 @@ export class HopperReleaseError extends Error {
       | "publisher_verification_failed"
       | "verification_unavailable"
       | "unsupported_hopper_build"
+      | "unsupported_hopper_runtime"
       | "cancelled"
       | "cleanup_failed"
       | "cache_missing",

@@ -13571,16 +13571,6 @@ msgstr ""
 "التجريبي أو فعّل ترخيصك عندما يفتح Hopper لأول مرة. على Linux، يجهّز الإعداد"
 " النسخة التجريبية المدعومة وشاشتها الخاصة."
 
-#: website/public/get-started/index.html:1039
-msgctxt "page:get-started/index.html"
-msgid ""
-"Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
-"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
-msgstr ""
-"أنظمة Linux المضيفة: Ubuntu 24.04+ وFedora 41+ وNobara 44+ وArch Linux "
-"وCachyOS أو Omarchy. Hopper برنامج تجاري؛ للنسخة التجريبية حدود تحددها "
-"الشركة المنتجة."
-
 #: website/public/get-started/index.html:1058
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -14856,6 +14846,22 @@ msgstr "العودة للأعلى"
 msgctxt "runtime"
 msgid "Contributors: {count}"
 msgstr "المساهمون: {count}"
+
+#: website/public/get-started/index.html:1039
+msgctxt "page:get-started/index.html"
+msgid ""
+"Linux hosts: Ubuntu 24.04, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+msgstr ""
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+#~ "Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+#~ msgstr ""
+#~ "أنظمة Linux المضيفة: Ubuntu 24.04+ وFedora 41+ وNobara 44+ وArch Linux "
+#~ "وCachyOS أو Omarchy. Hopper برنامج تجاري؛ للنسخة التجريبية حدود تحددها "
+#~ "الشركة المنتجة."
 
 #, python-brace-format
 #~ msgctxt "runtime"

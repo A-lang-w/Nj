@@ -12639,15 +12639,6 @@ msgstr ""
 "在 setup 中選擇 Hopper，查看它的獨立安裝計畫。macOS 首次打開 Hopper 時選擇試用模式或啟用授權；Linux 的 setup "
 "會準備支援的試用版及其專用顯示環境。"
 
-#: website/public/get-started/index.html:1039
-msgctxt "page:get-started/index.html"
-msgid ""
-"Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
-"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
-msgstr ""
-"Linux 支援 Ubuntu 24.04+、Fedora 41+、Nobara 44+、Arch Linux、CachyOS 和 "
-"Omarchy。Hopper 是商業軟體，試用版有廠商規定的限制。"
-
 #: website/public/get-started/index.html:1058
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13844,6 +13835,21 @@ msgstr "回到頂部"
 msgctxt "runtime"
 msgid "Contributors: {count}"
 msgstr "貢獻者: {count}"
+
+#: website/public/get-started/index.html:1039
+msgctxt "page:get-started/index.html"
+msgid ""
+"Linux hosts: Ubuntu 24.04, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+msgstr ""
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+#~ "Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+#~ msgstr ""
+#~ "Linux 支援 Ubuntu 24.04+、Fedora 41+、Nobara 44+、Arch Linux、CachyOS 和 "
+#~ "Omarchy。Hopper 是商業軟體，試用版有廠商規定的限制。"
 
 #, python-brace-format
 #~ msgctxt "runtime"

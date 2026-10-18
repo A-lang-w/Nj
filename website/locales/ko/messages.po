@@ -12974,15 +12974,6 @@ msgstr ""
 "설정에서 Hopper를 선택하고 별도로 제시되는 설치 계획을 확인하세요. macOS에서는 Hopper를 처음 열 때 데모 모드를 "
 "선택하거나 라이선스를 활성화하세요. Linux에서는 설정 과정에서 지원되는 데모와 전용 디스플레이를 준비합니다."
 
-#: website/public/get-started/index.html:1039
-msgctxt "page:get-started/index.html"
-msgid ""
-"Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
-"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
-msgstr ""
-"Linux 호스트: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, "
-"Omarchy. Hopper는 상용 소프트웨어이며 데모에는 공급업체가 정한 제한이 있습니다."
-
 #: website/public/get-started/index.html:1058
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -14208,6 +14199,21 @@ msgstr "맨 위로"
 msgctxt "runtime"
 msgid "Contributors: {count}"
 msgstr "기여자: {count}"
+
+#: website/public/get-started/index.html:1039
+msgctxt "page:get-started/index.html"
+msgid ""
+"Linux hosts: Ubuntu 24.04, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+msgstr ""
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+#~ "Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+#~ msgstr ""
+#~ "Linux 호스트: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, "
+#~ "Omarchy. Hopper는 상용 소프트웨어이며 데모에는 공급업체가 정한 제한이 있습니다."
 
 #, python-brace-format
 #~ msgctxt "runtime"

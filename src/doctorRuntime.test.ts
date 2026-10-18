@@ -1,15 +1,144 @@
 import { chmod, mkdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, it as test } from "vitest";
+import { expect, it as test, vi } from "vitest";
 
-import { createSystemDoctorHost } from "./doctorRuntime.js";
+import {
+  createSystemDoctorHost,
+  inspectLinuxEmbeddedPythonRuntime,
+} from "./doctorRuntime.js";
+import type { LinuxDistribution } from "./application/LinuxHopper.js";
 import { DOCTOR_PROVIDER_IDS } from "./application/DoctorProviderIds.js";
 import { providerRegistrationEnvironment } from "./application/SetupRegistrationEnvironment.js";
 import { createTestTempDirectory } from "../tests/fixtures/temporaryDirectory.js";
 import { writeJadxJarInventory } from "../tests/fixtures/android/jadxJar.js";
 
 const it = test.skipIf(process.platform === "win32");
+
+test("reports a missing Ubuntu 24.04 embedded Python runtime", async () => {
+  const distribution: LinuxDistribution = {
+    id: "ubuntu",
+    versionId: "24.04",
+    packageFamily: "deb",
+    hopperSetupSupported: true,
+  };
+  const run = vi.fn().mockRejectedValue(new Error("cannot load libpython"));
+  await expect(
+    inspectLinuxEmbeddedPythonRuntime(
+      {},
+      () => Promise.resolve(distribution),
+      run,
+    ),
+  ).resolves.toMatchObject({
+    name: "hopper-embedded-python",
+    ok: false,
+    classification: "missing_dependency",
+    remediation: expect.stringContaining("libpython3.12t64"),
+  });
+  expect(run).toHaveBeenCalledWith(
+    "/usr/bin/python3",
+    [
+      "-c",
+      "import ctypes, struct; assert struct.calcsize('P') == 8; ctypes.CDLL('libpython3.12.so.1.0')",
+    ],
+    { env: {} },
+  );
+});
+
+test("accepts a verified embedded Python runtime", async () => {
+  const distribution: LinuxDistribution = {
+    id: "fedora",
+    versionId: "41",
+    packageFamily: "rpm",
+    hopperSetupSupported: true,
+  };
+  await expect(
+    inspectLinuxEmbeddedPythonRuntime(
+      {},
+      () => Promise.resolve(distribution),
+      vi.fn().mockResolvedValue({
+        stdout:
+          "libpython3.12.so.1.0 (libc6,x86-64) => /lib64/libpython3.12.so.1.0",
+        stderr: "",
+        stdoutBytes: 0,
+        stderrBytes: 0,
+      }),
+    ),
+  ).resolves.toMatchObject({
+    name: "hopper-embedded-python",
+    ok: true,
+    classification: "healthy",
+  });
+});
+
+test("uses an absolute Python path before the caller PATH", async () => {
+  const distribution: LinuxDistribution = {
+    id: "ubuntu",
+    versionId: "25.04",
+    packageFamily: "deb",
+    hopperSetupSupported: false,
+  };
+  const run = vi.fn().mockResolvedValue({
+    stdout:
+      "libpython3.12.so.1.0 (libc6,x86-64) => /opt/python/libpython3.12.so.1.0",
+    stderr: "",
+    stdoutBytes: 0,
+    stderrBytes: 0,
+  });
+  await expect(
+    inspectLinuxEmbeddedPythonRuntime(
+      { PATH: "/usr/bin:/bin" },
+      () => Promise.resolve(distribution),
+      run,
+    ),
+  ).resolves.toMatchObject({ ok: true, classification: "healthy" });
+  expect(run).toHaveBeenCalledWith(
+    "/usr/bin/python3",
+    [
+      "-c",
+      "import ctypes, struct; assert struct.calcsize('P') == 8; ctypes.CDLL('libpython3.12.so.1.0')",
+    ],
+    { env: { PATH: "/usr/bin:/bin" } },
+  );
+});
+
+test("reports unknown remediation when no verified package mapping exists", async () => {
+  const distribution: LinuxDistribution = {
+    id: "arch",
+    packageFamily: "arch",
+    hopperSetupSupported: true,
+  };
+  const result = await inspectLinuxEmbeddedPythonRuntime(
+    {},
+    () => Promise.resolve(distribution),
+    vi.fn().mockRejectedValue(new Error("python3 unavailable")),
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    classification: "unknown",
+  });
+  expect(result).not.toHaveProperty("remediation");
+});
+
+test("reports a mapped runtime as missing when the loader rejects it", async () => {
+  const distribution: LinuxDistribution = {
+    id: "ubuntu",
+    versionId: "24.04",
+    packageFamily: "deb",
+    hopperSetupSupported: true,
+  };
+  await expect(
+    inspectLinuxEmbeddedPythonRuntime(
+      {},
+      () => Promise.resolve(distribution),
+      vi.fn().mockRejectedValue(new Error("cannot load shared object")),
+    ),
+  ).resolves.toMatchObject({
+    ok: false,
+    classification: "missing_dependency",
+    remediation: expect.stringContaining("libpython3.12t64"),
+  });
+});
 
 it("exposes jadx through the doctor provider selector", () => {
   expect(DOCTOR_PROVIDER_IDS).toContain("jadx");

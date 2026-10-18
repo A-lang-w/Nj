@@ -13615,15 +13615,6 @@ msgstr ""
 "ให้เลือกโหมดเดโมหรือเปิดใช้งานใบอนุญาตเมื่อเปิด Hopper ครั้งแรก บน Linux "
 "ขั้นตอนตั้งค่าจะเตรียมเดโมที่รองรับและจอแสดงผลเฉพาะของเดโม"
 
-#: website/public/get-started/index.html:1039
-msgctxt "page:get-started/index.html"
-msgid ""
-"Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
-"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
-msgstr ""
-"โฮสต์ Linux: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS หรือ"
-" Omarchy Hopper เป็นซอฟต์แวร์เชิงพาณิชย์ และเดโมมีข้อจำกัดตามที่ผู้ผลิตกำหนด"
-
 #: website/public/get-started/index.html:1058
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -14910,6 +14901,21 @@ msgstr "กลับขึ้นด้านบน"
 msgctxt "runtime"
 msgid "Contributors: {count}"
 msgstr "ผู้มีส่วนร่วม: {count}"
+
+#: website/public/get-started/index.html:1039
+msgctxt "page:get-started/index.html"
+msgid ""
+"Linux hosts: Ubuntu 24.04, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+msgstr ""
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+#~ "Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+#~ msgstr ""
+#~ "โฮสต์ Linux: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS หรือ"
+#~ " Omarchy Hopper เป็นซอฟต์แวร์เชิงพาณิชย์ และเดโมมีข้อจำกัดตามที่ผู้ผลิตกำหนด"
 
 #, python-brace-format
 #~ msgctxt "runtime"

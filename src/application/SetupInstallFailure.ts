@@ -10,6 +10,7 @@ export type SetupFailureCode =
   | "launcher_missing"
   | "runtime_dependency_unavailable"
   | "unsupported_hopper_build"
+  | "unsupported_hopper_runtime"
   | "setup_cancelled"
   | "destination_exists"
   | "mount_failed"
@@ -46,6 +47,7 @@ export type HopperInstallFailureReason =
   | "launcher_missing"
   | "runtime_dependencies"
   | "unsupported_hopper_build"
+  | "unsupported_hopper_runtime"
   | "cancelled"
   | "destination_exists"
   | "mount"
@@ -144,6 +146,13 @@ export const setupInstallFailure = (
         code: "unsupported_hopper_build",
         remediation:
           "The installed Hopper launcher does not match the authenticated vendor package. Check HOPPER_LAUNCHER_PATH and reinstall the official Hopper demo through rea setup.",
+      };
+    case "unsupported_hopper_runtime":
+      return {
+        status: "failed",
+        code: "unsupported_hopper_runtime",
+        remediation:
+          "This Hopper release has no verified embedded Python runtime mapping. Update REA before installing it, or configure an existing supported Hopper provider.",
       };
     case "cancelled":
       return {

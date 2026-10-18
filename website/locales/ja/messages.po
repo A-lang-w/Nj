@@ -12914,15 +12914,6 @@ msgid ""
 msgstr ""
 "セットアップでHopperを選び、別途提示されるインストール計画を確認してください。macOSでは、Hopperを初めて開いたときにデモモードを選ぶか、ライセンスを有効化します。Linuxでは、セットアップが対応するデモと専用のディスプレイを準備します。"
 
-#: website/public/get-started/index.html:1039
-msgctxt "page:get-started/index.html"
-msgid ""
-"Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
-"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
-msgstr ""
-"Linuxホスト：Ubuntu 24.04+、Fedora 41+、Nobara 44+、Arch "
-"Linux、CachyOS、Omarchy。Hopperは商用ソフトウェアで、デモには提供元が定めた制限があります。"
-
 #: website/public/get-started/index.html:1058
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -14141,6 +14132,21 @@ msgstr "ページ上部へ"
 msgctxt "runtime"
 msgid "Contributors: {count}"
 msgstr "貢献者: {count}"
+
+#: website/public/get-started/index.html:1039
+msgctxt "page:get-started/index.html"
+msgid ""
+"Linux hosts: Ubuntu 24.04, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+msgstr ""
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+#~ "Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+#~ msgstr ""
+#~ "Linuxホスト：Ubuntu 24.04+、Fedora 41+、Nobara 44+、Arch "
+#~ "Linux、CachyOS、Omarchy。Hopperは商用ソフトウェアで、デモには提供元が定めた制限があります。"
 
 #, python-brace-format
 #~ msgctxt "runtime"

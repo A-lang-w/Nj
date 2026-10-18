@@ -13858,16 +13858,6 @@ msgstr ""
 "ilk açıldığında demo modunu seçin veya lisansınızı etkinleştirin. Linux’ta "
 "kurulum, desteklenen demoyu ve ona özel ekran ortamını hazırlar."
 
-#: website/public/get-started/index.html:1039
-msgctxt "page:get-started/index.html"
-msgid ""
-"Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
-"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
-msgstr ""
-"Linux sistemleri: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS"
-" veya Omarchy. Hopper ticari bir yazılımdır; demosunun sınırlarını üretici "
-"belirler."
-
 #: website/public/get-started/index.html:1058
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -15181,6 +15171,22 @@ msgstr "Başa dön"
 msgctxt "runtime"
 msgid "Contributors: {count}"
 msgstr "Katkıda bulunanlar: {count}"
+
+#: website/public/get-started/index.html:1039
+msgctxt "page:get-started/index.html"
+msgid ""
+"Linux hosts: Ubuntu 24.04, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+msgstr ""
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+#~ "Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+#~ msgstr ""
+#~ "Linux sistemleri: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS"
+#~ " veya Omarchy. Hopper ticari bir yazılımdır; demosunun sınırlarını üretici "
+#~ "belirler."
 
 #, python-brace-format
 #~ msgctxt "runtime"
