@@ -3,6 +3,7 @@ import { readEffectiveClientRegistrationConfiguration } from "./ClientConfigurat
 import {
   clientServerForcedEnabled,
   clientServerListedDisabled,
+  codexServerToolsSchema,
   effectiveClientServer,
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
@@ -97,7 +98,7 @@ const registrationSchema = z
     type: z.string().optional(),
     transport: z.string().optional(),
     serverName: z.string().optional(),
-    tools: z.array(z.string()).optional(),
+    tools: z.union([z.array(z.string()), codexServerToolsSchema]).optional(),
     disabled: z.boolean().optional(),
     enabled: z.boolean().optional(),
   })
@@ -472,6 +473,16 @@ const parseRegistration = (
     });
   }
   const registration = registrationSchema.parse(value);
+  if (client.name === "codex" && Array.isArray(registration.tools))
+    throw new TypeError(
+      "Expected Codex tools to be a table of per-tool settings",
+    );
+  if (
+    client.name !== "codex" &&
+    registration.tools !== undefined &&
+    !Array.isArray(registration.tools)
+  )
+    throw new TypeError("Expected tools to be an array of strings");
   if (
     client.format === "kimi" &&
     registration.transport !== undefined &&

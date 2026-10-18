@@ -60,6 +60,9 @@ export interface ClientConfigurationDocument {
 
 const objectSchema = z.record(z.string(), z.unknown());
 
+/** Codex per-tool configuration table (`[mcp_servers.<server>.tools.<tool>]`). */
+export const codexServerToolsSchema = z.record(z.string(), objectSchema);
+
 /** Compare parsed configuration values without depending on parser prototypes. */
 export const clientConfigurationValuesEqual = (
   left: unknown,
