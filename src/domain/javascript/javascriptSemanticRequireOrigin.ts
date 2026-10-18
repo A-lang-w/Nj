@@ -50,6 +50,7 @@ import {
 import {
   INVOCATION_HELPERS,
   semanticFunctionValueIdentity,
+  isSemanticUnknownReferenceIdentity,
   semanticFunctionValueReadDependencies,
 } from "./javascriptSemanticFunctionValues.js";
 import {
@@ -352,6 +353,13 @@ const writesModuleRequire = (
     },
   });
   const retain = (path: JavaScriptSemanticPropertyPath, node: t.Node): void => {
+    if (isSemanticUnknownReferenceIdentity(path)) {
+      writes.push(
+        { node, delegate: "require", shared: true },
+        { node, delegate: "_load", shared: true },
+      );
+      return;
+    }
     const owner = semanticModuleDelegateWriteOwner(path, node, interop);
     if (owner !== undefined) writes.push({ node, ...owner });
   };
@@ -856,6 +864,11 @@ const hostLoaderPath = (
   ): boolean => {
     if (!state.ambientWrites.covers(path)) return true;
     return !state.ambientWriteEffects.some((effect) => {
+      if (isSemanticUnknownReferenceIdentity(effect.path))
+        return captures.some(
+          (capture) =>
+            !semanticEffectFollowsInitialCapture(capture, effect.node, state),
+        );
       return (
         effect.path.length > ownFrom &&
         effect.path.length <= path.length &&

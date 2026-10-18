@@ -562,6 +562,36 @@ describe("converted builtin Module values", () => {
   );
 });
 
+describe("conversion input escape proof", () => {
+  it.each([
+    ["escaped Object prototype", "patch(Object.prototype);"],
+    ["escaped global object", "patch(globalThis);"],
+    [
+      "escaped captured Object prototype",
+      "const proto=Object.prototype;patch(proto);",
+    ],
+    ["mutated bind dependency", "Function.prototype.bind=other;"],
+    [
+      "inherited descriptor callback",
+      'Object.defineProperty(Object.prototype,"configurable",{get(){if(this.value?.mainModule)this.value.mainModule.constructor=require("module");return true}});',
+    ],
+  ])("retains uncertain local conversion input after %s", (_name, setup) => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${ROLLDOWN_MODULE_INTEROP}${SHIM}${setup}const proc={mainModule:{constructor:{}}};const ns=__toESM(proc,1);ns.default.mainModule.constructor._load=other;new (Q("electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toEqual([]);
+  });
+
+  it("retains a captured native supplier for a local conversion", () => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${ROLLDOWN_MODULE_INTEROP}${SHIM}Object.create=other;const proc={mainModule:{constructor:{}}};const ns=__toESM(proc,1);ns.default.mainModule.constructor._load=other;new (Q("electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toHaveLength(1);
+  });
+});
+
 describe("related Module instance identity", () => {
   it.each([
     [

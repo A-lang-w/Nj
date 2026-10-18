@@ -83,6 +83,48 @@ describe("Electron module interop identity", () => {
   });
 });
 
+describe("Electron module interop namespace copies", () => {
+  const copies = [
+    ["spread", "const copy={...namespace};"],
+    ["rest", "const {...copy}=namespace;"],
+  ] as const;
+  const load =
+    'new (require.call.call(require,null,"electron").BrowserWindow)({});';
+
+  it.each(copies)(
+    "excludes inherited helpers from a namespace %s copy",
+    (_kind, copy) => {
+      const analysis = analyzeJavaScriptStaticSource(`
+        ${ROLLDOWN_MODULE_INTEROP}
+        const source={__proto__:Function.prototype};
+        const namespace=__toESM(source,1);
+        ${copy}
+        const value=copy.call??{};
+        value.call=other;
+        ${load}
+      `);
+      expect(analysis.parse_error_count).toBe(0);
+      expect(analysis.electron.browser_windows).toHaveLength(1);
+    },
+  );
+
+  it.each(copies)(
+    "retains own shared helpers in a namespace %s copy",
+    (_kind, copy) => {
+      const analysis = analyzeJavaScriptStaticSource(`
+        ${ROLLDOWN_MODULE_INTEROP}
+        const source={call:Function.prototype.call};
+        const namespace=__toESM(source,1);
+        ${copy}
+        copy.call.call=other;
+        ${load}
+      `);
+      expect(analysis.parse_error_count).toBe(0);
+      expect(analysis.electron.browser_windows).toEqual([]);
+    },
+  );
+});
+
 describe("Electron module interop shim inputs", () => {
   it.each([
     ...SHIM_NAMESPACE_INPUTS.map((input) => `${input} ${WINDOW}`),

@@ -2,7 +2,76 @@ import * as t from "@babel/types";
 import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
 
 type Path = readonly string[];
-type Projection = readonly (string | null)[];
+/** An internal [[Prototype]] operation, distinct from a shadowable member read. */
+export const SEMANTIC_PHYSICAL_PROTOTYPE = Symbol("physical-prototype");
+/** Continue source descriptor lookup without rebinding a native getter's receiver. */
+export const SEMANTIC_SOURCE_PROTO_DESCRIPTOR = Symbol(
+  "source-proto-descriptor",
+);
+export type SemanticFunctionValueProjection = readonly (
+  | string
+  | null
+  | typeof SEMANTIC_PHYSICAL_PROTOTYPE
+  | typeof SEMANTIC_SOURCE_PROTO_DESCRIPTOR
+)[];
+type Projection = SemanticFunctionValueProjection;
+
+/** An unknown reference may be any nominal ambient owner, including the
+ * CommonJS wrapper and shared callable helpers. The root wildcard absorbs
+ * every further selection. This is mutation possibility, never read proof. */
+export const semanticUnknownReferenceIdentities = (): readonly Projection[] => [
+  [null],
+];
+
+/** Selection and property appending cannot refine an unknown reference. */
+export const isSemanticUnknownReferenceIdentity = (
+  path: readonly unknown[],
+): boolean => path[0] === null;
+type StorageProjectionObserver = (
+  path: Projection,
+  suffixOffset: number,
+  owner: Path,
+  publishNominal?: true,
+) => void;
+
+export const INVOCATION_HELPERS = ["call", "apply", "bind"];
+
+const BUILTIN_DATA_PROTOTYPE_OWNERS = ["Object", "Array", "Function"] as const;
+
+export const semanticBuiltinDataPrototypeOwner = (
+  path: readonly string[] | undefined,
+): (typeof BUILTIN_DATA_PROTOTYPE_OWNERS)[number] | undefined =>
+  path?.length === 3 && path[0] === "intrinsic" && path[2] === "prototype"
+    ? BUILTIN_DATA_PROTOTYPE_OWNERS.find((owner) => owner === path[1])
+    : undefined;
+
+/** Canonical ambient paths whose mutations can affect inherited data writes. */
+export const semanticBuiltinDataPrototypeMayBeReached = (
+  path: readonly (string | null)[],
+): boolean =>
+  BUILTIN_DATA_PROTOTYPE_OWNERS.some((owner) =>
+    ["global", owner, "prototype"].every(
+      (key, index) =>
+        path[index] === undefined ||
+        path[index] === null ||
+        path[index] === key,
+    ),
+  );
+
+/** Intact builtin prototype chains accept ordinary data assignments except
+ * their native accessor and Function.prototype's protected own metadata. */
+export const semanticBuiltinPrototypeDataWritePossible = (
+  path: readonly string[] | undefined,
+  key: string,
+): boolean => {
+  const owner = semanticBuiltinDataPrototypeOwner(path);
+  return (
+    key !== "__proto__" &&
+    (owner === "Object" ||
+      (owner === "Function" &&
+        !["name", "length", "caller", "arguments"].includes(key)))
+  );
+};
 type RetainReadDependency = (path: Path, ownFrom: number) => void;
 
 export interface SemanticFunctionValueReadDependency {
@@ -12,8 +81,6 @@ export interface SemanticFunctionValueReadDependency {
   /** Replacing an already captured owner does not mutate its properties. */
   readonly ownFrom: number;
 }
-
-export const INVOCATION_HELPERS = ["call", "apply", "bind"];
 
 const callableValueIdentities = new WeakMap<t.Node, Path>();
 let nextCallableValueIdentity = 0;
@@ -418,6 +485,13 @@ const propertyValue = (
   };
 };
 
+const physicalPrototypeValue = (
+  value: FunctionValue,
+): FunctionValue | undefined =>
+  // The member transition shares the same builtin prototype inventory. Source
+  // descriptors and native accessor receiver binding belong to lookup callers.
+  propertyValue(value, "__proto__");
+
 /** Keep the traversed links and shadow slots with the value selection owner. */
 const inheritedCallable = (
   value: FunctionValue,
@@ -494,10 +568,7 @@ const rootValue = (
 const selectedValues = (
   initial: FunctionValue,
   projection: Projection,
-  retainModuleStorageProjection?: (
-    path: Projection,
-    suffixOffset: number,
-  ) => void,
+  retainStorageProjection?: StorageProjectionObserver,
   retainReadDependency?: (
     path: Path,
     ownFrom: number,
@@ -508,18 +579,53 @@ const selectedValues = (
   for (const [index, key] of projection.entries()) {
     const next = new Map<string, FunctionValue>();
     for (const value of values) {
-      // A known shared owner also gives a nominal storage path when its member
-      // value is unknown. Keep that fact separate from function identities;
-      // abandoning the suffix would lose stores through equivalent owners.
+      // Object identity and its nominal member storage remain separate from
+      // the selected value's type. Source edges can replace known members too.
       if (
-        retainModuleStorageProjection !== undefined &&
-        value.path[0] === "commonjs-module" &&
-        (key === null || propertyValue(value, key) === undefined)
+        retainStorageProjection !== undefined &&
+        (value.path[0] === "commonjs-module" || value.path[0] === "global")
       )
-        retainModuleStorageProjection(
+        retainStorageProjection(
           [...value.path, ...projection.slice(index)],
           index,
+          value.path,
+          value.path[0] === "commonjs-module" &&
+            (key === null ||
+              (typeof key === "string" &&
+                propertyValue(value, key) === undefined))
+            ? true
+            : undefined,
         );
+      // An unknown own slot can also be supplied by a shared prototype. The
+      // builtin inventory owns this chain; consumers only retain storage edges.
+      if (
+        retainStorageProjection !== undefined &&
+        value.kind !== "unknown-external" &&
+        typeof key !== "symbol" &&
+        (key === null ||
+          (typeof key === "string" && propertyValue(value, key) === undefined))
+      ) {
+        let prototype = propertyValue(value, "__proto__");
+        const seen = new Set<FunctionValue>();
+        while (prototype !== undefined && !seen.has(prototype)) {
+          seen.add(prototype);
+          if (
+            prototype.path[0] === "global" ||
+            prototype.path[0] === "commonjs-module"
+          )
+            retainStorageProjection?.(
+              [...prototype.path, ...projection.slice(index)],
+              index,
+              prototype.path,
+            );
+          if (
+            typeof key === "string" &&
+            propertyValue(prototype, key) !== undefined
+          )
+            break;
+          prototype = propertyValue(prototype, "__proto__");
+        }
+      }
       const keys =
         key === null
           ? [
@@ -536,13 +642,24 @@ const selectedValues = (
       if (key === null && value === MODULE_CHILDREN)
         next.set("object-instance:module-instance", MODULE_INSTANCE);
       for (const property of keys) {
-        for (const selected of possiblePropertyValues(
-          value,
-          property,
-          retainReadDependency === undefined
-            ? undefined
-            : (path, ownFrom) => retainReadDependency(path, ownFrom, index),
-        )) {
+        const prototype =
+          property === SEMANTIC_PHYSICAL_PROTOTYPE
+            ? physicalPrototypeValue(value)
+            : undefined;
+        const selections =
+          typeof property === "symbol"
+            ? prototype === undefined
+              ? []
+              : [prototype]
+            : possiblePropertyValues(
+                value,
+                property,
+                retainReadDependency === undefined
+                  ? undefined
+                  : (path, ownFrom) =>
+                      retainReadDependency(path, ownFrom, index),
+              );
+        for (const selected of selections) {
           retainReadDependency?.(
             selected.path,
             selected.path.length - 1,
@@ -555,6 +672,9 @@ const selectedValues = (
     values = [...next.values()];
     if (values.length === 0) break;
   }
+  for (const value of values)
+    if (value.path[0] === "commonjs-module" || value.path[0] === "global")
+      retainStorageProjection?.(value.path, projection.length, value.path);
   return values;
 };
 
@@ -611,7 +731,7 @@ export const semanticFunctionValueIdentity = (
   path: Projection,
 ): Path | undefined => {
   let rootLength: number;
-  if (path[0] === "global" && ["require", "Function"].includes(path[1] ?? ""))
+  if (path[0] === "global" && (path[1] === "require" || path[1] === "Function"))
     rootLength = 2;
   else if (path[0] === "global" && path[1] === "Reflect" && path[2] === "apply")
     rootLength = 3;
@@ -626,11 +746,11 @@ export const semanticFunctionValueIdentity = (
   } else return undefined;
   let identity = path.slice(0, rootLength) as Path;
   for (const key of path.slice(rootLength)) {
-    if (key !== null && INVOCATION_HELPERS.includes(key))
+    if (typeof key === "string" && INVOCATION_HELPERS.includes(key))
       identity = ["global", "Function", "prototype", key];
     else if (
       (key === "prototype" && identity.join(".") === "global.Function") ||
-      (key === "__proto__" &&
+      ((key === "__proto__" || key === SEMANTIC_PHYSICAL_PROTOTYPE) &&
         identity.join(".") !== "global.Function.prototype")
     )
       identity = ["global", "Function", "prototype"];
@@ -641,14 +761,11 @@ export const semanticFunctionValueIdentity = (
 
 /** Possible selected values invalidate reads but never prove an invocation.
  * The optional callback separately retains nominal storage projections below
- * known Module owners, with the original suffix offset for capture tracking;
+ * known shared owners, with the original suffix offset for capture tracking;
  * those paths do not establish the stored value's type. */
 export const semanticPossibleFunctionValueIdentities = (
   path: Projection,
-  retainModuleStorageProjection?: (
-    path: Projection,
-    suffixOffset: number,
-  ) => void,
+  retainStorageProjection?: StorageProjectionObserver,
 ): readonly Path[] => {
   const root = rootValue(path);
   return root === undefined
@@ -656,10 +773,15 @@ export const semanticPossibleFunctionValueIdentities = (
     : selectedValues(
         root.value,
         path.slice(root.length),
-        retainModuleStorageProjection === undefined
+        retainStorageProjection === undefined
           ? undefined
-          : (storage, offset) =>
-              retainModuleStorageProjection(storage, root.length + offset),
+          : (storage, offset, owner, publishNominal) =>
+              retainStorageProjection(
+                storage,
+                root.length + offset,
+                owner,
+                publishNominal,
+              ),
       )
         .filter(
           (value) =>
@@ -670,8 +792,13 @@ export const semanticPossibleFunctionValueIdentities = (
 
 export const semanticOrdinaryFunctionValueIdentities = (
   projection: Projection,
+  retainStorageProjection?: StorageProjectionObserver,
 ): readonly Path[] =>
-  selectedValues(ordinary(["source-function"]), projection)
+  selectedValues(
+    ordinary(["source-function"]),
+    projection,
+    retainStorageProjection,
+  )
     .filter((selected) => selected.path[0] === "global")
     .map((selected) => selected.path);
 
@@ -719,10 +846,12 @@ export const semanticSourceFunctionValueIdentities = (
   node: t.Function | t.Class,
   projection: Projection,
   bound = false,
+  retainStorageProjection?: StorageProjectionObserver,
 ): readonly Path[] => {
   return selectedValues(
     sourceFunctionValue(node, bound, ["source-function"]),
     projection,
+    retainStorageProjection,
   )
     .filter((selected) =>
       ["global", "function-family"].includes(selected.path[0]!),
@@ -735,15 +864,25 @@ export const semanticSourceFunctionValueIdentities = (
 export const semanticLiteralInheritedValueIdentities = (
   kind: "object" | "array",
   projection: Projection,
-): readonly Path[] =>
-  selectedValues(
+  retainStorageProjection?: StorageProjectionObserver,
+): readonly Path[] => {
+  const prototype = [
+    "global",
+    kind === "object" ? "Object" : "Array",
+    "prototype",
+  ];
+  if (projection.length > 0)
+    retainStorageProjection?.([...prototype, ...projection], 0, prototype);
+  return selectedValues(
     {
       path: ["source-instance"],
       kind: "object-instance",
       owner: kind === "object" ? OBJECT : ordinary(["global", "Array"]),
-      external: true,
+      external: kind === "array",
     },
     projection,
+    retainStorageProjection,
   )
     .filter((selected) => selected.path[0] === "global")
     .map((selected) => selected.path);
+};

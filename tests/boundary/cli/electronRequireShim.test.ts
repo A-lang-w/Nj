@@ -52,7 +52,7 @@ cliTest(
 );
 
 cliTest(
-  "distinguishes static class receiver writes from owned helpers through CLI and MCP",
+  "distinguishes shared helper mutations from owned properties through CLI and MCP",
   async ({ cli }) => {
     const load =
       'new (require.call.call(require,null,"electron").BrowserWindow)({});';
@@ -60,6 +60,13 @@ cliTest(
     for (const [setup, windows] of [
       ["class C{static{this.call.call=other}}", 0],
       ["class C{static{this.call=other}}", 1],
+      ["const obj={__proto__:Function.prototype};obj.call.call=other;", 0],
+      [
+        "const obj={__proto__:Function.prototype};const copy={...obj};const value=copy.call??{};value.call=other;",
+        1,
+      ],
+      ["class C{constructor(){this.constructor.call.call=other}}new C();", 0],
+      ["class C{constructor(){this.call=other}}new C();", 1],
     ] as const) {
       const root = await createTestTempDirectory(
         "rea-electron-class-receiver-",

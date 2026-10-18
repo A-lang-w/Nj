@@ -43,6 +43,7 @@ import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
+  semanticObjectPrototypeProperty,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -746,12 +747,7 @@ const evaluateObject = (
       continue;
     }
     // This spelling changes the prototype instead of defining an own slot.
-    if (
-      t.isObjectProperty(property) &&
-      !property.computed &&
-      !property.shorthand &&
-      name === "__proto__"
-    ) {
+    if (property === semanticObjectPrototypeProperty(node)) {
       unknownProperties = true;
       if (omittedProperties !== null) omittedProperties += 1;
       continue;

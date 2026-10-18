@@ -29,9 +29,12 @@ import {
 } from "./javascriptIntrinsicInvocation.js";
 import { SemanticPropertyPathCoverage } from "./javascriptSemanticPropertyPaths.js";
 import {
+  SEMANTIC_PHYSICAL_PROTOTYPE,
+  SEMANTIC_SOURCE_PROTO_DESCRIPTOR,
   semanticCallableValueIdentity,
   semanticFunctionValueReadDependencies,
   type SemanticFunctionValueReadDependency,
+  type SemanticFunctionValueProjection,
 } from "./javascriptSemanticFunctionValues.js";
 import {
   readExactJavaScriptLiteral,
@@ -102,7 +105,7 @@ interface InteropHelper {
 
 interface InteropReferenceSource {
   readonly node: t.Expression;
-  readonly projection: readonly (string | null)[] | undefined;
+  readonly projection: SemanticFunctionValueProjection | undefined;
   /** Namespace default selection does not select a slot on the input. */
   readonly projectionOffset: number;
 }
@@ -173,7 +176,7 @@ export const createSemanticModuleInterop = (
         binding,
         read,
         state,
-        globalBindingFacts,
+        options?.intrinsicWriteFacts ?? globalBindingFacts,
       ));
   const helpers = new Map<string, InteropHelper | null>();
   const origins = new Map<string, InteropOrigin>();
@@ -920,6 +923,7 @@ export const createSemanticModuleInterop = (
       return undefined;
     return {
       input,
+      bindings: proof.bindings,
       identity: proof.identity,
       // A truthy node mode forces the module-valued default. Other modes
       // preserve named exports without proving the source's default property.
@@ -937,7 +941,7 @@ export const createSemanticModuleInterop = (
    * intrinsic-integrity result is retained in this selection. */
   const callReferenceSources = (
     node: t.Node,
-    projection: readonly (string | null)[] | undefined,
+    projection: SemanticFunctionValueProjection | undefined,
     escapedContents = false,
   ): readonly InteropReferenceSource[] => {
     if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
@@ -962,9 +966,23 @@ export const createSemanticModuleInterop = (
         });
         // An unknown key can select an inherited value or expose the prototype
         // itself through __proto__. Preserve both capture offsets.
+        if (projection?.[0] === SEMANTIC_PHYSICAL_PROTOTYPE)
+          return [selected(1)];
+        if (projection?.[0] === "__proto__")
+          return [
+            selected(1),
+            {
+              node: prototype,
+              projection: [
+                SEMANTIC_SOURCE_PROTO_DESCRIPTOR,
+                ...projection.slice(1),
+              ],
+              projectionOffset: 0,
+            },
+          ];
         return projection?.[0] === null
           ? [selected(0), selected(1)]
-          : [selected(projection?.[0] === "__proto__" ? 1 : 0)];
+          : [selected(0)];
       }
       if (
         escapedContents &&
@@ -1001,6 +1019,52 @@ export const createSemanticModuleInterop = (
     // Falsy or unknown mode can preserve a source default or install the input
     // as default. Unknown selectors also retain the live named alternative.
     return [selected(0), selected(1)];
+  };
+
+  /** A checked conversion does not expose a fresh input to arbitrary code.
+   * Forced default mode avoids input property reads; reflection on a fresh
+   * ordinary value cannot run Proxy traps. Its emitted descriptors must also
+   * be free of inherited callbacks before the input's escape can be excluded. */
+  const nonEscapingConversionInput = (
+    node: t.Node,
+  ): t.Expression | undefined => {
+    const facts = options?.intrinsicWriteFacts;
+    if (facts?.complete !== true) return undefined;
+    const converted = conversionCall(node);
+    if (
+      converted === undefined ||
+      converted.dependencies.some((dependency) =>
+        dependencyReadChanged(dependency),
+      )
+    )
+      return undefined;
+    if (converted.identity) return converted.input;
+    if (
+      !converted.defaultIsModule ||
+      !isObjectValue(converted.input, "fresh") ||
+      [
+        "configurable",
+        "enumerable",
+        "value",
+        "writable",
+        "get",
+        "set",
+        "__proto__",
+      ].some((key) =>
+        semanticAmbientWriteMayMatch(
+          facts,
+          ["global", "Object", "prototype", key],
+          (effect) =>
+            !(
+              effect.path.length === 2 &&
+              effect.path[0] === "global" &&
+              effect.path[1] === "Object"
+            ) && !semanticEffectFollowsInitialCapture(node, effect.node, state),
+        ),
+      )
+    )
+      return undefined;
+    return converted.input;
   };
 
   /** Proven intrinsic arguments can be retained without reaching user code.
@@ -1174,8 +1238,16 @@ export const createSemanticModuleInterop = (
     origin,
     callOrigin,
     callReferenceSources,
+    nonEscapingConversionInput,
     callArgumentEscapes,
     intrinsicPath,
+    /** A captured intrinsic object path with complete binding/member proofs. */
+    capturedIntrinsicPath: (node: t.Node) => {
+      const dependency = capturedIntrinsic(node);
+      return dependency !== undefined && !dependencyReadChanged(dependency)
+        ? dependency.path
+        : undefined;
+    },
     intrinsicInvocation: (node: t.CallExpression | t.OptionalCallExpression) =>
       resolveJavaScriptIntrinsicInvocation(
         node,

@@ -2,6 +2,7 @@ import * as t from "@babel/types";
 import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
+  semanticObjectPrototypeProperty,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -439,7 +440,8 @@ export const semanticLiteralObjectReferenceSources = (
   const properties = new Map<string, t.Node>();
   const sources: LiteralObjectReferenceSource[] = [];
   let unknownKeys = false;
-  let prototype: t.Node | undefined;
+  const prototypeProperty = semanticObjectPrototypeProperty(node);
+  const prototype = prototypeProperty?.value;
   for (const property of node.properties) {
     if (t.isSpreadElement(property)) {
       sources.push({
@@ -452,15 +454,7 @@ export const semanticLiteralObjectReferenceSources = (
       continue;
     }
     const key = semanticStaticPropertyKey(property.key, property.computed);
-    if (
-      key === "__proto__" &&
-      t.isObjectProperty(property) &&
-      !property.computed &&
-      !property.shorthand
-    ) {
-      prototype = property.value;
-      continue;
-    }
+    if (property === prototypeProperty) continue;
     const value = t.isObjectProperty(property) ? property.value : property;
     sources.push({
       node: value,

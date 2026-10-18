@@ -47,6 +47,8 @@ interface JavaScriptSemanticReferenceInitializer extends JavaScriptSemanticIniti
 export interface JavaScriptSemanticMemberEffect {
   readonly path: JavaScriptSemanticPropertyPath;
   readonly node: t.Node | undefined;
+  /** A normalized value store, rather than a descriptor/prototype mutation. */
+  readonly valueOnly?: true;
 }
 
 export type JavaScriptSemanticEffectTiming = "before" | "after" | "unknown";

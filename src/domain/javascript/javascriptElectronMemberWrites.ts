@@ -77,7 +77,11 @@ type JavaScriptIntrinsicMutation = (
       readonly key: t.Node | undefined;
     }
   | { readonly kind: "define-properties" | "assign" | "set-prototype" }
-) & { readonly receiver?: true };
+) & {
+  readonly receiver?: true;
+  /** Legacy descriptor helpers supply the callable directly. */
+  readonly accessor?: "get" | "set";
+};
 
 /** Normalize static and receiver-based mutators before interpreting their keys. */
 export const semanticIntrinsicMutation = (
@@ -93,6 +97,7 @@ export const semanticIntrinsicMutation = (
       kind: "define-property",
       key: invocation.arguments?.[0],
       receiver: true,
+      accessor: path.endsWith(".__defineGetter__") ? "get" : "set",
     };
   if (
     path === "intrinsic.Object.defineProperty" ||
@@ -159,6 +164,7 @@ export function* collectJavaScriptIdentityWritesSteps(
     node: t.Node,
     path: readonly (string | null)[],
     recipient?: JavaScriptIntrinsicMutationRecipient,
+    valueOnly?: true,
   ) => void,
   observeInvocation?: (
     node:
@@ -197,6 +203,10 @@ export function* collectJavaScriptIdentityWritesSteps(
           );
           for (const target of targets) {
             const recipient = { invocation: invocation!, target };
+            const valueOnly =
+              mutation.kind === "set" || mutation.kind === "assign"
+                ? true
+                : undefined;
             // A known mutator with an opaque argument list can overwrite any
             // captured intrinsic. Do not turn an unexamined target into proof.
             if (target === undefined || t.isSpreadElement(target)) {
@@ -213,7 +223,7 @@ export function* collectJavaScriptIdentityWritesSteps(
                       // Retain an unknown child key, rather than its own identity.
                       [null];
                 for (const identity of identities)
-                  retain(node, [...identity, ...key], recipient);
+                  retain(node, [...identity, ...key], recipient, valueOnly);
               } else if (!freshObject(target)) {
                 for (const scope of origin(node, "opaque-call", node))
                   retain(node, scope, recipient);
@@ -238,7 +248,14 @@ export function* collectJavaScriptIdentityWritesSteps(
           continue;
         const key = semanticStaticPropertyKey(member.property, member.computed);
         for (const identity of origin(member.object, "member", node))
-          retain(node, [...identity, key]);
+          retain(
+            node,
+            [...identity, key],
+            undefined,
+            t.isAssignmentExpression(node, { operator: "=" })
+              ? true
+              : undefined,
+          );
       }
     },
   });

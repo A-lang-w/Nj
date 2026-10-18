@@ -964,6 +964,28 @@ export const semanticDefiniteMutationPrecedesRead = (
   return false;
 };
 
+/** A lexical arrow cannot run before its expression creates it. This proves
+ * initialization coverage only; callers still exclude later writes/escapes. */
+export const semanticMutationPrecedesLexicalRead = (
+  mutation: t.Node,
+  read: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  if (semanticDefiniteMutationPrecedesRead(mutation, read, parents))
+    return true;
+  let current: t.Node | undefined = read;
+  while (current !== undefined) {
+    if (
+      t.isArrowFunctionExpression(current) &&
+      semanticDefiniteMutationPrecedesRead(mutation, current, parents)
+    )
+      return true;
+    if (t.isFunction(current) && !t.isArrowFunctionExpression(current)) break;
+    current = parents.get(current);
+  }
+  return false;
+};
+
 /** Select a local alias at its read, before any later straight-line reassignment. */
 type SemanticBindingRead = {
   readonly status: "ordered" | "unresolved";

@@ -1,6 +1,7 @@
 import * as t from "@babel/types";
 
 import {
+  readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -571,19 +572,215 @@ export const createSemanticStaticClassSlotReferences = (
 };
 
 const constructorReplacesReceiver = (
-  constructor: t.ClassMethod | undefined,
+  constructor: t.Function | undefined,
   results: readonly SemanticCallableResultExpression[],
   isDefinitelyObject: (node: t.Node) => boolean,
 ): boolean => {
   const result = results[0];
   return (
     constructor !== undefined &&
+    t.isBlockStatement(constructor.body) &&
     results.length === 1 &&
     result !== undefined &&
     constructor.body.body.some((statement) => statement === result.site) &&
     result.node !== null &&
     isDefinitelyObject(result.node)
   );
+};
+
+export const semanticConstructorKeepsReceiver = (
+  node: t.Function,
+  isDefinitelyObject: (node: t.Node) => boolean,
+): boolean =>
+  !constructorReplacesReceiver(
+    node,
+    semanticCallableResultExpressions(node),
+    isDefinitelyObject,
+  );
+
+/** An unclassified return may supply any reference to an invocation caller.
+ * The caller owns whether this denotes an allocated or unresolved receiver. */
+export const createSemanticUnknownCallableResults = (
+  state: JavaScriptSemanticAnalysisState,
+  isFreshObject: (node: t.Node) => boolean,
+  isDefinitelyObject: (node: t.Node) => boolean,
+  options: { readonly thisIsUnknown?: boolean } = {},
+) => {
+  const references = createSemanticFunctionValueReferences(state);
+  const classes = new WeakMap<t.Class, ClassTargetIndex>();
+  const active = new WeakSet<t.Node>();
+  const cached = [
+    new WeakMap<t.Function, boolean>(),
+    new WeakMap<t.Function, boolean>(),
+  ] as const;
+  const knownValue = (input: t.Node, thisIsUnknown: boolean): boolean => {
+    const node = unwrapJavaScriptExpression(input).node;
+    if (t.isThisExpression(node)) return !thisIsUnknown;
+    if (readExactJavaScriptLiteral(node).found || isFreshObject(node))
+      return true;
+    if (active.has(node)) return false;
+    active.add(node);
+    let known = false;
+    if (t.isIdentifier(node) && isDefinitelyObject(node)) {
+      // Reuse the callable owner's captured alias selection, including its
+      // completeness proof. Projected and mixed values remain unknown here.
+      const selected = callableInitializersAt(node, state);
+      const source = selected.initializers[0];
+      known =
+        selected.definite &&
+        selected.initializers.length === 1 &&
+        source?.projection.length === 0 &&
+        knownValue(source.node, thisIsUnknown);
+    } else if (t.isNewExpression(node) && isFreshObject(node.callee)) {
+      const values = references(node.callee);
+      const source = values[0];
+      if (values.length === 1 && source?.projection.length === 0) {
+        const target = source.node;
+        if (t.isFunction(target)) known = !unknownResult(target, false);
+        else if (target.superClass == null) {
+          const constructor = classTargetIndex(
+            target,
+            classes,
+          ).constructorMethod;
+          known =
+            constructor === undefined || !unknownResult(constructor, false);
+        }
+      }
+    }
+    active.delete(node);
+    return known;
+  };
+  const unknownResult = (
+    node: t.Function,
+    thisIsUnknown = options.thisIsUnknown === true,
+  ): boolean => {
+    const results = cached[thisIsUnknown ? 1 : 0];
+    const prior = results.get(node);
+    if (prior !== undefined) return prior;
+    // Recursive result identities cannot establish their own locality.
+    results.set(node, true);
+    const unknown = semanticCallableResultExpressions(node).some(
+      (result) =>
+        result.kind === "return" &&
+        result.node !== null &&
+        !knownValue(result.node, thisIsUnknown),
+    );
+    results.set(node, unknown);
+    return unknown;
+  };
+  return unknownResult;
+};
+
+/** A stage's return affects subsequent derived initialization, never its own
+ * field initializers or constructor body. Reuse the class descriptor owner. */
+export const createSemanticClassConstructionStages = (
+  state: JavaScriptSemanticAnalysisState,
+  isDefinitelyObject: (node: t.Node) => boolean,
+  isFreshObject: (node: t.Node) => boolean,
+  includeUnknownResults = true,
+) => {
+  const indexes = new WeakMap<t.Class, ClassTargetIndex>();
+  const lineages = new WeakMap<t.Class, ClassLineage>();
+  const references = createSemanticFunctionValueReferences(state);
+  const unknownResult = createSemanticUnknownCallableResults(
+    state,
+    isFreshObject,
+    isDefinitelyObject,
+  );
+  return (node: t.Class) => {
+    let fresh = true;
+    const lineage = classLineage(node, state, lineages);
+    const stages: {
+      constructor: t.Function | undefined;
+      fields: readonly ClassTargetMember[];
+      fresh: boolean;
+      local: boolean;
+      keepsReceiver: boolean;
+      unknownReceiver: boolean;
+      unknownResult: boolean;
+    }[] = [];
+    const base = lineage.unknownBase;
+    const candidates = base === undefined ? [] : references(base);
+    const candidate = candidates.length === 1 ? candidates[0] : undefined;
+    let unknownReceiver =
+      base !== undefined &&
+      !t.isNullLiteral(unwrapJavaScriptExpression(base).node);
+    if (
+      base !== undefined &&
+      candidate?.projection.length === 0 &&
+      t.isFunction(candidate.node) &&
+      isFreshObject(base)
+    ) {
+      const stage = {
+        constructor: candidate.node,
+        fields: [],
+        fresh,
+        local: true,
+        keepsReceiver: true,
+        unknownReceiver: false,
+        unknownResult: false,
+      };
+      fresh = !constructorReplacesReceiver(
+        candidate.node,
+        semanticCallableResultExpressions(candidate.node),
+        isDefinitelyObject,
+      );
+      stage.keepsReceiver = fresh;
+      unknownReceiver = includeUnknownResults && unknownResult(candidate.node);
+      stage.unknownResult = unknownReceiver;
+      stages.push(stage);
+    }
+    const locals = new Map<t.Class, boolean>();
+    let local = true;
+    for (const owner of lineage.classes) {
+      locals.set(owner, local);
+      if (owner.superClass != null && !isFreshObject(owner.superClass))
+        local = false;
+    }
+    for (const owner of [...lineage.classes].reverse()) {
+      const index = classTargetIndex(owner, indexes);
+      unknownReceiver ||= locals.get(owner) !== true;
+      const stage = {
+        constructor: index.constructorMethod,
+        fields: index.fields,
+        fresh,
+        local: locals.get(owner) === true,
+        keepsReceiver: true,
+        unknownReceiver,
+        unknownResult: false,
+      };
+      const replacesReceiver =
+        locals.get(owner) === true &&
+        constructorReplacesReceiver(
+          index.constructorMethod,
+          index.constructorMethod === undefined
+            ? []
+            : semanticCallableResultExpressions(index.constructorMethod),
+          isDefinitelyObject,
+        );
+      fresh &&= !replacesReceiver;
+      stage.keepsReceiver = fresh;
+      unknownReceiver =
+        (!replacesReceiver && unknownReceiver) ||
+        (includeUnknownResults &&
+          index.constructorMethod !== undefined &&
+          unknownResult(index.constructorMethod));
+      // A provisional result alias cannot contribute its own top mutation to
+      // the frozen proof that decides whether that alias is a local object.
+      // The completed receiver owner refines these result alternatives later.
+      if (
+        !includeUnknownResults &&
+        index.constructorMethod !== undefined &&
+        semanticCallableResultExpressions(index.constructorMethod).some(
+          (result) => result.kind === "return",
+        )
+      )
+        unknownReceiver = false;
+      stage.unknownResult = unknownReceiver;
+      stages.push(stage);
+    }
+    return stages;
+  };
 };
 
 /** Resolve possible local callable identities without claiming call execution. */
@@ -593,7 +790,7 @@ const createSemanticCallableReferences = (
   definiteObjectProof?: (node: t.Node) => boolean,
   captureProofs?: CallableCaptureProofs,
 ): ((
-  callee: t.Node,
+  callee: t.Node | readonly t.Node[],
   projection?: readonly (string | number | null)[],
 ) => CallableReferenceSelection) => {
   let results = new WeakMap<t.Node, Map<string, CallableReferenceSelection>>();
@@ -630,8 +827,15 @@ const createSemanticCallableReferences = (
       ownSlotFactsReady = slotsReady;
       results = new WeakMap();
     }
+    const roots: readonly t.Node[] = t.isNode(callee) ? [callee] : callee;
+    const single = t.isNode(callee) ? callee : undefined;
+    const captureSite = roots[0];
+    if (captureSite === undefined) return { references: [], complete: true };
     const projectionKey = JSON.stringify(projection);
-    const existing = results.get(callee)?.get(projectionKey);
+    const existing =
+      single === undefined
+        ? undefined
+        : results.get(single)?.get(projectionKey);
     if (existing !== undefined) return existing;
     let complete = true;
     const functions = new Map<
@@ -656,20 +860,20 @@ const createSemanticCallableReferences = (
       );
       functions.set(node, paths);
     };
-    const work: ExpansionTask[] = [
-      {
-        kind: "visit",
-        item: {
-          node: callee,
-          path: projection,
-          initializers: new Set(),
-          ...(captureProofs === undefined
-            ? {}
-            : { captures: projection.map(() => callee) }),
-        },
-        parent: null,
+    // A consumer needing only the union of several roots shares completed
+    // expansions. Each root keeps its own capture and cycle-blocker context.
+    const work: ExpansionTask[] = roots.toReversed().map((node) => ({
+      kind: "visit",
+      item: {
+        node,
+        path: projection,
+        initializers: new Set(),
+        ...(captureProofs === undefined
+          ? {}
+          : { captures: projection.map(() => node) }),
       },
-    ];
+      parent: null,
+    }));
     // Finish descendants before memoizing an expansion. Only actual external
     // cycle blockers affect reuse; branch history is not a dependency. An
     // acyclic expression/path is consequently expanded once across a diamond.
@@ -887,7 +1091,7 @@ const createSemanticCallableReferences = (
             captureProofs.ownSlotUnchanged(
               node,
               String(key),
-              item.captures?.[0] ?? callee,
+              item.captures?.[0] ?? captureSite,
             );
         }
         selectObjectTargets(node, item, pending, objectTargets);
@@ -928,7 +1132,7 @@ const createSemanticCallableReferences = (
             captureProofs.ownSlotUnchanged(
               node,
               String(index),
-              item.captures?.[0] ?? callee,
+              item.captures?.[0] ?? captureSite,
             );
       } else if (t.isNewExpression(node)) {
         complete = false;
@@ -1055,9 +1259,11 @@ const createSemanticCallableReferences = (
       ...paths.values(),
     ]);
     const output = { references, complete };
-    const byProjection = results.get(callee) ?? new Map();
-    byProjection.set(projectionKey, output);
-    results.set(callee, byProjection);
+    if (single !== undefined) {
+      const byProjection = results.get(single) ?? new Map();
+      byProjection.set(projectionKey, output);
+      results.set(single, byProjection);
+    }
     return output;
   };
 };
@@ -1089,8 +1295,15 @@ export const createSemanticFunctionValueReferences = (
     "function-values",
     isDefinitelyObject,
   );
-  return (callee: t.Node, projection?: readonly (string | number | null)[]) =>
-    references(callee, projection).references;
+  return Object.assign(
+    (callee: t.Node, projection?: readonly (string | number | null)[]) =>
+      references(callee, projection).references,
+    {
+      // Only possible reachability is shared; this union grants no root-local
+      // capture proof and never enters the single-root result cache.
+      fromRoots: (roots: readonly t.Node[]) => references(roots).references,
+    },
+  );
 };
 
 /** Opt-in exact capture proof; possible-target consumers retain incomplete selections. */
