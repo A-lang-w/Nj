@@ -353,7 +353,15 @@ describe("client activation keys", () => {
                 toolTimeoutMs: 450_000,
               },
             ]
-          : [join(home, ".config/devin/mcp_config.json"), {}];
+          : [
+              join(
+                process.platform === "win32"
+                  ? join(home, "AppData", "Roaming", "devin")
+                  : join(home, ".config", "devin"),
+                "mcp_config.json",
+              ),
+              {},
+            ];
       await mkdir(dirname(config), { recursive: true });
       await writeFile(
         config,
