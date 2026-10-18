@@ -103,10 +103,12 @@ it("applies the provider export default from the target SDK", () => {
   });
   const modern = parseAndroidManifestComponents(MANIFEST, "complete", "33");
   expect(modern.items[6]?.exported_default).toBe(false);
-  // An unknown target SDK leaves the provider default unestablished.
+  // An unknown target SDK leaves the provider default unestablished; this
+  // manifest's provider declares android:exported, so no limitation fires.
+  // The omitted-exported warning path is covered by its own test.
   const unknown = parseAndroidManifestComponents(MANIFEST, "complete", null);
   expect(unknown.items[6]?.exported_default).toBeNull();
-  expect(unknown.limitations.join(" ")).toContain("export default");
+  expect(unknown.limitations).toEqual([]);
 });
 
 it("ignores same-local-name attributes from other namespaces", () => {
@@ -183,6 +185,89 @@ it("bounds the component inventory and says so", () => {
   expect(inventory.limitations.join(" ")).toContain(
     String(ANDROID_MANIFEST_LIMITS.components),
   );
+});
+
+it("shares one intent-value budget across actions and categories", () => {
+  const values = Array.from(
+    { length: 80 },
+    (_, index) =>
+      `<intent-filter><action android:name="a${String(index)}" /><category android:name="c${String(index)}" /></intent-filter>`,
+  ).join("");
+  const inventory = parseAndroidManifestComponents(
+    `<?xml version="1.0" encoding="utf-8"?><manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.app"><application><activity android:name=".Many">${values}</activity></application></manifest>`,
+    "complete",
+    "33",
+  );
+  const first = inventory.items[0];
+  expect(first).toBeDefined();
+  expect((first?.actions.length ?? 0) + (first?.categories.length ?? 0)).toBe(
+    ANDROID_MANIFEST_LIMITS.intentValues,
+  );
+  expect(inventory.status).toBe("partial");
+  expect(inventory.limitations.join(" ")).toContain("values per component");
+});
+
+it("bounds provider authorities", () => {
+  const authorities = Array.from(
+    { length: ANDROID_MANIFEST_LIMITS.authorities + 5 },
+    (_, index) => `auth${String(index)}`,
+  ).join(";");
+  const inventory = parseAndroidManifestComponents(
+    `<?xml version="1.0" encoding="utf-8"?><manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.app"><application><provider android:name=".Many" android:authorities="${authorities}" /></application></manifest>`,
+    "complete",
+    "33",
+  );
+  expect(inventory.items[0]?.authorities).toHaveLength(
+    ANDROID_MANIFEST_LIMITS.authorities,
+  );
+  expect(inventory.status).toBe("partial");
+});
+
+it("leaves later names declared when the resolved-name budget is spent", () => {
+  const hugePackage = "p".repeat(64 * 1024);
+  const names = Array.from(
+    { length: 20 },
+    (_, index) => `<activity android:name=".A${String(index)}" />`,
+  ).join("");
+  const inventory = parseAndroidManifestComponents(
+    `<?xml version="1.0" encoding="utf-8"?><manifest xmlns:android="http://schemas.android.com/apk/res/android" package="${hugePackage}"><application>${names}</application></manifest>`,
+    "complete",
+    "33",
+  );
+  expect(inventory.items.length).toBeGreaterThan(1);
+  expect(inventory.items[0]?.name).toContain(hugePackage);
+  const unresolved = inventory.items.filter(
+    ({ name }) => !name.includes(hugePackage),
+  );
+  expect(unresolved.length).toBeGreaterThan(0);
+  expect(unresolved.every(({ name }) => name.startsWith(".A"))).toBe(true);
+  expect(inventory.status).toBe("partial");
+  expect(inventory.limitations.join(" ")).toContain(
+    "resolved-name byte budget",
+  );
+});
+
+it("marks the inventory partial when nameless declarations are dropped", () => {
+  const inventory = parseAndroidManifestComponents(
+    `<?xml version="1.0" encoding="utf-8"?><manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.app"><application><activity /><activity android:name=".Real" /></application></manifest>`,
+    "complete",
+    "33",
+  );
+  expect(inventory.status).toBe("partial");
+  expect(inventory.items).toHaveLength(1);
+  expect(inventory.limitations.join(" ")).toContain(
+    "1 component declaration(s) without android:name",
+  );
+});
+
+it("does not warn about providers that declare android:exported", () => {
+  const inventory = parseAndroidManifestComponents(
+    `<?xml version="1.0" encoding="utf-8"?><manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.app"><application><provider android:name=".Declared" android:exported="false" /><provider android:name=".Omitted" /></application></manifest>`,
+    "complete",
+    null,
+  );
+  expect(inventory.limitations.join(" ")).toContain("1 provider(s) omit");
+  expect(inventory.limitations.join(" ")).not.toContain("2 provider(s) omit");
 });
 
 it("counts unnamed declarations against the component bound", () => {

@@ -17,6 +17,9 @@ export const ANDROID_MANIFEST_LIMITS = {
   components: 512,
   intentFilters: 32,
   intentValues: 64,
+  authorities: 64,
+  /** Total bytes of resolved component names, bounding package amplification. */
+  resolvedNameBytes: 1024 * 1024,
 } as const;
 
 /** The attribute namespace every component facet uses. */
@@ -26,7 +29,10 @@ export interface AndroidManifestComponent {
   readonly kind: AndroidComponentKind;
   /** Class name as written in the manifest. */
   readonly declared_name: string;
-  /** Fully qualified name with the manifest package applied. */
+  /**
+   * Fully qualified name with the manifest package applied, or the declared
+   * name unchanged when the resolved-name byte budget was exhausted.
+   */
   readonly name: string;
   /** Declared android:exported, or null when the attribute is absent. */
   readonly exported: boolean | null;
@@ -139,13 +145,17 @@ export const providerExportedDefault = (
   return level <= 16;
 };
 
-/** Collect unique intent-filter actions and categories within the bound. */
+/**
+ * Collect unique intent-filter actions and categories. The value budget is
+ * shared across both arrays, matching the stated per-component bound.
+ */
 const intentValues = (
   filters: readonly Element[],
 ): { actions: string[]; categories: string[]; truncated: boolean } => {
   const actions: string[] = [];
   const categories: string[] = [];
   let truncated = filters.length > ANDROID_MANIFEST_LIMITS.intentFilters;
+  let budget = ANDROID_MANIFEST_LIMITS.intentValues;
   for (const filter of filters.slice(0, ANDROID_MANIFEST_LIMITS.intentFilters))
     for (const member of childNodes(filter)) {
       if (member.nodeType !== 1) continue;
@@ -156,13 +166,32 @@ const intentValues = (
       if (value === null) continue;
       const target = element.nodeName === "action" ? actions : categories;
       if (target.includes(value)) continue;
-      if (target.length >= ANDROID_MANIFEST_LIMITS.intentValues) {
+      if (budget <= 0) {
         truncated = true;
         continue;
       }
+      budget -= 1;
       target.push(value);
     }
   return { actions, categories, truncated };
+};
+
+/** Split a provider authorities declaration within its own bound. */
+const providerAuthorities = (
+  declared: string,
+): { authorities: string[]; truncated: boolean } => {
+  const authorities: string[] = [];
+  let truncated = false;
+  for (const value of declared.split(";")) {
+    const trimmedValue = value.trim();
+    if (trimmedValue.length === 0) continue;
+    if (authorities.length >= ANDROID_MANIFEST_LIMITS.authorities) {
+      truncated = true;
+      break;
+    }
+    authorities.push(trimmedValue);
+  }
+  return { authorities, truncated };
 };
 
 /**
@@ -202,6 +231,8 @@ export const parseAndroidManifestComponents = (
   let applicationSeen = false;
   let unnamed = 0;
   let providerDefaultsUnknown = 0;
+  let unresolvedNames = 0;
+  let nameBudget = ANDROID_MANIFEST_LIMITS.resolvedNameBytes;
   for (const node of childNodes(root)) {
     if (node.nodeType !== 1) continue;
     const element = node as Element;
@@ -228,17 +259,39 @@ export const parseAndroidManifestComponents = (
       );
       const collected = intentValues(filters);
       if (collected.truncated) truncated = true;
-      const authorities = trimmed(component, "authorities");
+      // A huge manifest package would be copied into every resolved name;
+      // once the byte budget is spent, later names keep their declared form.
+      const resolved = resolveAndroidComponentName(packageName, declared);
+      const name =
+        nameBudget >= resolved.length || items.length === 0
+          ? resolved
+          : declared;
+      if (name !== resolved) unresolvedNames += 1;
+      else nameBudget -= resolved.length;
+      let authorities: readonly string[] | null = null;
+      if (component.nodeName === "provider") {
+        const declaredAuthorities = trimmed(component, "authorities");
+        if (declaredAuthorities !== null) {
+          const split = providerAuthorities(declaredAuthorities);
+          if (split.truncated) truncated = true;
+          authorities = split.authorities;
+        }
+      }
       const providerDefault =
         component.nodeName === "provider"
           ? providerExportedDefault(targetSdk)
           : null;
-      if (component.nodeName === "provider" && providerDefault === null)
+      // The default only matters when android:exported is absent.
+      if (
+        component.nodeName === "provider" &&
+        providerDefault === null &&
+        booleanAttribute(component, "exported") === null
+      )
         providerDefaultsUnknown += 1;
       items.push({
         kind: component.nodeName,
         declared_name: declared,
-        name: resolveAndroidComponentName(packageName, declared),
+        name,
         exported: booleanAttribute(component, "exported"),
         exported_default:
           component.nodeName === "provider"
@@ -252,13 +305,7 @@ export const parseAndroidManifestComponents = (
           component.nodeName === "service"
             ? trimmed(component, "foregroundServiceType")
             : null,
-        authorities:
-          component.nodeName === "provider" && authorities !== null
-            ? authorities
-                .split(";")
-                .map((value) => value.trim())
-                .filter((value) => value.length > 0)
-            : null,
+        authorities,
         target_activity:
           component.nodeName === "activity-alias"
             ? trimmed(component, "targetActivity")
@@ -270,17 +317,26 @@ export const parseAndroidManifestComponents = (
     limitations.push(
       "The manifest declares no <application> element, so no components were projected.",
     );
-  if (unnamed > 0)
+  // Dropped declarations mean the inventory is not the whole manifest.
+  if (unnamed > 0) {
     limitations.push(
       `${String(unnamed)} component declaration(s) without android:name are omitted from the inventory.`,
     );
+    truncated = true;
+  }
   if (providerDefaultsUnknown > 0)
     limitations.push(
       `${String(providerDefaultsUnknown)} provider(s) omit android:exported and the target SDK is unknown, so Android's export default for them is not established.`,
     );
+  if (unresolvedNames > 0) {
+    limitations.push(
+      `${String(unresolvedNames)} component name(s) keep their declared form because the resolved-name byte budget (${String(ANDROID_MANIFEST_LIMITS.resolvedNameBytes)}) was exhausted.`,
+    );
+    truncated = true;
+  }
   if (truncated)
     limitations.push(
-      `The component inventory stops at ${String(ANDROID_MANIFEST_LIMITS.components)} components, ${String(ANDROID_MANIFEST_LIMITS.intentFilters)} intent filters per component, or ${String(ANDROID_MANIFEST_LIMITS.intentValues)} values per component.`,
+      `The component inventory stops at ${String(ANDROID_MANIFEST_LIMITS.components)} components, ${String(ANDROID_MANIFEST_LIMITS.intentFilters)} intent filters per component, ${String(ANDROID_MANIFEST_LIMITS.intentValues)} intent-filter values per component, or ${String(ANDROID_MANIFEST_LIMITS.authorities)} authorities per provider.`,
     );
   return {
     status: truncated ? "partial" : "complete",

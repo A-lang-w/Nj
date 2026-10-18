@@ -120,6 +120,15 @@ const manifestComponent = z.strictObject({
   target_activity: z.string().nullable(),
 });
 
+/** Inventory shape for Evidence retained before this projection existed. */
+const PRE_PROJECTION_COMPONENTS: z.infer<typeof manifestComponents> = {
+  status: "unavailable",
+  items: [],
+  limitations: [
+    "This Evidence predates the manifest component projection; run inspect_android_package again to obtain it.",
+  ],
+};
+
 /**
  * Static component projection of the decoded manifest. The export default is
  * Android's documented rule for an absent android:exported; it is not a
@@ -165,7 +174,9 @@ export const androidResultSchemas = {
     target_sdk: z.string().nullable(),
     permissions: z.array(z.string()),
     manifest: textCoverage,
-    components: manifestComponents,
+    // Evidence retained before the component projection existed re-parses
+    // with an explicit unavailable inventory; current results always carry it.
+    components: manifestComponents.default(() => PRE_PROJECTION_COMPONENTS),
     class_count: z.number().int().nonnegative(),
     resource_count: z.number().int().nonnegative(),
     signature_verification: z.literal("not_performed"),
