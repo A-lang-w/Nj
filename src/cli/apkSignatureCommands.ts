@@ -35,7 +35,6 @@ export const registerApkSignatureCommands = (
             service,
             APK_SIGNATURE_PROVIDER_IDENTITY.id,
             apkSignatureModule.contract.name,
-            undefined,
             signal,
           ),
         );
