@@ -385,16 +385,18 @@ export const serveStreamableHttp = async (
   return { url, close };
 };
 
-/** Drop open connections and release the port. */
+/** Stop accepting, drop open connections and release the port. */
 const closeHttpServer = (
   httpServer: ReturnType<typeof createHttpServer>,
 ): Promise<void> => {
-  httpServer.closeAllConnections();
-  return new Promise<void>((resolve, reject) => {
+  // close() first, as Node documents: a connection accepted before it would otherwise miss the forced-close pass.
+  const closed = new Promise<void>((resolve, reject) => {
     httpServer.close((error) =>
       error === undefined ? resolve() : reject(error),
     );
   });
+  httpServer.closeAllConnections();
+  return closed;
 };
 
 /** Translate one node:http exchange through `route`, logging a failure and answering it when headers are still open. */
