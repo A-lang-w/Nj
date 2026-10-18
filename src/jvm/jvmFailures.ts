@@ -48,6 +48,14 @@ export const mapParseError = (
           message: `Class file ended before a structure completed at byte ${String(error.offset)}.`,
         },
       ]);
+    case "trailing-bytes":
+      return new AnalysisInputError(OPERATION, undefined, [
+        {
+          path: ["path"],
+          reason: "invalid_format",
+          message: `Class file has ${String(error.count)} extra bytes after its structure ends at byte ${String(error.offset)}; the JVM rejects such a class.`,
+        },
+      ]);
     case "unsupported-constant-tag":
       return new AnalysisInputError(OPERATION, undefined, [
         {

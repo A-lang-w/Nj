@@ -109,6 +109,16 @@ export type JavaClassFileParseError =
     }
   | { readonly kind: "invalid-utf8"; readonly offset: number }
   | {
+      /**
+       * Bytes remain after the class-file structure ends. JVMS §4.8 requires
+       * the file to end there; HotSpot rejects such a class ("Extra bytes at
+       * the end of class file").
+       */
+      readonly kind: "trailing-bytes";
+      readonly offset: number;
+      readonly count: number;
+    }
+  | {
       readonly kind: "budget-exceeded";
       readonly offset: number;
       readonly resource: "interfaces" | "fields" | "methods" | "attributes";
@@ -618,6 +628,12 @@ export const parseJavaClassFile = (
     budget,
   );
   if (!attributes.ok) return attributes;
+  if (cursor.remaining !== 0)
+    return err({
+      kind: "trailing-bytes",
+      offset: cursor.offset,
+      count: cursor.remaining,
+    });
 
   return ok({
     minorVersion: minorVersion.value,
