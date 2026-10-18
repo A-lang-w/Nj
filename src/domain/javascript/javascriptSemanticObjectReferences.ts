@@ -24,6 +24,7 @@ import { expandSemanticGetterResult } from "./javascriptSemanticGetterResults.js
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import { semanticCopiedReferencePath } from "./javascriptSemanticReferenceSources.js";
 import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
+import type { SemanticReturnedReferenceSelection } from "./javascriptSemanticReturnedReferences.js";
 
 export type SemanticCapturedOwnSlot =
   | { readonly status: "unknown" }
@@ -65,7 +66,7 @@ export interface SemanticOwnReferenceFacts {
   ) => boolean;
   readonly returnedReferences?: (
     callee: t.Node,
-  ) => readonly { readonly node: t.Node; readonly projection: PropertyPath }[];
+  ) => SemanticReturnedReferenceSelection;
   readonly ownClassSlotIntact?: (
     owner: t.Class,
     key: string,
@@ -228,12 +229,12 @@ export const semanticOwnReferenceCandidates = (
       continue;
     }
     if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
-      const returned = facts.returnedReferences?.(node.callee) ?? [];
-      if (returned.length === 0) {
+      const returned = facts.returnedReferences?.(node.callee);
+      if (returned?.complete !== true || returned.references.length === 0) {
         unknown = true;
         complete = false;
       }
-      for (const reference of returned) {
+      for (const reference of returned?.references ?? []) {
         if (
           reference.projection.some(
             (key) => key === null || typeof key === "object",

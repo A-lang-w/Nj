@@ -1,6 +1,5 @@
 import * as t from "@babel/types";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 
 import {
   resolveSemanticBindingState,
@@ -12,6 +11,7 @@ import {
 } from "./javascriptSemanticState.js";
 import {
   semanticHostRequireIntact,
+  semanticHostRequireBindingWritesIntact,
   semanticHostRequireModuleWritesIntact,
   semanticMemberChain,
   type JavaScriptRequireOrigin,
@@ -245,38 +245,8 @@ export const createSemanticRequireShimInertQuery = (
   )
     return () => false;
   const cached = new WeakMap<t.Node, boolean>();
-  let wrapperArguments: readonly t.Node[] | undefined;
-  const argumentsExposedBefore = (call: t.CallExpression): boolean => {
-    if (wrapperArguments === undefined) {
-      const references: t.Node[] = [];
-      traverseJavaScriptAst(state.program, {
-        skip: (node) => {
-          const parent = state.parentsByNode.get(node);
-          // Ordinary functions own arguments in their parameters and body;
-          // computed method keys and decorators still run in the outer scope.
-          return (
-            t.isFunction(parent) &&
-            !t.isArrowFunctionExpression(parent) &&
-            (parent.body === node ||
-              parent.params.some((param) => param === node))
-          );
-        },
-        enter: (node) => {
-          if (t.isIdentifier(node, { name: "arguments" }))
-            references.push(node);
-        },
-      });
-      wrapperArguments = references;
-    }
-    // A captured/escaped arguments object may rewrite the sloppy wrapper's
-    // mapped require parameter without any source-level require assignment.
-    return wrapperArguments.some(
-      (reference) =>
-        !semanticEffectFollowsInitialCapture(call, reference, state),
-    );
-  };
   const initializerInert = (call: t.CallExpression): boolean => {
-    if (facts.complete !== true || argumentsExposedBefore(call)) return false;
+    if (facts.complete !== true) return false;
     const prior = (effect: t.Node | undefined) =>
       !semanticEffectFollowsInitialCapture(call, effect, state);
     return semanticRequireShimInitializer(
@@ -284,7 +254,7 @@ export const createSemanticRequireShimInertQuery = (
       state,
       (reference) =>
         isUnshadowedGlobal(reference, state, "require") &&
-        !(state.ambientBindingWrites.get("require") ?? []).some(prior) &&
+        semanticHostRequireBindingWritesIntact(call, state) &&
         !(facts.opaqueGlobalSites ?? state.opaqueEffects.globalSites).some(
           prior,
         ) &&

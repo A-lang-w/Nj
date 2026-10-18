@@ -2,6 +2,9 @@ import * as t from "@babel/types";
 
 import {
   semanticStaticPropertyKey,
+  semanticWriteSiteReadsFirst,
+  semanticWriteSiteTarget,
+  semanticWriteTargets,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -94,25 +97,34 @@ const receiverQueries = new WeakMap<
 >();
 
 type ReceiverSite = readonly [node: t.Node, parent: t.Node | null];
+interface ParsedReceiverSites {
+  readonly sites: readonly ReceiverSite[];
+  readonly writes: WeakMap<t.Node, t.Node>;
+}
 const receiverSites = new WeakMap<
   JavaScriptSemanticAnalysisState,
-  readonly ReceiverSite[]
+  ParsedReceiverSites
 >();
 
 /** Retain syntax once per source; each proof snapshot selects uses afresh. */
 const parsedReceiverSites = (
   state: JavaScriptSemanticAnalysisState,
-): readonly ReceiverSite[] => {
+): ParsedReceiverSites => {
   const prior = receiverSites.get(state);
   if (prior !== undefined) return prior;
   const sites: ReceiverSite[] = [];
+  const writes = new WeakMap<t.Node, t.Node>();
   traverseJavaScriptAst(state.program, {
     enter: (node, parent) => {
       sites.push([node, parent]);
+      const target = semanticWriteSiteTarget(node);
+      if (target !== null)
+        for (const leaf of semanticWriteTargets(target)) writes.set(leaf, node);
     },
   });
-  receiverSites.set(state, sites);
-  return sites;
+  const parsed = { sites, writes };
+  receiverSites.set(state, parsed);
+  return parsed;
 };
 
 /** Possible receiver identity is shared by all ambient-write consumers. */
@@ -388,14 +400,13 @@ export const createSemanticReceiverReferences = (
         const inherited =
           declaration.owner.superClass == null
             ? []
-            : returned(declaration.owner.superClass).map(({ node }) => node);
+            : returned(declaration.owner.superClass).references.map(
+                ({ node }) => node,
+              );
         for (const node of inherited) values.add(node);
         if (
-          declaration.lineage.unknownBase !== undefined ||
-          declaration.lineage.classes.some(
-            (owner) =>
-              owner.superClass != null &&
-              !receiverObjects.isFreshObject(owner.superClass),
+          classStages(declaration.owner, name).some(
+            (stage) => stage.unknownReceiver,
           ) ||
           inherited.some((node) => !receiverObjects.isFreshObject(node))
         )
@@ -444,7 +455,7 @@ export const createSemanticReceiverReferences = (
           source: target,
         };
         const identity = semanticAllocatedReceiverIdentity(allocation);
-        const stages = t.isClass(target) ? classStages(target) : [];
+        const stages = t.isClass(target) ? classStages(target, allocation) : [];
         const activations: t.Node[] = t.isFunction(target)
           ? [target]
           : stages.flatMap((stage) => [
@@ -503,7 +514,7 @@ export const createSemanticReceiverReferences = (
       }
       covered.add(callee);
     };
-    const sites = parsedReceiverSites(state);
+    const { sites, writes } = parsedReceiverSites(state);
     const inactiveNodes = new WeakSet<t.Node>();
     sites.forEach(([node, parent]) => {
       if (
@@ -540,13 +551,8 @@ export const createSemanticReceiverReferences = (
             : (privateTargets(privateName)?.members.flatMap((member) =>
                 t.isFunction(member.value) ? [member.value] : [],
               ) ?? []);
-        const parent = state.parentsByNode.get(node);
-        const assignment =
-          t.isAssignmentExpression(parent) && parent.left === node;
-        const update = t.isUpdateExpression(parent) && parent.argument === node;
-        const deletion =
-          t.isUnaryExpression(parent, { operator: "delete" }) &&
-          parent.argument === node;
+        const write = writes.get(node);
+        const deletion = t.isUnaryExpression(write, { operator: "delete" });
         for (const member of members) {
           if (
             values !== undefined &&
@@ -555,8 +561,8 @@ export const createSemanticReceiverReferences = (
               t.isClassPrivateMethod(member)) &&
             ((member.kind === "get" &&
               !deletion &&
-              (!assignment || parent.operator !== "=")) ||
-              (member.kind === "set" && (assignment || update)))
+              (write === undefined || semanticWriteSiteReadsFirst(write))) ||
+              (member.kind === "set" && write !== undefined && !deletion))
           )
             retainReceivers(member, values);
         }
@@ -679,13 +685,11 @@ export const createSemanticReceiverReferences = (
       // not distinguish an escaped instance from a local method receiver.
       for (;;) {
         if (covered.has(current)) return;
-        // Plain assignment evaluates an address without reading its old value.
-        // Computed keys and the RHS remain independent evaluated use sites.
-        if (
-          t.isAssignmentExpression(parent, { operator: "=" }) &&
-          parent.left === current
-        )
-          return;
+        // Assignment patterns and loops evaluate target addresses without
+        // reading their old values. Keys, receivers and defaults keep their
+        // own evaluated sites; only target leaves belong to the write index.
+        const write = writes.get(current);
+        if (write !== undefined && !semanticWriteSiteReadsFirst(write)) return;
         if (
           (t.isSequenceExpression(parent) &&
             parent.expressions.at(-1) !== current) ||
@@ -832,7 +836,7 @@ export const createSemanticReceiverReferences = (
     const declaring =
       body === undefined ? undefined : state.parentsByNode.get(body);
     return t.isClass(declaring) && declaring.superClass != null
-      ? returned(declaring.superClass).map(({ node }) => node)
+      ? returned(declaring.superClass).references.map(({ node }) => node)
       : [];
   };
   const refresh = () => {

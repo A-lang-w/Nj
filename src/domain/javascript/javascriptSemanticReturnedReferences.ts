@@ -11,6 +11,7 @@ import {
 } from "./javascriptModuleInterop.js";
 import {
   semanticCallableResultExpressions,
+  semanticCallableResultCompletion,
   type SemanticCallableResultExpression,
 } from "./javascriptSemanticCallableResults.js";
 import { SemanticGetterExpansion } from "./javascriptSemanticGetterQueries.js";
@@ -20,7 +21,10 @@ import {
   semanticLiteralActivationIsImmediate,
 } from "./javascriptSemanticMutationInitializers.js";
 import { delayedInstanceFieldValue } from "./javascriptSemanticEvaluationOrder.js";
-import { semanticAmbientOwnSlotFactsReady } from "./javascriptSemanticAmbientWrites.js";
+import {
+  semanticAmbientOwnSlotFactsReady,
+  semanticAmbientPrototypeUnchanged,
+} from "./javascriptSemanticAmbientWrites.js";
 import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
 import {
   semanticArrayIndex,
@@ -38,6 +42,11 @@ import {
 export interface SemanticReturnedReference {
   readonly node: t.Node;
   readonly projection: JavaScriptSemanticPropertyPath;
+}
+
+export interface SemanticReturnedReferenceSelection {
+  readonly references: readonly SemanticReturnedReference[];
+  readonly complete: boolean;
 }
 
 interface ValueSelection {
@@ -713,9 +722,28 @@ export const createSemanticClassConstructionStages = (
     isFreshObject,
     isDefinitelyObject,
   );
-  return (node: t.Class) => {
+  return (node: t.Class, allocation?: t.Node) => {
     let fresh = true;
-    const lineage = classLineage(node, state, lineages);
+    const declared = classLineage(node, state, lineages);
+    // Unlike the instance prototype chain, super() follows the constructor's
+    // current [[Prototype]]. A changed edge invalidates every declared stage
+    // above it. Keep an unknown receiver until actual parent identity is known.
+    // Before the mutation snapshot exists, retain the provisional source graph;
+    // completed receiver queries reselect these edges at each allocation.
+    // Without an allocation, callers are collecting possible activation owners
+    // for escaped construction; retain every declared stage in that union.
+    const changedParent =
+      allocation !== undefined && semanticAmbientOwnSlotFactsReady(state)
+        ? declared.classes.findIndex(
+            (owner) =>
+              owner.superClass != null &&
+              !semanticAmbientPrototypeUnchanged(state, owner, allocation),
+          )
+        : -1;
+    const lineage: ClassLineage =
+      changedParent < 0
+        ? declared
+        : { classes: declared.classes.slice(0, changedParent + 1) };
     const stages: {
       constructor: t.Function | undefined;
       fields: readonly ClassTargetMember[];
@@ -729,8 +757,9 @@ export const createSemanticClassConstructionStages = (
     const candidates = base === undefined ? [] : references(base);
     const candidate = candidates.length === 1 ? candidates[0] : undefined;
     let unknownReceiver =
-      base !== undefined &&
-      !t.isNullLiteral(unwrapJavaScriptExpression(base).node);
+      changedParent >= 0 ||
+      (base !== undefined &&
+        !t.isNullLiteral(unwrapJavaScriptExpression(base).node));
     if (
       base !== undefined &&
       candidate?.projection.length === 0 &&
@@ -912,6 +941,14 @@ const createSemanticCallableReferences = (
     // cycle blockers affect reuse; branch history is not a dependency. An
     // acyclic expression/path is consequently expanded once across a diamond.
     let expanded: CompletedExpansions = new WeakMap();
+    // Possible callable reachability joins competing selectors at their source.
+    // Enumerating complete alias histories creates exponential path permutations.
+    // Null selectors retain every matching member; exact capture queries never
+    // use this widening and completion remains unknown after a join.
+    const projectionPaths = new WeakMap<
+      t.Node,
+      Map<string, Candidate["path"]>
+    >();
     while (work.length > 0) {
       const task = work.pop();
       if (task === undefined) break;
@@ -924,7 +961,7 @@ const createSemanticCallableReferences = (
       // The fallback is reachability over receiver contents, independent of
       // suffix permutations and alias ancestry. Calls expose both their
       // callable and result contents in this conservative pass.
-      const item: Candidate = widening
+      let item: Candidate = widening
         ? {
             node: task.item.node,
             path: [],
@@ -941,6 +978,42 @@ const createSemanticCallableReferences = (
           }
         : task.item;
       const node = unwrapJavaScriptExpression(item.node).node;
+      if (item.path.includes(null)) complete = false;
+      if (captureProofs === undefined && !widening) {
+        const joinKey = JSON.stringify([
+          item.instance === true,
+          item.path.length,
+          item.invocation,
+          item.accessorRead === true,
+          captureKey(
+            item.descriptorReceiver === undefined
+              ? undefined
+              : [item.descriptorReceiver.node],
+          ),
+          item.descriptorReceiver?.instance,
+          captureKey(
+            item.receiverContext === undefined
+              ? undefined
+              : [
+                  item.receiverContext.owner,
+                  item.receiverContext.receiver.node,
+                ],
+          ),
+          item.receiverContext?.receiver.instance,
+        ]);
+        const paths = projectionPaths.get(node) ?? new Map();
+        const previous = paths.get(joinKey);
+        if (previous !== undefined) {
+          const joined = item.path.map((key, index) =>
+            previous[index] === key ? key : null,
+          );
+          if (joined.some((key, index) => key !== item.path[index]))
+            complete = false;
+          item = { ...item, path: joined };
+        }
+        paths.set(joinKey, item.path);
+        projectionPaths.set(node, paths);
+      }
       const pathKey = JSON.stringify([
         item.instance === true,
         item.path,
@@ -1035,11 +1108,11 @@ const createSemanticCallableReferences = (
             });
       } else if (t.isIdentifier(node)) {
         const selected = callableInitializersAt(node, state);
+        complete &&= selected.definite;
         if (captureProofs !== undefined) {
           const binding = resolveSemanticBindingState(state, node, node.name);
           complete &&=
             binding !== undefined &&
-            selected.definite &&
             !captureProofs.bindingReadMayHaveChanged(binding, node) &&
             selected.initializers.every(
               ({ node: value }) =>
@@ -1240,7 +1313,8 @@ const createSemanticCallableReferences = (
             key == null ? undefined : index.propertyByName.get(String(key));
           complete &&=
             property !== undefined &&
-            t.isObjectProperty(property) &&
+            (t.isObjectProperty(property) ||
+              t.isObjectMethod(property, { kind: "method" })) &&
             !index.trailingUnknownsByProperty.has(property) &&
             captureProofs.ownSlotUnchanged(
               node,
@@ -1514,33 +1588,68 @@ export const createSemanticFunctionValueCapture = (
 export const createSemanticReturnedReferences = (
   state: JavaScriptSemanticAnalysisState,
   isDefinitelyObject?: (node: t.Node) => boolean,
-): ((callee: t.Node) => readonly SemanticReturnedReference[]) => {
+  captureProofs?: CallableCaptureProofs,
+): ((callee: t.Node) => SemanticReturnedReferenceSelection) => {
   const targets = createSemanticCallableReferences(
     state,
     "results",
     isDefinitelyObject,
   );
-  let results = new WeakMap<t.Node, readonly SemanticReturnedReference[]>();
+  // Possible targets remain useful to escapes even when their identity cannot
+  // be proved. Result coverage additionally requires every selected binding
+  // and own property to retain the callable captured at this read.
+  const capturedTargets = createSemanticCallableReferences(
+    state,
+    "results",
+    isDefinitelyObject,
+    captureProofs ?? {
+      bindingReadMayHaveChanged: () => true,
+      ownSlotUnchanged: () => false,
+    },
+  );
+  const completions = new WeakMap<
+    t.Node,
+    ReturnType<typeof semanticCallableResultCompletion>
+  >();
+  const completion = (callable: t.Node) => {
+    let result = completions.get(callable);
+    if (result === undefined) {
+      result = semanticCallableResultCompletion(callable);
+      completions.set(callable, result);
+    }
+    return result;
+  };
+  let results = new WeakMap<t.Node, SemanticReturnedReferenceSelection>();
   let factsReady = semanticFreshObjectFactsReady(state);
+  let slotsReady = semanticAmbientOwnSlotFactsReady(state);
   return (callee) => {
     const ready = semanticFreshObjectFactsReady(state);
-    if (factsReady !== ready) {
+    const ownSlotsReady = semanticAmbientOwnSlotFactsReady(state);
+    if (factsReady !== ready || slotsReady !== ownSlotsReady) {
       factsReady = ready;
+      slotsReady = ownSlotsReady;
       results = new WeakMap();
     }
     const prior = results.get(callee);
     if (prior !== undefined) return prior;
-    const references = targets(callee).references.flatMap(
-      ({ node: callable }) =>
-        semanticCallableResultExpressions(callable).flatMap(
-          ({ node, delegated }) =>
-            node === null
-              ? []
-              : [{ node, projection: delegated ? [null] : [] }],
-        ),
+    const selected = targets(callee);
+    const references = selected.references.flatMap(({ node: callable }) =>
+      completion(callable).expressions.flatMap(({ node, delegated }) =>
+        node === null ? [] : [{ node, projection: delegated ? [null] : [] }],
+      ),
     );
-    results.set(callee, references);
-    return references;
+    const output = {
+      references,
+      complete:
+        selected.complete &&
+        capturedTargets(callee).complete &&
+        selected.references.every(
+          ({ node, projection }) =>
+            projection.length === 0 && completion(node).complete,
+        ),
+    };
+    results.set(callee, output);
+    return output;
   };
 };
 

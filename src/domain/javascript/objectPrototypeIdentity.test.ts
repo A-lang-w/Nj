@@ -235,3 +235,112 @@ it.each([
 ])("keeps own property writes and null prototypes separate: %s", (setup) => {
   expect(windows(setup)).toHaveLength(1);
 });
+
+it.each([
+  ["conditional fallthrough", "if(flag)return {__proto__:null};", 0],
+  ["bare return", "if(flag)return {__proto__:null};return;", 0],
+  ["loop fallthrough", "while(flag){return {__proto__:null}}", 0],
+  ["finally bare return", "try{return {__proto__:null}}finally{return}", 0],
+  [
+    "catch fallthrough",
+    "try{throw 1}catch(error){if(flag)return {__proto__:null}}",
+    0,
+  ],
+  ["unconditional return", "return {__proto__:null};", 1],
+  [
+    "both branches return",
+    "if(flag)return {__proto__:null};else return {__proto__:null};",
+    1,
+  ],
+  [
+    "return after conditional",
+    "if(flag)return {__proto__:null};return {__proto__:null};",
+    1,
+  ],
+  ["throwing alternative", "if(flag)return {__proto__:null};throw 1;", 1],
+  [
+    "finally return",
+    "try{if(flag)return {__proto__:null}}finally{return {__proto__:null}}",
+    1,
+  ],
+  [
+    "loop followed by return",
+    "while(flag){if(other)break}return {__proto__:null};",
+    1,
+  ],
+] as const)(
+  "preserves call result coverage for %s",
+  (_name, body, expected) => {
+    expect(
+      windows(
+        `function proto(flag){${body}}const o={__proto__:proto(false)};o.toString.call.call=other;`,
+      ),
+    ).toHaveLength(expected);
+  },
+);
+
+it.each([
+  [
+    "replaced method",
+    "const holder={proto(){return {__proto__:null}}};holder.proto=()=>undefined;",
+    "holder.proto()",
+    0,
+  ],
+  [
+    "escaped receiver",
+    "const holder={proto(){return {__proto__:null}}};unknown(holder);",
+    "holder.proto()",
+    0,
+  ],
+  [
+    "optional unknown property",
+    "const holder={proto(){return {__proto__:null}}};",
+    "holder[key]?.()",
+    0,
+  ],
+  [
+    "optional unknown element",
+    "const holder=[()=>({__proto__:null})];",
+    "holder[key]?.()",
+    0,
+  ],
+  [
+    "unknown inherited property",
+    "const holder={proto(){return {__proto__:null}}};",
+    "holder[key]()",
+    0,
+  ],
+  [
+    "optional missing property alternative",
+    "const holder=flag?{proto(){return {__proto__:null}}}:{};",
+    "holder.proto?.()",
+    0,
+  ],
+  [
+    "stable method",
+    "const holder={proto(){return {__proto__:null}}};",
+    "holder.proto()",
+    1,
+  ],
+  [
+    "stable function property",
+    "const holder={proto:()=>({__proto__:null})};",
+    "holder.proto()",
+    1,
+  ],
+  [
+    "callable captured before replacement",
+    "const holder={proto(){return {__proto__:null}}};const saved=holder.proto;holder.proto=()=>undefined;",
+    "saved()",
+    1,
+  ],
+] as const)(
+  "requires complete callee identity for %s result coverage",
+  (_name, setup, call, expected) => {
+    expect(
+      windows(
+        `${setup}const o={__proto__:${call}};o.toString.call.call=other;`,
+      ),
+    ).toHaveLength(expected);
+  },
+);

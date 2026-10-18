@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascriptSemanticAnalysis.js";
+import { createSemanticReceiverReferences } from "./javascriptSemanticReceiverReferences.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
@@ -13,6 +14,9 @@ const analyze = (source: string, path = "bundle.js") => {
   if (parsed === null) throw new Error("Expected parsed source");
   return analyzeParsedJavaScriptStaticSource(source, parsed);
 };
+const browserWindows = (write: string) =>
+  analyze(`${SHIM}${write}new(Q("electron").BrowserWindow)({});`).electron
+    .browser_windows;
 
 it("keeps a wide receiver's primitive stores separate from its object references", () => {
   const count = 1600;
@@ -201,11 +205,7 @@ describe("source-visible function receivers", () => {
   });
 });
 
-describe("accessor and tagged-template receivers", () => {
-  const browserWindows = (write: string) =>
-    analyze(`${SHIM}${write}new(Q("electron").BrowserWindow)({});`).electron
-      .browser_windows;
-
+describe("public accessor receivers", () => {
   it.each([
     "const box={set value(v){this.Q=other}};box.value=0;",
     "const box={get value(){this.Q=other}};box.value;",
@@ -226,7 +226,97 @@ describe("accessor and tagged-template receivers", () => {
   ])("keeps a selected public accessor receiver local: %s", (write) => {
     expect(browserWindows(write)).toHaveLength(1);
   });
+});
 
+describe("accessor assignment target receivers", () => {
+  it.each([
+    "({x:box.value}={x:0});",
+    "[box.value]=[0];",
+    "({x:[{y:box.value=0}]}={x:[{}]});",
+    "[...box.value]=[0];",
+    "({...box.value}={x:0});",
+    "for(box.value of [0]){}",
+    "for(box.value in {x:0}){}",
+    "for({x:[box.value=0]} of [{x:[]}]){}",
+  ])("keeps a setter assignment target local: %s", (write) => {
+    expect(
+      browserWindows(`const box={set value(v){this.Q=other}};${write}`),
+    ).toHaveLength(1);
+  });
+
+  it.each([
+    "class Box{set value(v){this.Q=other}}const box=new Box();[box.value]=[0];",
+    "class Base{set value(v){this.Q=other}}class Box extends Base{}const box=new Box();for(box.value of [0]){}",
+    "class Box{static set value(v){this.Q=other}}({x:Box.value=0}={});",
+    "const box={get value(){this.Q=other;return 'x'}};let target;({[box.value]:target}={x:0});",
+    "const box={get value(){this.Q=other;return {}}};({x:box.value.x}={x:0});",
+    "const box={get value(){this.Q=other;return 0}};let target;({x:target=box.value}={});",
+  ])("preserves assignment receiver and read roles: %s", (write) => {
+    expect(browserWindows(write)).toHaveLength(1);
+  });
+
+  it.each([
+    "const box={set value(v){this.Q=other}};({x:box.value}={x:0});external(box);",
+    "const box={set value(v){this.Q=other;external(this)}};[box.value]=[0];",
+    "const box={set value(v){this.Q=other}};for(box.value of [0]){}Object.getOwnPropertyDescriptor(box,'value').set.call(globalThis,0);",
+    "const box={get value(){return globalThis}};({x:box.value.Q}={x:other});",
+    "const box={get value(){Q=other;return 'x'}};let target;({[box.value]:target}={x:0});",
+    "const box={get value(){Q=other;return 0}};let target;({x:target=box.value}={});",
+  ])(
+    "retains escaped receivers and evaluated assignment reads: %s",
+    (write) => {
+      expect(browserWindows(write)).toEqual([]);
+    },
+  );
+
+  it.each([
+    ["({x:box.value}={x:0});", false, true],
+    ["for(box.value of [0]){}", false, true],
+    ["box.value+=1;", true, true],
+    ["box.value++;", true, true],
+    ["box.value||=1;", true, true],
+    ["let target;({[box.value]:target}={});", true, false],
+    ["({x:box.value.x}={x:0});", true, false],
+    ["let target;({x:target=box.value}={});", true, false],
+    ["delete box.value;", false, false],
+  ] as const)(
+    "indexes only invoked accessor roles for %s",
+    (write, reads, writes) => {
+      const parsed = parseJavaScriptSource(
+        `const box={get value(){this},set value(v){this}};${write}`,
+        "bundle.js",
+      );
+      if (parsed === null) throw new Error("Expected parsed source");
+      const index = completeSemanticSteps(
+        indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+      );
+      const declaration = parsed.program.body[0];
+      const object =
+        declaration?.type === "VariableDeclaration"
+          ? declaration.declarations[0]?.init
+          : undefined;
+      if (object?.type !== "ObjectExpression")
+        throw new Error("Expected accessor object");
+      const receivers = createSemanticReceiverReferences(index.bindings);
+      for (const [position, invoked] of [reads, writes].entries()) {
+        const method = object.properties[position];
+        const statement =
+          method?.type === "ObjectMethod" ? method.body.body[0] : undefined;
+        const receiver =
+          statement?.type === "ExpressionStatement"
+            ? statement.expression
+            : null;
+        if (receiver?.type !== "ThisExpression")
+          throw new Error("Expected accessor receiver");
+        expect(receivers(receiver)).toMatchObject(
+          invoked ? [{ type: "Identifier", name: "box" }] : [parsed.program],
+        );
+      }
+    },
+  );
+});
+
+describe("accessor escapes and tagged-template receivers", () => {
   it.each([
     "const box={set value(v){this.Q=other}};box.value=0;external(box);",
     "const box={get value(){this.Q=other}};box.value;external(box);",
@@ -390,7 +480,7 @@ describe("outer constructor replacement aliases", () => {
       throw new Error("Expected derived constructor");
     const results = createSemanticReturnedReferences(index.bindings);
     const inheritsGlobal = () =>
-      results(derived).some(
+      results(derived).references.some(
         ({ node }) => node.type === "Identifier" && node.name === "globalThis",
       );
     expect(inheritsGlobal()).toBe(true);

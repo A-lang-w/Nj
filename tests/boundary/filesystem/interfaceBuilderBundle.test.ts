@@ -1013,33 +1013,51 @@ describe("bounded Interface Builder archive decoding", () => {
     );
   });
 
-  it("decodes an archive whose date the decoder cannot represent", async () => {
-    const root = await createTestTempDirectory("rea-ib-test-");
-    const bundle = join(root, "Example.app");
-    const resources = join(bundle, "Contents", "Resources");
-    await mkdir(resources, { recursive: true });
-    // plutil writes years past 9999 unsigned, which the decoder rejects.
-    await writeFile(
-      join(resources, "Far.nib"),
-      '<?xml version="1.0"?><plist version="1.0"><dict><key>$archiver</key><string>NSKeyedArchiver</string><key>$objects</key><array><string>$null</string><date>11507-08-17T05:20:00Z</date></array><key>$top</key><dict/></dict></plist>',
-    );
+  it.each([
+    ["11507-08-17T05:20:00Z", false],
+    ["999999-01-01T00:00:00Z", true],
+  ])(
+    "decodes archive date %s with its representability preserved",
+    async (date, unknown) => {
+      const root = await createTestTempDirectory("rea-ib-test-");
+      const bundle = join(root, "Example.app");
+      const resources = join(bundle, "Contents", "Resources");
+      await mkdir(resources, { recursive: true });
+      // Expanded years are supported; dates outside the ECMAScript range remain unknown.
+      await writeFile(
+        join(resources, "Far.nib"),
+        '<?xml version="1.0"?><plist version="1.0"><dict><key>$archiver</key><string>NSKeyedArchiver</string><key>$objects</key><array><string>$null</string><date>DATE_LITERAL</date></array><key>$top</key><dict/></dict></plist>'.replace(
+          "DATE_LITERAL",
+          date,
+        ),
+      );
 
-    const result = await analyzeInterfaceBuilderBundle({
-      bundlePath: bundle,
-      targetSha256: "f".repeat(64),
-    });
+      const result = await analyzeInterfaceBuilderBundle({
+        bundlePath: bundle,
+        targetSha256: "f".repeat(64),
+      });
 
-    expect(result.documents).toHaveLength(1);
-    expect(result.limitations).toContainEqual(
-      expect.stringMatching(
-        /^Contents\/Resources\/Far\.nib: 1 date value\(s\)/u,
-      ),
-    );
-    expect(result.limitations).not.toContainEqual(
-      expect.stringContaining("could not be decoded"),
-    );
-  });
+      expect(result.documents).toHaveLength(1);
+      if (!unknown)
+        expect(result.graph.coverage).toContainEqual(
+          expect.objectContaining({
+            facet: "archive_decode",
+            status: "complete",
+          }),
+        );
+      const unknownDate = expect.stringMatching(
+        /^Contents\/Resources\/Far\.nib: 1 XML scalar value\(s\)/u,
+      );
+      if (unknown) expect(result.limitations).toContainEqual(unknownDate);
+      else expect(result.limitations).not.toContainEqual(unknownDate);
+      expect(result.limitations).not.toContainEqual(
+        expect.stringContaining("could not be decoded"),
+      );
+    },
+  );
+});
 
+describe("Xcode-compiled Interface Builder archives", () => {
   it.skipIf(!xcodeIbtoolAvailable)(
     "decodes an Xcode-compiled storyboard NIB and recovers its UI routes",
     async () => {

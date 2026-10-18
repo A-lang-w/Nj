@@ -547,3 +547,82 @@ describe("unproven Electron require shims", () => {
     expect(electronOf(source).browser_windows).toEqual([]);
   });
 });
+
+describe("mapped CommonJS wrapper arguments", () => {
+  const replacement = "()=>({BrowserWindow:class Fake{}})";
+  const shim = 'var Q=(e=>typeof require<"u"?require:e)(function(){});';
+  const window = (loader: string) =>
+    `new (${loader}("electron").BrowserWindow)({});`;
+
+  it.each([
+    `arguments[1]=${replacement};`,
+    `var arguments;arguments[1]=${replacement};`,
+    `const args=arguments;args[1]=${replacement};`,
+    "consume(arguments);",
+    `(()=>{arguments[1]=${replacement}})();`,
+    `const obj={[(arguments[1]=${replacement},"key")](){}};`,
+    `class C{[(arguments[1]=${replacement},"key")](){}}`,
+  ])(
+    "rejects a host loader captured after wrapper arguments exposure: %s",
+    (setup) => {
+      for (const [capture, loader] of [
+        ["", "require"],
+        ["var require;", "require"],
+        [shim, "Q"],
+        ["const saved=require;", "saved"],
+        ["const saved=require.bind(null);", "saved"],
+      ]) {
+        expect
+          .soft(
+            commonJsElectronOf(`${setup}${capture}${window(loader!)}`)
+              .browser_windows,
+            loader,
+          )
+          .toEqual([]);
+      }
+    },
+  );
+
+  it.each([`arguments[1]=${replacement};`, "consume(arguments);"])(
+    "preserves host loaders captured before wrapper arguments exposure: %s",
+    (setup) => {
+      for (const [capture, loader] of [
+        [shim, "Q"],
+        ["const saved=require;", "saved"],
+        ["const saved=require.bind(null);", "saved"],
+      ]) {
+        expect(
+          commonJsElectronOf(`${capture}${setup}${window(loader!)}`)
+            .browser_windows,
+        ).toHaveLength(1);
+      }
+      expect(
+        commonJsElectronOf(`${window("require")}${setup}`).browser_windows,
+      ).toHaveLength(1);
+    },
+  );
+
+  it.each([
+    `"use strict";arguments[1]=${replacement};`,
+    `function own(){arguments[1]=${replacement}}own();`,
+    `function own(value=arguments){value[1]=${replacement}}own();`,
+    `const obj={own(){arguments[1]=${replacement}}};obj.own();`,
+    `const obj={arguments:1};`,
+    `const arguments={};arguments[1]=${replacement};`,
+  ])(
+    "preserves host identity when arguments cannot map its wrapper binding: %s",
+    (setup) => {
+      for (const [capture, loader] of [
+        ["", "require"],
+        ["var require;", "require"],
+        [shim, "Q"],
+        ["const saved=require;", "saved"],
+      ]) {
+        expect(
+          commonJsElectronOf(`${setup}${capture}${window(loader!)}`)
+            .browser_windows,
+        ).toHaveLength(1);
+      }
+    },
+  );
+});

@@ -67,6 +67,16 @@ cliTest(
       ],
       ["class C{constructor(){this.constructor.call.call=other}}new C();", 0],
       ["class C{constructor(){this.call=other}}new C();", 1],
+      ['"use strict";arguments[2].require=other;', 0],
+      ['"use strict";arguments[2]={};arguments[2].require=other;', 1],
+      [
+        "function proto(flag){if(flag)return {__proto__:null}}const o={__proto__:proto(false)};o.toString.call.call=other;",
+        0,
+      ],
+      [
+        "const holder={proto(){return {__proto__:null}}};holder.proto=()=>undefined;const o={__proto__:holder.proto()};o.toString.call.call=other;",
+        0,
+      ],
     ] as const) {
       const root = await createTestTempDirectory(
         "rea-electron-class-receiver-",

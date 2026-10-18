@@ -11,20 +11,40 @@ import { createTestTempDirectory } from "./temporaryDirectory.js";
 
 const EXACT_INTEGER = { $plist_type: "integer", decimal: "9007199254740993" };
 const ROUNDED = 9007199254740992;
+const unknownInteger = (
+  literal: string,
+  reason: "invalid-literal" | "unsupported-markup",
+) => ({
+  $plist_type: "unknown",
+  element: "integer",
+  literal,
+  reason,
+});
 
-/** Unknown integer literals must not discard independent numeric facts. */
-const unknownArchiveIntegerLiterals = [
-  ["9007199254740992<!-- split -->3", "unsupported-markup"],
-  ["9007199254740992<![CDATA[3]]>", "unsupported-markup"],
-  ["<![CDATA[9007199254740992]]>3", "unsupported-markup"],
-  ["<![CDATA[9007199254740992&#51;]]>", "unsupported-markup"],
-  ["9007199254740992<?rea split?>3", "unsupported-markup"],
-  ["9007199254740992<string>3</string>", "unsupported-markup"],
-  ["9007199254740992x", "invalid-literal"],
+/** Boundary cases that retain exact integers or explicit unknown literals. */
+export const mixedArchiveNumberElements = [
+  "<integer>9007199254740992<!-- split -->3</integer>",
+  "<integer>9007199254740992<![CDATA[3]]></integer>",
+  "<integer><![CDATA[9007199254740992]]>3</integer>",
+  "<integer><![CDATA[9007199254740992&#51;]]></integer>",
+  "<integer>9007199254740992<?rea split?>3</integer>",
+  "<integer>9007199254740992<string>3</string></integer>",
+  "<integer>9007199254740992x</integer>",
 ] as const;
 
+interface MetadataCase {
+  readonly name: string;
+  readonly source: JsonValue;
+  readonly element: string;
+  readonly expected: JsonValue;
+  readonly knownIntegerCount?: number;
+  readonly unknownScalarCount?: number;
+  readonly malformedReference: boolean;
+  readonly integerElement?: string;
+}
+
 /** Ordinary dictionaries and malformed numeric references at the same boundary. */
-export const archiveNumberMetadataCases = [
+export const archiveNumberMetadataCases: readonly MetadataCase[] = [
   ...[
     {
       element: "<real>9007199254740992<![CDATA[0]]></real>",
@@ -39,20 +59,23 @@ export const archiveNumberMetadataCases = [
     source: { first: "__INTEGER__", other: "__OTHER__" },
     element,
     expected: { first: EXACT_INTEGER, other: value },
-    unknownScalar: false,
-    exactInteger: true,
     malformedReference: false,
   })),
-  ...unknownArchiveIntegerLiterals.map(([literal, reason]) => ({
-    name: `<integer>${literal}</integer>`,
+  ...mixedArchiveNumberElements.map((element) => ({
+    name: element,
     source: { first: "__INTEGER__", other: "__OTHER__" },
-    element: `<integer>${literal}</integer>`,
+    element,
     expected: {
       first: EXACT_INTEGER,
-      other: { $plist_type: "unknown", element: "integer", literal, reason },
+      other: unknownInteger(
+        element.slice("<integer>".length, -"</integer>".length),
+        element.endsWith("x</integer>")
+          ? "invalid-literal"
+          : "unsupported-markup",
+      ),
     },
-    unknownScalar: true,
-    exactInteger: true,
+    knownIntegerCount: 1,
+    unknownScalarCount: 1,
     malformedReference: false,
   })),
   ...(["UID", "CF$UID"] as const).flatMap((key) => [
@@ -61,8 +84,6 @@ export const archiveNumberMetadataCases = [
       source: { [key]: { amount: "__INTEGER__" } },
       element: "",
       expected: { [key]: { amount: EXACT_INTEGER } },
-      unknownScalar: false,
-      exactInteger: true,
       malformedReference: false,
     },
     {
@@ -70,8 +91,6 @@ export const archiveNumberMetadataCases = [
       source: { [key]: ["__INTEGER__"] },
       element: "",
       expected: { [key]: [EXACT_INTEGER] },
-      unknownScalar: false,
-      exactInteger: true,
       malformedReference: false,
     },
     {
@@ -79,40 +98,23 @@ export const archiveNumberMetadataCases = [
       source: { [key]: "__INTEGER__" },
       element: "",
       expected: { [key]: ROUNDED },
-      unknownScalar: false,
-      exactInteger: false,
       malformedReference: true,
     },
   ]),
   {
-    name: "entity-encoded integer text",
+    // Native plist integer grammar reads raw text, unlike real elements.
+    name: "entity-encoded integer rejected by native plist grammar",
     source: { amount: "__INTEGER__" },
     element: "",
     expected: {
-      amount: {
-        $plist_type: "unknown",
-        element: "integer",
-        literal: "&#57;007199254740993",
-        reason: "invalid-literal",
-      },
+      amount: unknownInteger("&#57;007199254740993", "invalid-literal"),
     },
-    unknownScalar: true,
-    exactInteger: false,
+    knownIntegerCount: 0,
+    unknownScalarCount: 1,
     malformedReference: false,
     integerElement: "<integer>&#57;007199254740993</integer>",
   },
-] satisfies readonly {
-  name: string;
-  source: JsonValue;
-  element: string;
-  expected: JsonValue;
-  unknownScalar: boolean;
-  exactInteger: boolean;
-  malformedReference: boolean;
-  integerElement?: string;
-}[];
-
-type MetadataCase = (typeof archiveNumberMetadataCases)[number];
+];
 
 /** Write one inert archive and retain the original byte digest for assertions. */
 export const keyedArchiveNumberMetadataFixture = async (item: MetadataCase) => {
@@ -125,9 +127,7 @@ export const keyedArchiveNumberMetadataFixture = async (item: MetadataCase) => {
   })
     .replace(
       "<string>__INTEGER__</string>",
-      "integerElement" in item
-        ? item.integerElement
-        : "<integer>9007199254740993</integer>",
+      item.integerElement ?? "<integer>9007199254740993</integer>",
     )
     .replace("<string>__OTHER__</string>", item.element);
   const bytes = Buffer.from(xml);
@@ -140,7 +140,7 @@ export const keyedArchiveNumberMetadataFixture = async (item: MetadataCase) => {
   };
 };
 
-/** Require exact values, explicit unknowns and independently retained metadata. */
+/** Require exact ordinary values and honest limitations for incomplete metadata. */
 export const expectKeyedArchiveNumberMetadata = (
   value: unknown,
   item: MetadataCase,
@@ -162,36 +162,25 @@ export const expectKeyedArchiveNumberMetadata = (
     status: "resolved",
     raw: { CF$UID: 1 },
   });
-  expect(result.limitations).not.toContainEqual(
-    expect.stringMatching(/metadata.*completely observed.*precision/u),
-  );
-  expect(
-    result.limitations.filter((note) => note.includes("XML scalar value(s)")),
-  ).toEqual(
-    item.unknownScalar
-      ? [
-          expect.stringMatching(
-            /^1 XML scalar value\(s\) could not be established/u,
-          ),
-        ]
-      : [],
-  );
-  expect(
-    result.limitations.filter((note) => note.includes("unambiguous integer")),
-  ).toEqual(
-    item.exactInteger
-      ? [expect.stringMatching(/^1 unambiguous integer value/u)]
-      : [],
-  );
-  expect(
-    result.limitations.filter((note) =>
-      note.includes("observed integer literal(s)"),
-    ),
-  ).toEqual(
-    item.exactInteger || item.malformedReference
-      ? [expect.stringMatching(/^1 observed integer literal\(s\)/u)]
-      : [],
-  );
+  if (item.unknownScalarCount !== undefined) {
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        new RegExp(
+          `^${String(item.unknownScalarCount)} XML scalar value\\(s\\) could not be established`,
+          "u",
+        ),
+      ),
+    );
+    expect(result.limitations).not.toContainEqual(
+      expect.stringMatching(/metadata.*completely observed.*precision/u),
+    );
+  } else {
+    expect(result.limitations).not.toContainEqual(
+      expect.stringMatching(
+        /^\d+ XML scalar value\(s\) could not be established/u,
+      ),
+    );
+  }
   if (item.malformedReference) {
     expect(result.references).toContainEqual({
       source: 1,
@@ -202,5 +191,20 @@ export const expectKeyedArchiveNumberMetadata = (
     });
   } else {
     expect(result.references).toHaveLength(1);
+    const knownIntegerCount = item.knownIntegerCount ?? 1;
+    if (knownIntegerCount === 0) {
+      expect(result.limitations).not.toContainEqual(
+        expect.stringMatching(/^\d+ unambiguous integer value/u),
+      );
+    } else {
+      expect(result.limitations).toContainEqual(
+        expect.stringMatching(
+          new RegExp(
+            `^${String(knownIntegerCount)} unambiguous integer value`,
+            "u",
+          ),
+        ),
+      );
+    }
   }
 };

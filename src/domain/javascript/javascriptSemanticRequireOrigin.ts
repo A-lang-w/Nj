@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import { createSemanticRequireShimInertQuery } from "./javascriptRequireShimOrigin.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import {
@@ -59,6 +60,7 @@ import {
 import {
   semanticGlobalBindingReadMayHaveChanged,
   semanticOpaqueBindingReadMayHaveChanged,
+  semanticStrictContext,
 } from "./javascriptSemanticOpaqueEffects.js";
 
 export interface JavaScriptRequireOrigin {
@@ -93,11 +95,9 @@ export const semanticRequireLoaderAt = (
   const binding = resolveSemanticBindingState(state, loader, "require");
   if (binding === undefined) {
     if (semanticResolutionBlocked(state, loader, "require")) return "unknown";
-    return (state.ambientBindingWrites.get("require") ?? []).some(
-      (write) => !semanticEffectFollowsInitialCapture(node, write, state),
-    )
-      ? "unknown"
-      : "commonjs-loader";
+    return semanticHostRequireBindingWritesIntact(node, state)
+      ? "commonjs-loader"
+      : "unknown";
   }
   if (factoryBindingIds.has(binding.bindingId))
     return binding.initializers.length === 0 ? "factory-loader" : "unknown";
@@ -107,12 +107,15 @@ export const semanticRequireLoaderAt = (
   ) {
     if (binding.definitions.some(({ kind }) => kind === "function"))
       return "local";
-    return commonJsWrapperBindingHasPriorWrite(node, binding, state)
+    return !semanticHostRequireBindingWritesIntact(node, state) ||
+      commonJsWrapperBindingHasPriorWrite(node, binding, state)
       ? "unknown"
       : "commonjs-loader";
   }
   if (isWrapperRequireInitializerCall(binding, node, state))
-    return "commonjs-loader";
+    return semanticHostRequireBindingWritesIntact(node, state)
+      ? "commonjs-loader"
+      : "unknown";
   const wrapperBinding = commonJsWrapperBindingDeclaration(
     loader,
     "require",
@@ -120,6 +123,7 @@ export const semanticRequireLoaderAt = (
   );
   if (
     wrapperBinding !== undefined &&
+    semanticHostRequireBindingWritesIntact(node, state) &&
     !commonJsWrapperBindingHasPriorWrite(node, wrapperBinding, state)
   )
     return "commonjs-loader";
@@ -841,19 +845,151 @@ export const semanticModuleDelegateWriteOwner = (
     : undefined;
 };
 
-/**
- * Whether no module or ambient write replaces `require` before `capture` runs.
- * These checks are mandatory for a bare `require` reference: a replaced loader
- * is not the host loader regardless of how its binding resolves.
+const wrapperArgumentReferences = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  readonly t.Identifier[]
+>();
+
+/** Ordinary functions own arguments; arrow bodies retain the wrapper object. */
+const semanticWrapperArgumentReferences = (
+  state: JavaScriptSemanticAnalysisState,
+): readonly t.Identifier[] => {
+  let references = wrapperArgumentReferences.get(state);
+  if (references === undefined) {
+    const found: t.Identifier[] = [];
+    traverseJavaScriptAst(state.program, {
+      skip: (node) => {
+        const parent = state.parentsByNode.get(node);
+        // Ordinary functions own arguments in parameters and bodies, while
+        // computed method keys and decorators still run in the outer scope.
+        return (
+          t.isFunction(parent) &&
+          !t.isArrowFunctionExpression(parent) &&
+          (parent.body === node ||
+            parent.params.some((param) => param === node))
+        );
+      },
+      enter: (node) => {
+        const parent = state.parentsByNode.get(node);
+        if (
+          t.isIdentifier(node, { name: "arguments" }) &&
+          parent !== undefined &&
+          t.isReferenced(node, parent, state.parentsByNode.get(parent))
+        )
+          found.push(node);
+      },
+    });
+    references = found;
+    wrapperArgumentReferences.set(state, references);
+  }
+  return references;
+};
+
+/** The original wrapper arguments object retains its values even in strict code.
+ * Binding mapping and the identities stored in its slots are separate facts.
  */
+export const semanticCommonJsWrapperArgumentsReference = (
+  reference: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (
+    !t.isIdentifier(reference, { name: "arguments" }) ||
+    state.program.sourceType !== "script" ||
+    javaScriptRuntimeContext(state.program) !== "commonjs" ||
+    !semanticWrapperArgumentReferences(state).includes(reference)
+  )
+    return false;
+  const binding = resolveSemanticBindingState(state, reference, "arguments");
+  return (
+    (binding === undefined ||
+      (state.scopesById.get(binding.scopeId)?.kind === "program" &&
+        [...binding.declarationKinds].every((kind) => kind === "var") &&
+        !binding.definitions.some(({ kind }) => kind === "function") &&
+        !commonJsWrapperBindingHasPriorWrite(reference, binding, state))) &&
+    !(state.ambientBindingWrites.get("arguments") ?? []).some(
+      (write) => !semanticEffectFollowsInitialCapture(reference, write, state),
+    )
+  );
+};
+
+/** Sloppy mapped slots can also be replaced by writes to wrapper parameters.
+ * A parameter write does not identify the old captured argument object as its
+ * RHS. Keep the selected value unknown unless its mapping is immutable.
+ */
+export const semanticCommonJsWrapperArgumentValueChanged = (
+  key: string | null | undefined,
+  capture: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (semanticStrictContext(state.program, state)) return false;
+  const parameters = [
+    "exports",
+    "require",
+    "module",
+    "__filename",
+    "__dirname",
+  ];
+  const names =
+    key == null
+      ? parameters
+      : parameters.filter((_name, index) => String(index) === key);
+  const scope = state.scopeByNode.get(state.program);
+  return names.some((name) => {
+    const binding = scope?.bindings.get(name);
+    if (
+      binding !== undefined &&
+      [...binding.declarationKinds].some((kind) => kind !== "var")
+    )
+      return false;
+    return (
+      (binding !== undefined &&
+        (capture === undefined
+          ? binding.initializers.length > 0 ||
+            (state.bindingWrites.get(binding.bindingId)?.length ?? 0) > 0
+          : commonJsWrapperBindingHasPriorWrite(capture, binding, state))) ||
+      (state.ambientBindingWrites.get(name) ?? []).some(
+        (write) =>
+          capture === undefined ||
+          !semanticEffectFollowsInitialCapture(capture, write, state),
+      )
+    );
+  });
+};
+
+/** Sloppy wrapper slots also map writes back to the require parameter. */
+const semanticWrapperArgumentsExposedBefore = (
+  capture: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  state.program.sourceType === "script" &&
+  javaScriptRuntimeContext(state.program) === "commonjs" &&
+  !semanticStrictContext(state.program, state) &&
+  semanticWrapperArgumentReferences(state).some(
+    (reference) =>
+      semanticCommonJsWrapperArgumentsReference(reference, state) &&
+      !semanticEffectFollowsInitialCapture(capture, reference, state),
+  );
+
+/** Binding integrity is independent of module.require's delegate validity.
+ * The shim's inertness proof uses this same owner without recursively asking
+ * whether the delegate escaped through the shim's own alternate branch.
+ */
+export const semanticHostRequireBindingWritesIntact = (
+  capture: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  !semanticWrapperArgumentsExposedBefore(capture, state) &&
+  !(state.ambientBindingWrites.get("require") ?? []).some(
+    (write) => !semanticEffectFollowsInitialCapture(capture, write, state),
+  );
+
+/** Whether no module or ambient write replaces require before capture runs. */
 export const semanticHostRequireWritesIntact = (
   capture: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>
-  semanticHostRequireModuleWritesIntact(capture, state) &&
-  !(state.ambientBindingWrites.get("require") ?? []).some(
-    (write) => !semanticEffectFollowsInitialCapture(capture, write, state),
-  );
+  semanticHostRequireBindingWritesIntact(capture, state) &&
+  semanticHostRequireModuleWritesIntact(capture, state);
 
 /**
  * Whether `reference` reads the intact host `require` at the point `capture`

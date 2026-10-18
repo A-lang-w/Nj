@@ -29,6 +29,79 @@ const analyze = (setup: string) => {
   return analyzeParsedJavaScriptStaticSource(source, parsed).electron.ipc;
 };
 
+describe("changed constructor parents", () => {
+  it("drops a BrowserWindow identity after changed-parent initialization", () => {
+    const source = `${SHIM}class B{}class G{constructor(){return globalThis}}class C extends B{field=(this.Q=other)}Object.setPrototypeOf(C,G);new C();new(Q("electron").BrowserWindow)({});`;
+    const parsed = parseJavaScriptSource(source, "bundle.js");
+    if (parsed === null) throw new Error("Expected parsed source");
+    expect(
+      analyzeParsedJavaScriptStaticSource(source, parsed).electron
+        .browser_windows,
+    ).toEqual([]);
+  });
+
+  it.each([
+    "Object.setPrototypeOf(C,G);new C();",
+    "Reflect.setPrototypeOf(C,G);new C();",
+    "C.__proto__=G;new C();",
+    "const Alias=C;Object.setPrototypeOf(Alias,G);new Alias();",
+    "const set=Object.setPrototypeOf;set(C,G);new C();",
+    "Object.setPrototypeOf(C.prototype.constructor,G);new C();",
+  ])("retains a possible shared derived-field receiver: %s", (construction) => {
+    expect(
+      analyze(
+        `class B{}class G{constructor(){return globalThis}}class C extends B{field=(this.Q=other)}${construction}`,
+      ),
+    ).toEqual([]);
+  });
+
+  it.each([
+    "class C extends B{constructor(){super();this.Q=other}}Object.setPrototypeOf(C,G);new C();",
+    "class Middle extends B{}class C extends Middle{field=(this.Q=other)}Object.setPrototypeOf(Middle,G);new C();",
+    "class C extends B{field=(this.Q=other)}new C();Object.setPrototypeOf(C,G);new C();",
+    "class C extends B{#set(){this.Q=other}static run(c){c.#set()}}Object.setPrototypeOf(C,G);C.run(new C());",
+    "class C extends B{#set=function(){this.Q=other};static run(c){c.#set()}}Object.setPrototypeOf(C,G);C.run(new C());",
+    "class C extends B{get #value(){this.Q=other}static run(c){void c.#value}}Object.setPrototypeOf(C,G);C.run(new C());",
+  ])(
+    "retains changed explicit or inherited construction: %s",
+    (construction) => {
+      expect(
+        analyze(
+          `class B{}class G{constructor(){return globalThis}}${construction}`,
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  it.each([
+    "new C();",
+    "new C();Object.setPrototypeOf(C,G);",
+    "Object.setPrototypeOf(Unrelated,G);new C();",
+    "C.unrelated=G;new C();",
+    "Object.setPrototypeOf(C.prototype,G.prototype);new C();",
+  ])("preserves an unchanged captured parent: %s", (construction) => {
+    expect(
+      analyze(
+        `class B{}class G{constructor(){return globalThis}}class Unrelated{}class C extends B{field=(this.Q=other)}${construction}`,
+      ),
+    ).toMatchObject([{ channel: "kept" }]);
+  });
+
+  it.each([
+    "C.run(new C());Object.setPrototypeOf(C,G);external(C);",
+    "C.run(new C());external(()=>C.run(new C()));Object.setPrototypeOf(C,G);",
+  ])(
+    "retains later or unknown private activations after a parent change: %s",
+    (construction) => {
+      expect(
+        analyze(
+          `class B{}class G{constructor(){return globalThis}}class C extends B{#set(){this.Q=other}static run(c){c.#set()}}${construction}`,
+        ),
+      ).toEqual([]);
+    },
+  );
+});
+
 describe("private class-member receivers", () => {
   it.each([
     "class C{static #set(){this.Q=other}static run(){C.#set()}};C.run();",

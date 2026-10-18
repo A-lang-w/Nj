@@ -210,6 +210,14 @@ inferred Evidence whenever any group is templated, and derived Evidence only whe
 no group was templated.
 See [derived API surfaces](web-network-captures.md#derived-api-surface).
 
+`inspect_analysis_view` also accepts `environment-manifest` for retained HAR capture
+Evidence, projecting the primary origin's request lines into named tools with path
+templates, parameters, observed query names, value-free body shapes and record
+pointers, plus excluded groups and three fixed unknowns. Templates, parameters and
+names are inferences; the Evidence is inferred whenever any tool or excluded group
+is templated, and derived otherwise.
+See [environment manifests](web-network-captures.md#environment-manifest).
+
 `inspect_analysis_view` projects a caller-selected view of already completed
 `inspect_binary_layout`, `analyze_javascript_application`, or `analyze_function`
 Evidence. Native views select procedure, pseudocode, assembly, basic blocks,
@@ -354,6 +362,17 @@ client requirements. Compare the union of group names with `tools/list` when
 checking that a client received the full catalog. An operation absent from all
 groups is missing from the complete inventory; it is not an implicit
 unavailable entry.
+
+`get_call_graph` and `trace_call_path` report `forward` and `backward` modes.
+Each requires `procedure_address` plus `procedure_callees` or `procedure_callers`,
+respectively. The tool is available when either traversal mode is supported;
+`default_mode_available` describes the default forward direction. Read each mode's
+missing operations and remediation before selecting a direction. These facts
+describe traversal prerequisites, not relationship completeness or a guarantee
+for every selector. A trace whose start and goal resolve to the same address can
+finish without reading relationships, even when neither traversal mode is
+available. Discovery does not block that direct invocation or replace its typed
+partial/error outcomes.
 
 The `effects` and `annotations` arrays list the true members of their fixed
 vocabularies. A known member omitted from either array is false. This applies
