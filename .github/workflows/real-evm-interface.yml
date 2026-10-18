@@ -33,6 +33,9 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      - uses: ./.github/actions/portable-build-cache
+        with:
+          build_cache_artifact: ${{ inputs.build_cache_artifact }}
       - name: Verify portable parsing, Evidence and unsupported-host semantics
         run: >-
           npm run test:focused --

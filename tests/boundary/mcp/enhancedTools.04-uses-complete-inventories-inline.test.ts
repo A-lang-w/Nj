@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   closeEnhancedToolResources,
-  connect,
+  connect as connectTool,
   jsonResult,
 } from "./enhancedToolsHarness.js";
 import type {
@@ -19,6 +19,23 @@ import { err, type Result } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 
 afterEach(closeEnhancedToolResources);
+
+// These fixtures exercise composition for providers without a native overview.
+const connect = (analysis: AnalysisOperationPort) =>
+  connectTool({
+    execute: (operation, parameters, options) =>
+      operation === "read_binary_inventory_summary"
+        ? Promise.resolve(
+            err(
+              new AnalysisCapabilityUnavailableError(
+                "fixture",
+                operation,
+                "No native overview",
+              ),
+            ),
+          )
+        : analysis.execute(operation, parameters, options),
+  });
 
 it("discovers declarations without counting duplicates or compiler bookkeeping", async () => {
   const client = await connect({
@@ -135,7 +152,7 @@ const completeOverviewPort: AnalysisOperationPort = {
   },
 };
 
-describe("enhanced MCP tools", () => {
+describe("enhanced MCP binary overview", () => {
   it("returns the complete overview inline with exhaustive totals", async () => {
     const client = await connect(completeOverviewPort);
     const result = jsonResult(
@@ -210,7 +227,9 @@ describe("enhanced MCP tools", () => {
       string_count: 0,
     });
   });
+});
 
+describe("enhanced MCP inventory validation", () => {
   it("rejects paginated provider output", async () => {
     const client = await connect({
       execute: () =>
@@ -260,6 +279,38 @@ describe("enhanced MCP tools", () => {
     expect(result.content).toContainEqual({
       type: "text",
       text: JSON.stringify(parseMcpToolError(result)),
+    });
+  });
+
+  it("preserves unknown length for malformed segment coordinates", async () => {
+    const client = await connect({
+      execute: (name) => {
+        if (name === "list_segments")
+          return Promise.resolve(
+            ok([
+              {
+                name: "__TEXT",
+                start: "unparsed-start",
+                end: "0x2000",
+                readable: null,
+                writable: null,
+                executable: null,
+              },
+            ]),
+          );
+        if (name === "current_document") return Promise.resolve(ok("fixture"));
+        if (name === "list_procedures" || name === "list_strings")
+          return Promise.resolve(ok([]));
+        throw new Error(`Unexpected analysis operation: ${name}`);
+      },
+    });
+    expect(
+      jsonResult(
+        await client.callTool({ name: "binary_overview", arguments: {} }),
+      ),
+    ).toMatchObject({
+      segments: [{ name: "__TEXT", start: "unparsed-start", length: null }],
+      segment_count: 1,
     });
   });
 });
@@ -391,4 +442,38 @@ describe("overview document identity through MCP", () => {
       },
     });
   });
+});
+
+it("refuses document fallback while the current-selection owner reports incomplete cleanup", async () => {
+  const failure = new AnalysisCapabilityUnavailableError(
+    "fixture",
+    "current_document",
+    "Selection unavailable during cleanup",
+    {
+      cleanup: {
+        reason: "controlled live selection resource",
+        resources: ["selection owner"],
+      },
+    },
+  );
+  const calls: string[] = [];
+  const client = await connect({
+    execute: async (operation) => {
+      calls.push(operation);
+      return operation === "current_document"
+        ? err(failure)
+        : ok(["must-not-be-selected"]);
+    },
+  });
+  const response = await client.callTool({
+    name: "binary_overview",
+    arguments: {},
+  });
+  expect(response.isError).toBe(true);
+  expect(parseMcpToolError(response).error).toMatchObject({
+    code: "cleanup_incomplete",
+    details: { operation: "current_document" },
+  });
+  expect(calls).toEqual(["current_document"]);
+  expect(failure.cleanupIncomplete).toBe(true);
 });

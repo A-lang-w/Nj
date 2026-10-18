@@ -6,7 +6,13 @@ import {
   evmInterfaceFixture,
 } from "../../../tests/fixtures/evm/interface.js";
 import { err, ok } from "../../domain/result.js";
-import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
+  AnalysisOutputError,
+} from "../../domain/analysisErrorCore.js";
+import { parseEvidence } from "../../domain/evidence.js";
+import { selectSolcArtifact } from "../../domain/evm/solcArtifactSelection.js";
 
 it.each([
   { path: "relative.hex", encoding: "hex" },
@@ -83,18 +89,28 @@ it("preserves meaningful provider failure and cancellation before/after executio
       return Promise.resolve(ok(evmInterfaceExecution(observed)));
     },
   });
-  expect(
-    await cancelled.inspect(
-      { path: "/artifacts/source-owned.hex", encoding: "hex" },
-      { signal: controller.signal },
-    ),
-  ).toMatchObject({
+  const late = await cancelled.inspect(
+    { path: "/artifacts/source-owned.hex", encoding: "hex" },
+    { signal: controller.signal },
+  );
+  expect(late).toMatchObject({
     ok: false,
     error: {
       _tag: "AnalysisCancelledError",
       capturedOutput: observed.diagnostics,
+      partialObservation: {
+        operation: "inspect_evm_interface",
+        normalized_result: observed,
+      },
     },
   });
+  if (!late.ok) {
+    expect(late.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(parseEvidence(late.error.partialObservation)).toMatchObject({
+      operation: "inspect_evm_interface",
+      normalized_result: observed,
+    });
+  }
   const untouched = new EvmInterfaceService({
     inspect: () => {
       throw new Error("must not start");
@@ -107,3 +123,98 @@ it("preserves meaningful provider failure and cancellation before/after executio
     ),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
 });
+
+it("keeps malformed interface output ahead of a late cancellation", async () => {
+  const controller = new AbortController();
+  const malformed = evmInterfaceFixture();
+  malformed.artifact.path = "/artifacts/other.hex";
+  const result = await new EvmInterfaceService({
+    inspect: () => {
+      controller.abort();
+      return Promise.resolve(ok(evmInterfaceExecution(malformed)));
+    },
+  }).inspect(
+    { path: "/artifacts/source-owned.hex", encoding: "hex" },
+    { signal: controller.signal },
+  );
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
+});
+
+it.each([false, true])(
+  "retains compiler selection through late cancellation, rejecting mismatches first: %s",
+  async (mismatched) => {
+    const selection = {
+      source_unit: "source.sol",
+      contract_name: "C",
+      bytecode_kind: "creation" as const,
+    };
+    const fixture = evmInterfaceFixture();
+    const selected = selectSolcArtifact(
+      new TextEncoder().encode(
+        JSON.stringify({
+          contracts: {
+            "source.sol": {
+              C: { evm: { bytecode: { object: fixture.bytecode.hex } } },
+            },
+          },
+        }),
+      ),
+      selection,
+    );
+    if (!selected.ok) throw selected.error;
+    const report = {
+      ...fixture,
+      artifact: { ...fixture.artifact, encoding: "solc-json" as const },
+      bytecode: { ...fixture.bytecode, kind: "creation" as const },
+      compiler_artifact: selected.value.artifact,
+      inference_status: "examined" as const,
+    };
+    const controller = new AbortController();
+    const result = await new EvmInterfaceService({
+      inspect: () => {
+        controller.abort("completed compiler inspection");
+        return Promise.resolve(ok(evmInterfaceExecution(report)));
+      },
+    }).inspect(
+      {
+        path: fixture.artifact.path,
+        encoding: {
+          kind: "solc-json",
+          ...selection,
+          ...(mismatched ? { contract_name: "Other" } : {}),
+        },
+      },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected typed failure");
+    if (mismatched) {
+      expect(result.error).toBeInstanceOf(AnalysisOutputError);
+    } else {
+      expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+      expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+        parameters: { encoding: { kind: "solc-json", ...selection } },
+        normalized_result: report,
+      });
+    }
+  },
+);
+
+it.each([null, "caller stopped", { requested: "stop" }])(
+  "preserves the exact admission reason without invoking the provider: %j",
+  async (reason) => {
+    const controller = new AbortController();
+    controller.abort(reason);
+    const service = new EvmInterfaceService({
+      inspect: () => {
+        throw new Error("must not start");
+      },
+    });
+    const result = await service.inspect(
+      { path: "/selected.hex", encoding: "hex" },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error.cause).toBe(reason);
+  },
+);

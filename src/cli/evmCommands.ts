@@ -1,12 +1,13 @@
 import { z } from "incur";
-import { resolve } from "node:path";
 import { evmInterfaceModule } from "../composition/evm.js";
 import { logCliCommand } from "../cliLogging.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { err } from "../domain/result.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
 /** Resolve operator paths and preserve explicit encoding through the shared workflow. */
 export const registerEvmCommands = (
@@ -38,11 +39,9 @@ export const registerEvmCommands = (
         .describe("Selected compiler bytecode object"),
     }),
     run: ({ args, options }) =>
-      withCommandCancellation(async (signal) => {
-        try {
-          return await logCliCommand(
-            logger,
-            evmInterfaceModule.cliCommand,
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, evmInterfaceModule.cliCommand, () =>
+          finishAnalysisCommand(
             async () => {
               if (
                 args.encoding !== "solc-json" &&
@@ -50,7 +49,7 @@ export const registerEvmCommands = (
                   options["contract-name"] !== undefined ||
                   options["bytecode-kind"] !== undefined)
               )
-                return projectAnalysisError(
+                return err(
                   new AnalysisInputError("inspect_evm_interface", undefined, [
                     {
                       path: ["encoding"],
@@ -60,9 +59,9 @@ export const registerEvmCommands = (
                     },
                   ]),
                 );
-              const result = await service.inspect(
+              return service.inspect(
                 {
-                  path: resolve(args.path),
+                  path: absoluteCallerPath(args.path),
                   encoding:
                     args.encoding === "solc-json"
                       ? {
@@ -75,14 +74,13 @@ export const registerEvmCommands = (
                 },
                 { signal },
               );
-              return result.ok
-                ? result.value
-                : projectAnalysisError(result.error);
             },
-          );
-        } finally {
-          await service.close();
-        }
-      }),
+            service,
+            "evmole-interface",
+            "inspect_evm_interface",
+            signal,
+          ),
+        ),
+      ),
   });
 };

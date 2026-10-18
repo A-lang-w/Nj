@@ -8,7 +8,8 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
+import { evmInterfaceEvidence } from "./EvmInterfaceEvidence.js";
 import {
   inspectEvmInterfaceInputSchema,
   evmInterfaceSchema,
@@ -16,7 +17,8 @@ import {
 } from "../../domain/evm/evmInterface.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, type Result } from "../../domain/result.js";
+import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 const OPERATION = "inspect_evm_interface";
 const diagnosticsSchema = z.object({
@@ -37,7 +39,9 @@ export class EvmInterfaceService {
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
+      return err(
+        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
+      );
     const input = inspectEvmInterfaceInputSchema.safeParse(rawInput);
     if (!input.success)
       return err(
@@ -61,8 +65,6 @@ export class EvmInterfaceService {
     const outputOptions = diagnostics.success
       ? { capturedOutput: diagnostics.data.diagnostics }
       : undefined;
-    if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION, outputOptions));
     const execution = inspected.value;
     const report = evmInterfaceSchema.safeParse(execution.result);
     if (
@@ -79,18 +81,13 @@ export class EvmInterfaceService {
           outputOptions,
         ),
       );
-    return ok(
-      createEvidence(execution.subject, execution.provider, {
-        operation: OPERATION,
-        parameters: input.data,
+    return completeProviderEvidence(
+      evmInterfaceEvidence(input.data, {
+        ...execution,
         result: jsonValueSchema.parse(report.data),
-        ...(execution.rawResult === null
-          ? {}
-          : { rawResult: execution.rawResult }),
-        confidence: "inferred",
-        locations: execution.locations,
-        limitations: execution.limitations,
       }),
+      options?.signal,
+      outputOptions?.capturedOutput,
     );
   }
 }

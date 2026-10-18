@@ -1,18 +1,50 @@
 # Compiler artifact verification
 
-Verified on 13 October 2026 with Linux x64, Node 24.18.0, npm 11.16.0,
+## Current integration verification — 18 October 2026
+
+Integration base: `8307ea371` (REA 6.7.0), Linux x64, Node 24.18.0,
+npm 11.16.0, unchanged `solc 0.8.30+commit.73712a01.Emscripten.clang`
+and bundled `evmole@0.9.3`.
+
+- `npm run check`: passed typecheck, lint, formatting, unused-code, metadata,
+  module-boundary and architecture checks.
+- `npm run docs:check`: passed generated documentation checks and all five
+  README consistency tests.
+- `npm run test:fast`: all 620 source test files passed; 10,256 tests passed,
+  eight platform/capability cases skipped.
+- Focused compiler parser, domain, view, service, provider and MCP suites:
+  119 passed, two opposing-platform cases skipped.
+- `node scripts/verify-solc-artifacts.mjs`: all 80 public CLI/stdio-MCP cases
+  passed, with verified process-lineage cleanup and zero descendants.
+- Retained-view CLI/MCP and CI-scope suites: all 326 tests passed.
+- Existing raw/hex public EVM verifier: all 59 cases passed, with syscall tracing
+  and zero remaining descendants. All four real compiler metadata variants passed.
+- The eight other previously failing test files passed all 245 tests on this
+  integration, including the session MCP workflow on Linux.
+- The CI workflow contract test reproduced the missing build-cache step in
+  the portability job. With the shared cache action restored, all 17 tests pass.
+- Astra reviewed the resolved lifecycle integration and found no actionable
+  defects. Compiler selection is preserved through main's Evidence finalization
+  and CLI cleanup helpers; service tests cover late cancellation and invalid
+  selection precedence.
+
+The earlier hosted [CI run on `0602a06fe`](https://github.com/morluto/rea/actions/runs/38496525678)
+passed the Linux EVM verifier and native macOS/Windows compiler-contract and
+unsupported-host checks. That run also failed broader suites; it does not prove
+this integration revision passes hosted CI. EVM inference remains Linux x64 only.
+
+## Historical verification — 13 October 2026
+
+The following measurements and before/after comparisons were executed on the
+revisions identified below; they are not current-integration timing or
+whole-repository CI claims. They used Linux x64, Node 24.18.0, npm 11.16.0,
 `solc 0.8.30+commit.73712a01.Emscripten.clang`,
 `solc 0.4.26+commit.4563c3fc.Emscripten.clang`, and bundled `evmole@0.9.3`.
-Current integration base: `4d98123279c5a6f5442c458307f5a3ec678fd49e`.
-The earlier full, installed-package and live-agent matrices below ran on base
-`3cb9d61ec1a1bf29000a00cff712ed07ca472da6`. EVM production code is identical
-after the rebase; current-base reruns passed the runtime build, 78 public
-compiler CLI/MCP cases and 288 focused tests, with two opposing-platform skips.
-Current lint passed. Current typecheck is blocked by the unchanged main test
-`tests/acceptance/providers/hopperStartupRecovery.test.ts:207` (`TS2339`,
-`workspace` on a string); the same check blocks the normal pre-push hook.
+The historical integration base was `4d98123279c5a6f5442c458307f5a3ec678fd49e`;
+the full installed-package and live-agent matrices used
+`3cb9d61ec1a1bf29000a00cff712ed07ca472da6`.
 
-## Executed checks
+### Executed checks
 
 - `npm run build:cached`: passed.
 - Focused parser, domain, retained-view, service, adapter, MCP, JSON serialization,
@@ -38,14 +70,9 @@ Current lint passed. Current typecheck is blocked by the unchanged main test
   passed, preserving decoded terminal CBOR and unavailable metadata for the
   CBOR-free fixture.
 
-Repository-wide checks have unrelated failures on unchanged main files:
-formatting in `enhancedTools.04-uses-complete-inventories-inline.test.ts` and
-`packagePlatformDiagnostics.test.ts`; lint line limits in
-`artifactComparison.test.ts` and `ManagedCilDecoding.test.ts`; and documentation
-link drift in `docs/readme/README_tr.md`. All three failures also reproduce in the
-isolated rebased baseline; these files have no feature diff.
-The documentation generation stages passed before the link check failed.
-Hosted CI execution and the complete repository gate remain unverified.
+The historical base had unrelated repository-wide formatting, lint and
+documentation failures, and a Hopper test type error. Those observations are
+superseded by the current integration checks above.
 
 Both public lanes used an absolute `REA_VERIFY_SOLC_MODULE` selecting the pinned
 compiler. The existing EVM lane also used `/usr/bin/strace`. Both verified process
@@ -85,12 +112,10 @@ skill and full MCP catalog: exact deployed selection, Unicode unlinked creation
 inspection, and requesting missing selectors without guessing. Returned digests,
 selectors, byte counts and link offsets matched independent fixture checks.
 The temporary login profile was removed. These trials establish those observed
-workflows for one client/model, not general agent reliability. Hosted CI and
-native macOS/Windows runs remain unverified; the existing EVM provider supports
-Linux x64 and explicitly refuses other hosts.
-The real-EVM workflow includes native macOS/Windows jobs for portable parser,
-Evidence and provider-refusal tests plus the public CLI refusal. Their YAML and
-script syntax are checked locally; native execution awaits the hosted run.
+workflows for one client/model, not general agent reliability. At the time of these historical local trials, hosted CI and native
+macOS/Windows runs were unverified. The hosted results above supersede that gap
+for the identified old head. The EVM provider supports Linux x64 and explicitly
+refuses other hosts.
 No contract was executed.
 
 ## Issue acceptance and historical comparison
