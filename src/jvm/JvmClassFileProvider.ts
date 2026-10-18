@@ -277,6 +277,9 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
       "zip",
       JVM_LIMITS.archiveMetadataBytes,
       { handle, initial },
+      // The JDK decodes every member name as UTF-8 and refuses an archive
+      // holding one that is not, so members are named as JarFile names them.
+      "utf-8",
     );
     const readerLease = new AnalysisCleanupLease(() => reader.close());
     let result: Result<JvmDebugMetadataExecution, AnalysisError>;

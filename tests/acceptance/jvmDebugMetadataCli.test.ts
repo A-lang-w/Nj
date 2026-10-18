@@ -6,6 +6,7 @@ import { toolContract } from "../../src/contracts/toolContracts.js";
 import { jvmDebugClass } from "../fixtures/jvmDebugClass.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+import { storedZip } from "../fixtures/storedZip.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../support/cli/cliFixture.js";
 
@@ -156,6 +157,62 @@ cliTest(
         },
       });
     }
+    await client.ping();
+  },
+  30000,
+);
+
+cliTest(
+  "names unflagged JAR members as the JDK does (UTF-8) over CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-jvm-names-");
+    const { client, call } = await connectLocalToolsMcp();
+    const ascii = (text: string): Uint8Array => Buffer.from(text, "latin1");
+    // Unflagged UTF-8 bytes C3 A9: JarFile.getEntry("é.class") finds it.
+    const utf8 = join(root, "utf8.jar");
+    await writeFile(
+      utf8,
+      storedZip([
+        { name: Buffer.from("é.class", "utf8"), bytes: jvmDebugClass() },
+      ]),
+    );
+    const found = await inspectBoth(cli, call, {
+      path: utf8,
+      entry: "é.class",
+    });
+    if (!found.ok) throw new Error(JSON.stringify(found.error));
+    expect(found.evidence).toMatchObject({
+      normalized_result: { selected_entry: { entry: "é.class" } },
+    });
+    // An unflagged CP437 0x82 ("é") is invalid UTF-8: JarFile refuses the
+    // whole archive ("invalid CEN header (bad entry name or comment)"), so
+    // the valid sibling is not selectable either.
+    const cp437 = join(root, "cp437.jar");
+    await writeFile(
+      cp437,
+      storedZip([
+        { name: ascii("Example.class"), bytes: jvmDebugClass() },
+        { name: Uint8Array.of(0x82, ...ascii(".txt")), bytes: ascii("x") },
+      ]),
+    );
+    const refused = await inspectBoth(cli, call, {
+      path: cp437,
+      entry: "Example.class",
+    });
+    expect(refused).toMatchObject({
+      ok: false,
+      error: {
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              reason: "invalid_format",
+              message: expect.stringContaining("not valid UTF-8") as string,
+            },
+          ],
+        },
+      },
+    });
     await client.ping();
   },
   30000,
