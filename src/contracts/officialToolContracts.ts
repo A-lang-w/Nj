@@ -17,6 +17,7 @@ import { nativeInstructionInputSchema } from "../domain/native/nativeInstruction
 import { functionInstructionInputSchema } from "./functionInstructionContract.js";
 import { HOPPER_MEMORY_TOOL_DEFINITIONS } from "./hopperMemoryContracts.js";
 import { analysisSearchInput } from "./analysisSearchContract.js";
+import { analysisDetailSchema } from "./analysisDetail.js";
 
 const official = <Name extends string, Schema extends z.ZodObject>(
   name: Name,
@@ -181,8 +182,12 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "procedure_pseudo_code",
-    "Decompile one analyzed procedure by symbol name or provider-normalized address. Ghidra also accepts file-offset:0x... selectors and falls back to a unique source-file mapping when a 0x-prefixed number resolves to no procedure; existing analysis addresses take precedence and ambiguous mappings fail explicitly. Returns provider-specific pseudocode, never original source or cross-provider text equivalence, and may return null; request procedure_assembly when instruction precision matters. Ghidra no-return assumptions may cut the analyzed body; Evidence limitations report observed terminal calls and available callee identities.",
-    z.object({ procedure, document }),
+    "Decompile one analyzed procedure by symbol name or provider-normalized address. Ghidra also accepts file-offset:0x... selectors and falls back to a unique source-file mapping when a 0x-prefixed number resolves to no procedure; existing analysis addresses take precedence and ambiguous mappings fail explicitly. Returns provider-specific pseudocode, never original source or cross-provider text equivalence, and may return null. Omitted or complete detail returns the complete observation. Select detail summary to retain it and return identity, selection and text availability/length without pseudocode; read exact pages with inspect_analysis_view kind native, facet pseudocode and normalized_result.parent_evidence_id (offset/limit in UTF-16 code units). Summary changes delivery only and requires session retention; request procedure_assembly when instruction precision matters. Ghidra no-return assumptions may cut the analyzed body; Evidence limitations report observed terminal calls and available callee identities.",
+    z.object({
+      procedure,
+      document,
+      detail: analysisDetailSchema.unwrap().optional(),
+    }),
   ),
   official(
     "resolve_containing_procedure",

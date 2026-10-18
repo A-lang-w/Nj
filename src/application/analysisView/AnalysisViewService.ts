@@ -249,11 +249,19 @@ const createAnalysisViewEvidence = (
       ...(result.artifact.path.length > 0
         ? [{ kind: "artifact-path" as const, path: result.artifact.path }]
         : []),
-      ...(result.kind === "native" &&
-      result.procedure_address !== null &&
-      result.procedure_address.length > 0
-        ? [{ kind: "address" as const, address: result.procedure_address }]
-        : []),
+      // Scalar pseudocode has no structured function identity. Preserve the
+      // authenticated producer locations instead of interpreting the selector.
+      ...(parent.operation === "procedure_pseudo_code"
+        ? parent.locations.filter(
+            (location) =>
+              location.kind !== "artifact-path" ||
+              location.path !== result.artifact.path,
+          )
+        : result.kind === "native" &&
+            result.procedure_address !== null &&
+            result.procedure_address.length > 0
+          ? [{ kind: "address" as const, address: result.procedure_address }]
+          : []),
     ],
     evidenceLinks: [parent.evidence_id],
   });

@@ -29,7 +29,11 @@ export const createToolResultDelivery = (
 const nativeEvidenceContinuation = (
   evidence: Evidence,
 ): Readonly<Record<string, JsonValue>> => {
-  if (evidence.operation !== "analyze_function") return {};
+  if (
+    evidence.operation !== "analyze_function" &&
+    evidence.operation !== "procedure_pseudo_code"
+  )
+    return {};
   const input = inspectAnalysisViewInputSchema.safeParse({
     source: { kind: "retained-evidence", evidence_id: evidence.evidence_id },
     view: { kind: "native", facet: "pseudocode", offset: 0 },
