@@ -27,6 +27,7 @@ import {
   resolveSemanticBindingState,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
   type JavaScriptSemanticInitializer,
 } from "./javascriptSemanticState.js";
 
@@ -46,11 +47,30 @@ interface ValueSelection {
 interface Candidate extends ValueSelection {
   readonly node: t.Node;
   readonly initializers: ReadonlySet<JavaScriptSemanticInitializer>;
+  readonly captures?: readonly t.Node[];
 }
 
 interface CallableReference {
   readonly node: t.Function | t.Class;
   readonly projection: readonly (string | number | null)[];
+  readonly captures?: readonly t.Node[];
+}
+
+interface CallableReferenceSelection {
+  readonly references: readonly CallableReference[];
+  readonly complete: boolean;
+}
+
+interface CallableCaptureProofs {
+  readonly bindingReadMayHaveChanged: (
+    binding: JavaScriptSemanticBindingState,
+    read: t.Node,
+  ) => boolean;
+  readonly ownSlotUnchanged: (
+    owner: t.Node,
+    key: string,
+    read: t.Node,
+  ) => boolean;
 }
 
 type InitializerContext = ReadonlySet<JavaScriptSemanticInitializer>;
@@ -570,14 +590,12 @@ const createSemanticCallableReferences = (
   state: JavaScriptSemanticAnalysisState,
   mode: "callable" | "contents" | "function-values" | "results",
   definiteObjectProof?: (node: t.Node) => boolean,
+  captureProofs?: CallableCaptureProofs,
 ): ((
   callee: t.Node,
   projection?: readonly (string | number | null)[],
-) => readonly CallableReference[]) => {
-  let results = new WeakMap<
-    t.Node,
-    Map<string, readonly CallableReference[]>
-  >();
+) => CallableReferenceSelection) => {
+  let results = new WeakMap<t.Node, Map<string, CallableReferenceSelection>>();
   const objectTargets = new WeakMap<t.ObjectExpression, ObjectTargetIndex>();
   const classTargets = new WeakMap<t.Class, ClassTargetIndex>();
   const privateTargets = createSemanticPrivateMemberTargets(
@@ -587,6 +605,17 @@ const createSemanticCallableReferences = (
   const classLineages = new WeakMap<t.Class, ClassLineage>();
   const interop = createSemanticModuleInterop(state);
   const isDefinitelyObject = definiteObjectProof ?? interop.isDefinitelyObject;
+  const captureIds = new WeakMap<t.Node, number>();
+  let nextCaptureId = 0;
+  const captureKey = (captures?: readonly t.Node[]) =>
+    captures?.map((node) => {
+      let id = captureIds.get(node);
+      if (id === undefined) {
+        id = nextCaptureId++;
+        captureIds.set(node, id);
+      }
+      return id;
+    });
   let factsReady = semanticFreshObjectFactsReady(state);
   return (callee, projection = []) => {
     const ready = semanticFreshObjectFactsReady(state);
@@ -598,19 +627,40 @@ const createSemanticCallableReferences = (
     const projectionKey = JSON.stringify(projection);
     const existing = results.get(callee)?.get(projectionKey);
     if (existing !== undefined) return existing;
+    let complete = true;
     const functions = new Map<
       t.Function | t.Class,
       Map<string, CallableReference>
     >();
-    const retain = (node: t.Function | t.Class, path: Candidate["path"]) => {
+    const retain = (
+      node: t.Function | t.Class,
+      path: Candidate["path"],
+      captures?: readonly t.Node[],
+    ) => {
       const paths = functions.get(node) ?? new Map();
-      paths.set(JSON.stringify(path), { node, projection: path });
+      paths.set(
+        JSON.stringify(
+          captureProofs === undefined ? path : [path, captureKey(captures)],
+        ),
+        {
+          node,
+          projection: path,
+          ...(captures === undefined ? {} : { captures }),
+        },
+      );
       functions.set(node, paths);
     };
     const work: ExpansionTask[] = [
       {
         kind: "visit",
-        item: { node: callee, path: projection, initializers: new Set() },
+        item: {
+          node: callee,
+          path: projection,
+          initializers: new Set(),
+          ...(captureProofs === undefined
+            ? {}
+            : { captures: projection.map(() => callee) }),
+        },
         parent: null,
       },
     ];
@@ -631,6 +681,7 @@ const createSemanticCallableReferences = (
         item.instance === true,
         item.path,
         item.invocation,
+        ...(captureProofs === undefined ? [] : [captureKey(item.captures)]),
       ]);
       const covered = expanded
         .get(node)
@@ -651,9 +702,22 @@ const createSemanticCallableReferences = (
       work.push({ kind: "complete", frame });
       const pending: Candidate[] = [];
       if (t.isIdentifier(node)) {
-        for (const initializer of callableInitializersAt(node, state)
-          .initializers) {
+        const selected = callableInitializersAt(node, state);
+        if (captureProofs !== undefined) {
+          const binding = resolveSemanticBindingState(state, node, node.name);
+          complete &&=
+            binding !== undefined &&
+            selected.definite &&
+            !captureProofs.bindingReadMayHaveChanged(binding, node) &&
+            selected.initializers.every(
+              ({ node: value }) =>
+                t.isFunctionDeclaration(value) ||
+                (value.end ?? Infinity) < (node.start ?? -1),
+            );
+        }
+        for (const initializer of selected.initializers) {
           if (item.initializers.has(initializer)) {
+            complete = false;
             frame.blockers.add(initializer);
             continue;
           }
@@ -661,6 +725,14 @@ const createSemanticCallableReferences = (
             ...item,
             node: initializer.node,
             path: [...initializer.projection, ...item.path],
+            ...(item.captures === undefined
+              ? {}
+              : {
+                  captures: [
+                    ...initializer.projection.map(() => initializer.node),
+                    ...item.captures,
+                  ],
+                }),
             initializers: new Set([...item.initializers, initializer]),
           });
         }
@@ -696,7 +768,12 @@ const createSemanticCallableReferences = (
             ...item,
             node: receiver,
             path: [...path.reverse(), ...item.path],
+            ...(item.captures === undefined
+              ? {}
+              : { captures: [...path.map(() => node), ...item.captures] }),
           });
+        if (captureProofs !== undefined && (privateRead || path.includes(null)))
+          complete = false;
       } else if (
         t.isConditionalExpression(node) ||
         t.isLogicalExpression(node)
@@ -717,6 +794,7 @@ const createSemanticCallableReferences = (
       } else if (t.isAssignmentExpression(node, { operator: "=" })) {
         pending.push({ ...item, node: node.right });
       } else if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+        complete = false;
         const invocation = interop.intrinsicInvocation(node);
         const target = invocation?.arguments?.[0];
         if (
@@ -771,6 +849,7 @@ const createSemanticCallableReferences = (
         (node.kind === "get" || node.kind === "set")
       ) {
         // A property read selects an accessor's result, not its function.
+        complete = false;
         if (node.kind === "get")
           for (const result of semanticCallableResultExpressions(node))
             if (result.node !== null)
@@ -784,13 +863,29 @@ const createSemanticCallableReferences = (
         item.invocation === undefined &&
         (item.path.length === 0 || mode === "function-values")
       ) {
-        retain(node, item.path);
+        if (item.path.includes(null)) complete = false;
+        retain(node, item.path, item.captures);
       } else if (
         t.isObjectExpression(node) &&
         (item.path.length > 0 || mode === "contents")
-      )
+      ) {
+        if (captureProofs !== undefined) {
+          const key = item.path[0];
+          const index = objectTargetIndex(node, objectTargets);
+          const property =
+            key == null ? undefined : index.propertyByName.get(String(key));
+          complete &&=
+            property !== undefined &&
+            t.isObjectProperty(property) &&
+            !index.trailingUnknownsByProperty.has(property) &&
+            captureProofs.ownSlotUnchanged(
+              node,
+              String(key),
+              item.captures?.[0] ?? callee,
+            );
+        }
         selectObjectTargets(node, item, pending, objectTargets);
-      else if (
+      } else if (
         t.isArrayExpression(node) &&
         (item.path.length > 0 || mode === "contents")
       ) {
@@ -798,6 +893,7 @@ const createSemanticCallableReferences = (
         const index =
           key === undefined || key === null ? null : semanticArrayIndex(key);
         let uncertainOffset = false;
+        let selectedOwn = false;
         node.elements.forEach((element, offset) => {
           if (element === null) return;
           if (t.isSpreadElement(element)) {
@@ -807,12 +903,32 @@ const createSemanticCallableReferences = (
               node: element.argument,
               path: [null, ...path],
             });
-          } else if (index === null || uncertainOffset || index === offset)
-            pending.push({ ...item, node: element, path });
+          } else if (index === null || uncertainOffset || index === offset) {
+            selectedOwn ||= index === offset && !uncertainOffset;
+            pending.push({
+              ...item,
+              node: element,
+              path,
+              ...(item.captures === undefined
+                ? {}
+                : { captures: item.captures.slice(1) }),
+            });
+          }
         });
-      } else if (t.isNewExpression(node))
+        if (captureProofs !== undefined)
+          complete &&=
+            selectedOwn &&
+            index !== null &&
+            captureProofs.ownSlotUnchanged(
+              node,
+              String(index),
+              item.captures?.[0] ?? callee,
+            );
+      } else if (t.isNewExpression(node)) {
+        complete = false;
         pending.push({ ...item, node: node.callee, instance: true });
-      else if (t.isClass(node)) {
+      } else if (t.isClass(node)) {
+        complete = false;
         const prototype = item.path[0] === "prototype";
         const [key, ...path] = prototype ? item.path.slice(1) : item.path;
         const lineage = classLineage(node, state, classLineages);
@@ -922,16 +1038,17 @@ const createSemanticCallableReferences = (
           )
             retain(node, item.path);
         }
-      }
+      } else complete = false;
       for (let index = pending.length - 1; index >= 0; index--) {
         const child = pending[index];
         if (child !== undefined)
           work.push({ kind: "visit", item: child, parent: frame });
       }
     }
-    const output = [...functions.values()].flatMap((paths) => [
+    const references = [...functions.values()].flatMap((paths) => [
       ...paths.values(),
     ]);
+    const output = { references, complete };
     const byProjection = results.get(callee) ?? new Map();
     byProjection.set(projectionKey, output);
     results.set(callee, byProjection);
@@ -951,7 +1068,7 @@ export const createSemanticCallableTargets = (
     isDefinitelyObject,
   );
   return (callee: t.Node): readonly t.Function[] =>
-    references(callee).flatMap(({ node }) =>
+    references(callee).references.flatMap(({ node }) =>
       t.isFunction(node) ? [node] : [],
     );
 };
@@ -960,12 +1077,37 @@ export const createSemanticCallableTargets = (
 export const createSemanticFunctionValueReferences = (
   state: JavaScriptSemanticAnalysisState,
   isDefinitelyObject?: (node: t.Node) => boolean,
-) =>
-  createSemanticCallableReferences(
+) => {
+  const references = createSemanticCallableReferences(
     state,
     "function-values",
     isDefinitelyObject,
   );
+  return (callee: t.Node, projection?: readonly (string | number | null)[]) =>
+    references(callee, projection).references;
+};
+
+/** Opt-in exact capture proof; possible-target consumers retain incomplete selections. */
+export const createSemanticFunctionValueCapture = (
+  state: JavaScriptSemanticAnalysisState,
+  proofs: CallableCaptureProofs,
+) => {
+  const references = createSemanticCallableReferences(
+    state,
+    "function-values",
+    undefined,
+    proofs,
+  );
+  return (
+    callee: t.Node,
+    projection?: readonly (string | number | null)[],
+  ): CallableReference | undefined => {
+    const selected = references(callee, projection);
+    return selected.complete && selected.references.length === 1
+      ? selected.references[0]
+      : undefined;
+  };
+};
 
 /** Resolve local result references conservatively, without claiming call execution. */
 export const createSemanticReturnedReferences = (
@@ -987,11 +1129,14 @@ export const createSemanticReturnedReferences = (
     }
     const prior = results.get(callee);
     if (prior !== undefined) return prior;
-    const references = targets(callee).flatMap(({ node: callable }) =>
-      semanticCallableResultExpressions(callable).flatMap(
-        ({ node, delegated }) =>
-          node === null ? [] : [{ node, projection: delegated ? [null] : [] }],
-      ),
+    const references = targets(callee).references.flatMap(
+      ({ node: callable }) =>
+        semanticCallableResultExpressions(callable).flatMap(
+          ({ node, delegated }) =>
+            node === null
+              ? []
+              : [{ node, projection: delegated ? [null] : [] }],
+        ),
     );
     results.set(callee, references);
     return references;
@@ -1005,6 +1150,12 @@ const selectObjectTargets = (
   indexes: WeakMap<t.ObjectExpression, ObjectTargetIndex>,
 ): void => {
   const [key, ...path] = item.path;
+  const selected = {
+    path,
+    ...(item.captures === undefined
+      ? {}
+      : { captures: item.captures.slice(1) }),
+  };
   if (key !== null && key !== undefined) {
     const index = objectTargetIndex(node, indexes);
     const property = index.propertyByName.get(String(key));
@@ -1024,12 +1175,12 @@ const selectObjectTargets = (
             : t.isObjectProperty(unknown)
               ? unknown.value
               : unknown,
-          ...(t.isSpreadElement(unknown) ? {} : { path }),
+          ...(t.isSpreadElement(unknown) ? {} : selected),
         });
       pending.push({
         ...item,
         node: t.isObjectProperty(property) ? property.value : property,
-        path,
+        ...selected,
       });
       return;
     }
@@ -1050,8 +1201,8 @@ const selectObjectTargets = (
     )
       continue;
     if (t.isObjectProperty(property))
-      pending.push({ ...item, node: property.value, path });
-    else pending.push({ ...item, node: property, path });
+      pending.push({ ...item, node: property.value, ...selected });
+    else pending.push({ ...item, node: property, ...selected });
     if (key !== null && key !== undefined && name === String(key))
       replaced = true;
   }

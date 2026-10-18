@@ -14,6 +14,7 @@ import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
+  type JavaScriptSemanticMemberEffect,
 } from "./javascriptSemanticState.js";
 
 const blockFunctionNames = new WeakMap<
@@ -300,6 +301,73 @@ export type SemanticGlobalBindingFacts = Pick<
   readonly opaqueGlobalSites?: readonly t.Node[];
 };
 
+interface AmbientWriteCandidates {
+  indexed: number;
+  readonly roots: Map<
+    string,
+    {
+      readonly owners: Map<string, JavaScriptSemanticMemberEffect[]>;
+      readonly broad: JavaScriptSemanticMemberEffect[];
+    }
+  >;
+  readonly broad: JavaScriptSemanticMemberEffect[];
+}
+
+// The ambient producer appends immutable effects. Share one linear-size index
+// per snapshot, extending it for later appends without retaining another AST.
+const ambientWriteCandidates = new WeakMap<
+  readonly JavaScriptSemanticMemberEffect[],
+  AmbientWriteCandidates
+>();
+
+/** Select possible owner prefixes; the full path and caller proof still decide. */
+export const semanticAmbientWriteMayMatch = (
+  facts: SemanticGlobalBindingFacts,
+  path: readonly string[],
+  predicate: (effect: JavaScriptSemanticMemberEffect) => boolean,
+): boolean => {
+  const effects = facts.ambientWriteEffects;
+  let candidates = ambientWriteCandidates.get(effects);
+  if (candidates === undefined) {
+    candidates = { indexed: 0, roots: new Map(), broad: [] };
+    ambientWriteCandidates.set(effects, candidates);
+  }
+  for (; candidates.indexed < effects.length; candidates.indexed += 1) {
+    const effect = effects[candidates.indexed]!;
+    const [root, owner] = effect.path;
+    if (typeof root !== "string" && typeof root !== "number") {
+      candidates.broad.push(effect);
+      continue;
+    }
+    let group = candidates.roots.get(String(root));
+    if (group === undefined) {
+      group = { owners: new Map(), broad: [] };
+      candidates.roots.set(String(root), group);
+    }
+    if (typeof owner !== "string" && typeof owner !== "number")
+      group.broad.push(effect);
+    else {
+      const selected = group.owners.get(String(owner)) ?? [];
+      selected.push(effect);
+      group.owners.set(String(owner), selected);
+    }
+  }
+  const matches = (effect: JavaScriptSemanticMemberEffect) =>
+    effect.path.length <= path.length &&
+    effect.path.every((key, index) =>
+      semanticPropertyPathKeyMatches(key, path[index]!),
+    ) &&
+    predicate(effect);
+  const group =
+    path[0] === undefined ? undefined : candidates.roots.get(path[0]);
+  return (
+    candidates.broad.some(matches) ||
+    (group?.broad.some(matches) ?? false) ||
+    (path[1] !== undefined &&
+      (group?.owners.get(path[1])?.some(matches) ?? false))
+  );
+};
+
 export const semanticGlobalBindingReadMayHaveChanged = (
   binding: JavaScriptSemanticBindingState,
   read: t.Node,
@@ -337,12 +405,10 @@ export const semanticGlobalBindingReadMayHaveChanged = (
       ? binding.initializers[0]?.node
       : undefined;
   const bindingPath = ["global", binding.name];
-  return facts.ambientWriteEffects.some(
-    ({ path, node }) =>
-      path.length <= 2 &&
-      path.every((key, index) =>
-        semanticPropertyPathKeyMatches(key, bindingPath[index]!),
-      ) &&
+  return semanticAmbientWriteMayMatch(
+    facts,
+    bindingPath,
+    ({ node }) =>
       semanticEffectTiming(read, node, state) !== "after" &&
       // Initialization replaces earlier assigned values. Reflective writes may
       // instead change a descriptor and prevent that initialization, so keep

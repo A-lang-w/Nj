@@ -857,9 +857,7 @@ export function* indexJavaScriptElectronIdentitySteps(
       const path =
         exported === undefined
           ? (interop.intrinsicPath(root) ??
-            (kind === "member"
-              ? interop.boundIntrinsic(root)?.path
-              : undefined))
+            (kind === "member" ? interop.boundValuePath(root) : undefined))
           : ["electron", ...exported];
       return path === undefined ? [] : [[...path, ...members]];
     },

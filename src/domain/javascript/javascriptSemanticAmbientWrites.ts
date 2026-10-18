@@ -31,6 +31,7 @@ import {
   semanticRequireFunctionValue,
 } from "./javascriptSemanticRequireOrigin.js";
 import {
+  semanticCallableValueIdentity,
   semanticPossibleFunctionValueIdentities,
   semanticSourceFunctionValueIdentities,
   semanticOrdinaryFunctionValueIdentities,
@@ -350,6 +351,8 @@ export const createAmbientPathResolver = (
             [...source.projection.map(() => source.node), ...readCaptures],
           );
       };
+      if (possibleWrites && t.isFunction(root))
+        retain([...semanticCallableValueIdentity(root), ...(suffix ?? [])]);
       if (!t.isIdentifier(root) && facts?.freshObject(root)) {
         localIdentity?.(root, suffix);
         const firstKey = suffix?.[0];
@@ -681,8 +684,14 @@ export const createAmbientPathResolver = (
         possibleWrites &&
         (t.isCallExpression(root) || t.isOptionalCallExpression(root))
       ) {
+        const bound = functionInterop.boundIntrinsic(root);
+        const allocation = bound?.boundFunction?.allocations[0];
+        if (allocation !== undefined)
+          retain([
+            ...semanticCallableValueIdentity(allocation),
+            ...(suffix ?? []),
+          ]);
         if (suffix === undefined || suffix.length > 0) {
-          const bound = functionInterop.boundIntrinsic(root);
           if (bound?.path[1] === "source-function" && bound.path.length === 3) {
             for (const target of functionGroups.get(bound.path[2]!) ?? []) {
               if (
@@ -912,6 +921,20 @@ const completedAmbientResolvers = new WeakMap<
   JavaScriptSemanticAnalysisState,
   ReturnType<typeof createAmbientPathResolver>
 >();
+
+type OwnSlotUnchanged = (owner: t.Node, key: string, read: t.Node) => boolean;
+const completedOwnSlots = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  OwnSlotUnchanged
+>();
+
+/** Strict local capture uses the same completed store and escape snapshot. */
+export const semanticAmbientOwnSlotUnchanged = (
+  state: JavaScriptSemanticAnalysisState,
+  owner: t.Node,
+  key: string,
+  read: t.Node,
+): boolean => completedOwnSlots.get(state)?.(owner, key, read) === true;
 
 export const semanticAmbientIdentitySourcesReady = (
   state: JavaScriptSemanticAnalysisState,
@@ -1414,6 +1437,18 @@ export function* indexJavaScriptAmbientWritesSteps(
         facts.ambientWriteEffects.push({ path: identity, node });
       }
     }
+    for (const escape of escapes)
+      for (const identity of ambientWrites(
+        escape.target,
+        escape.node,
+        true,
+        escape.projection,
+      ))
+        if (identity[0] === "callable-value") {
+          const path = [...identity, null];
+          facts.ambientWrites.retain(path);
+          facts.ambientWriteEffects.push({ path, node: escape.node });
+        }
     weakBindingFacts = facts;
     return facts;
   };
@@ -1655,6 +1690,7 @@ export function* indexJavaScriptAmbientWritesSteps(
   // Resolve each discovered escape once against the completed weak graph.
   // Its descriptor effects recheck only stores depending on that receiver.
   const resolvedEscapes: {
+    node: t.Node;
     browserReceiver: boolean;
     paths: readonly AmbientPath[];
   }[] = [];
@@ -1665,7 +1701,12 @@ export function* indexJavaScriptAmbientWritesSteps(
       true,
       escape.projection,
       (root, path) => {
-        if (hasReceiverProofs || t.isClass(root)) {
+        if (
+          hasReceiverProofs ||
+          t.isClass(root) ||
+          t.isObjectExpression(root) ||
+          t.isArrayExpression(root)
+        ) {
           if (path === undefined || path.length === 0)
             retainDescriptorEffect(root, escape.node);
           else if (path.includes("__proto__"))
@@ -1675,7 +1716,11 @@ export function* indexJavaScriptAmbientWritesSteps(
     );
     if (hasReceiverProofs && paths.some(mayReachPrototype))
       retainPrototypeEffect(escape.node);
-    resolvedEscapes.push({ browserReceiver: escape.browserReceiver, paths });
+    resolvedEscapes.push({
+      node: escape.node,
+      browserReceiver: escape.browserReceiver,
+      paths,
+    });
   };
   for (const escape of escapes) resolveEscape(escape);
   if (hasReceiverProofs) {
@@ -1765,11 +1810,13 @@ export function* indexJavaScriptAmbientWritesSteps(
   // Exclusion needs the completed write/escape snapshot. Earlier resolver
   // queries retain inherited possibilities; their declarative slot cache does
   // not memoize this mutable proof, and possible-write paths are never cached.
-  ownStaticSlotUnchanged = (owner, key, read) =>
+  const ownSlotUnchanged: OwnSlotUnchanged = (owner, key, read) =>
     !effectMayPrecede(read, descriptorEffects.get(owner)) &&
     !writesToMember(owner, key).some(
       (site) => semanticEffectTiming(read, site, state) !== "after",
     );
+  ownStaticSlotUnchanged = ownSlotUnchanged;
+  completedOwnSlots.set(state, ownSlotUnchanged);
   // Resolve possible identities against one completed store snapshot before
   // publishing any writes. Incremental publication would invalidate loader
   // origin indexes for every target and replay a full source scan each time.
@@ -1789,11 +1836,17 @@ export function* indexJavaScriptAmbientWritesSteps(
       state.ambientWriteEffects.push({ path: resolved, node });
     }
   }
-  for (const { paths, browserReceiver } of resolvedEscapes)
-    for (const path of paths)
+  for (const { node, paths, browserReceiver } of resolvedEscapes)
+    for (const path of paths) {
+      if (path[0] === "callable-value") {
+        const escaped = [...path, null];
+        state.ambientWrites.retain(escaped);
+        state.ambientWriteEffects.push({ path: escaped, node });
+      }
       // Only proven browser APIs keep their global receiver from user code.
       if (!(browserReceiver && path.length === 1 && path[0] === "global"))
         state.ambientEscapes.retain([...path, null]);
+    }
   // A function may call a browser method replaced later in source order.
   if (
     [...browserReceiverMethods].some((method) =>

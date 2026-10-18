@@ -3,8 +3,30 @@ import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
 
 type Path = readonly string[];
 type Projection = readonly (string | null)[];
+type RetainReadDependency = (path: Path, ownFrom: number) => void;
+
+export interface SemanticFunctionValueReadDependency {
+  readonly path: Path;
+  /** The selection in the original path which reads this slot. */
+  readonly offset: number;
+  /** Replacing an already captured owner does not mutate its properties. */
+  readonly ownFrom: number;
+}
 
 export const INVOCATION_HELPERS = ["call", "apply", "bind"];
+
+const callableValueIdentities = new WeakMap<t.Node, Path>();
+let nextCallableValueIdentity = 0;
+
+/** Internal allocation identity; aliases share it without equating the target. */
+export const semanticCallableValueIdentity = (node: t.Node): Path => {
+  let path = callableValueIdentities.get(node);
+  if (path === undefined) {
+    path = ["callable-value", String(nextCallableValueIdentity++)];
+    callableValueIdentities.set(node, path);
+  }
+  return path;
+};
 
 interface FunctionValue {
   readonly path: Path;
@@ -264,13 +286,20 @@ const exotic = (family: string, prototype: boolean): FunctionValue => ({
 const propertyValue = (
   value: FunctionValue,
   key: string,
+  retainReadDependency?: RetainReadDependency,
 ): FunctionValue | undefined => {
+  retainReadDependency?.([...value.path, key], value.path.length);
   const members = VALUE_MEMBERS[value.path.join(".")];
   if (members !== undefined && Object.hasOwn(members, key)) return members[key];
   if (value === MODULE_CHILDREN && semanticArrayIndex(key) !== null)
     return MODULE_INSTANCE;
   if (INVOCATION_HELPERS.includes(key) && hasFunctionHelpers(value))
-    return ordinary(["global", "Function", "prototype", key], false);
+    return inheritedCallable(
+      value,
+      key,
+      FUNCTION_PROTOTYPE,
+      retainReadDependency,
+    );
   if (hasFunctionHelpers(value) && (key === "name" || key === "length"))
     return primitive(key === "name" ? "String" : "Number");
   if (
@@ -288,14 +317,24 @@ const propertyValue = (
         value.path.join(".") === "global.require",
     );
   if (hasFunctionHelpers(value) && key === "toString")
-    return ordinary(["global", "Function", "prototype", key], false);
+    return inheritedCallable(
+      value,
+      key,
+      FUNCTION_PROTOTYPE,
+      retainReadDependency,
+    );
   if (
     (hasFunctionHelpers(value) ||
       (value.kind === "object-instance" && value.owner !== undefined) ||
       value.kind === "instance-prototype") &&
     FUNCTION_MEMBERS["global.Object.prototype"]!.includes(key)
   )
-    return ordinary(["global", "Object", "prototype", key], false);
+    return inheritedCallable(
+      value,
+      key,
+      OBJECT_PROTOTYPE,
+      retainReadDependency,
+    );
   if (key === "constructor") {
     if (value.kind === "object-instance" || value.kind === "primitive")
       return value.owner;
@@ -340,9 +379,34 @@ const propertyValue = (
   };
 };
 
+/** Keep the traversed links and shadow slots with the value selection owner. */
+const inheritedCallable = (
+  value: FunctionValue,
+  key: string,
+  provider: FunctionValue,
+  retainReadDependency?: RetainReadDependency,
+): FunctionValue => {
+  if (retainReadDependency !== undefined) {
+    let current = value;
+    const visited = new Set<string>();
+    while (current.path.join(".") !== provider.path.join(".")) {
+      const identity = `${current.kind}:${current.path.join(".")}`;
+      if (visited.has(identity)) break;
+      visited.add(identity);
+      retainReadDependency([...current.path, "__proto__"], current.path.length);
+      const parent = propertyValue(current, "__proto__");
+      if (parent === undefined) break;
+      retainReadDependency([...parent.path, key], parent.path.length);
+      current = parent;
+    }
+  }
+  return ordinary([...provider.path, key], false);
+};
+
 const possiblePropertyValues = (
   value: FunctionValue,
   key: string,
+  retainReadDependency?: RetainReadDependency,
 ): readonly FunctionValue[] => {
   if (value === MODULE_CACHE) return [MODULE_INSTANCE, WRAPPER_MODULE_INSTANCE];
   if (value.kind === "unknown-external") {
@@ -356,7 +420,7 @@ const possiblePropertyValues = (
       return [UNKNOWN_EXTERNAL, FUNCTION_PROTOTYPE, OBJECT_PROTOTYPE];
     return [UNKNOWN_EXTERNAL];
   }
-  const selected = propertyValue(value, key);
+  const selected = propertyValue(value, key, retainReadDependency);
   if (selected !== undefined) return [selected];
   // Known absent prototype boundaries and primitive metadata must not become
   // functions merely because their owner is external.
@@ -394,6 +458,11 @@ const selectedValues = (
     path: Projection,
     suffixOffset: number,
   ) => void,
+  retainReadDependency?: (
+    path: Path,
+    ownFrom: number,
+    suffixOffset: number,
+  ) => void,
 ): readonly FunctionValue[] => {
   let values = [initial];
   for (const [index, key] of projection.entries()) {
@@ -427,14 +496,72 @@ const selectedValues = (
       if (key === null && value === MODULE_CHILDREN)
         next.set("object-instance:module-instance", MODULE_INSTANCE);
       for (const property of keys) {
-        for (const selected of possiblePropertyValues(value, property))
+        for (const selected of possiblePropertyValues(
+          value,
+          property,
+          retainReadDependency === undefined
+            ? undefined
+            : (path, ownFrom) => retainReadDependency(path, ownFrom, index),
+        )) {
+          retainReadDependency?.(
+            selected.path,
+            selected.path.length - 1,
+            index,
+          );
           next.set(`${selected.kind}:${selected.path.join(".")}`, selected);
+        }
       }
     }
     values = [...next.values()];
     if (values.length === 0) break;
   }
   return values;
+};
+
+/** Slot and prototype dependencies of possible value selection, not proof that
+ * the source currently reads that value. Capture timing remains with callers. */
+export const semanticFunctionValueReadDependencies = (
+  path: Path,
+  source?: t.Function,
+): readonly SemanticFunctionValueReadDependency[] => {
+  const root =
+    source === undefined
+      ? rootValue(path)
+      : {
+          value: sourceFunctionValue(
+            source,
+            false,
+            semanticCallableValueIdentity(source),
+          ),
+          length: 2,
+        };
+  if (root === undefined)
+    return [{ path, offset: path.length - 1, ownFrom: 0 }];
+  const dependencies = new Map<string, SemanticFunctionValueReadDependency>();
+  const retain = (selected: Path, ownFrom: number, offset: number) => {
+    if (
+      ![
+        "global",
+        "commonjs-module",
+        "callable-value",
+        "function-family",
+      ].includes(selected[0]!)
+    )
+      return;
+    const dependency = { path: selected, offset, ownFrom };
+    dependencies.set(JSON.stringify(dependency), dependency);
+  };
+  retain(path.slice(0, root.length), 0, root.length - 1);
+  for (let offset = root.length; offset < path.length; offset += 1)
+    retain(path.slice(0, offset + 1), offset, offset);
+  selectedValues(
+    root.value,
+    path.slice(root.length),
+    undefined,
+    (selected, ownFrom, offset) =>
+      retain(selected, ownFrom, root.length + offset),
+  );
+  return [...dependencies.values()];
 };
 
 /** Exact selectors are limited to the captures whose dependencies the loader
@@ -449,11 +576,12 @@ export const semanticFunctionValueIdentity = (
   else if (path[0] === "global" && path[1] === "Reflect" && path[2] === "apply")
     rootLength = 3;
   else if (path[0] === "commonjs-module") {
-    let end = 1;
-    while (path[end] === "__proto__") end += 1;
-    if (path[end] === "require") rootLength = end + 1;
-    else if (path[end] === "constructor" && path[end + 1] === "createRequire")
-      rootLength = end + 2;
+    if (path[1] === "require") rootLength = 2;
+    else if (
+      (path[1] === "__proto__" && path[2] === "require") ||
+      (path[1] === "constructor" && path[2] === "createRequire")
+    )
+      rootLength = 3;
     else return undefined;
   } else return undefined;
   let identity = path.slice(0, rootLength) as Path;
@@ -508,18 +636,18 @@ export const semanticOrdinaryFunctionValueIdentities = (
     .map((selected) => selected.path);
 
 /** Source callables share helpers, but own helpers/prototypes remain local. */
-export const semanticSourceFunctionValueIdentities = (
+const sourceFunctionValue = (
   node: t.Function | t.Class,
-  projection: Projection,
-  bound = false,
-): readonly Path[] => {
+  bound: boolean,
+  path: Path,
+): FunctionValue => {
   const family =
     t.isFunction(node) && (node.async || node.generator)
       ? `${node.async ? "async" : ""}${node.generator ? "generator" : ""}`
       : undefined;
-  const value: FunctionValue = {
+  return {
     ...ordinary(
-      ["source-function"],
+      path,
       !bound &&
         (t.isClass(node) ||
           (t.isFunction(node) &&
@@ -532,8 +660,20 @@ export const semanticSourceFunctionValueIdentities = (
     ),
     ...(family === undefined ? {} : { family }),
   };
-  return selectedValues(value, projection)
-    .filter((selected) => selected.path[0] === "global")
+};
+
+export const semanticSourceFunctionValueIdentities = (
+  node: t.Function | t.Class,
+  projection: Projection,
+  bound = false,
+): readonly Path[] => {
+  return selectedValues(
+    sourceFunctionValue(node, bound, ["source-function"]),
+    projection,
+  )
+    .filter((selected) =>
+      ["global", "function-family"].includes(selected.path[0]!),
+    )
     .map((selected) => selected.path);
 };
 

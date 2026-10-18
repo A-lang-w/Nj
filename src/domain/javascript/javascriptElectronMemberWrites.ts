@@ -48,10 +48,17 @@ export interface JavaScriptIntrinsicInvocation {
   readonly kind: "known" | "opaque";
   /** An explicit call/apply receiver or original bound receiver. */
   readonly receiver?: t.Node;
+  /** The receiver remains a possible recipient when helper proof is unavailable. */
+  readonly receiverUncertain?: boolean;
   /** Direct member-call syntax supplies this receiver only when none is explicit. */
   readonly memberReceiver?: t.Node;
   /** Callable selections consumed while recovering a bound invocation. */
   readonly callableReads?: readonly t.Node[];
+  /** Physical bound values, newest first; their logical target remains `path`. */
+  readonly boundFunction?: {
+    readonly allocations: readonly t.CallExpression[];
+    readonly prototypeTarget: t.Node;
+  };
   readonly path: readonly string[];
   readonly arguments:
     | readonly t.CallExpression["arguments"][number][]

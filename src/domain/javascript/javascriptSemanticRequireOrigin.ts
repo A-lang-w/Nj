@@ -335,14 +335,11 @@ const writesModuleRequire = (
   const interop = createSemanticModuleInterop(state);
   // Ambient indexing owns container stores and intrinsic prototype aliases.
   // Queries made during indexing must be refreshed when those facts arrive.
-  for (const { node, path } of state.ambientWriteEffects)
-    if (node !== undefined && isModuleDelegateWrite(path, node, interop))
-      writes.push({
-        node,
-        delegate:
-          path.length === 3 && path[1] === "constructor" ? "_load" : "require",
-        shared: path[1] === "constructor" || path[1] === "__proto__",
-      });
+  for (const { node, path } of state.ambientWriteEffects) {
+    if (node === undefined) continue;
+    const owner = moduleDelegateWriteOwner(path, node, interop);
+    if (owner !== undefined) writes.push({ node, ...owner });
+  }
   const projectionMayAliasModule = createSemanticModuleStorageQuery(
     state,
     interop,
@@ -464,8 +461,8 @@ const writesModuleRequire = (
         !visibleBindings().some((binding) =>
           semanticAmbientBindingPaths(binding, effect, state).some(
             (path) =>
-              isModuleDelegateWrite([...path, "require"], effect, interop) ||
-              isModuleDelegateWrite([...path, "_load"], effect, interop),
+              moduleDelegateWriteOwner([...path, "require"], effect, interop) ||
+              moduleDelegateWriteOwner([...path, "_load"], effect, interop),
           ),
         )
       )
@@ -680,45 +677,51 @@ export const semanticHostRequireModuleWritesIntact = (
       !semanticEffectFollowsInitialCapture(capture, write, state),
   );
 
-const isModuleDelegateWrite = (
+const moduleDelegateWriteOwner = (
   path: JavaScriptSemanticPropertyPath,
   node: t.Node,
   interop: ReturnType<typeof createSemanticModuleInterop>,
-): boolean => {
-  if (path[0] !== "commonjs-module") return false;
+): Omit<ModuleDelegateWrite, "node"> | undefined => {
+  if (path[0] !== "commonjs-module") return undefined;
+  // Ambient value normalization already selects the shared Module owners.
+  // Module.prototype owns require: changing its parent cannot replace that
+  // slot, while changing the wrapper's immediate prototype can hide it.
+  const wrapper = path.length <= 2;
+  const shared =
+    path.length === 3 && (path[1] === "__proto__" || path[1] === "constructor");
+  if (!wrapper && !shared) return undefined;
   // The inherited instance method dispatches through Module._load as well.
-  const delegate =
-    path.length === 3 && path[1] === "constructor" ? "_load" : "require";
-  const receiver = path.slice(1, -1);
-  if (
-    delegate === "require" &&
-    !receiver.every((key) => semanticPropertyPathKeyMatches(key, "__proto__"))
-  )
-    return false;
+  const delegate = shared && path[1] === "constructor" ? "_load" : "require";
+  const owner = { delegate, shared } as const;
   const key = path.at(-1)!;
-  if (path.length === 1) return true;
+  if (path.length === 1) return owner;
   if (
     !semanticPropertyPathKeyMatches(key, delegate) &&
-    !(delegate === "require" && key === "__proto__")
+    !(wrapper && key === "__proto__")
   )
-    return false;
+    return undefined;
   if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
     const invocation = interop.intrinsicInvocation(node);
     const mutation = semanticIntrinsicMutation(invocation);
     const args = invocation?.arguments;
+    if (mutation?.kind === "set-prototype") return wrapper ? owner : undefined;
     if (mutation?.kind === "assign")
-      return (
-        args === undefined ||
+      return args === undefined ||
         args
           .slice(1)
-          .some((source) => objectMayDefineDelegate(source, true, delegate))
-      );
+          .some((source) => objectMayDefineDelegate(source, wrapper, delegate))
+        ? owner
+        : undefined;
     if (mutation?.kind === "define-properties")
-      return objectMayDefineDelegate(args?.[1], false, delegate);
+      return objectMayDefineDelegate(args?.[1], false, delegate)
+        ? owner
+        : undefined;
     // Defining an own __proto__ property does not invoke the legacy setter.
-    return key !== "__proto__" || mutation?.kind === "set";
+    return key !== "__proto__" || mutation?.kind === "set" ? owner : undefined;
   }
-  return key !== "__proto__" || t.isAssignmentExpression(node);
+  return key !== "__proto__" || t.isAssignmentExpression(node)
+    ? owner
+    : undefined;
 };
 
 /**
@@ -781,26 +784,16 @@ const hostLoaderPath = (
     captures: readonly t.Node[],
     ownFrom = 0,
   ): boolean => {
-    if (
-      !(path[0] === "commonjs-module" && path[1] === "require") &&
-      !state.ambientWrites.covers(path)
-    )
-      return true;
+    if (!state.ambientWrites.covers(path)) return true;
     return !state.ambientWriteEffects.some((effect) => {
-      let normalized = effect.path;
-      if (path[0] === "commonjs-module" && path[1] === "require") {
-        let end = 1;
-        while (normalized[end] === "__proto__") end += 1;
-        normalized = [normalized[0]!, ...normalized.slice(end)];
-      }
       return (
-        normalized.length > ownFrom &&
-        normalized.length <= path.length &&
-        normalized.every((key, index) =>
+        effect.path.length > ownFrom &&
+        effect.path.length <= path.length &&
+        effect.path.every((key, index) =>
           semanticPropertyPathKeyMatches(key, path[index]!),
         ) &&
         !semanticEffectFollowsInitialCapture(
-          captures[Math.min(normalized.length - 1, captures.length - 1)]!,
+          captures[Math.min(effect.path.length - 1, captures.length - 1)]!,
           effect.node,
           state,
         )
@@ -836,7 +829,7 @@ const hostLoaderPath = (
       kind === "wrapper"
         ? ["global", "require"]
         : kind === "delegate"
-          ? ["commonjs-module", "require"]
+          ? ["commonjs-module", "__proto__", "require"]
           : kind === "factory"
             ? ["commonjs-module", "constructor", "createRequire"]
             : undefined;

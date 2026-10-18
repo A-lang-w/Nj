@@ -10,9 +10,11 @@ import {
 } from "./javascriptModuleInterop.js";
 import {
   createSemanticCallableTargets,
+  createSemanticFunctionValueCapture,
   createSemanticPrivateMemberTargets,
   createSemanticReturnedReferences,
 } from "./javascriptSemanticReturnedReferences.js";
+import { semanticAmbientOwnSlotUnchanged } from "./javascriptSemanticAmbientWrites.js";
 import {
   semanticGlobalBindingReadMayHaveChanged,
   semanticOpaqueBindingReadMayHaveChanged,
@@ -187,21 +189,37 @@ export const createSemanticReceiverReferences = (
       }
       return intrinsics.intrinsicPath(current);
     };
+    const invocationFacts = intrinsicWriteFacts ?? {
+      ambientWrites: state.ambientWrites,
+      ambientWriteEffects: state.ambientWriteEffects,
+      opaqueGlobalSites: state.opaqueEffects.globalSites,
+      get complete() {
+        return semanticFreshObjectFactsReady(state);
+      },
+    };
+    const sourceCapture = createSemanticFunctionValueCapture(state, {
+      bindingReadMayHaveChanged: (binding, read) =>
+        invocationFacts.complete !== true ||
+        semanticOpaqueBindingReadMayHaveChanged(binding, read, state) ||
+        semanticGlobalBindingReadMayHaveChanged(
+          binding,
+          read,
+          state,
+          invocationFacts,
+        ),
+      ownSlotUnchanged: (owner, key, read) =>
+        semanticAmbientOwnSlotUnchanged(state, owner, key, read),
+    });
     const invocations = createSemanticModuleInterop(state, {
       intrinsicPath: localPath,
+      boundFunctionWriteFacts: invocationFacts,
+      sourceFunctionCapture: sourceCapture,
     });
     // Only the ambient owner can supply complete canonical mutation facts.
     // Provisional queries retain uncertainty until that snapshot is available.
     const constructionInvocations = createSemanticModuleInterop(state, {
       intrinsicPath: intrinsics.intrinsicPath,
-      intrinsicWriteFacts: intrinsicWriteFacts ?? {
-        ambientWrites: state.ambientWrites,
-        ambientWriteEffects: state.ambientWriteEffects,
-        opaqueGlobalSites: state.opaqueEffects.globalSites,
-        get complete() {
-          return semanticFreshObjectFactsReady(state);
-        },
-      },
+      intrinsicWriteFacts: invocationFacts,
     });
     const retain = (target: t.Function, receiver?: t.Node) => {
       const values = indexed.get(target) ?? new Set<t.Node>();
@@ -329,6 +347,7 @@ export const createSemanticReceiverReferences = (
           }
           retain(target, receiver);
           if (
+            invocation.receiverUncertain === true ||
             t.isSpreadElement(receiver) ||
             (invocation.kind === "opaque" && receiver === undefined)
           )

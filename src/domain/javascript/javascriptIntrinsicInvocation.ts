@@ -71,7 +71,11 @@ export const resolveJavaScriptIntrinsicInvocation = (
   node: t.CallExpression | t.OptionalCallExpression,
   intrinsicPath: (node: t.Node) => readonly string[] | undefined,
   boundIntrinsic: (node: t.Node) => JavaScriptIntrinsicInvocation | undefined,
-  intrinsicReadChanged: (node: t.Node, path: readonly string[]) => boolean,
+  intrinsicReadChanged: (
+    node: t.Node,
+    path: readonly string[],
+    boundFunction?: JavaScriptIntrinsicInvocation["boundFunction"],
+  ) => boolean,
 ): JavaScriptIntrinsicInvocation | undefined => {
   const visited = new Set<t.Node>();
   let callee: t.Node = node.callee;
@@ -109,7 +113,11 @@ export const resolveJavaScriptIntrinsicInvocation = (
           const bound = boundIntrinsic(callee.object);
           if (
             bound !== undefined &&
-            intrinsicReadChanged(callee, [...bound.path, method])
+            intrinsicReadChanged(
+              callee,
+              [...bound.path, method],
+              bound.boundFunction,
+            )
           )
             return { kind: "opaque", path: bound.path, arguments: undefined };
           receiver = arguments_?.[0];

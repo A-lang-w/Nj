@@ -4,6 +4,122 @@ import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 const SHIM = 'var Q=(e=>typeof require<"u"?require:e)(function(){});';
 
+describe("Module prototype ownership", () => {
+  it.each([
+    ["legacy parent setter", "module.__proto__.__proto__={};"],
+    [
+      "constructor prototype parent",
+      "module.constructor.prototype.__proto__={};",
+    ],
+    ["captured prototype", "const proto=module.__proto__;proto.__proto__={};"],
+    [
+      "Object prototype mutation",
+      "Object.setPrototypeOf(module.__proto__,{});",
+    ],
+    [
+      "Reflect prototype mutation",
+      "Reflect.setPrototypeOf(module.constructor.prototype,{});",
+    ],
+    ["Reflect parent setter", 'Reflect.set(module.__proto__,"__proto__",{});'],
+    [
+      "assigned parent setter",
+      'Object.assign(module.__proto__,{["__proto__"]:{}});',
+    ],
+    ["ancestor require slot", "module.__proto__.__proto__.require=other;"],
+    [
+      "constructor parent",
+      "Object.setPrototypeOf(module.constructor,{_load:other});",
+    ],
+  ])("retains the owned delegate after %s", (_name, setup) => {
+    for (const load of [
+      'require("electron")',
+      'Q("electron")',
+      'module.require("electron")',
+    ]) {
+      expect(
+        analyzeJavaScriptStaticSource(
+          `${SHIM}${setup}new (${load}.BrowserWindow)({});`,
+        ).electron.browser_windows,
+      ).toHaveLength(1);
+    }
+  });
+
+  it.each([
+    "module.__proto__={};",
+    "Object.setPrototypeOf(module,{});",
+    'Reflect.set(module,"__proto__",{});',
+    "module.require=other;",
+    "module.__proto__.require=other;",
+    "module.constructor.prototype.require=other;",
+    'Reflect.set(module.constructor,"_load",other);',
+  ])("rejects changes to the selected delegate or its owner: %s", (setup) => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${SHIM}${setup}new (Q("electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toEqual([]);
+  });
+
+  it("retains a delegate captured before its prototype parent changes", () => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        'const load=module.require;module.__proto__.__proto__={};new (load.call(module,"electron").BrowserWindow)({});',
+      ).electron.browser_windows,
+    ).toHaveLength(1);
+  });
+
+  it("keeps ancestor callable slots distinct from delegate helpers", () => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        'const load=module.require;Object.prototype.require=function(){};module.__proto__.__proto__.require.call=other;new (load.call(module,"electron").BrowserWindow)({});',
+      ).electron.browser_windows,
+    ).toHaveLength(1);
+  });
+
+  it("retains an earlier load before the immediate prototype changes", () => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${SHIM}new (Q("electron").BrowserWindow)({});module.__proto__={};`,
+      ).electron.browser_windows,
+    ).toHaveLength(1);
+  });
+
+  it("rejects a live internal loader mutation after delegate capture", () => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        'const load=module.require;module.constructor._load=other;new (load.call(module,"electron").BrowserWindow)({});',
+      ).electron.browser_windows,
+    ).toEqual([]);
+  });
+
+  it("rejects a live delegate helper mutation after delegate capture", () => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        'const load=module.require;module.constructor.prototype.require.call=other;new (load.call(module,"electron").BrowserWindow)({});',
+      ).electron.browser_windows,
+    ).toEqual([]);
+  });
+
+  it("retains a helper captured before the delegate own slot changes", () => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        'const load=module.require;const invoke=load.call;module.constructor.prototype.require.call=other;new (Reflect.apply(invoke,load,[module,"electron"]).BrowserWindow)({});',
+      ).electron.browser_windows,
+    ).toHaveLength(1);
+  });
+
+  it.each([
+    'module.__proto__.require.call(module,"electron")',
+    'module.__proto__.__proto__.require.call(module,"electron")',
+    'module.__proto__.constructor.createRequire("/app.cjs")("electron")',
+  ])("does not promote a prototype path to strict loader proof: %s", (load) => {
+    expect(
+      analyzeJavaScriptStaticSource(`new (${load}.BrowserWindow)({});`).electron
+        .browser_windows,
+    ).toEqual([]);
+  });
+});
+
 describe("cached Module instance identity", () => {
   it.each([
     [

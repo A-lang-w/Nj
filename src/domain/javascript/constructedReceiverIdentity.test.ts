@@ -4,7 +4,10 @@ import { describe, expect, it } from "vitest";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascriptSemanticAnalysis.js";
 import { createSemanticReceiverReferences } from "./javascriptSemanticReceiverReferences.js";
-import { createSemanticCallableTargets } from "./javascriptSemanticReturnedReferences.js";
+import {
+  createSemanticCallableTargets,
+  createSemanticFunctionValueCapture,
+} from "./javascriptSemanticReturnedReferences.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
@@ -306,6 +309,190 @@ describe("normalized construction receivers", () => {
     expect(analyze(setup)).toEqual([]);
   });
 });
+
+describe("construction helper prototype selection", () => {
+  it.each([
+    "Reflect.construct.__proto__={call(_this,fn,args){fn()}};Reflect.construct.call(null,set,[]);",
+    "Reflect.construct.__proto__={apply(_this,args){args[0]()}};Reflect.construct.apply(null,[set,[]]);",
+    "Reflect.construct.__proto__={bind(_this,fn){return ()=>fn()}};const make=Reflect.construct.bind(null,set);make([]);",
+    "const make=Reflect.construct;Reflect.construct.__proto__={call(_this,fn,args){fn()}};make.call(null,set,[]);",
+    "const make=Reflect.construct;Object.setPrototypeOf(make,{call(_this,fn,args){fn()}});make.call(null,set,[]);",
+    "Reflect.construct.call.__proto__={call(_this,_receiver,fn,args){fn()}};Reflect.construct.call.call(Reflect.construct,null,set,[]);",
+    "Reflect.apply.__proto__={call(_this,_target,_receiver,args){args[0]()}};Reflect.apply.call(null,Reflect.construct,null,[set,[]]);",
+    "Reflect.construct.__proto__={call(_this,fn,args){fn()}};Reflect.apply(Reflect.construct.call,Reflect.construct,[null,set,[]]);",
+    "const call=Reflect.construct.call;call.__proto__={call(_this,_receiver,fn,args){fn()}};call.call(Reflect.construct,null,set,[]);",
+    "Reflect.construct.__proto__={call(_this,fn,args){fn()}};const {call}=Reflect.construct;call.call(Reflect.construct,null,set,[]);",
+    "const make=Reflect.construct;function patch(){Reflect.construct.__proto__={call(_this,fn,args){fn()}}}patch();make.call(null,set,[]);",
+    "const make=Reflect.construct;Reflect.setPrototypeOf(make,{apply(_this,args){args[0]()}});make.apply(null,[set,[]]);",
+    "Reflect.construct.call=other;Reflect.construct.__proto__={};Reflect.construct.call(null,set,[]);",
+  ])(
+    "retains callback effects after replacing an inherited helper: %s",
+    (call) => {
+      expect(analyze(`function set(){this.Q=other}${call}`)).toEqual([]);
+    },
+  );
+
+  it.each([
+    "Reflect.construct.call(null,set,[]);Reflect.construct.__proto__={call(_this,fn,args){fn()}};",
+    "const call=Reflect.construct.call;Reflect.construct.__proto__={call(_this,fn,args){fn()}};call.call(Reflect.construct,null,set,[]);",
+    "const apply=Reflect.construct.apply;Reflect.construct.__proto__={apply(_this,args){args[0]()}};apply.call(Reflect.construct,null,[set,[]]);",
+    "const bind=Function.prototype.bind;Reflect.construct.__proto__={bind(_this,fn){return ()=>fn()}};const make=bind.call(Reflect.construct,null,set);make([]);",
+    "const invoke=Reflect.construct.call;Reflect.construct.__proto__={call(_this,fn,args){fn()}};Reflect.apply(invoke,Reflect.construct,[null,set,[]]);",
+    "const make=Reflect.construct.bind(null,set);Reflect.construct.__proto__={bind(_this,fn){return ()=>fn()}};make([]);",
+    "const make=Reflect.construct;Reflect.construct=other;make.call(null,set,[]);",
+    "Reflect.construct.__proto__={call(_this,fn,args){fn()}};Reflect.construct(set,[]);",
+    "Function.prototype.__proto__={call(_this,fn,args){fn()}};Reflect.construct.call(null,set,[]);",
+    "Object.prototype.call=other;Reflect.construct.call(null,set,[]);",
+    "const local=function(){};local.__proto__={call(_this,fn,args){fn()}};Reflect.construct.call(null,set,[]);",
+    "const local={construct:{}};local.construct.__proto__={call(_this,fn,args){fn()}};Reflect.construct.call(null,set,[]);",
+  ])(
+    "preserves captured helpers and unrelated prototype changes: %s",
+    (call) => {
+      expect(analyze(`function set(){this.Q=other}${call}`)).toMatchObject([
+        { channel: "kept" },
+      ]);
+    },
+  );
+});
+
+describe("bound construction helper suppliers", () => {
+  it.each([
+    "const make=Reflect.construct.bind(null);make.__proto__={call(_this,fn,args){fn()}};make.call(null,set,[]);",
+    "const make=Reflect.construct.bind(null);make.call=function(_this,fn,args){fn()};make.call(null,set,[]);",
+    "const make=Reflect.construct.bind(null);const alias=make;alias.__proto__={apply(_this,args){args[0]()}};make.apply(null,[set,[]]);",
+    "const make=Reflect.construct.bind(null);Object.setPrototypeOf(make,{call(_this,fn,args){fn()}});make.call(null,set,[]);",
+    "const make=Reflect.construct.bind(null);consume(make);make.call(null,set,[]);",
+    "const make=Reflect.construct.bind(null);Function.prototype.call=other;make.call(null,set,[]);",
+    "Reflect.construct.__proto__={call(_this,fn,args){fn()}};const make=Function.prototype.bind.call(Reflect.construct,null);make.call(null,set,[]);",
+    "const first=Reflect.construct.bind(null);first.bind=function(_this,fn){return ()=>fn()};const make=first.bind(null,set);make([]);",
+  ])("retains callback effects from the physical bound helper: %s", (call) => {
+    expect(analyze(`function set(){this.Q=other}${call}`)).toEqual([]);
+  });
+
+  it.each([
+    "const make=Reflect.construct.bind(null,set);Reflect.construct.__proto__={call(_this,fn,args){fn()}};make.call(null,[]);",
+    "const make=Reflect.construct.bind(null);make.call(null,set,[]);make.__proto__={call(_this,fn,args){fn()}};",
+    "const make=Reflect.construct.bind(null);make.__proto__={call(_this,fn,args){fn()}};make(set,[]);",
+    "const make=Reflect.construct.bind(null);make.call=other;make(set,[]);",
+    "Reflect.construct.call=function(_this,fn,args){fn()};const make=Reflect.construct.bind(null);make.call(null,set,[]);",
+    "const first=Reflect.construct.bind(null);const make=first.bind(null,set);Reflect.construct.__proto__={call(_this,fn,args){fn()}};make.call(null,[]);",
+    "const first=Reflect.construct.bind(null);Reflect.construct.__proto__={call(_this,fn,args){fn()}};const make=first.bind(null,set);make.call(null,[]);",
+    "const first=Reflect.construct.bind(null);first.call=other;const make=first.bind(null,set);make.call(null,[]);",
+  ])("preserves the bound target and captured prototype: %s", (call) => {
+    expect(analyze(`function set(){this.Q=other}${call}`)).toMatchObject([
+      { channel: "kept" },
+    ]);
+  });
+});
+
+describe("bound source-function receivers", () => {
+  it.each([
+    "const make=set.bind({});make.call(null);",
+    "const make=set.bind({});set.__proto__={call(_this){this()}};make.call(null);",
+    "set.call=other;const make=set.bind({});make.call(null);",
+    "const make=(0,set).bind({});make.call(null);",
+    "const make=(flag?set:set).bind({});make.call(null);",
+    "const box={fn:set};const make=box.fn.bind({});make.call(null);",
+    "const box=[set];const make=box[0].bind({});make.call(null);",
+    "var candidate=set;const captured=(0,candidate);globalThis.candidate=other;const make=captured.bind({});make.call(null);",
+  ])("preserves a captured local receiver: %s", (call) => {
+    expect(analyze(`function set(){this.Q=other}${call}`)).toMatchObject([
+      { channel: "kept" },
+    ]);
+  });
+
+  it.each([
+    "const make=set.bind(globalThis);make.call(null);",
+    "const make=set.bind(null);make.call(null);",
+    "const make=set.bind({});make.call=other;make.call(null);",
+    "const make=set.bind({});make.__proto__={call:other};make.call(null);",
+    "set.bind=other;const make=set.bind({});make.call(null);",
+    "set.__proto__={bind:other};const make=set.bind({});make.call(null);",
+    "consume(set);const make=set.bind({});make.call(null);",
+    "const selected=condition?set:other;const make=selected.bind({});make.call(null);",
+    "var candidate=set;globalThis.candidate=other;const make=(0,candidate).bind({});make.call(null);",
+    "var candidate=set;eval('candidate=other');const make=(0,candidate).bind({});make.call(null);",
+    "const box={fn:set};box.fn=other;const make=box.fn.bind({});make.call(null);",
+    "const box={fn:set};consume(box);const make=box.fn.bind({});make.call(null);",
+    "const box={fn:set};const make=box[key].bind({});make.call(null);",
+    "const box=[set];box[0]=other;const make=box[0].bind({});make.call(null);",
+    "const box=[set];consume(box);const make=box[0].bind({});make.call(null);",
+    "const box=[...unknown,set];const make=box[0].bind({});make.call(null);",
+  ])("keeps an unproven bound receiver global: %s", (call) => {
+    expect(analyze(`function set(){this.Q=other}${call}`)).toEqual([]);
+  });
+
+  it("captures a hoisted source declaration", () => {
+    expect(
+      analyze(
+        "const make=set.bind({});function set(){this.Q=other};make.call(null);",
+      ),
+    ).toMatchObject([{ channel: "kept" }]);
+  });
+
+  it("does not capture a source expression before initialization", () => {
+    expect(
+      analyze(
+        "const make=set.bind({});const set=function(){this.Q=other};make.call(null);",
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("bound function-family helper suppliers", () => {
+  it.each([
+    "async function set(){this.Q=other}const make=set.bind({});make.call(null);",
+    "async function set(){this.Q=other}const make=set.bind({});set.__proto__={call:other};make.call(null);",
+    "async function set(){this.Q=other}const family=set.__proto__;const make=set.bind({});family.call=other;make();",
+    "async function set(){this.Q=other}const family=set.__proto__;const make=set.bind({});make.call(null);family.__proto__={call:other};",
+    "function* set(){this.Q=other}const make=set.bind({});make.call(null).next();",
+    "async function* set(){this.Q=other}const make=set.bind({});make.call(null).next();",
+  ])(
+    "preserves captured prototypes and independent direct calls: %s",
+    (setup) => {
+      expect(analyze(setup)).toMatchObject([{ channel: "kept" }]);
+    },
+  );
+
+  it.each([
+    "async function set(){this.Q=other}const family=set.__proto__;const make=set.bind({});family.call=other;make.call(null);",
+    "async function set(){this.Q=other}const family=set.__proto__;const make=set.bind({});family.__proto__={call:other};make.call(null);",
+    "function* set(){this.Q=other}const family=set.__proto__;const make=set.bind({});family.call=other;make.call(null).next();",
+    "function* set(){this.Q=other}const family=set.__proto__;const make=set.bind({});family.__proto__={call:other};make.call(null).next();",
+    "async function* set(){this.Q=other}const family=set.__proto__;const make=set.bind({});family.call=other;make.call(null).next();",
+  ])("keeps captured prototype slots and crossed links live: %s", (setup) => {
+    expect(analyze(setup)).toEqual([]);
+  });
+});
+
+it.each([
+  ["first", true],
+  ["condition?first:second", false],
+])(
+  "retains member selection sites in source capture proof: %s",
+  (selection, complete) => {
+    // Observable receiver analysis remains conservative after an overwritten
+    // container slot; this exercises the strict capture fact consumed beneath it.
+    const source = `function set(){}const box={fn:set};const first=box.fn;box.fn=other;const second=box.fn;(${selection}).bind({});`;
+    const parsed = parseJavaScriptSource(source, "bundle.js");
+    if (parsed === null) throw new Error("Expected parsed source");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    const last = parsed.program.body.at(-1);
+    if (
+      last?.type !== "ExpressionStatement" ||
+      last.expression.type !== "CallExpression"
+    )
+      throw new Error("Expected bound source call");
+    const capture = createSemanticFunctionValueCapture(index.bindings, {
+      bindingReadMayHaveChanged: () => false,
+      ownSlotUnchanged: (_owner, _key, read) =>
+        (read.start ?? Infinity) < source.indexOf("box.fn=other"),
+    });
+    expect(capture(last.expression.callee) !== undefined).toBe(complete);
+  },
+);
 
 it("refreshes a retained receiver query after ambient facts complete", () => {
   const parsed = parseJavaScriptSource(
