@@ -108,15 +108,18 @@ const SHUTTING_DOWN = (): Response =>
   jsonError(503, -32000, "Server shutting down");
 
 /** The headers the SDK requires of a streamable POST; a request without them is left to the transport's refusal. */
+/** The media type proper of one header value or Accept range: no parameters, lowercase. */
+const mediaType = (value: string): string =>
+  (value.split(";")[0] ?? "").trim().toLowerCase();
 const hasStreamablePostHeaders = (request: Request): boolean => {
-  const accept = request.headers.get("accept") ?? "";
-  const contentType = request.headers.get("content-type") ?? "";
-  // The media type proper, without parameters: `application/json-patch+json` is not JSON here.
-  const essence = (contentType.split(";")[0] ?? "").trim().toLowerCase();
+  // Exact media ranges and type: `application/json-patch+json` or `text/event-streaming` do not count.
+  const accepted = new Set(
+    (request.headers.get("accept") ?? "").split(",").map(mediaType),
+  );
   return (
-    accept.includes("application/json") &&
-    accept.includes("text/event-stream") &&
-    essence === "application/json"
+    accepted.has("application/json") &&
+    accepted.has("text/event-stream") &&
+    mediaType(request.headers.get("content-type") ?? "") === "application/json"
   );
 };
 
@@ -187,8 +190,9 @@ export class McpSessionSlot {
     this.#closed = true;
     await this.#arming?.catch(() => undefined);
     const open = this.#live;
-    this.#live = undefined;
+    // The session stays owned until its shutdown succeeds, so a retry can finish it.
     await open?.shutdown();
+    if (this.#live === open) this.#live = undefined;
   }
 
   #current(): Promise<WebStandardStreamableHTTPServerTransport> {
@@ -225,9 +229,10 @@ export class McpSessionSlot {
     protocol.onclose = NO_SHUTDOWN_HOOK;
     try {
       await shutdown();
+      // Only a completed shutdown releases the session; a failed one stays live for a retry.
+      if (this.#live?.transport === transport) this.#live = undefined;
     } finally {
       protocol.onclose = this.#shutdownHook;
-      if (this.#live?.transport === transport) this.#live = undefined;
     }
   }
 }
@@ -308,8 +313,7 @@ export const serveStreamableHttp = async (
   const bound = httpServer.address();
   let url: string;
   try {
-    url = endpointUrl(bound);
-    origin = new URL(url).origin;
+    ((url = endpointUrl(bound)), (origin = new URL(url).origin));
   } catch (cause: unknown) {
     await closeListener().catch(() => undefined);
     throw new StreamableHttpListenError(cause);

@@ -216,3 +216,11 @@ allowlist (test: `ip6-localhost` bound to `::1`, `dev.local` bound to
 `127.0.0.1`); and the MCP runtime passes `closeInstance: false` so the factory
 owner in `startMcpTransport` remains the single owner of instance cleanup
 (test: `close` leaves the instance open until its owner closes it).
+
+A fourth round (Codex, two findings) was addressed next: the replacement
+guard parses `Accept` into media ranges and requires exact `application/json`
+and `text/event-stream` entries (test: `application/json-patch+json,
+text/event-streaming` is refused while the connected client keeps echoing),
+and a session whose transport shutdown rejected stays owned so the next close
+retries it (test: a failing transport close rejects `close()` once, the second
+call completes, the shutdown hook fires once and later requests get `503`).

@@ -2,9 +2,12 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { McpServer } from "@modelcontextprotocol/server";
+import {
+  McpServer,
+  WebStandardStreamableHTTPServerTransport,
+} from "@modelcontextprotocol/server";
 import pino from "pino";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import {
@@ -420,4 +423,49 @@ it("leaves the instance to its owner when closeInstance is false", async () => {
   expect(instanceCloses).toBe(0);
   await server.close();
   expect(instanceCloses).toBe(1);
+});
+
+it("requires exact Accept media ranges before a sessionless POST may replace the session", async () => {
+  const { served } = await start();
+  const { client } = await connect(served.url);
+  const url = new URL(served.url);
+  const lookalike = await rawHttpRequest(url, {
+    method: "POST",
+    headers: {
+      host: `127.0.0.1:${url.port}`,
+      "content-type": "application/json",
+      accept: "application/json-patch+json, text/event-streaming",
+    },
+    body: await initializeRequest().text(),
+  });
+  expect(lookalike.status).toBeGreaterThanOrEqual(400);
+  expect(lookalike.status).toBeLessThan(500);
+  expect(await echo(client, "still mine")).toEqual([
+    { type: "text", text: "still mine" },
+  ]);
+  await client.close();
+});
+
+it("keeps a session whose transport shutdown failed so the next close retries it", async () => {
+  let shutdowns = 0;
+  const slot = new McpSessionSlot(
+    createEchoServer(() => {
+      shutdowns += 1;
+    }),
+    undefined,
+  );
+  // The slot binds the transport's close when it arms, so the spy must exist before the first request.
+  const close = vi
+    .spyOn(WebStandardStreamableHTTPServerTransport.prototype, "close")
+    .mockImplementationOnce(() => Promise.reject(new Error("transport stuck")));
+  try {
+    await slot.handle(initializeRequest());
+    await expect(slot.close()).rejects.toThrow("transport stuck");
+    expect(shutdowns).toBe(0);
+    await expect(slot.close()).resolves.toBeUndefined();
+    expect(shutdowns).toBe(1);
+    expect((await slot.handle(initializeRequest())).status).toBe(503);
+  } finally {
+    close.mockRestore();
+  }
 });
