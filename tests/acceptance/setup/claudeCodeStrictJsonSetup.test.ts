@@ -33,7 +33,9 @@ const clients = [
             "Claude",
             "claude_desktop_config.json",
           ]
-        : [".config", "Claude", "claude_desktop_config.json"],
+        : process.platform === "win32"
+          ? ["AppData", "Roaming", "Claude", "claude_desktop_config.json"]
+          : [".config", "Claude", "claude_desktop_config.json"],
   },
 ] as const;
 
