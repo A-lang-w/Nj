@@ -12,6 +12,7 @@ import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { parseJebMcpEndpoint } from "./jeb/JebMcpEndpoint.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
 import { ok } from "./domain/result.js";
+import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";
 import {
   inspectLinuxHopperPythonRuntime,
   linuxHopperPythonUnavailable,
@@ -65,7 +66,7 @@ export const createSystemDoctorHost = (
       }),
     ],
     linuxDemoRuntimeCheck: () =>
-      inspectLinuxPrivateDisplay(environment, signal),
+      inspectLinuxHopperDemoRuntime(environment, signal),
   });
 };
 
@@ -73,7 +74,7 @@ const HOPPER_DEMO_HELPER_PATH = fileURLToPath(
   new URL("../scripts/hopper-demo-x11.py", import.meta.url),
 );
 
-const inspectLinuxPrivateDisplay = async (
+const inspectLinuxHopperDemoRuntime = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   signal?: AbortSignal,
 ): Promise<DoctorCheck> => {
@@ -113,6 +114,11 @@ const inspectLinuxPrivateDisplay = async (
     private_display: { ...value },
     embedded_python: pythonDiagnostic,
   };
+  if (!python.ok && python.error.reason === "cancelled")
+    throw new AnalysisCancelledError("doctor", {
+      cause: python.error.cause,
+      diagnostics: { hopper_demo_runtime: details },
+    });
   if (selection.ok && pythonFailure === undefined)
     return {
       name: "hopper-demo-runtime",

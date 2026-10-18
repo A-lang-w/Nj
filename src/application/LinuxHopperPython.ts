@@ -90,7 +90,13 @@ export const inspectLinuxHopperPythonRuntime = async (
     const result = await execute(
       runtimeCommand.executable,
       runtimeCommand.args,
-      { env: environment, signal, timeout: 10_000, maxBuffer: 64 * 1024 },
+      {
+        env: environment,
+        signal,
+        stopSignal: "SIGTERM",
+        timeout: 10_000,
+        maxBuffer: 64 * 1024,
+      },
     );
     output = result.stdout;
   } catch (cause: unknown) {

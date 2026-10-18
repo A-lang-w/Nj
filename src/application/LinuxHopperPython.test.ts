@@ -1,11 +1,11 @@
 import { existsSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import type { execFileOutput } from "../process/ExecFileOutput.js";
+import { execFileOutput } from "../process/ExecFileOutput.js";
 import { inspectLinuxHopperPythonRuntime } from "./LinuxHopperPython.js";
 
 const response = (value: unknown) => {
@@ -47,6 +47,7 @@ describe("distribution Python runtime inspection", () => {
         env: environment,
         timeout: 10_000,
         maxBuffer: 64 * 1024,
+        stopSignal: "SIGTERM",
       }),
     );
   });
@@ -124,6 +125,72 @@ describe("distribution Python runtime inspection", () => {
       await inspectLinuxHopperPythonRuntime({}, undefined, execute),
     ).toMatchObject({ ok: false, error: { reason: "invalid_response" } });
   });
+});
+
+describe("distribution Python process cleanup", () => {
+  it.skipIf(process.platform !== "linux" || !existsSync("/usr/bin/python3"))(
+    "waits for a delayed Python exit before completing cancellation",
+    async () => {
+      const directory = await createTestTempDirectory("rea-python-stop-");
+      const ready = join(directory, "ready");
+      const stopping = join(directory, "stopping");
+      const release = join(directory, "release");
+      const stopped = join(directory, "stopped");
+      const program = `from pathlib import Path
+import signal, sys, time
+def stop(signum, frame):
+    Path(${JSON.stringify(stopping)}).write_text(str(signum))
+    while not Path(${JSON.stringify(release)}).exists():
+        time.sleep(0.01)
+    Path(${JSON.stringify(stopped)}).write_text(str(signum))
+    sys.exit(0)
+signal.signal(signal.SIGTERM, stop)
+Path(${JSON.stringify(ready)}).write_text("ready")
+while True:
+    time.sleep(0.1)
+`;
+      const controller = new AbortController();
+      const reason = { request: "stop owned Python" };
+      let settled = false;
+      const execution = inspectLinuxHopperPythonRuntime(
+        process.env,
+        controller.signal,
+        (command, _arguments, options) =>
+          execFileOutput(command, ["-I", "-S", "-B", "-c", program], options),
+      ).then((result) => {
+        settled = true;
+        return result;
+      });
+      try {
+        await vi.waitFor(() => access(ready), { timeout: 5_000, interval: 10 });
+        controller.abort(reason);
+        await vi.waitFor(() => access(stopping), {
+          timeout: 3_000,
+          interval: 10,
+        });
+        // The child cannot exit until released; early settlement loses ownership.
+        expect(settled).toBe(false);
+      } finally {
+        try {
+          await writeFile(release, "release");
+        } finally {
+          controller.abort(reason);
+          await execution;
+        }
+        await vi.waitFor(() => access(stopped), {
+          timeout: 5_000,
+          interval: 10,
+        });
+      }
+      expect(await readFile(stopped, "utf8")).toBe("15");
+      const result = await execution;
+      expect(result).toMatchObject({
+        ok: false,
+        error: { reason: "cancelled" },
+      });
+      if (!result.ok) expect(result.error.cause).toBe(reason);
+    },
+  );
 });
 
 describe("distribution Python isolation and cancellation", () => {

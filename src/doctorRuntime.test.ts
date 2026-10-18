@@ -11,6 +11,10 @@ import { writeJadxJarInventory } from "../tests/fixtures/android/jadxJar.js";
 import * as privateDisplay from "./hopper/LinuxPrivateDisplayProbe.js";
 import * as pythonRuntime from "./application/LinuxHopperPython.js";
 import { err, ok } from "./domain/result.js";
+import { AnalysisError } from "./domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";
+import { createDoctorHostFixture } from "./application/Doctor.fixture.js";
+import { runDoctorOwned } from "./application/Doctor.js";
 
 const readyDisplay = {
   ok: true,
@@ -32,6 +36,71 @@ const readyDisplay = {
     failure_code: null,
   },
 } as const satisfies privateDisplay.LinuxPrivateDisplaySelection;
+
+test.each([undefined, "controlled close refusal"])(
+  "propagates runtime-probe cancellation through owned doctor cleanup: %s",
+  async (cleanupFailure) => {
+    const controller = new AbortController();
+    const reason = { request: "cancel Python runtime inspection" };
+    const display = vi
+      .spyOn(privateDisplay, "selectLinuxPrivateDisplayStrategy")
+      .mockResolvedValue(readyDisplay);
+    const python = vi
+      .spyOn(pythonRuntime, "inspectLinuxHopperPythonRuntime")
+      .mockImplementation(async (_environment, signal) => {
+        expect(signal).toBe(controller.signal);
+        controller.abort(reason);
+        return err(
+          new pythonRuntime.LinuxHopperPythonError(
+            "cancelled",
+            "Controlled runtime cancellation",
+            reason,
+          ),
+        );
+      });
+    const systemHost = createSystemDoctorHost({}, controller.signal);
+    const close = vi.fn(async () => {
+      await systemHost.close?.();
+      return cleanupFailure;
+    });
+    try {
+      const failure = await runDoctorOwned(
+        undefined,
+        createDoctorHostFixture({
+          platform: "linux",
+          configuredHopperPath: "/fixture/Hopper",
+          signal: controller.signal,
+          linuxDemoRuntimeCheck: systemHost.linuxDemoRuntimeCheck,
+          close,
+        }),
+      ).then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+      if (!(failure instanceof AnalysisError))
+        throw new Error("Expected a doctor cancellation failure");
+      const primary = failure.cleanupPrimary ?? failure;
+      expect(primary).toBeInstanceOf(AnalysisCancelledError);
+      expect(primary.cause).toBe(reason);
+      expect(primary.diagnostics).toMatchObject({
+        hopper_demo_runtime: {
+          private_display: readyDisplay.diagnostic,
+          embedded_python: { status: "unknown", reason: "cancelled" },
+        },
+      });
+      expect(close).toHaveBeenCalledTimes(1);
+      if (cleanupFailure === undefined) expect(failure).toBe(primary);
+      else expect(failure.cleanupIncomplete).toBe(true);
+    } finally {
+      try {
+        await systemHost.close?.();
+      } finally {
+        python.mockRestore();
+        display.mockRestore();
+      }
+    }
+  },
+);
 
 test.each(["unavailable", "unknown"] as const)(
   "does not report a healthy Hopper runtime when Python is %s",

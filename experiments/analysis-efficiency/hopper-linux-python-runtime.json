@@ -3,14 +3,6 @@
   "issue": 5015,
   "purpose": "Embedding dependency correctness and bounded real-provider qualification; no equivalent-task speedup claim",
   "baseline_revision": "093ce695f0a7c3407c7fde520ed8b20c0981b408",
-  "final_source_base_revision": "23f984b1a884baefc3c44e4ab697f6eff61dffb6",
-  "final_runtime_bridge_manifest": {
-    "tree_sha256": "8800edc8e70965ae2132e57ca6d999ba276503f27f1045b33305c83cd0e2ff2a",
-    "total_bytes": 26537393,
-    "base_main": "23f984b1a884baefc3c44e4ab697f6eff61dffb6",
-    "scope": "All regular dist and bridge files; canonical sorted-key compact JSON manifest hash"
-  },
-  "final_runtime_bridge_file_count": 1733,
   "earlier_prototype_runtime_bridge_manifest_sha256": "589cbe956e89b9bd794eb5ca43f5c5f70dabe33734176f42c4fd76e1da1a7f22",
   "accounting": "Native includes guardian and observer at payload exit. Controller snapshots before final exit are separate and partial; sum of separate peaks is not simultaneous memory. Final removed-scope counters, Docker daemon/containerd/system-manager costs and actual model usage are unknown. Aborted observations remain null. Admission is excluded from stage elapsed and recorded separately. No zero-host-OOM claim.",
   "resource_bounds": {
@@ -2264,5 +2256,15 @@
         "raw_total_tokens": 2905
       }
     ]
-  }
+  },
+  "native_validation_source_commit": "0c70be0030f6bb821c4292c4f5b7f776b365c8ec",
+  "native_validation_source_base_revision": "23f984b1a884baefc3c44e4ab697f6eff61dffb6",
+  "native_validation_runtime_bridge_manifest": {
+    "tree_sha256": "8800edc8e70965ae2132e57ca6d999ba276503f27f1045b33305c83cd0e2ff2a",
+    "total_bytes": 26537393,
+    "base_main": "23f984b1a884baefc3c44e4ab697f6eff61dffb6",
+    "scope": "All regular dist and bridge files; canonical sorted-key compact JSON manifest hash"
+  },
+  "native_validation_runtime_bridge_file_count": 1733,
+  "cancellation_followup_scope": "Later doctor cancellation propagation changes only the cancelled-probe branch. Native success measurements belong to pinned commit0c70be0030; follow-up boundary/CI validation is recorded on the PR. No final-head native rerun is claimed."
 }

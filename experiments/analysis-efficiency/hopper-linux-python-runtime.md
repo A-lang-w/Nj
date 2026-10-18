@@ -33,7 +33,7 @@ Doctor consumes the same fresh, bounded producer, retaining both private-display
 and Python observations. Its Python facts concern the system interpreter;
 the interpreter actually selected inside Hopper remains unknown. The query
 uses isolated Python mode, disables site hooks and bytecode writes, has a
-10-second timeout and 64-KiB output bound, and is not cached: package/interpreter
+10-second work deadline and 64-KiB output bound, and is not cached: package/interpreter
 changes must be visible immediately. The approval plan discloses the conditional
 package change without returning the probe program. Existing MCP analysis
 contracts and Evidence semantics are unchanged.
@@ -44,16 +44,31 @@ interruption of dpkg. This qualifies the install API's signal behavior through
 boundary tests; it does not claim new CLI interrupt plumbing or actual
 interruption of a real package transaction.
 
+A review follow-up preserves cancellation through doctor as well. A cancelled
+Python probe now raises the existing domain cancellation error with its original
+reason and completed private-display observations; the owned doctor workflow
+performs cleanup and attaches any cleanup failure. It no longer becomes an
+ordinary unknown diagnostic. The probe also opts into the existing
+stop-and-wait supervisor: cancellation and timeout wait for Python to exit,
+with the shared five-second grace period and forced-kill fallback. A real
+Python fixture holds its SIGTERM handler until the test releases it, checking
+that the probe retains ownership until exit. The success-path native measurements below precede
+this error-branch correction. Its boundary tests cover both successful cleanup
+and cleanup refusal; final-head validation is tracked on the PR. A pre-fix red
+execution and a final-head native rerun are not claimed.
+
 ## Pinned environment and artifacts
 
-Final source is based on main `23f984b1a884baefc3c44e4ab697f6eff61dffb6`.
-The final runtime and bridge manifest covers 1,733 regular files, 26,537,393
+Native success measurements pin the initial fix at
+`0c70be0030f6bb821c4292c4f5b7f776b365c8ec`, based on main
+`23f984b1a884baefc3c44e4ab697f6eff61dffb6`.
+The measured runtime and bridge manifest covers 1,733 regular files, 26,537,393
 bytes. Its SHA-256 is
 `8800edc8e70965ae2132e57ca6d999ba276503f27f1045b33305c83cd0e2ff2a`
 (sorted paths, compact sorted-key JSON records containing path, bytes and
 SHA-256). The tiny MCP loader alone is not a whole-runtime identity.
 Earlier prototype runs have a separately recorded manifest; they are not
-presented as final-source executions.
+presented as executions of that same artifact.
 
 - Node 24.18.0; npm 11.16.0; Debian 12 x86-64 host.
 - Official [Hopper 6.6.0 Linux demo](https://www.hopperapp.com:443/downloader/public/Hopper-6.6.0-Linux-demo.deb),
@@ -105,12 +120,12 @@ matched their MCP facts and Evidence identity; both target files stayed unchange
 | Baseline control MCP: startup timeout          |      49.541 |         24.158 |            1282.5 |
 | Install only matching libPython                |       5.012 |          1.925 |             174.8 |
 | Unchanged runtime control MCP: passed          |      24.791 |         23.608 |            1228.4 |
-| Final fresh setup: ready                       |      80.739 |         40.404 |            1382.6 |
-| Final public doctor: healthy                   |       6.035 |          5.160 |             560.9 |
-| Final normal-user control MCP: 13 calls passed |      24.434 |         23.305 |            1195.7 |
-| Final normal-user SQLite MCP: 16 calls passed  |      92.504 |         90.138 |            1507.2 |
-| Final normal-user control CLI: parity passed   |       8.981 |          7.831 |             613.5 |
-| Final normal-user SQLite CLI: parity passed    |      70.207 |         68.704 |             781.6 |
+| Fixed fresh setup: ready                       |      80.739 |         40.404 |            1382.6 |
+| Fixed public doctor: healthy                   |       6.035 |          5.160 |             560.9 |
+| Fixed normal-user control MCP: 13 calls passed |      24.434 |         23.305 |            1195.7 |
+| Fixed normal-user SQLite MCP: 16 calls passed  |      92.504 |         90.138 |            1507.2 |
+| Fixed normal-user control CLI: parity passed   |       8.981 |          7.831 |             613.5 |
+| Fixed normal-user SQLite CLI: parity passed    |      70.207 |         68.704 |             781.6 |
 
 Each control MCP session includes discovery and 13 calls: open, status, first
 literal query, six repeats, absent query, procedure listing, decompilation and
