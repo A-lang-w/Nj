@@ -238,7 +238,7 @@ describe.skipIf(process.platform === "win32")("coordo handoff --apply", () => {
     );
   });
 
-  it("reports Coordo's own failure reason, redacted, with the tasks created so far", async () => {
+  it("reports Coordo's exit state without backend diagnostics and includes tasks created so far", async () => {
     const root = await project();
     const coordo = await fakeCoordo(
       [
@@ -255,12 +255,12 @@ describe.skipIf(process.platform === "win32")("coordo handoff --apply", () => {
     );
 
     expect(result.code).toBe(1);
-    expect(result.stderr).toContain(
-      "coordo failed (3): connect failed for mongodb+srv://<redacted>@cluster.example.net/coordo",
-    );
+    expect(result.stderr).toContain("coordo failed (3)");
     expect(result.stderr).toContain(
       'created before failure: [{"to":"claude","task_id":"TASK-001"}]',
     );
+    expect(result.stderr).not.toContain("connect failed");
+    expect(result.stderr).not.toContain("mongodb+srv://");
     expect(result.stderr).not.toContain("hunter2");
   });
 });
