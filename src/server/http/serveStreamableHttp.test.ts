@@ -668,7 +668,8 @@ it("keeps a network-path request target as a path and refuses absolute-form targ
   expect((await rawTargetRequest(url, "/card?x=1")).status).toBe(200);
   const plain = await rawTargetRequest(url, "/card");
   expect(plain.status).toBe(200);
-  expect(seen).toEqual([`127.0.0.1:${url.port}`]);
+  // Both successful route calls saw only the bound host, never the attacker-selected one.
+  expect(seen).toEqual([`127.0.0.1:${url.port}`, `127.0.0.1:${url.port}`]);
 });
 
 it("lets only a lone initialize replace a session, not a batch that carries one", async () => {
