@@ -155,3 +155,44 @@ re-runs, not by repeating the full projects on an idle host. The error-level
 log line that names the bind cause was observed in earlier runs, not asserted
 by `mainErrors.test.ts`. Response budgets keep the stdio-derived floor and were
 not re-measured over HTTP. Windows was not run.
+
+## Automated review findings on the PR (2026-10-18)
+
+Codex and Greptile left eight inline findings on morluto/rea#4955 at
+46dd8f0e; each was checked against the code and addressed in one follow-up
+commit, with a regression test where the behaviour is observable:
+
+- A late `initialize` could arm a fresh transport after shutdown (Codex, P1):
+  the slot now records that it is closed, `close()` joins an arming session
+  before ending it, and every request after that is refused with `503`. Test:
+  an initialize racing `close()` gets `503`, the shutdown hook fires once, and
+  the next request gets `503`.
+- A failed `close()` was memoized forever (both reviewers, P1): the close runs
+  three stages once each and a failed stage is retried by the next call. Test:
+  the instance's first `close()` rejects, the second call resolves and the port
+  is released.
+- Loopback aliases skipped Host validation (both reviewers, P2 and P1): a bind
+  is now loopback by address class (`127.0.0.0/8`, `::1`, IPv4-mapped loopback,
+  `localhost` names) after the same normalization the SDK applies to the Host
+  header, and the allowlist adds the bind's own hostname so requests to
+  `127.0.0.2` or `localhost.` are still served. Test: twelve spellings.
+- A sessionless POST could close the live session before any header check
+  (Greptile, P1): on loopback binds the route validates `Origin` with the same
+  allowlist as `Host`, and only a POST carrying `Content-Type:
+  application/json` and an `Accept` naming both `application/json` and
+  `text/event-stream` may replace a session; others reach the live transport,
+  which refuses them. Test: a `text/plain` initialize and one with a foreign
+  `Origin` are refused (4xx and 403) while the connected client keeps echoing.
+- The bound URL disappeared at quiet log levels (Greptile, P2): the listening
+  line is written through a child logger pinned to `info`. Test: a `warn`
+  logger still receives the line with the URL.
+- `rea mcp -h --http` reached the ordinary CLI (Greptile, P2): the dispatcher
+  predicate accepts any flag after the entry. Test: the dispatcher case.
+
+Checks after the change: `oxfmt --check .` clean; `tsc --noEmit` clean;
+`oxlint` on the touched sources clean after extracting the staged close into
+its own function; `npx knip` no findings; `npm run jscpd` 3.35 % duplicated
+lines; `scan:todos` none; `verify:test-discovery` 1,583 files once; `vitest
+run` over the listener and bridge adapters tests 14 passed in 2 files; after
+`npm run build:cached`, `vitest run` over the dispatcher, option, streamable
+HTTP, shutdown and main-error boundary tests 22 passed in 5 files.

@@ -427,7 +427,8 @@ stdio is the default transport and the only one that client registrations,
 streamable HTTP transport at `/mcp`; it replaces stdio for that process rather
 than running beside it. Host and port come from the flags, then `MCP_HOST` and
 `MCP_PORT`, then `127.0.0.1` and an ephemeral port. The bound URL is announced
-as one JSON log line on stderr (`"msg":"MCP transport listening"` with `url`);
+as one JSON log line on stderr (`"msg":"MCP transport listening"` with `url`)
+at every `REA_LOG_LEVEL`, because an ephemeral port is otherwise unreachable;
 stdout stays unused.
 
 The HTTP server is stateful and serves one client at a time on one server
@@ -439,11 +440,19 @@ and the shared active target, and the next client opens a fresh session against
 them. The newest client replaces an open session: an `initialize` that arrives
 while a session is open ends that session instead of being refused, because a
 client that exits without `DELETE` must not wedge the listener; the replaced
-client's open streams are closed and its later requests are refused. Requests
-that carry no valid session id are refused with `400` or `404` as the SDK
-transport defines. On a loopback bind, requests whose `Host` header is outside
-the SDK loopback allowlist are refused with `403`; a non-loopback bind relaxes
-that check and logs the relaxation. Request bodies are bounded by the SDK's
+client's open streams are closed and its later requests are refused. Only an
+`initialize` that carries the streamable headers (`Content-Type:
+application/json` and an `Accept` naming both `application/json` and
+`text/event-stream`) and passes the Host and Origin checks can replace a
+session; any other sessionless POST goes to the live transport, which refuses
+it without disturbing the session. Requests that carry no valid session id are
+refused with `400` or `404` as the SDK transport defines. A bind is loopback by
+address class, not spelling: any `127.0.0.0/8` address, `::1`, an IPv4-mapped
+loopback and `localhost` names. On such a bind, requests whose `Host` header is
+outside the SDK loopback allowlist plus the bind's own hostname are refused with
+`403`, and a browser `Origin` outside that allowlist is refused the same way (a
+missing `Origin` passes); a non-loopback bind relaxes both checks and logs the
+relaxation. Request bodies are bounded by the SDK's
 4 MiB limit, and the response budget keeps its stdio-derived floor. The
 listener ends on SIGINT or SIGTERM only, not on stdin EOF, and exits `130` or
 `143` after cleanup settles.

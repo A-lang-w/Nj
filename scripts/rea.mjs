@@ -15,10 +15,11 @@ process.env.REA_PACKAGE_VERSION = packageJson.version;
 const isMcpEntry = args[0] === "--mcp" || args[0] === "mcp";
 const isMcpMode = isMcpEntry && args.length === 1;
 const isMcpDoctorMode = args[0] === "mcp" && args[1] === "doctor";
-// Only flags may follow the entry: `mcp add --http` stays Incur's `mcp add`.
+// Only flags may follow the entry: `mcp add --http` stays Incur's `mcp add`,
+// while `mcp -h --http` reaches the HTTP entry's own help.
 const isMcpHttpMode =
   isMcpEntry &&
-  (args[1]?.startsWith("--") ?? false) &&
+  (args[1]?.startsWith("-") ?? false) &&
   args.slice(1).includes("--http");
 /** Exit status of a writer terminated by SIGPIPE (128 + 13). */
 const SIGPIPE_EXIT_STATUS = 141;

@@ -16,7 +16,7 @@ client registration keep stdio.
   dispatcher without changing bare `mcp`, `mcp doctor` or `mcp add`.
 - Resolve host and port from the flags, then `MCP_HOST`/`MCP_PORT` from the
   environment snapshot, then `127.0.0.1` and port `0`; announce the bound URL as
-  one pino JSON line on stderr and leave stdout unused.
+  one pino JSON line on stderr at every log level and leave stdout unused.
 - Use `WebStandardStreamableHTTPServerTransport` in stateful mode around one
   server instance built once. `DELETE` ends the session on its transport without
   running the instance's shutdown hooks, so the same instance keeps its
@@ -29,8 +29,13 @@ client registration keep stdio.
 - Bridge node:http to web Request/Response in `src/server/http/`, streaming
   response chunks as they are produced and turning a client disconnect into a
   request abort and body cancellation.
-- Validate the `Host` header with the SDK loopback allowlist for loopback binds;
-  relax it for other binds and log that relaxation.
+- Classify a loopback bind by address class (`127.0.0.0/8`, `::1`, IPv4-mapped
+  loopback, `localhost` names), validate the `Host` and `Origin` headers with
+  the SDK loopback allowlist plus the bind's own hostname on such binds, and
+  relax both for other binds and log that relaxation.
+- Let only an `initialize` that carries the streamable headers and passes those
+  checks replace an open session; refuse requests once the slot is closed, join
+  an arming session during shutdown, and keep close stages retryable.
 - End the HTTP listener on SIGINT/SIGTERM only, never on stdin EOF, and exit with
   the signal status (`130`/`143`) after cleanup settles.
 - Export `serveStreamableHttp({ host, port, createMcpServer, routes, logger })`

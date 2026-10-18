@@ -216,14 +216,108 @@ it("reports a port that cannot be bound as a typed listen error naming the cause
   await expect(failed).rejects.toThrow(/EADDRINUSE/u);
 });
 
-it("keeps the SDK loopback allowlist only for loopback binds", () => {
-  expect(hostHeaderAllowlist("127.0.0.1")).toEqual([
-    "localhost",
-    "127.0.0.1",
-    "[::1]",
+it("keeps the SDK loopback allowlist, plus the bind's own hostname, for every loopback spelling", () => {
+  const sdk = ["localhost", "127.0.0.1", "[::1]"];
+  expect(hostHeaderAllowlist("127.0.0.1")).toEqual(sdk);
+  expect(hostHeaderAllowlist("localhost")).toEqual(sdk);
+  expect(hostHeaderAllowlist("LOCALHOST")).toEqual(sdk);
+  expect(hostHeaderAllowlist("::1")).toEqual(sdk);
+  expect(hostHeaderAllowlist("0:0:0:0:0:0:0:1")).toEqual(sdk);
+  expect(hostHeaderAllowlist("127.0.0.2")).toEqual([...sdk, "127.0.0.2"]);
+  expect(hostHeaderAllowlist("localhost.")).toEqual([...sdk, "localhost."]);
+  expect(hostHeaderAllowlist("::ffff:127.0.0.1")).toEqual([
+    ...sdk,
+    "[::ffff:7f00:1]",
   ]);
-  expect(hostHeaderAllowlist("localhost")).toBeDefined();
-  expect(hostHeaderAllowlist("::1")).toBeDefined();
   expect(hostHeaderAllowlist("192.0.2.10")).toBeUndefined();
+  expect(hostHeaderAllowlist("0.0.0.0")).toBeUndefined();
   expect(hostHeaderAllowlist("::")).toBeUndefined();
+  expect(hostHeaderAllowlist("example.com")).toBeUndefined();
+  expect(hostHeaderAllowlist("not a host")).toBeUndefined();
+});
+
+it("refuses requests once the slot is closed and joins an initialize that is still arming", async () => {
+  let shutdowns = 0;
+  const slot = new McpSessionSlot(
+    createEchoServer(() => {
+      shutdowns += 1;
+    }),
+    undefined,
+  );
+  const arming = slot.handle(initializeRequest());
+  await slot.close();
+  expect((await arming).status).toBe(503);
+  expect(shutdowns).toBe(1);
+  expect((await slot.handle(initializeRequest())).status).toBe(503);
+});
+
+it("retries unfinished cleanup after a close stage fails instead of replaying the failure", async () => {
+  let failures = 1;
+  const { served } = await start({
+    createMcpServer: () => {
+      const server = createEchoServer(() => undefined);
+      const original = server.close.bind(server);
+      server.close = async () => {
+        if (failures > 0) {
+          failures -= 1;
+          throw new Error("provider cleanup failed");
+        }
+        await original();
+      };
+      return server;
+    },
+  });
+  await expect(served.close()).rejects.toThrow("provider cleanup failed");
+  await expect(served.close()).resolves.toBeUndefined();
+  await expect(rawHttpRequest(new URL(served.url))).rejects.toMatchObject({
+    code: "ECONNREFUSED",
+  });
+});
+
+it("leaves a sessionless POST without the streamable headers or with a foreign Origin to refusal, keeping the session", async () => {
+  const { served } = await start();
+  const { client } = await connect(served.url);
+  const url = new URL(served.url);
+  const body = await initializeRequest().text();
+  const host = `127.0.0.1:${url.port}`;
+  const plain = await rawHttpRequest(url, {
+    method: "POST",
+    headers: {
+      host,
+      "content-type": "text/plain",
+      accept: "application/json, text/event-stream",
+    },
+    body,
+  });
+  expect(plain.status).toBeGreaterThanOrEqual(400);
+  expect(plain.status).toBeLessThan(500);
+  const foreign = await rawHttpRequest(url, {
+    method: "POST",
+    headers: {
+      host,
+      origin: "http://attacker.example",
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    },
+    body,
+  });
+  expect(foreign.status).toBe(403);
+  expect(await echo(client, "still here")).toEqual([
+    { type: "text", text: "still here" },
+  ]);
+  await client.close();
+});
+
+it("announces the bound URL even when the log level hides info lines", async () => {
+  const logs: string[] = [];
+  const logger = pino({ level: "warn" }, { write: (line) => logs.push(line) });
+  const { served } = await start({ logger });
+  expect(
+    logs.map((line) => JSON.parse(line) as Record<string, unknown>),
+  ).toContainEqual(
+    expect.objectContaining({
+      msg: "MCP transport listening",
+      url: served.url,
+    }),
+  );
 });

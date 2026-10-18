@@ -100,20 +100,16 @@ describe("executable dispatcher", () => {
         adapter: "cli",
         args: ["--mcp", "extra"],
       });
-      await expect(invoke(["mcp", "--http", "--port", "0"])).resolves.toEqual({
-        adapter: "mcp-http",
-        args: ["--http", "--port", "0"],
-      });
-      await expect(invoke(["--mcp", "--http"])).resolves.toEqual({
-        adapter: "mcp-http",
-        args: ["--http"],
-      });
-      await expect(
-        invoke(["mcp", "--host", "127.0.0.1", "--http"]),
-      ).resolves.toEqual({
-        adapter: "mcp-http",
-        args: ["--host", "127.0.0.1", "--http"],
-      });
+      for (const args of [
+        ["mcp", "--http", "--port", "0"],
+        ["--mcp", "--http"],
+        ["mcp", "-h", "--http"],
+        ["mcp", "--host", "127.0.0.1", "--http"],
+      ])
+        await expect(invoke(args)).resolves.toEqual({
+          adapter: "mcp-http",
+          args: args.slice(1),
+        });
       await expect(invoke(["mcp", "doctor", "--http"])).resolves.toEqual({
         adapter: "mcp-doctor",
         args: ["--http"],

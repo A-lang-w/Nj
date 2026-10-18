@@ -2,6 +2,7 @@ import {
   hostHeaderValidationResponse,
   isInitializeRequest,
   localhostAllowedHostnames,
+  originValidationResponse,
   readRequestBody,
   WebStandardStreamableHTTPServerTransport,
   type McpServer,
@@ -15,6 +16,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
+import { isIPv4, isIPv6 } from "node:net";
 import type { Logger } from "pino";
 
 import { toWebRequest, writeWebResponse } from "./nodeHttpBridge.js";
@@ -22,14 +24,6 @@ import { StreamableHttpListenError } from "./streamableHttpListenError.js";
 
 /** MCP endpoint path shared by `rea mcp --http` and agent environment servers. */
 export const MCP_HTTP_PATH = "/mcp";
-
-/** Bind literals that keep the SDK loopback Host allowlist. */
-const LOOPBACK_HOSTS: ReadonlySet<string> = new Set([
-  "127.0.0.1",
-  "localhost",
-  "::1",
-  "[::1]",
-]);
 
 /** One plain HTTP route served beside the MCP endpoint as web Request to Response. */
 export interface StreamableHttpRoute {
@@ -55,9 +49,41 @@ export interface StreamableHttpServer {
   readonly close: () => Promise<void>;
 }
 
-/** Host header allowlist for a bind, or undefined when validation is relaxed. */
-export const hostHeaderAllowlist = (host: string): string[] | undefined =>
-  LOOPBACK_HOSTS.has(host) ? localhostAllowedHostnames() : undefined;
+/** The bind host as the SDK compares Host headers: lowercase, IPv6 bracketed and canonical. */
+const normalizedHostname = (host: string): string | undefined => {
+  try {
+    return new URL(`http://${isIPv6(host) ? `[${host}]` : host}`).hostname;
+  } catch {
+    return undefined;
+  }
+};
+const isLoopbackIpv4 = (address: string): boolean =>
+  isIPv4(address) && address.startsWith("127.");
+/** Loopback by address class and localhost names, so no spelling of a local bind skips validation. */
+const isLoopbackHostname = (hostname: string): boolean => {
+  if (
+    hostname === "localhost" ||
+    hostname === "localhost." ||
+    hostname.endsWith(".localhost") ||
+    hostname.endsWith(".localhost.")
+  )
+    return true;
+  if (isLoopbackIpv4(hostname)) return true;
+  if (!hostname.startsWith("[") || !hostname.endsWith("]")) return false;
+  const inner = hostname.slice(1, -1);
+  if (inner === "::1") return true;
+  if (!inner.startsWith("::ffff:")) return false;
+  const mapped = inner.slice("::ffff:".length);
+  if (isLoopbackIpv4(mapped)) return true;
+  const hex = /^([0-9a-f]{1,4}):[0-9a-f]{1,4}$/u.exec(mapped);
+  return hex !== null && Number.parseInt(hex[1] ?? "0", 16) >> 8 === 0x7f;
+};
+/** Host and Origin allowlist for a loopback bind, including the bind's own hostname; undefined relaxes validation. */
+export const hostHeaderAllowlist = (host: string): string[] | undefined => {
+  const hostname = normalizedHostname(host);
+  if (hostname === undefined || !isLoopbackHostname(hostname)) return undefined;
+  return [...new Set([...localhostAllowedHostnames(), hostname])];
+};
 
 const jsonError = (status: number, code: number, message: string): Response =>
   Response.json(
@@ -72,10 +98,27 @@ const describe = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
 const NO_SHUTDOWN_HOOK = (): void => undefined;
+const SHUTTING_DOWN = (): Response =>
+  jsonError(503, -32000, "Server shutting down");
+
+/** The headers the SDK requires of a streamable POST; a request without them is left to the transport's refusal. */
+const hasStreamablePostHeaders = (request: Request): boolean => {
+  const accept = request.headers.get("accept") ?? "";
+  const contentType = request.headers.get("content-type") ?? "";
+  return (
+    accept.includes("application/json") &&
+    accept.includes("text/event-stream") &&
+    /^application\/json\b/iu.test(contentType.trim())
+  );
+};
 
 /** Only a new client's initialize travels without a session id; peek within the SDK body bound. */
 const isInitializePost = async (request: Request): Promise<boolean> => {
-  if (request.method !== "POST" || request.headers.has("mcp-session-id"))
+  if (
+    request.method !== "POST" ||
+    request.headers.has("mcp-session-id") ||
+    !hasStreamablePostHeaders(request)
+  )
     return false;
   const probe = request.clone();
   try {
@@ -102,6 +145,7 @@ interface LiveSession {
 export class McpSessionSlot {
   #live: LiveSession | undefined;
   #arming: Promise<WebStandardStreamableHTTPServerTransport> | undefined;
+  #closed = false;
   /** The instance's own close hook, captured once so every session end restores exactly it. */
   readonly #shutdownHook: () => void;
 
@@ -114,25 +158,34 @@ export class McpSessionSlot {
 
   /** Route one MCP request; a new client's initialize replaces a session its predecessor left open. */
   async handle(request: Request): Promise<Response> {
+    if (this.#closed) return SHUTTING_DOWN();
     const open = this.#live;
     if (
       open?.transport.sessionId !== undefined &&
       (await isInitializePost(request))
     ) {
+      if (this.#closed) return SHUTTING_DOWN();
       this.logger?.info("MCP HTTP session replaced by a new client");
       await open.transport.close();
     }
-    return (await this.#current()).handleRequest(request);
+    const transport = await this.#current();
+    // Shutdown may have closed the slot while this request was arming it.
+    if (this.#closed) return SHUTTING_DOWN();
+    return transport.handleRequest(request);
   }
 
-  /** End the live session as part of server shutdown, so the instance's onclose runs. */
+  /** End the live session as part of server shutdown, so the instance's onclose runs; later requests are refused. */
   async close(): Promise<void> {
+    this.#closed = true;
+    await this.#arming?.catch(() => undefined);
     const open = this.#live;
     this.#live = undefined;
     await open?.shutdown();
   }
 
   #current(): Promise<WebStandardStreamableHTTPServerTransport> {
+    if (this.#closed)
+      return Promise.reject(new Error("MCP HTTP session slot is closed"));
     if (this.#live !== undefined) return Promise.resolve(this.#live.transport);
     this.#arming ??= this.#arm().finally(() => {
       this.#arming = undefined;
@@ -194,10 +247,12 @@ export const serveStreamableHttp = async (
   let stopped = false;
   const route = async (request: Request): Promise<Response> => {
     if (stopped) return jsonError(503, -32000, "Server shutting down");
+    // One loopback allowlist gates Host (DNS rebinding) and Origin (browser pages); a missing Origin passes.
     const refused =
       allowedHosts === undefined
         ? undefined
-        : hostHeaderValidationResponse(request, allowedHosts);
+        : (hostHeaderValidationResponse(request, allowedHosts) ??
+          originValidationResponse(request, allowedHosts));
     if (refused !== undefined) return refused;
     const { pathname } = new URL(request.url);
     if (pathname === MCP_HTTP_PATH) return slot.handle(request);
@@ -249,13 +304,12 @@ export const serveStreamableHttp = async (
       { host },
       "MCP HTTP Host header validation relaxed for a non-loopback bind",
     );
-  logger?.info(
-    { transport: "streamable-http", url },
-    "MCP transport listening",
-  );
-  let closing: Promise<void> | undefined;
-  const close = (): Promise<void> => {
-    closing ??= (async () => {
+  // The URL is the only way to reach an ephemeral port, so the announcement ignores the log threshold.
+  logger
+    ?.child({}, { level: "info" })
+    .info({ transport: "streamable-http", url }, "MCP transport listening");
+  const close = stagedClose([
+    async () => {
       stopped = true;
       httpServer.closeAllConnections();
       await new Promise<void>((resolve, reject) => {
@@ -263,10 +317,32 @@ export const serveStreamableHttp = async (
           error === undefined ? resolve() : reject(error),
         );
       });
-      await slot.close();
-      await instance.close();
-    })();
-    return closing;
-  };
+    },
+    () => slot.close(),
+    () => instance.close(),
+  ]);
   return { url, close };
+};
+
+/** Run close stages in order once each; a failed stage is retried by the next call instead of replaying its rejection. */
+const stagedClose = (
+  stages: readonly (() => Promise<void>)[],
+): (() => Promise<void>) => {
+  const done = stages.map(() => false);
+  let closing: Promise<void> | undefined;
+  return () => {
+    if (closing !== undefined) return closing;
+    const attempt = (async () => {
+      for (const [index, stage] of stages.entries()) {
+        if (done[index]) continue;
+        await stage();
+        done[index] = true;
+      }
+    })();
+    closing = attempt;
+    void attempt.catch(() => {
+      if (closing === attempt) closing = undefined;
+    });
+    return attempt;
+  };
 };
