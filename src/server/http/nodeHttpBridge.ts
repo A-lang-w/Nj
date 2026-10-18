@@ -37,12 +37,24 @@ export const toWebRequest = (
   });
 };
 
+/** Header fields for writeHead; repeated Set-Cookie values survive as one array. */
+const responseHeaders = (
+  headers: Headers,
+): Record<string, string | string[]> => {
+  const fields: Record<string, string | string[]> = {};
+  for (const [name, value] of headers)
+    if (name !== "set-cookie") fields[name] = value;
+  const cookies = headers.getSetCookie();
+  if (cookies.length > 0) fields["set-cookie"] = cookies;
+  return fields;
+};
+
 /** Stream a web Response into node:http, flushing headers and each chunk as it arrives. */
 export const writeWebResponse = async (
   response: Response,
   target: ServerResponse,
 ): Promise<void> => {
-  target.writeHead(response.status, Object.fromEntries(response.headers));
+  target.writeHead(response.status, responseHeaders(response.headers));
   target.flushHeaders();
   if (response.body === null) {
     target.end();

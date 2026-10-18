@@ -224,3 +224,13 @@ text/event-streaming` is refused while the connected client keeps echoing),
 and a session whose transport shutdown rejected stays owned so the next close
 retries it (test: a failing transport close rejects `close()` once, the second
 call completes, the shutdown hook fires once and later requests get `503`).
+
+A fifth round (Codex, three findings) was addressed next: the instance's
+shutdown hook now runs exactly once even when the listener closes without a
+live session (test: two closes of an idle slot fire it once; an idle listener
+close fires it once); the initialize probe no longer awaits cancelling its
+cloned body, which is one branch of a tee and would wait for the original
+request to drain (test: a 4.5 MB sessionless initialize is refused promptly
+while the connected client keeps echoing); and the node:http bridge passes
+repeated `Set-Cookie` values as an array instead of collapsing them (test: two
+cookies from a composed route both arrive).

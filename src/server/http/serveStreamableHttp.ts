@@ -142,7 +142,8 @@ const isInitializePost = async (request: Request): Promise<boolean> => {
   } catch {
     return false;
   } finally {
-    await probe.body?.cancel().catch(() => undefined);
+    // The clone is one branch of a tee; awaiting its cancel would wait for the original to drain.
+    void probe.body?.cancel().catch(() => undefined);
   }
 };
 
@@ -157,14 +158,22 @@ export class McpSessionSlot {
   #live: LiveSession | undefined;
   #arming: Promise<WebStandardStreamableHTTPServerTransport> | undefined;
   #closed = false;
-  /** The instance's own close hook, captured once so every session end restores exactly it. */
+  #hookRan = false;
+  /** The instance's own close hook, captured once; it runs exactly once, when the listener closes. */
   readonly #shutdownHook: () => void;
 
   constructor(
     private readonly instance: McpServer | Server,
     private readonly logger: Logger | undefined,
   ) {
-    this.#shutdownHook = protocolOf(instance).onclose ?? NO_SHUTDOWN_HOOK;
+    const protocol = protocolOf(instance);
+    const captured = protocol.onclose ?? NO_SHUTDOWN_HOOK;
+    this.#shutdownHook = () => {
+      if (this.#hookRan) return;
+      this.#hookRan = true;
+      captured();
+    };
+    protocol.onclose = this.#shutdownHook;
   }
 
   /** Route one MCP request; a new client's initialize replaces a session its predecessor left open. */
@@ -193,6 +202,8 @@ export class McpSessionSlot {
     // The session stays owned until its shutdown succeeds, so a retry can finish it.
     await open?.shutdown();
     if (this.#live === open) this.#live = undefined;
+    // Without a live transport nothing fires the instance's hook; run it here, once.
+    this.#shutdownHook();
   }
 
   #current(): Promise<WebStandardStreamableHTTPServerTransport> {

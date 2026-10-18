@@ -139,3 +139,18 @@ it("aborts the web Request and cancels its response body when the client leaves"
     expect(cancelled).toBe(true);
   });
 });
+
+it("preserves every Set-Cookie header of a composed route", async () => {
+  const origin = await serve(() => {
+    const headers = new Headers({ "x-one": "1" });
+    headers.append("set-cookie", "session=a; Path=/; HttpOnly");
+    headers.append("set-cookie", "csrf=b; Path=/");
+    return new Response("ok", { headers });
+  });
+  const response = await fetch(`${origin}/cookies`);
+  expect(response.headers.get("x-one")).toBe("1");
+  expect(response.headers.getSetCookie()).toEqual([
+    "session=a; Path=/; HttpOnly",
+    "csrf=b; Path=/",
+  ]);
+});
