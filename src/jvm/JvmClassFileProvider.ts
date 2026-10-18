@@ -574,6 +574,10 @@ export class JvmClassFileProvider implements JvmDebugMetadataPort {
         throw new ArtifactReaderFailure(
           "limit",
           `Selected class entry exceeds ${String(JVM_LIMITS.inputBytes)} bytes`,
+          {
+            boundary: "file-size",
+            limit: { key: "max_input_bytes", maximum: JVM_LIMITS.inputBytes },
+          },
         );
       }
       chunks.push(chunk);

@@ -117,7 +117,10 @@ export const readStableArtifact = async (
     throw new ArtifactReaderFailure(
       "limit",
       `Selected artifact exceeds ${String(maximumBytes)} bytes: ${path}`,
-      { boundary: "file-size" },
+      {
+        boundary: "file-size",
+        limit: { key: "max_input_bytes", maximum: maximumBytes },
+      },
     );
   const file = await afterValidation(path, "before open", () =>
     fileSystem.open(
@@ -160,7 +163,10 @@ export const readStableArtifact = async (
           throw new ArtifactReaderFailure(
             "limit",
             `Selected artifact grew beyond its byte limit: ${path}`,
-            { boundary: "file-size" },
+            {
+              boundary: "file-size",
+              limit: { key: "max_input_bytes", maximum: maximumBytes },
+            },
           );
         chunks.push(bytes);
       }

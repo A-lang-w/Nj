@@ -1,4 +1,7 @@
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactReaderBoundary,
+} from "../artifacts/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
   artifactFileCancellationCause,
@@ -20,7 +23,7 @@ import {
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import type { JavaClassFileParseError } from "../domain/jvm/javaClassFile.js";
-import { JVM_LIMITS, JVM_PROVIDER_IDENTITY } from "./JvmClassFileRelease.js";
+import { JVM_PROVIDER_IDENTITY } from "./JvmClassFileRelease.js";
 
 const OPERATION = "inspect_jvm_debug_metadata";
 
@@ -174,6 +177,16 @@ const primaryFailure = (
   return executionFailure(cause, path);
 };
 
+/** Every reader bound REA applies here is fixed; say what would fit it. */
+const LIMIT_REMEDIATION: Readonly<Record<ArtifactReaderBoundary, string>> = {
+  "file-size":
+    "The class-file size budget is fixed; select a smaller artifact.",
+  memory:
+    "The JAR's central directory exceeds REA's fixed metadata read budget; this archive cannot be inspected as is.",
+  capacity:
+    "The JAR's members declare more uncompressed bytes than REA's fixed decompression budget for an archive of this size allows; this archive cannot be inspected as is.",
+};
+
 const readerFailure = (
   cause: ArtifactReaderFailure,
   path: string,
@@ -184,15 +197,19 @@ const readerFailure = (
         cause: artifactFileCancellationCause(cause),
       });
     case "limit":
+      // Report the bound the reader actually hit (class-file size, ZIP
+      // metadata read, or decompression budget), never a substitute.
       return new AnalysisResourceConstraintError(
         OPERATION,
-        "file-size",
+        cause.boundary ?? "memory",
         cause.message,
-        { max_input_bytes: JVM_LIMITS.inputBytes },
+        cause.limit === undefined
+          ? null
+          : { [cause.limit.key]: cause.limit.maximum },
         {
           cause,
-          remediationAction:
-            "The class-file size budget is fixed; select a smaller artifact.",
+          retryable: false,
+          remediationAction: LIMIT_REMEDIATION[cause.boundary ?? "memory"],
         },
       );
     case "integrity":

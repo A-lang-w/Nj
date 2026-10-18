@@ -68,6 +68,27 @@ describe("ZipArtifactReader decompression budget", () => {
       await expect(enumerate(reader)).rejects.toMatchObject({
         name: "ArtifactReaderFailure",
         reason: "limit",
+        boundary: "capacity",
+        limit: {
+          key: "max_decompressed_bytes",
+          maximum: MINIMUM_ARTIFACT_DECOMPRESSION_BYTES,
+        },
+      });
+    } finally {
+      await reader.close();
+    }
+  });
+
+  it("names the metadata read budget a central directory exceeds", async () => {
+    const directory = await createTestTempDirectory("rea-zip-metadata-");
+    const path = await writeZipWithDeclaredSize(directory, [1, 1, 1]);
+    const reader = new ZipArtifactReader(path, "zip", 64);
+    try {
+      await expect(enumerate(reader)).rejects.toMatchObject({
+        name: "ArtifactReaderFailure",
+        reason: "limit",
+        boundary: "memory",
+        limit: { key: "max_metadata_read_bytes", maximum: 64 },
       });
     } finally {
       await reader.close();

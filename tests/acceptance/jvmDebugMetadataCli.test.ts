@@ -217,3 +217,45 @@ cliTest(
   },
   30000,
 );
+
+cliTest(
+  "reports the ZIP decompression budget a JAR exceeds over CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-jvm-zip-limit-");
+    const { client, call } = await connectLocalToolsMcp();
+    const path = join(root, "declares-more.jar");
+    // One member declares 300 MiB uncompressed: past the 256 MiB minimum
+    // decompression budget of a small archive, not the class-file size limit.
+    await writeFile(
+      path,
+      storedZip([
+        { name: Buffer.from("Example.class"), bytes: jvmDebugClass() },
+        {
+          name: Buffer.from("big.bin"),
+          bytes: Buffer.from("x"),
+          declaredSize: 300 * 1024 * 1024,
+        },
+      ]),
+    );
+    const outcome = await inspectBoth(cli, call, {
+      path,
+      entry: "Example.class",
+    });
+    expect(outcome).toMatchObject({
+      ok: false,
+      error: {
+        code: "resource_constraint",
+        details: {
+          resource: "capacity",
+          reported_limits: { max_decompressed_bytes: 256 * 1024 * 1024 },
+        },
+      },
+    });
+    expect(
+      (outcome as { error: { details: { reported_limits: object } } }).error
+        .details.reported_limits,
+    ).not.toHaveProperty("max_input_bytes");
+    await client.ping();
+  },
+  30000,
+);
