@@ -1,3 +1,4 @@
+import { parse } from "@babel/parser";
 import { describe, expect, it } from "vitest";
 
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
@@ -16,6 +17,95 @@ const analyze = (setup: string) => {
   if (parsed === null) throw new Error("Expected parsed source");
   return analyzeParsedJavaScriptStaticSource(source, parsed).electron.ipc;
 };
+
+describe("private class-member receivers", () => {
+  it.each([
+    "class C{static #set(){this.Q=other}static run(){C.#set()}};C.run();",
+    "class C{#set(){this.Q=other}run(){this.#set()}};new C().run();",
+    "class C{static #set=function(){this.Q=other};static run(){C.#set()}};C.run();",
+    "class C{#set=function(){this.Q=other};run(){this.#set()}};new C().run();",
+    "class C{static get #value(){this.Q=other}static run(){void C.#value}};C.run();",
+    "class C{get #value(){this.Q=other}run(){void this.#value}};new C().run();",
+    "class C{static set #value(v){this.Q=other}static run(){C.#value=0}};C.run();",
+    "class C{set #value(v){this.Q=other}run(){this.#value=0}};new C().run();",
+    "class C{get #value(){this.Q=other;return 0}set #value(v){this.Q=other}run(){this.#value++}};new C().run();",
+    "class C{#set(){this.Q=other}run(){this.#set()}};const c=new C();c.run();consume(c);",
+    "class C{#set=function(){this.Q=other};run(){this.#set()}};const c=new C();c.run();consume(c);",
+    "class C{static #set(){this.Q=other}static set(){}static run(){C.#set();C.set.call(globalThis)}};C.run();",
+    "class C{static #set(){this.Q=other}static run(){C.#set();C[key]?.call(globalThis)}};C.run();",
+    "class B{#set(){this.Q=other}run(){this.#set()}}class C extends B{#set(){}run(){super.run();this.#set.call(globalThis)}};new C().run();",
+    "class B{static #set(){this.Q=other}static run(){B.#set()}}class C{static #set(){}static run(){C.#set.call(globalThis)}};B.run();C.run();",
+    "class C{static #set(){this.Q=other}static run(){class Inner{static run(){C.#set()}}Inner.run()}};C.run();",
+    "var B=class{};class C extends B{#set(){this.Q=other}run(){this.#set()}};new C().run();",
+    "class B{constructor(){return {}}}class C extends B{#set(){this.Q=other}run(){this.#set()}};new C().run();",
+  ])("keeps a private member's receiver separate: %s", (setup) => {
+    expect(analyze(setup)).toMatchObject([{ channel: "kept" }]);
+  });
+
+  it.each([
+    "class C{static #set(){this.Q=other}static run(){C.#set();C.#set.call(globalThis)}};C.run();",
+    "class C{#set(){this.Q=other}run(){this.#set();this.#set.call(globalThis)}};new C().run();",
+    "class C{static #set=function(){this.Q=other};static run(){C.#set();consume(C.#set)}};C.run();",
+    "class C{#set=function(){this.Q=other};run(){this.#set();return this.#set}};consume(new C().run());",
+    "class C{static get #set(){return function(){this.Q=other}}static run(){return C.#set}};C.run().call(globalThis);",
+    "class C{get #set(){return function(){this.Q=other}}run(){return this.#set}};new C().run().call(globalThis);",
+    "class B{constructor(){return globalThis}}class C extends B{#set(){this.Q=other}run(){this.#set()}static run(c){c.#set()}};C.run(new C());",
+    "class B{constructor(){return globalThis}}class C extends B{#set=function(){this.Q=other};static run(c){c.#set()}};C.run(new C());",
+    "class B{constructor(){return globalThis}}class C extends B{get #value(){this.Q=other}static run(c){void c.#value}};C.run(new C());",
+    "class B{constructor(){return globalThis}}class C extends B{set #value(v){this.Q=other}static run(c){c.#value=0}};C.run(new C());",
+    "class C extends external{#set(){this.Q=other}run(){this.#set()}};new C().run();",
+    "class B{constructor(){return external()}}class C extends B{#set(){this.Q=other}run(){this.#set()}};new C().run();",
+    "class C extends external{get #value(){this.Q=other}run(){void this.#value}};new C().run();",
+    "class C extends external{set #value(v){this.Q=other}run(){this.#value=0}};new C().run();",
+    "var B=class{};globalThis.B=external;class C extends B{#set(){this.Q=other}run(){this.#set()}};new C().run();",
+    "class C{@dec #set(){this.Q=other}run(){this.#set()}};new C().run();",
+    "class C{@dec #set=function(){this.Q=other};run(){this.#set()}};new C().run();",
+  ])("retains global or escaped private-member receivers: %s", (setup) => {
+    expect(analyze(setup)).toEqual([]);
+  });
+});
+
+describe("auto-accessor AST targets", () => {
+  // The production parser does not enable decoratorAutoAccessors. These tests
+  // cover the existing Babel AST contract without expanding source support.
+  it.each([
+    ["accessor run=function base(){}", "run(){}", "derived"],
+    ["run=function base(){}", "run(){}", "base"],
+    ["run=function base(){}", "accessor run=function derived(){}", "base"],
+    ["accessor run=function base(){}", "", "base"],
+    ["accessor run=function base(){};set run(value){}", "", "base"],
+  ])("selects the effective descriptor: %s / %s", (base, derived, owner) => {
+    const parsed = parse(
+      `class B{${base}}class C extends B{${derived}}new C().run();`,
+      { plugins: ["decoratorAutoAccessors"] },
+    );
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    const declaration = parsed.program.body[owner === "base" ? 0 : 1];
+    const member =
+      declaration?.type === "ClassDeclaration"
+        ? declaration.body.body[0]
+        : undefined;
+    const expected =
+      member?.type === "ClassMethod"
+        ? member
+        : member?.type === "ClassProperty" ||
+            member?.type === "ClassAccessorProperty"
+          ? member.value
+          : undefined;
+    const statement = parsed.program.body.at(-1);
+    const call =
+      statement?.type === "ExpressionStatement"
+        ? statement.expression
+        : undefined;
+    if (expected == null || call?.type !== "CallExpression")
+      throw new Error("Expected class member and invocation");
+    expect(createSemanticCallableTargets(index.bindings)(call.callee)).toEqual([
+      expected,
+    ]);
+  });
+});
 
 describe("stored class-field receivers", () => {
   it.each([

@@ -92,7 +92,12 @@ const statementPosition = (
   declarator?: t.VariableDeclarator,
 ): StatementPosition | null => {
   const parent = parents.get(statement);
-  if (!t.isProgram(parent) && !t.isBlockStatement(parent)) return null;
+  if (
+    !t.isProgram(parent) &&
+    !t.isBlockStatement(parent) &&
+    !t.isStaticBlock(parent)
+  )
+    return null;
   const index = parent.body.indexOf(statement);
   return index < 0
     ? null
@@ -441,6 +446,7 @@ const expressionChildIndices = (
   const cached = cache.get(node);
   if (cached !== undefined) return cached;
   const children = ((): readonly (t.Node | null)[] | null => {
+    if (t.isStaticBlock(node)) return node.body;
     if (t.isSequenceExpression(node)) return node.expressions;
     if (t.isArrayExpression(node) || t.isArrayPattern(node))
       return node.elements;

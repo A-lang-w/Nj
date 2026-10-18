@@ -4,6 +4,190 @@ import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 const SHIM = 'var Q=(e=>typeof require<"u"?require:e)(function(){});';
 
+describe("related Module instance identity", () => {
+  it.each([
+    [
+      "parent constructor",
+      "module.parent.constructor.prototype.require=other;",
+    ],
+    [
+      "parent chain",
+      "module.parent.parent.constructor.prototype.require=other;",
+    ],
+    [
+      "parent prototype",
+      'Reflect.set(Object.getPrototypeOf(module.parent),"require",other);',
+    ],
+    [
+      "captured parent",
+      'const parent=module.parent;module.parent=other;Reflect.set(parent.constructor.prototype,"require",other);',
+    ],
+    [
+      "copied parent alias",
+      "const box={parent:module.parent};const copy={...box};copy.parent.constructor.prototype.require=other;",
+    ],
+    ["parent internal loader", "module.parent.constructor._load=other;"],
+    [
+      "main module parent",
+      "require.main.parent.constructor.prototype.require=other;",
+    ],
+    ["child module", "module.children[0].constructor.prototype.require=other;"],
+    [
+      "unknown child module",
+      'Reflect.set(module.children[index].constructor.prototype,"require",other);',
+    ],
+    ["unknown parent member", "module.parent[key].prototype.require=other;"],
+    [
+      "unknown related module",
+      "module[key].constructor.prototype.require=other;",
+    ],
+  ])("rejects shared delegate mutation through %s", (_name, setup) => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${SHIM}${setup}new (Q("electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toEqual([]);
+  });
+
+  it.each([
+    "module.parent.require=other;",
+    'Reflect.set(module.parent,"require",other);',
+    "module.parent.constructor=other;",
+    "module.parent.__proto__={require:other};",
+    "Object.setPrototypeOf(module.parent,{require:other});",
+    'Object.defineProperty(module.parent,"__proto__",{value:{require:other}});',
+    "module.parent.parent.require=other;",
+    "module.children[0].require=other;",
+    "const otherModule={parent:{constructor:{prototype:{}}}};otherModule.parent.constructor.prototype.require=other;",
+    "const module={parent:{constructor:{prototype:{}}}};module.parent.constructor.prototype.require=other;",
+  ])("preserves an unrelated instance's own mutation: %s", (setup) => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${SHIM}${setup}new (Q("electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toHaveLength(1);
+  });
+
+  it("retains an earlier load before a parent prototype mutation", () => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${SHIM}new (Q("electron").BrowserWindow)({});module.parent.constructor.prototype.require=other;`,
+      ).electron.browser_windows,
+    ).toHaveLength(1);
+  });
+
+  it("retains a delegate captured before a parent prototype mutation", () => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        'const load=module.require;module.parent.constructor.prototype.require=other;new (load.call(module,"electron").BrowserWindow)({});',
+      ).electron.browser_windows,
+    ).toHaveLength(1);
+  });
+
+  it.each([
+    "module.parent.constructor.__proto__.call=other;",
+    "module.parent.require.call.call=other;",
+    "module.parent.exports.call.call=other;",
+    "module.children[0].exports.call.call=other;",
+  ])("tracks shared function helpers through parent modules: %s", (setup) => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${setup}new (require.call.call(require,null,"electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toEqual([]);
+  });
+
+  it("retains stored aliases below equivalent shared prototype paths", () => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${SHIM}module.constructor.prototype.box.alias=module;module.__proto__.box.alias.require=other;new (Q("electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toEqual([]);
+  });
+
+  it.each([
+    'module.parent.require("electron")',
+    'require.main.parent.require("electron")',
+    'module.children[0].require("electron")',
+  ])(
+    "does not grant strict loader proof to a possible instance: %s",
+    (load) => {
+      expect(
+        analyzeJavaScriptStaticSource(`new (${load}.BrowserWindow)({});`)
+          .electron.browser_windows,
+      ).toEqual([]);
+    },
+  );
+});
+
+describe("shared Module storage identities", () => {
+  describe.each([
+    [
+      "prototype to constructor",
+      "module.__proto__",
+      "module.constructor.prototype",
+    ],
+    [
+      "constructor to prototype",
+      "module.constructor.prototype",
+      "module.__proto__",
+    ],
+    [
+      "constructor to parent",
+      "module.constructor",
+      "module.parent.constructor",
+    ],
+    [
+      "parent to constructor",
+      "module.parent.constructor",
+      "module.constructor",
+    ],
+  ])("shared stores from %s", (_name, written, read) => {
+    it("follows the stored wrapper module", () => {
+      expect(
+        analyzeJavaScriptStaticSource(
+          `${SHIM}${written}.box=module;${read}.box.require=other;new (Q("electron").BrowserWindow)({});`,
+        ).electron.browser_windows,
+      ).toEqual([]);
+    });
+
+    it("keeps a stored local object separate", () => {
+      expect(
+        analyzeJavaScriptStaticSource(
+          `${SHIM}${written}.box={};${read}.box.require=other;new (Q("electron").BrowserWindow)({});`,
+        ).electron.browser_windows,
+      ).toHaveLength(1);
+    });
+  });
+
+  it("retains a local slot captured before its shared owner is changed", () => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${SHIM}module.__proto__.box={};const saved=module.constructor.prototype.box;module.__proto__.box=module;saved.require=other;new (Q("electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toHaveLength(1);
+  });
+
+  it("retains a wrapper slot captured before its shared owner is changed", () => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${SHIM}module.__proto__.box=module;const saved=module.constructor.prototype.box;module.__proto__.box={};saved.require=other;new (Q("electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toEqual([]);
+  });
+
+  it.each([
+    "module.__proto__.box=unknown;module.constructor.prototype.box.require=other;",
+    "function change(){module.__proto__.box=module}change();module.constructor.prototype.box.require=other;",
+  ])("retains unknown or deferred stored aliases: %s", (setup) => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${SHIM}${setup}new (Q("electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toEqual([]);
+  });
+});
+
 describe("Node Module constructor delegate identity", () => {
   it.each([
     [

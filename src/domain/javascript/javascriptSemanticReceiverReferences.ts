@@ -10,9 +10,12 @@ import {
 } from "./javascriptModuleInterop.js";
 import {
   createSemanticCallableTargets,
+  createSemanticPrivateMemberTargets,
   createSemanticReturnedReferences,
 } from "./javascriptSemanticReturnedReferences.js";
 import {
+  semanticGlobalBindingReadMayHaveChanged,
+  semanticOpaqueBindingReadMayHaveChanged,
   semanticStrictContext,
   type SemanticGlobalBindingFacts,
 } from "./javascriptSemanticOpaqueEffects.js";
@@ -136,6 +139,21 @@ export const createSemanticReceiverReferences = (
         inactiveDefaults.add(selection.right);
     const intrinsics = createSemanticModuleInterop(state);
     const definiteObject = isDefinitelyObject ?? intrinsics.isDefinitelyObject;
+    const receiverObjects =
+      intrinsicWriteFacts === undefined
+        ? intrinsics
+        : createSemanticModuleInterop(state, {
+            intrinsicPath: intrinsics.intrinsicPath,
+            bindingReadMayHaveChanged: (binding, read) =>
+              semanticOpaqueBindingReadMayHaveChanged(binding, read, state) ||
+              semanticGlobalBindingReadMayHaveChanged(
+                binding,
+                read,
+                state,
+                intrinsicWriteFacts,
+              ),
+          });
+    const privateTargets = createSemanticPrivateMemberTargets(state);
     const groups = new Map<
       string,
       { node: t.Node; targets: readonly t.Function[] }
@@ -190,6 +208,40 @@ export const createSemanticReceiverReferences = (
       if (receiver !== undefined) values.add(receiver);
       indexed.set(target, values);
     };
+    const privateReceivers = (
+      name: t.PrivateName,
+    ): readonly t.Node[] | undefined => {
+      const declaration = privateTargets(name);
+      if (declaration === undefined) return undefined;
+      const values = new Set<t.Node>();
+      if (declaration.members.some((member) => member.static))
+        values.add(declaration.owner);
+      if (declaration.members.some((member) => !member.static)) {
+        // A successful private lookup checks the declaring class's brand. Its
+        // instance starts fresh unless super() supplies an existing object.
+        // Unknown bases and returned values cannot prove global exclusion.
+        const inherited =
+          declaration.owner.superClass == null
+            ? []
+            : returned(declaration.owner.superClass).map(({ node }) => node);
+        for (const node of inherited) values.add(node);
+        if (
+          declaration.lineage.unknownBase !== undefined ||
+          declaration.lineage.classes.some(
+            (owner) =>
+              owner.superClass != null &&
+              !receiverObjects.isFreshObject(owner.superClass),
+          ) ||
+          inherited.some((node) => !receiverObjects.isFreshObject(node))
+        )
+          values.add(state.program);
+      }
+      return [...values];
+    };
+    const retainPrivate = (target: t.Function, values: readonly t.Node[]) => {
+      retain(target);
+      for (const receiver of values) retain(target, receiver);
+    };
     const construct = (callee: t.Node) => {
       // An explicit returned object does not replace the fresh receiver used
       // inside a base constructor.
@@ -199,6 +251,41 @@ export const createSemanticReceiverReferences = (
     traverseJavaScriptAst(state.program, {
       skip: (node) => inactiveDefaults.has(node),
       enter: (node) => {
+        if (t.isPrivateName(node)) {
+          // A decorator can expose the original callable even when the private
+          // slot itself never leaves the class's lexical scope.
+          for (const member of privateTargets(node)?.members ?? [])
+            if (
+              member.key.kind === "private" &&
+              member.key.declaration === node &&
+              member.decorated &&
+              member.value !== null
+            )
+              for (const target of contents(member.value))
+                retain(target, state.program);
+        }
+        if (
+          (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
+          t.isPrivateName(node.property)
+        ) {
+          const declaration = privateTargets(node.property);
+          const values = privateReceivers(node.property);
+          const parent = state.parentsByNode.get(node);
+          const assignment =
+            t.isAssignmentExpression(parent) && parent.left === node;
+          const update =
+            t.isUpdateExpression(parent) && parent.argument === node;
+          for (const member of declaration?.members ?? []) {
+            if (
+              values !== undefined &&
+              t.isFunction(member.value) &&
+              ((member.kind === "get" &&
+                (!assignment || parent.operator !== "=")) ||
+                (member.kind === "set" && (assignment || update)))
+            )
+              retainPrivate(member.value, values);
+          }
+        }
         if (t.isNewExpression(node)) {
           construct(node.callee);
           return;
@@ -232,7 +319,19 @@ export const createSemanticReceiverReferences = (
           (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee))
             ? callee.object
             : undefined);
+        const branded =
+          invocation.receiver === undefined &&
+          callee === group.node &&
+          (t.isMemberExpression(callee) ||
+            t.isOptionalMemberExpression(callee)) &&
+          t.isPrivateName(callee.property)
+            ? privateReceivers(callee.property)
+            : undefined;
         for (const target of group.targets) {
+          if (branded !== undefined) {
+            retainPrivate(target, branded);
+            continue;
+          }
           retain(target, receiver);
           if (
             t.isSpreadElement(receiver) ||

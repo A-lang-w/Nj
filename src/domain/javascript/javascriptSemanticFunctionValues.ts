@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
 
 type Path = readonly string[];
 type Projection = readonly (string | null)[];
@@ -168,13 +169,34 @@ const ordinary = (path: Path, ownsPrototype = true): FunctionValue => ({
 
 const MODULE_CONSTRUCTOR = ordinary(["commonjs-module", "constructor"]);
 const MODULE_REQUIRE = ordinary(["commonjs-module", "__proto__", "require"]);
+const MODULE_PROTOTYPE: FunctionValue = {
+  path: ["commonjs-module", "__proto__"],
+  kind: "instance-prototype",
+  owner: MODULE_CONSTRUCTOR,
+  external: true,
+};
 
-// Main can be absent or belong to another wrapper. Its instance identity stays
-// separate; only selected inherited constructor/prototype values are shared.
-const MAIN_MODULE: FunctionValue = {
-  path: ["global", "require", "main"],
+// Main, parents, and children can be absent or belong to another wrapper.
+// This finite value describes their type, not a shared instance identity: only
+// selected constructor/prototype/delegate values leave this projection walk.
+const MODULE_INSTANCE: FunctionValue = {
+  path: ["module-instance"],
   kind: "object-instance",
   owner: MODULE_CONSTRUCTOR,
+};
+const WRAPPER_MODULE_INSTANCE: FunctionValue = {
+  ...MODULE_INSTANCE,
+  path: ["commonjs-module"],
+};
+const MODULE_CHILDREN: FunctionValue = {
+  path: ["module-children"],
+  kind: "object-instance",
+  owner: ordinary(["global", "Array"]),
+};
+const MODULE_INSTANCE_MEMBERS = {
+  parent: MODULE_INSTANCE,
+  children: MODULE_CHILDREN,
+  require: MODULE_REQUIRE,
 };
 
 // Typed slots and inherited aliases are not ordinary functions at their nominal
@@ -182,9 +204,19 @@ const MAIN_MODULE: FunctionValue = {
 const VALUE_MEMBERS: Readonly<
   Record<string, Readonly<Record<string, FunctionValue>>>
 > = {
-  "global.require": { main: MAIN_MODULE },
-  "global.require.main": { require: MODULE_REQUIRE },
-  "commonjs-module.constructor.prototype": { require: MODULE_REQUIRE },
+  "global.require": { main: MODULE_INSTANCE },
+  "commonjs-module": MODULE_INSTANCE_MEMBERS,
+  "module-instance": {
+    ...MODULE_INSTANCE_MEMBERS,
+    // Another module's exports are externally supplied. Source-added instance
+    // slots and the current wrapper's exports remain with the store owner.
+    exports: UNKNOWN_EXTERNAL,
+  },
+  "commonjs-module.constructor": {
+    Module: MODULE_CONSTRUCTOR,
+    prototype: MODULE_PROTOTYPE,
+  },
+  "commonjs-module.__proto__": { require: MODULE_REQUIRE },
 };
 
 const hasFunctionHelpers = (value: FunctionValue): boolean =>
@@ -228,6 +260,8 @@ const propertyValue = (
 ): FunctionValue | undefined => {
   const members = VALUE_MEMBERS[value.path.join(".")];
   if (members !== undefined && Object.hasOwn(members, key)) return members[key];
+  if (value === MODULE_CHILDREN && semanticArrayIndex(key) !== null)
+    return MODULE_INSTANCE;
   if (INVOCATION_HELPERS.includes(key) && hasFunctionHelpers(value))
     return ordinary(["global", "Function", "prototype", key], false);
   if (hasFunctionHelpers(value) && (key === "name" || key === "length"))
@@ -235,7 +269,8 @@ const propertyValue = (
   if (
     NUMBER_CONSTANTS[value.path.join(".")]?.includes(key) ||
     (key === "length" &&
-      (value.path.join(".") === "global.Array.prototype" ||
+      (value === MODULE_CHILDREN ||
+        value.path.join(".") === "global.Array.prototype" ||
         value.path.join(".") === "primitive.String"))
   )
     return primitive("Number");
@@ -253,11 +288,6 @@ const propertyValue = (
     FUNCTION_MEMBERS["global.Object.prototype"]!.includes(key)
   )
     return ordinary(["global", "Object", "prototype", key], false);
-  if (
-    key === "Module" &&
-    value.path.join(".") === "commonjs-module.constructor"
-  )
-    return value;
   if (key === "constructor") {
     if (value.kind === "object-instance" || value.kind === "primitive")
       return value.owner;
@@ -342,22 +372,8 @@ const rootValue = (
       return { value: primitive("Number"), length: 2 };
     return { value: ordinary(["global", name]), length: 2 };
   }
-  if (path[0] === "commonjs-module") {
-    let end = 1;
-    while (path[end] === "__proto__") end += 1;
-    if (path[end] === "require" && end <= 2)
-      return {
-        value: ordinary(path.slice(0, end + 1) as Path),
-        length: end + 1,
-      };
-    if (path[end] === "constructor" && end <= 2)
-      return {
-        value: MODULE_CONSTRUCTOR,
-        length: end + 1,
-      };
-    if (path[end] === "constructor" && end === 3)
-      return { value: OBJECT, length: end + 1 };
-  }
+  if (path[0] === "commonjs-module")
+    return { value: WRAPPER_MODULE_INSTANCE, length: 1 };
   return undefined;
 };
 
@@ -365,11 +381,27 @@ const rootValue = (
 const selectedValues = (
   initial: FunctionValue,
   projection: Projection,
+  retainModuleStorageProjection?: (
+    path: Projection,
+    suffixOffset: number,
+  ) => void,
 ): readonly FunctionValue[] => {
   let values = [initial];
-  for (const key of projection) {
+  for (const [index, key] of projection.entries()) {
     const next = new Map<string, FunctionValue>();
     for (const value of values) {
+      // A known shared owner also gives a nominal storage path when its member
+      // value is unknown. Keep that fact separate from function identities;
+      // abandoning the suffix would lose stores through equivalent owners.
+      if (
+        retainModuleStorageProjection !== undefined &&
+        value.path[0] === "commonjs-module" &&
+        (key === null || propertyValue(value, key) === undefined)
+      )
+        retainModuleStorageProjection(
+          [...value.path, ...projection.slice(index)],
+          index,
+        );
       const keys =
         key === null
           ? [
@@ -383,6 +415,8 @@ const selectedValues = (
           : [key];
       if (key === null && hasOpenMembers(value))
         next.set("unknown-external:unknown-external", UNKNOWN_EXTERNAL);
+      if (key === null && value === MODULE_CHILDREN)
+        next.set("object-instance:module-instance", MODULE_INSTANCE);
       for (const property of keys) {
         for (const selected of possiblePropertyValues(value, property))
           next.set(`${selected.kind}:${selected.path.join(".")}`, selected);
@@ -428,13 +462,28 @@ export const semanticFunctionValueIdentity = (
   return identity;
 };
 
+/** Possible selected values invalidate reads but never prove an invocation.
+ * The optional callback separately retains nominal storage projections below
+ * known Module owners, with the original suffix offset for capture tracking;
+ * those paths do not establish the stored value's type. */
 export const semanticPossibleFunctionValueIdentities = (
   path: Projection,
+  retainModuleStorageProjection?: (
+    path: Projection,
+    suffixOffset: number,
+  ) => void,
 ): readonly Path[] => {
   const root = rootValue(path);
   return root === undefined
     ? []
-    : selectedValues(root.value, path.slice(root.length))
+    : selectedValues(
+        root.value,
+        path.slice(root.length),
+        retainModuleStorageProjection === undefined
+          ? undefined
+          : (storage, offset) =>
+              retainModuleStorageProjection(storage, root.length + offset),
+      )
         .filter(
           (value) =>
             value.path[0] === "global" || value.path[0] === "commonjs-module",

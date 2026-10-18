@@ -1,19 +1,16 @@
 import * as t from "@babel/types";
+import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import {
-  completeSemanticSteps,
-  traverseJavaScriptAst,
-} from "./javascriptSemanticTraversal.js";
-import {
-  createAmbientPathResolver,
+  createSemanticModuleStorageQuery,
   semanticAmbientBindingPaths,
   semanticAmbientIdentitySourcesReady,
+  type SemanticModuleProjection as ModuleProjection,
 } from "./javascriptSemanticAmbientWrites.js";
 import {
   semanticCopiedReferencePath,
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
 import {
-  collectJavaScriptIdentityWritesSteps,
   electronMemberPath,
   semanticIntrinsicMutationTargets,
 } from "./javascriptElectronMemberWrites.js";
@@ -40,7 +37,6 @@ import {
 import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 import {
   semanticBindingAtRead,
-  semanticEffectTiming,
   semanticEffectFollowsInitialCapture,
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
@@ -310,12 +306,6 @@ interface ModuleDelegateWrite {
   readonly shared: boolean;
 }
 
-/** Each property is read at its own capture, including shallow-copy slots. */
-type ModuleProjection = readonly {
-  readonly key: string | number | null;
-  readonly capture: t.Node;
-}[];
-
 const writesModuleRequire = (
   state: JavaScriptSemanticAnalysisState,
 ): readonly ModuleDelegateWrite[] => {
@@ -352,7 +342,7 @@ const writesModuleRequire = (
           path.length === 3 && path[1] === "constructor" ? "_load" : "require",
         shared: path[1] === "constructor" || path[1] === "__proto__",
       });
-  const projectionMayAliasModule = createModuleProjectionWriteQuery(
+  const projectionMayAliasModule = createSemanticModuleStorageQuery(
     state,
     interop,
   );
@@ -568,51 +558,6 @@ const writesModuleRequire = (
     writes,
   });
   return writes;
-};
-
-/** A replaced module property may refer back to its owner. Query nominal paths
- * from the shared write collector rather than guessing property values. Build
- * this index only when a projected module alias actually needs the proof. */
-const createModuleProjectionWriteQuery = (
-  state: JavaScriptSemanticAnalysisState,
-  interop: ReturnType<typeof createSemanticModuleInterop>,
-) => {
-  type Write = { node: t.Node; path: readonly (string | null)[] };
-  let writes: Write[] | undefined;
-  return (projection: ModuleProjection): boolean => {
-    if (writes === undefined) {
-      const collected: Write[] = [];
-      writes = collected;
-      const paths = createAmbientPathResolver(state, true);
-      completeSemanticSteps(
-        collectJavaScriptIdentityWritesSteps(
-          state.program,
-          (node, kind, site) => (kind === "member" ? paths(node, site) : []),
-          interop.intrinsicInvocation,
-          interop.staticString,
-          interop.isFreshObject,
-          (node, path) => {
-            if (path[0] === "commonjs-module")
-              collected.push({ node, path: path.slice(1) });
-          },
-        ),
-      );
-    }
-    return writes.some(({ node, path }) => {
-      const capture = projection[path.length - 1]?.capture;
-      return (
-        capture !== undefined &&
-        path.length <= projection.length &&
-        path.every(
-          (key, index) =>
-            key === null ||
-            projection[index]?.key === null ||
-            key === String(projection[index]?.key),
-        ) &&
-        semanticEffectTiming(capture, node, state) !== "after"
-      );
-    });
-  };
 };
 
 /** Unknown keys and spreads cannot prove the loader delegate was untouched. */

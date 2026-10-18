@@ -12,7 +12,10 @@ import {
   semanticCallableResultExpressions,
   type SemanticCallableResultExpression,
 } from "./javascriptSemanticCallableResults.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticBindingAtRead,
+  semanticEffectTiming,
+} from "./javascriptSemanticMutationInitializers.js";
 import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
 import {
   semanticArrayIndex,
@@ -152,12 +155,33 @@ const callableInitializersAt = (
   };
 };
 
-type ClassMember = t.ClassMethod | t.ClassProperty;
+type ClassMember =
+  | t.ClassMethod
+  | t.ClassPrivateMethod
+  | t.ClassProperty
+  | t.ClassPrivateProperty
+  | t.ClassAccessorProperty;
+interface ClassTargetMember {
+  readonly node: ClassMember;
+  readonly key:
+    | { readonly kind: "public"; readonly name: string | null }
+    | {
+        readonly kind: "private";
+        readonly name: string;
+        readonly declaration: t.PrivateName;
+      };
+  readonly kind: "method" | "get" | "set" | "accessor" | "field";
+  readonly value: t.Node | null;
+  readonly static: boolean;
+  readonly decorated: boolean;
+}
 type ClassMemberLayer = "static" | "prototype" | "fields";
 interface ClassTargetIndex {
-  readonly static: readonly ClassMember[];
-  readonly prototype: readonly ClassMember[];
-  readonly fields: readonly ClassMember[];
+  readonly static: readonly ClassTargetMember[];
+  readonly prototype: readonly ClassTargetMember[];
+  readonly fields: readonly ClassTargetMember[];
+  readonly privateByName: ReadonlyMap<string, readonly ClassTargetMember[]>;
+  readonly staticEvaluationOrder: ReadonlyMap<t.Node, number>;
   readonly constructorMethod?: t.ClassMethod;
 }
 interface ClassLineage {
@@ -226,47 +250,268 @@ const classTargetIndex = (
 ): ClassTargetIndex => {
   const prior = cache.get(node);
   if (prior !== undefined) return prior;
-  const methods = node.body.body.filter(t.isClassMethod);
-  const fields = node.body.body.filter(t.isClassProperty);
-  const constructor = methods.find((member) => member.kind === "constructor");
+  const descriptors: ClassTargetMember[] = [];
+  const fields: ClassTargetMember[] = [];
+  const privateByName = new Map<string, ClassTargetMember[]>();
+  const staticEvaluationOrder = new Map<t.Node, number>();
+  let constructor: t.ClassMethod | undefined;
+  for (const [position, member] of node.body.body.entries()) {
+    if (t.isStaticBlock(member)) {
+      staticEvaluationOrder.set(member, position);
+      continue;
+    }
+    if (t.isClassMethod(member, { kind: "constructor" })) {
+      constructor = member;
+      continue;
+    }
+    if (
+      !t.isClassMethod(member) &&
+      !t.isClassPrivateMethod(member) &&
+      !t.isClassProperty(member) &&
+      !t.isClassPrivateProperty(member) &&
+      !t.isClassAccessorProperty(member)
+    )
+      continue;
+    const target = classMemberTarget(member);
+    if (
+      target.static &&
+      (target.kind === "field" || target.kind === "accessor")
+    )
+      staticEvaluationOrder.set(member, position);
+    (target.kind === "field" ? fields : descriptors).push(target);
+    if (target.key.kind === "private") {
+      const named = privateByName.get(target.key.name) ?? [];
+      named.push(target);
+      privateByName.set(target.key.name, named);
+    }
+  }
   const result = {
     static: [
-      ...methods.filter((member) => member.static),
+      ...descriptors.filter((member) => member.static),
       ...fields.filter((member) => member.static),
     ],
-    prototype: methods.filter(
-      (member) => !member.static && member.kind !== "constructor",
-    ),
+    prototype: descriptors.filter((member) => !member.static),
     fields: fields.filter((member) => !member.static),
+    privateByName,
+    staticEvaluationOrder,
     ...(constructor === undefined ? {} : { constructorMethod: constructor }),
   };
   cache.set(node, result);
   return result;
 };
 
+const classMemberTarget = (member: ClassMember): ClassTargetMember => {
+  const method = t.isClassMethod(member) || t.isClassPrivateMethod(member);
+  return {
+    node: member,
+    key: t.isPrivateName(member.key)
+      ? {
+          kind: "private",
+          name: member.key.id.name,
+          declaration: member.key,
+        }
+      : {
+          kind: "public",
+          name: semanticStaticPropertyKey(
+            member.key,
+            "computed" in member && member.computed,
+          ),
+        },
+    kind: method
+      ? member.kind === "get" || member.kind === "set"
+        ? member.kind
+        : "method"
+      : t.isClassAccessorProperty(member)
+        ? "accessor"
+        : "field",
+    value: method ? member : (member.value ?? null),
+    static: member.static === true,
+    decorated: (member.decorators?.length ?? 0) > 0,
+  };
+};
+
+/** Private lookup selects a lexical declaration, never a public property path. */
+export const createSemanticPrivateMemberTargets = (
+  state: JavaScriptSemanticAnalysisState,
+  indexes = new WeakMap<t.Class, ClassTargetIndex>(),
+) => {
+  const resolved = new WeakMap<
+    t.PrivateName,
+    {
+      readonly owner: t.Class;
+      readonly members: readonly ClassTargetMember[];
+      readonly lineage: ClassLineage;
+    }
+  >();
+  const lineages = new WeakMap<t.Class, ClassLineage>();
+  return (name: t.PrivateName) => {
+    const prior = resolved.get(name);
+    if (prior !== undefined) return prior;
+    let child: t.Node = name;
+    for (
+      let parent = state.parentsByNode.get(child);
+      parent !== undefined;
+      parent = state.parentsByNode.get(child)
+    ) {
+      if (t.isClass(parent) && parent.body === child) {
+        const members = classTargetIndex(parent, indexes).privateByName.get(
+          name.id.name,
+        );
+        if (members !== undefined) {
+          const declaration = {
+            owner: parent,
+            members,
+            lineage: classLineage(parent, state, lineages),
+          };
+          resolved.set(name, declaration);
+          return declaration;
+        }
+      }
+      child = parent;
+    }
+    return undefined;
+  };
+};
+
+const selectPrivateTargets = (
+  members: readonly ClassTargetMember[],
+  item: Candidate,
+  path: Candidate["path"],
+  pending: Candidate[],
+): void => {
+  for (const member of members) {
+    if (member.value === null || member.kind === "set") continue;
+    if (member.kind === "get") {
+      // The read invokes the getter; a following call invokes its result.
+      pending.push({
+        node: member.value,
+        path: [],
+        initializers: item.initializers,
+        invocation: {
+          path,
+          ...(item.instance === true ? { instance: true } : {}),
+          ...(item.invocation === undefined
+            ? {}
+            : { invocation: item.invocation }),
+        },
+      });
+    } else pending.push({ ...item, node: member.value, path });
+  }
+};
+
 const selectClassTargets = (
-  members: readonly ClassMember[],
+  members: readonly ClassTargetMember[],
   key: string | number | null | undefined,
-): { readonly values: readonly t.Node[]; readonly own: boolean } => {
+): {
+  readonly values: readonly t.Node[];
+  readonly members: readonly ClassTargetMember[];
+  readonly own: boolean;
+} => {
   const values: t.Node[] = [];
+  const selected: ClassTargetMember[] = [];
   let own = false;
   let setter = false;
   for (const member of members.toReversed()) {
-    const name = semanticStaticPropertyKey(member.key, member.computed);
+    if (member.key.kind === "private") continue;
+    const name = member.key.name;
     if (key != null && name !== null && name !== String(key)) continue;
     const exact = key != null && name === String(key);
     if (exact) own = true;
-    if (t.isClassMethod(member, { kind: "set" })) {
+    if (member.kind === "set") {
+      selected.push(member);
       if (exact) setter = true;
       continue;
     }
     // A setter pairs with an earlier getter, but replaces an earlier data slot.
-    if (exact && setter && !t.isClassMethod(member, { kind: "get" })) break;
-    const value = t.isClassMethod(member) ? member : member.value;
+    if (exact && setter && member.kind !== "get" && member.kind !== "accessor")
+      break;
+    const value = member.value;
+    selected.push(member);
     if (value != null) values.push(value);
     if (exact) break;
   }
-  return { values, own };
+  return { values, members: selected, own };
+};
+
+/** Class descriptors exist before static initialization; fields do not. */
+export const createSemanticStaticClassSlotReferences = (
+  state: JavaScriptSemanticAnalysisState,
+  isFreshObject: (node: t.Node) => boolean,
+) => {
+  const indexes = new WeakMap<t.Class, ClassTargetIndex>();
+  const lineages = new WeakMap<t.Class, ClassLineage>();
+  return (owner: t.Class, key: string, read: t.Node | undefined) => {
+    const owners: t.Class[] = [];
+    const values: t.Node[] = [];
+    let own = false;
+    let local = true;
+    for (const declaring of classLineage(owner, state, lineages).classes) {
+      owners.push(declaring);
+      const index = classTargetIndex(declaring, indexes);
+      let current = read;
+      while (
+        current !== undefined &&
+        state.parentsByNode.get(current) !== declaring.body
+      )
+        current = state.parentsByNode.get(current);
+      const position =
+        current === undefined
+          ? undefined
+          : index.staticEvaluationOrder.get(current);
+      const completed =
+        read !== undefined &&
+        semanticEffectTiming(read, declaring, state) === "before";
+      const initialized = (member: ClassTargetMember): boolean | undefined => {
+        if (member.kind !== "field" && member.kind !== "accessor") return true;
+        if (position !== undefined)
+          return (
+            (index.staticEvaluationOrder.get(member.node) ?? Infinity) <
+            position
+          );
+        return completed ? true : undefined;
+      };
+      const selected = selectClassTargets(
+        index.static.filter((member) => initialized(member) !== false),
+        key,
+      );
+      for (const member of selected.members)
+        if (member.kind === "get" && t.isFunction(member.value)) {
+          for (const { node } of semanticCallableResultExpressions(
+            member.value,
+          ))
+            if (node !== null) values.push(node);
+        } else if (member.kind !== "set" && member.value !== null)
+          values.push(member.value);
+      local &&=
+        !declaring.decorators?.length &&
+        selected.members.every(
+          (member) =>
+            member.key.kind === "public" &&
+            member.key.name === key &&
+            !member.decorated &&
+            member.kind !== "get" &&
+            initialized(member) === true &&
+            (member.kind === "set" ||
+              member.value === null ||
+              isFreshObject(member.value)),
+        );
+      if (selected.own) {
+        own = selected.members.every((member) => initialized(member) === true);
+        break;
+      }
+      // A source binding alone does not prove that the runtime superclass
+      // still names this declaration; reuse the completed fresh-value proof.
+      if (declaring.superClass != null && !isFreshObject(declaring.superClass))
+        local = false;
+    }
+    return {
+      own,
+      ownLocal: own && local,
+      values,
+      owners,
+      inherited: owner.superClass,
+    };
+  };
 };
 
 const constructorReplacesReceiver = (
@@ -300,6 +545,10 @@ const createSemanticCallableReferences = (
   >();
   const objectTargets = new WeakMap<t.ObjectExpression, ObjectTargetIndex>();
   const classTargets = new WeakMap<t.Class, ClassTargetIndex>();
+  const privateTargets = createSemanticPrivateMemberTargets(
+    state,
+    classTargets,
+  );
   const classLineages = new WeakMap<t.Class, ClassLineage>();
   const interop = createSemanticModuleInterop(state);
   const isDefinitelyObject = definiteObjectProof ?? interop.isDefinitelyObject;
@@ -386,20 +635,33 @@ const createSemanticCallableReferences = (
       ) {
         const path: (string | number | null)[] = [];
         let receiver: t.Node = node;
+        let privateRead = false;
         while (
           t.isMemberExpression(receiver) ||
           t.isOptionalMemberExpression(receiver)
         ) {
+          if (t.isPrivateName(receiver.property)) {
+            privateRead = true;
+            const declaration = privateTargets(receiver.property);
+            selectPrivateTargets(
+              declaration?.members ?? [],
+              item,
+              [...path.reverse(), ...item.path],
+              pending,
+            );
+            break;
+          }
           path.push(
             semanticStaticPropertyKey(receiver.property, receiver.computed),
           );
           receiver = unwrapJavaScriptExpression(receiver.object).node;
         }
-        pending.push({
-          ...item,
-          node: receiver,
-          path: [...path.reverse(), ...item.path],
-        });
+        if (!privateRead)
+          pending.push({
+            ...item,
+            node: receiver,
+            path: [...path.reverse(), ...item.path],
+          });
       } else if (
         t.isConditionalExpression(node) ||
         t.isLogicalExpression(node)
@@ -555,7 +817,8 @@ const createSemanticCallableReferences = (
               ...index.prototype,
               ...index.fields,
             ]) {
-              const selected = t.isClassMethod(member) ? member : member.value;
+              if (member.key.kind === "private") continue;
+              const selected = member.value;
               if (selected != null) value(selected, []);
             }
           }

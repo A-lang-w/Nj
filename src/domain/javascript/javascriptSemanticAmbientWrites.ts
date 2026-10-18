@@ -15,6 +15,7 @@ import {
 import {
   completeSemanticFreshObjectFacts,
   createSemanticModuleInterop,
+  semanticFreshObjectFactsReady,
 } from "./javascriptModuleInterop.js";
 import {
   isUnshadowedGlobal,
@@ -52,6 +53,7 @@ import {
 import {
   createSemanticFunctionValueReferences,
   createSemanticReturnedReferences,
+  createSemanticStaticClassSlotReferences,
 } from "./javascriptSemanticReturnedReferences.js";
 import { createSemanticReceiverReferences } from "./javascriptSemanticReceiverReferences.js";
 import {
@@ -64,6 +66,7 @@ import {
   semanticOpaqueBindingReadMayHaveChanged,
   type SemanticGlobalBindingFacts,
 } from "./javascriptSemanticOpaqueEffects.js";
+import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 
 const GLOBAL_OBJECT_NAMES = ["globalThis", "global", "window", "self"];
 
@@ -130,6 +133,11 @@ interface AmbientReferenceFacts {
   /** A completed conservative binding snapshot may refine constructor results. */
   readonly definiteObject?: (node: t.Node) => boolean;
   readonly intrinsicWriteFacts?: SemanticGlobalBindingFacts;
+  readonly ownStaticSlotUnchanged?: (
+    owner: t.Class,
+    key: string,
+    read: t.Node,
+  ) => boolean;
 }
 
 /**
@@ -157,6 +165,10 @@ export const createAmbientPathResolver = (
     facts?.intrinsicWriteFacts,
   );
   const intrinsics = createSemanticModuleInterop(state);
+  const staticClassSlots = createSemanticStaticClassSlotReferences(
+    state,
+    facts?.freshObject ?? intrinsics.isFreshObject,
+  );
   const functionGroups = new Map<string, readonly (t.Function | t.Class)[]>();
   const functionPaths = new WeakMap<t.Node, readonly string[]>();
   const functionInterop = createSemanticModuleInterop(state, {
@@ -233,48 +245,11 @@ export const createAmbientPathResolver = (
         if (possibleWrites)
           for (const identity of semanticPossibleFunctionValueIdentities(
             canonical,
+            (storage) => {
+              if (!result.has(JSON.stringify(storage))) retain(storage);
+            },
           ))
             if (!result.has(JSON.stringify(identity))) retain(identity);
-        // Preserve the nominal path and its possible inherited prototype owner.
-        // Constructor/prototype cycles do not prove strict intrinsic reads.
-        if (possibleWrites && canonical[0] === "commonjs-module") {
-          let prototypeEnd = 1;
-          while (canonical[prototypeEnd] === "__proto__") prototypeEnd += 1;
-          if (prototypeEnd === 2 && canonical[prototypeEnd] === "constructor") {
-            canonical = ["commonjs-module", ...canonical.slice(prototypeEnd)];
-            continue;
-          }
-          if (
-            canonical[prototypeEnd] === "constructor" &&
-            canonical[prototypeEnd + 1] === null
-          ) {
-            // An unknown key can select the self export or prototype. Their
-            // different depths widen once rather than enumerating alias paths.
-            canonical = ["commonjs-module", null];
-            continue;
-          }
-          if (
-            canonical[prototypeEnd] === "constructor" &&
-            canonical[prototypeEnd + 1] === "Module"
-          ) {
-            canonical = [
-              ...canonical.slice(0, prototypeEnd + 1),
-              ...canonical.slice(prototypeEnd + 2),
-            ];
-            continue;
-          }
-          if (
-            canonical[prototypeEnd] === "constructor" &&
-            canonical[prototypeEnd + 1] === "prototype"
-          ) {
-            canonical = [
-              ...canonical.slice(0, prototypeEnd),
-              ...(prototypeEnd === 1 ? ["__proto__"] : []),
-              ...canonical.slice(prototypeEnd + 2),
-            ];
-            continue;
-          }
-        }
         if (
           possibleWrites &&
           canonical[0] === "global" &&
@@ -484,7 +459,42 @@ export const createAmbientPathResolver = (
             });
         continue;
       }
-      if (possibleWrites && (t.isFunction(root) || t.isClass(root))) {
+      const classKey = suffix?.[0];
+      const classRead = captures[0];
+      const classSlot =
+        possibleWrites &&
+        t.isClass(root) &&
+        typeof classKey === "string" &&
+        classKey !== "prototype"
+          ? staticClassSlots(root, classKey, classRead)
+          : undefined;
+      for (const value of classSlot?.values ?? [])
+        continueWith(value, suffix?.slice(1), captures.slice(1));
+      const ownClassSlot =
+        classSlot?.ownLocal === true &&
+        typeof classKey === "string" &&
+        classRead !== undefined &&
+        classSlot.owners.every(
+          (owner, index) =>
+            facts?.ownStaticSlotUnchanged?.(owner, classKey, classRead) ===
+              true &&
+            // Inherited selection also depends on every crossed prototype
+            // link. The declaring owner's own slot needs no such proof.
+            (index === classSlot.owners.length - 1 ||
+              facts?.ownStaticSlotUnchanged?.(owner, "__proto__", classRead) ===
+                true),
+        );
+      if (
+        !ownClassSlot &&
+        classSlot?.inherited != null &&
+        suffix?.[0] !== "__proto__"
+      )
+        continueWith(classSlot.inherited, suffix, captures);
+      if (
+        possibleWrites &&
+        (t.isFunction(root) || t.isClass(root)) &&
+        !ownClassSlot
+      ) {
         // A derived class inherits its constructor prototype from its base,
         // rather than directly from Function.prototype.
         if (
@@ -520,6 +530,7 @@ export const createAmbientPathResolver = (
       if (
         possibleWrites &&
         suffix !== undefined &&
+        classSlot?.own !== true &&
         (t.isObjectExpression(root) ||
           t.isClass(root) ||
           t.isNewExpression(root))
@@ -916,6 +927,130 @@ export const semanticAmbientBindingPaths = (
     createAmbientPathResolver(state, true)
   ).binding(binding, capture);
 
+/** Each slot keeps its own capture when shared Module owners are normalized. */
+export type SemanticModuleProjection = readonly {
+  readonly key: string | number | null;
+  readonly capture: t.Node;
+}[];
+
+/** Source stores can replace a Module property with the wrapper itself. Reads
+ * and writes use the same nominal storage owner, without proving a loader.
+ * The require-write cache recreates this query when ambient/fresh facts change. */
+export const createSemanticModuleStorageQuery = (
+  state: JavaScriptSemanticAnalysisState,
+  interop: ReturnType<typeof createSemanticModuleInterop>,
+) => {
+  type Write = {
+    node: t.Node;
+    path: AmbientPath;
+    sources: readonly SemanticIterationSource[];
+  };
+  let writes: Write[] | undefined;
+  return (projection: SemanticModuleProjection): boolean => {
+    if (writes === undefined) {
+      const collected: Write[] = [];
+      writes = collected;
+      const paths = createAmbientPathResolver(state, true);
+      const sources = new WeakMap<t.Node, readonly SemanticIterationSource[]>();
+      const targets = new WeakMap<
+        SemanticIterationSource,
+        ReadonlySet<string>
+      >();
+      completeSemanticSteps(
+        collectJavaScriptIdentityWritesSteps(
+          state.program,
+          (node, kind, site) => (kind === "member" ? paths(node, site) : []),
+          interop.intrinsicInvocation,
+          interop.staticString,
+          interop.isFreshObject,
+          (node, path) => {
+            if (path[0] !== "commonjs-module") return;
+            let references = sources.get(node);
+            if (references === undefined) {
+              references = semanticIterationSources(
+                node,
+                state.parentsByNode.get(node) ?? null,
+              ).filter((source) => source.kind === "reference-store");
+              sources.set(node, references);
+            }
+            const selected = references.filter((source) => {
+              if (source.target === undefined) return false;
+              let stored = targets.get(source);
+              if (stored === undefined) {
+                const key = semanticStaticPropertyKey(
+                  source.target.property,
+                  source.target.computed,
+                );
+                stored = new Set(
+                  paths(source.target.object, source.mutation).map((owner) =>
+                    JSON.stringify([...owner, key]),
+                  ),
+                );
+                targets.set(source, stored);
+              }
+              return stored.has(JSON.stringify(path));
+            });
+            collected.push({ node, path, sources: selected });
+          },
+        ),
+      );
+    }
+    const nominal: AmbientPath = [
+      "commonjs-module",
+      ...projection.map(({ key }) => (key === null ? null : String(key))),
+    ];
+    const captures: AmbientCaptures = [
+      undefined,
+      ...projection.map(({ capture }) => capture),
+    ];
+    const reads = new Map<
+      string,
+      { path: AmbientPath; captures: AmbientCaptures }
+    >([[JSON.stringify(nominal), { path: nominal, captures }]]);
+    semanticPossibleFunctionValueIdentities(nominal, (path, offset) => {
+      const suffix = captures.slice(offset);
+      reads.set(JSON.stringify(path), {
+        path,
+        captures: [
+          ...Array<t.Node | undefined>(path.length - suffix.length).fill(
+            captures[offset - 1],
+          ),
+          ...suffix,
+        ],
+      });
+    });
+    return [...reads.values()].some((read) =>
+      writes!.some(({ node, path, sources }) => {
+        const capture = read.captures[path.length - 1];
+        if (
+          capture === undefined ||
+          path.length > read.path.length ||
+          !path.every(
+            (key, index) =>
+              key === null ||
+              read.path[index] === null ||
+              key === read.path[index],
+          ) ||
+          semanticEffectTiming(capture, node, state) === "after"
+        )
+          return false;
+        if (sources.length === 0) return true;
+        return sources.some(
+          (source) =>
+            !semanticReferenceSourcesInactive(source, state, "syntax-only") &&
+            !(
+              path.length === read.path.length &&
+              source.projection.length === 0 &&
+              (readExactJavaScriptLiteral(source.node).found ||
+                (semanticFreshObjectFactsReady(state) &&
+                  interop.isFreshObject(source.node)))
+            ),
+        );
+      }),
+    );
+  };
+};
+
 /**
  * Index source-local writes through ambient identities and stable aliases.
  * The shared invocation owner resolves intrinsic aliases, bind/call/apply and
@@ -963,10 +1098,13 @@ export function* indexJavaScriptAmbientWritesSteps(
         : undefined;
     },
   });
+  let ownStaticSlotUnchanged: AmbientReferenceFacts["ownStaticSlotUnchanged"];
   const referenceFacts: AmbientReferenceFacts = {
     stores,
     replacements,
     freshObject: interop.isFreshObject,
+    ownStaticSlotUnchanged: (owner, key, read) =>
+      ownStaticSlotUnchanged?.(owner, key, read) === true,
     prototypeTarget: (node) => {
       if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
         return undefined;
@@ -1461,14 +1599,14 @@ export function* indexJavaScriptAmbientWritesSteps(
       escape.node,
       true,
       escape.projection,
-      !hasReceiverProofs
-        ? undefined
-        : (root, path) => {
-            if (path === undefined || path.length === 0)
-              retainDescriptorEffect(root, escape.node);
-            else if (path.includes("__proto__"))
-              retainPrototypeEffect(escape.node);
-          },
+      (root, path) => {
+        if (hasReceiverProofs || t.isClass(root)) {
+          if (path === undefined || path.length === 0)
+            retainDescriptorEffect(root, escape.node);
+          else if (path.includes("__proto__"))
+            retainPrototypeEffect(escape.node);
+        }
+      },
     );
     if (hasReceiverProofs && paths.some(mayReachPrototype))
       retainPrototypeEffect(escape.node);
@@ -1559,6 +1697,14 @@ export function* indexJavaScriptAmbientWritesSteps(
     byKey.set(receiver.key, sources);
     replacements.set(receiver.root, byKey);
   }
+  // Exclusion needs the completed write/escape snapshot. Earlier resolver
+  // queries retain inherited possibilities; their declarative slot cache does
+  // not memoize this mutable proof, and possible-write paths are never cached.
+  ownStaticSlotUnchanged = (owner, key, read) =>
+    !effectMayPrecede(read, descriptorEffects.get(owner)) &&
+    !writesToMember(owner, key).some(
+      (site) => semanticEffectTiming(read, site, state) !== "after",
+    );
   // Resolve possible identities against one completed store snapshot before
   // publishing any writes. Incremental publication would invalidate loader
   // origin indexes for every target and replay a full source scan each time.
