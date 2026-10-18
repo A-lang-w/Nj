@@ -1,6 +1,4 @@
 import assert from "node:assert/strict";
-import { ArtifactResourceScope } from "../../../dist/artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../../../dist/artifacts/AnalysisCleanupLease.js";
 import { execFile } from "node:child_process";
 import { access, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -16,10 +14,8 @@ import { verifyAndroidCliCancellation } from "./cli-cancellation.mjs";
 import { verifyAndroidMetadata } from "./metadata.mjs";
 import { verifyAndroidClassSearch } from "./class-search.mjs";
 import { verifyAndroidFailureRecovery } from "./failure-recovery.mjs";
-import {
-  resolveJadxConfigurationInputs,
-  validateJadxConfiguration,
-} from "../../../dist/android/JadxConfiguration.js";
+import { resolveJadxConfigurationInputs } from "../../../dist/android/JadxConfiguration.js";
+import { validateVerifierJadxConfiguration } from "../../lib/jadx-configuration-inspection.mjs";
 import { verifyWindowsAndroidLifecycle } from "./windows-lifecycle.mjs";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -45,27 +41,11 @@ const configuration = await resolveJadxConfigurationInputs(
   process.env,
   "inspect_android_package",
 );
-const prerequisiteResources = new ArtifactResourceScope();
-try {
-  await validateJadxConfiguration(
-    configuration,
-    process.env,
-    "inspect_android_package",
-    {
-      resourceOwner: {
-        run: (operation) => prerequisiteResources.run(operation),
-        retain: (owner, resource) =>
-          prerequisiteResources.retain({
-            kind: "lease",
-            resource,
-            lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
-          }),
-      },
-    },
-  );
-} finally {
-  await prerequisiteResources.close();
-}
+await validateVerifierJadxConfiguration(
+  configuration,
+  process.env,
+  "inspect_android_package",
+);
 const { java, jvmArguments } = configuration;
 const execute = promisify(execFile);
 await execute(java, ["-version"], { timeout: 10_000 });
