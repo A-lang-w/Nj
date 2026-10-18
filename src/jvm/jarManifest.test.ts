@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { isJarManifestName, isMultiReleaseManifest } from "./jarManifest.js";
 
@@ -156,5 +156,26 @@ describe("isJarManifestName (OpenJDK 25 ZipFile manifest lookup)", () => {
     expect(isJarManifestName("META_INF/MANIFEST.MF")).toBe(false);
     // U+0130 lowercases to "i̇" in Unicode; only ASCII case is folded.
     expect(isJarManifestName("META-İNF/MANIFEST.MF")).toBe(false);
+  });
+});
+
+describe("isMultiReleaseManifest continuation cost", () => {
+  it("decides a value continued over 300,000 lines without copying each line", () => {
+    // OpenJDK 25.0.4 JarFile.isMultiRelease(): true. The value "tr" + 300,000
+    // empty continuations + "ue" is "true"; the pre-filter matches X-Note.
+    const manifest = bytes(
+      `Manifest-Version: 1.0${CRLF}X-Note: ${MR}${CRLF}Multi-Release: tr${CRLF}` +
+        ` ${CRLF}`.repeat(300_000) +
+        ` ue${CRLF}${CRLF}`,
+    );
+    // Retaining one copy per continuation line grew the heap ~63 MiB here;
+    // only the attribute names may be copied.
+    const slice = vi.spyOn(Uint8Array.prototype, "slice");
+    try {
+      expect(isMultiReleaseManifest(manifest)).toBe(true);
+      expect(slice.mock.calls.length).toBeLessThanOrEqual(3);
+    } finally {
+      slice.mockRestore();
+    }
   });
 });

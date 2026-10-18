@@ -175,15 +175,35 @@ const asciiEqualsIgnoreCase = (bytes: Uint8Array, lower: string): boolean =>
   bytes.length === lower.length &&
   bytes.every((c, i) => asciiLower(c) === lower.charCodeAt(i));
 
-const concat = (parts: readonly Uint8Array[]): Uint8Array => {
-  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
-  let at = 0;
-  for (const part of parts) {
-    out.set(part, at);
-    at += part.length;
+/**
+ * Whether a value, fed in fragments as its continuation lines arrive, equals
+ * `true` ignoring ASCII case. Only the match state is kept, never the value:
+ * a value continued over any number of lines costs constant memory.
+ */
+class TrueValueMatcher {
+  #matched = 0;
+  #possible = true;
+
+  /** Match `bytes[from, to)`; reads in place, allocating nothing. */
+  feed(bytes: Uint8Array, from: number, to: number): void {
+    for (let at = from; at < to; at++) {
+      const byte = bytes[at]!;
+      if (
+        !this.#possible ||
+        this.#matched >= 4 ||
+        asciiLower(byte) !== "true".charCodeAt(this.#matched)
+      ) {
+        this.#possible = false;
+        return;
+      }
+      this.#matched++;
+    }
   }
-  return out;
-};
+
+  get isTrue(): boolean {
+    return this.#possible && this.#matched === 4;
+  }
+}
 
 /**
  * `Attributes.read` over the main section with the JDK's 512-byte line
@@ -194,7 +214,8 @@ const mainSectionMultiRelease = (bytes: Uint8Array): boolean | undefined => {
   const reader = new ManifestLineReader(bytes);
   const line = new Uint8Array(512);
   let name: Uint8Array | undefined;
-  let continued: Uint8Array[] = [];
+  // The value being assembled for `name`, matched as it arrives.
+  let value: TrueValueMatcher | undefined;
   let multiRelease = false;
   for (;;) {
     let len = reader.readLine(line);
@@ -204,13 +225,10 @@ const mainSectionMultiRelease = (bytes: Uint8Array): boolean | undefined => {
     if (terminator !== LF && terminator !== CR) return undefined;
     if (len > 0 && line[len - 1] === CR) len--;
     if (len === 0) break; // end of the main section
-    let value: Uint8Array;
     if (line[0] === SPACE) {
       if (name === undefined) return undefined; // misplaced continuation
-      continued.push(line.slice(1, len));
+      value?.feed(line, 1, len);
       if (reader.peek() === SPACE) continue;
-      value = concat(continued);
-      continued = [];
     } else {
       let i = 0;
       for (;;) {
@@ -219,16 +237,15 @@ const mainSectionMultiRelease = (bytes: Uint8Array): boolean | undefined => {
       }
       if (line[i++] !== SPACE) return undefined; // no space after the colon
       name = line.slice(0, i - 2);
-      if (reader.peek() === SPACE) {
-        continued = [line.slice(i, len)];
-        continue;
-      }
-      value = line.subarray(i, len);
+      value = asciiEqualsIgnoreCase(name, "multi-release")
+        ? new TrueValueMatcher()
+        : undefined;
+      value?.feed(line, i, len);
+      if (reader.peek() === SPACE) continue;
     }
     if (!isValidAttributeName(name)) return undefined;
     // Duplicate names replace earlier values: the last one wins.
-    if (asciiEqualsIgnoreCase(name, "multi-release"))
-      multiRelease = asciiEqualsIgnoreCase(value, "true");
+    if (value !== undefined) multiRelease = value.isTrue;
   }
   return multiRelease;
 };
