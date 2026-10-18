@@ -12,15 +12,15 @@ import { createTestTempDirectory } from "./temporaryDirectory.js";
 const EXACT_INTEGER = { $plist_type: "integer", decimal: "9007199254740993" };
 const ROUNDED = 9007199254740992;
 
-/** Accepted decoder representations whose supplemental metadata needs care. */
-export const mixedArchiveNumberElements = [
-  "<integer>9007199254740992<!-- split -->3</integer>",
-  "<integer>9007199254740992<![CDATA[3]]></integer>",
-  "<integer><![CDATA[9007199254740992]]>3</integer>",
-  "<integer><![CDATA[9007199254740992&#51;]]></integer>",
-  "<integer>9007199254740992<?rea split?>3</integer>",
-  "<integer>9007199254740992<string>3</string></integer>",
-  "<integer>9007199254740992x</integer>",
+/** Unknown integer literals must not discard independent numeric facts. */
+const unknownArchiveIntegerLiterals = [
+  ["9007199254740992<!-- split -->3", "unsupported-markup"],
+  ["9007199254740992<![CDATA[3]]>", "unsupported-markup"],
+  ["<![CDATA[9007199254740992]]>3", "unsupported-markup"],
+  ["<![CDATA[9007199254740992&#51;]]>", "unsupported-markup"],
+  ["9007199254740992<?rea split?>3", "unsupported-markup"],
+  ["9007199254740992<string>3</string>", "unsupported-markup"],
+  ["9007199254740992x", "invalid-literal"],
 ] as const;
 
 /** Ordinary dictionaries and malformed numeric references at the same boundary. */
@@ -39,15 +39,20 @@ export const archiveNumberMetadataCases = [
     source: { first: "__INTEGER__", other: "__OTHER__" },
     element,
     expected: { first: EXACT_INTEGER, other: value },
-    incomplete: false,
+    unknownScalar: false,
+    exactInteger: true,
     malformedReference: false,
   })),
-  ...mixedArchiveNumberElements.map((element) => ({
-    name: element,
+  ...unknownArchiveIntegerLiterals.map(([literal, reason]) => ({
+    name: `<integer>${literal}</integer>`,
     source: { first: "__INTEGER__", other: "__OTHER__" },
-    element,
-    expected: { first: ROUNDED, other: ROUNDED },
-    incomplete: true,
+    element: `<integer>${literal}</integer>`,
+    expected: {
+      first: EXACT_INTEGER,
+      other: { $plist_type: "unknown", element: "integer", literal, reason },
+    },
+    unknownScalar: true,
+    exactInteger: true,
     malformedReference: false,
   })),
   ...(["UID", "CF$UID"] as const).flatMap((key) => [
@@ -56,7 +61,8 @@ export const archiveNumberMetadataCases = [
       source: { [key]: { amount: "__INTEGER__" } },
       element: "",
       expected: { [key]: { amount: EXACT_INTEGER } },
-      incomplete: false,
+      unknownScalar: false,
+      exactInteger: true,
       malformedReference: false,
     },
     {
@@ -64,7 +70,8 @@ export const archiveNumberMetadataCases = [
       source: { [key]: ["__INTEGER__"] },
       element: "",
       expected: { [key]: [EXACT_INTEGER] },
-      incomplete: false,
+      unknownScalar: false,
+      exactInteger: true,
       malformedReference: false,
     },
     {
@@ -72,7 +79,8 @@ export const archiveNumberMetadataCases = [
       source: { [key]: "__INTEGER__" },
       element: "",
       expected: { [key]: ROUNDED },
-      incomplete: false,
+      unknownScalar: false,
+      exactInteger: false,
       malformedReference: true,
     },
   ]),
@@ -80,8 +88,16 @@ export const archiveNumberMetadataCases = [
     name: "entity-encoded integer text",
     source: { amount: "__INTEGER__" },
     element: "",
-    expected: { amount: EXACT_INTEGER },
-    incomplete: false,
+    expected: {
+      amount: {
+        $plist_type: "unknown",
+        element: "integer",
+        literal: "&#57;007199254740993",
+        reason: "invalid-literal",
+      },
+    },
+    unknownScalar: true,
+    exactInteger: false,
     malformedReference: false,
     integerElement: "<integer>&#57;007199254740993</integer>",
   },
@@ -90,7 +106,8 @@ export const archiveNumberMetadataCases = [
   source: JsonValue;
   element: string;
   expected: JsonValue;
-  incomplete: boolean;
+  unknownScalar: boolean;
+  exactInteger: boolean;
   malformedReference: boolean;
   integerElement?: string;
 }[];
@@ -123,7 +140,7 @@ export const keyedArchiveNumberMetadataFixture = async (item: MetadataCase) => {
   };
 };
 
-/** Require exact ordinary values and honest limitations for incomplete metadata. */
+/** Require exact values, explicit unknowns and independently retained metadata. */
 export const expectKeyedArchiveNumberMetadata = (
   value: unknown,
   item: MetadataCase,
@@ -145,14 +162,37 @@ export const expectKeyedArchiveNumberMetadata = (
     status: "resolved",
     raw: { CF$UID: 1 },
   });
-  if (item.incomplete) {
-    expect(result.limitations).toContainEqual(
-      expect.stringMatching(/metadata.*completely observed.*precision/u),
-    );
-    expect(
-      result.limitations.some((note) => note.includes("unambiguous integer")),
-    ).toBe(false);
-  } else if (item.malformedReference) {
+  expect(result.limitations).not.toContainEqual(
+    expect.stringMatching(/metadata.*completely observed.*precision/u),
+  );
+  expect(
+    result.limitations.filter((note) => note.includes("XML scalar value(s)")),
+  ).toEqual(
+    item.unknownScalar
+      ? [
+          expect.stringMatching(
+            /^1 XML scalar value\(s\) could not be established/u,
+          ),
+        ]
+      : [],
+  );
+  expect(
+    result.limitations.filter((note) => note.includes("unambiguous integer")),
+  ).toEqual(
+    item.exactInteger
+      ? [expect.stringMatching(/^1 unambiguous integer value/u)]
+      : [],
+  );
+  expect(
+    result.limitations.filter((note) =>
+      note.includes("observed integer literal(s)"),
+    ),
+  ).toEqual(
+    item.exactInteger || item.malformedReference
+      ? [expect.stringMatching(/^1 observed integer literal\(s\)/u)]
+      : [],
+  );
+  if (item.malformedReference) {
     expect(result.references).toContainEqual({
       source: 1,
       path: [],
@@ -162,8 +202,5 @@ export const expectKeyedArchiveNumberMetadata = (
     });
   } else {
     expect(result.references).toHaveLength(1);
-    expect(result.limitations).toContainEqual(
-      expect.stringMatching(/^1 unambiguous integer value/u),
-    );
   }
 };

@@ -109,6 +109,7 @@ import {
   type SemanticGlobalBindingFacts,
 } from "./javascriptSemanticOpaqueEffects.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
+import { SemanticReferenceStoreIndex } from "./javascriptSemanticReferenceStoreIndex.js";
 import {
   createSemanticGlobalRootReplacementQuery,
   semanticGlobalRootHasDataDescriptor,
@@ -229,7 +230,7 @@ interface AmbientReferenceFacts {
   readonly hasGlobalRootStores?: () => boolean;
   readonly stores: WeakMap<
     SemanticStorageIdentity,
-    Map<SemanticIterationSource, AmbientProjection>
+    SemanticReferenceStoreIndex<SemanticIterationSource>
   >;
   readonly sharedStorage: ReturnType<
     typeof createSemanticSharedStorageIdentities
@@ -724,7 +725,9 @@ export const createAmbientPathResolver = (
         selectedAt,
         state,
       );
-      for (const [source, path] of facts?.stores.get(identity) ?? []) {
+      for (const [source, path] of facts?.stores
+        .get(identity)
+        ?.candidates(firstKey) ?? []) {
         const sourceProjection = source.projection.map((key) =>
           key === null || typeof key === "object" ? null : String(key),
         );
@@ -2916,7 +2919,7 @@ export function* indexJavaScriptAmbientWritesSteps(
   >();
   const stores = new WeakMap<
     SemanticStorageIdentity,
-    Map<SemanticIterationSource, AmbientProjection>
+    SemanticReferenceStoreIndex<SemanticIterationSource>
   >();
   const sharedStorage = createSemanticSharedStorageIdentities();
   const interop = createSemanticModuleInterop(state, {
@@ -3230,7 +3233,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     for (const [node, path] of identities) {
       const entries =
         stores.get(node) ??
-        new Map<SemanticIterationSource, AmbientProjection>();
+        new SemanticReferenceStoreIndex<SemanticIterationSource>();
       const previous = entries.get(source);
       const joined = entries.has(source)
         ? joinAmbientProjection(previous, path)
@@ -3242,7 +3245,11 @@ export function* indexJavaScriptAmbientWritesSteps(
             previous.every((key, index) => key === joined[index])))
       )
         continue;
-      entries.set(source, joined);
+      entries.set(
+        source,
+        joined,
+        storeKinds.get(source) === "prototype" || joined?.[0] === "__proto__",
+      );
       stores.set(node, entries);
       for (const dependent of dependents.get(node) ?? [])
         pendingStores.add(dependent);
