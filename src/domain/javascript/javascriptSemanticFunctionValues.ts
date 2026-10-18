@@ -233,6 +233,7 @@ const VALUE_MEMBERS: Readonly<
   Record<string, Readonly<Record<string, FunctionValue>>>
 > = {
   "global.require": { main: MODULE_INSTANCE, cache: MODULE_CACHE },
+  "global.process": { mainModule: MODULE_INSTANCE },
   "commonjs-module": MODULE_INSTANCE_MEMBERS,
   "module-instance": {
     ...MODULE_INSTANCE_MEMBERS,

@@ -93,6 +93,13 @@ interface InteropHelper {
   readonly identity: boolean;
 }
 
+interface InteropReferenceSource {
+  readonly node: t.Expression;
+  readonly projection: readonly (string | null)[] | undefined;
+  /** Namespace default selection does not select a slot on the input. */
+  readonly projectionOffset: number;
+}
+
 const completedFreshObjectFacts =
   new WeakSet<JavaScriptSemanticAnalysisState>();
 
@@ -112,7 +119,11 @@ export const completeSemanticFreshObjectFacts = (
 export const createSemanticModuleInterop = (
   state: JavaScriptSemanticAnalysisState,
   options?: {
-    readonly intrinsicPath: (node: t.Node) => readonly string[] | undefined;
+    readonly intrinsicPath?: (node: t.Node) => readonly string[] | undefined;
+    /** The consumer supplies proven loader origins with its module-write coverage. */
+    readonly loaderOrigin?: (
+      node: t.Node,
+    ) => JavaScriptModuleOrigin | undefined;
     /** Complete canonical effects, kept separate from nominal alias paths. */
     readonly intrinsicWriteFacts?: SemanticGlobalBindingFacts;
     /** Physical bound helper reads can use facts independently of logical receiver paths. */
@@ -135,6 +146,9 @@ export const createSemanticModuleInterop = (
     ) => boolean;
   },
 ) => {
+  const loaderOrigin =
+    options?.loaderOrigin ??
+    ((node: t.Node) => semanticRequireOrigin(node, state)?.origin);
   const globalBindingFacts = {
     ambientWrites: state.ambientWrites,
     ambientWriteEffects: state.ambientWriteEffects,
@@ -808,7 +822,7 @@ export const createSemanticModuleInterop = (
     return proof;
   };
 
-  const provenCall = (node: t.Node) => {
+  const conversionCall = (node: t.Node, allowUnknownMode = false) => {
     if (!t.isCallExpression(node) || !t.isIdentifier(node.callee))
       return undefined;
     const helper = resolveSemanticBindingState(
@@ -830,19 +844,48 @@ export const createSemanticModuleInterop = (
       proof.readyAfter >= (node.start ?? -1) ||
       !t.isExpression(input) ||
       node.arguments.length > 2 ||
-      !literalMode.found
+      (!literalMode.found && !allowUnknownMode)
     )
       return undefined;
     return {
       input,
+      identity: proof.identity,
       // A truthy node mode forces the module-valued default. Other modes
       // preserve named exports without proving the source's default property.
-      defaultIsModule: !proof.identity && Boolean(literalMode.value),
+      defaultIsModule:
+        !proof.identity && literalMode.found && Boolean(literalMode.value),
       dependencies: proof.dependencies.map((dependency) => ({
         ...dependency,
         capturedAt: dependency.capturedAt ?? node,
       })),
     };
+  };
+
+  /** Parsed conversion sources are possible references, never loader proof.
+   * The caller owns source captures and mutations; no provisional loader or
+   * intrinsic-integrity result is retained in this selection. */
+  const callReferenceSources = (
+    node: t.Node,
+    projection: readonly (string | null)[] | undefined,
+    escapedContents = false,
+  ): readonly InteropReferenceSource[] => {
+    const converted = conversionCall(node, true);
+    if (converted === undefined) return [];
+    const selected = (offset: number): InteropReferenceSource => ({
+      node: converted.input,
+      projection: projection?.slice(offset),
+      projectionOffset: offset,
+    });
+    if (converted.identity || projection === undefined) return [selected(0)];
+    const key = projection[0];
+    // Own namespace writes do not mutate source slots. Escaping the namespace
+    // can still expose the source through its default or live named values.
+    if (key === undefined) return escapedContents ? [selected(0)] : [];
+    if (key !== "default" && key !== null) return [selected(0)];
+    if (key === "default" && converted.defaultIsModule) return [selected(1)];
+    // Falsy or unknown mode can preserve a source default or install the input
+    // as default. Unknown selectors also retain the live named alternative.
+    return [selected(0), selected(1)];
   };
 
   const callOrigin = (node: t.Node): InteropOrigin | undefined => {
@@ -851,11 +894,9 @@ export const createSemanticModuleInterop = (
     const { root, members } = electronMemberPath(node);
     if (!members.every((member): member is string => member !== null))
       return undefined;
-    const converted = provenCall(root);
+    const converted = conversionCall(root);
     const required =
-      converted === undefined
-        ? undefined
-        : semanticRequireOrigin(converted.input, state)?.origin;
+      converted === undefined ? undefined : loaderOrigin(converted.input);
     if (
       converted === undefined ||
       required === undefined ||
@@ -944,14 +985,14 @@ export const createSemanticModuleInterop = (
       (initial.node.start ?? Infinity) >= (call.start ?? -1)
     )
       return undefined;
-    const convertedCall = provenCall(call);
+    const convertedCall = conversionCall(call);
     const input = convertedCall?.input;
     if (
       !t.isIdentifier(input) ||
       resolveSemanticBindingState(state, input, input.name) !== binding
     )
       return undefined;
-    const required = semanticRequireOrigin(initial.node, state)?.origin;
+    const required = loaderOrigin(initial.node);
     if (required === undefined || required.importedPath.length !== 0)
       return undefined;
     if (convertedCall === undefined) return undefined;
@@ -968,6 +1009,7 @@ export const createSemanticModuleInterop = (
   return {
     origin,
     callOrigin,
+    callReferenceSources,
     intrinsicPath,
     intrinsicInvocation: (node: t.CallExpression | t.OptionalCallExpression) =>
       resolveJavaScriptIntrinsicInvocation(

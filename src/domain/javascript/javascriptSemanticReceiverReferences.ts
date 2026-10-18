@@ -14,7 +14,10 @@ import {
   createSemanticPrivateMemberTargets,
   createSemanticReturnedReferences,
 } from "./javascriptSemanticReturnedReferences.js";
-import { semanticAmbientOwnSlotUnchanged } from "./javascriptSemanticAmbientWrites.js";
+import {
+  semanticAmbientOwnSlotFactsReady,
+  semanticAmbientOwnSlotUnchanged,
+} from "./javascriptSemanticAmbientWrites.js";
 import {
   semanticGlobalBindingReadMayHaveChanged,
   semanticOpaqueBindingReadMayHaveChanged,
@@ -36,6 +39,28 @@ const receiverQueries = new WeakMap<
   JavaScriptSemanticAnalysisState,
   (node: t.ThisExpression) => readonly t.Node[]
 >();
+
+type ReceiverSite = readonly [node: t.Node, parent: t.Node | null];
+const receiverSites = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  readonly ReceiverSite[]
+>();
+
+/** Retain syntax once per source; each proof snapshot selects uses afresh. */
+const parsedReceiverSites = (
+  state: JavaScriptSemanticAnalysisState,
+): readonly ReceiverSite[] => {
+  const prior = receiverSites.get(state);
+  if (prior !== undefined) return prior;
+  const sites: ReceiverSite[] = [];
+  traverseJavaScriptAst(state.program, {
+    enter: (node, parent) => {
+      sites.push([node, parent]);
+    },
+  });
+  receiverSites.set(state, sites);
+  return sites;
+};
 
 /** Possible receiver identity is shared by all ambient-write consumers. */
 export const createSemanticReceiverReferences = (
@@ -100,6 +125,7 @@ export const createSemanticReceiverReferences = (
   };
   let receivers: WeakMap<t.Function, Set<t.Node>> | undefined;
   let factsReady = semanticFreshObjectFactsReady(state);
+  let ownSlotFactsReady = semanticAmbientOwnSlotFactsReady(state);
   const indexReceivers = () => {
     const indexed = new WeakMap<t.Function, Set<t.Node>>();
     receivers = indexed;
@@ -266,227 +292,232 @@ export const createSemanticReceiverReferences = (
       for (const target of targets(callee)) retain(target);
       covered.add(callee);
     };
-    traverseJavaScriptAst(state.program, {
-      skip: (node) => inactiveDefaults.has(node),
-      enter: (node) => {
-        if (t.isPrivateName(node)) {
-          // A decorator can expose the original callable even when the private
-          // slot itself never leaves the class's lexical scope.
-          for (const member of privateTargets(node)?.members ?? [])
-            if (
-              member.key.kind === "private" &&
-              member.key.declaration === node &&
-              member.decorated &&
-              member.value !== null
-            )
-              for (const target of contents(member.value))
-                retain(target, state.program);
-        }
-        if (
-          (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
-          t.isPrivateName(node.property)
-        ) {
-          const declaration = privateTargets(node.property);
-          const values = privateReceivers(node.property);
-          const parent = state.parentsByNode.get(node);
-          const assignment =
-            t.isAssignmentExpression(parent) && parent.left === node;
-          const update =
-            t.isUpdateExpression(parent) && parent.argument === node;
-          for (const member of declaration?.members ?? []) {
-            if (
-              values !== undefined &&
-              t.isFunction(member.value) &&
-              ((member.kind === "get" &&
-                (!assignment || parent.operator !== "=")) ||
-                (member.kind === "set" && (assignment || update)))
-            )
-              retainPrivate(member.value, values);
-          }
-        }
-        if (t.isNewExpression(node)) {
-          construct(node.callee);
-          return;
-        }
-        if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
-          return;
-        let invocation = invocations.intrinsicInvocation(node);
-        if (invocation?.path.join(".") === "intrinsic.Reflect.construct")
-          invocation = constructionInvocations.intrinsicInvocation(node);
-        if (
-          invocation?.kind === "known" &&
-          invocation.path.join(".") === "intrinsic.Reflect.construct"
-        ) {
-          const target = invocation.arguments?.[0];
-          if (t.isExpression(target)) construct(target);
-          return;
-        }
-        if (
-          invocation?.path.length !== 3 ||
-          invocation.path[1] !== "local-receiver"
-        )
-          return;
-        const group = groups.get(invocation.path[2]!);
-        if (group === undefined) return;
-        covered.add(group.node);
-        for (const read of invocation.callableReads ?? []) covered.add(read);
-        const callee = unwrapJavaScriptExpression(node.callee).node;
-        const receiver = invocation.receiver ?? invocation.memberReceiver;
-        const branded =
-          invocation.receiver === undefined &&
-          callee === group.node &&
-          (t.isMemberExpression(callee) ||
-            t.isOptionalMemberExpression(callee)) &&
-          t.isPrivateName(callee.property)
-            ? privateReceivers(callee.property)
-            : undefined;
-        for (const target of group.targets) {
-          if (branded !== undefined) {
-            retainPrivate(target, branded);
-            continue;
-          }
-          retain(target, receiver);
+    const sites = parsedReceiverSites(state);
+    const inactiveNodes = new WeakSet<t.Node>();
+    sites.forEach(([node, parent]) => {
+      if (
+        inactiveDefaults.has(node) ||
+        (parent !== null && inactiveNodes.has(parent))
+      ) {
+        inactiveNodes.add(node);
+        return;
+      }
+      if (t.isPrivateName(node)) {
+        // A decorator can expose the original callable even when the private
+        // slot itself never leaves the class's lexical scope.
+        for (const member of privateTargets(node)?.members ?? [])
           if (
-            invocation.receiverUncertain === true ||
-            t.isSpreadElement(receiver) ||
-            (invocation.kind === "opaque" && receiver === undefined)
+            member.key.kind === "private" &&
+            member.key.declaration === node &&
+            member.decorated &&
+            member.value !== null
           )
-            retain(target, state.program);
-          // Unknown arguments can be nullish. Only proven objects/non-null
-          // literals exclude sloppy receiver substitution; reads remain strict.
-          const value =
-            receiver === undefined
-              ? undefined
-              : unwrapJavaScriptExpression(receiver).node;
-          const nonNullish =
-            value !== undefined &&
-            (definiteObject(value) ||
-              (t.isLiteral(value) && !t.isNullLiteral(value)) ||
-              ["globalThis", "global", "window", "self", "module"].some(
-                (name) => isUnshadowedGlobal(value, state, name),
-              ));
-          if (!nonNullish && !semanticStrictContext(target, state))
-            retain(target, state.program);
+            for (const target of contents(member.value))
+              retain(target, state.program);
+      }
+      if (
+        (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
+        t.isPrivateName(node.property)
+      ) {
+        const declaration = privateTargets(node.property);
+        const values = privateReceivers(node.property);
+        const parent = state.parentsByNode.get(node);
+        const assignment =
+          t.isAssignmentExpression(parent) && parent.left === node;
+        const update = t.isUpdateExpression(parent) && parent.argument === node;
+        for (const member of declaration?.members ?? []) {
+          if (
+            values !== undefined &&
+            t.isFunction(member.value) &&
+            ((member.kind === "get" &&
+              (!assignment || parent.operator !== "=")) ||
+              (member.kind === "set" && (assignment || update)))
+          )
+            retainPrivate(member.value, values);
         }
-      },
+      }
+      if (t.isNewExpression(node)) {
+        construct(node.callee);
+        return;
+      }
+      if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
+        return;
+      let invocation = invocations.intrinsicInvocation(node);
+      if (invocation?.path.join(".") === "intrinsic.Reflect.construct")
+        invocation = constructionInvocations.intrinsicInvocation(node);
+      if (
+        invocation?.kind === "known" &&
+        invocation.path.join(".") === "intrinsic.Reflect.construct"
+      ) {
+        const target = invocation.arguments?.[0];
+        if (t.isExpression(target)) construct(target);
+        return;
+      }
+      if (
+        invocation?.path.length !== 3 ||
+        invocation.path[1] !== "local-receiver"
+      )
+        return;
+      const group = groups.get(invocation.path[2]!);
+      if (group === undefined) return;
+      covered.add(group.node);
+      for (const read of invocation.callableReads ?? []) covered.add(read);
+      const callee = unwrapJavaScriptExpression(node.callee).node;
+      const receiver = invocation.receiver ?? invocation.memberReceiver;
+      const branded =
+        invocation.receiver === undefined &&
+        callee === group.node &&
+        (t.isMemberExpression(callee) ||
+          t.isOptionalMemberExpression(callee)) &&
+        t.isPrivateName(callee.property)
+          ? privateReceivers(callee.property)
+          : undefined;
+      for (const target of group.targets) {
+        if (branded !== undefined) {
+          retainPrivate(target, branded);
+          continue;
+        }
+        retain(target, receiver);
+        if (
+          invocation.receiverUncertain === true ||
+          t.isSpreadElement(receiver) ||
+          (invocation.kind === "opaque" && receiver === undefined)
+        )
+          retain(target, state.program);
+        // Unknown arguments can be nullish. Only proven objects/non-null
+        // literals exclude sloppy receiver substitution; reads remain strict.
+        const value =
+          receiver === undefined
+            ? undefined
+            : unwrapJavaScriptExpression(receiver).node;
+        const nonNullish =
+          value !== undefined &&
+          (definiteObject(value) ||
+            (t.isLiteral(value) && !t.isNullLiteral(value)) ||
+            ["globalThis", "global", "window", "self", "module"].some((name) =>
+              isUnshadowedGlobal(value, state, name),
+            ));
+        if (!nonNullish && !semanticStrictContext(target, state))
+          retain(target, state.program);
+      }
     });
     // Recovered calls are not a complete use set: stored, returned or passed
     // callable values can be invoked through a receiver we did not recover.
-    const inactiveNodes = new WeakSet<t.Node>();
     const inactiveTargets = new Set<t.Function>();
     const storedSources: [t.Node, t.Node][] = [];
     const escapedValues = new WeakSet<t.Node>();
-    traverseJavaScriptAst(state.program, {
-      enter: (node, parent) => {
-        if (
-          inactiveDefaults.has(node) ||
-          (parent !== null && inactiveNodes.has(parent))
-        ) {
-          inactiveNodes.add(node);
-          if (t.isFunction(node)) inactiveTargets.add(node);
-          else if (
-            parent !== null &&
-            t.isIdentifier(node) &&
-            t.isReferenced(node, parent, state.parentsByNode.get(parent))
-          )
-            for (const target of contents(node)) inactiveTargets.add(target);
-          return;
-        }
-        if (parent !== null && t.isClassDeclaration(node)) {
-          storedSources.push([node, parent]);
-          return;
-        }
-        if (parent === null || !t.isExpression(node)) return;
-        if (
+    sites.forEach(([node, initialParent]) => {
+      let parent = initialParent;
+      if (inactiveNodes.has(node)) {
+        if (t.isFunction(node)) inactiveTargets.add(node);
+        else if (
+          parent !== null &&
           t.isIdentifier(node) &&
-          !t.isReferenced(node, parent, state.parentsByNode.get(parent))
+          t.isReferenced(node, parent, state.parentsByNode.get(parent))
+        )
+          for (const target of contents(node)) inactiveTargets.add(target);
+        return;
+      }
+      if (parent !== null && t.isClassDeclaration(node)) {
+        storedSources.push([node, parent]);
+        return;
+      }
+      if (parent === null || !t.isExpression(node)) return;
+      if (
+        t.isIdentifier(node) &&
+        !t.isReferenced(node, parent, state.parentsByNode.get(parent))
+      )
+        return;
+      let current: t.Node = node;
+      // Follow edges that select this value before deciding whether it is
+      // stored, consumed, or discarded. The expression's syntax alone does
+      // not distinguish an escaped instance from a local method receiver.
+      for (;;) {
+        if (covered.has(current)) return;
+        // Plain assignment evaluates an address without reading its old value.
+        // Computed keys and the RHS remain independent evaluated use sites.
+        if (
+          t.isAssignmentExpression(parent, { operator: "=" }) &&
+          parent.left === current
         )
           return;
-        let current: t.Node = node;
-        // Follow edges that select this value before deciding whether it is
-        // stored, consumed, or discarded. The expression's syntax alone does
-        // not distinguish an escaped instance from a local method receiver.
-        for (;;) {
-          if (covered.has(current)) return;
-          if (
-            (t.isSequenceExpression(parent) &&
-              parent.expressions.at(-1) !== current) ||
-            (t.isConditionalExpression(parent) && parent.test === current) ||
-            (t.isExpressionStatement(parent) &&
-              parent.expression === current) ||
-            (t.isUnaryExpression(parent) &&
-              ["void", "typeof", "!"].includes(parent.operator)) ||
-            ((t.isIfStatement(parent) ||
-              t.isWhileStatement(parent) ||
-              t.isDoWhileStatement(parent)) &&
-              parent.test === current) ||
-            (t.isForStatement(parent) &&
-              (parent.init === current ||
-                parent.test === current ||
-                parent.update === current))
-          )
-            return;
-          if (
-            parent === null ||
-            !(
-              ((t.isMemberExpression(parent) ||
-                t.isOptionalMemberExpression(parent)) &&
-                parent.object === current) ||
-              unwrapJavaScriptExpression(parent).node === current ||
-              t.isSequenceExpression(parent) ||
-              t.isConditionalExpression(parent) ||
-              t.isLogicalExpression(parent) ||
-              (t.isAssignmentExpression(parent, { operator: "=" }) &&
-                parent.right === current &&
-                t.isIdentifier(parent.left) &&
-                resolveSemanticBindingState(
-                  state,
-                  parent.left,
-                  parent.left.name,
-                ) !== undefined)
-            )
-          )
-            break;
-          current = parent;
-          parent = state.parentsByNode.get(current) ?? null;
-        }
         if (
-          (t.isVariableDeclarator(parent) &&
-            parent.init === current &&
-            t.isIdentifier(parent.id)) ||
-          ((t.isObjectProperty(parent) ||
-            t.isClassProperty(parent) ||
-            t.isClassPrivateProperty(parent) ||
-            t.isClassAccessorProperty(parent)) &&
-            parent.value === current) ||
-          t.isArrayExpression(parent) ||
-          (t.isSpreadElement(parent) &&
-            t.isArrayExpression(state.parentsByNode.get(parent))) ||
-          (t.isClass(parent) && parent.superClass === current)
-        ) {
-          storedSources.push([node, parent]);
+          (t.isSequenceExpression(parent) &&
+            parent.expressions.at(-1) !== current) ||
+          (t.isConditionalExpression(parent) && parent.test === current) ||
+          (t.isExpressionStatement(parent) && parent.expression === current) ||
+          (t.isUnaryExpression(parent) &&
+            ["void", "typeof", "!"].includes(parent.operator)) ||
+          ((t.isIfStatement(parent) ||
+            t.isWhileStatement(parent) ||
+            t.isDoWhileStatement(parent)) &&
+            parent.test === current) ||
+          (t.isForStatement(parent) &&
+            (parent.init === current ||
+              parent.test === current ||
+              parent.update === current))
+        )
           return;
+        if (
+          parent === null ||
+          !(
+            ((t.isMemberExpression(parent) ||
+              t.isOptionalMemberExpression(parent)) &&
+              parent.object === current) ||
+            unwrapJavaScriptExpression(parent).node === current ||
+            t.isSequenceExpression(parent) ||
+            t.isConditionalExpression(parent) ||
+            t.isLogicalExpression(parent) ||
+            (t.isAssignmentExpression(parent, { operator: "=" }) &&
+              parent.right === current &&
+              t.isIdentifier(parent.left) &&
+              resolveSemanticBindingState(
+                state,
+                parent.left,
+                parent.left.name,
+              ) !== undefined)
+          )
+        )
+          break;
+        current = parent;
+        parent = state.parentsByNode.get(current) ?? null;
+      }
+      if (
+        (t.isVariableDeclarator(parent) &&
+          parent.init === current &&
+          t.isIdentifier(parent.id)) ||
+        ((t.isObjectProperty(parent) ||
+          t.isClassProperty(parent) ||
+          t.isClassPrivateProperty(parent) ||
+          t.isClassAccessorProperty(parent)) &&
+          parent.value === current) ||
+        t.isArrayExpression(parent) ||
+        (t.isSpreadElement(parent) &&
+          t.isArrayExpression(state.parentsByNode.get(parent))) ||
+        (t.isClass(parent) && parent.superClass === current)
+      ) {
+        storedSources.push([node, parent]);
+        return;
+      }
+      if (escapedValues.has(current)) return;
+      escapedValues.add(current);
+      // Literal invocation arrays can contain a consumed callable selection.
+      // Walk their leaves without hiding other arguments or nested contents.
+      const values = [current];
+      while (values.length > 0) {
+        const value = values.pop();
+        if (value === undefined || covered.has(value)) continue;
+        const unwrapped = unwrapJavaScriptExpression(value).node;
+        if (t.isArrayExpression(unwrapped)) {
+          for (const element of unwrapped.elements)
+            if (element !== null)
+              values.push(
+                t.isSpreadElement(element) ? element.argument : element,
+              );
+          continue;
         }
-        if (escapedValues.has(current)) return;
-        escapedValues.add(current);
-        // Literal invocation arrays can contain a consumed callable selection.
-        // Walk their leaves without hiding other arguments or nested contents.
-        const values = [current];
-        while (values.length > 0) {
-          const value = values.pop();
-          if (value === undefined || covered.has(value)) continue;
-          const unwrapped = unwrapJavaScriptExpression(value).node;
-          if (t.isArrayExpression(unwrapped)) {
-            for (const element of unwrapped.elements)
-              if (element !== null)
-                values.push(
-                  t.isSpreadElement(element) ? element.argument : element,
-                );
-            continue;
-          }
-          for (const target of contents(value)) retain(target, state.program);
-        }
-      },
+        for (const target of contents(value)) retain(target, state.program);
+      }
     });
     // An explicitly unused default is a known non-invocation. Keep independent
     // calls and escapes, and leave unobserved stored/exported uses unknown.
@@ -537,8 +568,15 @@ export const createSemanticReceiverReferences = (
   };
   const query = (node: t.ThisExpression): readonly t.Node[] => {
     const ready = semanticFreshObjectFactsReady(state);
-    if (!customContext && factsReady !== ready) {
+    const slotsReady = semanticAmbientOwnSlotFactsReady(state);
+    if (
+      (!customContext && factsReady !== ready) ||
+      ownSlotFactsReady !== slotsReady
+    ) {
+      // Frozen binding proofs still acquire completed slot facts. A receiver
+      // indexed while resolving escapes must not retain provisional failures.
       factsReady = ready;
+      ownSlotFactsReady = slotsReady;
       receivers = undefined;
     }
     const owner = lexicalOwner(node);

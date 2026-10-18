@@ -18,6 +18,7 @@ import {
   semanticLiteralActivationIsImmediate,
 } from "./javascriptSemanticMutationInitializers.js";
 import { delayedInstanceFieldValue } from "./javascriptSemanticEvaluationOrder.js";
+import { semanticAmbientOwnSlotFactsReady } from "./javascriptSemanticAmbientWrites.js";
 import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
 import {
   semanticArrayIndex,
@@ -617,11 +618,16 @@ const createSemanticCallableReferences = (
       return id;
     });
   let factsReady = semanticFreshObjectFactsReady(state);
+  let ownSlotFactsReady =
+    captureProofs === undefined || semanticAmbientOwnSlotFactsReady(state);
   return (callee, projection = []) => {
     const ready = semanticFreshObjectFactsReady(state);
-    if (factsReady !== ready) {
-      // Provisional global-binding uncertainty is not a final result fact.
+    const slotsReady =
+      captureProofs === undefined || semanticAmbientOwnSlotFactsReady(state);
+    if (factsReady !== ready || ownSlotFactsReady !== slotsReady) {
+      // Neither provisional binding nor own-slot uncertainty is a final fact.
       factsReady = ready;
+      ownSlotFactsReady = slotsReady;
       results = new WeakMap();
     }
     const projectionKey = JSON.stringify(projection);

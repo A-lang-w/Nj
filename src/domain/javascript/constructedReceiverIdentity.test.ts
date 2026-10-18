@@ -1,7 +1,15 @@
 import { parse } from "@babel/parser";
 import { describe, expect, it } from "vitest";
 
-import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import {
+  createSemanticModuleInterop,
+  semanticFreshObjectFactsReady,
+} from "./javascriptModuleInterop.js";
+import {
+  indexJavaScriptAmbientWritesSteps,
+  semanticAmbientOwnSlotFactsReady,
+  semanticAmbientOwnSlotUnchanged,
+} from "./javascriptSemanticAmbientWrites.js";
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascriptSemanticAnalysis.js";
 import { createSemanticReceiverReferences } from "./javascriptSemanticReceiverReferences.js";
 import {
@@ -394,6 +402,10 @@ describe("bound source-function receivers", () => {
     "const make=(flag?set:set).bind({});make.call(null);",
     "const box={fn:set};const make=box.fn.bind({});make.call(null);",
     "const box=[set];const make=box[0].bind({});make.call(null);",
+    "const box={fn:set};const make=box.fn.bind({});box.fn=other;make.call(null);",
+    "const box=[set];const make=box[0].bind({});box[0]=other;make.call(null);",
+    "const box={fn:set};const make=box.fn.bind({});consume(box.fn=other);make.call(null);",
+    "const box={fn:set};const saved=box.fn;box.fn=other;const make=saved.bind({});make.call(null);",
     "var candidate=set;const captured=(0,candidate);globalThis.candidate=other;const make=captured.bind({});make.call(null);",
   ])("preserves a captured local receiver: %s", (call) => {
     expect(analyze(`function set(){this.Q=other}${call}`)).toMatchObject([
@@ -418,6 +430,11 @@ describe("bound source-function receivers", () => {
     "const box=[set];box[0]=other;const make=box[0].bind({});make.call(null);",
     "const box=[set];consume(box);const make=box[0].bind({});make.call(null);",
     "const box=[...unknown,set];const make=box[0].bind({});make.call(null);",
+    "const box={fn:set};const make=box.fn.bind({});box[(consume(set),'fn')]=other;make.call(null);",
+    "const box={fn:set};const make=box.fn.bind({});box.fn=consume(set);make.call(null);",
+    "const box={fn:set};const make=box.fn.bind({});consume(box.fn);box.fn=other;make.call(null);",
+    "const box={fn:set};const make=box.fn.bind({});consume(box.fn ||= other);make.call(null);",
+    "const box={fn:set};const make=box.fn.bind({});consume(box.fn=set);make.call(null);",
   ])("keeps an unproven bound receiver global: %s", (call) => {
     expect(analyze(`function set(){this.Q=other}${call}`)).toEqual([]);
   });
@@ -434,6 +451,45 @@ describe("bound source-function receivers", () => {
     expect(
       analyze(
         "const make=set.bind({});const set=function(){this.Q=other};make.call(null);",
+      ),
+    ).toEqual([]);
+  });
+
+  it("preserves ambient fetch after overwriting a captured source slot", () => {
+    const source =
+      "function set(){this.fetch=other}const box={fn:set};const make=box.fn.bind({});box.fn=other;make.call(null);fetch('/local');";
+    const parsed = parseJavaScriptSource(source, "bundle.js");
+    if (parsed === null) throw new Error("Expected parsed source");
+    expect(
+      analyzeParsedJavaScriptStaticSource(source, parsed).endpoints.filter(
+        ({ mechanism }) => mechanism === "call:fetch",
+      ),
+    ).toHaveLength(1);
+  });
+});
+
+describe("bound source receivers with completed own-slot facts", () => {
+  it.each([
+    "function set(){this.Q=other}function get(){return this}const box={fn:set};const make=box.fn.bind({});make.call(null);const local={get};consume(local.get());",
+    "function set(){this.Q=other}function get(){return this}const local={get};consume(local.get());const box={fn:set};const make=box.fn.bind({});make.call(null);",
+    "const box={fn:set};const make=box.fn.bind({});make.call(null);const local={get};consume(local.get());function set(){this.Q=other}function get(){return this}",
+    "function set(){this.Q=other}function get(){return this}const box=[set];const make=box[0].bind({});make.call(null);const local={get};consume(local.get());",
+    "function set(){this.Q=other}function get(){return this}const box={fn:set};const make=box.fn.bind({});box.fn=other;make.call(null);const local={get};consume(local.get());",
+  ])("refreshes provisional receiver exclusions: %s", (setup) => {
+    expect(analyze(setup)).toMatchObject([{ channel: "kept" }]);
+  });
+
+  it.each([
+    "const box={fn:set};box.fn=other;const make=box.fn.bind({});make.call(null);",
+    "const box={fn:set};consume(box);const make=box.fn.bind({});make.call(null);",
+    "const box={fn:set};consume(set);const make=box.fn.bind({});make.call(null);",
+    "const box=flag?{fn:set}:unknown;const make=box.fn.bind({});make.call(null);",
+    "const box={fn:flag?set:unknown};const make=box.fn.bind({});make.call(null);",
+    "const box={fn:set};const make=box[key].bind({});make.call(null);",
+  ])("retains changed, escaped, and incomplete captures: %s", (setup) => {
+    expect(
+      analyze(
+        `function set(){this.Q=other}function get(){return this}${setup}const local={get};consume(local.get());`,
       ),
     ).toEqual([]);
   });
@@ -471,8 +527,8 @@ it.each([
 ])(
   "retains member selection sites in source capture proof: %s",
   (selection, complete) => {
-    // Observable receiver analysis remains conservative after an overwritten
-    // container slot; this exercises the strict capture fact consumed beneath it.
+    // Each alternative keeps the member read that captured its value instead
+    // of using the later bind site for every slot-stability proof.
     const source = `function set(){}const box={fn:set};const first=box.fn;box.fn=other;const second=box.fn;(${selection}).bind({});`;
     const parsed = parseJavaScriptSource(source, "bundle.js");
     if (parsed === null) throw new Error("Expected parsed source");
@@ -493,6 +549,44 @@ it.each([
     expect(capture(last.expression.callee) !== undefined).toBe(complete);
   },
 );
+
+it("refreshes a retained source capture when slot facts complete", () => {
+  const parsed = parseJavaScriptSource(
+    "function set(){}const box={fn:set};box.fn.bind({});",
+    "bundle.js",
+  );
+  if (parsed === null) throw new Error("Expected parsed source");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  const statement = parsed.program.body.at(-1);
+  if (
+    statement?.type !== "ExpressionStatement" ||
+    statement.expression.type !== "CallExpression"
+  )
+    throw new Error("Expected bound source call");
+  const callee = statement.expression.callee;
+  const state = index.bindings;
+  const capture = createSemanticFunctionValueCapture(state, {
+    bindingReadMayHaveChanged: () => false,
+    ownSlotUnchanged: (owner, key, read) =>
+      semanticAmbientOwnSlotUnchanged(state, owner, key, read),
+  });
+  expect(capture(callee)).toBeUndefined();
+  const snapshots: { fresh: boolean; captured: boolean }[] = [];
+  completeSemanticSteps(
+    indexJavaScriptAmbientWritesSteps(parsed.program, state, () => () => {
+      if (semanticAmbientOwnSlotFactsReady(state))
+        snapshots.push({
+          fresh: semanticFreshObjectFactsReady(state),
+          captured: capture(callee) !== undefined,
+        });
+    }),
+  );
+  expect(snapshots.length).toBeGreaterThan(0);
+  for (const snapshot of snapshots)
+    expect(snapshot).toEqual({ fresh: false, captured: true });
+});
 
 it("refreshes a retained receiver query after ambient facts complete", () => {
   const parsed = parseJavaScriptSource(

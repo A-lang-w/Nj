@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import { ROLLDOWN_MODULE_INTEROP } from "./javascriptModuleInterop.fixture.js";
+import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
+import { createAmbientPathResolver } from "./javascriptSemanticAmbientWrites.js";
+import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 const SHIM = 'var Q=(e=>typeof require<"u"?require:e)(function(){});';
@@ -235,6 +240,259 @@ describe("cached Module instance identity", () => {
         .browser_windows,
     ).toEqual([]);
   });
+});
+
+describe("process main Module instance identity", () => {
+  it.each([
+    ["main constructor", "process.mainModule.constructor._load=other;"],
+    [
+      "main prototype",
+      "process.mainModule.constructor.prototype.require=other;",
+    ],
+    [
+      "reflected main prototype",
+      'Reflect.set(Object.getPrototypeOf(process.mainModule),"require",other);',
+    ],
+    [
+      "qualified process",
+      "globalThis.process.mainModule.constructor._load=other;",
+    ],
+    [
+      "process alias",
+      "const proc=process;proc.mainModule.constructor._load=other;",
+    ],
+    [
+      "captured main module",
+      "const main=process.mainModule;process.mainModule={};main.constructor._load=other;",
+    ],
+    [
+      "copied main module alias",
+      "const box={main:process.mainModule};const copy={...box};copy.main.constructor._load=other;",
+    ],
+    [
+      "unknown process member",
+      "process[key].constructor.prototype.require=other;",
+    ],
+    [
+      "related child",
+      "process.mainModule.children[0].constructor._load=other;",
+    ],
+    [
+      "required process",
+      'const proc=require("process");proc.mainModule.constructor._load=other;',
+    ],
+    [
+      "required main module",
+      'const {mainModule:main}=require("node:process");main.constructor._load=other;',
+    ],
+    [
+      "default process import",
+      'import proc from "node:process";proc.mainModule.constructor._load=other;',
+    ],
+    [
+      "namespace default process",
+      'import * as proc from "process";proc.default.mainModule.constructor._load=other;',
+    ],
+    [
+      "named main module import",
+      'import {mainModule as main} from "node:process";main.constructor._load=other;',
+    ],
+    [
+      "namespace main module",
+      'import * as proc from "node:process";proc.mainModule.constructor._load=other;',
+    ],
+    [
+      "unknown namespace process",
+      'import * as proc from "node:process";proc[key].mainModule.constructor._load=other;',
+    ],
+    [
+      "unknown namespace main module",
+      'import * as proc from "node:process";proc[key].constructor._load=other;',
+    ],
+  ])("rejects changed shared loader state through %s", (_name, setup) => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${SHIM}${setup}new (Q("electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toEqual([]);
+  });
+
+  it.each([
+    "const process={mainModule:{constructor:{}}};process.mainModule.constructor._load=other;",
+    "let proc=process;proc={mainModule:{constructor:{}}};proc.mainModule.constructor._load=other;",
+    "let main=process.mainModule;main={constructor:{}};main.constructor._load=other;",
+    'let proc=require("process");proc={mainModule:{constructor:{}}};proc.mainModule.constructor._load=other;',
+    'const proc=require("other");proc.mainModule.constructor._load=other;',
+    'function change(require){const proc=require("process");proc.mainModule.constructor._load=other;}',
+    'import * as proc from "node:process";proc.constructor._load=other;',
+    'import * as proc from "node:process";proc.mainModule=other;',
+    'import * as proc from "node:process";proc.default=other;',
+    "process.mainModule.constructor=other;",
+    "process.mainModule.require=other;",
+    "process.mainModule.constructor.require=other;",
+    "process.mainModule.constructor.prototype._load=other;",
+    "process.mainModule.__proto__.__proto__.require=other;",
+  ])("preserves distinct process or Module slots: %s", (setup) => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${SHIM}${setup}new (Q("electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toHaveLength(1);
+  });
+
+  it("retains an earlier load before the main constructor changes", () => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${SHIM}new (Q("electron").BrowserWindow)({});process.mainModule.constructor._load=other;`,
+      ).electron.browser_windows,
+    ).toHaveLength(1);
+  });
+
+  it.each([
+    'process.mainModule.require("electron")',
+    'process.mainModule.constructor.createRequire("/app.cjs")("electron")',
+  ])("does not grant strict loader proof to the main module: %s", (load) => {
+    expect(
+      analyzeJavaScriptStaticSource(`new (${load}.BrowserWindow)({});`).electron
+        .browser_windows,
+    ).toEqual([]);
+  });
+});
+
+describe("converted builtin Module values", () => {
+  it.each([
+    [
+      "required process default",
+      'const ns=__toESM(require("node:process"),1);ns.default.mainModule.constructor._load=other;',
+    ],
+    [
+      "required process named value",
+      'const ns=__toESM(require("node:process"),1);ns.mainModule.constructor._load=other;',
+    ],
+    [
+      "shim process default",
+      'const ns=__toESM(Q("node:process"),1);ns.default.mainModule.constructor._load=other;',
+    ],
+    [
+      "shim process named value",
+      'const ns=__toESM(Q("node:process"),1);ns.mainModule.constructor._load=other;',
+    ],
+    [
+      "Module default",
+      'const ns=__toESM(Q("node:module"),1);ns.default.prototype.require=other;',
+    ],
+    [
+      "Module named prototype",
+      'const ns=__toESM(Q("node:module"),1);ns.prototype.require=other;',
+    ],
+    [
+      "saved helper supplier",
+      'Object.create=other;const ns=__toESM(Q("node:process"),1);ns.default.mainModule.constructor._load=other;',
+    ],
+    [
+      "input captured before loader replacement",
+      'const ns=__toESM(Q("node:process"),1);require=other;ns.default.mainModule.constructor._load=other;',
+    ],
+    [
+      "returned namespace from a captured input",
+      'const proc=Q("node:process");function load(){return __toESM(proc,1)}const ns=load();ns.default.mainModule.constructor._load=other;',
+    ],
+    [
+      "source captured before local replacement",
+      'let proc=Q("node:process");const ns=__toESM(proc,1);proc={mainModule:{constructor:{}}};ns.default.mainModule.constructor._load=other;',
+    ],
+    [
+      "named value captured before namespace replacement",
+      'let ns=__toESM(Q("node:process"),1);const main=ns.mainModule;ns={};main.constructor._load=other;',
+    ],
+    [
+      "possible default with false mode",
+      'const ns=__toESM(Q("node:module"),false);ns.default.prototype.require=other;',
+    ],
+    [
+      "possible default with unknown mode",
+      'const ns=__toESM(Q("node:module"),flag);ns.default.prototype.require=other;',
+    ],
+    [
+      "possible named value with unknown mode",
+      'const ns=__toESM(Q("node:process"),flag);ns.mainModule.constructor._load=other;',
+    ],
+    [
+      "unknown namespace selector",
+      'const ns=__toESM(Q("node:module"),1);ns[key].prototype.require=other;',
+    ],
+  ])("rejects redirected loads through %s", (_name, setup) => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${ROLLDOWN_MODULE_INTEROP}${SHIM}${setup}new (Q("electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toEqual([]);
+  });
+
+  it.each([
+    'const ns=__toESM(Q("node:process"),1);ns.mainModule=other;',
+    'const ns=__toESM(Q("node:process"),1);ns.default=other;',
+    'const ns=__toESM(Q("node:module"),1);ns._load=other;',
+    'const ns=__toESM(Q("node:module"),1);ns.prototype=other;',
+    'let proc=Q("node:process");proc={mainModule:{constructor:{}}};const ns=__toESM(proc,1);ns.default.mainModule.constructor._load=other;',
+    'const local=(input)=>({default:{mainModule:{constructor:{}}}});const ns=local(Q("node:process"));ns.default.mainModule.constructor._load=other;',
+    'const ns=__toESM(Q("other"),1);ns.default.mainModule.constructor._load=other;',
+  ])("preserves distinct namespace or source values: %s", (setup) => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${ROLLDOWN_MODULE_INTEROP}${SHIM}${setup}new (Q("electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toHaveLength(1);
+  });
+
+  it("exposes escaped namespace contents without aliasing its own receiver", () => {
+    const parsed = parseJavaScriptSource(
+      `${ROLLDOWN_MODULE_INTEROP}${SHIM}const ns=__toESM(Q("node:module"),1);patch(ns);`,
+      "bundle.js",
+    );
+    const statement = parsed?.program.body.at(-1);
+    if (
+      parsed == null ||
+      statement?.type !== "ExpressionStatement" ||
+      statement.expression.type !== "CallExpression"
+    )
+      throw new Error("Expected a parsed namespace escape");
+    const call = statement.expression;
+    const receiver = call.arguments[0];
+    if (receiver?.type !== "Identifier")
+      throw new Error("Expected the namespace receiver");
+    const state = completeSemanticSteps(
+      indexJavaScriptBindingsSteps(parsed.program),
+    );
+    const paths = createAmbientPathResolver(state, true);
+    expect(paths(receiver, call, true)).toContainEqual([
+      "commonjs-module",
+      "constructor",
+    ]);
+    expect(paths(receiver, call)).not.toContainEqual([
+      "commonjs-module",
+      "constructor",
+    ]);
+  });
+
+  it("retains an earlier load before a converted builtin mutation", () => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${ROLLDOWN_MODULE_INTEROP}${SHIM}const ns=__toESM(Q("node:process"),1);new (Q("electron").BrowserWindow)({});ns.default.mainModule.constructor._load=other;`,
+      ).electron.browser_windows,
+    ).toHaveLength(1);
+  });
+
+  it.each(["false", "flag"])(
+    "does not promote a possible default to strict proof with mode %s",
+    (mode) => {
+      expect(
+        analyzeJavaScriptStaticSource(
+          `${ROLLDOWN_MODULE_INTEROP}${SHIM}const ns=__toESM(Q("electron"),${mode});new ns.default.BrowserWindow({});`,
+        ).electron.browser_windows,
+      ).toEqual([]);
+    },
+  );
 });
 
 describe("related Module instance identity", () => {

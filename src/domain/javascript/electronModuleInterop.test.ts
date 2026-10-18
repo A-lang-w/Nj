@@ -7,6 +7,12 @@ const WINDOW =
   'new electron.BrowserWindow({webPreferences:{preload:"./preload.js"}});';
 const IMPORT = 'let electron = require("electron");';
 const WRAP = "electron = __toESM(electron, 1);";
+const REQUIRE_SHIM =
+  'var Q = (fallback => typeof require < "u" ? require : fallback)(function() {});';
+const SHIM_NAMESPACE_INPUTS = [
+  'const electron = __toESM(Q("electron"), 1);',
+  'let electron = Q("electron"); electron = __toESM(electron, 1);',
+];
 // The upstream runtime uses control-body braces that its bundled printer omits.
 // https://github.com/rolldown/rolldown/blob/22a0ab13732d81f2559ad2b7064b688699324889/crates/rolldown/src/runtime/runtime-base.js
 const BLOCK_MODULE_INTEROP = ROLLDOWN_MODULE_INTEROP.replace(
@@ -70,6 +76,84 @@ describe("Electron module interop identity", () => {
       analyzeJavaScriptStaticSource(`${altered}\n${IMPORT} ${WRAP} ${WINDOW}`)
         .electron.browser_windows,
     ).toEqual([]);
+  });
+});
+
+describe("Electron module interop shim inputs", () => {
+  it.each([
+    ...SHIM_NAMESPACE_INPUTS.map((input) => `${input} ${WINDOW}`),
+    'new (__toESM(Q("electron"), 1).BrowserWindow)({webPreferences:{preload:"./preload.js"}});',
+    'const {default: {BrowserWindow}} = __toESM(Q("electron"), 1); new BrowserWindow({webPreferences:{preload:"./preload.js"}});',
+    'const Window = __toESM(Q("electron"), 1).BrowserWindow; new Window({webPreferences:{preload:"./preload.js"}});',
+  ])("preserves a proven shim module through conversion: %s", (consumer) => {
+    const analysis = analyzeJavaScriptStaticSource(
+      `${ROLLDOWN_MODULE_INTEROP}\n${REQUIRE_SHIM}\n${consumer}`,
+    );
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      { preload_path: "./preload.js" },
+    ]);
+  });
+
+  it.each(SHIM_NAMESPACE_INPUTS)(
+    "preserves captured loaders and intrinsics through later supplier writes: %s",
+    (input) => {
+      const analysis = analyzeJavaScriptStaticSource(`
+        ${ROLLDOWN_MODULE_INTEROP} ${REQUIRE_SHIM}
+        require = other; Object.create = customCreate;
+        ${input} ${WINDOW}
+      `);
+      expect(analysis.electron.browser_windows).toHaveLength(1);
+    },
+  );
+
+  it.each([
+    ["saved loader binding", "Q = other;"],
+    ["host module delegate", "module.require = other;"],
+    ["namespace helper", "__toESM = () => ({});"],
+    ["copy helper", "__copyProps = () => ({});"],
+    ["captured intrinsic binding", "__defProp = other;"],
+    ["live intrinsic member", "__hasOwnProp.call = other;"],
+  ])("keeps a replaced %s unresolved", (_name, write) => {
+    for (const input of SHIM_NAMESPACE_INPUTS) {
+      const analysis = analyzeJavaScriptStaticSource(`
+        ${ROLLDOWN_MODULE_INTEROP} ${REQUIRE_SHIM}
+        ${write} ${input} ${WINDOW}
+      `);
+      expect(analysis.electron.browser_windows).toEqual([]);
+    }
+  });
+
+  it.each(SHIM_NAMESPACE_INPUTS)(
+    "requires the original host loader at shim capture: %s",
+    (input) => {
+      const analysis = analyzeJavaScriptStaticSource(`
+        ${ROLLDOWN_MODULE_INTEROP} require = other;
+        ${REQUIRE_SHIM} ${input} ${WINDOW}
+      `);
+      expect(analysis.electron.browser_windows).toEqual([]);
+    },
+  );
+
+  it.each(SHIM_NAMESPACE_INPUTS)(
+    "invalidates live exports after a shared module mutation: %s",
+    (input) => {
+      const analysis = analyzeJavaScriptStaticSource(`
+        ${ROLLDOWN_MODULE_INTEROP} ${REQUIRE_SHIM} ${input}
+        Q("electron").BrowserWindow = Fake; ${WINDOW}
+      `);
+      expect(analysis.electron.browser_windows).toEqual([]);
+    },
+  );
+
+  it("preserves a constructor captured before a shared export mutation", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      ${ROLLDOWN_MODULE_INTEROP} ${REQUIRE_SHIM}
+      const Window = __toESM(Q("electron"), 1).BrowserWindow;
+      Q("electron").BrowserWindow = Fake;
+      new Window({});
+    `);
+    expect(analysis.electron.browser_windows).toHaveLength(1);
   });
 });
 

@@ -95,22 +95,38 @@ type AmbientPath = readonly (string | null)[];
 type AmbientProjection = AmbientPath | undefined;
 type AmbientCaptures = readonly (t.Node | undefined)[];
 
-/** Node exports the constructor whose prototype owns the wrapper delegate. */
-const moduleConstructorPath = (
+/** Builtin exports select the same possible values as their ambient owners. */
+const builtinValuePaths = (
   origin: JavaScriptModuleOrigin,
   projection: AmbientProjection,
-): AmbientPath | undefined => {
-  if (!["module", "node:module"].includes(origin.specifier)) return undefined;
+): readonly AmbientPath[] => {
+  const processOrigin = ["process", "node:process"].includes(origin.specifier);
+  if (!processOrigin && !["module", "node:module"].includes(origin.specifier))
+    return [];
   const path = [...origin.importedPath, ...(projection ?? [null])];
+  if (processOrigin) {
+    if (origin.resolutionMode === "require")
+      return [["global", "process", ...path]];
+    if (path[0] === "default") return [["global", "process", ...path.slice(1)]];
+    if (path[0] === "mainModule") return [["global", "process", ...path]];
+    // An unknown namespace export may select either the process object or a
+    // named main Module. Namespace own slots never become ambient owners.
+    return path[0] === null
+      ? [
+          ["global", "process", ...path.slice(1)],
+          ["global", "process", ...path],
+        ]
+      : [];
+  }
   // ESM namespace slots select the constructor; the namespace is not itself it.
   if (origin.resolutionMode !== "require") {
     const selected = path.shift();
     if (selected === "createRequire")
-      return ["commonjs-module", "constructor", "createRequire", ...path];
+      return [["commonjs-module", "constructor", "createRequire", ...path]];
     if (selected !== "default" && selected !== "Module" && selected !== null)
-      return undefined;
+      return [];
   }
-  return ["commonjs-module", "constructor", ...path];
+  return [["commonjs-module", "constructor", ...path]];
 };
 
 const joinAmbientProjection = (
@@ -592,10 +608,8 @@ export const createAmbientPathResolver = (
                 .binding
             : binding;
         if (possibleWrites)
-          for (const origin of selected.directOrigins) {
-            const path = moduleConstructorPath(origin, suffix);
-            if (path !== undefined) retain(path);
-          }
+          for (const origin of selected.directOrigins)
+            for (const path of builtinValuePaths(origin, suffix)) retain(path);
         const initializers = possibleWrites
           ? selected.initializers
           : stable === undefined
@@ -684,6 +698,17 @@ export const createAmbientPathResolver = (
         possibleWrites &&
         (t.isCallExpression(root) || t.isOptionalCallExpression(root))
       ) {
+        for (const source of intrinsics.callReferenceSources(
+          root,
+          suffix,
+          escapedContents,
+        ))
+          pending.push({
+            node: source.node,
+            suffix: source.projection,
+            captures: captures.slice(source.projectionOffset),
+            readsAtSelf: true,
+          });
         const bound = functionInterop.boundIntrinsic(root);
         const allocation = bound?.boundFunction?.allocations[0];
         if (allocation !== undefined)
@@ -736,11 +761,8 @@ export const createAmbientPathResolver = (
         const origin =
           semanticRequireOrigin(root, state)?.origin ??
           semanticRequireShimOrigin(root, state)?.origin;
-        const path =
-          origin === undefined
-            ? undefined
-            : moduleConstructorPath(origin, suffix);
-        if (path !== undefined) retain(path);
+        if (origin !== undefined)
+          for (const path of builtinValuePaths(origin, suffix)) retain(path);
       }
       if (
         possibleWrites &&
@@ -927,6 +949,11 @@ const completedOwnSlots = new WeakMap<
   JavaScriptSemanticAnalysisState,
   OwnSlotUnchanged
 >();
+
+/** Slot captures become provable before the final ambient writes are published. */
+export const semanticAmbientOwnSlotFactsReady = (
+  state: JavaScriptSemanticAnalysisState,
+): boolean => completedOwnSlots.has(state);
 
 /** Strict local capture uses the same completed store and escape snapshot. */
 export const semanticAmbientOwnSlotUnchanged = (
@@ -1807,9 +1834,9 @@ export function* indexJavaScriptAmbientWritesSteps(
     byKey.set(receiver.key, sources);
     replacements.set(receiver.root, byKey);
   }
-  // Exclusion needs the completed write/escape snapshot. Earlier resolver
-  // queries retain inherited possibilities; their declarative slot cache does
-  // not memoize this mutable proof, and possible-write paths are never cached.
+  // Exclusion needs the completed write/escape snapshot. Publishing it refreshes
+  // provisional source-capture and receiver caches before final target queries;
+  // possible-write paths themselves are never cached.
   const ownSlotUnchanged: OwnSlotUnchanged = (owner, key, read) =>
     !effectMayPrecede(read, descriptorEffects.get(owner)) &&
     !writesToMember(owner, key).some(

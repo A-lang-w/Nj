@@ -145,6 +145,93 @@ describe("destructuring reference selection order", () => {
   });
 });
 
+describe("literal-prototype default sources", () => {
+  it.each([
+    ["inherited slot", "const {x:target=DEFAULT}={__proto__:{x:{}}};"],
+    [
+      "prototype chain",
+      "const {x:target=DEFAULT}={__proto__:{__proto__:{x:{}}}};",
+    ],
+    [
+      "nested inherited slots",
+      "const {nested:{x:target=DEFAULT}}={__proto__:{nested:{__proto__:{x:{}}}}};",
+    ],
+    [
+      "own slot over inherited slot",
+      "const {x:target=DEFAULT}={x:{},__proto__:{x:null}};",
+    ],
+    ["null prototype", "const {x:target=DEFAULT}={__proto__:null,x:{}};"],
+    ["primitive prototype", "const {x:target=DEFAULT}={__proto__:1,x:{}};"],
+    [
+      "computed prototype data key",
+      'const {["__proto__"]:{x:target=DEFAULT}}={["__proto__"]:{x:{}},__proto__:null};',
+    ],
+    [
+      "later prototype mutation",
+      "const {x:target=DEFAULT,__proto__:saved,t:unused=(saved.x=undefined)}={__proto__:{x:{}}};",
+    ],
+  ])("excludes a fallback after reading %s", (_name, setup) => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${setup.replaceAll("DEFAULT", "globalThis")}target.fetch=other;fetch('/local');`,
+      ).endpoints.filter(({ mechanism }) => mechanism === "call:fetch"),
+    ).toMatchObject([{ value: "/local" }]);
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${setup.replaceAll("DEFAULT", "module")}target.require=other;new (require("electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toHaveLength(1);
+  });
+
+  it.each([
+    ["missing slot", "const {x:target=DEFAULT}={__proto__:{}};"],
+    [
+      "undefined inherited slot",
+      "const {x:target=DEFAULT}={__proto__:{x:undefined}};",
+    ],
+    [
+      "undefined own slot over inherited slot",
+      "const {x:target=DEFAULT}={__proto__:{x:{}},x:undefined};",
+    ],
+    ["null prototype", "const {x:target=DEFAULT}={__proto__:null};"],
+    [
+      "ignored primitive prototype",
+      'const {0:target=DEFAULT}={__proto__:"text"};',
+    ],
+    [
+      "computed prototype data key",
+      'const {x:target=DEFAULT}={["__proto__"]:{x:{}}};',
+    ],
+    [
+      "prototype accessor",
+      "const {x:target=DEFAULT}={__proto__:{get x(){return undefined}}};",
+    ],
+    [
+      "earlier inherited getter",
+      "const {trigger,x:target=DEFAULT}={__proto__:{get trigger(){this.x=undefined},x:{}}};",
+    ],
+    [
+      "earlier prototype mutation",
+      "const {__proto__:saved,t:unused=(saved.x=undefined),x:target=DEFAULT}={__proto__:{x:{}}};",
+    ],
+    ["unknown prototype", "const {x:target=DEFAULT}={__proto__:source};"],
+    [
+      "effectful prototype",
+      "const {x:target=DEFAULT}={__proto__:createSource()};",
+    ],
+    [
+      "effectful sibling",
+      "const {x:target=DEFAULT}={__proto__:{x:{}},effect:changeSource()};",
+    ],
+  ])("retains a possible fallback after %s", (_name, setup) => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${setup.replaceAll("DEFAULT", "globalThis")}target.fetch=other;fetch('/local');`,
+      ).endpoints.filter(({ mechanism }) => mechanism === "call:fetch"),
+    ).toEqual([]);
+  });
+});
+
 describe("named-source destructuring reads", () => {
   it.each([
     "const source={x:{},method:()=>{}};const {x:target=fallback}=source;",

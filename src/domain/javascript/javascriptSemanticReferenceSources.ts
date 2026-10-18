@@ -2,7 +2,6 @@ import * as t from "@babel/types";
 import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
-  staticObjectProperty,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -282,10 +281,7 @@ const syntaxDataSource = (root: t.Node): boolean => {
       if (t.isObjectExpression(node) || t.isArrayExpression(node)) return;
       if (
         t.isObjectProperty(node) &&
-        semanticStaticPropertyKey(node.key, node.computed) !== null &&
-        (node.computed ||
-          node.shorthand ||
-          semanticStaticPropertyKey(node.key, false) !== "__proto__")
+        semanticStaticPropertyKey(node.key, node.computed) !== null
       ) {
         skipped.add(node.key);
         return;
@@ -412,7 +408,53 @@ const selectedDefaultInput = (
   return semanticSlotAtPath(value, path);
 };
 
-/** Reuse explicit-slot syntax without consulting potentially stale bindings. */
+interface SyntaxDataObject {
+  readonly properties: ReadonlyMap<string, t.Node>;
+  readonly prototype: t.Node | undefined;
+}
+
+const syntaxDataObjects = new WeakMap<t.ObjectExpression, SyntaxDataObject>();
+
+/** Keep the prototype initializer separate from own data named `__proto__`. */
+const syntaxDataObject = (node: t.ObjectExpression): SyntaxDataObject => {
+  const cached = syntaxDataObjects.get(node);
+  if (cached !== undefined) return cached;
+  const properties = new Map<string, t.Node>();
+  let prototype: t.Node | undefined;
+  // The complete syntaxDataSource proof excludes spreads, accessors and
+  // effectful values before any of these literal slots are consulted.
+  for (const property of node.properties) {
+    if (!t.isObjectProperty(property)) continue;
+    const key = semanticStaticPropertyKey(property.key, property.computed);
+    if (key === null) continue;
+    if (key === "__proto__" && !property.computed && !property.shorthand)
+      prototype = property.value;
+    else properties.set(key, property.value);
+  }
+  const result = { properties, prototype };
+  syntaxDataObjects.set(node, result);
+  return result;
+};
+
+const syntaxDataProperty = (root: t.Node, key: string): t.Node | undefined => {
+  let node = root;
+  while (t.isObjectExpression(node)) {
+    const source = syntaxDataObject(node);
+    const property = source.properties.get(key);
+    if (property !== undefined) return property;
+    if (source.prototype === undefined) return undefined;
+    node = unwrapJavaScriptExpression(source.prototype).node;
+  }
+  if (t.isArrayExpression(node)) {
+    const index = semanticArrayIndex(key);
+    return index === null ? undefined : (node.elements[index] ?? undefined);
+  }
+  // Primitive prototype initializers are ignored at runtime, and neither they
+  // nor an unmodeled intrinsic prototype establish a selected data value.
+  return undefined;
+};
+
+/** Reuse literal data slots without consulting potentially stale bindings. */
 const syntaxReferenceSourceDefined = (
   source: JavaScriptSemanticReferenceSource,
 ): boolean => {
@@ -420,24 +462,9 @@ const syntaxReferenceSourceDefined = (
   let node = unwrapJavaScriptExpression(source.node).node;
   for (const key of source.projection) {
     if (key === null || typeof key === "object") return false;
-    if (t.isObjectExpression(node)) {
-      const selected = staticObjectProperty(node, String(key));
-      if (selected.status !== "explicit") return false;
-      if (
-        key === "__proto__" &&
-        !selected.property.computed &&
-        !selected.property.shorthand
-      )
-        return false;
-      node = selected.property.value;
-    } else if (t.isArrayExpression(node)) {
-      if (node.elements.some(t.isSpreadElement)) return false;
-      const index = semanticArrayIndex(key);
-      const element = index === null ? undefined : node.elements[index];
-      if (element == null) return false;
-      node = element;
-    } else return false;
-    node = unwrapJavaScriptExpression(node).node;
+    const selected = syntaxDataProperty(node, String(key));
+    if (selected === undefined) return false;
+    node = unwrapJavaScriptExpression(selected).node;
   }
   return (
     readExactJavaScriptLiteral(node).found ||

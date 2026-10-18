@@ -63,8 +63,7 @@ import {
   traverseJavaScriptAstSteps,
 } from "./javascriptSemanticTraversal.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
-import { semanticBundledRequireOrigin } from "./javascriptBundledRequireOrigin.js";
-import { semanticRequireShimOrigin } from "./javascriptRequireShimOrigin.js";
+import { semanticLoaderOrigin } from "./javascriptLoaderOrigin.js";
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
 import {
@@ -815,7 +814,9 @@ export function* indexJavaScriptElectronIdentitySteps(
 ): Generator<void, JavaScriptElectronIdentity> {
   yield* indexSemanticAmbientWritesSteps(state);
   const facts = new Map<number, readonly string[]>();
-  const interop = createSemanticModuleInterop(state);
+  const interop = createSemanticModuleInterop(state, {
+    loaderOrigin: (node) => semanticLoaderOrigin(node, state)?.origin,
+  });
   const writes = new SemanticPropertyPathCoverage();
   const exportWrites: {
     readonly node: t.Node;
@@ -840,7 +841,7 @@ export function* indexJavaScriptElectronIdentitySteps(
     const wrapped = interop.callOrigin(root);
     const origin =
       wrapped === undefined
-        ? electronRequireOrigin(root, state)?.origin
+        ? semanticLoaderOrigin(root, state)?.origin
         : collectedWrites && interop.invalidatedCall(root)
           ? undefined
           : wrapped.origin;
@@ -1026,14 +1027,6 @@ const electronExport = (
     : null;
 };
 
-const electronRequireOrigin = (
-  node: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-) =>
-  semanticRequireOrigin(node, state) ??
-  semanticBundledRequireOrigin(node, state) ??
-  semanticRequireShimOrigin(node, state);
-
 const bindingOrigin = (
   binding: JavaScriptSemanticBindingState,
   state: JavaScriptSemanticAnalysisState,
@@ -1044,7 +1037,7 @@ const bindingOrigin = (
       : undefined;
   const initializer = semanticStableInitializer(binding, state);
   if (initializer === undefined) return undefined;
-  const origin = electronRequireOrigin(initializer.node, state)?.origin;
+  const origin = semanticLoaderOrigin(initializer.node, state)?.origin;
   const projection = initializer.projection;
   return origin === undefined ||
     !projection.every((key): key is string => typeof key === "string")
