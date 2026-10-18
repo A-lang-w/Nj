@@ -356,6 +356,34 @@ it("leaves a sessionless POST without the streamable headers or with a foreign O
   await client.close();
 });
 
+it("accepts a same-origin browser Origin carrying the bound port on the MCP endpoint and on routes", async () => {
+  const { served } = await start({
+    routes: [
+      { method: "GET", path: "/health", handle: () => new Response("ok") },
+    ],
+  });
+  const url = new URL(served.url);
+  const body = await initializeRequest().text();
+  for (const name of ["127.0.0.1", "localhost"]) {
+    const headers = {
+      host: `${name}:${url.port}`,
+      origin: `http://${name}:${url.port}`,
+    };
+    const route = await rawHttpRequest(new URL("/health", url), { headers });
+    expect(route.status).toBe(200);
+    const initialize = await rawHttpRequest(url, {
+      method: "POST",
+      headers: {
+        ...headers,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body,
+    });
+    expect(initialize.status).toBe(200);
+  }
+});
+
 it("announces the bound URL even when the log level hides info lines", async () => {
   const logs: string[] = [];
   const logger = pino({ level: "warn" }, { write: (line) => logs.push(line) });
