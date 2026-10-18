@@ -252,7 +252,7 @@ confirmed root cause.
 
 To separate registration failures from model-request failures:
 
-1. Run `rea doctor --client gemini --json` and verify which client
+1. Run `rea doctor --client gemini_cli --json` and verify which client
    configuration actually wins. A healthy result checks registration; it does
    **not** verify that the model API accepts the advertised tools.
 2. Try a fresh Gemini CLI session with the REA MCP entry disabled, then one
