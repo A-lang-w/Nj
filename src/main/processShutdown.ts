@@ -61,3 +61,32 @@ export const registerSignalShutdown = (
     },
     { signals },
   );
+
+/** A signal recorded while startup is still running, before the lifecycle owner can act on it. */
+export interface SignalLatch {
+  /** Stop recording; returns the exit status of the first signal seen, if any. */
+  readonly release: () => number | undefined;
+}
+
+/** Record the first SIGINT or SIGTERM during startup and exit at once on a second one, so startup never dies without its cleanup. */
+export const latchSignalShutdown = (
+  signals: ShutdownSignalSource = process,
+  exit: (status: number) => void = (status) => process.exit(status),
+): SignalLatch => {
+  let pending: number | undefined;
+  const record = (signal: ShutdownSignal) => (): void => {
+    if (pending === undefined) pending = SIGNAL_EXIT_STATUS[signal];
+    else exit(pending);
+  };
+  const onInterrupt = record("SIGINT");
+  const onTerminate = record("SIGTERM");
+  signals.on("SIGINT", onInterrupt);
+  signals.on("SIGTERM", onTerminate);
+  return {
+    release: () => {
+      signals.off("SIGINT", onInterrupt);
+      signals.off("SIGTERM", onTerminate);
+      return pending;
+    },
+  };
+};

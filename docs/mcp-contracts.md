@@ -459,7 +459,10 @@ name them. Listener errors reach the runtime's connection-loss handler only
 after a successful bind; a bind failure prints the listen-failure message alone. Request bodies are bounded by the SDK's
 4 MiB limit, and the response budget keeps its stdio-derived floor. The
 listener ends on SIGINT or SIGTERM only, not on stdin EOF, and exits `130` or
-`143` after cleanup settles.
+`143` after cleanup settles. A signal that arrives while startup is still
+running is recorded and acted on as soon as the listener and its providers are
+owned, so startup never ends without cleanup; a second signal during startup
+exits immediately.
 
 ## Progress and cancellation
 

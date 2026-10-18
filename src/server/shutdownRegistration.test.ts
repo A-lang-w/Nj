@@ -4,6 +4,7 @@ import pino from "pino";
 
 import { createShutdown } from "../main/shutdown.js";
 import {
+  latchSignalShutdown,
   registerProcessShutdown,
   registerSignalShutdown,
 } from "../main/processShutdown.js";
@@ -219,4 +220,20 @@ it("joins concurrent shutdown events and retries only failed owners", async () =
   expect(signals.listenerCount("SIGTERM")).toBe(0);
   expect(input.listenerCount("end")).toBe(0);
   expect(input.listenerCount("close")).toBe(0);
+});
+
+it("latches the first startup signal, exits at once on a second, and hands the status over on release", () => {
+  const signals = new EventEmitter();
+  const exits: number[] = [];
+  const latch = latchSignalShutdown(signals, (status) => exits.push(status));
+  expect(signals.listenerCount("SIGINT")).toBe(1);
+  signals.emit("SIGTERM");
+  expect(exits).toEqual([]);
+  signals.emit("SIGINT");
+  expect(exits).toEqual([143]);
+  expect(latch.release()).toBe(143);
+  expect(signals.listenerCount("SIGINT")).toBe(0);
+  expect(signals.listenerCount("SIGTERM")).toBe(0);
+  const quiet = latchSignalShutdown(signals, (status) => exits.push(status));
+  expect(quiet.release()).toBeUndefined();
 });

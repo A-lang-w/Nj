@@ -234,3 +234,12 @@ request to drain (test: a 4.5 MB sessionless initialize is refused promptly
 while the connected client keeps echoing); and the node:http bridge passes
 repeated `Set-Cookie` values as an array instead of collapsing them (test: two
 cookies from a composed route both arrive).
+
+A sixth round (Codex, one P1) was addressed next: signal handlers were only
+installed after the asynchronous startup returned, so a SIGINT or SIGTERM
+during target opening, provider loading or the HTTP bind ended the process
+without cleanup. The HTTP entry now latches signals before startup, the
+lifecycle owner picks the recorded signal up as soon as it registers, and a
+second signal during startup exits at once (test: the latch records `143`,
+exits on the second signal, hands the status over on release and leaves no
+listeners behind).

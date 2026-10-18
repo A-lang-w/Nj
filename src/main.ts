@@ -22,8 +22,10 @@ import {
 import { createToolResultDelivery } from "./server/toolResult.js";
 import { createShutdown } from "./main/shutdown.js";
 import {
+  latchSignalShutdown,
   registerProcessShutdown,
   registerSignalShutdown,
+  type SignalLatch,
 } from "./main/processShutdown.js";
 import {
   parseMcpHttpEndpoint,
@@ -43,6 +45,7 @@ const runtimeDependencies = (): RuntimeDependencies => ({
 /** Replace stdio with the streamable HTTP listener; signals alone end it, never stdin. */
 const httpRuntimeDependencies = (
   endpoint: McpHttpEndpoint,
+  latch: SignalLatch,
 ): RuntimeDependencies => {
   const base = runtimeDependencies();
   return {
@@ -59,11 +62,19 @@ const httpRuntimeDependencies = (
         ...options,
       });
     },
-    registerShutdown: (request) =>
-      registerSignalShutdown((exitStatus) => {
+    registerShutdown: (request) => {
+      const unregister = registerSignalShutdown((exitStatus) => {
         base.setExitCode(exitStatus);
         request();
-      }),
+      });
+      // A signal that arrived during startup is honoured now that the lifecycle owner exists.
+      const pending = latch.release();
+      if (pending !== undefined) {
+        base.setExitCode(pending);
+        request();
+      }
+      return unregister;
+    },
   };
 };
 
@@ -177,11 +188,17 @@ export const runMcpHttpEntrypoint = async (
     io.setExitCode(1);
     return;
   }
-  await runEntrypoint(
-    () => run(httpRuntimeDependencies(endpoint.value)),
-    io.writeStderr,
-    io.setExitCode,
-  );
+  // Latched before any asynchronous startup so a signal cannot end the process without cleanup.
+  const latch = latchSignalShutdown();
+  try {
+    await runEntrypoint(
+      () => run(httpRuntimeDependencies(endpoint.value, latch)),
+      io.writeStderr,
+      io.setExitCode,
+    );
+  } finally {
+    latch.release();
+  }
 };
 
 /** Return false when the runtime's argv path is synthetic or no longer exists. */

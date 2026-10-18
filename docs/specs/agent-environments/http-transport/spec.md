@@ -42,7 +42,9 @@ client registration keep stdio.
   checks replace an open session; refuse requests once the slot is closed, join
   an arming session during shutdown, and keep close stages retryable.
 - End the HTTP listener on SIGINT/SIGTERM only, never on stdin EOF, and exit with
-  the signal status (`130`/`143`) after cleanup settles.
+  the signal status (`130`/`143`) after cleanup settles; latch a signal that
+  arrives during startup so it is acted on as soon as the lifecycle owner exists,
+  and exit at once on a second one.
 - Export `serveStreamableHttp({ host, port, createMcpServer, routes, logger })`
   returning `{ url, close }` so an agent environment server can add plain routes
   beside `/mcp` without a second bridge.
