@@ -367,9 +367,12 @@ in this order:
 | `opaque-token`      | A lowercase alphanumeric segment of twelve or more characters mixing letters and digits that is not a `v1`-style version                                                                                                                                                                        | `uid`                                           |
 | `sibling-variance`  | Groups equal in method, origin and segment count that differ in one literal at index 2 or later; the siblings whose literal is identifier-like (a digit or `:`, or three or more hyphenated names under a plural literal) merge, never a stop word, and the other literals stay their own tools | singular previous literal plus `_id`, else `id` |
 
-A literal sibling of a position templated by an opt-in rule folds into that
-parameter as an observed value, so `/api/folders/{uid}` lists `general` beside
-the recorded token. A position templated by one of the four format rules
+With `sibling-variance` selected, literal siblings within its comparison scope
+fold into existing opt-in parameters as observed values unless they are stop words.
+For example, select both `opaque-token` and `sibling-variance` so
+`/api/folders/{uid}` lists `general` beside the recorded token. With only
+`opaque-token`, `/api/folders/general` stays a separate literal tool.
+A position templated by one of the four format rules
 absorbs no literal, so `/api/teams/{numeric}` keeps its exact-format meaning
 and `/api/teams/search` stays its own tool. Opt-in placeholders use the
 parameter name; format-rule placeholders keep their api-surface spelling. Tool names are

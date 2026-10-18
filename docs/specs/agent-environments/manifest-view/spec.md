@@ -22,11 +22,13 @@ manifest are later increments.
 - Without opt-in rules, every tool template must equal the api-surface template
   of the same group; the four format rules always apply with `basis: inferred`.
 - Apply `after-uid-literal`, `opaque-token` and `sibling-variance` only when
-  listed, each at most once, in that order, folding literal siblings of an
-  opt-in templated position into observed values whichever was recorded first,
-  never folding a literal into a format-rule parameter and never templating a
-  stop word; `sibling-variance` compares routes of at most 32 segments and the
-  manifest states when a route exceeded that.
+  listed, each at most once, in that order. With `sibling-variance` selected,
+  fold literal siblings within its comparison scope into existing opt-in
+  parameters unless they are stop words, whichever was recorded first. With only
+  `opaque-token`, a non-opaque literal remains a separate tool. Never fold a
+  literal into a format-rule parameter or template a stop word;
+  `sibling-variance` compares routes of at most 32 segments and the manifest
+  states when a route exceeded that.
 - Derive tool names from the method and route literals deterministically, at
   most 60 characters, unique within one manifest.
 - Derive `body_shape` for `POST`, `PUT` and `PATCH` from the tool's earliest
