@@ -211,12 +211,16 @@ const keyedArchiveTable = (objectTable: readonly unknown[]) => {
     if (uid !== undefined) return reference(uid);
     if (Array.isArray(value)) return value.map(resolve);
     if (typeof value !== "object" || value === null) return value;
-    const output: Record<string, unknown> = {};
-    for (const [key, child] of Object.entries(value)) {
-      if (key === "$class") output.className = classNameOf(value);
-      else output[key] = resolve(child);
-    }
-    return output;
+    // Class identity belongs to the object's $class descriptor, not a
+    // synthesized data property that can collide with an archived className.
+    // Keep inline class references as source fields; only UID stubs carry
+    // derived className metadata.
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [
+        key,
+        key === "$class" ? child : resolve(child),
+      ]),
+    );
   };
   const hierarchy = (start: unknown) => {
     let omittedReferences = 0;
@@ -307,7 +311,7 @@ const keyedArchiveTable = (objectTable: readonly unknown[]) => {
       classNames.includes("NSArray") || classNames.includes("NSMutableArray")
     );
   };
-  return { resolve, hierarchy };
+  return { resolve, hierarchy, classNameOf };
 };
 
 /** Project class and connection objects from an NSKeyedArchiver object table. */
@@ -317,7 +321,11 @@ const parseKeyedArchive = (
   if (root.$archiver !== "NSKeyedArchiver" || !Array.isArray(root.$objects))
     return null;
   const objectTable: readonly unknown[] = root.$objects;
-  const { resolve, hierarchy: toHierarchy } = keyedArchiveTable(objectTable);
+  const {
+    resolve,
+    hierarchy: toHierarchy,
+    classNameOf,
+  } = keyedArchiveTable(objectTable);
   const objects: InterfaceBuilderObject[] = [];
   const connections: InterfaceBuilderConnection[] = [];
   let objectCount = 0;
@@ -326,14 +334,14 @@ const parseKeyedArchive = (
   for (const [index, raw] of objectTable.entries()) {
     if (index === 0) continue;
     const resolved = record(resolve(raw));
-    const className = firstString(resolved.className);
+    const className = classNameOf(raw);
     // An archived object names its class with its own `$class` reference;
     // when that reference cannot be resolved the object is still observed,
     // with an unknown class. Scalars and class descriptors are not objects.
     if (className === null && !Object.hasOwn(record(raw), "$class")) continue;
     objectCount += 1;
     const fields = Object.fromEntries(
-      Object.entries(resolved).filter(([key]) => key !== "className"),
+      Object.entries(resolved).filter(([key]) => key !== "$class"),
     );
     // Keep the unresolvable class reference itself, e.g. a dangling UID.
     if (className === null) fields.$class = record(raw).$class;

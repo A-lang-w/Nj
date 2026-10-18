@@ -156,6 +156,81 @@ describe("compiled Interface Builder graph projection", () => {
   });
 });
 
+describe("keyed archive class identity", () => {
+  it.each([true, false])(
+    "keeps archived className data separate from class identity (class first: %s)",
+    (classFirst) => {
+      const object = classFirst
+        ? { $class: { UID: 2 }, className: "NSButton" }
+        : { className: "NSButton", $class: { UID: 2 } };
+      const raw = parseBinary(
+        buildBinary({
+          $archiver: "NSKeyedArchiver",
+          $objects: [
+            "$null",
+            object,
+            { $classname: "NSView", $classes: ["NSView", "NSObject"] },
+          ],
+          $top: { root: { UID: 1 } },
+        }),
+      );
+      expect(parseInterfaceBuilderRecords(raw).objects).toEqual([
+        {
+          id: "1",
+          kind: "view",
+          class_name: "NSView",
+          name: "NSView",
+          attributes: { className: "NSButton" },
+        },
+      ]);
+    },
+  );
+
+  it("does not use an archived className to resolve a missing class or invent an object", () => {
+    const parsed = parseInterfaceBuilderRecords({
+      $archiver: "NSKeyedArchiver",
+      $objects: [
+        "$null",
+        { $class: { UID: 99 }, className: "NSButton", label: "Unknown" },
+        { className: "NSView" },
+      ],
+      $top: {},
+    });
+    expect(parsed.objects).toEqual([
+      {
+        id: "1",
+        kind: "other",
+        class_name: null,
+        name: "Unknown",
+        attributes: {
+          $class: { UID: 99 },
+          className: "NSButton",
+          label: "Unknown",
+        },
+      },
+    ]);
+    expect(parsed.objectCount).toBe(1);
+  });
+
+  it("preserves inline dictionary class fields without synthesized property collisions", () => {
+    const parsed = parseInterfaceBuilderRecords({
+      $archiver: "NSKeyedArchiver",
+      $objects: [
+        "$null",
+        {
+          $class: { UID: 2 },
+          nested: { $class: { UID: 2 }, className: "authored" },
+        },
+        { $classname: "NSView", $classes: ["NSView", "NSObject"] },
+      ],
+      $top: {},
+    });
+    expect(parsed.objects[0]?.attributes).toEqual({
+      nested: { $class: { UID: 2 }, className: "authored" },
+    });
+  });
+});
+
 describe("keyed archive objects with unresolved classes", () => {
   it("keeps an archived object whose class reference cannot be resolved", () => {
     const parsed = parseInterfaceBuilderRecords({
