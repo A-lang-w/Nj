@@ -30,6 +30,8 @@ async function readPage(url, request, { delaysMs, sleep }) {
         signal: AbortSignal.timeout(30_000),
       });
       if (!response.ok) {
+        // Release the connection before a retry; an unread error body can keep it busy.
+        await response.body?.cancel().catch(() => {});
         const kind =
           response.status >= 500
             ? "server_error"
@@ -132,10 +134,14 @@ if (
   } catch (error) {
     if (process.env.GITHUB_STEP_SUMMARY) {
       const message = error instanceof Error ? error.message : String(error);
-      await appendFile(
-        process.env.GITHUB_STEP_SUMMARY,
-        `### MCP Registry read failed\n\nFailure kind: \`${classifyReadFailure(error)}\`\n\n${message}\n`,
-      );
+      try {
+        await appendFile(
+          process.env.GITHUB_STEP_SUMMARY,
+          `### MCP Registry read failed\n\nFailure kind: \`${classifyReadFailure(error)}\`\n\n${message}\n`,
+        );
+      } catch {
+        // The summary is best effort; keep the original registry error below.
+      }
     }
     throw error; // unknown stays unknown: the job still fails
   }

@@ -1,8 +1,22 @@
+import { execFile } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { expect, it } from "vitest";
 import {
   classifyReadFailure,
   registryPublicationState,
 } from "../../../.github/actions/publish-mcp/registry-state.mjs";
+
+const runNode = promisify(execFile);
+const scriptPath = fileURLToPath(
+  new URL(
+    "../../../.github/actions/publish-mcp/registry-state.mjs",
+    import.meta.url,
+  ),
+);
 
 const server = {
   name: "io.github.fixture/rea",
@@ -152,3 +166,52 @@ it("classifies registry read failures", async () => {
   ).catch((error: unknown) => error);
   expect(classifyReadFailure(notFound)).toBe("not_found");
 });
+
+it("cancels a failed response body before retrying", async () => {
+  const events: string[] = [];
+  let calls = 0;
+  const result = await registryPublicationState(
+    server,
+    async () => {
+      calls += 1;
+      if (calls === 1) {
+        events.push("request 1");
+        const body = new ReadableStream({
+          cancel() {
+            events.push("body cancelled");
+          },
+        });
+        return new Response(body, { status: 503 });
+      }
+      events.push("request 2");
+      return page([]);
+    },
+    { sleep: noSleep },
+  );
+  expect(result).toBe("absent");
+  expect(events).toEqual(["request 1", "body cancelled", "request 2"]);
+});
+
+it("keeps the original registry error when the job summary cannot be written", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "rea-registry-state-"));
+  try {
+    // No server.json here, so the step fails before any network call.
+    // The summary path is a directory, so writing the summary fails too.
+    const failure = await runNode(process.execPath, [scriptPath], {
+      cwd: dir,
+      env: {
+        ...process.env,
+        GITHUB_STEP_SUMMARY: dir,
+        GITHUB_OUTPUT: join(dir, "output.txt"),
+      },
+    }).then(
+      () => undefined,
+      (error: unknown) => error as { code?: number; stderr?: string },
+    );
+    expect(failure).toBeDefined();
+    expect(failure?.code).not.toBe(0);
+    expect(failure?.stderr).toContain("server.json");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 20_000);
