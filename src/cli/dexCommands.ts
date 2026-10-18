@@ -60,7 +60,6 @@ export const registerDexCommands = (
             service,
             DEX_PROVIDER_IDENTITY.id,
             dexDebugMetadataModule.contract.name,
-            undefined,
             signal,
           ),
         ),

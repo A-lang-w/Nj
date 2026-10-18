@@ -4,6 +4,7 @@
  * buffering of one entry. A provider that admits an archive and reads single
  * entries reuses these instead of copying them.
  */
+import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { ArtifactReaderFailure, type ArtifactEntry } from "./ArtifactReader.js";
 import type { ZipArtifactReader } from "./ZipArtifactReader.js";
 
@@ -27,11 +28,11 @@ export const readArchiveMember = async (
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of stream) {
-    if (signal?.aborted) {
+    try {
+      assertArtifactReadActive(signal);
+    } catch (cancelled: unknown) {
       stream.destroy();
-      throw new ArtifactReaderFailure("cancelled", "archive read cancelled", {
-        cause: signal.reason,
-      });
+      throw cancelled;
     }
     if (!Buffer.isBuffer(chunk)) {
       stream.destroy();
