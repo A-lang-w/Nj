@@ -40,21 +40,27 @@ export const toWebRequest = (
 /** Header fields for writeHead; repeated Set-Cookie values survive as one array. */
 const responseHeaders = (
   headers: Headers,
+  closeConnection: boolean,
 ): Record<string, string | string[]> => {
   const fields: Record<string, string | string[]> = {};
   for (const [name, value] of headers)
     if (name !== "set-cookie") fields[name] = value;
   const cookies = headers.getSetCookie();
   if (cookies.length > 0) fields["set-cookie"] = cookies;
+  if (closeConnection) fields.connection = "close";
   return fields;
 };
 
-/** Stream a web Response into node:http, flushing headers and each chunk as it arrives. */
+/** Stream a web Response into node:http, flushing headers and each chunk as it arrives; `closeConnection` ends the socket after this reply. */
 export const writeWebResponse = async (
   response: Response,
   target: ServerResponse,
+  options: { readonly closeConnection?: boolean } = {},
 ): Promise<void> => {
-  target.writeHead(response.status, responseHeaders(response.headers));
+  target.writeHead(
+    response.status,
+    responseHeaders(response.headers, options.closeConnection ?? false),
+  );
   target.flushHeaders();
   if (response.body === null) {
     target.end();

@@ -453,7 +453,7 @@ actually bound: any `127.0.0.0/8` address, `::1`, an IPv4-mapped loopback and
 a bind, requests whose `Host` header is outside the SDK loopback allowlist plus
 the configured name and the bound address are refused with `403`, and a browser
 `Origin` outside that allowlist is refused the same way (a missing `Origin`
-passes); a non-loopback bind relaxes both checks and logs the relaxation. Scoped
+passes); a non-loopback bind relaxes both checks and logs the relaxation. A reply sent before a request body was read (a refused `Host` or `Origin`, an unknown route, the startup `503`) closes the connection after the reply, so an unread upload cannot keep a socket open. Scoped
 IPv6 literals (`fe80::1%eth0`) are refused before binding, because no URL can
 name them. Listener errors reach the runtime's connection-loss handler only
 after a successful bind; a bind failure prints the listen-failure message alone. Request bodies are bounded by the SDK's

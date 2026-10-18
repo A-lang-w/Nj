@@ -386,9 +386,16 @@ const serveNodeRequest = async (
   response: ServerResponse,
 ): Promise<void> => {
   const { route, origin, logger } = target;
+  const webRequest = toWebRequest(request, response, origin());
+  // A reply sent before the body was read leaves that body unread on the socket, which the
+  // bridged stream keeps paused; closing the connection after the reply releases it.
+  const unreadBody = (): boolean =>
+    webRequest.body !== null && !webRequest.bodyUsed;
   try {
-    const webResponse = await route(toWebRequest(request, response, origin()));
-    await writeWebResponse(webResponse, response);
+    const webResponse = await route(webRequest);
+    await writeWebResponse(webResponse, response, {
+      closeConnection: unreadBody(),
+    });
   } catch (cause: unknown) {
     // A client that left mid-stream is routine; a failure before headers is not.
     logger?.[response.headersSent ? "debug" : "warn"](
@@ -400,6 +407,7 @@ const serveNodeRequest = async (
       await writeWebResponse(
         jsonError(500, -32603, "Internal server error"),
         response,
+        { closeConnection: unreadBody() },
       ).catch(() => undefined);
   }
 };

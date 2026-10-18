@@ -249,3 +249,10 @@ the entry's normal `0` return: the HTTP entry now owns its exit status through
 `createExitStatus`, where a `0` after a recorded signal keeps the signal's
 status and a real failure still wins (unit test), and a process test sends the
 signal the moment the listening line appears and asserts the signal status.
+
+An eighth finding (Codex): a reply sent before the MCP handler read the body
+left that body unread on a paused bridged stream, so a slow uploader could
+hold the socket. The bridge now closes the connection after any reply whose
+request body was never read (test: an unknown-route POST and a foreign-Host
+POST are answered with `Connection: close`, while a keep-alive GET without a
+body keeps its connection).

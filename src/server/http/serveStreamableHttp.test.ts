@@ -515,3 +515,28 @@ it("answers an oversized sessionless POST promptly instead of stalling on the pr
   ]);
   await client.close();
 }, 20_000);
+
+it("closes the connection after a reply sent before the request body was read", async () => {
+  const { served } = await start();
+  const url = new URL(served.url);
+  const host = `127.0.0.1:${url.port}`;
+  const unread = await rawHttpRequest(new URL("/nowhere", url), {
+    method: "POST",
+    headers: { host, "content-type": "application/json" },
+    body: '{"never":"read"}',
+  });
+  expect(unread.status).toBe(404);
+  expect(unread.headers.connection).toBe("close");
+  const foreign = await rawHttpRequest(url, {
+    method: "POST",
+    headers: { host: "attacker.example", "content-type": "application/json" },
+    body: '{"never":"read"}',
+  });
+  expect(foreign.status).toBe(403);
+  expect(foreign.headers.connection).toBe("close");
+  // A keep-alive client shows the server does not close after a bodiless reply.
+  const bodiless = await fetch(new URL("/nowhere", url));
+  expect(bodiless.status).toBe(404);
+  expect(bodiless.headers.get("connection")).not.toBe("close");
+  await bodiless.body?.cancel();
+});
