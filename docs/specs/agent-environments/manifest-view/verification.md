@@ -122,3 +122,44 @@ the `cli-boundary` project was executing, and the clean 18aa9af2 export's
 `npm ci`, build and test preparation overlapped the `mcp-boundary` and
 `acceptance` runs, so those elapsed figures include host contention. Token usage and full process-family peak are
 unmeasured. Local real-tool verification ran on macOS arm64; the hosted Linux lane result is recorded above.
+
+## Automated review findings on the PR (2026-10-18)
+
+Codex and Greptile left seven inline findings on morluto/rea#4954 at
+b6d18d23; each was checked against the code and addressed in one follow-up
+commit, with a regression test where the behaviour is observable:
+
+- Body shapes walked nested values (both reviewers, P1): `#bodyShape` passed
+  the text to `inferJsonShape`, whose per-node path copies grow with the square
+  of depth, so a small deeply nested body could exceed the budget it had
+  reserved. The reader now parses once and reads top-level key types from the
+  parsed object; a test feeds a 2,500-level nested body and gets the four
+  top-level types back.
+- Literal route parts were not admitted (Codex, P2): a path of many short
+  literal segments materialized one part object per segment without a charge.
+  Every route part is now charged before the group is created; a test shows a
+  5,000-segment path refused under a 1 MiB budget while a 100-segment path is
+  retained.
+- `sibling-variance` rebuilt a key over the whole route at every position
+  (Greptile, P1): routes longer than 32 segments are no longer compared, the
+  manifest states it in a limitation, and a test shows two 39-segment siblings
+  left unmerged beside a merged short pair.
+- `after-uid-literal` templated stop words (Greptile, P1): the rule now skips
+  them; a test keeps `/api/items/uid/search` literal beside
+  `/api/items/uid/{uid}`.
+- Tool-name suffixes restarted at 2 on every collision (Greptile, P2): the
+  registry keeps the next suffix per base; a test projects 300 dotted literals
+  into `get_item` and `get_item_2` through `get_item_300`.
+- An exclusion row could lose its templated flag when two groups printed the
+  same row (Codex, P2): the flag is now the logical or of both. The scenario
+  needs a literal segment spelled `{numeric}`, which the WHATWG URL parser
+  percent-encodes in recorded paths, so no capture reaches it; the one-line
+  defence is kept without a test.
+
+Checks after the change: `oxfmt --check .` clean; `tsc --noEmit` clean;
+`npm run lint` and `verify:module-boundaries` clean (the complexity warnings
+on `#append` predate the change); `npx knip` no findings; `npm run jscpd`
+3.35 % duplicated lines; `scan:todos` none; `verify:test-discovery` 1,580
+files once; `vitest run` over the view, accumulator, JSON-shape and contract
+example tests 32 passed in 4 files; `vitest run` over the service, CLI and
+MCP boundary tests for analysis views 73 passed in 3 files.

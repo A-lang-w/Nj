@@ -129,7 +129,8 @@ export const inferJsonShape = (text: string): JsonShape | null => {
   };
 };
 
-const jsonValueType = (value: unknown): JsonValueType => {
+/** The JSON type name of one parsed value. */
+export const jsonValueType = (value: unknown): JsonValueType => {
   if (value === null) return "null";
   if (Array.isArray(value)) return "array";
   switch (typeof value) {

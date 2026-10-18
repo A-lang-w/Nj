@@ -70,6 +70,8 @@ const STOP_WORDS = new Set([
 ]);
 const DROPPED_NAME_LITERALS = new Set(["api", "apis", "namespaces", "default"]);
 const TOOL_NAME_LIMIT = 60;
+/** Longest route sibling-variance compares; every position rebuilds a key over the whole route. */
+export const SIBLING_VARIANCE_SEGMENT_LIMIT = 32;
 const BASE_RULES: ReadonlySet<string> = new Set(ROUTE_RULES);
 const OPT_IN_RULES: ReadonlySet<string> = new Set(TEMPLATE_RULES);
 
@@ -152,7 +154,8 @@ const templateAfterUidLiteral = (parts: readonly RoutePart[]): RoutePart[] =>
     const previous = parts[index - 1];
     return part.kind === "literal" &&
       previous?.kind === "literal" &&
-      previous.value === "uid"
+      previous.value === "uid" &&
+      !STOP_WORDS.has(part.value)
       ? param("after-uid-literal", [part.value])
       : part;
   });
@@ -244,8 +247,13 @@ const mergeSiblings = (
 
 /** Merge groups that differ in exactly one identifier-like segment at index two or later. */
 const mergeSiblingVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
-  let current = [...groups];
-  const longest = Math.max(0, ...groups.map((group) => group.parts.length));
+  const beyondLimit = groups.filter(
+    (group) => group.parts.length > SIBLING_VARIANCE_SEGMENT_LIMIT,
+  );
+  let current = groups.filter(
+    (group) => group.parts.length <= SIBLING_VARIANCE_SEGMENT_LIMIT,
+  );
+  const longest = Math.max(0, ...current.map((group) => group.parts.length));
   for (let position = 2; position < longest; position += 1) {
     const buckets = new Map<string, ToolGroup[]>();
     const output: ToolGroup[] = [];
@@ -270,7 +278,7 @@ const mergeSiblingVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
       output.push(...mergeSiblings(bucket, position));
     current = output;
   }
-  return current;
+  return [...current, ...beyondLimit];
 };
 
 /** Apply the selected opt-in rules in fixed order; every merge is an inference. */
@@ -360,12 +368,21 @@ export const pathTemplate = (
     .join("/")}`;
 };
 
+/** Names assigned in one manifest and the next suffix to try for each colliding base. */
+export interface ToolNameRegistry {
+  readonly used: Set<string>;
+  readonly nextSuffix: Map<string, number>;
+}
+export const toolNameRegistry = (): ToolNameRegistry => ({
+  used: new Set(),
+  nextSuffix: new Map(),
+});
 /** Deterministic tool name from the method and route literals, unique within a manifest. */
 export const toolName = (
   method: string,
   parts: readonly RoutePart[],
   names: readonly string[],
-  used: Set<string>,
+  registry: ToolNameRegistry,
 ): string => {
   const literals = parts.flatMap((part, index) => {
     if (part.kind !== "literal") return [];
@@ -390,11 +407,16 @@ export const toolName = (
   const truncate = (text: string, limit: number): string =>
     text.slice(0, limit).replace(/_+$/u, "");
   let candidate = truncate(base, TOOL_NAME_LIMIT);
-  for (let suffix = 2; used.has(candidate); suffix += 1) {
-    const tail = `_${String(suffix)}`;
-    candidate = `${truncate(base, TOOL_NAME_LIMIT - tail.length)}${tail}`;
+  if (registry.used.has(candidate)) {
+    let suffix = registry.nextSuffix.get(base) ?? 2;
+    for (; ; suffix += 1) {
+      const tail = `_${String(suffix)}`;
+      candidate = `${truncate(base, TOOL_NAME_LIMIT - tail.length)}${tail}`;
+      if (!registry.used.has(candidate)) break;
+    }
+    registry.nextSuffix.set(base, suffix + 1);
   }
-  used.add(candidate);
+  registry.used.add(candidate);
   return candidate;
 };
 

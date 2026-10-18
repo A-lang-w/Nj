@@ -25,20 +25,22 @@ manifest are later increments.
   listed, each at most once, in that order, folding literal siblings of an
   opt-in templated position into observed values whichever was recorded first,
   never folding a literal into a format-rule parameter and never templating a
-  stop word.
+  stop word; `sibling-variance` compares routes of at most 32 segments and the
+  manifest states when a route exceeded that.
 - Derive tool names from the method and route literals deterministically, at
   most 60 characters, unique within one manifest.
 - Derive `body_shape` for `POST`, `PUT` and `PATCH` from the tool's earliest
   record when it carries a JSON-typed request body, as top-level key types
-  only; copy no header, cookie, query or body value anywhere in the result.
+  only without walking nested values; copy no header, cookie, query or body
+  value anywhere in the result.
 - List records as pointers (`ordinal`, `method`, `path`, `status`,
   `content_type`) and excluded groups with reason `other-origin`,
   `ui-page-or-asset` or `non-json`.
 - Mark the Evidence inferred whenever any tool or excluded group is templated,
   derived otherwise; keep the parent's authority.
 - Admit the capture clone, the inline envelope, every retained pointer, group,
-  observed value, query name and body-shape key before allocation, and charge
-  body parsing as temporary bytes, within the existing 96 MiB budget.
+  route part, observed value, query name and body-shape key before allocation,
+  and charge body parsing as temporary bytes, within the existing 96 MiB budget.
 
 ## Acceptance and limits
 

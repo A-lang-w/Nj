@@ -30,7 +30,7 @@ const finished = (accumulator: EnvironmentManifestAccumulator) => {
 };
 
 it("refuses a body parse that exceeds the budget without retaining a partial tool", () => {
-  const accumulator = new EnvironmentManifestAccumulator(16 * 1024);
+  const accumulator = new EnvironmentManifestAccumulator(32 * 1024);
   expect(accumulator.add(sample(0, "/api/items")).ok).toBe(true);
   const before = finished(accumulator);
   const body = `{"name":"${"x".repeat(2_000)}"}`;
@@ -84,4 +84,14 @@ it("retains repeated observed values, statuses and query names once across many 
   });
   expect(manifest.tools[0]?.record_ordinals).toHaveLength(1000);
   expect(manifest.records).toHaveLength(1000);
+});
+
+it("charges every literal route part so a path of many short segments fails closed", () => {
+  const accumulator = new EnvironmentManifestAccumulator(1024 * 1024);
+  expect(accumulator.add(sample(0, "/a".repeat(100))).ok).toBe(true);
+  expect(accumulator.add(sample(1, "/a".repeat(5_000)))).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisResourceConstraintError", resource: "memory" },
+  });
+  expect(finished(accumulator).tools).toHaveLength(1);
 });

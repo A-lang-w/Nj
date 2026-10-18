@@ -774,3 +774,90 @@ it("omits a __proto__ body key explicitly instead of publishing a prototype", ()
   );
   expect(JSON.stringify(projected)).not.toContain("admin");
 });
+
+it("keeps a stop word literal after a uid literal instead of templating it", () => {
+  const projected = manifest(
+    ["after-uid-literal"],
+    syntheticCapture([
+      ["GET", "https://s.test/api/items/uid/abc"],
+      ["GET", "https://s.test/api/items/uid/search"],
+    ]),
+  );
+  expect(projected.tools.map(line)).toEqual([
+    "GET /api/items/uid/search",
+    "GET /api/items/uid/{uid}",
+  ]);
+  expect(projected.tools[1]?.params[0]?.observed_values).toEqual(["abc"]);
+});
+
+it("reads only the top-level key types of a deeply nested request body", () => {
+  const nested = `${"[".repeat(2_500)}1${"]".repeat(2_500)}`;
+  const projected = manifest(
+    [],
+    syntheticCapture([
+      [
+        "POST",
+        "https://s.test/api/folders",
+        "application/json",
+        `{"title":"t","tree":${nested},"count":2,"meta":{"deep":${nested}}}`,
+      ],
+    ]),
+  );
+  expect(projected.tools[0]?.body_shape).toEqual({
+    type: "object",
+    properties: {
+      count: "number",
+      meta: "object",
+      title: "string",
+      tree: "array",
+    },
+  });
+});
+
+it("assigns collision suffixes in sequence and keeps every name unique", () => {
+  const projected = manifest(
+    [],
+    syntheticCapture(
+      Array.from(
+        { length: 300 },
+        (_, index) =>
+          ["GET", `https://s.test/api/item.${String(index)}`] as const,
+      ),
+    ),
+  );
+  const names = projected.tools.map((tool) => tool.name);
+  expect(new Set(names).size).toBe(300);
+  expect([...names].sort()).toEqual(
+    [
+      "get_item",
+      ...Array.from(
+        { length: 299 },
+        (_, index) => `get_item_${String(index + 2)}`,
+      ),
+    ].sort(),
+  );
+});
+
+it("does not compare routes beyond the sibling-variance segment limit and says so", () => {
+  const tail = Array.from(
+    { length: 36 },
+    (_, index) => `s${String(index)}`,
+  ).join("/");
+  const projected = manifest(
+    ["sibling-variance"],
+    syntheticCapture([
+      ["GET", `https://s.test/api/items/a1/${tail}`],
+      ["GET", `https://s.test/api/items/b2/${tail}`],
+      ["GET", "https://s.test/api/things/c3"],
+      ["GET", "https://s.test/api/things/d4"],
+    ]),
+  );
+  expect(projected.tools.map((tool) => tool.path_template)).toEqual([
+    `/api/items/a1/${tail}`,
+    `/api/items/b2/${tail}`,
+    "/api/things/{thing_id}",
+  ]);
+  expect(projected.limitations).toContain(
+    "Routes with more than 32 segments are not compared by sibling-variance; they keep their grouped templates.",
+  );
+});

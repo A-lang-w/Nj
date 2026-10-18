@@ -363,7 +363,7 @@ in this order:
 
 | Rule                | Applies to                                                                                                                                                                                                                        | Parameter                                       |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| `after-uid-literal` | The literal segment right after a literal `uid`                                                                                                                                                                                   | `uid`                                           |
+| `after-uid-literal` | The literal segment right after a literal `uid`, unless it is a stop word                                                                                                                                                         | `uid`                                           |
 | `opaque-token`      | A lowercase alphanumeric segment of twelve or more characters mixing letters and digits that is not a `v1`-style version                                                                                                          | `uid`                                           |
 | `sibling-variance`  | Groups equal in method, origin and segment count that differ in one literal at index 2 or later whose values are identifier-like (a digit or `:`, or three or more hyphenated names under a plural literal) and never a stop word | singular previous literal plus `_id`, else `id` |
 
@@ -379,10 +379,12 @@ cut to their first label, `_by_<params>` appended when parameters exist,
 sanitized to `[a-z0-9_]`, at most 60 characters and made unique with numeric
 suffixes: `get_dashboards_by_uid`, `get_plugins_settings_by_plugin_id`.
 
-`body_shape` is derived for `POST`, `PUT` and `PATCH` from the tool's earliest
-record when it carries an `application/json` or `application/*+json` request
-body: top-level keys and their JSON type names, never values; a body on a later
-record adds nothing. `unknowns` always states three facts: the authorization model, response
+`sibling-variance` compares routes of at most 32 segments; longer routes keep
+their grouped templates and the manifest says so in a limitation. `body_shape`
+is derived for `POST`, `PUT` and `PATCH` from the tool's earliest record when it
+carries an `application/json` or `application/*+json` request body: top-level
+keys and their JSON type names, never values and never nested structure; a body
+on a later record adds nothing. `unknowns` always states three facts: the authorization model, response
 semantics and state transitions are not established by a capture.
 `templated_groups` counts tools and excluded groups with a templated segment;
 whenever it is nonzero the Evidence is inferred, otherwise derived. The view
@@ -392,9 +394,9 @@ typed unsupported errors as the api-surface view, including the canonical
 token `sensitive_values_unretained`.
 
 The manifest accumulator shares the api-surface admission model: the capture
-clone, the inline envelope, record pointers, groups, observed values, query
-names and body-shape keys are admitted before allocation, and each recorded
-body is charged as temporary bytes before it is parsed. Retained state and
+clone, the inline envelope, record pointers, groups, every route part, observed
+values, query names and body-shape keys are admitted before allocation, and each
+recorded body is charged as temporary bytes before it is parsed. Retained state and
 temporary work must fit together within the 96 MiB projection representation
 budget; exceeding it returns `resource_constraint` without a partial manifest.
 

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { inferJsonShape } from "../jsonShape.js";
+import { jsonValueType } from "../jsonShape.js";
 import { ok, type Result } from "../result.js";
 import {
   compareUnicodeCodePoints as compare,
@@ -18,7 +18,9 @@ import {
   compareTools,
   parameterNames,
   pathTemplate,
+  SIBLING_VARIANCE_SEGMENT_LIMIT,
   toolName,
+  toolNameRegistry,
   type BodyShape,
   type JsonTypeName,
   type LiteralPart,
@@ -127,6 +129,26 @@ const UNKNOWNS: Manifest["unknowns"] = [
   },
 ];
 
+/** Parse text as a JSON object; anything else, including invalid JSON, is null. */
+const parseJsonObject = (
+  text: string,
+): Readonly<Record<string, unknown>> | null => {
+  let root: unknown;
+  try {
+    root = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  return typeof root === "object" && root !== null && !Array.isArray(root)
+    ? (root as Readonly<Record<string, unknown>>)
+    : null;
+};
+/** Route parts of a template: one more than its separators. */
+const routePartCount = (template: string): number => {
+  let count = 1;
+  for (const character of template) if (character === "/") count += 1;
+  return count;
+};
 const isJson = (essence: string | null): boolean =>
   essence === "application/json" || (essence?.endsWith("+json") ?? false);
 
@@ -235,7 +257,7 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
     }
   }
 
-  /** Parse the group's first recorded JSON-typed request body into key types only; values are discarded. */
+  /** Read the top-level key types of the group's first recorded JSON-typed request body; nested values are never walked. */
   #bodyShape(reported: unknown): Result<BodyShape | null, AnalysisError> {
     const parsed = postDataSchema.safeParse(reported);
     const body = parsed.success ? parsed.data.request.postData : undefined;
@@ -247,18 +269,16 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
       !isJson(mediaTypeEssence(body.mimeType))
     )
       return ok(null);
-    // The parsed value, the shape nodes and their paths coexist with the text.
+    // The parsed tree is linear in the text and coexists with it and the key entries.
     if (!this.scratch(RECORD_SCRATCH_BYTES + textBytes(body.text.length) * 3))
       return this.overBudget();
-    const shape = inferJsonShape(body.text);
-    if (shape === null || shape.root_type !== "object") return ok(null);
+    const root = parseJsonObject(body.text);
+    if (root === null) return ok(null);
     const entries: [string, JsonTypeName][] = [];
-    for (const property of shape.properties) {
-      const [segment] = property.path;
-      if (property.path.length !== 1 || segment?.kind !== "property") continue;
+    for (const [name, value] of Object.entries(root)) {
       // JSON parsers and schema clones drop a __proto__ own property; omit it explicitly.
-      if (segment.name === "__proto__") this.#unrepresentableBodyKey = true;
-      else entries.push([segment.name, property.types[0] ?? "null"]);
+      if (name === "__proto__") this.#unrepresentableBodyKey = true;
+      else entries.push([name, jsonValueType(value)]);
     }
     return ok({ type: "object", properties: Object.fromEntries(entries) });
   }
@@ -289,6 +309,8 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
         textBytes(line.origin.length) +
         textBytes(route.template.length) * 2 +
         textBytes(route.rules.length);
+      // Every part, literal or templated, is one object in the group and in each rule, template and name pass.
+      bytes += ENTRY_BYTES * 4 * routePartCount(route.template);
       for (const segment of route.segments)
         bytes += SEGMENT_BYTES + ENTRY_BYTES + textBytes(segment.value.length);
       if (bodyShape !== null)
@@ -371,7 +393,7 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
   }
 
   #tools(groups: readonly ToolGroup[]): Tool[] {
-    const used = new Set<string>();
+    const registry = toolNameRegistry();
     return applyTemplateRules(groups, this.#rules)
       .map((group) => {
         const names = parameterNames(group.parts);
@@ -386,7 +408,7 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
       .map(({ group, names, template }): Tool => {
         let next = 0;
         return {
-          name: toolName(group.method, group.parts, names, used),
+          name: toolName(group.method, group.parts, names, registry),
           method: group.method,
           path_template: template,
           api_surface_template: group.api_surface_template,
@@ -439,9 +461,12 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
         path_template: group.api_surface_template,
         reason,
       };
-      exclusions.set(compositeKey(Object.values(exclusion)), {
+      // Distinct groups can print the same exclusion row; a templated one keeps the row inferred.
+      const key = compositeKey(Object.values(exclusion));
+      exclusions.set(key, {
         ...exclusion,
-        templated: hasParam(group.parts),
+        templated:
+          (exclusions.get(key)?.templated ?? false) || hasParam(group.parts),
       });
     }
     const tools = this.#tools(toolGroups);
@@ -465,6 +490,14 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
       ...(this.#unrepresentableBodyKey
         ? [
             "A top-level __proto__ key in a recorded JSON body is omitted from body_shape; it cannot be an own property of the published object.",
+          ]
+        : []),
+      ...(this.#rules.has("sibling-variance") &&
+      toolGroups.some(
+        (group) => group.parts.length > SIBLING_VARIANCE_SEGMENT_LIMIT,
+      )
+        ? [
+            `Routes with more than ${String(SIBLING_VARIANCE_SEGMENT_LIMIT)} segments are not compared by sibling-variance; they keep their grouped templates.`,
           ]
         : []),
       ...(this.#unrepresented > 0
