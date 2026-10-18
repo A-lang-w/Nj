@@ -4,6 +4,7 @@ import type {
   DoctorProviderInspection,
 } from "../application/Doctor.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
   runOwnedCommand,
   OwnedCommandFailure,
@@ -52,10 +53,12 @@ export class FirmwareDoctor {
     readonly environment: Readonly<NodeJS.ProcessEnv>,
     readonly platform: NodeJS.Platform = process.platform,
     readonly host: FirmwareDoctorHost = {},
+    readonly signal?: AbortSignal,
   ) {}
 
   /** Inspect each optional tool independently and share host prerequisite probes. */
   async inspect(): Promise<readonly DoctorProviderInspection[]> {
+    this.#throwIfCancelled();
     const platform = diagnostic(
       "platform",
       this.platform === "linux",
@@ -67,6 +70,7 @@ export class FirmwareDoctor {
     let limiter: string | undefined;
     if (platform.ok) {
       const ps = await this.#inspectPs();
+      this.#throwIfCancelled();
       checks.push(ps);
       const path = await inspectFirmwareExecutable(
         firmwareLimiterPath(this.environment),
@@ -114,8 +118,11 @@ export class FirmwareDoctor {
       }
     }
     const inspections: DoctorProviderInspection[] = [];
-    for (const engine of ["binwalk", "unblob"] as const)
+    for (const engine of ["binwalk", "unblob"] as const) {
+      this.#throwIfCancelled();
       inspections.push(await this.#inspectEngine(engine, checks, limiter));
+    }
+    this.#throwIfCancelled();
     return inspections;
   }
 
@@ -132,9 +139,18 @@ export class FirmwareDoctor {
       : `Firmware doctor cleanup incomplete: ${failures.join("; ")}`;
   }
 
+  #throwIfCancelled(): void {
+    if (this.signal?.aborted)
+      throw new AnalysisCancelledError("doctor", { cause: this.signal.reason });
+  }
+
   async #inspectPs(): Promise<DoctorProviderCheck> {
     try {
-      const signal = AbortSignal.timeout(PROBE_LIMITS.timeoutMs);
+      const timeout = AbortSignal.timeout(PROBE_LIMITS.timeoutMs);
+      const signal =
+        this.signal === undefined
+          ? timeout
+          : AbortSignal.any([this.signal, timeout]);
       if (this.host.prepareOwnership !== undefined)
         await this.host.prepareOwnership(this.environment, signal);
       else
@@ -150,6 +166,7 @@ export class FirmwareDoctor {
         "",
       );
     } catch (cause: unknown) {
+      this.#throwIfCancelled();
       return diagnostic(
         "ps",
         false,
@@ -309,6 +326,7 @@ export class FirmwareDoctor {
         },
         PROBE_LIMITS,
         {
+          signal: this.signal,
           retainCleanup: (owner) => {
             this.#pendingCleanup.add(owner);
           },
@@ -320,6 +338,7 @@ export class FirmwareDoctor {
         exitCode: result.exitCode ?? null,
       });
     } catch (cause: unknown) {
+      this.#throwIfCancelled();
       const output =
         cause instanceof OwnedCommandFailure ? cause.snapshot : null;
       return err(

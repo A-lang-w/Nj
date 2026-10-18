@@ -18,7 +18,7 @@ it("exposes jadx through the doctor provider selector", () => {
 });
 
 it("keeps firmware diagnostics out of setup's engine selection", async () => {
-  const host = createSystemDoctorHost({}, { firmware: false });
+  const host = createSystemDoctorHost({}, undefined, { firmware: false });
   try {
     const inspections = await host.providerInspections?.();
     expect(inspections?.map(({ id }) => id)).toEqual([

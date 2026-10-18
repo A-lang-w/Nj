@@ -7,6 +7,7 @@ import {
   type ProviderProcessSnapshot,
 } from "../process/ProviderProcess.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type { FirmwareDoctorHost } from "./FirmwareDoctor.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { runDoctor } from "../application/Doctor.js";
@@ -36,6 +37,14 @@ it("reports unsupported firmware hosts without launching configured tools", asyn
       false,
     );
   }
+  expect(await doctor.close()).toBeUndefined();
+});
+
+it("preserves doctor cancellation before firmware probes run", async () => {
+  const controller = new AbortController();
+  controller.abort("stop doctor");
+  const doctor = new FirmwareDoctor({}, "linux", {}, controller.signal);
+  await expect(doctor.inspect()).rejects.toBeInstanceOf(AnalysisCancelledError);
   expect(await doctor.close()).toBeUndefined();
 });
 

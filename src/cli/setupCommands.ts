@@ -1,3 +1,4 @@
+import { withCommandCancellation } from "./commandCancellation.js";
 import { z } from "incur";
 
 import type { DoctorScope } from "../application/Doctor.js";
@@ -120,18 +121,20 @@ const registerDoctorCommand = (
         .describe("Require the installed REA skill identity to be aligned"),
     }),
     run: ({ options }) =>
-      logCliCommand(logger, "doctor", async () => {
-        const [{ runDoctorOwned }, { createSystemDoctorHost }] =
-          await Promise.all([
-            import("../application/Doctor.js"),
-            import("../doctorRuntime.js"),
-          ]);
-        return runDoctorOwned(
-          options.target,
-          createSystemDoctorHost(environment),
-          doctorScope(options),
-        );
-      }),
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, "doctor", async () => {
+          const [{ runDoctorOwned }, { createSystemDoctorHost }] =
+            await Promise.all([
+              import("../application/Doctor.js"),
+              import("../doctorRuntime.js"),
+            ]);
+          return runDoctorOwned(
+            options.target,
+            createSystemDoctorHost(environment, signal),
+            doctorScope(options),
+          );
+        }),
+      ),
   });
 };
 
@@ -221,7 +224,7 @@ const runSetupCommand = async (
     setupRunOptions(input, interactive, hasExplicitScope),
     // Firmware readiness must not select an engine or change setup's install plan.
     systemSetupHost(
-      createSystemDoctorHost(environment, { firmware: false }),
+      createSystemDoctorHost(environment, undefined, { firmware: false }),
       environment,
     ),
     interactive
