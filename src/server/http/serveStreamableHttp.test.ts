@@ -359,3 +359,65 @@ it("releases the listener when the server factory fails after the port is bound"
   for (const line of logs) seen.push((JSON.parse(line) as { msg: string }).msg);
   expect(seen).not.toContain("MCP transport listening");
 });
+
+it("classifies loopback from the bound address and lists the configured name beside it", () => {
+  const sdk = ["localhost", "127.0.0.1", "[::1]"];
+  expect(hostHeaderAllowlist("ip6-localhost", "::1")).toEqual([
+    ...sdk,
+    "ip6-localhost",
+  ]);
+  expect(hostHeaderAllowlist("dev.local", "127.0.0.1")).toEqual([
+    ...sdk,
+    "dev.local",
+  ]);
+  expect(hostHeaderAllowlist("0.0.0.0", "0.0.0.0")).toBeUndefined();
+  expect(hostHeaderAllowlist("dev.local", "192.0.2.10")).toBeUndefined();
+});
+
+it("refuses a scoped IPv6 bind before creating anything and keeps bind failures away from onerror", async () => {
+  let factoryCalls = 0;
+  const onerror = (): void => {
+    throw new Error("onerror must not run during startup");
+  };
+  await expect(
+    serveStreamableHttp({
+      host: "fe80::1%lo0",
+      port: 0,
+      onerror,
+      createMcpServer: () => {
+        factoryCalls += 1;
+        return createEchoServer(() => undefined);
+      },
+    }),
+  ).rejects.toBeInstanceOf(StreamableHttpListenError);
+  expect(factoryCalls).toBe(0);
+  const { served } = await start();
+  await expect(
+    serveStreamableHttp({
+      host: "127.0.0.1",
+      port: Number(new URL(served.url).port),
+      onerror,
+      createMcpServer: () => createEchoServer(() => undefined),
+    }),
+  ).rejects.toThrow(/EADDRINUSE/u);
+});
+
+it("leaves the instance to its owner when closeInstance is false", async () => {
+  let instanceCloses = 0;
+  const server = createEchoServer(() => undefined);
+  const original = server.close.bind(server);
+  server.close = async () => {
+    instanceCloses += 1;
+    await original();
+  };
+  const served = await serveStreamableHttp({
+    host: "127.0.0.1",
+    port: 0,
+    closeInstance: false,
+    createMcpServer: () => server,
+  });
+  await served.close();
+  expect(instanceCloses).toBe(0);
+  await server.close();
+  expect(instanceCloses).toBe(1);
+});

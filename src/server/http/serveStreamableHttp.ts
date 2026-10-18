@@ -41,6 +41,8 @@ export interface ServeStreamableHttpOptions {
   readonly logger?: Logger;
   /** Reports listener failures after binding; request failures are logged instead. */
   readonly onerror?: (error: Error) => void;
+  /** Close the server instance as the last stage of `close`; false when the factory's owner closes it. */
+  readonly closeInstance?: boolean;
 }
 
 export interface StreamableHttpServer {
@@ -78,11 +80,15 @@ const isLoopbackHostname = (hostname: string): boolean => {
   const hex = /^([0-9a-f]{1,4}):[0-9a-f]{1,4}$/u.exec(mapped);
   return hex !== null && Number.parseInt(hex[1] ?? "0", 16) >> 8 === 0x7f;
 };
-/** Host and Origin allowlist for a loopback bind, including the bind's own hostname; undefined relaxes validation. */
-export const hostHeaderAllowlist = (host: string): string[] | undefined => {
-  const hostname = normalizedHostname(host);
-  if (hostname === undefined || !isLoopbackHostname(hostname)) return undefined;
-  return [...new Set([...localhostAllowedHostnames(), hostname])];
+/** Host and Origin allowlist when the configured host or the address it bound is loopback, including both names; undefined relaxes validation. */
+export const hostHeaderAllowlist = (
+  host: string,
+  boundAddress = host,
+): string[] | undefined => {
+  const names = [normalizedHostname(host), normalizedHostname(boundAddress)];
+  const known = names.filter((name): name is string => name !== undefined);
+  if (!known.some((name) => isLoopbackHostname(name))) return undefined;
+  return [...new Set([...localhostAllowedHostnames(), ...known])];
 };
 
 const jsonError = (status: number, code: number, message: string): Response =>
@@ -240,9 +246,15 @@ const endpointUrl = (
 export const serveStreamableHttp = async (
   options: ServeStreamableHttpOptions,
 ): Promise<StreamableHttpServer> => {
-  const { host, port, logger, routes = [] } = options;
-  const allowedHosts = hostHeaderAllowlist(host);
-  // The instance is created after the listener binds, so a bind failure leaves nothing to clean up.
+  const { host, port, logger, routes = [], closeInstance = true } = options;
+  // Scoped IPv6 literals bind but cannot be named in a URL; refuse them before anything exists.
+  if (host.includes("%"))
+    throw new StreamableHttpListenError(
+      new Error(`scoped IPv6 bind address ${host} is not supported`),
+    );
+  // Loopback is classified from the address the listener binds, after it binds; the instance
+  // is created after that, so a bind failure leaves nothing to clean up.
+  let allowedHosts: string[] | undefined;
   let slot: McpSessionSlot | undefined;
   let origin = "";
   let stopped = false;
@@ -269,31 +281,15 @@ export const serveStreamableHttp = async (
       : match.handle(request);
   };
   const httpServer = createHttpServer();
-  const handleRequest = async (
+  const handleRequest = (
     request: IncomingMessage,
     response: ServerResponse,
-  ): Promise<void> => {
-    try {
-      const webResponse = await route(toWebRequest(request, response, origin));
-      await writeWebResponse(webResponse, response);
-    } catch (cause: unknown) {
-      // A client that left mid-stream is routine; a failure before headers is not.
-      logger?.[response.headersSent ? "debug" : "warn"](
-        { error: describe(cause) },
-        "MCP HTTP request did not complete",
-      );
-      if (response.headersSent) response.destroy();
-      else
-        await writeWebResponse(
-          jsonError(500, -32603, "Internal server error"),
-          response,
-        ).catch(() => undefined);
-    }
-  };
-  httpServer.on("request", (request, response) => {
-    void handleRequest(request, response);
-  });
-  httpServer.on("error", (error) => options.onerror?.(error));
+  ): Promise<void> =>
+    serveNodeRequest(
+      { route, origin: () => origin, logger },
+      request,
+      response,
+    );
   const closeListener = async (): Promise<void> => {
     stopped = true;
     httpServer.closeAllConnections();
@@ -309,8 +305,24 @@ export const serveStreamableHttp = async (
   } catch (cause: unknown) {
     throw new StreamableHttpListenError(cause);
   }
-  const url = endpointUrl(httpServer.address());
-  origin = new URL(url).origin;
+  const bound = httpServer.address();
+  let url: string;
+  try {
+    url = endpointUrl(bound);
+    origin = new URL(url).origin;
+  } catch (cause: unknown) {
+    await closeListener().catch(() => undefined);
+    throw new StreamableHttpListenError(cause);
+  }
+  allowedHosts = hostHeaderAllowlist(
+    host,
+    bound !== null && typeof bound === "object" ? bound.address : host,
+  );
+  httpServer.on("request", (request, response) => {
+    void handleRequest(request, response);
+  });
+  // Bind failures already rejected the listening wait above; only later listener errors are reported.
+  httpServer.on("error", (error) => options.onerror?.(error));
   let instance: McpServer | Server;
   try {
     instance = await options.createMcpServer({ era: "legacy" });
@@ -335,9 +347,38 @@ export const serveStreamableHttp = async (
   const close = stagedClose([
     closeListener,
     () => live.close(),
-    () => instance.close(),
+    ...(closeInstance ? [() => instance.close()] : []),
   ]);
   return { url, close };
+};
+
+/** Translate one node:http exchange through `route`, logging a failure and answering it when headers are still open. */
+const serveNodeRequest = async (
+  target: {
+    readonly route: (request: Request) => Promise<Response>;
+    readonly origin: () => string;
+    readonly logger: Logger | undefined;
+  },
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> => {
+  const { route, origin, logger } = target;
+  try {
+    const webResponse = await route(toWebRequest(request, response, origin()));
+    await writeWebResponse(webResponse, response);
+  } catch (cause: unknown) {
+    // A client that left mid-stream is routine; a failure before headers is not.
+    logger?.[response.headersSent ? "debug" : "warn"](
+      { error: describe(cause) },
+      "MCP HTTP request did not complete",
+    );
+    if (response.headersSent) response.destroy();
+    else
+      await writeWebResponse(
+        jsonError(500, -32603, "Internal server error"),
+        response,
+      ).catch(() => undefined);
+  }
 };
 
 /** Run close stages in order once each; a failed stage is retried by the next call instead of replaying its rejection. */

@@ -447,12 +447,16 @@ application/json` and an `Accept` naming both `application/json` and
 session; any other sessionless POST goes to the live transport, which refuses
 it without disturbing the session. Requests that carry no valid session id are
 refused with `400` or `404` as the SDK transport defines. A bind is loopback by
-address class, not spelling: any `127.0.0.0/8` address, `::1`, an IPv4-mapped
-loopback and `localhost` names. On such a bind, requests whose `Host` header is
-outside the SDK loopback allowlist plus the bind's own hostname are refused with
-`403`, and a browser `Origin` outside that allowlist is refused the same way (a
-missing `Origin` passes); a non-loopback bind relaxes both checks and logs the
-relaxation. Request bodies are bounded by the SDK's
+address class, not spelling, and is classified from the address the listener
+actually bound: any `127.0.0.0/8` address, `::1`, an IPv4-mapped loopback and
+`localhost` names, including a host alias that resolves to one of them. On such
+a bind, requests whose `Host` header is outside the SDK loopback allowlist plus
+the configured name and the bound address are refused with `403`, and a browser
+`Origin` outside that allowlist is refused the same way (a missing `Origin`
+passes); a non-loopback bind relaxes both checks and logs the relaxation. Scoped
+IPv6 literals (`fe80::1%eth0`) are refused before binding, because no URL can
+name them. Listener errors reach the runtime's connection-loss handler only
+after a successful bind; a bind failure prints the listen-failure message alone. Request bodies are bounded by the SDK's
 4 MiB limit, and the response budget keeps its stdio-derived floor. The
 listener ends on SIGINT or SIGTERM only, not on stdin EOF, and exits `130` or
 `143` after cleanup settles.

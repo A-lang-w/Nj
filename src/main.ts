@@ -51,9 +51,11 @@ const httpRuntimeDependencies = (
       // Loaded here so the default stdio entry never loads the HTTP listener.
       const { serveStreamableHttp } =
         await import("./server/http/serveStreamableHttp.js");
+      // The transport's factory owner closes every instance it created; the listener must not race it.
       return serveStreamableHttp({
         ...endpoint,
         createMcpServer: factory,
+        closeInstance: false,
         ...options,
       });
     },

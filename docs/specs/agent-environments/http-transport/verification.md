@@ -204,3 +204,15 @@ initialize is refused while the connected client keeps echoing), and the
 server instance is created only after the listener has bound, so a bind
 failure has nothing to clean up and a factory failure releases the listener
 and rethrows (test: a throwing factory rejects without announcing a URL).
+
+A third round (Greptile and Codex, five findings) was addressed next: the
+listener's `error` forwarding to `onerror` is registered after the bind, so
+`EADDRINUSE` prints only the listen-failure message (test: an occupied port
+rejects without calling `onerror`); scoped IPv6 literals are refused before
+binding and a URL that cannot be formed from the bound address closes the
+listener (test: `fe80::1%lo0` rejects before the factory runs); loopback is
+classified from the bound address with the configured name added to the
+allowlist (test: `ip6-localhost` bound to `::1`, `dev.local` bound to
+`127.0.0.1`); and the MCP runtime passes `closeInstance: false` so the factory
+owner in `startMcpTransport` remains the single owner of instance cleanup
+(test: `close` leaves the instance open until its owner closes it).

@@ -30,9 +30,14 @@ client registration keep stdio.
   response chunks as they are produced and turning a client disconnect into a
   request abort and body cancellation.
 - Classify a loopback bind by address class (`127.0.0.0/8`, `::1`, IPv4-mapped
-  loopback, `localhost` names), validate the `Host` and `Origin` headers with
-  the SDK loopback allowlist plus the bind's own hostname on such binds, and
-  relax both for other binds and log that relaxation.
+  loopback, `localhost` names) from the address the listener bound, validate
+  the `Host` and `Origin` headers with the SDK loopback allowlist plus the
+  configured name and the bound address on such binds, and relax both for
+  other binds and log that relaxation. Refuse scoped IPv6 literals before
+  binding, close the listener if its URL cannot be formed, and forward
+  listener errors to `onerror` only after a successful bind.
+- Let the caller own instance cleanup (`closeInstance: false`) when its factory
+  owner already closes every instance, as the MCP runtime does.
 - Let only an `initialize` that carries the streamable headers and passes those
   checks replace an open session; refuse requests once the slot is closed, join
   an arming session during shutdown, and keep close stages retryable.
