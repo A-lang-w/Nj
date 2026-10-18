@@ -20,7 +20,7 @@ cliTest(
       result.json,
     );
     expect(evidence.normalized_result.header.python_version).toBe("3.12");
-    expect(evidence.normalized_result.code.nested_code[0]?.name).toBe("inner");
+    expect(evidence.normalized_result.code_objects[1]?.name).toBe("inner");
   },
 );
 

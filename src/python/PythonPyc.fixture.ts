@@ -71,6 +71,8 @@ export type FixtureCodeFields = {
   firstlineno?: number;
   linetable?: Buffer;
   exceptiontable?: Buffer;
+  /** Raw marshal object in place of the co_names tuple. */
+  namesObject?: Buffer;
   /** Raw marshal object in place of the co_exceptiontable bytes. */
   exceptiontableObject?: Buffer;
   flagged?: boolean;
@@ -93,9 +95,10 @@ export const marshalCode = (
     u32(fields.flags ?? 0),
     marshalBytes(fields.bytecode ?? Buffer.from([0x53])),
     marshalSmallTuple(fields.consts ?? [marshalNone()]),
-    marshalSmallTuple(
-      (fields.names ?? []).map((name) => marshalShortAscii(name)),
-    ),
+    fields.namesObject ??
+      marshalSmallTuple(
+        (fields.names ?? []).map((name) => marshalShortAscii(name)),
+      ),
   );
   if (layout === "py311") {
     parts.push(

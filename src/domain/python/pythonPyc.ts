@@ -177,16 +177,15 @@ const pythonCodeFields = {
 
 export type PythonPycConst = z.infer<typeof pythonConstSchema>;
 
-const pythonCodeObjectBaseSchema = z.strictObject(pythonCodeFields);
-export type PythonPycCodeObject = z.infer<typeof pythonCodeObjectBaseSchema> & {
-  nested_code: PythonPycCodeObject[];
-};
-
-const pythonCodeObjectSchema: z.ZodType<PythonPycCodeObject> = z.lazy(() =>
-  pythonCodeObjectBaseSchema.extend({
-    nested_code: z.array(pythonCodeObjectSchema),
-  }),
-);
+/**
+ * One distinct marshal code object. `nested_code` holds indexes into the
+ * report's `code_objects`, so a child shared through TYPE_REF is listed once.
+ */
+const pythonCodeObjectSchema = z.strictObject({
+  ...pythonCodeFields,
+  nested_code: z.array(index),
+});
+export type PythonPycCodeObject = z.infer<typeof pythonCodeObjectSchema>;
 
 export const pythonPycHeaderSchema = z.strictObject({
   magic: z.number().int().min(0).max(0xffff),
@@ -209,7 +208,8 @@ export const pythonPycSchema = z
       bytes: index,
     }),
     header: pythonPycHeaderSchema,
-    code: pythonCodeObjectSchema,
+    /** The top-level module code object is first. */
+    code_objects: z.array(pythonCodeObjectSchema).min(1),
     coverage: z.strictObject({
       status: z.literal("complete"),
       objects: uint,
@@ -258,14 +258,23 @@ export const pythonPycSchema = z
           "Timestamp pycs require source_size; hash-based pycs must omit it.",
       });
     }
-    const counted = countCodeObjects(report.code);
-    if (report.coverage.code_objects !== counted) {
+    if (report.coverage.code_objects !== report.code_objects.length) {
       context.addIssue({
         code: "custom",
         path: ["coverage", "code_objects"],
-        message: "Code-object coverage disagrees with the nested inventory.",
+        message: "Code-object coverage disagrees with the listed code objects.",
       });
     }
+    report.code_objects.forEach((code, owner) =>
+      code.nested_code.forEach((nested, position) => {
+        if (nested >= report.code_objects.length || nested === owner)
+          context.addIssue({
+            code: "custom",
+            path: ["code_objects", owner, "nested_code", position],
+            message: "Nested code index does not name another listed object.",
+          });
+      }),
+    );
   });
 
 export type PythonPyc = z.infer<typeof pythonPycSchema>;
@@ -273,10 +282,3 @@ export type InspectPythonPycInput = z.infer<typeof inspectPythonPycInputSchema>;
 
 export const PYTHON_PYC_CONST_PREVIEW_LIMIT = constPreviewLimit;
 export const PYTHON_PYC_INT_PREVIEW_BITS = intPreviewBits;
-
-const countCodeObjects = (code: PythonPycCodeObject): number =>
-  1 +
-  code.nested_code.reduce(
-    (total, nested) => total + countCodeObjects(nested),
-    0,
-  );

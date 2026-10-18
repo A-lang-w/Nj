@@ -63,7 +63,12 @@ type MarshalValue =
       readonly kind: "dict";
       readonly items: readonly (readonly [MarshalValue, MarshalValue])[];
     }
-  | { readonly kind: "code"; readonly value: PythonPycCodeObject };
+  | { readonly kind: "code"; readonly value: CodeNode };
+
+/** A decoded code object; TYPE_REF children are the same node, not copies. */
+type CodeNode = Omit<PythonPycCodeObject, "nested_code"> & {
+  readonly nested: readonly CodeNode[];
+};
 
 const malformed = (message: string): never => {
   throw new PythonPycFormatFailure("malformed", message);
@@ -116,6 +121,7 @@ export const parsePythonPyc = (
     malformed("Marshal stream has trailing bytes after the top-level object.");
   if (root.kind !== "code")
     return malformed("Top-level marshal object is not a code object.");
+  const codeObjects = flattenCode(root.value);
   const unknownFlags =
     flags & ~(PYTHON_PYC_HASH_BASED | PYTHON_PYC_CHECK_SOURCE);
   return {
@@ -125,11 +131,11 @@ export const parsePythonPyc = (
       bytes: artifact.bytes,
     },
     header,
-    code: root.value,
+    code_objects: codeObjects,
     coverage: {
       status: "complete",
       objects: reader.objects,
-      code_objects: reader.codeObjects(root.value),
+      code_objects: codeObjects.length,
       marshal_bytes: marshal.length,
       marshal_depth: reader.depthReached,
     },
@@ -154,15 +160,8 @@ class MarshalReader {
   objects = 0;
   depthReached = 0;
   readonly #intern: (MarshalValue | undefined)[] = [];
-  /** Expanded weight of each admitted code object, counting TYPE_REF copies. */
-  readonly #codeWeight = new WeakMap<
-    PythonPycCodeObject,
-    { readonly objects: number; readonly bytes: number; readonly codes: number }
-  >();
-  /** Weight a TYPE_REF added beyond its one marshal object, cumulative. */
-  #expanded = { objects: 0, bytes: 0, codes: 0 };
-  /** Own string bytes and code count of every admitted code object, cumulative. */
-  #admitted = { bytes: 0, codes: 0 };
+  /** Name and identifier bytes the report carries across all code objects. */
+  #reportedStringBytes = 0;
 
   constructor(
     readonly bytes: Buffer,
@@ -254,12 +253,7 @@ class MarshalReader {
     }
   }
 
-  code(depth: number): PythonPycCodeObject {
-    const start = {
-      objects: this.objects,
-      expanded: { ...this.#expanded },
-      admitted: { ...this.#admitted },
-    };
+  code(depth: number): CodeNode {
     const argcount = this.u32();
     const posonlyargcount = this.layout === "py37" ? null : this.u32();
     const kwonlyargcount = this.u32();
@@ -297,10 +291,18 @@ class MarshalReader {
     asBytes(this.readObject(depth + 1), "co_linetable");
     if (this.layout === "py311")
       asBytes(this.readObject(depth + 1), "co_exceptiontable");
-    const nested_code = consts.flatMap((item) =>
-      item.kind === "code" ? [item.value] : [],
-    );
-    const code: PythonPycCodeObject = {
+    this.#reportStrings([
+      name,
+      qualname ?? "",
+      filename,
+      ...names,
+      ...(varnames ?? []),
+      ...(freevars ?? []),
+      ...(cellvars ?? []),
+      ...(localsplusnames ?? []),
+      localspluskinds_hex ?? "",
+    ]);
+    return {
       name,
       qualname,
       filename,
@@ -319,80 +321,25 @@ class MarshalReader {
       localspluskinds_hex,
       bytecode: { bytes: bytecode.length, sha256: sha256(bytecode) },
       consts: consts.map(summarizeConst),
-      nested_code,
+      nested: consts.flatMap((item) =>
+        item.kind === "code" ? [item.value] : [],
+      ),
     };
-    this.#admitCode(
-      code,
-      start,
-      [
-        name,
-        qualname ?? "",
-        filename,
-        ...names,
-        ...(varnames ?? []),
-        ...(freevars ?? []),
-        ...(cellvars ?? []),
-        ...(localsplusnames ?? []),
-        localspluskinds_hex ?? "",
-      ].reduce((total, text) => total + Buffer.byteLength(text, "utf8"), 0),
-    );
-    return code;
   }
 
   /**
-   * The report repeats a nested code object once per reference, so bound the
-   * expanded tree rather than the marshal stream: a child reached through
-   * TYPE_REF adds its whole subtree again.
+   * Strings reached through TYPE_REF are one marshal object but a full copy
+   * in the report, so bound what the report carries, not the stream.
    */
-  #admitCode(
-    code: PythonPycCodeObject,
-    start: {
-      readonly objects: number;
-      readonly expanded: { objects: number; bytes: number; codes: number };
-      readonly admitted: { bytes: number; codes: number };
-    },
-    ownBytes: number,
-  ): void {
-    const objects =
-      this.objects -
-      start.objects +
-      this.#expanded.objects -
-      start.expanded.objects;
-    const bytes =
-      ownBytes +
-      this.#admitted.bytes -
-      start.admitted.bytes +
-      this.#expanded.bytes -
-      start.expanded.bytes;
-    const codes =
-      1 +
-      this.#admitted.codes -
-      start.admitted.codes +
-      this.#expanded.codes -
-      start.expanded.codes;
-    if (objects > this.input.max_objects)
-      throw new PythonPycResourceFailure(
-        "objects",
-        { max_objects: this.input.max_objects },
-        `Expanded code-object tree of ${objects} marshal objects exceeds max_objects ${this.input.max_objects}.`,
-      );
-    if (bytes > this.input.max_file_bytes)
+  #reportStrings(values: readonly string[]): void {
+    for (const value of values)
+      this.#reportedStringBytes += Buffer.byteLength(value, "utf8");
+    if (this.#reportedStringBytes > this.input.max_file_bytes)
       throw new PythonPycResourceFailure(
         "string",
         { max_file_bytes: this.input.max_file_bytes },
-        `Expanded code-object strings of ${bytes} bytes exceed max_file_bytes ${this.input.max_file_bytes}.`,
+        `Reported code-object strings exceed max_file_bytes ${this.input.max_file_bytes}.`,
       );
-    this.#codeWeight.set(code, { objects, bytes, codes });
-    this.#admitted.bytes += ownBytes;
-    this.#admitted.codes += 1;
-  }
-
-  /** Expanded code-object count of an admitted code object. */
-  codeObjects(code: PythonPycCodeObject): number {
-    const weight = this.#codeWeight.get(code);
-    if (weight === undefined)
-      return malformed("Top-level code object was not admitted.");
-    return weight.codes;
   }
 
   readRef(): MarshalValue {
@@ -402,14 +349,6 @@ class MarshalReader {
       return malformed(
         `TYPE_REF index ${index} is missing or still being constructed.`,
       );
-    if (value.kind === "code") {
-      const weight = this.#codeWeight.get(value.value);
-      if (weight === undefined)
-        return malformed("Referenced code object was not admitted.");
-      this.#expanded.objects += weight.objects - 1;
-      this.#expanded.bytes += weight.bytes;
-      this.#expanded.codes += weight.codes;
-    }
     return value;
   }
 
@@ -606,6 +545,30 @@ const jsonFloat = (value: number): number | "inf" | "-inf" | "nan" =>
       : value === -Infinity
         ? "-inf"
         : value;
+
+/**
+ * Emit each distinct code object once, the top-level object first. A child
+ * shared through TYPE_REF is listed once and referenced by index, so the
+ * report never repeats a subtree.
+ */
+const flattenCode = (root: CodeNode): PythonPycCodeObject[] => {
+  const indexes = new Map<CodeNode, number>();
+  const order: CodeNode[] = [];
+  const visit = (node: CodeNode): void => {
+    if (indexes.has(node)) return;
+    indexes.set(node, order.length);
+    order.push(node);
+    for (const child of node.nested) visit(child);
+  };
+  visit(root);
+  return order.map(({ nested, ...code }) => ({
+    ...code,
+    nested_code: nested.map(
+      (child) =>
+        indexes.get(child) ?? malformed("Nested code object was not listed."),
+    ),
+  }));
+};
 
 const asBytes = (value: MarshalValue, field: string): Buffer => {
   if (value.kind !== "bytes")

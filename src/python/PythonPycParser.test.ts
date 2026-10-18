@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 import {
   inspectPythonPycInputSchema,
   pythonPycSchema,
+  type PythonPyc,
 } from "../domain/python/pythonPyc.js";
 import {
   marshalCode,
@@ -18,6 +19,12 @@ import {
 const defaults = inspectPythonPycInputSchema.parse({
   path: "/artifacts/sample.pyc",
 });
+
+const root = (report: PythonPyc) => {
+  const code = report.code_objects[0];
+  if (code === undefined) throw new Error("Report lists no code object");
+  return code;
+};
 
 const parse = (bytes: Buffer) =>
   parsePythonPyc(
@@ -38,14 +45,14 @@ it("reads 3.7, 3.10 and 3.12 layouts including nested code", () => {
     code_layout: "py37",
     hash_based: false,
   });
-  expect(py37.code.posonlyargcount).toBeNull();
-  expect(py37.code.nlocals).toBe(0);
-  expect(py37.code.qualname).toBeNull();
+  expect(root(py37).posonlyargcount).toBeNull();
+  expect(root(py37).nlocals).toBe(0);
+  expect(root(py37).qualname).toBeNull();
 
   const py38 = parse(pythonPycFixture("py38", { nested: true }));
   expect(py38.header.python_version).toBe("3.10");
-  expect(py38.code.posonlyargcount).toBe(0);
-  expect(py38.code.nested_code[0]?.name).toBe("inner");
+  expect(root(py38).posonlyargcount).toBe(0);
+  expect(py38.code_objects[1]?.name).toBe("inner");
   expect(py38.coverage.code_objects).toBe(2);
 
   const py311 = parse(pythonPycFixture("py311", { nested: true }));
@@ -54,10 +61,10 @@ it("reads 3.7, 3.10 and 3.12 layouts including nested code", () => {
     python_version: "3.12",
     code_layout: "py311",
   });
-  expect(py311.code.nlocals).toBeNull();
-  expect(py311.code.qualname).toBe("<module>");
-  expect(py311.code.nested_code[0]?.name).toBe("inner");
-  expect(py311.code.consts).toEqual(
+  expect(root(py311).nlocals).toBeNull();
+  expect(root(py311).qualname).toBe("<module>");
+  expect(py311.code_objects[1]?.name).toBe("inner");
+  expect(root(py311).consts).toEqual(
     expect.arrayContaining([
       { kind: "code", name: "inner", firstlineno: 2 },
       { kind: "none" },
@@ -81,7 +88,7 @@ it("decodes a hash-based header and a FLAG_REF top-level code object", () => {
     source_mtime: null,
     source_size: null,
   });
-  expect(report.code.name).toBe("<module>");
+  expect(root(report).name).toBe("<module>");
 });
 
 it("fails unknown magics and truncated marshal without partial success", () => {
@@ -137,12 +144,42 @@ const sharedChain = (levels: number): Buffer => {
   return Buffer.concat([pythonPycHeader(3531), level(0)]);
 };
 
-it("bounds a code tree expanded through TYPE_REF before counting it", () => {
+it("lists a code object shared through TYPE_REF once and refers to it by index", () => {
   const small = parse(sharedChain(3));
-  // level0 -> 3 x level1 -> 3 x level2 -> 3 x leaf
-  expect(small.coverage.code_objects).toBe(1 + 3 + 9 + 27);
-  expect(small.coverage.objects).toBeLessThan(150);
-  const bytes = sharedChain(3);
+  expect(small.code_objects.map((code) => code.name)).toEqual([
+    "level0",
+    "level1",
+    "level2",
+    "leaf",
+  ]);
+  expect(small.code_objects.map((code) => code.nested_code)).toEqual([
+    [1, 1, 1],
+    [2, 2, 2],
+    [3, 3, 3],
+    [],
+  ]);
+  expect(small.coverage.code_objects).toBe(4);
+  expect(pythonPycSchema.safeParse(small).success).toBe(true);
+  const started = Date.now();
+  const deep = parse(sharedChain(25));
+  expect(Date.now() - started).toBeLessThan(1000);
+  expect(deep.coverage.code_objects).toBe(26);
+  expect(JSON.stringify(deep).length).toBeLessThan(64 * 1024);
+});
+
+it("bounds names repeated through TYPE_REF by what the report carries", () => {
+  const name = Buffer.alloc(1000, 0x61);
+  const namesObject = Buffer.concat([
+    Buffer.from([0x29, 101]),
+    Buffer.from([0x61 | 0x80]),
+    u32(name.length),
+    name,
+    ...Array.from({ length: 100 }, () => marshalRef(0)),
+  ]);
+  const bytes = Buffer.concat([
+    pythonPycHeader(3531),
+    marshalCode("py311", { namesObject }),
+  ]);
   expect(() =>
     parsePythonPyc(
       bytes,
@@ -151,12 +188,9 @@ it("bounds a code tree expanded through TYPE_REF before counting it", () => {
         sha256: createHash("sha256").update(bytes).digest("hex"),
         bytes: bytes.length,
       },
-      { ...defaults, max_objects: 150 },
+      { ...defaults, max_file_bytes: bytes.length },
     ),
   ).toThrow(PythonPycResourceFailure);
-  const started = Date.now();
-  expect(() => parse(sharedChain(25))).toThrow(PythonPycResourceFailure);
-  expect(Date.now() - started).toBeLessThan(1000);
 });
 
 it("charges long digits to the string budget and keeps large previews bounded", () => {
@@ -169,12 +203,12 @@ it("charges long digits to the string budget and keeps large previews bounded", 
       marshalLong(Array.from({ length: 20 }, (_, index) => index + 1)),
     ]),
   );
-  expect(report.code.consts[0]).toEqual({
+  expect(root(report).consts[0]).toEqual({
     kind: "int",
     bits: 17,
     value: String(1n + (2n << 15n)),
   });
-  expect(report.code.consts[1]).toMatchObject({ kind: "int", value: null });
+  expect(root(report).consts[1]).toMatchObject({ kind: "int", value: null });
   expect(pythonPycSchema.safeParse(report).success).toBe(true);
   expect(() => parse(withConsts([marshalLong([1, 0])]))).toThrow(
     PythonPycFormatFailure,
@@ -188,7 +222,7 @@ it("decodes marshal strings with CPython surrogatepass rules", () => {
   const report = parse(
     withConsts([marshalUnicode(Buffer.from([0x73, 0xed, 0xa0, 0x80]))]),
   );
-  expect(report.code.consts[0]).toMatchObject({
+  expect(root(report).consts[0]).toMatchObject({
     kind: "str",
     value: "s\ud800",
   });
@@ -208,7 +242,7 @@ it("keeps non-finite float and complex constants JSON-safe", () => {
       Buffer.concat([Buffer.from([0x67]), f64(Number.NaN)]),
     ]),
   );
-  expect(report.code.consts).toEqual([
+  expect(root(report).consts).toEqual([
     { kind: "float", value: "inf" },
     { kind: "complex", real: 0, imag: "-inf" },
     { kind: "float", value: "nan" },
@@ -224,7 +258,7 @@ it("accepts an empty co_filename", () => {
       marshalCode("py311", { filename: "" }),
     ]),
   );
-  expect(report.code.filename).toBe("");
+  expect(root(report).filename).toBe("");
   expect(pythonPycSchema.safeParse(report).success).toBe(true);
 });
 

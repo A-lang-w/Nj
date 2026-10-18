@@ -33,10 +33,12 @@ The inline Evidence result contains the artifact path, SHA-256, and byte length.
 - `source_hash_hex` for hash-based pycs, or `source_mtime` and `source_size`
   for timestamp pycs.
 
-`code` is the top-level marshal code object. Nested functions remain in
-`nested_code`. Each object reports name, optional qualname, filename, argument
-counts, flags, names, locals (or `localsplusnames` on 3.11+), const summaries,
-and bytecode length plus SHA-256.
+`code_objects` lists each distinct marshal code object once, the top-level
+module code first. `nested_code` holds the indexes of the code objects in that
+object's consts, so a function shared through a marshal reference appears once
+and is named by index. Each object reports name, optional qualname, filename,
+argument counts, flags, names, locals (or `localsplusnames` on 3.11+), const
+summaries, and bytecode length plus SHA-256.
 
 Bytecode is not decompiled. Const strings may be truncated in the summary while
 the marshal walk still consumed the original bytes. Integer consts report
@@ -47,8 +49,8 @@ complex parts use CPython's `inf`, `-inf`, and `nan` spellings.
 
 The selected file is limited to 16 MiB by default (64 MiB maximum). Marshal
 object count, nesting depth, and per-string size are bounded; exceeding a
-budget fails without partial success. A nested code object repeated through a
-marshal reference counts again for each copy the report would carry, and
+budget fails without partial success. Names repeated through a marshal
+reference count against the file budget once per copy the report carries, and
 integer digits count against the string budget. Magics outside the pinned 3.7–3.13 table,
 truncated headers, trailing marshal bytes, and a non-code top-level object are
 typed failures.
