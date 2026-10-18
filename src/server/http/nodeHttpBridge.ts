@@ -68,7 +68,7 @@ const responseHeaders = (
   return fields;
 };
 
-/** Stream a web Response into node:http, flushing headers and each chunk as it arrives; `closeConnection` ends the socket after this reply. */
+/** Stream a web Response into node:http, flushing headers and each chunk as it arrives; `closeConnection` ends the socket after this reply. A HEAD reply ends after the headers and cancels any body the route attached. */
 export const writeWebResponse = async (
   response: Response,
   target: ServerResponse,
@@ -79,8 +79,9 @@ export const writeWebResponse = async (
     responseHeaders(response.headers, options.closeConnection ?? false),
   );
   target.flushHeaders();
-  if (response.body === null) {
+  if (response.body === null || target.req.method === "HEAD") {
     target.end();
+    await response.body?.cancel().catch(() => undefined);
     return;
   }
   await pipeline(Readable.fromWeb(response.body), target);

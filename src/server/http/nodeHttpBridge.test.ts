@@ -38,6 +38,34 @@ const serve = async (
   return origin;
 };
 
+it("ends a HEAD reply after the headers and cancels a body the handler attached", async () => {
+  let pulls = 0;
+  let cancelled = false;
+  const origin = await serve(
+    () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          pull: async () => {
+            pulls += 1;
+            // Never produces a chunk, like an idle event stream.
+            await new Promise(() => undefined);
+          },
+          cancel: () => {
+            cancelled = true;
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      ),
+  );
+  const response = await fetch(`${origin}/events`, { method: "HEAD" });
+  expect(response.status).toBe(200);
+  expect(response.headers.get("content-type")).toBe("text/event-stream");
+  await vi.waitFor(() => {
+    expect(cancelled).toBe(true);
+  });
+  expect(pulls).toBeLessThanOrEqual(1);
+});
+
 it("forwards method, URL, headers and the request body as a web Request", async () => {
   const seen: Request[] = [];
   const origin = await serve(async (request) => {
