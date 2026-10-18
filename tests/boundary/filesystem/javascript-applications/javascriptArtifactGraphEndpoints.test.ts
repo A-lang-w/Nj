@@ -682,6 +682,54 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "failed-optional-member-receiver.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){null.value?.[await 0]}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "missing-resource-disposer.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){await using r={__proto__:null}}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "unmatched-switch-body.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){switch(0){case 1:await 0}}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "failed-class-decorator.js",
+    source:
+      '(async()=>{await 0;@(null.value) class C{};new Socket("wss://example.test/review-latest")})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "optional-receiver-prior-cleanup-wait.js",
+    source:
+      '(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-latest")}})()){(await 0,null.value)?.[await 0]}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "own-async-resource-disposer.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){await using r={__proto__:null,[Symbol.asyncDispose](){}}}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "switch-test-wait-after-default.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){switch(0){default:break;case (await 0,1):break}}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "legacy-static-before-decorator.js",
+    source:
+      '(async()=>{await 0;@(null.value) class C{static value=new Socket("wss://example.test/review-latest")}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
     file: "optional-call-consumer-wait.js",
     source:
       'const consume=()=>{};(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){consume?.(await 0)}})();const Socket=globalThis.WebSocket;',

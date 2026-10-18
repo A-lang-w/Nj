@@ -45,6 +45,7 @@ import {
   syntaxOperandAlwaysThrows,
 } from "./javascriptSymbolicControlFlow.js";
 import { childNodes } from "./javascriptSemanticTraversal.js";
+import { semanticAsyncDeclarationAcquisition } from "./javascriptSemanticResourceAcquisition.js";
 
 /** A direct return preserves the value separately from the completed activation. */
 const webSocketReturnedOwner = (
@@ -395,10 +396,37 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
   return [];
 };
 
-const webSocketCompletedSuspensions = new WeakMap<
+interface WebSocketSuspensionFacts {
+  readonly effects: JavaScriptSemanticAnalysisState["literalMemberEffects"];
+  readonly phase: JavaScriptSemanticAnalysisState["memberMutationFactsPhase"];
+  readonly completed: WeakMap<t.Node, WebSocketSuspension | null>;
+  readonly prefixes: WeakMap<t.Node, ReadonlyMap<t.Node, WebSocketSuspension>>;
+}
+const webSocketSuspensions = new WeakMap<
   JavaScriptSemanticAnalysisState,
-  WeakMap<t.Node, WebSocketSuspension | null>
+  WebSocketSuspensionFacts
 >();
+
+/** Resource acquisition and cached prefixes depend on the same effect-index phase. */
+const webSocketSuspensionFacts = (
+  state: JavaScriptSemanticAnalysisState,
+): WebSocketSuspensionFacts => {
+  let facts = webSocketSuspensions.get(state);
+  if (
+    facts === undefined ||
+    facts.effects !== state.literalMemberEffects ||
+    facts.phase !== state.memberMutationFactsPhase
+  ) {
+    facts = {
+      effects: state.literalMemberEffects,
+      phase: state.memberMutationFactsPhase,
+      completed: new WeakMap(),
+      prefixes: new WeakMap(),
+    };
+    webSocketSuspensions.set(state, facts);
+  }
+  return facts;
+};
 
 /** Successful completion crosses the last suspension in this straight-line node. */
 const webSocketCompletedSuspension = (
@@ -411,11 +439,7 @@ const webSocketCompletedSuspension = (
       semanticIteratorAcquisitionAlwaysFails(node.right, state))
   )
     return undefined;
-  let cached = webSocketCompletedSuspensions.get(state);
-  if (cached === undefined) {
-    cached = new WeakMap();
-    webSocketCompletedSuspensions.set(state, cached);
-  }
+  const cached = webSocketSuspensionFacts(state).completed;
   const existing = cached.get(node);
   if (existing !== undefined) return existing ?? undefined;
   const pending = [node];
@@ -429,7 +453,8 @@ const webSocketCompletedSuspension = (
       current.body.some(
         (statement) =>
           t.isVariableDeclaration(statement) &&
-          statement.kind === "await using",
+          statement.kind === "await using" &&
+          semanticAsyncDeclarationAcquisition(statement, state) === "acquired",
       )
     ) {
       cached.set(node, current);
@@ -460,11 +485,6 @@ const webSocketCompletedSuspension = (
   cached.set(node, null);
   return undefined;
 };
-
-const webSocketSuspensionPrefixes = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  WeakMap<t.Node, ReadonlyMap<t.Node, WebSocketSuspension>>
->();
 
 /** Break/return/throw paths bypass updates; only a continuing path can skip its wait. */
 const webSocketUpdateSuspension = (
@@ -558,11 +578,7 @@ const webSocketPrecedingSuspension = (
         ? webSocketCompletedSuspension(parent.init, state)
         : undefined)
     );
-  let byParent = webSocketSuspensionPrefixes.get(state);
-  if (byParent === undefined) {
-    byParent = new WeakMap();
-    webSocketSuspensionPrefixes.set(state, byParent);
-  }
+  const byParent = webSocketSuspensionFacts(state).prefixes;
   let prefixes = byParent.get(parent);
   if (prefixes === undefined) {
     const indexed = new Map<t.Node, WebSocketSuspension>();
@@ -860,14 +876,14 @@ const bodySuspensionFacts = new WeakMap<
   {
     readonly effects: JavaScriptSemanticAnalysisState["literalMemberEffects"];
     readonly phase: JavaScriptSemanticAnalysisState["memberMutationFactsPhase"];
-    readonly value: boolean;
+    readonly value: boolean | undefined;
   }
 >();
 /** A synchronous iterator resumes in-turn unless its consumer body can await. */
 const webSocketBodyMaySuspend = (
   body: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): boolean => {
+): boolean | undefined => {
   const known = bodySuspensionFacts.get(body);
   if (
     known !== undefined &&
@@ -875,7 +891,7 @@ const webSocketBodyMaySuspend = (
     known.phase === state.memberMutationFactsPhase
   )
     return known.value;
-  const remember = (value: boolean): boolean => {
+  const remember = (value: boolean | undefined): boolean | undefined => {
     bodySuspensionFacts.set(body, {
       effects: state.literalMemberEffects,
       phase: state.memberMutationFactsPhase,
@@ -884,6 +900,8 @@ const webSocketBodyMaySuspend = (
     return value;
   };
   const pending = [body];
+  let maySuspend = false;
+  let unknownResource = false;
   while (pending.length > 0) {
     const node = pending.pop();
     if (node === undefined) continue;
@@ -895,13 +913,14 @@ const webSocketBodyMaySuspend = (
           !syntaxEvaluationAlwaysThrows(node.argument))) ||
       (t.isForOfStatement(node) &&
         node.await &&
-        !semanticIteratorAcquisitionAlwaysFails(node.right, state)) ||
-      (t.isVariableDeclaration(node) &&
-        node.kind === "await using" &&
-        node.declarations[0]?.init != null &&
-        !syntaxEvaluationAlwaysThrows(node.declarations[0].init))
+        !semanticIteratorAcquisitionAlwaysFails(node.right, state))
     ) {
-      return remember(true);
+      maySuspend = true;
+    }
+    if (t.isVariableDeclaration(node) && node.kind === "await using") {
+      const acquisition = semanticAsyncDeclarationAcquisition(node, state);
+      maySuspend ||= acquisition === "acquired";
+      unknownResource ||= acquisition === "unknown";
     }
     if (
       t.isForOfStatement(node) &&
@@ -912,10 +931,14 @@ const webSocketBodyMaySuspend = (
     }
     pending.push(...syntaxReachableOperands(node));
   }
-  return remember(false);
+  return remember(unknownResource ? undefined : maySuspend);
 };
 
-type WebSocketConsumerPhase = "same-turn" | "after-wait" | "unknown";
+type WebSocketConsumerPhase =
+  | "same-turn"
+  | "after-wait"
+  | "unknown"
+  | "unknown-resource";
 
 /** A delegated generator inherits the surrounding generator's actual consumer phase. */
 const webSocketGeneratorConsumerPhase = (
@@ -938,7 +961,7 @@ const webSocketGeneratorConsumerPhase = (
       state,
       ...(ownedResultEscape === undefined ? {} : { ownedResultEscape }),
       ordered: webSocketOrderedEvaluation,
-      maySuspend: (node) => webSocketBodyMaySuspend(node, state),
+      maySuspend: (node) => webSocketBodyMaySuspend(node, state) !== false,
       completedSuspension: (node) =>
         webSocketCompletedSuspension(node, state) !== undefined,
     })
@@ -953,19 +976,19 @@ const webSocketGeneratorConsumerPhase = (
       body,
       state,
       webSocketOrderedEvaluation,
-      (node) => webSocketBodyMaySuspend(node, state),
+      (node) => webSocketBodyMaySuspend(node, state) !== false,
     ) &&
       (invocation.await ||
         (t.isBlockStatement(invocation.body) &&
           webSocketEveryExitSuspension(invocation.body) !== undefined))
       ? "after-wait"
       : "same-turn";
-  if (t.isForOfStatement(invocation))
-    return !invocation.await &&
-      !webSocketBodyMaySuspend(invocation.left, state) &&
-      !webSocketBodyMaySuspend(invocation.body, state)
-      ? "same-turn"
-      : "after-wait";
+  if (t.isForOfStatement(invocation)) {
+    const left = webSocketBodyMaySuspend(invocation.left, state);
+    const body = webSocketBodyMaySuspend(invocation.body, state);
+    if (left === undefined || body === undefined) return "unknown-resource";
+    return !invocation.await && !left && !body ? "same-turn" : "after-wait";
+  }
   if (t.isYieldExpression(invocation) && invocation.delegate) {
     const owner = webSocketSuspensionOwner(invocation, state);
     if (
@@ -1267,10 +1290,12 @@ export const webSocketExecutionContexts = (
             )
           : "unknown";
       if (
+        // Unknown consumer acquisition is not evidence that a synchronous
+        // yield let the surrounding caller initialize later locals.
         (parent.async || generatorBody) &&
         current === parent.body &&
-        // Synchronous for-of resumes after every ordinary yield in the same turn.
-        consumerPhase !== "same-turn"
+        consumerPhase !== "same-turn" &&
+        consumerPhase !== "unknown-resource"
       ) {
         if (
           consumerPhase === "after-wait" &&
@@ -1279,7 +1304,7 @@ export const webSocketExecutionContexts = (
             parent.body,
             state,
             webSocketOrderedEvaluation,
-            (node) => webSocketBodyMaySuspend(node, state),
+            (node) => webSocketBodyMaySuspend(node, state) !== false,
           )
         )
           suspendedOwner = parent;

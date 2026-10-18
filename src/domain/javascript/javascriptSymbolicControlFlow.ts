@@ -119,6 +119,39 @@ export const syntaxStaticInitializers = (member: t.Node): readonly t.Node[] =>
       ? [member.value]
       : [];
 
+/** The parser's legacy decorator expressions run after class initialization. */
+const syntaxLegacyClassDecorators = (node: t.Class): readonly t.Node[] => {
+  const members = node.body.body;
+  return [
+    ...[false, true].flatMap((isStatic) =>
+      members.flatMap((member) => {
+        if (
+          t.isStaticBlock(member) ||
+          member.static !== isStatic ||
+          t.isClassMethod(member, { kind: "constructor" })
+        )
+          return [];
+        return [
+          ...("decorators" in member ? (member.decorators ?? []) : []),
+          ...(t.isClassMethod(member) || t.isClassPrivateMethod(member)
+            ? member.params.flatMap((parameter) =>
+                "decorators" in parameter ? (parameter.decorators ?? []) : [],
+              )
+            : []),
+        ];
+      }),
+    ),
+    ...members.flatMap((member) =>
+      t.isClassMethod(member, { kind: "constructor" })
+        ? member.params.flatMap((parameter) =>
+            "decorators" in parameter ? (parameter.decorators ?? []) : [],
+          )
+        : [],
+    ),
+    ...(node.decorators ?? []),
+  ];
+};
+
 /** Evaluation order shared by continuation and caught-prefix proofs. */
 export const syntaxEvaluationOperands = (
   node: t.Node,
@@ -128,7 +161,9 @@ export const syntaxEvaluationOperands = (
     return [
       ...syntaxClassKeys(node),
       ...node.body.body.flatMap(syntaxStaticInitializers),
+      ...syntaxLegacyClassDecorators(node),
     ];
+  if (t.isDecorator(node)) return [node.expression];
   if (t.isSwitchCase(node)) return node.consequent;
   if (t.isExpressionStatement(node)) return [node.expression];
   // Abrupt statements evaluate their argument before completing. Their block
@@ -183,20 +218,41 @@ export const syntaxEvaluationOperands = (
   return undefined;
 };
 
+/** All sequential consumers stop at the same abrupt operand or structured exit. */
+const syntaxReachablePrefix = (
+  node: t.Node,
+  operands: readonly t.Node[],
+): readonly t.Node[] => {
+  const reachable: t.Node[] = [];
+  for (const operand of operands) {
+    reachable.push(operand);
+    if (
+      syntaxOperandAlwaysThrows(node, operand) ||
+      ((t.isBlockStatement(node) ||
+        t.isStaticBlock(node) ||
+        t.isSwitchCase(node) ||
+        t.isProgram(node)) &&
+        !syntaxMayCompleteNormally(operand))
+    )
+      break;
+  }
+  return reachable;
+};
+
 /** Possible evaluation paths, excluding syntax-proven skipped or abrupt tails. */
 export const syntaxReachableOperands = (node: t.Node): readonly t.Node[] => {
   if (t.isOptionalMemberExpression(node))
-    return node.computed && !javaScriptOptionalOperandsAlwaysSkipped(node)
-      ? [node.object, node.property]
-      : [node.object];
+    return syntaxReachablePrefix(
+      node,
+      node.computed && !javaScriptOptionalOperandsAlwaysSkipped(node)
+        ? [node.object, node.property]
+        : [node.object],
+    );
   if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
     const operands = javaScriptOptionalOperandsAlwaysSkipped(node)
       ? [node.callee]
       : [node.callee, ...node.arguments];
-    const failed = operands.findIndex((operand) =>
-      syntaxOperandAlwaysThrows(node, operand),
-    );
-    return failed < 0 ? operands : operands.slice(0, failed + 1);
+    return syntaxReachablePrefix(node, operands);
   }
   if (t.isAssignmentExpression(node))
     return node.operator === "=" &&
@@ -260,6 +316,7 @@ export const syntaxReachableOperands = (node: t.Node): readonly t.Node[] => {
       : childNodes(node);
   }
   if (t.isLoop(node)) return childNodes(node);
+  if (t.isSwitchStatement(node)) return syntaxReachableSwitchOperands(node);
   if (t.isTryStatement(node))
     return [
       node.block,
@@ -274,19 +331,7 @@ export const syntaxReachableOperands = (node: t.Node): readonly t.Node[] => {
     syntaxUnconditionalOperands(node) ??
     syntaxEvaluationOperands(node) ??
     childNodes(node);
-  const reachable: t.Node[] = [];
-  for (const operand of operands) {
-    reachable.push(operand);
-    if (
-      syntaxOperandAlwaysThrows(node, operand) ||
-      ((t.isBlockStatement(node) ||
-        t.isStaticBlock(node) ||
-        t.isProgram(node)) &&
-        !syntaxMayCompleteNormally(operand))
-    )
-      break;
-  }
-  return reachable;
+  return syntaxReachablePrefix(node, operands);
 };
 
 type SyntaxAbruptCompletion =
@@ -476,6 +521,37 @@ const syntaxSwitchEntries = (node: t.SwitchStatement) => {
   const result = { entries, tests };
   switchSelections.set(node, result);
   return result;
+};
+
+/** Selection tests precede the selected entry; fallthrough stops at owned exits. */
+const syntaxReachableSwitchOperands = (
+  node: t.SwitchStatement,
+): readonly t.Node[] => {
+  const { entries, tests } = syntaxSwitchEntries(node);
+  const testCount = entries.reduce(
+    (count, entry) => Math.max(count, entry.testCount),
+    0,
+  );
+  const prefix = syntaxReachablePrefix(node, [
+    node.discriminant,
+    ...tests.slice(0, testCount),
+  ]);
+  if (syntaxEvaluationAlwaysThrows(node.discriminant)) return prefix;
+  const reachable = [...prefix];
+  const failedTest = tests.findIndex(syntaxEvaluationAlwaysThrows);
+  const starts = new Set(
+    entries
+      .filter((entry) => failedTest < 0 || entry.testCount <= failedTest)
+      .map((entry) => entry.index),
+  );
+  let active = false;
+  for (const [index, item] of node.cases.entries()) {
+    active ||= starts.has(index);
+    if (!active) continue;
+    reachable.push(item);
+    active = syntaxMayCompleteNormally(item);
+  }
+  return reachable;
 };
 
 /** Only entries that can fall through to this body contribute test prerequisites. */

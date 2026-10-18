@@ -4367,6 +4367,116 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "switch jump skips later wait in selected case",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){switch(0){case 0:break;await 0}}}) ();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "possible early switch entry precedes later failing test",
+    "const choice=0;(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){switch(0){case choice:await 0;break;case null.value:break}}}) ();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "noncallable async disposer cannot defer next step",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){await using r={__proto__:null,[Symbol.asyncDispose]:1,[Symbol.dispose](){}}}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "resource getter leaves consumer phase unresolved",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){await using r={__proto__:null,get [Symbol.asyncDispose](){return ()=>{}}}}}) ();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "replaced Symbol cannot prove resource acquisition",
+    "globalThis.Symbol={asyncDispose:'x'};(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){await using r={__proto__:null,[Symbol.asyncDispose](){}}}}) ();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "failed optional receiver skips computed consumer wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){null.value?.[await 0]}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "failed optional receiver skips nested key wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){null.value?.run?.[await 0]}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "failed optional receiver still retains earlier cleanup wait",
+    "(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket(URL)}})()){(await 0,null.value)?.[await 0]}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "missing null prototype disposer cannot defer next step",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){await using r={__proto__:null}}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "primitive resource cannot defer next step",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){await using r=1}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "prior acquired resource disposes after acquisition failure",
+    "(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket(URL)}})()){await using first=null,second={__proto__:null}}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "own async disposer defers next step",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){await using r={__proto__:null,[Symbol.asyncDispose](){}}}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "own sync disposer fallback defers next step",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){await using r={__proto__:null,[Symbol.dispose](){}}}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "unmatched switch cannot defer next step",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){switch(0){case 1:await 0}}}) ();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "selected switch skips earlier waiting body",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){switch(0){case 1:await 0;break;case 0:break}}}) ();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "switch break excludes later waiting body",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){switch(0){case 0:break;default:await 0}}}) ();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "switch fallthrough reaches waiting body",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){switch(0){case 0:;default:await 0}}}) ();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "selected switch retains waiting test after default",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){switch(0){default:break;case (await 0,1):break}}}) ();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "failed switch discriminant skips waiting cases",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){switch(null.value){case (await 0,1):break}}}) ();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "failed class decorator stops continuation",
+    "(async()=>{await 0;@(null.value) class C{};new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "failed member decorator stops continuation",
+    "(async()=>{await 0;class C{@(null.value) run(){}};new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "legacy static initialization precedes failed class decorator",
+    "(async()=>{await 0;@(null.value) class C{static value=new Socket(URL)}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
     "optional call consumer can wait",
     "const consume=()=>{};(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){consume?.(await 0)}})();const Socket=globalThis.WebSocket;",
     true,
