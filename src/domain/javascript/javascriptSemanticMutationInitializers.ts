@@ -121,6 +121,41 @@ const positionPrecedes = (
       left.declaratorIndex >= 0 &&
       left.declaratorIndex < right.declaratorIndex));
 
+/** Direct synchronous calls/constructions run literals in their enclosing
+ * activation. Aliases and mutable helpers require separate identity proof. */
+export const semanticLiteralActivationIsImmediate = (
+  node: t.Function | t.Class,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  if (t.isClassMethod(node, { kind: "constructor" })) {
+    const body = parents.get(node);
+    const owner = body === undefined ? undefined : parents.get(body);
+    return (
+      t.isClassExpression(owner) &&
+      semanticLiteralActivationIsImmediate(owner, parents)
+    );
+  }
+  if (t.isFunctionExpression(node) || t.isArrowFunctionExpression(node)) {
+    if (node.async || (t.isFunctionExpression(node) && node.generator))
+      return false;
+  } else if (!t.isClassExpression(node)) return false;
+  let expression: t.Node = node;
+  let parent = parents.get(expression);
+  while (
+    parent !== undefined &&
+    unwrapJavaScriptExpression(parent).node === expression
+  ) {
+    expression = parent;
+    parent = parents.get(expression);
+  }
+  return t.isClassExpression(node)
+    ? t.isNewExpression(parent) && parent.callee === expression
+    : (t.isCallExpression(parent) ||
+        t.isOptionalCallExpression(parent) ||
+        (t.isFunctionExpression(node) && t.isNewExpression(parent))) &&
+        parent.callee === expression;
+};
+
 /** Order effects only in a non-repeating top-level activation. */
 export const semanticTopLevelEffectFollowsCapture = (
   capture: t.Node,

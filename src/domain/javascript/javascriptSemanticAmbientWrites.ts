@@ -9,6 +9,7 @@ import {
 import {
   collectJavaScriptIdentityWritesSteps,
   electronMemberPath,
+  semanticIntrinsicMutation,
   semanticIntrinsicMutationTargets,
   type JavaScriptIntrinsicMutationRecipient,
 } from "./javascriptElectronMemberWrites.js";
@@ -1051,6 +1052,60 @@ export const createSemanticModuleStorageQuery = (
   };
 };
 
+/** Possible inherited accessor helpers are effects, never strict call proofs. */
+const createPossibleAccessorMutations = (
+  state: JavaScriptSemanticAnalysisState,
+  possiblePaths: ReturnType<typeof createAmbientPathResolver>,
+  interop: ReturnType<typeof createSemanticModuleInterop>,
+) => {
+  const candidates = new WeakSet<t.Node>();
+  const paths = new WeakMap<t.Node, readonly string[] | null>();
+  const possible = createSemanticModuleInterop(state, {
+    intrinsicPath: (node) => {
+      const known = interop.intrinsicPath(node);
+      const prior = paths.get(node);
+      if (prior !== undefined) return prior ?? known;
+      for (const nominal of possiblePaths(node)) {
+        for (let end = 1; end <= nominal.length; end += 1)
+          for (const value of semanticPossibleFunctionValueIdentities(
+            nominal.slice(0, end),
+          )) {
+            if (value[0] !== "global") continue;
+            const path = ["intrinsic", ...value.slice(1)];
+            if (
+              semanticIntrinsicMutation({
+                kind: "known",
+                path,
+                arguments: undefined,
+              })?.receiver !== true
+            )
+              continue;
+            // Typed selectors before the helper can be unknown cache keys.
+            // Invocation syntax after the selected callable must stay exact.
+            const suffix = nominal.slice(end);
+            if (suffix.some((key) => key === null)) continue;
+            const selected = [...path, ...(suffix as readonly string[])];
+            paths.set(node, selected);
+            return selected;
+          }
+      }
+      paths.set(node, null);
+      return known;
+    },
+  });
+  return {
+    candidates,
+    invocation: (node: t.CallExpression | t.OptionalCallExpression) => {
+      const known = interop.intrinsicInvocation(node);
+      if (semanticIntrinsicMutation(known) !== undefined) return known;
+      const candidate = possible.intrinsicInvocation(node);
+      if (semanticIntrinsicMutation(candidate)?.receiver !== true) return known;
+      candidates.add(node);
+      return candidate;
+    },
+  };
+};
+
 /**
  * Index source-local writes through ambient identities and stable aliases.
  * The shared invocation owner resolves intrinsic aliases, bind/call/apply and
@@ -1126,6 +1181,11 @@ export function* indexJavaScriptAmbientWritesSteps(
   let observeOpaqueInvocation = createOpaqueObserver?.(ambientWrites);
   const opaqueCalls =
     observeOpaqueInvocation === undefined ? undefined : new Set<t.Node>();
+  const accessorMutations = createPossibleAccessorMutations(
+    state,
+    ambientWrites,
+    interop,
+  );
   yield* collectJavaScriptIdentityWritesSteps(
     program,
     (root, kind, writeSite) => {
@@ -1171,7 +1231,7 @@ export function* indexJavaScriptAmbientWritesSteps(
       const id = targets.push({ node: root, capture: writeSite }) - 1;
       return [["pending-target", String(id)]];
     },
-    interop.intrinsicInvocation,
+    accessorMutations.invocation,
     interop.staticString,
     interop.isFreshObject,
     (node, path, recipient) => {
@@ -1181,7 +1241,12 @@ export function* indexJavaScriptAmbientWritesSteps(
         ...(recipient === undefined ? {} : { recipient }),
       });
     },
-    (node, invocation) => {
+    (node, selectedInvocation) => {
+      // A possible inherited helper supplies only mutation recipients. It
+      // cannot suppress the receiver escape of an unresolved actual callable.
+      const invocation = accessorMutations.candidates.has(node)
+        ? undefined
+        : selectedInvocation;
       opaqueCalls?.add(node);
       // Escaping objects can change contents without replacing their identity.
       const retainEscape = (target: t.Node, browserReceiver = false) => {

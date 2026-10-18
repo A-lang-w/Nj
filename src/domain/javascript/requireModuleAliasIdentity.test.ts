@@ -7,6 +7,137 @@ import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
 const SHIM = 'var Q=(e=>typeof require<"u"?require:e)(function(){});';
 
+describe("legacy accessor descriptor mutations", () => {
+  it.each([
+    'module.METHOD("require",()=>other);',
+    'module.__proto__.METHOD("require",()=>other);',
+    'Object.prototype.METHOD.call(module,"require",()=>other);',
+    'const change=Object.prototype.METHOD;change.call(module,"require",()=>other);',
+    'const {METHOD:change}=Object.prototype;change.apply(module,["require",()=>other]);',
+    'const change=Object.prototype.METHOD.bind(module,"require");change(()=>other);',
+    'Reflect.apply(Object.prototype.METHOD,module,["require",()=>other]);',
+    'const change=module.METHOD;change.call(module,"require",()=>other);',
+    'const change=module.METHOD.bind(module);change("require",()=>other);',
+    'Function.prototype.call.call(Object.prototype.METHOD,module,"require",()=>other);',
+    'Reflect.apply(Function.prototype.bind,Object.prototype.METHOD,[module,"require"])(()=>other);',
+    'Object.prototype.METHOD=other;Object.prototype.METHOD.call(module,"require",()=>other);',
+    'Object.prototype.METHOD.call=other;Object.prototype.METHOD.call(module,"require",()=>other);',
+    'const change=Object.prototype.METHOD;Object.prototype.METHOD=other;change.call(module,"require",()=>other);',
+    "module.METHOD(key,()=>other);",
+    "Object.prototype.METHOD.apply(module,args);",
+  ])("rejects a changed module delegate through %s", (source) => {
+    for (const method of ["__defineGetter__", "__defineSetter__"])
+      expect(
+        analyzeJavaScriptStaticSource(
+          `${SHIM}${source.replaceAll("METHOD", method)}new (Q("electron").BrowserWindow)({});`,
+        ).electron.browser_windows,
+      ).toEqual([]);
+  });
+
+  it.each([
+    'const local={};local.METHOD("require",()=>other);',
+    'Object.prototype.METHOD.call({},"require",()=>other);',
+    'const local={METHOD(){}};local.METHOD.call(module,"require",()=>other);',
+    'module.METHOD("unrelated",()=>other);',
+    'const change=Object.prototype.METHOD.bind(module,"require");',
+  ])(
+    "preserves a loader beside an unrelated descriptor operation: %s",
+    (source) => {
+      for (const method of ["__defineGetter__", "__defineSetter__"])
+        expect(
+          analyzeJavaScriptStaticSource(
+            `${SHIM}${source.replaceAll("METHOD", method)}new (Q("electron").BrowserWindow)({});`,
+          ).electron.browser_windows,
+        ).toHaveLength(1);
+    },
+  );
+
+  it.each(["__defineGetter__", "__defineSetter__"])(
+    "preserves a load before a later %s descriptor mutation",
+    (method) => {
+      expect(
+        analyzeJavaScriptStaticSource(
+          `${SHIM}new (Q("electron").BrowserWindow)({});module.${method}("require",()=>other);`,
+        ).electron.browser_windows,
+      ).toHaveLength(1);
+    },
+  );
+
+  it.each(["__defineGetter__", "__defineSetter__"])(
+    "preserves a saved delegate value before a %s descriptor mutation",
+    (method) => {
+      expect(
+        analyzeJavaScriptStaticSource(
+          `const saved=module.require;module.${method}("require",()=>other);new (saved.call(module,"electron").BrowserWindow)({});`,
+        ).electron.browser_windows,
+      ).toHaveLength(1);
+    },
+  );
+
+  it.each(["__defineGetter__", "__defineSetter__"])(
+    "shares %s mutation facts with Electron export identity",
+    (method) => {
+      for (const [key, count] of [
+        ["BrowserWindow", 0],
+        ["unrelated", 1],
+      ] as const)
+        expect(
+          analyzeJavaScriptStaticSource(
+            `const electron=require("electron");Object.prototype.${method}.call(electron,"${key}",()=>other);new electron.BrowserWindow({});`,
+          ).electron.browser_windows,
+        ).toHaveLength(count);
+    },
+  );
+});
+
+describe("legacy accessor mutations through cached Modules", () => {
+  it.each([
+    'require.cache[key].METHOD("require",()=>other);',
+    'require.cache["/app.cjs"].METHOD("require",()=>other);',
+    'require("module")._cache[key].METHOD("require",()=>other);',
+    'module.constructor._cache[key].METHOD("require",()=>other);',
+    'const entry=require.cache[key];entry.METHOD("require",()=>other);',
+    'require.cache[key].constructor.prototype.METHOD("require",()=>other);',
+    'const entry=require.cache[key];const change=entry.METHOD.bind(entry,"require");change(()=>other);',
+    'Object.prototype.METHOD.call(require.cache[key],"require",()=>other);',
+  ])("rejects a cached delegate descriptor mutation: %s", (source) => {
+    for (const method of ["__defineGetter__", "__defineSetter__"])
+      expect(
+        analyzeJavaScriptStaticSource(
+          `${SHIM}${source.replaceAll("METHOD", method)}new (Q("electron").BrowserWindow)({});`,
+        ).electron.browser_windows,
+      ).toEqual([]);
+  });
+
+  it.each([
+    'const local={cache:{entry:{METHOD(){}}}};local.cache.entry.METHOD("require",()=>other);',
+    'let cache=require.cache;cache={entry:{METHOD(){}}};cache.entry.METHOD("require",()=>other);',
+    'require.cache[key].METHOD("unrelated",()=>other);',
+    'require.cache.METHOD("require",()=>other);',
+  ])(
+    "preserves a distinct cache or local descriptor operation: %s",
+    (source) => {
+      for (const method of ["__defineGetter__", "__defineSetter__"])
+        expect(
+          analyzeJavaScriptStaticSource(
+            `${SHIM}${source.replaceAll("METHOD", method)}new (Q("electron").BrowserWindow)({});`,
+          ).electron.browser_windows,
+        ).toHaveLength(1);
+    },
+  );
+
+  it.each(["__defineGetter__", "__defineSetter__"])(
+    "retains an earlier load before a cached %s descriptor mutation",
+    (method) => {
+      expect(
+        analyzeJavaScriptStaticSource(
+          `${SHIM}new (Q("electron").BrowserWindow)({});require.cache[key].${method}("require",()=>other);`,
+        ).electron.browser_windows,
+      ).toHaveLength(1);
+    },
+  );
+});
+
 describe("CommonJS module delegate aliases", () => {
   it.each([
     [

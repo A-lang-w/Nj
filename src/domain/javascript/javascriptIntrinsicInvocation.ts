@@ -157,12 +157,18 @@ export const resolveJavaScriptIntrinsicInvocation = (
       arguments_ = arrayArguments(arguments_?.[2]);
       continue;
     }
+    const memberReceiver =
+      !explicitReceiver &&
+      (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee))
+        ? callee.object
+        : undefined;
     return {
       kind: "known",
       path,
       arguments: arguments_,
       ...(callableReads.length === 0 ? {} : { callableReads }),
       ...(receiver === undefined ? {} : { receiver }),
+      ...(memberReceiver === undefined ? {} : { memberReceiver }),
     };
   }
 };

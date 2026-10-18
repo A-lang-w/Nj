@@ -15,7 +15,9 @@ import {
 import {
   semanticBindingAtRead,
   semanticEffectTiming,
+  semanticLiteralActivationIsImmediate,
 } from "./javascriptSemanticMutationInitializers.js";
+import { delayedInstanceFieldValue } from "./javascriptSemanticEvaluationOrder.js";
 import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
 import {
   semanticArrayIndex,
@@ -402,6 +404,7 @@ const selectPrivateTargets = (
 const selectClassTargets = (
   members: readonly ClassTargetMember[],
   key: string | number | null | undefined,
+  definitelyPresent: (member: ClassTargetMember) => boolean = () => true,
 ): {
   readonly values: readonly t.Node[];
   readonly members: readonly ClassTargetMember[];
@@ -416,19 +419,25 @@ const selectClassTargets = (
     const name = member.key.name;
     if (key != null && name !== null && name !== String(key)) continue;
     const exact = key != null && name === String(key);
-    if (exact) own = true;
+    const definite = exact && definitelyPresent(member);
+    if (definite) own = true;
     if (member.kind === "set") {
       selected.push(member);
-      if (exact) setter = true;
+      if (definite) setter = true;
       continue;
     }
     // A setter pairs with an earlier getter, but replaces an earlier data slot.
-    if (exact && setter && member.kind !== "get" && member.kind !== "accessor")
+    if (
+      definite &&
+      setter &&
+      member.kind !== "get" &&
+      member.kind !== "accessor"
+    )
       break;
     const value = member.value;
     selected.push(member);
     if (value != null) values.push(value);
-    if (exact) break;
+    if (definite) break;
   }
   return { values, members: selected, own };
 };
@@ -449,11 +458,32 @@ export const createSemanticStaticClassSlotReferences = (
       owners.push(declaring);
       const index = classTargetIndex(declaring, indexes);
       let current = read;
+      let child: t.Node | undefined;
+      let deferred = false;
       while (
         current !== undefined &&
         state.parentsByNode.get(current) !== declaring.body
-      )
+      ) {
+        if (
+          t.isFunction(current) &&
+          (current.body === child ||
+            current.params.some((parameter) => parameter === child)) &&
+          !semanticLiteralActivationIsImmediate(current, state.parentsByNode)
+        )
+          deferred = true;
+        if (delayedInstanceFieldValue(current, child)) {
+          const body = state.parentsByNode.get(current);
+          const owner =
+            body === undefined ? undefined : state.parentsByNode.get(body);
+          if (
+            !t.isClass(owner) ||
+            !semanticLiteralActivationIsImmediate(owner, state.parentsByNode)
+          )
+            deferred = true;
+        }
+        child = current;
         current = state.parentsByNode.get(current);
+      }
       const position =
         current === undefined
           ? undefined
@@ -463,16 +493,22 @@ export const createSemanticStaticClassSlotReferences = (
         semanticEffectTiming(read, declaring, state) === "before";
       const initialized = (member: ClassTargetMember): boolean | undefined => {
         if (member.kind !== "field" && member.kind !== "accessor") return true;
-        if (position !== undefined)
-          return (
+        if (position !== undefined) {
+          if (
             (index.staticEvaluationOrder.get(member.node) ?? Infinity) <
             position
-          );
+          )
+            return true;
+          // A deferred body can run after later fields initialize. Its
+          // creation position is only an earliest activation bound.
+          return deferred ? undefined : false;
+        }
         return completed ? true : undefined;
       };
       const selected = selectClassTargets(
         index.static.filter((member) => initialized(member) !== false),
         key,
+        (member) => initialized(member) === true,
       );
       for (const member of selected.members)
         if (member.kind === "get" && t.isFunction(member.value)) {
@@ -490,13 +526,12 @@ export const createSemanticStaticClassSlotReferences = (
             member.key.name === key &&
             !member.decorated &&
             member.kind !== "get" &&
-            initialized(member) === true &&
             (member.kind === "set" ||
               member.value === null ||
               isFreshObject(member.value)),
         );
       if (selected.own) {
-        own = selected.members.every((member) => initialized(member) === true);
+        own = true;
         break;
       }
       // A source binding alone does not prove that the runtime superclass

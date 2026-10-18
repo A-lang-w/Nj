@@ -12,6 +12,7 @@ import {
 } from "./javascriptSemanticReferenceSources.js";
 import {
   electronMemberPath,
+  semanticIntrinsicMutation,
   semanticIntrinsicMutationTargets,
 } from "./javascriptElectronMemberWrites.js";
 
@@ -498,49 +499,31 @@ const writesModuleRequire = (
       }
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
         const invocation = interop.intrinsicInvocation(node);
-        const owner =
-          invocation?.path?.length === 3 ? invocation.path[1] : undefined;
-        const method = invocation?.path?.at(-1);
+        const mutation = semanticIntrinsicMutation(invocation);
         const args = invocation?.arguments;
         if (
           invocation !== undefined &&
-          ((owner === "Object" && method === "defineProperty") ||
-            (owner === "Reflect" &&
-              ["defineProperty", "set", "deleteProperty"].includes(
-                method ?? "",
-              ))) &&
+          mutation !== undefined &&
           semanticIntrinsicMutationTargets(
             invocation,
             interop.isFreshObject,
           ).some((target) => target !== undefined && isModuleObject(target))
         ) {
-          const key = interop.staticString(args?.[1]);
-          if (
-            key === "require" ||
-            key === undefined ||
-            (key === "__proto__" && owner === "Reflect" && method === "set")
-          )
+          if ("key" in mutation) {
+            const key = interop.staticString(mutation.key);
+            if (
+              key === "require" ||
+              key === undefined ||
+              (key === "__proto__" && mutation.kind === "set")
+            )
+              writes.push({ node, delegate: "require", shared: false });
+          } else if (mutation.kind === "set-prototype") {
+            // The CommonJS delegate can be inherited from Module.prototype.
             writes.push({ node, delegate: "require", shared: false });
-        } else if (
-          (owner === "Object" || owner === "Reflect") &&
-          method === "setPrototypeOf" &&
-          isModuleObject(args?.[0] ?? t.nullLiteral())
-        ) {
-          // The CommonJS delegate can be inherited from Module.prototype.
-          writes.push({ node, delegate: "require", shared: false });
-        } else if (
-          owner === "Object" &&
-          method === "defineProperties" &&
-          isModuleObject(args?.[0] ?? t.nullLiteral())
-        ) {
-          if (objectMayDefineDelegate(args?.[1]))
-            writes.push({ node, delegate: "require", shared: false });
-        } else if (
-          owner === "Object" &&
-          method === "assign" &&
-          isModuleObject(args?.[0] ?? t.nullLiteral())
-        ) {
-          if (
+          } else if (mutation.kind === "define-properties") {
+            if (objectMayDefineDelegate(args?.[1]))
+              writes.push({ node, delegate: "require", shared: false });
+          } else if (
             args
               ?.slice(1)
               .some((source) => objectMayDefineDelegate(source, true))
@@ -721,19 +704,19 @@ const isModuleDelegateWrite = (
     return false;
   if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
     const invocation = interop.intrinsicInvocation(node);
-    const method = invocation?.path?.at(-1);
+    const mutation = semanticIntrinsicMutation(invocation);
     const args = invocation?.arguments;
-    if (method === "assign")
+    if (mutation?.kind === "assign")
       return (
         args === undefined ||
         args
           .slice(1)
           .some((source) => objectMayDefineDelegate(source, true, delegate))
       );
-    if (method === "defineProperties")
+    if (mutation?.kind === "define-properties")
       return objectMayDefineDelegate(args?.[1], false, delegate);
     // Defining an own __proto__ property does not invoke the legacy setter.
-    return key !== "__proto__" || method === "set";
+    return key !== "__proto__" || mutation?.kind === "set";
   }
   return key !== "__proto__" || t.isAssignmentExpression(node);
 };
@@ -1124,13 +1107,7 @@ export const semanticRequireOrigin = (
   )
     return undefined;
   if (kind === "delegate") {
-    const callee = unwrapJavaScriptExpression(current.callee).node;
-    const receiver =
-      invocation.receiver ??
-      ((t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
-      semanticStaticPropertyKey(callee.property, callee.computed) === "require"
-        ? callee.object
-        : undefined);
+    const receiver = invocation.receiver ?? invocation.memberReceiver;
     if (
       receiver === undefined ||
       hostLoaderPath(receiver, state)?.join(".") !== HOST_MODULE ||

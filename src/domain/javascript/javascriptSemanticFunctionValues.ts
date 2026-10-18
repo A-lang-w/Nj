@@ -193,6 +193,12 @@ const MODULE_CHILDREN: FunctionValue = {
   kind: "object-instance",
   owner: ordinary(["global", "Array"]),
 };
+// require.cache and Module._cache initially expose the same null-prototype
+// dictionary. An arbitrary entry can be this wrapper as well as another Module.
+const MODULE_CACHE: FunctionValue = {
+  path: ["commonjs-module", "constructor", "_cache"],
+  kind: "object-instance",
+};
 const MODULE_INSTANCE_MEMBERS = {
   parent: MODULE_INSTANCE,
   children: MODULE_CHILDREN,
@@ -204,7 +210,7 @@ const MODULE_INSTANCE_MEMBERS = {
 const VALUE_MEMBERS: Readonly<
   Record<string, Readonly<Record<string, FunctionValue>>>
 > = {
-  "global.require": { main: MODULE_INSTANCE },
+  "global.require": { main: MODULE_INSTANCE, cache: MODULE_CACHE },
   "commonjs-module": MODULE_INSTANCE_MEMBERS,
   "module-instance": {
     ...MODULE_INSTANCE_MEMBERS,
@@ -215,6 +221,7 @@ const VALUE_MEMBERS: Readonly<
   "commonjs-module.constructor": {
     Module: MODULE_CONSTRUCTOR,
     prototype: MODULE_PROTOTYPE,
+    _cache: MODULE_CACHE,
   },
   "commonjs-module.__proto__": { require: MODULE_REQUIRE },
 };
@@ -284,7 +291,8 @@ const propertyValue = (
     return ordinary(["global", "Function", "prototype", key], false);
   if (
     (hasFunctionHelpers(value) ||
-      (value.kind === "object-instance" && value.owner === OBJECT)) &&
+      (value.kind === "object-instance" && value.owner !== undefined) ||
+      value.kind === "instance-prototype") &&
     FUNCTION_MEMBERS["global.Object.prototype"]!.includes(key)
   )
     return ordinary(["global", "Object", "prototype", key], false);
@@ -336,6 +344,7 @@ const possiblePropertyValues = (
   value: FunctionValue,
   key: string,
 ): readonly FunctionValue[] => {
+  if (value === MODULE_CACHE) return [MODULE_INSTANCE, WRAPPER_MODULE_INSTANCE];
   if (value.kind === "unknown-external") {
     if (INVOCATION_HELPERS.includes(key))
       return [

@@ -4,6 +4,123 @@ import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 const SHIM = 'var Q=(e=>typeof require<"u"?require:e)(function(){});';
 
+describe("cached Module instance identity", () => {
+  it.each([
+    [
+      "wrapper cache constructor",
+      "require.cache[__filename].constructor._load=other;",
+    ],
+    [
+      "literal cache key",
+      'require.cache["/app.cjs"].constructor.prototype.require=other;',
+    ],
+    ["cached wrapper delegate", "require.cache[__filename].require=other;"],
+    ["unknown cache key", 'Reflect.set(require.cache[key],"require",other);'],
+    [
+      "cache prototype",
+      'Reflect.set(Object.getPrototypeOf(require.cache[key]),"require",other);',
+    ],
+    [
+      "cache alias",
+      'const cache=require.cache;const entry=cache[key];Reflect.set(entry.constructor,"_load",other);',
+    ],
+    [
+      "Module cache",
+      'const M=require("module");M._cache[__filename].constructor._load=other;',
+    ],
+    [
+      "named Module cache",
+      'require("node:module").Module._cache[key].require=other;',
+    ],
+    [
+      "imported Module cache",
+      'import M from "module";M._cache[key].constructor.prototype.require=other;',
+    ],
+    ["cached parent", "require.cache[key].parent.constructor._load=other;"],
+    [
+      "cached child",
+      "require.cache[key].children[index].constructor.prototype.require=other;",
+    ],
+    ["unknown cache selector", "require[slot][key].constructor._load=other;"],
+    [
+      "copied cache entry",
+      "const box={entry:require.cache[key]};const copy={...box};copy.entry.require=other;",
+    ],
+    [
+      "saved cache entry",
+      "const entry=require.cache[key];require.cache={};entry.require=other;",
+    ],
+    [
+      "saved cache slot",
+      'const cache=require.cache;require.cache={};Reflect.set(cache[key],"require",other);',
+    ],
+    [
+      "constructor cache cycle",
+      "require.cache[key].constructor.Module._cache[next].constructor.prototype.require=other;",
+    ],
+  ])("rejects changed shared loader state through %s", (_name, setup) => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${SHIM}${setup}new (Q("electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toEqual([]);
+  });
+
+  it.each([
+    "require.cache[key].require.call.call=other;",
+    "require.cache[key].exports.call.call=other;",
+  ])("tracks cached Module callable helpers: %s", (setup) => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${setup}new (require.call.call(require,null,"electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toEqual([]);
+  });
+
+  it.each([
+    "const local={cache:{entry:{constructor:{prototype:{}}}}};local.cache.entry.constructor.prototype.require=other;",
+    "let cache=require.cache;cache={entry:{}};cache.entry.require=other;",
+    "require.cache[key].parent.require=other;",
+    "require.cache[key].children[0].require=other;",
+    "require.cache[key].constructor=other;",
+    "require.cache[key].unrelated=other;",
+    "require.cache[key]=other;",
+  ])("preserves distinct cache or instance slots: %s", (setup) => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${SHIM}${setup}new (Q("electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toHaveLength(1);
+  });
+
+  it("retains an earlier load before a cached Module mutation", () => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${SHIM}new (Q("electron").BrowserWindow)({});require.cache[__filename].require=other;`,
+      ).electron.browser_windows,
+    ).toHaveLength(1);
+  });
+
+  it("retains a saved delegate across a cached own-slot mutation", () => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        'const load=module.require;require.cache[__filename].require=other;new (load.call(module,"electron").BrowserWindow)({});',
+      ).electron.browser_windows,
+    ).toHaveLength(1);
+  });
+
+  it.each([
+    'require.cache[key].require("electron")',
+    'require("module")._cache[key].require("electron")',
+    'require.cache[key].constructor.createRequire("/app.cjs")("electron")',
+  ])("does not grant strict loader proof to a cache entry: %s", (load) => {
+    expect(
+      analyzeJavaScriptStaticSource(`new (${load}.BrowserWindow)({});`).electron
+        .browser_windows,
+    ).toEqual([]);
+  });
+});
+
 describe("related Module instance identity", () => {
   it.each([
     [
@@ -85,6 +202,9 @@ describe("related Module instance identity", () => {
   });
 
   it.each([
+    "module.__defineGetter__.call.call=other;",
+    "module.__proto__.__defineSetter__.call.call=other;",
+    "module.parent.__defineGetter__.call.call=other;",
     "module.parent.constructor.__proto__.call=other;",
     "module.parent.require.call.call=other;",
     "module.parent.exports.call.call=other;",

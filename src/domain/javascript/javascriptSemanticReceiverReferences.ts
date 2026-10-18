@@ -313,12 +313,7 @@ export const createSemanticReceiverReferences = (
         covered.add(group.node);
         for (const read of invocation.callableReads ?? []) covered.add(read);
         const callee = unwrapJavaScriptExpression(node.callee).node;
-        const receiver =
-          invocation.receiver ??
-          (callee === group.node &&
-          (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee))
-            ? callee.object
-            : undefined);
+        const receiver = invocation.receiver ?? invocation.memberReceiver;
         const branded =
           invocation.receiver === undefined &&
           callee === group.node &&

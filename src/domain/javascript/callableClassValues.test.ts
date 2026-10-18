@@ -115,6 +115,42 @@ it.each([
 });
 
 it.each([
+  "let run;class C{static call={};static{run=()=>{this.call.call=other}}static call=Function.prototype.call}run();",
+  "class C{static call={};static run=()=>{this.call.call=other};static call=Function.prototype.call}C.run();",
+  "let run;class C{static call={};static{run=function(){C.call.call=other}}static call=Function.prototype.call}run();",
+  "let run;class C{static call={};static{run=(value=(C.call.call=other))=>{}}static call=Function.prototype.call}run();",
+  "let run;class C{static call={};static{run=(()=>()=>{this.call.call=other})()}static call=Function.prototype.call}run();",
+  "let run;class C{static call={};static{run=async()=>{await pause();this.call.call=other}}static call=Function.prototype.call}run();",
+  "let run;class C{static call={};static{run=function*(){C.call.call=other}}static call=Function.prototype.call}run().next();",
+  "class C{static call={};static D=class{field=(C.call.call=other)};static call=Function.prototype.call}new C.D();",
+  "class C{static call={};static D=class{#field=(C.call.call=other)};static call=Function.prototype.call}new C.D();",
+  "class C{static call={};static D=class{constructor(){C.call.call=other}};static call=Function.prototype.call}new C.D();",
+  "class C{static call=Function.prototype.call;static{const run=()=>{this.call.call=other};run()}static call={}};",
+])("retains possible later fields across deferred reads: %s", (setup) => {
+  expect(
+    analyzeJavaScriptStaticSource(`${setup}${LOAD}`).electron.browser_windows,
+  ).toEqual([]);
+});
+
+it.each([
+  "class C{static call={};static{this.call.call=other}static call=Function.prototype.call};",
+  "class C{static call={};static{(()=>{this.call.call=other})()}static call=Function.prototype.call};",
+  "class C{static call={};static{(function(){C.call.call=other})()}static call=Function.prototype.call};",
+  "let run;class C{static call={};static{run=()=>{this.call.call=other}}}run();",
+  "let run;class C{static call={};static{run=()=>{this.call.call=other}}static call={}}run();",
+  "let run;class C{static call=function(){};static{run=()=>{this.call.call=other}}static call={}}run();",
+  "class C{static call={};static D=class{field=(C.call.call=other)}}new C.D();",
+  "class C{static call={};static{new class{field=(C.call.call=other)}}static call=Function.prototype.call};",
+  "class C{static call={};static{new class{constructor(){C.call.call=other}}}static call=Function.prototype.call};",
+  "class C{static call={};static D=class{[(C.call.call=other,'field')]=0};static call=Function.prototype.call};",
+  "class C{static call={};static{new function(){C.call.call=other}}static call=Function.prototype.call};",
+])("preserves local fields with safe activation bounds: %s", (setup) => {
+  expect(
+    analyzeJavaScriptStaticSource(`${setup}${LOAD}`).electron.browser_windows,
+  ).toHaveLength(1);
+});
+
+it.each([
   "class C extends null{}C.__proto__.call=other;",
   "class C extends null{}const bound=C.bind(null);bound.__proto__.call=other;",
   "class C extends null{static{this.__proto__.call=other}}",

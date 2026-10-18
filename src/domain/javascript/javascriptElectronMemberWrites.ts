@@ -46,8 +46,10 @@ export const electronMemberPath = (
 /** A known intrinsic callable and its examined positional arguments. */
 export interface JavaScriptIntrinsicInvocation {
   readonly kind: "known" | "opaque";
-  /** The original bound receiver; rebinding cannot replace it. */
+  /** An explicit call/apply receiver or original bound receiver. */
   readonly receiver?: t.Node;
+  /** Direct member-call syntax supplies this receiver only when none is explicit. */
+  readonly memberReceiver?: t.Node;
   /** Callable selections consumed while recovering a bound invocation. */
   readonly callableReads?: readonly t.Node[];
   readonly path: readonly string[];
@@ -62,12 +64,57 @@ export interface JavaScriptIntrinsicMutationRecipient {
   readonly target: t.Node | undefined;
 }
 
+type JavaScriptIntrinsicMutation = (
+  | {
+      readonly kind: "define-property" | "set" | "delete";
+      readonly key: t.Node | undefined;
+    }
+  | { readonly kind: "define-properties" | "assign" | "set-prototype" }
+) & { readonly receiver?: true };
+
+/** Normalize static and receiver-based mutators before interpreting their keys. */
+export const semanticIntrinsicMutation = (
+  invocation: JavaScriptIntrinsicInvocation | undefined,
+): JavaScriptIntrinsicMutation | undefined => {
+  if (invocation === undefined) return undefined;
+  const path = invocation.path.join(".");
+  if (
+    path === "intrinsic.Object.prototype.__defineGetter__" ||
+    path === "intrinsic.Object.prototype.__defineSetter__"
+  )
+    return {
+      kind: "define-property",
+      key: invocation.arguments?.[0],
+      receiver: true,
+    };
+  if (
+    path === "intrinsic.Object.defineProperty" ||
+    path === "intrinsic.Reflect.defineProperty"
+  )
+    return { kind: "define-property", key: invocation.arguments?.[1] };
+  if (path === "intrinsic.Reflect.set")
+    return { kind: "set", key: invocation.arguments?.[1] };
+  if (path === "intrinsic.Reflect.deleteProperty")
+    return { kind: "delete", key: invocation.arguments?.[1] };
+  if (path === "intrinsic.Object.defineProperties")
+    return { kind: "define-properties" };
+  if (path === "intrinsic.Object.assign") return { kind: "assign" };
+  if (
+    path === "intrinsic.Object.setPrototypeOf" ||
+    path === "intrinsic.Reflect.setPrototypeOf"
+  )
+    return { kind: "set-prototype" };
+  return undefined;
+};
+
 /** Select possible property-write recipients, preserving unknown receiver aliases. */
 export const semanticIntrinsicMutationTargets = (
   invocation: JavaScriptIntrinsicInvocation,
   freshObject: (node: t.Node) => boolean,
 ): readonly (t.Node | undefined)[] => {
   const args = invocation.arguments;
+  if (semanticIntrinsicMutation(invocation)?.receiver === true)
+    return [invocation.receiver ?? invocation.memberReceiver];
   if (
     invocation.path.join(".") !== "intrinsic.Reflect.set" ||
     args === undefined ||
@@ -115,19 +162,6 @@ export function* collectJavaScriptIdentityWritesSteps(
     invocation: JavaScriptIntrinsicInvocation | undefined,
   ) => void,
 ): Generator<void> {
-  const objectMutators = new Set([
-    "defineProperty",
-    "defineProperties",
-    "assign",
-    "setPrototypeOf",
-  ]);
-  const reflectMutators = new Set([
-    "set",
-    "deleteProperty",
-    "defineProperty",
-    "setPrototypeOf",
-  ]);
-  const keyedMutators = new Set(["set", "deleteProperty", "defineProperty"]);
   yield* traverseJavaScriptAstSteps(program, {
     enter: (node) => {
       if (
@@ -148,14 +182,8 @@ export function* collectJavaScriptIdentityWritesSteps(
             retain(node, scope);
           return;
         }
-        const callee = invocation?.path;
-        const arguments_ = invocation?.arguments;
-        const method = callee?.at(-1);
-        const owner = callee?.length === 3 ? callee[1] : undefined;
-        if (
-          (owner === "Object" && objectMutators.has(method ?? "")) ||
-          (owner === "Reflect" && reflectMutators.has(method ?? ""))
-        ) {
+        const mutation = semanticIntrinsicMutation(invocation);
+        if (mutation !== undefined) {
           const targets = semanticIntrinsicMutationTargets(
             invocation!,
             freshObject,
@@ -171,11 +199,12 @@ export function* collectJavaScriptIdentityWritesSteps(
             if (t.isNode(target) && !t.isSpreadElement(target)) {
               const identities = origin(target, "member", node);
               if (identities.length > 0) {
-                const key = keyedMutators.has(method ?? "")
-                  ? [staticString(arguments_?.[1]) ?? null]
-                  : // Mutating a target's contents does not replace the target.
-                    // Retain an unknown child key, rather than its own identity.
-                    [null];
+                const key =
+                  "key" in mutation
+                    ? [staticString(mutation.key) ?? null]
+                    : // Mutating a target's contents does not replace the target.
+                      // Retain an unknown child key, rather than its own identity.
+                      [null];
                 for (const identity of identities)
                   retain(node, [...identity, ...key], recipient);
               } else if (!freshObject(target)) {
