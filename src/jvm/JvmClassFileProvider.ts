@@ -35,6 +35,7 @@ import { parseJavaClassFile } from "../domain/jvm/javaClassFile.js";
 import { projectDebugOutput } from "../domain/jvm/javaDebugMetadata.js";
 import {
   buildJavaDebugMetadataResult,
+  normalizeJarEntryPath,
   type InspectJvmDebugMetadataInput,
   type JavaDebugMetadataResult,
 } from "../domain/jvm/javaDebugMetadataReport.js";
@@ -49,7 +50,6 @@ import {
 import {
   classifyJarEntry,
   parseVersionedJarEntry,
-  normalizeJarEntryPath,
   resolveJarSelection,
 } from "./jarClassEntry.js";
 import {

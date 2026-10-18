@@ -27,21 +27,6 @@ export type JarSelection =
 
 const VERSIONS_PREFIX = "META-INF/versions/";
 
-/**
- * Normalize a caller-supplied entry once, before any match: backslashes become
- * `/`, then leading `/` characters and leading `./` segments are removed.
- * Interior segments (`a/./b`, `..`) are left unchanged. This rule applies only
- * to the caller's spelling: members are matched on their stored ZIP names, as
- * the JDK's `JarFile.getEntry` does, so `./Foo.class` and `Foo.class` both
- * select the member stored as `Foo.class`, while a member stored as
- * `./Foo.class` is an inert resource that never matches.
- */
-export const normalizeJarEntryPath = (entry: string): string =>
-  entry
-    .replace(/\\/g, "/")
-    .replace(/^\/+/, "")
-    .replace(/^(?:\.\/)+/u, "");
-
 /** The largest version the JDK's ZIP index can represent (`Integer.MAX_VALUE`). */
 const MAX_JAR_VERSION = 2 ** 31 - 1;
 

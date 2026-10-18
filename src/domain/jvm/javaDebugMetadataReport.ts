@@ -59,6 +59,22 @@ export type InspectJvmDebugMetadataInput = z.infer<
   typeof inspectJvmDebugMetadataInputSchema
 >;
 
+/**
+ * Normalize a caller-supplied entry once, before any match: backslashes become
+ * `/`, then leading `/` characters and leading `./` segments are removed.
+ * Interior segments (`a/./b`, `..`) are left unchanged. This rule applies only
+ * to the caller's spelling: members are matched on their stored ZIP names, as
+ * the JDK's `JarFile.getEntry` does, so `./Foo.class` and `Foo.class` both
+ * select the member stored as `Foo.class`, while a member stored as
+ * `./Foo.class` is an inert resource that never matches. The report's
+ * `selected_entry.entry` is this normalized form.
+ */
+export const normalizeJarEntryPath = (entry: string): string =>
+  entry
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .replace(/^(?:\.\/)+/u, "");
+
 const lineNumberEntry = z.strictObject({
   start_pc: z.number().int().nonnegative(),
   line_number: z.number().int().nonnegative(),
@@ -269,14 +285,38 @@ export const buildJavaDebugMetadataResult = (
   };
 };
 
-/** The returned artifact identity must match the caller-selected local file. */
-export const javaDebugMetadataMatchesSubject = (
-  artifact: JavaDebugMetadataResult["artifact"],
+/**
+ * The report answers exactly the caller's selection: the selected path and
+ * subject, a loose class file (`file`) iff no entry was requested, and
+ * otherwise a JAR (`zip`) whose selected member is the normalized entry at the
+ * requested release (the base, `null`, when none was requested). Guards the
+ * application boundary against a provider answering a different selection
+ * under the caller's parameters.
+ */
+export const javaDebugMetadataAnswersSelection = (
+  report: JavaDebugMetadataResult,
   subject: EvidenceSubjectTarget,
-): boolean =>
-  artifact.sha256 === subject.sha256 &&
-  artifact.path === subject.path &&
-  (subject.format === "file" || subject.format === "zip");
+  input: InspectJvmDebugMetadataInput,
+): boolean => {
+  if (
+    report.artifact.path !== input.path ||
+    report.artifact.sha256 !== subject.sha256 ||
+    report.artifact.path !== subject.path
+  )
+    return false;
+  if (input.entry === undefined)
+    return (
+      subject.format === "file" &&
+      report.container === "class-file" &&
+      report.selected_entry === null
+    );
+  return (
+    subject.format === "zip" &&
+    report.container === "jar" &&
+    report.selected_entry?.entry === normalizeJarEntryPath(input.entry) &&
+    report.selected_entry.release === (input.release ?? null)
+  );
+};
 
 /**
  * Evidence for one completed inspection, echoing exactly the caller's

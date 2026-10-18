@@ -12,7 +12,7 @@ import type { Evidence } from "../../domain/evidence.js";
 import {
   createJavaDebugMetadataEvidence,
   inspectJvmDebugMetadataInputSchema,
-  javaDebugMetadataMatchesSubject,
+  javaDebugMetadataAnswersSelection,
   javaDebugMetadataResultSchema,
 } from "../../domain/jvm/javaDebugMetadataReport.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
@@ -62,13 +62,16 @@ export class JvmDebugMetadataService {
     const report = javaDebugMetadataResultSchema.safeParse(execution.result);
     if (
       !report.success ||
-      report.data.artifact.path !== input.data.path ||
-      !javaDebugMetadataMatchesSubject(report.data.artifact, execution.subject)
+      !javaDebugMetadataAnswersSelection(
+        report.data,
+        execution.subject,
+        input.data,
+      )
     )
       return err(
         new AnalysisOutputError(
           OPERATION,
-          "JVM class-file reader returned malformed data or changed the selected artifact identity.",
+          "JVM class-file reader returned malformed data or answered a different artifact, container, entry or release than was selected.",
         ),
       );
     // Validate before classifying completion: a valid report keeps its

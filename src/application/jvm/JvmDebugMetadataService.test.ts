@@ -7,6 +7,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { JvmDebugMetadataService } from "./JvmDebugMetadataService.js";
 import { JvmClassFileProvider } from "../../jvm/JvmClassFileProvider.js";
 import { CONSTANT_TAG } from "../../domain/jvm/javaClassFile.js";
+import type { JavaDebugMetadataResult } from "../../domain/jvm/javaDebugMetadataReport.js";
+import { ok } from "../../domain/result.js";
+import type { JvmDebugMetadataPort } from "./JvmDebugMetadataPort.js";
 
 class Blob {
   readonly parts: number[] = [];
@@ -219,5 +222,70 @@ describe("JvmDebugMetadataService", () => {
     expect(result.error._tag).toBe("AnalysisResourceConstraintError");
     // The pre-count guard trips, not the post-build output guard.
     expect(result.error.message).toContain("before allocation");
+  });
+
+  it("refuses a report that answers a different container, entry or release", async () => {
+    const path = join(dir, "Example.class");
+    await writeFile(path, minimalClass());
+    const real = new JvmClassFileProvider();
+    const observed = await real.inspect({ path });
+    await real.close();
+    if (!observed.ok) throw observed.error;
+    const execution = observed.value;
+    const report = execution.result as JavaDebugMetadataResult;
+    const member = {
+      entry: "com/example/Other.class",
+      release: null,
+      sha256: report.artifact.sha256,
+      bytes: report.artifact.bytes,
+    };
+    const answering = (
+      result: JavaDebugMetadataResult,
+      format: "file" | "zip",
+    ): JvmDebugMetadataPort => ({
+      close: () => Promise.resolve(),
+      inspect: () =>
+        Promise.resolve(
+          ok({
+            ...execution,
+            result,
+            subject: { ...execution.subject, format },
+          }),
+        ),
+    });
+    const jar = {
+      ...report,
+      container: "jar" as const,
+      selected_entry: member,
+    };
+    const cases: readonly [Record<string, unknown>, JvmDebugMetadataPort][] = [
+      // A loose class requested, a JAR member answered.
+      [{ path }, answering(jar, "zip")],
+      // Another member answered for the requested entry.
+      [{ path, entry: "com/example/Foo.class" }, answering(jar, "zip")],
+      // The base answered for a requested release.
+      [
+        { path, entry: "./com/example/Other.class", release: 17 },
+        answering(jar, "zip"),
+      ],
+      // A JAR answer whose subject claims a loose file.
+      [{ path, entry: "com/example/Other.class" }, answering(jar, "file")],
+      // A loose-class report for a requested entry.
+      [{ path, entry: "com/example/Other.class" }, answering(report, "zip")],
+    ];
+    for (const [input, port] of cases) {
+      const result = await new JvmDebugMetadataService(port).inspect(input);
+      expect(result.ok, JSON.stringify(input)).toBe(false);
+      if (result.ok) continue;
+      expect(result.error._tag).toBe("AnalysisOutputError");
+    }
+    // The matching selection, spelled with a leading ./, is accepted.
+    const accepted = await new JvmDebugMetadataService(
+      answering(jar, "zip"),
+    ).inspect({ path, entry: "./com/example/Other.class" });
+    if (!accepted.ok) throw accepted.error;
+    expect(accepted.value.normalized_result).toMatchObject({
+      selected_entry: { entry: "com/example/Other.class", release: null },
+    });
   });
 });
