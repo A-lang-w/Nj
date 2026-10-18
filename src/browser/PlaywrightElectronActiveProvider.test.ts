@@ -26,10 +26,15 @@ beforeEach(() => {
     ownershipObservation,
     "prepareProcessOwnershipInspection",
   ).mockResolvedValue(undefined);
-  vi.spyOn(
-    ownershipObservation.systemProcessOwnershipHost,
-    "captureBaseline",
-  ).mockResolvedValue([]);
+  if (
+    ownershipObservation.systemProcessOwnershipHost.captureBaseline !==
+    undefined
+  ) {
+    vi.spyOn(
+      ownershipObservation.systemProcessOwnershipHost,
+      "captureBaseline",
+    ).mockResolvedValue([]);
+  }
 });
 
 afterEach(() => {
