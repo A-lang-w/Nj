@@ -19,11 +19,11 @@ import {
 } from "./application/LinuxHopper.js";
 import { execFileOutput } from "./process/ExecFileOutput.js";
 
-const LDCONFIG_CANDIDATES = [
-  "/sbin/ldconfig",
-  "/usr/sbin/ldconfig",
-  "ldconfig",
-];
+const PYTHON3_CANDIDATES = ["/usr/bin/python3", "python3"];
+const EMBEDDED_PYTHON_PROBE = [
+  "-c",
+  "import ctypes, struct; assert struct.calcsize('P') == 8; ctypes.CDLL('libpython3.12.so.1.0')",
+] as const;
 
 /** Compose provider diagnostics at the outer CLI adapter boundary. */
 export const createSystemDoctorHost = (
@@ -89,20 +89,20 @@ export const inspectLinuxEmbeddedPythonRuntime = async (
   const runtime = linuxHopperEmbeddedPythonRuntime("6.6.0");
   const packageName = linuxHopperEmbeddedPythonPackage(distribution, "6.6.0");
   try {
-    let linked: Awaited<ReturnType<typeof execFileOutput>> | undefined;
+    let loaded: Awaited<ReturnType<typeof execFileOutput>> | undefined;
     let lastFailure: unknown;
-    for (const command of LDCONFIG_CANDIDATES) {
+    for (const command of PYTHON3_CANDIDATES) {
       try {
-        linked = await run(command, ["-p"], { env: environment });
+        loaded = await run(command, EMBEDDED_PYTHON_PROBE, {
+          env: environment,
+        });
         break;
       } catch (cause: unknown) {
         lastFailure = cause;
       }
     }
-    if (linked === undefined) throw lastFailure;
-    const available =
-      runtime !== undefined &&
-      new RegExp(`\\b${runtime.soname}\\b`, "u").test(linked.stdout);
+    if (loaded === undefined) throw lastFailure;
+    const available = runtime !== undefined;
     return {
       name: "hopper-embedded-python",
       ok: available,
@@ -123,10 +123,14 @@ export const inspectLinuxEmbeddedPythonRuntime = async (
     return {
       name: "hopper-embedded-python",
       ok: false,
-      classification: "unknown",
+      classification:
+        packageName === undefined ? "unknown" : "missing_dependency",
       detail: cause instanceof Error ? cause.message : String(cause),
-      remediation:
-        "Verify the matching Hopper embedded Python runtime with ldconfig, then rerun rea doctor --provider hopper.",
+      ...(packageName === undefined
+        ? {}
+        : {
+            remediation: `Install ${packageName}, then rerun rea doctor --provider hopper.`,
+          }),
     };
   }
 };

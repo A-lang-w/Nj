@@ -22,12 +22,7 @@ test("reports a missing Ubuntu 24.04 embedded Python runtime", async () => {
     packageFamily: "deb",
     hopperSetupSupported: true,
   };
-  const run = vi.fn().mockResolvedValue({
-    stdout: "libc.so.6 (libc6,x86-64) => /lib/libc.so.6",
-    stderr: "",
-    stdoutBytes: 0,
-    stderrBytes: 0,
-  });
+  const run = vi.fn().mockRejectedValue(new Error("cannot load libpython"));
   await expect(
     inspectLinuxEmbeddedPythonRuntime(
       {},
@@ -40,7 +35,14 @@ test("reports a missing Ubuntu 24.04 embedded Python runtime", async () => {
     classification: "missing_dependency",
     remediation: expect.stringContaining("libpython3.12t64"),
   });
-  expect(run).toHaveBeenCalledWith("/sbin/ldconfig", ["-p"], { env: {} });
+  expect(run).toHaveBeenCalledWith(
+    "/usr/bin/python3",
+    [
+      "-c",
+      "import ctypes, struct; assert struct.calcsize('P') == 8; ctypes.CDLL('libpython3.12.so.1.0')",
+    ],
+    { env: {} },
+  );
 });
 
 test("accepts a verified embedded Python runtime", async () => {
@@ -69,7 +71,7 @@ test("accepts a verified embedded Python runtime", async () => {
   });
 });
 
-test("uses an absolute ldconfig path before the caller PATH", async () => {
+test("uses an absolute Python path before the caller PATH", async () => {
   const distribution: LinuxDistribution = {
     id: "ubuntu",
     versionId: "25.04",
@@ -90,9 +92,14 @@ test("uses an absolute ldconfig path before the caller PATH", async () => {
       run,
     ),
   ).resolves.toMatchObject({ ok: true, classification: "healthy" });
-  expect(run).toHaveBeenCalledWith("/sbin/ldconfig", ["-p"], {
-    env: { PATH: "/usr/bin:/bin" },
-  });
+  expect(run).toHaveBeenCalledWith(
+    "/usr/bin/python3",
+    [
+      "-c",
+      "import ctypes, struct; assert struct.calcsize('P') == 8; ctypes.CDLL('libpython3.12.so.1.0')",
+    ],
+    { env: { PATH: "/usr/bin:/bin" } },
+  );
 });
 
 test("reports unknown remediation when no verified package mapping exists", async () => {
@@ -104,18 +111,33 @@ test("reports unknown remediation when no verified package mapping exists", asyn
   const result = await inspectLinuxEmbeddedPythonRuntime(
     {},
     () => Promise.resolve(distribution),
-    vi.fn().mockResolvedValue({
-      stdout: "",
-      stderr: "",
-      stdoutBytes: 0,
-      stderrBytes: 0,
-    }),
+    vi.fn().mockRejectedValue(new Error("python3 unavailable")),
   );
   expect(result).toMatchObject({
     ok: false,
     classification: "unknown",
   });
   expect(result).not.toHaveProperty("remediation");
+});
+
+test("reports a mapped runtime as missing when the loader rejects it", async () => {
+  const distribution: LinuxDistribution = {
+    id: "ubuntu",
+    versionId: "24.04",
+    packageFamily: "deb",
+    hopperSetupSupported: true,
+  };
+  await expect(
+    inspectLinuxEmbeddedPythonRuntime(
+      {},
+      () => Promise.resolve(distribution),
+      vi.fn().mockRejectedValue(new Error("cannot load shared object")),
+    ),
+  ).resolves.toMatchObject({
+    ok: false,
+    classification: "missing_dependency",
+    remediation: expect.stringContaining("libpython3.12t64"),
+  });
 });
 
 it("exposes jadx through the doctor provider selector", () => {
