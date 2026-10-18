@@ -99,11 +99,12 @@ it(
 it(
   "reports rejected Electron CLI arguments with structured issue details",
   async () => {
-    const invalidTargetList = await runCli(
+    const invalidTargetList = await runCliResult(
       ["list-electron-targets", "not a url", "--json"],
       process.env,
     );
-    expect(invalidTargetList).toMatchObject({
+    expect(invalidTargetList.exitCode).toBe(1);
+    expect(invalidTargetList.result).toMatchObject({
       error: "Electron analysis failed",
       code: "invalid_request",
       category: "invalid_input",
@@ -118,11 +119,12 @@ it(
       },
     });
 
-    const invalidPageInspect = await runCli(
+    const invalidPageInspect = await runCliResult(
       ["inspect-electron-page", "http://127.0.0.1:9222", "", "--json"],
       process.env,
     );
-    expect(invalidPageInspect).toMatchObject({
+    expect(invalidPageInspect.exitCode).toBe(1);
+    expect(invalidPageInspect.result).toMatchObject({
       error: "Electron analysis failed",
       code: "invalid_request",
       category: "invalid_input",
@@ -462,25 +464,32 @@ describe("Electron CLI runtime reconciliation", () => {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const runCli = async (
+const runCliResult = async (
   arguments_: readonly string[],
   environment: NodeJS.ProcessEnv,
-): Promise<unknown> => {
+): Promise<{ readonly exitCode: number; readonly result: unknown }> => {
   try {
     const { stdout } = await execute(
       process.execPath,
       ["scripts/rea.mjs", ...arguments_],
       { cwd: process.cwd(), env: environment, maxBuffer: 16 * 1_024 * 1_024 },
     );
-    return JSON.parse(stdout);
+    return { exitCode: 0, result: JSON.parse(stdout) };
   } catch (cause: unknown) {
     if (
       typeof cause === "object" &&
       cause !== null &&
       "stdout" in cause &&
-      typeof cause.stdout === "string"
+      typeof cause.stdout === "string" &&
+      "code" in cause &&
+      typeof cause.code === "number"
     )
-      return JSON.parse(cause.stdout);
+      return { exitCode: cause.code, result: JSON.parse(cause.stdout) };
     throw cause;
   }
 };
+
+const runCli = async (
+  arguments_: readonly string[],
+  environment: NodeJS.ProcessEnv,
+): Promise<unknown> => (await runCliResult(arguments_, environment)).result;
