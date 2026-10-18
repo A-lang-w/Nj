@@ -132,6 +132,8 @@ const transport = new StdioClientTransport({
   stderr: "pipe",
 });
 let cases = 0;
+/** Named skips: coverage this host could not provide. */
+const skipped = [];
 const failures = [];
 
 try {
@@ -282,16 +284,20 @@ class Debuggable<T> {
     "all methods stripped under -g:none",
   );
 
-  // Real third-party application bytecode, when present on the host.
+  // Real third-party application bytecode, when present on the host. It is
+  // extracted with the resolved JDK `jar` tool; without one the case is a
+  // named skip, never a silent pass.
   let realJarClass;
-  for (const jar of [
-    "/usr/share/java/fontbox-1.8.16.jar",
-    "/usr/share/java/pdfbox-1.8.16.jar",
-  ]) {
+  for (const jar of jarTool === undefined
+    ? []
+    : [
+        "/usr/share/java/fontbox-1.8.16.jar",
+        "/usr/share/java/pdfbox-1.8.16.jar",
+      ]) {
     try {
       const extractDir = join(workspace, "realjar");
       await mkdir(extractDir, { recursive: true });
-      const { stdout } = await execute("jar", ["tf", jar], {
+      const { stdout } = await execute(jarTool, ["tf", jar], {
         env: environment,
         maxBuffer: 32 * 1024 * 1024,
       });
@@ -299,7 +305,7 @@ class Debuggable<T> {
         .split("\n")
         .find((name) => name.endsWith(".class") && !name.includes("$"));
       if (entry === undefined) continue;
-      await execute("jar", ["xf", jar, entry], {
+      await execute(jarTool, ["xf", jar, entry], {
         cwd: extractDir,
         env: environment,
       });
@@ -326,7 +332,12 @@ class Debuggable<T> {
         realOracle.descriptors.has(m.descriptor),
         `real-jar descriptor ${m.descriptor} not reported by javap`,
       );
-  }
+  } else
+    skipped.push(
+      jarTool === undefined
+        ? "real third-party JAR class: no JDK jar tool on JAVA_HOME or PATH"
+        : "real third-party JAR class: no fontbox/pdfbox 1.8.16 JAR on this host",
+    );
 
   // Multi-release JAR: base + a release-17 override of the same class entry,
   // read through the JAR entry path (ZipArtifactReader + explicit selection).
@@ -419,7 +430,10 @@ class Debuggable<T> {
     });
     assert.equal(missing.category, "invalid_input", JSON.stringify(missing));
     cases += 2;
-  }
+  } else
+    skipped.push(
+      "multi-release JAR selection: no JDK jar tool on JAVA_HOME or PATH",
+    );
 
   // Error surfaces: non-class bytes and a truncated class file.
   const notClass = join(workspace, "notclass.bin");
@@ -475,6 +489,7 @@ console.log(
     {
       status: "passed",
       cases,
+      skipped,
       toolchain: "jdk-javac-javap",
       entrypoint,
       verifier: await completeVerifierRun(run),
