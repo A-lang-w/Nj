@@ -78,7 +78,10 @@ explicit-17 selection (distinct SHA), absent-release refusal, and missing-entry
 error, through the CLI and MCP — 16 cases total.
 
 Out-of-range scope validation against `code_length` landed earlier (flagged
-`out_of_range`, raw values preserved).
+`out_of_range`, raw values preserved). Because HotSpot rejects such a class
+("Invalid pc in LineNumberTable", "Invalid start_pc"/"Invalid length", and
+"Invalid index" for a slot, or a `J`/`D` second slot, at or past `max_locals`),
+a flagged entry or out-of-frame slot also makes its table `malformed`.
 
 ## Second independent review — JAR/multi-release + out-of-range (three angles)
 

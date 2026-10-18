@@ -164,8 +164,8 @@ describe("decodeClassDebugMetadata", () => {
         new Blob().attr(4, lineNumberTable([[0, 1]])).attr(
           4,
           lineNumberTable([
-            [5, 2],
-            [9, 3],
+            [0, 2],
+            [0, 3],
           ]),
         ),
       ).parts,
@@ -180,9 +180,8 @@ describe("decodeClassDebugMetadata", () => {
     expect(method.lineNumbers.declaredCount).toBe(3);
     expect(method.lineNumbers.entries).toEqual([
       { startPc: 0, lineNumber: 1, outOfRange: false },
-      // code_length is 1 in this fixture: later pcs are flagged, not dropped.
-      { startPc: 5, lineNumber: 2, outOfRange: true },
-      { startPc: 9, lineNumber: 3, outOfRange: true },
+      { startPc: 0, lineNumber: 2, outOfRange: false },
+      { startPc: 0, lineNumber: 3, outOfRange: false },
     ]);
   });
 
@@ -209,6 +208,10 @@ describe("decodeClassDebugMetadata", () => {
       .localVariables.entries;
     expect(entries[0]!.outOfRange).toBe(false);
     expect(entries[1]!.outOfRange).toBe(true);
+    // HotSpot rejects the class ("Invalid length"): flagged and kept, malformed.
+    const method = decodeClassDebugMetadata(cls.value).methods[0]!;
+    expect(method.localVariables.presence).toBe("malformed");
+    expect(method.state).toBe("malformed");
   });
 });
 
@@ -221,7 +224,7 @@ describe("decodeClassDebugMetadata — states and edge cases", () => {
           5,
           localVariableTable([
             { startPc: 0, length: 1, slot: 1 },
-            { startPc: 2, length: 1, slot: 1 },
+            { startPc: 0, length: 1, slot: 1 },
           ]),
         ),
       ).parts,
@@ -557,6 +560,9 @@ describe("decodeClassDebugMetadata — line-number ranges", () => {
       { startPc: 0, lineNumber: 1, outOfRange: false },
       { startPc: 99, lineNumber: 2, outOfRange: true },
     ]);
+    // HotSpot rejects the class ("Invalid pc in LineNumberTable").
+    expect(method.lineNumbers.presence).toBe("malformed");
+    expect(method.state).toBe("malformed");
   });
 });
 

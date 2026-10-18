@@ -117,3 +117,46 @@ cliTest(
   },
   30000,
 );
+
+cliTest(
+  "reports debug positions outside the code as malformed over CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-jvm-pcs-");
+    const { client, call } = await connectLocalToolsMcp();
+    // code_length is 1. HotSpot: "Invalid pc in LineNumberTable" and
+    // "Invalid length 2 in LocalVariableTable".
+    const cases = [
+      {
+        name: "line-pc",
+        options: { linePc: 1 },
+        line: "malformed",
+        lvt: "present",
+      },
+      {
+        name: "scope-length",
+        options: { locals: [{ slot: 0, descriptor: "J", length: 2 }] },
+        line: "present",
+        lvt: "malformed",
+      },
+    ] as const;
+    for (const { name, options, line, lvt } of cases) {
+      const path = join(root, `${name}.class`);
+      await writeFile(path, jvmDebugClass(options));
+      const outcome = await inspectBoth(cli, call, { path });
+      if (!outcome.ok) throw new Error(JSON.stringify(outcome.error));
+      expect(outcome.evidence).toMatchObject({
+        normalized_result: {
+          methods: [
+            {
+              state: "malformed",
+              line_number_table: { presence: line },
+              local_variable_table: { presence: lvt },
+            },
+          ],
+        },
+      });
+    }
+    await client.ping();
+  },
+  30000,
+);

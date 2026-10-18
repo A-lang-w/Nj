@@ -215,14 +215,20 @@ const decodeLineNumberTable = (
   infos: readonly Uint8Array[],
   codeLength: number,
 ): DebugTable<LineNumberEntry> =>
-  decodeTable(infos, 4, (cursor) => {
-    const startPc = u2(cursor);
-    return {
-      startPc,
-      lineNumber: u2(cursor),
-      outOfRange: startPc >= codeLength,
-    };
-  });
+  decodeTable(
+    infos,
+    4,
+    (cursor) => {
+      const startPc = u2(cursor);
+      return {
+        startPc,
+        lineNumber: u2(cursor),
+        outOfRange: startPc >= codeLength,
+      };
+    },
+    // HotSpot rejects the class ("Invalid pc in LineNumberTable").
+    (entry) => !entry.outOfRange,
+  );
 
 /** A scope lies outside the code when it starts at/after the end or extends past it. */
 const scopeOutOfRange = (
@@ -257,7 +263,10 @@ const decodeLocalVariableTable = (
         outOfRange: scopeOutOfRange(startPc, length, codeLength),
       };
     },
+    // HotSpot rejects an out-of-code scope ("Invalid start_pc"/"Invalid
+    // length") as it rejects an out-of-frame slot.
     (entry) =>
+      !entry.outOfRange &&
       namesResolve(entry) &&
       slotInFrame(
         entry.slot +
@@ -315,7 +324,10 @@ const decodeLocalVariableTypeTable = (
     },
     // A signature names no wide primitive, so only the entry's own slot is
     // checked (as HotSpot checks a LocalVariableTypeTable).
-    (entry) => namesResolve(entry) && slotInFrame(entry.slot, maxLocals),
+    (entry) =>
+      !entry.outOfRange &&
+      namesResolve(entry) &&
+      slotInFrame(entry.slot, maxLocals),
   );
 
 /** Advance past the fixed Code header and exception table to its sub-attributes, keeping max_locals and code_length. */
