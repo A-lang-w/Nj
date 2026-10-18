@@ -895,3 +895,32 @@ it("folds many literal siblings into one opt-in parameter", () => {
   expect(projected.tools).toHaveLength(1);
   expect(projected.tools[0]?.params[0]?.observed_values).toHaveLength(301);
 });
+
+it("treats a +json suffix as JSON only on application media types", () => {
+  const projected = manifest(
+    [],
+    syntheticCapture([
+      ["GET", "https://s.test/api/items", "application/vnd.api+json"],
+      ["GET", "https://s.test/gallery/1", "image/example+json"],
+      ["GET", "https://s.test/notes/1", "text/example+json"],
+      [
+        "POST",
+        "https://s.test/api/items",
+        "application/json",
+        '{"title":"t"}',
+        "text/example+json",
+      ],
+    ]),
+  );
+  expect(projected.tools.map(line)).toEqual([
+    "GET /api/items",
+    "POST /api/items",
+  ]);
+  expect(
+    projected.excluded.map((entry) => [entry.path_template, entry.reason]),
+  ).toEqual([
+    ["/gallery/{numeric}", "ui-page-or-asset"],
+    ["/notes/{numeric}", "non-json"],
+  ]);
+  expect(projected.tools[1]?.body_shape).toBeNull();
+});

@@ -131,8 +131,12 @@ const UNKNOWNS: Manifest["unknowns"] = [
   },
 ];
 
+/** `application/json` or `application/*+json`; a `+json` suffix on another type is not JSON here. */
 const isJson = (essence: string | null): boolean =>
-  essence === "application/json" || (essence?.endsWith("+json") ?? false);
+  essence === "application/json" ||
+  (essence !== null &&
+    essence.startsWith("application/") &&
+    essence.endsWith("+json"));
 
 const isJsonLike = (essence: string | null): boolean =>
   isJson(essence) || (essence !== null && JSON_LIKE_TEXT.has(essence));
