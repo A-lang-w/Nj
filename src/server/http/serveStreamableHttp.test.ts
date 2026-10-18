@@ -711,3 +711,54 @@ it("retries a shutdown hook that threw instead of marking it complete", async ()
   await slot.close();
   expect(attempts).toBe(2);
 });
+
+it("closes the connection when a route read only part of the body and keeps it after a full read", async () => {
+  const { served } = await start({
+    routes: [
+      {
+        method: "POST",
+        path: "/partial",
+        handle: async (request) => {
+          const reader = request.body?.getReader();
+          await reader?.read();
+          return new Response("stopped early");
+        },
+      },
+      {
+        method: "POST",
+        path: "/whole",
+        handle: async (request) =>
+          Response.json({ bytes: (await request.text()).length }),
+      },
+    ],
+  });
+  const url = new URL(served.url);
+  const agent = new Agent({ keepAlive: true, maxSockets: 1 });
+  const body = "x".repeat(256 * 1024);
+  try {
+    const partial = await keepAliveRequest(agent, new URL("/partial", url), {
+      method: "POST",
+      headers: {
+        "content-type": "text/plain",
+        "content-length": String(body.length),
+      },
+      body,
+    });
+    expect(partial.status).toBe(200);
+    expect(partial.headers.connection).toBe("close");
+    expect(partial.socketClosed).toBe(true);
+    const whole = await keepAliveRequest(agent, new URL("/whole", url), {
+      method: "POST",
+      headers: {
+        "content-type": "text/plain",
+        "content-length": String(body.length),
+      },
+      body,
+    });
+    expect(whole.status).toBe(200);
+    expect(whole.headers.connection).not.toBe("close");
+    expect(whole.socketClosed).toBe(false);
+  } finally {
+    agent.destroy();
+  }
+});

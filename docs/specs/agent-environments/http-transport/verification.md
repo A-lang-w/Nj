@@ -281,3 +281,10 @@ An eleventh finding (Codex): URL construction canonicalized dot segments, so
 differs after URL parsing, so routing always sees the path the client sent
 (test: `/public/../mcp`, `/public/%2e%2e/mcp` and `/./mcp` get `400`; `/card?x=1`
 still routes).
+
+A twelfth finding (Codex): `bodyUsed` means disturbed, not consumed, so a
+composed route that read one chunk of an upload left the rest paused on a
+keep-alive socket. The close decision now uses the incoming message's end of
+stream (test: a route that reads one chunk of a 256 KiB upload is answered
+with `Connection: close` and a closed socket; a route that reads it all keeps
+the connection).
