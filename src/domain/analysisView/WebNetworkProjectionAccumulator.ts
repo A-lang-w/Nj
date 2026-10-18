@@ -127,6 +127,26 @@ export const admitHarCaptureParent = (
     return unsupported(
       `${viewKind} does not support capture format ${parsed.data.format}.`,
     );
+  // The manifest cites the report path and digest, so its parent's subject must be exactly them;
+  // the api-surface view keeps the admission its existing callers rely on.
+  const { artifact } = parsed.data;
+  if (
+    viewKind === "environment-manifest" &&
+    artifact.sha256 !== null &&
+    (parent.subject == null ||
+      parent.subject.local_path !== artifact.path ||
+      parent.subject.digest.sha256 !== artifact.sha256)
+  )
+    return err(
+      analysisViewInputError([
+        {
+          path: ["source", "subject"],
+          reason: "invalid_value",
+          message:
+            "Capture parent subject must identify the report's exact path and SHA-256.",
+        },
+      ]),
+    );
   // The view would write path templates it cannot check against declarations
   // the parent does not retain, so the refusal does not repeat declaration text.
   const declarations = z

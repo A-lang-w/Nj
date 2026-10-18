@@ -42,6 +42,7 @@ const parentOf = (
     evidenceId: evidence.evidence_id,
     operation: evidence.operation,
     normalizedResult: evidence.normalized_result,
+    subject: evidence.subject,
     limitations: [],
     parameters,
   };
@@ -923,4 +924,43 @@ it("treats a +json suffix as JSON only on application media types", () => {
     ["/notes/{numeric}", "non-json"],
   ]);
   expect(projected.tools[1]?.body_shape).toBeNull();
+});
+
+it("refuses a parent whose subject is absent or names another path or digest", () => {
+  const parent = parentOf();
+  const refusal = {
+    ok: false,
+    error: {
+      _tag: "AnalysisInputError",
+      issues: [{ path: ["source", "subject"], reason: "invalid_value" }],
+    },
+  };
+  const { subject, ...withoutSubject } = parent;
+  expect(projectAnalysisView(withoutSubject, view())).toMatchObject(refusal);
+  expect(
+    projectAnalysisView({ ...withoutSubject, subject: null }, view()),
+  ).toMatchObject(refusal);
+  if (subject == null) throw new Error("Fixture evidence carries a subject");
+  expect(
+    projectAnalysisView(
+      {
+        ...parent,
+        subject: { ...subject, local_path: "/elsewhere/capture.har" },
+      },
+      view(),
+    ),
+  ).toMatchObject(refusal);
+  expect(
+    projectAnalysisView(
+      {
+        ...parent,
+        subject: {
+          ...subject,
+          digest: { ...subject.digest, sha256: "0".repeat(64) },
+        },
+      },
+      view(),
+    ),
+  ).toMatchObject(refusal);
+  expect(projectAnalysisView(parent, view()).ok).toBe(true);
 });
