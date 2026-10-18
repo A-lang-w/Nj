@@ -13,6 +13,7 @@ import {
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
+  isUnshadowedGlobal,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticInitializer,
 } from "./javascriptSemanticState.js";
@@ -47,8 +48,8 @@ const directLiteralReturn = (
     : undefined;
 };
 
-/** Exact local promise-result identity; aliases do not prove execution order. */
-export const semanticPromiseResultIdentity = (
+/** Exact local value identity; aliases do not prove execution order or object validity. */
+export const semanticExactValueIdentity = (
   rawNode: t.Node,
   state: JavaScriptSemanticAnalysisState,
   onLiteralProjection?: () => void,
@@ -76,7 +77,8 @@ export const semanticPromiseResultIdentity = (
       node = result;
       continue;
     }
-    if (!t.isIdentifier(node)) return { node, aliases };
+    if (!t.isIdentifier(node) || isUnshadowedGlobal(node, state, "undefined"))
+      return { node, aliases };
     const binding = resolveSemanticBindingState(state, node, node.name);
     const initializer = semanticStableInitializer(binding, state);
     if (
@@ -105,14 +107,14 @@ export const semanticPromiseSettlementDependency = (
   rawNode: t.Node,
   state: JavaScriptSemanticAnalysisState,
   onLiteralProjection?: () => void,
-): ReturnType<typeof semanticPromiseResultIdentity> => {
+): ReturnType<typeof semanticExactValueIdentity> => {
   const aliases: NonNullable<
-    ReturnType<typeof semanticPromiseResultIdentity>
+    ReturnType<typeof semanticExactValueIdentity>
   >["aliases"][number][] = [];
   const seen = new Set<t.Node>();
   let current = rawNode;
   for (;;) {
-    const result = semanticPromiseResultIdentity(
+    const result = semanticExactValueIdentity(
       current,
       state,
       onLiteralProjection,
@@ -127,7 +129,7 @@ export const semanticPromiseSettlementDependency = (
       // Async return adopts via Get(then), unlike awaiting a native promise.
       // Request the same alias-aware effect index used by literal projections.
       onLiteralProjection?.();
-      const adopted = semanticPromiseResultIdentity(
+      const adopted = semanticExactValueIdentity(
         value,
         state,
         onLiteralProjection,

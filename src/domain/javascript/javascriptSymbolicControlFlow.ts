@@ -7,7 +7,10 @@ import {
   javaScriptClassField,
   readExactJavaScriptNormalResult,
 } from "./javascriptAstValues.js";
-import { javaScriptOptionalOperandsMayBeSkipped } from "./javascriptSemanticEvaluationOrder.js";
+import {
+  javaScriptOptionalOperandsMayBeSkipped,
+  javaScriptOptionalOperandsAlwaysSkipped,
+} from "./javascriptSemanticEvaluationOrder.js";
 import {
   symbolicTruth,
   type SymbolicValue,
@@ -62,7 +65,10 @@ export const syntaxUnconditionalOperands = (
     return branch === undefined ? [node.test] : [node.test, branch];
   }
   if (t.isIfStatement(node)) {
-    const test = readExactJavaScriptLiteral(node.test);
+    const test = readExactJavaScriptNormalResult(
+      node.test,
+      syntaxEvaluationCannotThrow,
+    );
     const branch = test.found
       ? test.value
         ? node.consequent
@@ -179,6 +185,28 @@ export const syntaxEvaluationOperands = (
 
 /** Possible evaluation paths, excluding syntax-proven skipped or abrupt tails. */
 export const syntaxReachableOperands = (node: t.Node): readonly t.Node[] => {
+  if (t.isOptionalMemberExpression(node))
+    return node.computed && !javaScriptOptionalOperandsAlwaysSkipped(node)
+      ? [node.object, node.property]
+      : [node.object];
+  if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+    const operands = javaScriptOptionalOperandsAlwaysSkipped(node)
+      ? [node.callee]
+      : [node.callee, ...node.arguments];
+    const failed = operands.findIndex((operand) =>
+      syntaxOperandAlwaysThrows(node, operand),
+    );
+    return failed < 0 ? operands : operands.slice(0, failed + 1);
+  }
+  if (t.isAssignmentExpression(node))
+    return node.operator === "=" &&
+      (t.isObjectPattern(node.left) || t.isArrayPattern(node.left))
+      ? syntaxEvaluationAlwaysThrows(node.right)
+        ? [node.right]
+        : [node.right, node.left]
+      : syntaxEvaluationAlwaysThrows(node.left)
+        ? [node.left]
+        : [node.left, node.right];
   if (t.isAssignmentPattern(node))
     return syntaxEvaluationAlwaysThrows(node.right)
       ? [node.right]
@@ -250,7 +278,7 @@ export const syntaxReachableOperands = (node: t.Node): readonly t.Node[] => {
   for (const operand of operands) {
     reachable.push(operand);
     if (
-      syntaxEvaluationAlwaysThrows(operand) ||
+      syntaxOperandAlwaysThrows(node, operand) ||
       ((t.isBlockStatement(node) ||
         t.isStaticBlock(node) ||
         t.isProgram(node)) &&
@@ -341,7 +369,10 @@ const syntaxLoopCompletion = (
   complete: CompleteSyntax,
 ): SyntaxCompletion => {
   if (t.isDoWhileStatement(node)) {
-    const test = readExactJavaScriptLiteral(node.test);
+    const test = readExactJavaScriptNormalResult(
+      node.test,
+      syntaxEvaluationCannotThrow,
+    );
     if (test.found && !test.value) {
       const body = complete(node.body);
       const owned = (exit: SyntaxAbruptCompletion) =>
@@ -355,7 +386,12 @@ const syntaxLoopCompletion = (
   }
   if (t.isWhileStatement(node) || t.isForStatement(node)) {
     const test =
-      node.test == null ? undefined : readExactJavaScriptLiteral(node.test);
+      node.test == null
+        ? undefined
+        : readExactJavaScriptNormalResult(
+            node.test,
+            syntaxEvaluationCannotThrow,
+          );
     if (test?.found && !test.value)
       return t.isForStatement(node) ? complete(node.init) : normalCompletion;
   }
@@ -377,7 +413,10 @@ const syntaxIfCompletion = (
   node: t.IfStatement,
   complete: CompleteSyntax,
 ): SyntaxCompletion => {
-  const test = readExactJavaScriptLiteral(node.test);
+  const test = readExactJavaScriptNormalResult(
+    node.test,
+    syntaxEvaluationCannotThrow,
+  );
   if (test.found)
     return complete(test.value ? node.consequent : node.alternate);
   const consequent = complete(node.consequent);
@@ -407,7 +446,10 @@ const switchSelections = new WeakMap<
 const syntaxSwitchEntries = (node: t.SwitchStatement) => {
   const cached = switchSelections.get(node);
   if (cached !== undefined) return cached;
-  const discriminant = readExactJavaScriptLiteral(node.discriminant);
+  const discriminant = readExactJavaScriptNormalResult(
+    node.discriminant,
+    syntaxEvaluationCannotThrow,
+  );
   const entries: SwitchEntry[] = [];
   const tests: t.Node[] = [];
   let fallback = node.cases.length;
@@ -417,7 +459,10 @@ const syntaxSwitchEntries = (node: t.SwitchStatement) => {
       continue;
     }
     tests.push(item.test);
-    const value = readExactJavaScriptLiteral(item.test);
+    const value = readExactJavaScriptNormalResult(
+      item.test,
+      syntaxEvaluationCannotThrow,
+    );
     if (discriminant.found && value.found) {
       if (discriminant.value !== value.value) continue;
       entries.push({ index, testCount: tests.length });
@@ -589,6 +634,36 @@ export const symbolicDefiniteExit = (
 const nonthrowingEvaluations = new WeakMap<t.Node, boolean>();
 const throwingEvaluations = new WeakMap<t.Node, boolean>();
 
+/** Object spread copies properties; only array/call/new spread acquires iterators. */
+const syntaxSpreadAcquisitionAlwaysFails = (
+  owner: t.Node,
+  operand: t.Node,
+): boolean => {
+  if (
+    !t.isSpreadElement(operand) ||
+    !(
+      t.isArrayExpression(owner) ||
+      t.isCallExpression(owner) ||
+      t.isOptionalCallExpression(owner) ||
+      t.isNewExpression(owner)
+    )
+  )
+    return false;
+  const value = readExactJavaScriptNormalResult(
+    operand.argument,
+    syntaxEvaluationCannotThrow,
+  );
+  // Non-null primitives can have user-installed iterators on their prototypes.
+  return value.found && (value.value === null || value.value === undefined);
+};
+
+export const syntaxOperandAlwaysThrows = (
+  owner: t.Node,
+  operand: t.Node,
+): boolean =>
+  syntaxSpreadAcquisitionAlwaysFails(owner, operand) ||
+  syntaxEvaluationAlwaysThrows(operand);
+
 /** Definite abrupt expression completion, not merely a possibly throwing read. */
 export const syntaxEvaluationAlwaysThrows = (raw: t.Node): boolean => {
   const root = unwrapJavaScriptExpression(raw).node;
@@ -620,6 +695,7 @@ export const syntaxEvaluationAlwaysThrows = (raw: t.Node): boolean => {
         node,
         operands.some(
           (operand) =>
+            syntaxSpreadAcquisitionAlwaysFails(node, operand) ||
             throwingEvaluations.get(
               unwrapJavaScriptExpression(operand).node,
             ) === true,
@@ -642,7 +718,7 @@ export const syntaxBeforeDefiniteThrow = (raw: t.Node): readonly t.Node[] => {
       syntaxUnconditionalOperands(node) ?? syntaxEvaluationOperands(node) ?? [];
     let throwing: t.Node | undefined;
     for (const operand of operands) {
-      if (syntaxEvaluationAlwaysThrows(operand)) {
+      if (syntaxOperandAlwaysThrows(node, operand)) {
         throwing = operand;
         break;
       }

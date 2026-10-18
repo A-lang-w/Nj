@@ -11,6 +11,7 @@ import {
 } from "./javascriptAstValues.js";
 import { semanticPatternInitializationPrecedesRead } from "./javascriptSemanticEvaluationOrder.js";
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
+import { syntaxEvaluationAlwaysThrows } from "./javascriptSymbolicControlFlow.js";
 import {
   semanticArrayIndex,
   semanticPropertyPathKeyMatches,
@@ -217,6 +218,9 @@ export const semanticLiteralInitializerProjection = (
   state: JavaScriptSemanticAnalysisState,
   onLiteralProjection?: () => void,
 ): JavaScriptSemanticInitializer | undefined => {
+  // Projection cannot initialize a binding if its owning RHS never completes.
+  // Possible failures remain uncertain rather than rejecting useful metadata.
+  if (syntaxEvaluationAlwaysThrows(initializer.node)) return undefined;
   let node = initializer.node;
   let projection = initializer.projection;
   while (projection.length > 0) {

@@ -42,6 +42,7 @@ import {
   syntaxStaticInitializers,
   syntaxBeforeDefiniteThrow,
   syntaxReachableOperands,
+  syntaxOperandAlwaysThrows,
 } from "./javascriptSymbolicControlFlow.js";
 import { childNodes } from "./javascriptSemanticTraversal.js";
 
@@ -280,7 +281,7 @@ const webSocketEveryExitSuspension = (
     const node = unwrapJavaScriptExpression(next).node;
     if (
       t.isAwaitExpression(node) &&
-      readExactJavaScriptLiteral(node.argument).found
+      syntaxEvaluationCannotThrow(node.argument)
     ) {
       scopeExitSuspensions.set(block, node);
       return node;
@@ -348,7 +349,9 @@ const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
   const operands =
     syntaxUnconditionalOperands(node) ?? syntaxEvaluationOperands(node);
   if (operands !== undefined) {
-    const failed = operands.findIndex(syntaxEvaluationAlwaysThrows);
+    const failed = operands.findIndex((operand) =>
+      syntaxOperandAlwaysThrows(node, operand),
+    );
     return failed < 0 ? operands : operands.slice(0, failed + 1);
   }
   if (t.isLabeledStatement(node)) {
@@ -893,7 +896,10 @@ const webSocketBodyMaySuspend = (
       (t.isForOfStatement(node) &&
         node.await &&
         !semanticIteratorAcquisitionAlwaysFails(node.right, state)) ||
-      (t.isVariableDeclaration(node) && node.kind === "await using")
+      (t.isVariableDeclaration(node) &&
+        node.kind === "await using" &&
+        node.declarations[0]?.init != null &&
+        !syntaxEvaluationAlwaysThrows(node.declarations[0].init))
     ) {
       return remember(true);
     }

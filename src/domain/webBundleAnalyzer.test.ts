@@ -4367,6 +4367,171 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "optional call consumer can wait",
+    "const consume=()=>{};(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){consume?.(await 0)}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "optional member consumer can wait",
+    "const receiver={};(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){receiver?.[await 0]}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "logical assignment consumer can wait",
+    "(async()=>{let value=0;for(const x of(function*(){yield 0;new Socket(URL)})()){value||=await 0}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "failed owning object cannot project socket alias",
+    "const{WebSocket:Socket}={WebSocket:globalThis.WebSocket,broken:null.value};new Socket(URL);",
+    false,
+  ],
+  [
+    "failed owning array cannot project socket alias",
+    "const[Socket]=[globalThis.WebSocket,null.value];new Socket(URL);",
+    false,
+  ],
+  [
+    "unrelated possible suffix failure retains socket metadata",
+    "const{WebSocket:Socket}={WebSocket:globalThis.WebSocket,other:globalThis};new Socket(URL);",
+    true,
+  ],
+  [
+    "null array spread stops carried wait",
+    "(async()=>{await 0;[...null];new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "undefined call spread stops carried wait",
+    "(async()=>{await 0;(()=>{})(...void 0);new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "object spread does not require iterator acquisition",
+    "(async()=>{await 0;({...null});new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "string spread preserves continuation",
+    "(async()=>{await 0;[...'ok'];new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "failed await using initializer cannot defer next step",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){await using r=null.value}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "null await using resource defers next step",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){await using r=null}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "void false branch cannot reach waiting catch",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{if(void 0)throw 0}catch{await 0;continue}break}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "void false loop cannot reach waiting catch",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{while(void 0)throw 0}catch{await 0;continue}break}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "void switch mismatch cannot reach waiting catch",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{switch(void 0){case 1:throw 0}}catch{await 0;continue}break}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "undefined identifier import options preserve origin",
+    "(async()=>{const{WebSocket:Socket}=await import('ws',undefined);new Socket(URL)})();",
+    true,
+  ],
+  [
+    "stable alias import options preserve origin",
+    "(async()=>{const options={};const{WebSocket:Socket}=await import('ws',options);new Socket(URL)})();",
+    true,
+  ],
+  [
+    "array import options preserve origin",
+    "(async()=>{const{WebSocket:Socket}=await import('ws',[]);new Socket(URL)})();",
+    true,
+  ],
+  [
+    "function import options preserve origin",
+    "(async()=>{const{WebSocket:Socket}=await import('ws',()=>{});new Socket(URL)})();",
+    true,
+  ],
+  [
+    "array import attributes preserve origin",
+    "(async()=>{const{WebSocket:Socket}=await import('ws',{with:[]});new Socket(URL)})();",
+    true,
+  ],
+  [
+    "shadowed undefined import options reject origin",
+    "(async()=>{const undefined=null;const{WebSocket:Socket}=await import('ws',undefined);new Socket(URL)})();",
+    false,
+  ],
+  [
+    "mutated options reject origin",
+    "(async()=>{const options={};options.with=null;const{WebSocket:Socket}=await import('ws',options);new Socket(URL)})();",
+    false,
+  ],
+  [
+    "late options alias rejects origin",
+    "(async()=>{const{WebSocket:Socket}=await import('ws',options);new Socket(URL)})();const options={};",
+    false,
+  ],
+  [
+    "nonliteral safe await precedes continuing update",
+    "(async()=>{for(let i=0;i<1;new Socket(URL),i++){await(()=>{});continue}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "failed await cannot prove continuing update",
+    "(async()=>{for(let i=0;i<1;new Socket(URL),i++){await null.value;continue}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "null optional consumer cannot wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){null?.(await 0)}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "null optional member consumer cannot wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){null?.[await 0]}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "grouped null optional call still evaluates argument",
+    "(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket(URL)}})()){(null?.run)(await 0)}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "prior await using resource disposes after later initializer failure",
+    "(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket(URL)}})()){await using first=null,second=null.value}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "failed spread skips later optional wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){(()=>{})(...null,await 0)}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "replaced array import options prototype rejects origin",
+    "(async()=>{Array.prototype.with=null;const{WebSocket:Socket}=await import('ws',[]);new Socket(URL)})();",
+    false,
+  ],
+  [
+    "mutated function import options reject origin",
+    "(async()=>{const options=()=>{};options.with=null;const{WebSocket:Socket}=await import('ws',options);new Socket(URL)})();",
+    false,
+  ],
+  [
+    "stable undefined options alias preserves origin",
+    "(async()=>{const options=undefined;const{WebSocket:Socket}=await import('ws',options);new Socket(URL)})();",
+    true,
+  ],
+  [
     "prior wait cannot bypass failed async iterator acquisition",
     "(async()=>{await 0;for await(const x of null){}new Socket(URL)})();const Socket=globalThis.WebSocket;",
     false,

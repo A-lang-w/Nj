@@ -682,6 +682,72 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "optional-call-consumer-wait.js",
+    source:
+      'const consume=()=>{};(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){consume?.(await 0)}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "optional-member-consumer-wait.js",
+    source:
+      'const receiver={};(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){receiver?.[await 0]}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "logical-assignment-consumer-wait.js",
+    source:
+      '(async()=>{let value=0;for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){value||=await 0}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "failed-literal-projection.js",
+    source:
+      'const{WebSocket:Socket}={WebSocket:globalThis.WebSocket,broken:null.value};new Socket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "failed-iterator-spread.js",
+    source:
+      '(async()=>{await 0;[...null];new Socket("wss://example.test/review-latest")})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "failed-async-resource-initializer.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){await using r=null.value}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "void-false-catch.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{if(void 0)throw 0}catch{await 0;continue}break}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "undefined-import-options.js",
+    source:
+      '(async()=>{const{WebSocket:Socket}=await import("ws",undefined);new Socket("wss://example.test/review-latest")})();',
+    present: true,
+  },
+  {
+    file: "alias-import-options.js",
+    source:
+      '(async()=>{const options={};const{WebSocket:Socket}=await import("ws",options);new Socket("wss://example.test/review-latest")})();',
+    present: true,
+  },
+  {
+    file: "array-import-options.js",
+    source:
+      '(async()=>{const{WebSocket:Socket}=await import("ws",[]);new Socket("wss://example.test/review-latest")})();',
+    present: true,
+  },
+  {
+    file: "nonliteral-continuing-await.js",
+    source:
+      '(async()=>{for(let i=0;i<1;new Socket("wss://example.test/review-latest"),i++){await(()=>{});continue}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
     file: "prior-wait-cannot-bypass-failed-async-iterator-acquisition.js",
     source:
       '(async()=>{await 0;for await(const x of null){}new Socket("wss://example.test/review-latest")})();const Socket=globalThis.WebSocket;',

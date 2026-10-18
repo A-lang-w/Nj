@@ -150,6 +150,35 @@ export const javaScriptOptionalOperandsMayBeSkipped = (
     t.isOptionalMemberExpression(node) ? node.object : node.callee,
   );
 
+/** A definitely nullish link skips the rest of its ungrouped optional chain. */
+export const javaScriptOptionalOperandsAlwaysSkipped = (
+  node:
+    | t.CallExpression
+    | t.OptionalCallExpression
+    | t.OptionalMemberExpression,
+): boolean => {
+  const skips = (
+    link: t.OptionalCallExpression | t.OptionalMemberExpression,
+  ) => {
+    if (!link.optional) return false;
+    const receiver = unwrapJavaScriptExpression(
+      t.isOptionalCallExpression(link) ? link.callee : link.object,
+    ).node;
+    return (
+      t.isNullLiteral(receiver) ||
+      t.isUnaryExpression(receiver, { operator: "void" })
+    );
+  };
+  return (
+    ((t.isOptionalCallExpression(node) || t.isOptionalMemberExpression(node)) &&
+      skips(node)) ||
+    optionalChainMayShortCircuit(
+      t.isOptionalMemberExpression(node) ? node.object : node.callee,
+      skips,
+    )
+  );
+};
+
 /** Normal completion of these syntax forms cannot produce a nullish receiver. */
 const optionalOperationMaySkip = (
   node: t.OptionalCallExpression | t.OptionalMemberExpression,
@@ -285,7 +314,10 @@ export const semanticBranchMayBeSkipped = (
   return false;
 };
 
-const optionalChainMayShortCircuit = (expression: t.Node): boolean => {
+const optionalChainMayShortCircuit = (
+  expression: t.Node,
+  skips = optionalOperationMaySkip,
+): boolean => {
   let current = expression;
   while (true) {
     // Parentheses terminate optional-chain short-circuiting. In particular,
@@ -300,11 +332,11 @@ const optionalChainMayShortCircuit = (expression: t.Node): boolean => {
       continue;
     }
     if (t.isOptionalMemberExpression(current)) {
-      if (optionalOperationMaySkip(current)) return true;
+      if (skips(current)) return true;
       current = current.object;
     } else if (t.isMemberExpression(current)) current = current.object;
     else if (t.isOptionalCallExpression(current)) {
-      if (optionalOperationMaySkip(current)) return true;
+      if (skips(current)) return true;
       current = current.callee;
     } else if (t.isCallExpression(current)) current = current.callee;
     else return false;
