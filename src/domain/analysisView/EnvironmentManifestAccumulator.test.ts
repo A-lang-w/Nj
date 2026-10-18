@@ -108,3 +108,15 @@ it("charges a request media type before scanning it so an oversized one fails cl
   });
   expect(finished(accumulator).tools).toHaveLength(0);
 });
+
+it("charges the group key before building it so an oversized request method fails closed", () => {
+  const accumulator = new EnvironmentManifestAccumulator(64 * 1024);
+  const record = sample(0, "/api/items");
+  (record.reported as { request: { method: string } }).request.method =
+    `GET${"X".repeat(100_000)}`;
+  expect(accumulator.add(record)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisResourceConstraintError", resource: "memory" },
+  });
+  expect(finished(accumulator).tools).toHaveLength(0);
+});

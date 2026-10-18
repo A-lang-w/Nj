@@ -111,6 +111,8 @@ const ASSET_PREFIXES = ["image/", "font/", "audio/", "video/"];
 const ASSET_PATH =
   /\.(?:m?js|css|map|html?|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|otf)$/iu;
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH"]);
+/** Quotes, separators and brackets a four-part composite key adds around its texts. */
+const KEY_OVERHEAD_CHARS = 32;
 const UNKNOWNS: Manifest["unknowns"] = [
   {
     kind: "authorization-model",
@@ -211,13 +213,25 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
       if (route === null) return this.overBudget();
       const queryNames = readQueryParameterNames(line.query, this.scratch);
       if (queryNames === null) return this.overBudget();
+      // The key copies the method, origin, template and rules; charge that copy before it exists.
+      if (
+        !this.scratch(
+          textBytes(
+            line.method.length +
+              line.origin.length +
+              route.template.length +
+              route.rules.length +
+              KEY_OVERHEAD_CHARS,
+          ),
+        )
+      )
+        return this.overBudget();
       const key = compositeKey([
         line.method,
         line.origin,
         route.template,
         route.rules,
       ]);
-      if (!this.scratch(textBytes(key.length))) return this.overBudget();
       const group = this.#groups.get(key);
       const bodyShape =
         group === undefined && WRITE_METHODS.has(line.method)
