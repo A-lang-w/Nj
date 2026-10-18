@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, parse, relative } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { parseConfig } from "../config/parseConfig.js";
@@ -80,6 +80,10 @@ const legacyMips: BinaryTarget = {
 let installDir = "";
 beforeAll(async () => {
   installDir = await mkdtemp(join(tmpdir(), "rea-ghidra-languages-"));
+  // The simulated Linux host needs a POSIX absolute path. A current-drive root
+  // path also reaches this real fixture on Windows without changing admission.
+  if (process.platform === "win32")
+    installDir = `/${relative(parse(installDir).root, installDir).replaceAll("\\", "/")}`;
   const languages = join(installDir, "Ghidra/Processors/x86/data/languages");
   await mkdir(languages, { recursive: true });
   await writeFile(join(languages, "x86.ldefs"), X86_LDEFS);

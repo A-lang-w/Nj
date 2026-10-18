@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, parse, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { parseConfig } from "../config/parseConfig.js";
@@ -76,7 +76,12 @@ describe("bounded Ghidra PowerPC admission", () => {
   });
 
   it("lets a configured language replace the lane default", async () => {
-    const installDir = await createTestTempDirectory("rea-ghidra-ppc-");
+    let installDir = await createTestTempDirectory("rea-ghidra-ppc-");
+    // The simulated Linux host needs a POSIX absolute path. A current-drive
+    // root path also reaches this real fixture on Windows without changing
+    // admission.
+    if (process.platform === "win32")
+      installDir = `/${relative(parse(installDir).root, installDir).replaceAll("\\", "/")}`;
     const languages = join(
       installDir,
       "Ghidra/Processors/PowerPC/data/languages",
