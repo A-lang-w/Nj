@@ -172,18 +172,28 @@ export const evidenceSchema = evidenceBaseSchema.superRefine(
   validateAnalysisProfileProvider,
 );
 
+/** True when `claimedId` matches the record's current semantic identity, or its
+ * 6.5.0 identity, which omitted an explicit null relationship_coverage from the
+ * projection. Keeps those legacy IDs valid while still requiring the field in
+ * the envelope, so downstream re-projection checks stay open to retained
+ * 6.5.0 records instead of reporting a false integrity mismatch. */
+export const matchesEvidenceIdentity = (
+  evidence: EvidenceSchemaValue,
+  claimedId: string,
+): boolean => {
+  const { evidence_id: _suppliedId, ...withoutId } = evidence;
+  if (computeEvidenceId(withoutId) === claimedId) return true;
+  return (
+    evidence.relationship_coverage === null &&
+    computeEvidenceId(withoutId, { omitNullRelationshipCoverage: true }) ===
+      claimedId
+  );
+};
+
 const authenticatedEvidenceSchema = evidenceSchema.superRefine(
   (evidence, context) => {
-    const { evidence_id: evidenceId, ...withoutId } = evidence;
-    const matchesCurrentIdentity = computeEvidenceId(withoutId) === evidenceId;
-    // 6.5.0 omitted an explicit null relationship_coverage from its identity.
-    // Keep those IDs valid while still requiring the field in the envelope.
-    const matchesLegacyNullCoverageIdentity =
-      !matchesCurrentIdentity &&
-      evidence.relationship_coverage === null &&
-      computeEvidenceId(withoutId, { omitNullRelationshipCoverage: true }) ===
-        evidenceId;
-    if (!matchesCurrentIdentity && !matchesLegacyNullCoverageIdentity)
+    const { evidence_id: evidenceId } = evidence;
+    if (!matchesEvidenceIdentity(evidence, evidenceId))
       context.addIssue({
         code: "custom",
         path: ["evidence_id"],
@@ -193,7 +203,7 @@ const authenticatedEvidenceSchema = evidenceSchema.superRefine(
 );
 
 /** Complete observation whose normalized payload retains its operation-specific type. */
-type EvidenceSchemaValue = z.infer<typeof evidenceSchema>;
+export type EvidenceSchemaValue = z.infer<typeof evidenceSchema>;
 export type Evidence<Result extends JsonValue = JsonValue> =
   EvidenceSchemaValue & {
     readonly normalized_result: Result;
