@@ -297,12 +297,7 @@ export const serveStreamableHttp = async (
     );
   const closeListener = async (): Promise<void> => {
     stopped = true;
-    httpServer.closeAllConnections();
-    await new Promise<void>((resolve, reject) => {
-      httpServer.close((error) =>
-        error === undefined ? resolve() : reject(error),
-      );
-    });
+    await closeHttpServer(httpServer);
   };
   try {
     httpServer.listen(port, host);
@@ -313,7 +308,8 @@ export const serveStreamableHttp = async (
   const bound = httpServer.address();
   let url: string;
   try {
-    ((url = endpointUrl(bound)), (origin = new URL(url).origin));
+    url = endpointUrl(bound);
+    origin = new URL(url).origin;
   } catch (cause: unknown) {
     await closeListener().catch(() => undefined);
     throw new StreamableHttpListenError(cause);
@@ -354,6 +350,18 @@ export const serveStreamableHttp = async (
     ...(closeInstance ? [() => instance.close()] : []),
   ]);
   return { url, close };
+};
+
+/** Drop open connections and release the port. */
+const closeHttpServer = (
+  httpServer: ReturnType<typeof createHttpServer>,
+): Promise<void> => {
+  httpServer.closeAllConnections();
+  return new Promise<void>((resolve, reject) => {
+    httpServer.close((error) =>
+      error === undefined ? resolve() : reject(error),
+    );
+  });
 };
 
 /** Translate one node:http exchange through `route`, logging a failure and answering it when headers are still open. */
