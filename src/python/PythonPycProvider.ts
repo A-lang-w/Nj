@@ -1,3 +1,4 @@
+import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -130,7 +131,9 @@ const failureFor = (
     { reason: cause.cleanup.reason },
     { operation: OPERATION, cause },
   );
-  return analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
+  const error = analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
+  bindArtifactFileCleanup(cause, error);
+  return error;
 };
 
 /** Portable parser over one bounded, identity-checked regular file. */

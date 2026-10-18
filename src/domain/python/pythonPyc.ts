@@ -52,7 +52,9 @@ export const PYTHON_PYC_MAGIC_TABLE: ReadonlyMap<number, MagicEntry> = new Map([
     "3.10",
     "py38",
   ),
-  ...consecutive(3452, 3495, "3.11", "py311"),
+  // 3.11 alphas before 3494 marshal other code layouts: no co_qualname
+  // before 3460, and PEP 657 end-line and column tables until 3494.
+  ...consecutive(3494, 3495, "3.11", "py311"),
   ...consecutive(3500, 3531, "3.12", "py311"),
   ...consecutive(3550, 3571, "3.13", "py311"),
 ]);
@@ -104,12 +106,21 @@ export const inspectPythonPycInputSchema = z.strictObject({
 });
 
 const constPreviewLimit = 80;
+/** Integers up to 256 bits fit the 80-character preview in decimal. */
+const intPreviewBits = 256;
+
+/** CPython float repr for values JSON numbers cannot carry. */
+const pythonFloatSchema = z.union([z.number(), z.enum(["inf", "-inf", "nan"])]);
 
 const pythonConstSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("none") }),
   z.strictObject({ kind: z.literal("bool"), value: z.boolean() }),
-  z.strictObject({ kind: z.literal("int"), value: z.string().min(1) }),
-  z.strictObject({ kind: z.literal("float"), value: z.number() }),
+  z.strictObject({
+    kind: z.literal("int"),
+    bits: uint,
+    value: z.string().min(1).max(constPreviewLimit).nullable(),
+  }),
+  z.strictObject({ kind: z.literal("float"), value: pythonFloatSchema }),
   z.strictObject({
     kind: z.literal("str"),
     bytes: uint,
@@ -134,8 +145,8 @@ const pythonConstSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("ellipsis") }),
   z.strictObject({
     kind: z.literal("complex"),
-    real: z.number(),
-    imag: z.number(),
+    real: pythonFloatSchema,
+    imag: pythonFloatSchema,
   }),
   z.strictObject({ kind: z.literal("other"), type: z.string().min(1) }),
 ]);
@@ -143,7 +154,7 @@ const pythonConstSchema = z.discriminatedUnion("kind", [
 const pythonCodeFields = {
   name: z.string().min(1),
   qualname: z.string().min(1).nullable(),
-  filename: z.string().min(1),
+  filename: z.string(),
   firstlineno: uint,
   argcount: uint,
   posonlyargcount: uint.nullable(),
@@ -261,6 +272,7 @@ export type PythonPyc = z.infer<typeof pythonPycSchema>;
 export type InspectPythonPycInput = z.infer<typeof inspectPythonPycInputSchema>;
 
 export const PYTHON_PYC_CONST_PREVIEW_LIMIT = constPreviewLimit;
+export const PYTHON_PYC_INT_PREVIEW_BITS = intPreviewBits;
 
 const countCodeObjects = (code: PythonPycCodeObject): number =>
   1 +

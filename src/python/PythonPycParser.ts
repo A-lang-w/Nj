@@ -4,6 +4,7 @@ import {
   PYTHON_PYC_CONST_PREVIEW_LIMIT,
   PYTHON_PYC_HASH_BASED,
   PYTHON_PYC_HEADER_BYTES,
+  PYTHON_PYC_INT_PREVIEW_BITS,
   pythonPycMagicEntry,
   type InspectPythonPycInput,
   type PythonPyc,
@@ -128,7 +129,7 @@ export const parsePythonPyc = (
     coverage: {
       status: "complete",
       objects: reader.objects,
-      code_objects: countCode(root.value),
+      code_objects: reader.codeObjects(root.value),
       marshal_bytes: marshal.length,
       marshal_depth: reader.depthReached,
     },
@@ -153,6 +154,15 @@ class MarshalReader {
   objects = 0;
   depthReached = 0;
   readonly #intern: (MarshalValue | undefined)[] = [];
+  /** Expanded weight of each admitted code object, counting TYPE_REF copies. */
+  readonly #codeWeight = new WeakMap<
+    PythonPycCodeObject,
+    { readonly objects: number; readonly bytes: number; readonly codes: number }
+  >();
+  /** Weight a TYPE_REF added beyond its one marshal object, cumulative. */
+  #expanded = { objects: 0, bytes: 0, codes: 0 };
+  /** Own string bytes and code count of every admitted code object, cumulative. */
+  #admitted = { bytes: 0, codes: 0 };
 
   constructor(
     readonly bytes: Buffer,
@@ -245,6 +255,11 @@ class MarshalReader {
   }
 
   code(depth: number): PythonPycCodeObject {
+    const start = {
+      objects: this.objects,
+      expanded: { ...this.#expanded },
+      admitted: { ...this.#admitted },
+    };
     const argcount = this.u32();
     const posonlyargcount = this.layout === "py37" ? null : this.u32();
     const kwonlyargcount = this.u32();
@@ -279,12 +294,13 @@ class MarshalReader {
         ? asString(this.readObject(depth + 1), "co_qualname")
         : null;
     const firstlineno = this.u32();
-    this.readObject(depth + 1);
-    if (this.layout === "py311") this.readObject(depth + 1);
+    asBytes(this.readObject(depth + 1), "co_linetable");
+    if (this.layout === "py311")
+      asBytes(this.readObject(depth + 1), "co_exceptiontable");
     const nested_code = consts.flatMap((item) =>
       item.kind === "code" ? [item.value] : [],
     );
-    return {
+    const code: PythonPycCodeObject = {
       name,
       qualname,
       filename,
@@ -305,6 +321,78 @@ class MarshalReader {
       consts: consts.map(summarizeConst),
       nested_code,
     };
+    this.#admitCode(
+      code,
+      start,
+      [
+        name,
+        qualname ?? "",
+        filename,
+        ...names,
+        ...(varnames ?? []),
+        ...(freevars ?? []),
+        ...(cellvars ?? []),
+        ...(localsplusnames ?? []),
+        localspluskinds_hex ?? "",
+      ].reduce((total, text) => total + Buffer.byteLength(text, "utf8"), 0),
+    );
+    return code;
+  }
+
+  /**
+   * The report repeats a nested code object once per reference, so bound the
+   * expanded tree rather than the marshal stream: a child reached through
+   * TYPE_REF adds its whole subtree again.
+   */
+  #admitCode(
+    code: PythonPycCodeObject,
+    start: {
+      readonly objects: number;
+      readonly expanded: { objects: number; bytes: number; codes: number };
+      readonly admitted: { bytes: number; codes: number };
+    },
+    ownBytes: number,
+  ): void {
+    const objects =
+      this.objects -
+      start.objects +
+      this.#expanded.objects -
+      start.expanded.objects;
+    const bytes =
+      ownBytes +
+      this.#admitted.bytes -
+      start.admitted.bytes +
+      this.#expanded.bytes -
+      start.expanded.bytes;
+    const codes =
+      1 +
+      this.#admitted.codes -
+      start.admitted.codes +
+      this.#expanded.codes -
+      start.expanded.codes;
+    if (objects > this.input.max_objects)
+      throw new PythonPycResourceFailure(
+        "objects",
+        { max_objects: this.input.max_objects },
+        `Expanded code-object tree of ${objects} marshal objects exceeds max_objects ${this.input.max_objects}.`,
+      );
+    if (bytes > this.input.max_file_bytes)
+      throw new PythonPycResourceFailure(
+        "string",
+        { max_file_bytes: this.input.max_file_bytes },
+        `Expanded code-object strings of ${bytes} bytes exceed max_file_bytes ${this.input.max_file_bytes}.`,
+      );
+    this.#codeWeight.set(code, { objects, bytes, codes });
+    this.#admitted.bytes += ownBytes;
+    this.#admitted.codes += 1;
+  }
+
+  /** Expanded code-object count of an admitted code object. */
+  codeObjects(code: PythonPycCodeObject): number {
+    const weight = this.#codeWeight.get(code);
+    if (weight === undefined)
+      return malformed("Top-level code object was not admitted.");
+    return weight.codes;
   }
 
   readRef(): MarshalValue {
@@ -314,6 +402,14 @@ class MarshalReader {
       return malformed(
         `TYPE_REF index ${index} is missing or still being constructed.`,
       );
+    if (value.kind === "code") {
+      const weight = this.#codeWeight.get(value.value);
+      if (weight === undefined)
+        return malformed("Referenced code object was not admitted.");
+      this.#expanded.objects += weight.objects - 1;
+      this.#expanded.bytes += weight.bytes;
+      this.#expanded.codes += weight.codes;
+    }
     return value;
   }
 
@@ -333,26 +429,57 @@ class MarshalReader {
     }
   }
 
+  /**
+   * CPython stores a long as 15-bit digits, least significant first. Charge
+   * the digits against the string budget (they never use another one), reject
+   * the digits CPython rejects, and build the value in one linear pass.
+   */
   long(): bigint {
     const count = this.i32();
-    const size = count < 0 ? -count : count;
-    let value = 0n;
-    let place = 1n;
+    const size = Math.abs(count);
+    if (size * 2 > this.input.max_string_bytes)
+      throw new PythonPycResourceFailure(
+        "string",
+        { max_string_bytes: this.input.max_string_bytes },
+        `Marshal long of ${size * 2} digit bytes exceeds max_string_bytes ${this.input.max_string_bytes}.`,
+      );
+    if (this.offset > this.bytes.length - size * 2)
+      malformed("Marshal long overruns the selected file.");
+    const nibbles: number[] = [];
+    let carry = 0;
+    let carryBits = 0;
+    let digit = 0;
     for (let index = 0; index < size; index += 1) {
-      value += BigInt(this.u16()) * place;
-      place <<= 15n;
+      digit = this.u16();
+      if (digit >= 0x8000) malformed("Marshal long digit is out of range.");
+      carry |= digit << carryBits;
+      carryBits += 15;
+      while (carryBits >= 4) {
+        nibbles.push(carry & 0xf);
+        carry >>>= 4;
+        carryBits -= 4;
+      }
     }
+    if (size > 0 && digit === 0) malformed("Marshal long is not normalized.");
+    if (carryBits > 0) nibbles.push(carry);
+    if (nibbles.length === 0) return 0n;
+    const value = BigInt(
+      `0x${nibbles
+        .reverse()
+        .map((nibble) => nibble.toString(16))
+        .join("")}`,
+    );
     return count < 0 ? -value : value;
   }
 
   utf8(length: number, ascii: boolean): string {
     const bytes = this.blob(length);
-    const text = bytes.toString("utf8");
-    if (Buffer.byteLength(text, "utf8") !== bytes.length)
-      malformed("Marshal string is not valid UTF-8.");
-    if (ascii && [...text].some((char) => char.charCodeAt(0) > 127))
-      malformed("Marshal ASCII string contains a non-ASCII code point.");
-    return text;
+    if (ascii) {
+      if (bytes.some((byte) => byte > 0x7f))
+        malformed("Marshal ASCII string contains a non-ASCII byte.");
+      return bytes.toString("latin1");
+    }
+    return decodeSurrogatePass(bytes);
   }
 
   blob(length: number): Buffer {
@@ -412,6 +539,74 @@ class MarshalReader {
   }
 }
 
+/**
+ * Decode marshal UTF-8 the way CPython does (`surrogatepass`): encoded lone
+ * surrogates are kept, every other ill-formed sequence is rejected.
+ */
+const decodeSurrogatePass = (bytes: Buffer): string => {
+  const units: number[] = [];
+  let text = "";
+  for (let index = 0; index < bytes.length;) {
+    const lead = bytes[index] ?? 0;
+    let codePoint: number;
+    let width: number;
+    if (lead < 0x80) {
+      codePoint = lead;
+      width = 1;
+    } else if (lead >= 0xc2 && lead <= 0xdf) {
+      codePoint = lead & 0x1f;
+      width = 2;
+    } else if (lead >= 0xe0 && lead <= 0xef) {
+      codePoint = lead & 0x0f;
+      width = 3;
+    } else if (lead >= 0xf0 && lead <= 0xf4) {
+      codePoint = lead & 0x07;
+      width = 4;
+    } else {
+      return malformed("Marshal string is not valid UTF-8.");
+    }
+    if (index + width > bytes.length)
+      return malformed("Marshal string is not valid UTF-8.");
+    for (let offset = 1; offset < width; offset += 1) {
+      const next = bytes[index + offset] ?? 0;
+      if ((next & 0xc0) !== 0x80)
+        return malformed("Marshal string is not valid UTF-8.");
+      codePoint = (codePoint << 6) | (next & 0x3f);
+    }
+    if (
+      (width === 3 && codePoint < 0x800) ||
+      (width === 4 && (codePoint < 0x10000 || codePoint > 0x10ffff))
+    )
+      return malformed("Marshal string is not valid UTF-8.");
+    units.push(codePoint);
+    index += width;
+    if (units.length === 4096) {
+      text += codePointsToString(units);
+      units.length = 0;
+    }
+  }
+  return text + codePointsToString(units);
+};
+
+const codePointsToString = (codePoints: readonly number[]): string =>
+  codePoints
+    .map((codePoint) =>
+      codePoint >= 0xd800 && codePoint <= 0xdfff
+        ? String.fromCharCode(codePoint)
+        : String.fromCodePoint(codePoint),
+    )
+    .join("");
+
+/** JSON has no non-finite numbers; keep CPython's repr for them. */
+const jsonFloat = (value: number): number | "inf" | "-inf" | "nan" =>
+  Number.isNaN(value)
+    ? "nan"
+    : value === Infinity
+      ? "inf"
+      : value === -Infinity
+        ? "-inf"
+        : value;
+
 const asBytes = (value: MarshalValue, field: string): Buffer => {
   if (value.kind !== "bytes")
     return malformed(`${field} is not marshal bytes.`);
@@ -446,10 +641,17 @@ const summarizeConst = (value: MarshalValue): PythonPycConst => {
       return { kind: "none" };
     case "bool":
       return { kind: "bool", value: value.value };
-    case "int":
-      return { kind: "int", value: value.value.toString() };
+    case "int": {
+      const bits = bitLength(value.value);
+      return {
+        kind: "int",
+        bits,
+        value:
+          bits <= PYTHON_PYC_INT_PREVIEW_BITS ? value.value.toString() : null,
+      };
+    }
     case "float":
-      return { kind: "float", value: value.value };
+      return { kind: "float", value: jsonFloat(value.value) };
     case "str": {
       const truncated = value.value.length > PYTHON_PYC_CONST_PREVIEW_LIMIT;
       return {
@@ -486,11 +688,20 @@ const summarizeConst = (value: MarshalValue): PythonPycConst => {
     case "ellipsis":
       return { kind: "ellipsis" };
     case "complex":
-      return { kind: "complex", real: value.real, imag: value.imag };
+      return {
+        kind: "complex",
+        real: jsonFloat(value.real),
+        imag: jsonFloat(value.imag),
+      };
     default:
       return { kind: "other", type: value.kind };
   }
 };
 
-const countCode = (code: PythonPycCodeObject): number =>
-  1 + code.nested_code.reduce((total, nested) => total + countCode(nested), 0);
+const bitLength = (value: bigint): number => {
+  if (value === 0n) return 0;
+  const hex = (value < 0n ? -value : value).toString(16);
+  return (
+    (hex.length - 1) * 4 + Number.parseInt(hex[0] ?? "0", 16).toString(2).length
+  );
+};

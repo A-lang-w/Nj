@@ -1,13 +1,19 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
-import { inspectPythonPycInputSchema } from "../domain/python/pythonPyc.js";
+import {
+  inspectPythonPycInputSchema,
+  pythonPycSchema,
+} from "../domain/python/pythonPyc.js";
 import {
   marshalCode,
   pythonPycFixture,
   pythonPycHeader,
 } from "./PythonPyc.fixture.js";
 import { parsePythonPyc } from "./PythonPycParser.js";
-import { PythonPycFormatFailure } from "./PythonPyc.errors.js";
+import {
+  PythonPycFormatFailure,
+  PythonPycResourceFailure,
+} from "./PythonPyc.errors.js";
 
 const defaults = inspectPythonPycInputSchema.parse({
   path: "/artifacts/sample.pyc",
@@ -84,4 +90,163 @@ it("fails unknown magics and truncated marshal without partial success", () => {
   expect(() => parse(pythonPycFixture("py311").subarray(0, 20))).toThrow(
     PythonPycFormatFailure,
   );
+});
+
+const u32 = (value: number): Buffer => {
+  const bytes = Buffer.alloc(4);
+  bytes.writeUInt32LE(value);
+  return bytes;
+};
+const i32 = (value: number): Buffer => {
+  const bytes = Buffer.alloc(4);
+  bytes.writeInt32LE(value);
+  return bytes;
+};
+const f64 = (value: number): Buffer => {
+  const bytes = Buffer.alloc(8);
+  bytes.writeDoubleLE(value);
+  return bytes;
+};
+const marshalRef = (index: number): Buffer =>
+  Buffer.concat([Buffer.from([0x72]), u32(index)]);
+const marshalLong = (digits: readonly number[], negative = false): Buffer =>
+  Buffer.concat([
+    Buffer.from([0x6c]),
+    i32(negative ? -digits.length : digits.length),
+    ...digits.map((digit) => {
+      const bytes = Buffer.alloc(2);
+      bytes.writeUInt16LE(digit);
+      return bytes;
+    }),
+  ]);
+const marshalUnicode = (bytes: Buffer): Buffer =>
+  Buffer.concat([Buffer.from([0x75]), u32(bytes.length), bytes]);
+const withConsts = (consts: Buffer[]): Buffer =>
+  Buffer.concat([pythonPycHeader(3531), marshalCode("py311", { consts })]);
+
+/** Each level keeps one flagged child and two TYPE_REF copies of it. */
+const sharedChain = (levels: number): Buffer => {
+  const level = (index: number): Buffer =>
+    index === levels
+      ? marshalCode("py311", { name: `leaf`, flagged: true })
+      : marshalCode("py311", {
+          name: `level${index}`,
+          flagged: index > 0,
+          consts: [level(index + 1), marshalRef(index), marshalRef(index)],
+        });
+  return Buffer.concat([pythonPycHeader(3531), level(0)]);
+};
+
+it("bounds a code tree expanded through TYPE_REF before counting it", () => {
+  const small = parse(sharedChain(3));
+  // level0 -> 3 x level1 -> 3 x level2 -> 3 x leaf
+  expect(small.coverage.code_objects).toBe(1 + 3 + 9 + 27);
+  expect(small.coverage.objects).toBeLessThan(150);
+  const bytes = sharedChain(3);
+  expect(() =>
+    parsePythonPyc(
+      bytes,
+      {
+        path: defaults.path,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.length,
+      },
+      { ...defaults, max_objects: 150 },
+    ),
+  ).toThrow(PythonPycResourceFailure);
+  const started = Date.now();
+  expect(() => parse(sharedChain(25))).toThrow(PythonPycResourceFailure);
+  expect(Date.now() - started).toBeLessThan(1000);
+});
+
+it("charges long digits to the string budget and keeps large previews bounded", () => {
+  expect(() =>
+    parse(withConsts([Buffer.concat([Buffer.from([0x6c]), i32(600_000)])])),
+  ).toThrow(PythonPycResourceFailure);
+  const report = parse(
+    withConsts([
+      marshalLong([1, 2]),
+      marshalLong(Array.from({ length: 20 }, (_, index) => index + 1)),
+    ]),
+  );
+  expect(report.code.consts[0]).toEqual({
+    kind: "int",
+    bits: 17,
+    value: String(1n + (2n << 15n)),
+  });
+  expect(report.code.consts[1]).toMatchObject({ kind: "int", value: null });
+  expect(pythonPycSchema.safeParse(report).success).toBe(true);
+  expect(() => parse(withConsts([marshalLong([1, 0])]))).toThrow(
+    PythonPycFormatFailure,
+  );
+  expect(() => parse(withConsts([marshalLong([0x8000])]))).toThrow(
+    PythonPycFormatFailure,
+  );
+});
+
+it("decodes marshal strings with CPython surrogatepass rules", () => {
+  const report = parse(
+    withConsts([marshalUnicode(Buffer.from([0x73, 0xed, 0xa0, 0x80]))]),
+  );
+  expect(report.code.consts[0]).toMatchObject({
+    kind: "str",
+    value: "s\ud800",
+  });
+  expect(() =>
+    parse(withConsts([marshalUnicode(Buffer.from([0xf0, 0x90, 0x80]))])),
+  ).toThrow(PythonPycFormatFailure);
+  expect(() =>
+    parse(withConsts([marshalUnicode(Buffer.from([0xc0, 0x80]))])),
+  ).toThrow(PythonPycFormatFailure);
+});
+
+it("keeps non-finite float and complex constants JSON-safe", () => {
+  const report = parse(
+    withConsts([
+      Buffer.concat([Buffer.from([0x67]), f64(Infinity)]),
+      Buffer.concat([Buffer.from([0x79]), f64(0), f64(-Infinity)]),
+      Buffer.concat([Buffer.from([0x67]), f64(Number.NaN)]),
+    ]),
+  );
+  expect(report.code.consts).toEqual([
+    { kind: "float", value: "inf" },
+    { kind: "complex", real: 0, imag: "-inf" },
+    { kind: "float", value: "nan" },
+  ]);
+  expect(pythonPycSchema.safeParse(report).success).toBe(true);
+  expect(JSON.parse(JSON.stringify(report))).toEqual(report);
+});
+
+it("accepts an empty co_filename", () => {
+  const report = parse(
+    Buffer.concat([
+      pythonPycHeader(3531),
+      marshalCode("py311", { filename: "" }),
+    ]),
+  );
+  expect(report.code.filename).toBe("");
+  expect(pythonPycSchema.safeParse(report).success).toBe(true);
+});
+
+it("rejects a code object whose location tables are not bytes", () => {
+  expect(() =>
+    parse(
+      Buffer.concat([
+        pythonPycHeader(3531),
+        marshalCode("py311", { exceptiontableObject: Buffer.from([0x53]) }),
+      ]),
+    ),
+  ).toThrow(PythonPycFormatFailure);
+});
+
+it("leaves 3.11 alpha magics with other code layouts unsupported", () => {
+  for (const magic of [3452, 3459, 3460, 3493]) {
+    const bytes = Buffer.concat([pythonPycHeader(magic), marshalCode("py311")]);
+    expect(() => parse(bytes)).toThrow(
+      expect.objectContaining({ kind: "unsupported" }),
+    );
+  }
+  expect(
+    parse(pythonPycFixture("py311", { magic: 3495 })).header,
+  ).toMatchObject({ python_version: "3.11", code_layout: "py311" });
 });

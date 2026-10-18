@@ -71,6 +71,8 @@ export type FixtureCodeFields = {
   firstlineno?: number;
   linetable?: Buffer;
   exceptiontable?: Buffer;
+  /** Raw marshal object in place of the co_exceptiontable bytes. */
+  exceptiontableObject?: Buffer;
   flagged?: boolean;
 };
 
@@ -126,7 +128,10 @@ export const marshalCode = (
     marshalBytes(fields.linetable ?? Buffer.alloc(0)),
   );
   if (layout === "py311")
-    parts.push(marshalBytes(fields.exceptiontable ?? Buffer.alloc(0)));
+    parts.push(
+      fields.exceptiontableObject ??
+        marshalBytes(fields.exceptiontable ?? Buffer.alloc(0)),
+    );
   return concat(...parts);
 };
 

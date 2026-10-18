@@ -27,7 +27,8 @@ The inline Evidence result contains the artifact path, SHA-256, and byte length.
 
 - `magic`, the 16-bit little-endian field;
 - `python_version` and `code_layout`, mapped from the pinned CPython 3.7–3.13
-  table (`py37`, `py38`, or `py311`);
+  table (`py37`, `py38`, or `py311`); 3.11 alpha magics before 3494 used
+  other code layouts and are unsupported;
 - `flags`, `hash_based`, and `check_source` from PEP 552;
 - `source_hash_hex` for hash-based pycs, or `source_mtime` and `source_size`
   for timestamp pycs.
@@ -38,13 +39,17 @@ counts, flags, names, locals (or `localsplusnames` on 3.11+), const summaries,
 and bytecode length plus SHA-256.
 
 Bytecode is not decompiled. Const strings may be truncated in the summary while
-the marshal walk still consumed the original bytes.
+the marshal walk still consumed the original bytes. Integer consts report
+`bits`; their decimal `value` is `null` above 256 bits. Non-finite float and
+complex parts use CPython's `inf`, `-inf`, and `nan` spellings.
 
 ## Limits and failures
 
 The selected file is limited to 16 MiB by default (64 MiB maximum). Marshal
 object count, nesting depth, and per-string size are bounded; exceeding a
-budget fails without partial success. Magics outside the pinned 3.7–3.13 table,
+budget fails without partial success. A nested code object repeated through a
+marshal reference counts again for each copy the report would carry, and
+integer digits count against the string budget. Magics outside the pinned 3.7–3.13 table,
 truncated headers, trailing marshal bytes, and a non-code top-level object are
 typed failures.
 
