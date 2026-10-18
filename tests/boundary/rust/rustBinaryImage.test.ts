@@ -4,6 +4,7 @@ import {
   createRustImage,
   createRustHashOverflowImage,
   createRustWasmModule,
+  createWasmSectionFlood,
   RUSTC_HASH,
   rustDependencyPayload,
   WASM_MODULE_HEADER,
@@ -176,6 +177,21 @@ it.each([
       name: "RustAuditableFormatFailure",
       kind,
       message: expect.stringMatching(message),
+    }),
+  );
+});
+
+it("bounds the synchronous WebAssembly section walk", () => {
+  expect(
+    readRustBinaryImage(createWasmSectionFlood(65_536)).auditable_metadata,
+  ).toBeNull();
+  expect(() => readRustBinaryImage(createWasmSectionFlood(65_537))).toThrow(
+    expect.objectContaining({
+      name: "RustAuditableResourceFailure",
+      constraint: {
+        resource: "cpu",
+        reported_limits: { maximum_wasm_sections: 65_536 },
+      },
     }),
   );
 });

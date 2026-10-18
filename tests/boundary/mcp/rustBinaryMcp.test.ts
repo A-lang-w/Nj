@@ -9,6 +9,7 @@ import {
   createRustImage,
   createRustHashOverflowImage,
   createRustWasmModule,
+  createWasmSectionFlood,
 } from "../../fixtures/rust/image.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
@@ -111,7 +112,7 @@ mcpTest(
 );
 
 mcpTest(
-  "preserves rustc hash capacity units through the public error contract",
+  "preserves Rust resource units through the public error contract",
   async ({ mcp }) => {
     const { client, session } = await connect(mcp);
     try {
@@ -134,6 +135,20 @@ mcpTest(
       expect(parseMcpToolError(response).error.details).not.toHaveProperty(
         "reported_limits.maximum_bytes",
       );
+      const flood = join(root, "many-sections.wasm");
+      await writeFile(flood, createWasmSectionFlood(65_537));
+      const walk = await client.callTool({
+        name: "inspect_rust_binary",
+        arguments: { path: flood },
+      });
+      expect(walk.isError).toBe(true);
+      expect(parseMcpToolError(walk).error).toMatchObject({
+        code: "resource_constraint",
+        details: {
+          resource: "cpu",
+          reported_limits: { maximum_wasm_sections: 65_536 },
+        },
+      });
     } finally {
       await session.close();
     }

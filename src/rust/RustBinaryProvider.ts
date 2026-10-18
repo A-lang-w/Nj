@@ -29,6 +29,7 @@ import {
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readRustBinaryImage } from "./RustBinaryImage.js";
+import { MAX_WASM_SECTIONS } from "./RustWasmImage.js";
 import {
   RUST_BINARY_INPUT_BYTES,
   RUST_OUTPUT_BYTES,
@@ -129,7 +130,7 @@ const limitationsFor = (
   `Only the .dep-v0 dependency section and compiler path strings in ${compilerPathSource(image.format)} are inspected. Functions, types, and runtime behavior are not recovered.`,
   ...(image.format === "wasm"
     ? [
-        "WebAssembly declares no container word size, so bits is null. Memory address types were not inspected.",
+        `WebAssembly declares no container word size, so bits is null. Memory address types were not inspected. Section framing is bounded to ${MAX_WASM_SECTIONS} sections.`,
       ]
     : []),
   "Resource guards bound the selected file to 256 MiB, a dependency section to 1 MiB, inflated JSON to the smaller of 8 MiB and 64 times the section size, and the complete report to 8 MiB. Package and dependency counts are admitted against that output budget before schema cloning, graph objects, or reverse-edge allocation.",

@@ -315,6 +315,13 @@ export const createRustWasmModule = (
   ]);
 };
 
+/** The densest section framing: three-byte custom sections with empty names. */
+export const createWasmSectionFlood = (count: number): Buffer =>
+  Buffer.concat([
+    WASM_MODULE_HEADER,
+    Buffer.alloc(count * 3, Buffer.from([0x00, 0x01, 0x00])),
+  ]);
+
 /** Read-only ELF data exceeding the distinct rustc-hash retention capacity. */
 export const createRustHashOverflowImage = (): Buffer => {
   const bytes = createRustImage({ format: "elf", omitSection: true });

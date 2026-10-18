@@ -1,6 +1,15 @@
 import { isUtf8 } from "node:buffer";
-import { RustAuditableFormatFailure } from "./RustAuditableReader.js";
+import {
+  RustAuditableFormatFailure,
+  RustAuditableResourceFailure,
+} from "./RustAuditableReader.js";
 
+/**
+ * Producer output holds a few dozen sections. The format sets no bound, and a
+ * 256 MiB input of three-byte custom sections would otherwise keep this
+ * synchronous walk busy for about 89 million sections.
+ */
+export const MAX_WASM_SECTIONS = 65_536;
 const PREAMBLE = Buffer.from("\0asm", "latin1");
 const CORE_MODULE_VERSION = Buffer.from([1, 0, 0, 0]);
 const COMPONENT_LAYER = 1;
@@ -50,7 +59,15 @@ export const readRustWasmSections = (bytes: Buffer): RustWasmSections => {
   const dependencies: WasmSectionRange[] = [];
   let data: WasmSectionRange | null = null;
   let cursor = 8;
-  while (cursor < bytes.length) {
+  for (let sections = 0; cursor < bytes.length; sections += 1) {
+    if (sections === MAX_WASM_SECTIONS)
+      throw new RustAuditableResourceFailure(
+        {
+          resource: "cpu",
+          reported_limits: { maximum_wasm_sections: MAX_WASM_SECTIONS },
+        },
+        `WebAssembly module declares more than ${MAX_WASM_SECTIONS} sections`,
+      );
     const id = bytes[cursor]!;
     const size = readU32(bytes, cursor + 1, bytes.length, "section size");
     const end = size.end + size.value;

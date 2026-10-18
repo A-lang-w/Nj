@@ -91,3 +91,8 @@ Package and dependency counts are checked against the minimum required JSON
 representation before graph allocation or schema cloning. Oversized graphs
 report the output byte budget; the compiler-path capacity reports
 `maximum_rustc_hashes` in hashes, independently of byte limits.
+
+WebAssembly section framing is walked synchronously, and the format sets no
+section count, so a module with more than 65,536 sections is refused with a
+`cpu` resource constraint that reports `maximum_wasm_sections`. Producer output
+holds a few dozen sections.
