@@ -18,7 +18,7 @@ client registration keep stdio.
   environment snapshot, then `127.0.0.1` and port `0`; announce the bound URL as
   one pino JSON line on stderr at every log level and leave stdout unused.
 - Use `WebStandardStreamableHTTPServerTransport` in stateful mode around one
-  server instance built once. `DELETE` ends the session on its transport without
+  server instance built once, after the listener has bound. `DELETE` ends the session on its transport without
   running the instance's shutdown hooks, so the same instance keeps its
   providers and serves the next client on a fresh transport; the hooks run when
   the listener closes.

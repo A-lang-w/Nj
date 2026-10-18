@@ -321,3 +321,41 @@ it("announces the bound URL even when the log level hides info lines", async () 
     }),
   );
 });
+
+it("does not let a JSON-suffixed media type replace the session", async () => {
+  const { served } = await start();
+  const { client } = await connect(served.url);
+  const url = new URL(served.url);
+  const patch = await rawHttpRequest(url, {
+    method: "POST",
+    headers: {
+      host: `127.0.0.1:${url.port}`,
+      "content-type": "application/json-patch+json",
+      accept: "application/json, text/event-stream",
+    },
+    body: await initializeRequest().text(),
+  });
+  expect(patch.status).toBeGreaterThanOrEqual(400);
+  expect(patch.status).toBeLessThan(500);
+  expect(await echo(client, "unchanged")).toEqual([
+    { type: "text", text: "unchanged" },
+  ]);
+  await client.close();
+});
+
+it("releases the listener when the server factory fails after the port is bound", async () => {
+  const logs: string[] = [];
+  const logger = pino({ level: "debug" }, { write: (line) => logs.push(line) });
+  const seen: string[] = [];
+  const failing = serveStreamableHttp({
+    host: "127.0.0.1",
+    port: 0,
+    logger,
+    createMcpServer: () => {
+      throw new Error("provider unavailable");
+    },
+  });
+  await expect(failing).rejects.toThrow("provider unavailable");
+  for (const line of logs) seen.push((JSON.parse(line) as { msg: string }).msg);
+  expect(seen).not.toContain("MCP transport listening");
+});

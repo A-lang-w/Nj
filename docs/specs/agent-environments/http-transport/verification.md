@@ -196,3 +196,11 @@ lines; `scan:todos` none; `verify:test-discovery` 1,583 files once; `vitest
 run` over the listener and bridge adapters tests 14 passed in 2 files; after
 `npm run build:cached`, `vitest run` over the dispatcher, option, streamable
 HTTP, shutdown and main-error boundary tests 22 passed in 5 files.
+
+A second automated round on the fix (Codex, two P2 findings) was addressed in
+the next commit: the replacement guard compares the media type proper, so
+`application/json-patch+json` no longer counts as JSON (test: such an
+initialize is refused while the connected client keeps echoing), and the
+server instance is created only after the listener has bound, so a bind
+failure has nothing to clean up and a factory failure releases the listener
+and rethrows (test: a throwing factory rejects without announcing a URL).

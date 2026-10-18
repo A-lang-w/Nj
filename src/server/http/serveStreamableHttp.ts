@@ -105,10 +105,12 @@ const SHUTTING_DOWN = (): Response =>
 const hasStreamablePostHeaders = (request: Request): boolean => {
   const accept = request.headers.get("accept") ?? "";
   const contentType = request.headers.get("content-type") ?? "";
+  // The media type proper, without parameters: `application/json-patch+json` is not JSON here.
+  const essence = (contentType.split(";")[0] ?? "").trim().toLowerCase();
   return (
     accept.includes("application/json") &&
     accept.includes("text/event-stream") &&
-    /^application\/json\b/iu.test(contentType.trim())
+    essence === "application/json"
   );
 };
 
@@ -240,10 +242,9 @@ export const serveStreamableHttp = async (
 ): Promise<StreamableHttpServer> => {
   const { host, port, logger, routes = [] } = options;
   const allowedHosts = hostHeaderAllowlist(host);
-  const instance = await options.createMcpServer({ era: "legacy" });
-  protocolOf(instance).onerror = (error) =>
-    logger?.warn({ error: error.message }, "MCP HTTP request rejected");
-  const slot = new McpSessionSlot(instance, logger);
+  // The instance is created after the listener binds, so a bind failure leaves nothing to clean up.
+  let slot: McpSessionSlot | undefined;
+  let origin = "";
   let stopped = false;
   const route = async (request: Request): Promise<Response> => {
     if (stopped) return jsonError(503, -32000, "Server shutting down");
@@ -255,7 +256,10 @@ export const serveStreamableHttp = async (
           originValidationResponse(request, allowedHosts));
     if (refused !== undefined) return refused;
     const { pathname } = new URL(request.url);
-    if (pathname === MCP_HTTP_PATH) return slot.handle(request);
+    if (pathname === MCP_HTTP_PATH)
+      return slot === undefined
+        ? jsonError(503, -32000, "Server starting")
+        : slot.handle(request);
     const match = routes.find(
       (candidate) =>
         candidate.path === pathname && candidate.method === request.method,
@@ -265,15 +269,6 @@ export const serveStreamableHttp = async (
       : match.handle(request);
   };
   const httpServer = createHttpServer();
-  try {
-    httpServer.listen(port, host);
-    await once(httpServer, "listening");
-  } catch (cause: unknown) {
-    await instance.close().catch(() => undefined);
-    throw new StreamableHttpListenError(cause);
-  }
-  const url = endpointUrl(httpServer.address());
-  const origin = new URL(url).origin;
   const handleRequest = async (
     request: IncomingMessage,
     response: ServerResponse,
@@ -299,6 +294,35 @@ export const serveStreamableHttp = async (
     void handleRequest(request, response);
   });
   httpServer.on("error", (error) => options.onerror?.(error));
+  const closeListener = async (): Promise<void> => {
+    stopped = true;
+    httpServer.closeAllConnections();
+    await new Promise<void>((resolve, reject) => {
+      httpServer.close((error) =>
+        error === undefined ? resolve() : reject(error),
+      );
+    });
+  };
+  try {
+    httpServer.listen(port, host);
+    await once(httpServer, "listening");
+  } catch (cause: unknown) {
+    throw new StreamableHttpListenError(cause);
+  }
+  const url = endpointUrl(httpServer.address());
+  origin = new URL(url).origin;
+  let instance: McpServer | Server;
+  try {
+    instance = await options.createMcpServer({ era: "legacy" });
+  } catch (cause: unknown) {
+    // No instance exists yet, so the listener is the only resource to release.
+    await closeListener().catch(() => undefined);
+    throw cause;
+  }
+  protocolOf(instance).onerror = (error) =>
+    logger?.warn({ error: error.message }, "MCP HTTP request rejected");
+  const live = new McpSessionSlot(instance, logger);
+  slot = live;
   if (allowedHosts === undefined)
     logger?.warn(
       { host },
@@ -309,16 +333,8 @@ export const serveStreamableHttp = async (
     ?.child({}, { level: "info" })
     .info({ transport: "streamable-http", url }, "MCP transport listening");
   const close = stagedClose([
-    async () => {
-      stopped = true;
-      httpServer.closeAllConnections();
-      await new Promise<void>((resolve, reject) => {
-        httpServer.close((error) =>
-          error === undefined ? resolve() : reject(error),
-        );
-      });
-    },
-    () => slot.close(),
+    closeListener,
+    () => live.close(),
     () => instance.close(),
   ]);
   return { url, close };
