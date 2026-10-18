@@ -15,8 +15,27 @@ const SHT_NOTE = 7;
 const SHT_STRTAB = 3;
 const HEX_DESCRIPTOR_LIMIT = 64;
 
+interface TextBudget {
+  readonly limit: number;
+  used: number;
+}
+
 const fail = (message: string): never => {
   throw new ArtifactReaderFailure("format", message);
+};
+
+const chargeText = (budget: TextBudget, bytes: number): void => {
+  if (
+    !Number.isSafeInteger(bytes) ||
+    bytes < 0 ||
+    bytes > budget.limit - budget.used
+  )
+    throw new ArtifactReaderFailure(
+      "limit",
+      `ELF note text exceeds the ${String(budget.limit)}-byte budget.`,
+      { boundary: "memory" },
+    );
+  budget.used += bytes;
 };
 
 const sha256 = (bytes: Buffer): string =>
@@ -98,10 +117,11 @@ class ElfReader {
     return this.bytes.subarray(offset, offset + length);
   }
 
-  cString(table: Buffer, offset: number): string | null {
+  cString(table: Buffer, offset: number, text: TextBudget): string | null {
     if (offset < 0 || offset >= table.length) return null;
     const end = table.subarray(offset).indexOf(0);
     if (end < 0) return null;
+    chargeText(text, end);
     return table.subarray(offset, offset + end).toString("latin1");
   }
 }
@@ -129,6 +149,7 @@ const parseNoteStream = (
   alignment: number,
   maxEntries: number,
   examined: { count: number },
+  text: TextBudget,
 ): ParsedNote[] => {
   const notes: ParsedNote[] = [];
   let at = 0;
@@ -156,6 +177,8 @@ const parseNoteStream = (
     const nameBytes = reader.slice(header + 12, namesz);
     const descriptor = reader.slice(header + descRel, descsz);
     const ownerEnd = nameBytes.indexOf(0);
+    const ownerBytes = ownerEnd < 0 ? namesz : ownerEnd;
+    chargeText(text, ownerBytes + namesz * 2);
     notes.push({
       location: { offset: header, bytes: next - at },
       namesz,
@@ -184,14 +207,17 @@ const decodeGnu = (
   type: number,
   descriptor: Buffer,
   little: boolean,
+  text: TextBudget,
 ): ElfNotes["entries"][number]["gnu"] => {
   if (owner !== "GNU") return null;
-  if (type === 3 && descriptor.length > 0)
+  if (type === 3 && descriptor.length > 0) {
+    chargeText(text, descriptor.length * 2);
     return {
       build_id_hex: descriptor.toString("hex"),
       abi_tag: null,
       gold_version: null,
     };
+  }
   if (type === 1 && descriptor.length === 16) {
     const read = (offset: number) =>
       little
@@ -210,12 +236,16 @@ const decodeGnu = (
       gold_version: null,
     };
   }
-  if (type === 4)
+  if (type === 4) {
+    let end = descriptor.length;
+    while (end > 0 && descriptor[end - 1] === 0) end -= 1;
+    chargeText(text, end);
     return {
       build_id_hex: null,
       abi_tag: null,
-      gold_version: descriptor.toString("latin1").replace(/\0+$/u, ""),
+      gold_version: descriptor.toString("latin1", 0, end),
     };
+  }
   return {
     build_id_hex: null,
     abi_tag: null,
@@ -246,12 +276,27 @@ export const parseElfNotes = (
   const shentsize = reader.u16(wide ? 58 : 46);
   const shnum = reader.u16(wide ? 60 : 48);
   const shstrndx = reader.u16(wide ? 62 : 50);
-  if (phnum !== 0 && phentsize < (wide ? 56 : 32))
-    return fail("ELF program header width is invalid.");
-  if (shnum !== 0 && shentsize < (wide ? 64 : 40))
-    return fail("ELF section header width is invalid.");
-  if (phnum === 0xffff || shnum === 0xffff || shstrndx === 0xffff)
+  if (
+    phnum === 0xffff ||
+    shnum === 0xffff ||
+    shstrndx === 0xffff ||
+    (shoff !== 0 && shnum === 0)
+  )
     return fail("ELF extended numbering is unsupported.");
+  if (phnum !== 0) {
+    if (phentsize < (wide ? 56 : 32))
+      return fail("ELF program header width is invalid.");
+    reader.require(phoff, phnum * phentsize);
+  }
+  if (shnum !== 0) {
+    if (shentsize < (wide ? 64 : 40))
+      return fail("ELF section header width is invalid.");
+    reader.require(shoff, shnum * shentsize);
+  }
+  const text: TextBudget = {
+    limit: Math.min(bytes.length, input.max_file_bytes),
+    used: 0,
+  };
   let shstrtab: Buffer | null = null;
   if (shnum !== 0 && shstrndx !== 0) {
     if (shstrndx >= shnum)
@@ -289,8 +334,9 @@ export const parseElfNotes = (
         alignment,
         input.max_entries,
         examined,
+        text,
       ))
-        parsed.push(toEntry(note, "program", index, reader.little));
+        parsed.push(toEntry(note, "program", index, reader.little, text));
     }
   }
   if (shnum !== 0) {
@@ -306,7 +352,8 @@ export const parseElfNotes = (
       tables.push({
         kind: "section",
         index,
-        name: shstrtab === null ? null : reader.cString(shstrtab, nameOffset),
+        name:
+          shstrtab === null ? null : reader.cString(shstrtab, nameOffset, text),
         location: { offset: fileOffset, bytes: fileSize },
         alignment,
       });
@@ -317,8 +364,9 @@ export const parseElfNotes = (
         alignment,
         input.max_entries,
         examined,
+        text,
       ))
-        parsed.push(toEntry(note, "section", index, reader.little));
+        parsed.push(toEntry(note, "section", index, reader.little, text));
     }
   }
   const absent = tables.length === 0;
@@ -345,6 +393,7 @@ const toEntry = (
   tableKind: "program" | "section",
   tableIndex: number,
   little: boolean,
+  text: TextBudget,
 ): Omit<ElfNotes["entries"][number], "index"> => {
   const gnuOwner = note.owner === "GNU";
   return {
@@ -366,6 +415,6 @@ const toEntry = (
           ? note.descriptor.toString("hex")
           : null,
     },
-    gnu: decodeGnu(note.owner, note.type, note.descriptor, little),
+    gnu: decodeGnu(note.owner, note.type, note.descriptor, little, text),
   };
 };

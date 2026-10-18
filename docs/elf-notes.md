@@ -39,9 +39,12 @@ the image never carried notes in another container or overlay.
 ## Limits and failures
 
 The selected file is limited to 64 MiB by default (512 MiB maximum). At most
-32 note entries are examined by default across every table. Malformed ELF
-headers and truncated note entries fail without partial success. ELF extended
-numbering (`PN_XNUM`) is unsupported.
+32 note entries are examined by default across every table. Retained note
+names, section names, and GNU descriptor text share that file's byte budget,
+and repeated table ranges count again. Malformed ELF headers, truncated header
+tables, and truncated note entries fail without partial success. ELF extended
+numbering (`PN_XNUM`, including a section count stored when `e_shnum` is 0) is
+unsupported.
 
 This workflow does not execute the image or verify GNU build-id uniqueness
 against package catalogs.

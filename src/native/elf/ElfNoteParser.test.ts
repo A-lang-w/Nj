@@ -16,16 +16,45 @@ const defaults = inspectElfNotesInputSchema.parse({
   path: "/artifacts/app",
 });
 
-const parse = (bytes: Buffer) =>
+const parse = (bytes: Buffer, input: typeof defaults = defaults) =>
   parseElfNotes(
     bytes,
     {
-      path: defaults.path,
+      path: input.path,
       sha256: createHash("sha256").update(bytes).digest("hex"),
       bytes: bytes.length,
     },
-    defaults,
+    input,
   );
+
+const elf64 = (
+  fields: {
+    readonly phoff?: number;
+    readonly shoff?: number;
+    readonly phnum?: number;
+    readonly shnum?: number;
+    readonly phentsize?: number;
+    readonly shentsize?: number;
+  },
+  tail?: Buffer,
+): Buffer => {
+  const header = Buffer.alloc(64);
+  header.write("\x7fELF", 0, "latin1");
+  header[4] = 2;
+  header[5] = 1;
+  header[6] = 1;
+  header.writeUInt16LE(2, 16);
+  header.writeUInt16LE(62, 18);
+  header.writeUInt32LE(1, 20);
+  header.writeBigUInt64LE(BigInt(fields.phoff ?? 0), 32);
+  header.writeBigUInt64LE(BigInt(fields.shoff ?? 0), 40);
+  header.writeUInt16LE(64, 52);
+  header.writeUInt16LE(fields.phentsize ?? 56, 54);
+  header.writeUInt16LE(fields.phnum ?? 0, 56);
+  header.writeUInt16LE(fields.shentsize ?? 64, 58);
+  header.writeUInt16LE(fields.shnum ?? 0, 60);
+  return tail === undefined ? header : Buffer.concat([header, tail]);
+};
 
 it("reads GNU build-id and ABI-tag notes from ELF32 and ELF64", () => {
   for (const bits of [32, 64] as const) {
@@ -228,6 +257,54 @@ it.skipIf(hostElf === null)(
     expect(report.entries.length).toBeGreaterThan(0);
   },
 );
+
+it("rejects note text that repeats beyond the shared byte budget", () => {
+  const notes = elfNote("A".repeat(40), 1, Buffer.alloc(0));
+  const once = elfNoteFixture({ ownership: "program", notes });
+  const twice = elfNoteFixture({ ownership: "both", notes });
+  const input = inspectElfNotesInputSchema.parse({
+    path: defaults.path,
+    max_file_bytes: 200,
+  });
+  expect(parse(once, input).entries).toHaveLength(1);
+  expect(() => parse(twice, input)).toThrow(ArtifactReaderFailure);
+  expect(() => parse(twice, input)).toThrow(/byte budget/u);
+});
+
+it("rejects program and section header tables that do not fit", () => {
+  expect(() =>
+    parse(elf64({ phoff: 64, phnum: 1 }, Buffer.from([1, 0, 0, 0]))),
+  ).toThrow(/leaves the artifact/u);
+  expect(() =>
+    parse(
+      elf64({ shoff: 64, shnum: 1, shentsize: 64 }, Buffer.from([0, 0, 0, 0])),
+    ),
+  ).toThrow(/leaves the artifact/u);
+});
+
+it("rejects an extended section count stored in section zero", () => {
+  expect(() => parse(elf64({ shoff: 64, shnum: 0 }))).toThrow(
+    /extended numbering/u,
+  );
+});
+
+it("decodes a GNU gold version by scanning trailing NULs", () => {
+  const trailing = elfNote("GNU", 4, Buffer.from("gold\0\0x\0", "latin1"));
+  expect(
+    parse(elfNoteFixture({ ownership: "program", notes: trailing })).entries[0]
+      ?.gnu?.gold_version,
+  ).toBe("gold\0\0x");
+  const descriptor = Buffer.concat([Buffer.alloc(131_072), Buffer.from("x")]);
+  const started = Date.now();
+  const report = parse(
+    elfNoteFixture({
+      ownership: "program",
+      notes: elfNote("GNU", 4, descriptor),
+    }),
+  );
+  expect(Date.now() - started).toBeLessThan(1_000);
+  expect(report.entries[0]?.gnu?.gold_version).toBe(`${"\0".repeat(131_072)}x`);
+});
 
 it("fails when the entry budget is exhausted", () => {
   const notes = Buffer.concat([

@@ -15,6 +15,7 @@ import {
 } from "../../domain/native/elfNotes.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { BINARY_ARCHITECTURES } from "../../domain/binaryTargetTypes.js";
+import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
@@ -71,7 +72,7 @@ export class ElfNotesService {
       );
     const value = report.data;
     const architecture = BINARY_ARCHITECTURES.find(
-      (supported) => supported === architectureFromMachine(value.machine),
+      (supported) => supported === elfArchitecture(value.machine),
     );
     const locations = [
       { kind: "artifact-path" as const, path: value.artifact.path },
@@ -103,27 +104,6 @@ export class ElfNotesService {
     );
   }
 }
-
-const architectureFromMachine = (machine: number): string | undefined => {
-  switch (machine) {
-    case 3:
-      return "x86";
-    case 62:
-      return "x86_64";
-    case 8:
-      return "mips";
-    case 20:
-      return "powerpc";
-    case 40:
-      return "arm";
-    case 183:
-      return "arm64";
-    case 243:
-      return "riscv";
-    default:
-      return undefined;
-  }
-};
 
 const validReport = (
   report: ElfNotes,
