@@ -50,6 +50,7 @@ export const registerBinaryDiagnosticsCommands = (
               elf,
               "rea-elf-notes",
               "inspect_elf_notes",
+              signal,
             ),
         );
       }),
@@ -82,6 +83,7 @@ export const registerBinaryDiagnosticsCommands = (
               pe,
               "rea-pe-resources",
               "inspect_pe_resources",
+              signal,
             ),
         );
       }),
