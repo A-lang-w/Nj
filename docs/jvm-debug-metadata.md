@@ -45,7 +45,11 @@ that is not multi-release such a member is an inert resource and is read as
 itself. Members are matched by their stored ZIP names, as the JDK's
 `JarFile.getEntry` matches them: the requested `entry` may use `\` separators
 or a leading `/` or `./`, but a member stored with a leading `./` is an inert
-resource that never supplies the entry, an override, or an ambiguity.
+resource that never supplies the entry, an override, or an ambiguity. Stored
+names are decoded as the JDK's `JarFile` decodes them: as UTF-8 whether or not
+the ZIP language-encoding flag is set. A JAR holding a member name or entry
+comment that is not valid UTF-8 is refused as invalid input, because the JDK
+refuses to open it ("invalid CEN header (bad entry name or comment)").
 
 A JAR is multi-release exactly when the JDK's `JarFile.isMultiRelease()` would
 say so (OpenJDK 25, default settings): the manifest is the member stored as
@@ -100,13 +104,13 @@ The normalized result binds every fact to exact identity:
 
 ### Method debugging state
 
-| `state`          | Meaning                                                                                    |
-| ---------------- | ------------------------------------------------------------------------------------------ |
-| `present`        | both line and local-variable tables decoded; or line numbers decoded and `max_locals` is 0 |
-| `partial`        | one table present, the other absent                                                        |
-| `stripped`       | a body exists but carries neither table (e.g. `javac -g:none`)                             |
-| `malformed`      | a present table failed to decode fully; recovered entries are kept                         |
-| `not-applicable` | no `Code` attribute (native/abstract, or no body)                                          |
+| `state`          | Meaning                                                                                      |
+| ---------------- | -------------------------------------------------------------------------------------------- |
+| `present`        | both line and local-variable tables decoded; or line numbers decoded and `max_locals` is 0   |
+| `partial`        | one table present, the other absent                                                          |
+| `stripped`       | a body exists but carries neither table (e.g. `javac -g:none`)                               |
+| `malformed`      | a present table failed to decode or violates a constraint HotSpot enforces; entries are kept |
+| `not-applicable` | no `Code` attribute (native/abstract, or no body)                                            |
 
 A method with `max_locals` 0 has no local at all (not even `this` or a
 parameter), so `javac -g` emits no `LocalVariableTable` for it; that absent table
@@ -125,6 +129,11 @@ JVMS permits `Code`, `SourceFile` and `SourceDebugExtension` at most once
 `malformed` with no name or length chosen; a method with more than one `Code`
 attribute is `malformed`, with `max_locals` `null` and every table `unread`,
 because which body is meant is unknown.
+
+A table entry HotSpot rejects the class for also makes its table `malformed`,
+with the raw values kept: a line `start_pc` or local-variable scope flagged
+`out_of_range`, or a local-variable `slot` at or past `max_locals` (for a `J` or
+`D` `LocalVariableTable` descriptor, the second slot `slot + 1` too).
 
 A table whose declared entry count exceeds its bytes is reported `malformed` with
 the entries recovered before the short read. A `Code` attribute with bytes left after its declared
@@ -151,7 +160,11 @@ output budget, is refused without building the report; the exact serialized
 size is checked again afterwards. A local-variable scope whose `[start_pc, start_pc+length)`
 lies outside the method's code length, or a line entry whose `start_pc` is at
 or past it, is surfaced as declared and flagged `out_of_range: true`, never
-silently corrected.
+silently corrected. A class file with bytes after its last attribute is
+refused as invalid input, as HotSpot refuses it. A JAR whose central directory
+exceeds the metadata read budget, or whose members declare more uncompressed
+bytes than its decompression budget allows, is refused with that bound named in
+`reported_limits` (`max_metadata_read_bytes` or `max_decompressed_bytes`).
 
 Verified by the `verify:jvm` real lane, which compiles owned `javac` fixtures
 with `-g` and `-g:none` and cross-checks the decoded facts against `javap` —
