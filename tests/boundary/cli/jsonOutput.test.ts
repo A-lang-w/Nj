@@ -389,6 +389,11 @@ describe("full-output token windows", () => {
     // failure text; the displayed start must never exceed its end or total.
     expect(Number(start)).toBe(Number(total));
     expect(Number(end)).toBe(Number(total));
+    // The slice itself must be empty: the error renders only the newline
+    // and the truncation notice, with none of the failure text.
+    expect(text).toContain(
+      `error: "\\n[truncated: showing tokens ${total}–${total} of ${total}]"`,
+    );
     expect(text).not.toMatch(/nextOffset/);
   });
 });
