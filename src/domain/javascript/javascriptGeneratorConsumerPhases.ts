@@ -508,6 +508,12 @@ const patternCompletedSuspension = (
     }
   }
   if (t.isIdentifier(pattern) || t.isMemberExpression(pattern)) {
+    if (t.isMemberExpression(pattern))
+      phase = combinePatternCompletion(
+        phase,
+        patternExpressionCompletion(pattern, suspended),
+      );
+    if (patternStopped(phase)) return phase;
     let owner: t.Node | undefined = pattern;
     while (
       owner !== undefined &&
@@ -525,13 +531,32 @@ const patternCompletedSuspension = (
       );
       if (completion !== "completed")
         return combinePatternCompletion(
-          patternExpressionCompletion(pattern, suspended),
+          phase,
           completion === "abrupt" ? "blocked" : "unproven",
         );
     }
   }
   return phase;
 };
+
+/** Binding consumers share coercion, selected defaults and completed target work. */
+export const semanticPatternCompletion = (
+  pattern: t.Node,
+  value: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+  suspended: (node: t.Node) => boolean,
+  executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
+): PatternCompletion =>
+  patternCompletedSuspension(
+    pattern,
+    value === undefined ? { known: false } : { known: true, node: value },
+    state,
+    suspended,
+    0,
+    undefined,
+    undefined,
+    executionFrames,
+  );
 
 /** Selected defaults and keys before a particular destructuring write share slot semantics. */
 export const semanticPatternSuspendsBeforeTarget = (

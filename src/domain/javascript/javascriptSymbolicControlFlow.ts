@@ -710,6 +710,21 @@ export const symbolicDefiniteExit = (
 const nonthrowingEvaluations = new WeakMap<t.Node, boolean>();
 const throwingEvaluations = new WeakMap<t.Node, boolean>();
 
+/** Value selection and transparent wrappers have one owner; prefixes still evaluate. */
+const syntaxExactResultNode = (raw: t.Node): t.Node => {
+  let node = unwrapJavaScriptExpression(raw).node;
+  for (let depth = 0; depth < 128; depth += 1) {
+    const result = javaScriptExactResultOperand(
+      node,
+      undefined,
+      syntaxEvaluationCannotThrow,
+    );
+    if (result === undefined) break;
+    node = unwrapJavaScriptExpression(result).node;
+  }
+  return node;
+};
+
 /** Object spread copies properties; only array/call/new spread acquires iterators. */
 const syntaxSpreadAcquisitionAlwaysFails = (
   owner: t.Node,
@@ -743,7 +758,7 @@ const syntaxCallOnPrimitiveAlwaysFails = (node: t.Node): boolean => {
     )
   )
     return false;
-  const callee = unwrapJavaScriptExpression(node.callee).node;
+  const callee = syntaxExactResultNode(node.callee);
   const value = readExactJavaScriptNormalResult(
     callee,
     syntaxEvaluationCannotThrow,
@@ -781,7 +796,7 @@ export const syntaxEvaluationAlwaysThrows = (raw: t.Node): boolean => {
     if (throwingEvaluations.has(node)) continue;
     const object =
       t.isMemberExpression(node) || t.isOptionalMemberExpression(node)
-        ? unwrapJavaScriptExpression(node.object).node
+        ? syntaxExactResultNode(node.object)
         : undefined;
     if (
       t.isThrowStatement(node) ||
@@ -855,6 +870,7 @@ export const syntaxMayContinue = (body: t.Node): boolean =>
   );
 /** Narrow syntax-only completion proof; reads, calls and disposal remain uncertain. */
 export const syntaxEvaluationCannotThrow = (node: t.Node): boolean => {
+  node = unwrapJavaScriptExpression(node).node;
   const cached = nonthrowingEvaluations.get(node);
   if (cached !== undefined) return cached;
   let result =

@@ -5,6 +5,7 @@ import {
   semanticGeneratorReadInCleanup,
   semanticGeneratorReadAfterYield,
   semanticIteratorAcquisitionAlwaysFails,
+  semanticPatternCompletion,
 } from "./javascriptGeneratorConsumerPhases.js";
 
 import {
@@ -327,18 +328,19 @@ const webSocketEveryExitSuspension = (
   return undefined;
 };
 
-/** A definite throw enters a simple catch binding before its handler can run. */
+/** A definite throw enters its binding before the handler body can run. */
 const webSocketMandatoryHandler = (
   node: t.TryStatement,
-): t.BlockStatement | undefined =>
-  node.handler != null &&
-  (node.handler.param == null || t.isIdentifier(node.handler.param)) &&
-  syntaxAlwaysThrows(node.block)
-    ? node.handler.body
+): t.CatchClause | undefined =>
+  node.handler != null && syntaxAlwaysThrows(node.block)
+    ? node.handler
     : undefined;
 
 /** Children completed in order if this straight-line node completes normally. */
 const webSocketOrderedEvaluation = (node: t.Node): readonly t.Node[] => {
+  // Binding work uses the shared pattern completion owner, not a syntax-only
+  // walk that would evaluate computed keys before nullish coercion.
+  if (t.isCatchClause(node)) return [node.body];
   if (t.isBlockStatement(node)) {
     const reachable: t.Node[] = [];
     for (const statement of node.body) {
@@ -428,6 +430,48 @@ const webSocketSuspensionFacts = (
   return facts;
 };
 
+/** Catch and loop heads consume the same ordered binding facts as destructuring. */
+const webSocketBindingCompletion = (
+  pattern: t.Node,
+  value: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): {
+  readonly phase: ReturnType<typeof semanticPatternCompletion>;
+  readonly suspension: WebSocketSuspension | undefined;
+} => {
+  let suspension: WebSocketSuspension | undefined;
+  const phase = semanticPatternCompletion(
+    pattern,
+    value,
+    state,
+    (operand) => {
+      const completed = webSocketCompletedSuspension(operand, state);
+      if (completed !== undefined) suspension = completed;
+      return completed !== undefined;
+    },
+    (node) => webSocketExecutionContexts(node, state, true),
+  );
+  return { phase, suspension: phase === "suspended" ? suspension : undefined };
+};
+
+const webSocketCatchBinding = (
+  handler: t.CatchClause,
+  state: JavaScriptSemanticAnalysisState,
+) => {
+  const owner = state.parentsByNode.get(handler);
+  const statement =
+    t.isTryStatement(owner) && owner.block.body.length === 1
+      ? owner.block.body[0]
+      : undefined;
+  return handler.param == null
+    ? undefined
+    : webSocketBindingCompletion(
+        handler.param,
+        t.isThrowStatement(statement) ? statement.argument : undefined,
+        state,
+      );
+};
+
 /** Successful completion crosses the last suspension in this straight-line node. */
 const webSocketCompletedSuspension = (
   node: t.Node,
@@ -447,6 +491,18 @@ const webSocketCompletedSuspension = (
     const next = pending.pop();
     if (next === undefined) continue;
     const current = unwrapJavaScriptExpression(next).node;
+    if (t.isCatchClause(current)) {
+      const binding = webSocketCatchBinding(current, state);
+      if (
+        binding?.phase === "blocked" ||
+        binding?.phase === "suspended-blocked"
+      )
+        continue;
+      if (binding?.suspension !== undefined) {
+        cached.set(node, binding.suspension);
+        return binding.suspension;
+      }
+    }
     // Disposal belongs to successful scope exit, never the declaration point.
     if (
       t.isBlockStatement(current) &&
@@ -454,7 +510,10 @@ const webSocketCompletedSuspension = (
         (statement) =>
           t.isVariableDeclaration(statement) &&
           statement.kind === "await using" &&
-          semanticAsyncDeclarationAcquisition(statement, state) === "acquired",
+          // This query is conditional on normal block completion: reaching the
+          // next statement proves an unknown acquisition succeeded. A known
+          // failure cannot establish that completed exit.
+          semanticAsyncDeclarationAcquisition(statement, state) !== "failed",
       )
     ) {
       cached.set(node, current);
@@ -522,10 +581,15 @@ const webSocketPrecedingSuspension = (
     return (
       (handler === undefined
         ? undefined
-        : webSocketEveryExitSuspension(handler)) ??
-      webSocketEveryExitSuspension(parent.block)
+        : // A finalizer is also entered when binding throws; normal handler
+          // completion cannot prove that its body ran on every exit.
+          handler.param == null || t.isIdentifier(handler.param)
+          ? webSocketEveryExitSuspension(handler.body)
+          : undefined) ?? webSocketEveryExitSuspension(parent.block)
     );
   }
+  if (t.isCatchClause(parent) && child === parent.body)
+    return webSocketCatchBinding(parent, state)?.suspension;
   if (
     t.isSwitchStatement(parent) &&
     parent.cases.includes(child as t.SwitchCase)
@@ -560,8 +624,32 @@ const webSocketPrecedingSuspension = (
   if (
     (t.isForOfStatement(parent) || t.isForInStatement(parent)) &&
     (child === parent.body || child === parent.left)
-  )
+  ) {
+    if (child === parent.body) {
+      const pattern = t.isVariableDeclaration(parent.left)
+        ? parent.left.declarations[0]?.id
+        : parent.left;
+      const iterable = unwrapJavaScriptExpression(parent.right).node;
+      const value =
+        t.isForOfStatement(parent) &&
+        t.isArrayExpression(iterable) &&
+        state.arrayIterationUnknown !== true &&
+        iterable.elements.length === 1 &&
+        !t.isSpreadElement(iterable.elements[0])
+          ? (iterable.elements[0] ?? undefined)
+          : undefined;
+      if (pattern !== undefined) {
+        const binding = webSocketBindingCompletion(pattern, value, state);
+        if (
+          binding.phase === "blocked" ||
+          binding.phase === "suspended-blocked"
+        )
+          return undefined;
+        if (binding.suspension !== undefined) return binding.suspension;
+      }
+    }
     return webSocketCompletedSuspension(parent.right, state);
+  }
   if (
     (t.isWhileStatement(parent) || t.isForStatement(parent)) &&
     (child === parent.body ||

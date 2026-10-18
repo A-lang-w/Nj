@@ -122,6 +122,37 @@ export const semanticLiteralProjectionSlot = (
     const member = semanticFinalObjectMember(container, String(key));
     if (t.isObjectMethod(member) && member.kind === "get")
       return { kind: "accessor", node: member };
+    // Missing own data is undefined only when neither dynamic own keys nor a
+    // prototype can provide it. Collected mutations still own that proof.
+    const nullPrototype = container.properties.some(
+      (property) =>
+        t.isObjectProperty(property) &&
+        !property.computed &&
+        !property.shorthand &&
+        semanticStaticPropertyKey(property.key, false) === "__proto__" &&
+        t.isNullLiteral(unwrapJavaScriptExpression(property.value).node),
+    );
+    if (
+      member === undefined &&
+      nullPrototype &&
+      container.properties.every(
+        (property) =>
+          !t.isSpreadElement(property) &&
+          semanticStaticPropertyKey(property.key, property.computed) !== null,
+      )
+    ) {
+      state.memberMutationFactsPhase ??= "requested";
+      if (
+        state.memberMutationFactsPhase === "indexed" &&
+        semanticLiteralOwnKeysStable(
+          container,
+          capture,
+          state,
+          options?.ownedResultEscape,
+        )
+      )
+        return { kind: "undefined" };
+    }
   }
   // Iterator exhaustion ignores inherited indexed properties; a hole within
   // the length does not. Spreads leave the actual length unknown.

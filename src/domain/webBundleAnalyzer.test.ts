@@ -4367,6 +4367,141 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "mandatory catch default shares missing slot wait",
+    "(async()=>{try{throw{__proto__:null}}catch({x=await 0}){}new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "loop head default shares missing slot wait",
+    "(async()=>{let x;for({x=await 0} of[{__proto__:null}]){new Socket(URL);break}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "loop head member receiver wait precedes body",
+    "(async()=>{for((await 0,holder).x of[0]){new Socket(URL);break}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "throwing catch key blocks later binding wait",
+    "(async()=>{try{throw{}}catch({[null.x]:x,[await 0]:y}){}new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "TypeScript wrapped numeric capture retains endpoint",
+    "const box={__proto__:null};const Socket=(box[(-1 as number)]=globalThis.WebSocket);new Socket(URL);",
+    true,
+  ],
+  [
+    "TypeScript satisfies key capture retains endpoint",
+    "new (({__proto__:null})[(-1 satisfies number)]=globalThis.WebSocket)(URL);",
+    true,
+  ],
+  [
+    "TypeScript wrapped throwing key cannot expose result",
+    "new (({__proto__:null})[(void null.x as undefined)]=globalThis.WebSocket)(URL);",
+    false,
+  ],
+  [
+    "selected sequence null receiver stops continuation",
+    "(async()=>{await 0;(0,null).x;new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "selected conditional null receiver stops continuation",
+    "(async()=>{await 0;(true?null:{}).x;new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "selected sequence object receiver retains continuation",
+    "(async()=>{await 0;(0,{}).x;new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "selected optional null receiver keeps continuation",
+    "(async()=>{await 0;(0,null)?.x;new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "selected primitive callee stops continuation",
+    "(async()=>{await 0;(0,1)();new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "absent null prototype slot triggers default wait",
+    "(async()=>{const[{x=await 0},next]=(function*(){yield{__proto__:null};new Socket(URL);yield 1})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "own null prototype slot bypasses default wait",
+    "(async()=>{const[{x=await 0},next]=(function*(){yield{__proto__:null,x:1};new Socket(URL);yield 1})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "spread null prototype slot cannot prove absence",
+    "(async()=>{const[{x=await 0},next]=(function*(){yield{__proto__:null,...{x:1}};new Socket(URL);yield 1})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "changed null prototype cannot prove absence",
+    "const item={__proto__:null};Object.setPrototypeOf(item,{x:1});(async()=>{const[{x=await 0},next]=(function*(){yield item;new Socket(URL);yield 1})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "mandatory catch computed binding precedes continuation",
+    "(async()=>{try{throw{}}catch({[await 0]:x}){}new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "mandatory catch binding precedes handler body",
+    "(async()=>{try{throw{}}catch({[await 0]:x}){new Socket(URL)}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "skipped catch binding cannot suspend continuation",
+    "(async()=>{try{}catch({[await 0]:x}){}new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "null catch value blocks computed binding wait",
+    "(async()=>{try{throw null}catch({[await 0]:x}){}new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "synchronous loop target key precedes body",
+    "(async()=>{let x;for({[await 0]:x} of[{}]){new Socket(URL);break}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "for in target key precedes body",
+    "(async()=>{let x;for({[await 0]:x} in{x:1}){new Socket(URL);break}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "unconsumed loop target cannot suspend continuation",
+    "(async()=>{let x;for({[await 0]:x} of[]){ }new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "null loop value blocks target key wait",
+    "(async()=>{let x;for({[await 0]:x} of[null]){new Socket(URL);break}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "unknown acquisition completed scope retains disposal wait",
+    "(async r=>{{await using a=r;}new Socket(URL)})(null);const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "known failed acquisition cannot finish scope",
+    "(async()=>{{await using a=1;}new Socket(URL)})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "unknown acquisition declaration alone cannot suspend",
+    "(async r=>{await using a=r;new Socket(URL)})(null);const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
     "explicit body wait survives unknown resource binding",
     "(async()=>{for(await using x of(function*(){yield null;new Socket(URL)})()){await 0}})();const Socket=globalThis.WebSocket;",
     true,
