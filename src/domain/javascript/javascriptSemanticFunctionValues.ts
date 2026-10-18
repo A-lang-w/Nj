@@ -32,7 +32,7 @@ type StorageProjectionObserver = (
   suffixOffset: number,
   owner: Path,
   publishNominal?: true,
-) => void;
+) => boolean | void;
 
 export const INVOCATION_HELPERS = ["call", "apply", "bind"];
 
@@ -534,6 +534,14 @@ const possiblePropertyValues = (
     return [UNKNOWN_EXTERNAL];
   }
   const selected = propertyValue(value, key, retainReadDependency);
+  // The entry module can be the current wrapper. Retain that alternative in
+  // the possible-reference inventory without promoting it to strict identity.
+  if (
+    selected === MODULE_INSTANCE &&
+    ((value.path.join(".") === "global.require" && key === "main") ||
+      (value === PROCESS_INSTANCE && key === "mainModule"))
+  )
+    return [selected, WRAPPER_MODULE_INSTANCE];
   if (selected !== undefined) return [selected];
   // Known absent prototype boundaries and primitive metadata must not become
   // functions merely because their owner is external.
@@ -584,8 +592,8 @@ const selectedValues = (
       if (
         retainStorageProjection !== undefined &&
         (value.path[0] === "commonjs-module" || value.path[0] === "global")
-      )
-        retainStorageProjection(
+      ) {
+        const replaced = retainStorageProjection(
           [...value.path, ...projection.slice(index)],
           index,
           value.path,
@@ -596,6 +604,10 @@ const selectedValues = (
             ? true
             : undefined,
         );
+        // A completed data-slot replacement owns this selection. Its stored
+        // sources are queued by the observer, including their capture sites.
+        if (replaced === true) continue;
+      }
       // An unknown own slot can also be supplied by a shared prototype. The
       // builtin inventory owns this chain; consumers only retain storage edges.
       if (
@@ -832,7 +844,7 @@ const sourceFunctionValue = (
 /** Initial own callable metadata only; source-written slots and capture timing
  * remain with the caller. Classes can execute static writes to their metadata. */
 export const semanticSourceFunctionOwnPropertyDefined = (
-  node: t.Function,
+  node: t.Function | t.Class,
   key: string,
   bound = false,
 ): boolean =>

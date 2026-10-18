@@ -296,7 +296,9 @@ export type SemanticGlobalBindingFacts = Pick<
   JavaScriptSemanticAnalysisState,
   "ambientWrites" | "ambientWriteEffects"
 > & {
-  /** False while global writes or deferred global eval are still unexamined. */
+  /** Complete provisional escapes, before the ambient owner publishes them. */
+  readonly ambientEscapeEffects?: readonly JavaScriptSemanticMemberEffect[];
+  /** False while global writes, escapes, or deferred global eval are unexamined. */
   readonly complete?: boolean;
   readonly opaqueGlobalSites?: readonly t.Node[];
 };
@@ -322,7 +324,9 @@ const ambientWriteCandidates = new WeakMap<
 
 /** Select possible owner prefixes; the full path and caller proof still decide. */
 export const semanticAmbientWriteMayMatch = (
-  facts: SemanticGlobalBindingFacts,
+  facts: {
+    readonly ambientWriteEffects: readonly JavaScriptSemanticMemberEffect[];
+  },
   path: readonly string[],
   predicate: (effect: JavaScriptSemanticMemberEffect) => boolean,
 ): boolean => {

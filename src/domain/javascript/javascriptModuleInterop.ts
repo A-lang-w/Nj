@@ -11,6 +11,7 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
+import { semanticAmbientEscapeEffects } from "./javascriptSemanticAmbientWrites.js";
 import {
   semanticBindingAtRead,
   semanticEffectFollowsInitialCapture,
@@ -26,6 +27,7 @@ import {
 import {
   expandJavaScriptInvocationArguments,
   resolveJavaScriptIntrinsicInvocation,
+  type JavaScriptBoundHelperRead,
 } from "./javascriptIntrinsicInvocation.js";
 import { SemanticPropertyPathCoverage } from "./javascriptSemanticPropertyPaths.js";
 import {
@@ -130,6 +132,10 @@ export const createSemanticModuleInterop = (
   state: JavaScriptSemanticAnalysisState,
   options?: {
     readonly intrinsicPath?: (node: t.Node) => readonly string[] | undefined;
+    /** Physical dependencies and capture offsets for a consumer's logical paths. */
+    readonly intrinsicReadDependencies?: (
+      path: readonly string[],
+    ) => readonly SemanticFunctionValueReadDependency[] | undefined;
     /** The consumer supplies proven loader origins with its module-write coverage. */
     readonly loaderOrigin?: (
       node: t.Node,
@@ -199,10 +205,12 @@ export const createSemanticModuleInterop = (
     const key = JSON.stringify(path);
     let dependencies = intrinsicDependencies.get(key);
     if (dependencies === undefined) {
-      dependencies = semanticFunctionValueReadDependencies(
-        [path[0] === "intrinsic" ? "global" : path[0]!, ...path.slice(1)],
-        sourceFunction,
-      );
+      dependencies =
+        options?.intrinsicReadDependencies?.(path) ??
+        semanticFunctionValueReadDependencies(
+          [path[0] === "intrinsic" ? "global" : path[0]!, ...path.slice(1)],
+          sourceFunction,
+        );
       intrinsicDependencies.set(key, dependencies);
     }
     return dependencies;
@@ -446,6 +454,7 @@ export const createSemanticModuleInterop = (
   const dependencyReadChanged = (
     dependency: IntrinsicDependency,
     facts = options?.intrinsicWriteFacts,
+    checkEscapes = false,
   ): boolean => {
     const capture = dependency.capturedAt;
     if (capture === undefined) return true;
@@ -493,15 +502,37 @@ export const createSemanticModuleInterop = (
         )
       )
         return true;
+      // An escaped owner can replace a later-selected property. A callable
+      // captured before that exposure retains its own identity.
+      const escapeEffects = checkEscapes
+        ? (facts.ambientEscapeEffects ?? semanticAmbientEscapeEffects(state))
+        : [];
+      if (escapeEffects === undefined) return true;
+      if (
+        dependencies.some(({ path, offset }) =>
+          semanticAmbientWriteMayMatch(
+            { ambientWriteEffects: escapeEffects },
+            path,
+            (effect) =>
+              !semanticEffectFollowsInitialCapture(
+                captureAt(offset),
+                effect.node,
+                state,
+              ),
+          ),
+        )
+      )
+        return true;
     }
     return retainedReadChanged(dependency);
   };
 
   const boundHelperReadChanged = (
     read: t.Node,
-    method: string,
+    projection: readonly string[],
     bound: NonNullable<JavaScriptIntrinsicInvocation["boundFunction"]>,
     proofFacts?: SemanticGlobalBindingFacts,
+    checkEscapes = false,
   ): boolean => {
     const allocation = bound.allocations[0];
     const initial = bound.allocations.at(-1);
@@ -517,7 +548,7 @@ export const createSemanticModuleInterop = (
       options?.boundFunctionWriteFacts ??
       options?.intrinsicWriteFacts;
     const changed = (dependency: IntrinsicDependency) =>
-      dependencyReadChanged(dependency, facts);
+      dependencyReadChanged(dependency, facts, checkEscapes);
     // Binding copies [[Prototype]], not the target's own helper properties.
     if (
       changed({
@@ -545,14 +576,14 @@ export const createSemanticModuleInterop = (
       )
         return true;
     return (
-      [method, "__proto__"].some((key) =>
+      [projection[0]!, "__proto__"].some((key) =>
         changed({
           path: [...semanticCallableValueIdentity(allocation), key],
           capturedAt: read,
         }),
       ) ||
       changed({
-        path: [...(target.readPath ?? target.path), "__proto__", method],
+        path: [...(target.readPath ?? target.path), "__proto__", ...projection],
         ...(target.sourceFunction === undefined
           ? {}
           : { sourceFunction: target.sourceFunction }),
@@ -560,7 +591,7 @@ export const createSemanticModuleInterop = (
         captures: [
           ...(target.captures ?? target.path.map(() => target.capturedAt)),
           initial,
-          read,
+          ...projection.map(() => read),
         ],
       })
     );
@@ -569,11 +600,18 @@ export const createSemanticModuleInterop = (
   const intrinsicReadChanged = (
     node: t.Node,
     path: readonly string[],
-    bound?: JavaScriptIntrinsicInvocation["boundFunction"],
+    bound?: JavaScriptBoundHelperRead,
     proofFacts?: SemanticGlobalBindingFacts,
+    checkEscapes = false,
   ): boolean => {
     if (bound !== undefined)
-      return boundHelperReadChanged(node, path.at(-1)!, bound, proofFacts);
+      return boundHelperReadChanged(
+        node,
+        bound.projection,
+        bound.value,
+        proofFacts,
+        checkEscapes,
+      );
     const dependency = capturedIntrinsic(node, proofFacts);
     return (
       ((proofFacts ?? options?.intrinsicWriteFacts) !== undefined &&
@@ -586,6 +624,7 @@ export const createSemanticModuleInterop = (
           capturedAt: dependency?.capturedAt ?? node,
         },
         proofFacts ?? options?.intrinsicWriteFacts,
+        checkEscapes,
       )
     );
   };
@@ -593,6 +632,7 @@ export const createSemanticModuleInterop = (
   const resolveBoundIntrinsic = (
     node: t.Node,
     proofFacts?: SemanticGlobalBindingFacts,
+    checkEscapes = false,
   ): JavaScriptIntrinsicInvocation | undefined => {
     const visited = new Set<string>();
     const argumentGroups: t.CallExpression["arguments"][] = [];
@@ -654,9 +694,9 @@ export const createSemanticModuleInterop = (
         const invocation = resolveJavaScriptIntrinsicInvocation(
           current,
           intrinsicPath,
-          (node) => boundIntrinsic(node, proofFacts),
+          (node) => boundIntrinsic(node, proofFacts, checkEscapes),
           (node, path, bound) =>
-            intrinsicReadChanged(node, path, bound, proofFacts),
+            intrinsicReadChanged(node, path, bound, proofFacts, checkEscapes),
         );
         if (
           invocation?.kind !== "known" ||
@@ -696,17 +736,21 @@ export const createSemanticModuleInterop = (
             : undefined;
         const sourceFacts = proofFacts ?? options?.boundFunctionWriteFacts;
         return source?.sourceFunction !== undefined && sourceFacts !== undefined
-          ? dependencyReadChanged(source, sourceFacts)
+          ? dependencyReadChanged(source, sourceFacts, checkEscapes)
           : intrinsicReadChanged(
               node,
               boundPath,
               allocationIndex === allocations.length - 1
                 ? undefined
                 : {
-                    ...boundFunction,
-                    allocations: allocations.slice(allocationIndex + 1),
+                    value: {
+                      ...boundFunction,
+                      allocations: allocations.slice(allocationIndex + 1),
+                    },
+                    projection: ["bind"],
                   },
               proofFacts,
+              checkEscapes,
             );
       });
       opaqueArguments ||= helperChanged;
@@ -729,11 +773,12 @@ export const createSemanticModuleInterop = (
   const boundIntrinsic = (
     node: t.Node,
     proofFacts?: SemanticGlobalBindingFacts,
+    checkEscapes = false,
   ): JavaScriptIntrinsicInvocation | undefined => {
     if (activeBoundValues.has(node)) return undefined;
     activeBoundValues.add(node);
     try {
-      return resolveBoundIntrinsic(node, proofFacts);
+      return resolveBoundIntrinsic(node, proofFacts, checkEscapes);
     } finally {
       activeBoundValues.delete(node);
     }
@@ -764,8 +809,9 @@ export const createSemanticModuleInterop = (
         const invocation = resolveJavaScriptIntrinsicInvocation(
           current,
           intrinsicPath,
-          (node) => boundIntrinsic(node, facts),
-          (node, path, bound) => intrinsicReadChanged(node, path, bound, facts),
+          (node) => boundIntrinsic(node, facts, true),
+          (node, path, bound) =>
+            intrinsicReadChanged(node, path, bound, facts, true),
         );
         return (
           invocation?.kind === "known" &&
@@ -1248,7 +1294,12 @@ export const createSemanticModuleInterop = (
         ? dependency.path
         : undefined;
     },
-    intrinsicInvocation: (node: t.CallExpression | t.OptionalCallExpression) =>
+    intrinsicInvocation: (
+      node:
+        | t.CallExpression
+        | t.OptionalCallExpression
+        | t.TaggedTemplateExpression,
+    ) =>
       resolveJavaScriptIntrinsicInvocation(
         node,
         intrinsicPath,

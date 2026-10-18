@@ -31,7 +31,7 @@ import {
 import { isImportMetaUrl } from "./javascriptStaticAnalysisHelpers.js";
 import {
   semanticRequireOrigin,
-  semanticRequireFunctionValue,
+  semanticRequireFunctionPath,
   semanticInitialModuleDelegateDataProperty,
   semanticModuleDelegateWriteOwner,
 } from "./javascriptSemanticRequireOrigin.js";
@@ -56,7 +56,10 @@ import {
   semanticOwnReferenceCandidates,
   semanticClassPropertyDescriptors,
 } from "./javascriptSemanticObjectReferences.js";
-import { semanticRequireShimOrigin } from "./javascriptRequireShimOrigin.js";
+import {
+  semanticRequireShimOrigin,
+  createSemanticRequireShimInertQuery,
+} from "./javascriptRequireShimOrigin.js";
 import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
 import {
   createSemanticSharedStorageIdentities,
@@ -111,7 +114,7 @@ import {
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import { SemanticReferenceStoreIndex } from "./javascriptSemanticReferenceStoreIndex.js";
 import {
-  createSemanticGlobalRootReplacementQuery,
+  createSemanticBuiltinDataReplacementQuery,
   semanticGlobalRootHasDataDescriptor,
 } from "./javascriptSemanticGlobalRootReplacements.js";
 
@@ -225,6 +228,11 @@ interface AmbientReferenceFacts {
   readonly sourceSlotsComplete?: () => boolean;
   readonly globalRootReplacement?: (
     name: string,
+    read: t.Node,
+  ) => SemanticIterationSource | undefined;
+  readonly builtinMemberReplacement?: (
+    owner: readonly string[],
+    key: string,
     read: t.Node,
   ) => SemanticIterationSource | undefined;
   readonly hasGlobalRootStores?: () => boolean;
@@ -606,6 +614,8 @@ export const createAmbientPathResolver = (
     intrinsicPath: (node) => {
       const intrinsic = intrinsics.intrinsicPath(node);
       if (intrinsic !== undefined) return intrinsic;
+      const loader = semanticRequireFunctionPath(node, state);
+      if (loader !== undefined) return loader;
       const prior = functionPaths.get(node);
       if (prior !== undefined) return prior;
       const references = functionReferences(node);
@@ -1111,16 +1121,30 @@ export const createAmbientPathResolver = (
       owner: readonly string[],
       readCaptures: AmbientCaptures,
       copySelection?: string | null,
-    ) => {
+    ): boolean => {
       // CommonJS wrapper storage keeps its existing nominal-path owner. It
       // is not a global binding or a shared builtin object in this graph.
-      if (!semanticSharedStorageHasDescriptorFacts(owner)) return;
+      if (!semanticSharedStorageHasDescriptorFacts(owner)) return false;
       const suffix = storage.slice(owner.length);
-      if (hasInternalSelector(suffix)) return;
+      if (hasInternalSelector(suffix)) return false;
       const identity = facts?.sharedStorage(owner);
-      if (identity === undefined) return;
+      if (identity === undefined) return false;
       sharedIdentity?.(identity, suffix as AmbientProjection);
       const captures = readCaptures.slice(offset);
+      const replacement =
+        typeof suffix[0] === "string" && captures[0] !== undefined
+          ? facts?.builtinMemberReplacement?.(owner, suffix[0], captures[0])
+          : undefined;
+      if (replacement !== undefined) {
+        pending.push({
+          node: replacement.node,
+          suffix: suffix.slice(1),
+          captures: captures.slice(1),
+          readsAtSelf: true,
+          ...(copySelection === undefined ? {} : { copySelection }),
+        });
+        return true;
+      }
       const signature = JSON.stringify([
         suffix,
         copySelection === undefined ? [] : [copySelection],
@@ -1135,10 +1159,11 @@ export const createAmbientPathResolver = (
         }),
       ]);
       const expanded = expandedStorage.get(identity) ?? new Set<string>();
-      if (expanded.has(signature)) return;
+      if (expanded.has(signature)) return false;
       expanded.add(signature);
       expandedStorage.set(identity, expanded);
       followStores(identity, suffix, captures, [], copySelection);
+      return false;
     };
     const retain = (
       path: SemanticFunctionValueProjection,
@@ -1171,7 +1196,7 @@ export const createAmbientPathResolver = (
                 ).fill(undefined),
                 ...readCaptures,
               ].slice(-canonical.length);
-              selectStorage(
+              const replaced = selectStorage(
                 storage,
                 offset,
                 owner,
@@ -1180,6 +1205,7 @@ export const createAmbientPathResolver = (
               );
               if (publishNominal && !hasInternalSelector(storage))
                 result.set(JSON.stringify(storage), storage as AmbientPath);
+              return replaced;
             },
           ))
             if (!result.has(JSON.stringify(identity)))
@@ -2115,7 +2141,7 @@ export const createAmbientPathResolver = (
         }
         if (
           (suffix === undefined || suffix.length > 0) &&
-          semanticRequireFunctionValue(root, state)
+          semanticRequireFunctionPath(root, state)?.length === 3
         )
           for (const identity of semanticOrdinaryFunctionValueIdentities(
             suffix ?? [null],
@@ -2941,6 +2967,10 @@ export function* indexJavaScriptAmbientWritesSteps(
   >();
 
   let globalRootReplacement: AmbientReferenceFacts["globalRootReplacement"];
+  const builtinMemberReplacements = new Map<
+    string,
+    ReturnType<typeof createSemanticBuiltinDataReplacementQuery>
+  >();
   let sourceSlotsComplete = false;
   const referenceFacts: AmbientReferenceFacts = {
     stores,
@@ -2951,6 +2981,8 @@ export function* indexJavaScriptAmbientWritesSteps(
       if (selected !== undefined) inertReferenceStores.add(selected);
       return selected;
     },
+    builtinMemberReplacement: (owner, key, read) =>
+      builtinMemberReplacements.get(owner.join("."))?.(key, read),
     hasGlobalRootStores: () => globalRootSources.size > 0,
     replacements,
     storeKinds,
@@ -3316,9 +3348,11 @@ export function* indexJavaScriptAmbientWritesSteps(
     [];
   const completedBindingFacts = (): SemanticGlobalBindingFacts => {
     if (weakBindingFacts !== undefined) return weakBindingFacts;
+    const ambientEscapeEffects: JavaScriptSemanticMemberEffect[] = [];
     const facts: SemanticGlobalBindingFacts = {
       ambientWrites: new SemanticPropertyPathCoverage(),
       ambientWriteEffects: [],
+      ambientEscapeEffects,
       opaqueGlobalSites: weakGlobalSites,
       complete:
         observeWeakOpaqueInvocation !== undefined ||
@@ -3351,6 +3385,7 @@ export function* indexJavaScriptAmbientWritesSteps(
         escape.projection,
       )) {
         const path = canonicalAmbientPath([...identity, null]);
+        ambientEscapeEffects.push({ path, node: escape.node });
         if (identity[0] === "callable-value") {
           facts.ambientWrites.retain(path);
           facts.ambientWriteEffects.push({ path, node: escape.node });
@@ -3361,7 +3396,18 @@ export function* indexJavaScriptAmbientWritesSteps(
   };
   // Complete the weak snapshot before any refined resolver can consult it.
   // Constructor receiver queries cannot justify their own binding stability.
-  const bindingFacts = completedBindingFacts();
+  const weakFacts = completedBindingFacts();
+  const inertShimNode = createSemanticRequireShimInertQuery(state, weakFacts);
+  const bindingFacts: SemanticGlobalBindingFacts = {
+    ...weakFacts,
+    ...(weakFacts.ambientEscapeEffects === undefined
+      ? {}
+      : {
+          ambientEscapeEffects: weakFacts.ambientEscapeEffects.filter(
+            ({ node }) => node === undefined || !inertShimNode(node),
+          ),
+        }),
+  };
   const frozenInterop = (facts: SemanticGlobalBindingFacts) =>
     createSemanticModuleInterop(state, {
       intrinsicPath: interop.intrinsicPath,
@@ -3396,7 +3442,7 @@ export function* indexJavaScriptAmbientWritesSteps(
       entries.push(source);
       globalRootSources.set(path[0], entries);
     }
-  globalRootReplacement = createSemanticGlobalRootReplacementQuery(
+  globalRootReplacement = createSemanticBuiltinDataReplacementQuery(
     state,
     bindingFacts,
     globalRootSources,
@@ -3406,6 +3452,40 @@ export function* indexJavaScriptAmbientWritesSteps(
       opaqueSites: [...(opaqueCalls ?? [])],
     },
   );
+  const opaqueMemberSites = [...opaqueCalls].filter(
+    (node) => !inertShimNode(node),
+  );
+  for (const [owner, key] of [
+    [["global", "require"], "main"],
+    [["global", "process"], "mainModule"],
+  ] as const) {
+    const sources = new Map<string, SemanticIterationSource[]>();
+    for (const [source, path] of stores.get(sharedStorage(owner)) ?? [])
+      if (
+        path?.length === 1 &&
+        path[0] === key &&
+        t.isAssignmentExpression(source.mutation, { operator: "=" }) &&
+        source.target === source.mutation.left
+      ) {
+        const entries = sources.get(key) ?? [];
+        entries.push(source);
+        sources.set(key, entries);
+      }
+    if (sources.size > 0)
+      builtinMemberReplacements.set(
+        owner.join("."),
+        createSemanticBuiltinDataReplacementQuery(
+          state,
+          bindingFacts,
+          sources,
+          {
+            owner,
+            freshObject: proofInterop.isFreshObject,
+            opaqueSites: opaqueMemberSites,
+          },
+        ),
+      );
+  }
   // Provisional result/receiver caches retain all possible inherited objects.
   // Refinement owns fresh caches and consumes the frozen weak proof inputs.
   ambientWrites = createAmbientPathResolver(state, true, {
@@ -3420,7 +3500,8 @@ export function* indexJavaScriptAmbientWritesSteps(
     JavaScriptIntrinsicMutationRecipient["invocation"],
     ReadonlySet<t.Node | undefined>
   >();
-  const activeWrites = writes.filter(({ recipient }) => {
+  const activeWrites = writes.filter(({ node, recipient }) => {
+    if (inertShimNode(node)) return false;
     if (recipient === undefined) return true;
     let selected = selectedRecipients.get(recipient.invocation);
     if (selected === undefined) {
@@ -3449,7 +3530,7 @@ export function* indexJavaScriptAmbientWritesSteps(
       // the wrapper's own slot remains absent. Every other preceding write and
       // escape is still checked below, independently of these candidates.
       if (
-        semanticModuleDelegateWriteOwner(identity, node, proofInterop)
+        semanticModuleDelegateWriteOwner(identity, node, proofInterop, state)
           ?.deletesInitiallyAbsentOwnSlot
       )
         continue;
@@ -3463,6 +3544,7 @@ export function* indexJavaScriptAmbientWritesSteps(
   ): typeof escapes => {
     const argumentsByCall = new Map<t.Node, typeof escapes>();
     const refined = sources.filter((escape) => {
+      if (inertShimNode(escape.node)) return false;
       if (
         !escape.argument ||
         (!t.isCallExpression(escape.node) &&
@@ -3475,6 +3557,7 @@ export function* indexJavaScriptAmbientWritesSteps(
       return false;
     });
     for (const node of invocationSites) {
+      if (inertShimNode(node)) continue;
       const selected = proofInterop.callArgumentEscapes(
         node,
         dataPropertyIntact === undefined

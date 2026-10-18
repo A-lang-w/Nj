@@ -214,6 +214,25 @@ export const createSemanticReceiverReferences = (
       "contents",
       isDefinitelyObject,
     );
+    // Receiver indexing finishes before escape selection. Read its selected
+    // public accessor receivers when an actual escape exposes a returned this.
+    const escapedContents = createSemanticCallableTargets(
+      state,
+      "contents",
+      isDefinitelyObject,
+      (node) => {
+        const owner = lexicalOwner(node);
+        return (t.isObjectMethod(owner) || t.isClassMethod(owner)) &&
+          (owner.kind === "get" || owner.kind === "set")
+          ? { owner, receivers: [...(indexed.get(owner) ?? [])] }
+          : undefined;
+      },
+    );
+    const accessors = createSemanticCallableTargets(
+      state,
+      "accessors",
+      isDefinitelyObject,
+    );
     const inactiveDefaults = new WeakSet<t.Node>();
     const defaultSources = new Map<
       t.AssignmentPattern,
@@ -384,7 +403,7 @@ export const createSemanticReceiverReferences = (
       }
       return [...values];
     };
-    const retainPrivate = (target: t.Function, values: readonly t.Node[]) => {
+    const retainReceivers = (target: t.Function, values: readonly t.Node[]) => {
       retain(target);
       for (const receiver of values) retain(target, receiver);
     };
@@ -507,32 +526,50 @@ export const createSemanticReceiverReferences = (
             for (const target of contents(member.value))
               retain(target, state.program);
       }
-      if (
-        (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
-        t.isPrivateName(node.property)
-      ) {
-        const declaration = privateTargets(node.property);
-        const values = privateReceivers(node.property);
+      if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+        const privateName = t.isPrivateName(node.property)
+          ? node.property
+          : undefined;
+        const values =
+          privateName === undefined
+            ? [node.object]
+            : privateReceivers(privateName);
+        const members =
+          privateName === undefined
+            ? accessors(node)
+            : (privateTargets(privateName)?.members.flatMap((member) =>
+                t.isFunction(member.value) ? [member.value] : [],
+              ) ?? []);
         const parent = state.parentsByNode.get(node);
         const assignment =
           t.isAssignmentExpression(parent) && parent.left === node;
         const update = t.isUpdateExpression(parent) && parent.argument === node;
-        for (const member of declaration?.members ?? []) {
+        const deletion =
+          t.isUnaryExpression(parent, { operator: "delete" }) &&
+          parent.argument === node;
+        for (const member of members) {
           if (
             values !== undefined &&
-            t.isFunction(member.value) &&
+            (t.isObjectMethod(member) ||
+              t.isClassMethod(member) ||
+              t.isClassPrivateMethod(member)) &&
             ((member.kind === "get" &&
+              !deletion &&
               (!assignment || parent.operator !== "=")) ||
               (member.kind === "set" && (assignment || update)))
           )
-            retainPrivate(member.value, values);
+            retainReceivers(member, values);
         }
       }
       if (t.isNewExpression(node)) {
         construct(node.callee, node);
         return;
       }
-      if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
+      if (
+        !t.isCallExpression(node) &&
+        !t.isOptionalCallExpression(node) &&
+        !t.isTaggedTemplateExpression(node)
+      )
         return;
       let invocation = invocations.intrinsicInvocation(node);
       if (invocation?.path.join(".") === "intrinsic.Reflect.construct")
@@ -560,7 +597,9 @@ export const createSemanticReceiverReferences = (
       if (group === undefined) return;
       covered.add(group.node);
       for (const read of invocation.callableReads ?? []) covered.add(read);
-      const callee = unwrapJavaScriptExpression(node.callee).node;
+      const callee = unwrapJavaScriptExpression(
+        t.isTaggedTemplateExpression(node) ? node.tag : node.callee,
+      ).node;
       const receiver = invocation.receiver ?? invocation.memberReceiver;
       const branded =
         invocation.receiver === undefined &&
@@ -575,7 +614,7 @@ export const createSemanticReceiverReferences = (
         activations.add(node);
         activationSites.set(target, activations);
         if (branded !== undefined) {
-          retainPrivate(target, branded);
+          retainReceivers(target, branded);
           continue;
         }
         retain(target, receiver);
@@ -689,9 +728,7 @@ export const createSemanticReceiverReferences = (
         parent = state.parentsByNode.get(current) ?? null;
       }
       if (
-        (t.isVariableDeclarator(parent) &&
-          parent.init === current &&
-          t.isIdentifier(parent.id)) ||
+        (t.isVariableDeclarator(parent) && parent.init === current) ||
         ((t.isObjectProperty(parent) ||
           t.isClassProperty(parent) ||
           t.isClassPrivateProperty(parent) ||
@@ -709,6 +746,11 @@ export const createSemanticReceiverReferences = (
       }
       if (escapedValues.has(current)) return;
       escapedValues.add(current);
+      // A source return is not itself a receiver escape. Accessor reads own
+      // the returned value; argument/store escapes below substitute its this.
+      const sourceReturn =
+        t.isReturnStatement(parent) ||
+        (t.isArrowFunctionExpression(parent) && parent.body === current);
       // Literal invocation arrays can contain a consumed callable selection.
       // Walk their leaves without hiding other arguments or nested contents.
       const values = [current];
@@ -725,7 +767,9 @@ export const createSemanticReceiverReferences = (
               );
           continue;
         }
-        for (const target of contents(value)) {
+        for (const target of (sourceReturn ? contents : escapedContents)(
+          value,
+        )) {
           unknownActivations.add(target);
           retain(target, state.program);
         }

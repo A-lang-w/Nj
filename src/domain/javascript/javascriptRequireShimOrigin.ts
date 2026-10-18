@@ -1,9 +1,12 @@
 import * as t from "@babel/types";
+import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
+import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 
 import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
   semanticStableInitializer,
+  isUnshadowedGlobal,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
@@ -14,9 +17,14 @@ import {
   type JavaScriptRequireOrigin,
 } from "./javascriptSemanticRequireOrigin.js";
 import { argumentValue } from "./javascriptStaticAnalysisHelpers.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticBindingAtRead,
+  semanticEffectFollowsInitialCapture,
+} from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticBindingMayHaveBlockFunctionWrite,
+  semanticAmbientWriteMayMatch,
+  type SemanticGlobalBindingFacts,
   semanticGlobalBindingReadMayHaveChanged,
   semanticOpaqueBindingReadMayHaveChanged,
 } from "./javascriptSemanticOpaqueEffects.js";
@@ -124,7 +132,7 @@ const bindsRequireShim = (
   // Provenance can be queried while effect indexing is still in progress.
   // The proof includes host-loader integrity, so do not retain it beyond the
   // shared provenance owner's dependency-aware query lifetime.
-  return shimSelectsRequire(stable.node, state);
+  return semanticRequireShimInitializer(stable.node, state);
 };
 
 /**
@@ -132,9 +140,11 @@ const bindsRequireShim = (
  * availability and is applied to a fallback function. esbuild emits exactly
  * this shape, so the argument count and callee form are part of the proof.
  */
-const shimSelectsRequire = (
+const semanticRequireShimInitializer = (
   call: t.CallExpression,
   state: JavaScriptSemanticAnalysisState,
+  intact: (node: t.Node) => boolean = (node) =>
+    isGlobalRequire(node, call, state),
 ): boolean => {
   const callee = call.callee;
   if (
@@ -151,7 +161,7 @@ const shimSelectsRequire = (
   )
     return false;
   const body = t.isBlockStatement(callee.body) ? undefined : callee.body;
-  return body !== undefined && selectsGlobalRequire(body, call, state);
+  return body !== undefined && selectsGlobalRequire(body, intact);
 };
 
 /**
@@ -166,15 +176,13 @@ const shimSelectsRequire = (
  */
 const selectsGlobalRequire = (
   expression: t.Expression,
-  capture: t.Node,
-  state: JavaScriptSemanticAnalysisState,
+  intact: (node: t.Node) => boolean,
 ): boolean => {
   if (t.isConditionalExpression(expression)) {
-    if (!guardsRequireAvailability(expression.test, capture, state))
-      return false;
-    return selectsGlobalRequire(expression.consequent, capture, state);
+    if (!guardsRequireAvailability(expression.test, intact)) return false;
+    return selectsGlobalRequire(expression.consequent, intact);
   }
-  return isGlobalRequire(expression, capture, state);
+  return intact(expression);
 };
 
 /**
@@ -198,12 +206,11 @@ const isGlobalRequire = (
  */
 const guardsRequireAvailability = (
   test: t.Expression,
-  capture: t.Node,
-  state: JavaScriptSemanticAnalysisState,
+  intact: (node: t.Node) => boolean,
 ): boolean => {
   if (!t.isBinaryExpression(test)) return false;
-  const testOnLeft = isTypeofRequire(test.left, capture, state);
-  const testOnRight = isTypeofRequire(test.right, capture, state);
+  const testOnLeft = isTypeofRequire(test.left, intact);
+  const testOnRight = isTypeofRequire(test.right, intact);
   if (testOnLeft === testOnRight) return false;
   const literal = readLiteralText(testOnLeft ? test.right : test.left);
   if (test.operator === "<") return testOnLeft && literal === "u";
@@ -216,11 +223,99 @@ const guardsRequireAvailability = (
 /** Whether this operand is `typeof require` for the unshadowed host `require`. */
 const isTypeofRequire = (
   node: t.Node,
-  capture: t.Node,
-  state: JavaScriptSemanticAnalysisState,
+  intact: (node: t.Node) => boolean,
 ): boolean =>
-  t.isUnaryExpression(node, { operator: "typeof" }) &&
-  isGlobalRequire(node.argument, capture, state);
+  t.isUnaryExpression(node, { operator: "typeof" }) && intact(node.argument);
 
 const readLiteralText = (node: t.Node): string | undefined =>
   t.isStringLiteral(node) ? node.value : undefined;
+
+/** A proven host-binding selection executes neither the fallback nor its body.
+ * Availability is independent of module.require's delegate validity: consulting
+ * that validity here would make escape exclusion depend on its own result. */
+export const createSemanticRequireShimInertQuery = (
+  state: JavaScriptSemanticAnalysisState,
+  facts: SemanticGlobalBindingFacts,
+): ((node: t.Node) => boolean) => {
+  // An unshadowed name is not proof of existence. Unknown scripts and ES
+  // modules can select the alternate, including all of its source effects.
+  if (
+    state.program.sourceType !== "script" ||
+    javaScriptRuntimeContext(state.program) !== "commonjs"
+  )
+    return () => false;
+  const cached = new WeakMap<t.Node, boolean>();
+  let wrapperArguments: readonly t.Node[] | undefined;
+  const argumentsExposedBefore = (call: t.CallExpression): boolean => {
+    if (wrapperArguments === undefined) {
+      const references: t.Node[] = [];
+      traverseJavaScriptAst(state.program, {
+        skip: (node) => {
+          const parent = state.parentsByNode.get(node);
+          // Ordinary functions own arguments in their parameters and body;
+          // computed method keys and decorators still run in the outer scope.
+          return (
+            t.isFunction(parent) &&
+            !t.isArrowFunctionExpression(parent) &&
+            (parent.body === node ||
+              parent.params.some((param) => param === node))
+          );
+        },
+        enter: (node) => {
+          if (t.isIdentifier(node, { name: "arguments" }))
+            references.push(node);
+        },
+      });
+      wrapperArguments = references;
+    }
+    // A captured/escaped arguments object may rewrite the sloppy wrapper's
+    // mapped require parameter without any source-level require assignment.
+    return wrapperArguments.some(
+      (reference) =>
+        !semanticEffectFollowsInitialCapture(call, reference, state),
+    );
+  };
+  const initializerInert = (call: t.CallExpression): boolean => {
+    if (facts.complete !== true || argumentsExposedBefore(call)) return false;
+    const prior = (effect: t.Node | undefined) =>
+      !semanticEffectFollowsInitialCapture(call, effect, state);
+    return semanticRequireShimInitializer(
+      call,
+      state,
+      (reference) =>
+        isUnshadowedGlobal(reference, state, "require") &&
+        !(state.ambientBindingWrites.get("require") ?? []).some(prior) &&
+        !(facts.opaqueGlobalSites ?? state.opaqueEffects.globalSites).some(
+          prior,
+        ) &&
+        ![...state.opaqueEffects.byScope.values()].some((sites) =>
+          sites.some(prior),
+        ) &&
+        !semanticAmbientWriteMayMatch(
+          facts,
+          ["global", "require"],
+          ({ node }) => prior(node),
+        ),
+    );
+  };
+  return (node) => {
+    let current: t.Node | undefined = node;
+    const pending: t.Node[] = [];
+    let inert = false;
+    while (current !== undefined) {
+      const prior = cached.get(current);
+      if (prior !== undefined) {
+        inert = prior;
+        break;
+      }
+      pending.push(current);
+      if (t.isCallExpression(current) && initializerInert(current)) {
+        inert = true;
+        break;
+      }
+      current = state.parentsByNode.get(current);
+    }
+    for (const visited of pending) cached.set(visited, inert);
+    return inert;
+  };
+};

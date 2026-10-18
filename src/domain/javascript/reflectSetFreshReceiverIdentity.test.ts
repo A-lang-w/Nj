@@ -20,6 +20,26 @@ it.each([
   ],
   ["a captured allocator", "const create=Object.create;", "create(module)"],
   [
+    "an allocator captured before its owner escapes",
+    "const create=Object.create;patch(Object);",
+    "create(module)",
+  ],
+  [
+    "a captured allocator whose own properties escape",
+    "const create=Object.create;patch(create);",
+    "create(module)",
+  ],
+  [
+    "an allocator whose own properties escape",
+    "patch(Object.create);",
+    "Object.create(module)",
+  ],
+  [
+    "an allocator owner captured before global replacement",
+    "const owner=Object;Object=unknown;",
+    "owner.create(module)",
+  ],
+  [
     "an allocator captured before replacement",
     "const create=Object.create;Object.create=()=>module;",
     "create(module)",
@@ -35,6 +55,11 @@ it.each([
   [
     "a bound allocator captured before replacement",
     "const create=Object.create.bind(null,module);Object.create=()=>module;",
+    "create()",
+  ],
+  [
+    "a bound allocator captured before its owner escapes",
+    "const create=Object.create.bind(null,module);patch(Object);",
     "create()",
   ],
   [
@@ -63,6 +88,27 @@ it.each([
     "Object.create(module)",
   ],
   ["a replaced allocator owner", "Object=unknown;", "Object.create(module)"],
+  ["an escaped allocator owner", "patch(Object);", "Object.create(module)"],
+  [
+    "an allocator captured after its owner escapes",
+    "patch(Object);const create=Object.create;",
+    "create(module)",
+  ],
+  [
+    "a captured allocator owner that escapes",
+    "const owner=Object;patch(owner);",
+    "owner.create(module)",
+  ],
+  [
+    "an allocator whose call helper may change after escape",
+    "patch(Object.create);",
+    "Object.create.call(null,module)",
+  ],
+  [
+    "a bound allocator captured after its owner escapes",
+    "patch(Object);const create=Object.create.bind(null,module);",
+    "create()",
+  ],
   ["an arbitrary call", "", "makeReceiver(module)"],
   ["an unknown receiver", "", "receiver"],
   [
@@ -93,6 +139,14 @@ it.each([
 ])("retains possible module writes through %s", (_name, setup, receiver) => {
   expect(
     ipcAfter(`${setup}Reflect.set(module,"require",other,${receiver});`),
+  ).toEqual([]);
+});
+
+it("keeps the reported escaped allocator receiver unresolved", () => {
+  expect(
+    analyzeJavaScriptStaticSource(
+      'patch(Object);Reflect.set(module,"require",other,Object.create(module));new(require("electron").BrowserWindow)({});',
+    ).electron.browser_windows,
   ).toEqual([]);
 });
 

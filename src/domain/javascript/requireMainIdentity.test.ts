@@ -5,6 +5,7 @@ import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 const SHIM = 'var Q=(e=>typeof require<"u"?require:e)(function(){});';
 
 it.each([
+  "require.main.require=other;",
   "require.main.constructor._load=other;",
   "const main=require.main;main.constructor._load=other;",
   "const {main}=require;main.constructor._load=other;",
@@ -29,7 +30,6 @@ it.each([
 
 it.each([
   "require.main._load=other;",
-  "require.main.require=other;",
   "require.main.constructor=other;",
   "require.main.call={};require.main.call.call=other;",
   "require.main.extra={constructor:{}};require.main.extra.constructor._load=other;",

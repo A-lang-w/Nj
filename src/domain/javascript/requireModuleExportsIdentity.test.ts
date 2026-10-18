@@ -395,7 +395,6 @@ describe("process main Module instance identity", () => {
     'import * as proc from "node:process";proc.mainModule=other;',
     'import * as proc from "node:process";proc.default=other;',
     "process.mainModule.constructor=other;",
-    "process.mainModule.require=other;",
     "process.mainModule.constructor.require=other;",
     "process.mainModule.constructor.prototype._load=other;",
     "process.mainModule.__proto__.__proto__.require=other;",

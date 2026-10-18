@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { createSemanticRequireShimInertQuery } from "./javascriptRequireShimOrigin.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import {
   createSemanticModuleStorageQuery,
@@ -23,12 +24,14 @@ import {
   resolveSemanticBindingState,
   isUnmodifiedCommonJsWrapperBinding,
   commonJsWrapperBindingDeclaration,
+  isUnshadowedGlobal,
   semanticResolutionBlocked,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import {
+  readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -315,6 +318,8 @@ interface ModuleDelegateWrite extends ModuleDelegateOwner {
   readonly node: t.Node;
   /** Deleting the wrapper's inherited require is inert until its own slot can change. */
   readonly deletesInitiallyAbsentOwnSlot?: true;
+  /** ||= and ??= cannot write an intact, initially callable delegate. */
+  readonly shortCircuitsOnInitialDelegate?: true;
 }
 
 const writesModuleRequire = (
@@ -352,7 +357,13 @@ const writesModuleRequire = (
       complete: freshObjectFactsReady,
     },
   });
+  const inertShimNode = createSemanticRequireShimInertQuery(state, {
+    ambientWrites: state.ambientWrites,
+    ambientWriteEffects: state.ambientWriteEffects,
+    complete: freshObjectFactsReady,
+  });
   const retain = (path: JavaScriptSemanticPropertyPath, node: t.Node): void => {
+    if (inertShimNode(node)) return;
     if (isSemanticUnknownReferenceIdentity(path)) {
       writes.push(
         { node, delegate: "require", shared: true },
@@ -360,7 +371,7 @@ const writesModuleRequire = (
       );
       return;
     }
-    const owner = semanticModuleDelegateWriteOwner(path, node, interop);
+    const owner = semanticModuleDelegateWriteOwner(path, node, interop, state);
     if (owner !== undefined) writes.push({ node, ...owner });
   };
   // Ambient indexing owns container stores and intrinsic prototype aliases.
@@ -476,6 +487,7 @@ const writesModuleRequire = (
       return visible;
     };
     for (const effect of effects) {
+      if (inertShimNode(effect)) continue;
       const moduleBinding = resolveSemanticBindingState(
         state,
         effect,
@@ -494,11 +506,13 @@ const writesModuleRequire = (
                 [...path, "require"],
                 effect,
                 interop,
+                state,
               ) ||
               semanticModuleDelegateWriteOwner(
                 [...path, "_load"],
                 effect,
                 interop,
+                state,
               ),
           ),
         )
@@ -546,28 +560,27 @@ const writesModuleRequire = (
       }
     },
   });
-  // Node's wrapper starts without an own require property. Deletion alone
-  // cannot hide its inherited delegate, but any earlier possible definition,
-  // escape, or replacement removes that absence proof. Keep this decision on
-  // the canonical owner facts shared by ambient writes and the AST fallback.
+  // Initial absence and truthiness are facts of the canonical delegate owner.
+  // Inert deletes and short-circuit assignments do not invalidate each other's
+  // initial-state proof. Any preceding non-inert write or escape removes it.
   let effectiveWrites = writes;
-  if (
-    escapeEffects !== undefined &&
-    writes.some((write) => write.deletesInitiallyAbsentOwnSlot)
-  ) {
+  const requiresPriorChange = (write: ModuleDelegateWrite): boolean =>
+    write.deletesInitiallyAbsentOwnSlot === true ||
+    write.shortCircuitsOnInitialDelegate === true;
+  if (escapeEffects !== undefined && writes.some(requiresPriorChange)) {
     const possibleDefinitions = createSemanticPrecedingEffectIndex(
       state.parentsByNode,
       (capture, effect) =>
         semanticEffectFollowsInitialCapture(capture, effect, state),
     );
     for (const write of writes)
-      if (!write.deletesInitiallyAbsentOwnSlot) possibleDefinitions.add(write);
+      if (!requiresPriorChange(write)) possibleDefinitions.add(write);
     for (const escape of escapeEffects)
       if (moduleDelegateOwner(escape.path) !== undefined)
         possibleDefinitions.add(escape);
     effectiveWrites = writes.filter(
       (write) =>
-        !write.deletesInitiallyAbsentOwnSlot ||
+        !requiresPriorChange(write) ||
         possibleDefinitions.mayPrecede(write.node),
     );
   }
@@ -585,24 +598,41 @@ const writesModuleRequire = (
 /** Unknown keys and spreads cannot prove the loader delegate was untouched. */
 const objectMayDefineDelegate = (
   node: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
   invokesSetters = false,
   delegate: "require" | "_load" = "require",
-): boolean =>
-  !t.isObjectExpression(node) ||
-  node.properties.some((property) => {
-    if (t.isSpreadElement(property)) return true;
-    const key = semanticStaticPropertyKey(property.key, property.computed);
-    return (
-      key === null ||
-      key === delegate ||
-      // Object.assign invokes the legacy prototype setter for an own
-      // __proto__ key. A literal prototype initializer creates no own key.
-      (invokesSetters &&
-        delegate === "require" &&
-        key === "__proto__" &&
-        (t.isObjectMethod(property) || property.computed || property.shorthand))
-    );
-  });
+): boolean => {
+  if (node === undefined) return true;
+  node = unwrapJavaScriptExpression(node).node;
+  // Nullish assign sources have no own keys. Only erase an inert void source:
+  // an opaque operand can change the delegate before assign is invoked.
+  if (
+    t.isNullLiteral(node) ||
+    (t.isUnaryExpression(node, { operator: "void" }) &&
+      readExactJavaScriptLiteral(node.argument).found) ||
+    isUnshadowedGlobal(node, state, "undefined")
+  )
+    return false;
+  return (
+    !t.isObjectExpression(node) ||
+    node.properties.some((property) => {
+      if (t.isSpreadElement(property)) return true;
+      const key = semanticStaticPropertyKey(property.key, property.computed);
+      return (
+        key === null ||
+        key === delegate ||
+        // Object.assign invokes the legacy prototype setter for an own
+        // __proto__ key. A literal prototype initializer creates no own key.
+        (invokesSetters &&
+          delegate === "require" &&
+          key === "__proto__" &&
+          (t.isObjectMethod(property) ||
+            property.computed ||
+            property.shorthand))
+      );
+    })
+  );
+};
 
 /** Whether the original global process object can still own effects at this source site. */
 export const semanticOriginalGlobalProcessAt = (
@@ -759,6 +789,7 @@ export const semanticModuleDelegateWriteOwner = (
   path: JavaScriptSemanticPropertyPath,
   node: t.Node,
   interop: ReturnType<typeof createSemanticModuleInterop>,
+  state: JavaScriptSemanticAnalysisState,
 ): Omit<ModuleDelegateWrite, "node"> | undefined => {
   const owner = moduleDelegateOwner(path);
   if (owner === undefined || path.length === 1) return owner;
@@ -781,16 +812,24 @@ export const semanticModuleDelegateWriteOwner = (
       return args === undefined ||
         args
           .slice(1)
-          .some((source) => objectMayDefineDelegate(source, wrapper, delegate))
+          .some((source) =>
+            objectMayDefineDelegate(source, state, wrapper, delegate),
+          )
         ? owner
         : undefined;
     if (mutation?.kind === "define-properties")
-      return objectMayDefineDelegate(args?.[1], false, delegate)
+      return objectMayDefineDelegate(args?.[1], state, false, delegate)
         ? owner
         : undefined;
     // Defining an own __proto__ property does not invoke the legacy setter.
     return key !== "__proto__" || mutation?.kind === "set" ? owner : undefined;
   }
+  if (
+    key === delegate &&
+    t.isAssignmentExpression(node) &&
+    (node.operator === "||=" || node.operator === "??=")
+  )
+    return { ...owner, shortCircuitsOnInitialDelegate: true };
   if (
     wrapper &&
     key === "require" &&
@@ -845,6 +884,11 @@ const semanticHostRequireBindingIntact = (
 
 const HOST_MODULE = "node-wrapper-module";
 const HOST_LOADER = "node-host-loader";
+const HOST_LOADER_IDENTITIES: Readonly<Record<string, readonly string[]>> = {
+  wrapper: ["global", "require"],
+  delegate: ["commonjs-module", "__proto__", "require"],
+  factory: ["commonjs-module", "constructor", "createRequire"],
+};
 
 /** Resolve the value read at each alias capture, rather than its current name. */
 const hostLoaderPath = (
@@ -908,14 +952,7 @@ const hostLoaderPath = (
     // Factory results are fresh callables. Their own invocation helpers do not
     // have a shared ambient identity, so only direct invocation is proven.
     if (kind === "created" && suffix.length !== 0) return invalid;
-    const identity =
-      kind === "wrapper"
-        ? ["global", "require"]
-        : kind === "delegate"
-          ? ["commonjs-module", "__proto__", "require"]
-          : kind === "factory"
-            ? ["commonjs-module", "constructor", "createRequire"]
-            : undefined;
+    const identity = HOST_LOADER_IDENTITIES[kind];
     if (identity !== undefined && !helpersIntact(identity, suffix))
       return invalid;
     return [
@@ -1101,13 +1138,13 @@ const hostLoaderInvocations = new WeakMap<
 >();
 const activeHostInvocations = new WeakSet<t.Node>();
 
-/** A proven loader/factory value is callable even when used only as a receiver. */
-export const semanticRequireFunctionValue = (
+/** Share proven host callable paths with receiver and bound-allocation owners. */
+export const semanticRequireFunctionPath = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): boolean => {
+): readonly string[] | undefined => {
   const path = hostLoaderPath(node, state);
-  return path?.length === 3 && path[1] === HOST_LOADER;
+  return path?.[1] === HOST_LOADER ? path : undefined;
 };
 
 /** Share call/apply/bind argument normalization with all other intrinsic users. */
@@ -1122,6 +1159,31 @@ const hostLoaderInvocation = (
     if (resolver === undefined) {
       resolver = createSemanticModuleInterop(state, {
         intrinsicPath: (value) => hostLoaderPath(value, state),
+        intrinsicReadDependencies: (path) => {
+          const identity =
+            path[0] === "intrinsic" && path[1] === HOST_LOADER
+              ? HOST_LOADER_IDENTITIES[path[2]!]
+              : undefined;
+          if (identity === undefined) return undefined;
+          return semanticFunctionValueReadDependencies([
+            ...identity,
+            ...path.slice(3),
+          ]).map((dependency) => ({
+            ...dependency,
+            // The logical loader prefix has three slots. Keep every suffix
+            // read at its original capture when selecting the physical owner.
+            offset: dependency.offset + 3 - identity.length,
+          }));
+        },
+        // Logical loader paths are checked above; physical bound helper slots
+        // need the ambient owner's completed facts, including later publication.
+        boundFunctionWriteFacts: {
+          ambientWrites: state.ambientWrites,
+          ambientWriteEffects: state.ambientWriteEffects,
+          get complete() {
+            return semanticFreshObjectFactsReady(state);
+          },
+        },
       });
       hostLoaderInvocations.set(state, resolver);
     }

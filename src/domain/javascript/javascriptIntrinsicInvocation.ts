@@ -63,24 +63,39 @@ const invocationArguments = (
       ? arrayArguments(arguments_?.[1])
       : arguments_?.slice(1);
 
+/** A helper selection retains its physical bound owner and every member read. */
+export interface JavaScriptBoundHelperRead {
+  readonly value: NonNullable<JavaScriptIntrinsicInvocation["boundFunction"]>;
+  readonly projection: readonly string[];
+}
+
 /**
  * Normalize known invocation syntax once, retaining bound argument prefixes.
  * Binding a function alone is not a write; only its eventual call is examined.
  */
 export const resolveJavaScriptIntrinsicInvocation = (
-  node: t.CallExpression | t.OptionalCallExpression,
+  node:
+    | t.CallExpression
+    | t.OptionalCallExpression
+    | t.TaggedTemplateExpression,
   intrinsicPath: (node: t.Node) => readonly string[] | undefined,
   boundIntrinsic: (node: t.Node) => JavaScriptIntrinsicInvocation | undefined,
   intrinsicReadChanged: (
     node: t.Node,
     path: readonly string[],
-    boundFunction?: JavaScriptIntrinsicInvocation["boundFunction"],
+    boundHelper?: JavaScriptBoundHelperRead,
   ) => boolean,
 ): JavaScriptIntrinsicInvocation | undefined => {
   const visited = new Set<t.Node>();
-  let callee: t.Node = node.callee;
+  let callee: t.Node = t.isTaggedTemplateExpression(node)
+    ? node.tag
+    : node.callee;
   let arguments_: JavaScriptIntrinsicInvocation["arguments"] =
-    expandJavaScriptInvocationArguments(node.arguments);
+    // The template object is a runtime allocation, not a source expression.
+    // Retain its callable/receiver without inventing positional argument facts.
+    t.isTaggedTemplateExpression(node)
+      ? undefined
+      : expandJavaScriptInvocationArguments(node.arguments);
   let receiver: t.Node | undefined;
   const callableReads: t.Node[] = [];
   let explicitReceiver = false;
@@ -101,32 +116,40 @@ export const resolveJavaScriptIntrinsicInvocation = (
     if (path !== undefined && intrinsicReadChanged(callee, path))
       return { kind: "opaque", path, arguments: undefined };
     if (path === undefined) {
-      if (
-        t.isMemberExpression(callee) ||
-        t.isOptionalMemberExpression(callee)
+      let helperTarget: t.Node = callee;
+      const helpers: string[] = [];
+      while (
+        t.isMemberExpression(helperTarget) ||
+        t.isOptionalMemberExpression(helperTarget)
       ) {
         const method = semanticStaticPropertyKey(
-          callee.property,
-          callee.computed,
+          helperTarget.property,
+          helperTarget.computed,
         );
-        if (method === "call" || method === "apply") {
-          const bound = boundIntrinsic(callee.object);
+        if (method !== "call" && method !== "apply" && method !== "bind") break;
+        helpers.push(method);
+        helperTarget = unwrapJavaScriptExpression(helperTarget.object).node;
+      }
+      if (helpers.length > 0) {
+        helpers.reverse();
+        const bound = boundIntrinsic(helperTarget);
+        if (bound !== undefined) {
           if (
-            bound !== undefined &&
-            intrinsicReadChanged(
-              callee,
-              [...bound.path, method],
-              bound.boundFunction,
-            )
+            bound.kind === "opaque" ||
+            bound.boundFunction === undefined ||
+            intrinsicReadChanged(callee, [...bound.path, ...helpers], {
+              value: bound.boundFunction,
+              projection: helpers,
+            })
           )
             return { kind: "opaque", path: bound.path, arguments: undefined };
-          receiver = arguments_?.[0];
-          explicitReceiver = true;
-          callee = callee.object;
-          arguments_ = invocationArguments(method, arguments_);
-          continue;
+          // After proving the whole selection, normalize the selected generic
+          // helper with its actual receiver, just like an unbound helper value.
+          path = ["intrinsic", "Function", "prototype", ...helpers];
         }
       }
+    }
+    if (path === undefined) {
       const bound = boundIntrinsic(callee);
       if (bound === undefined) return undefined;
       if (bound.kind === "opaque") return bound;

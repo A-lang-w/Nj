@@ -336,6 +336,17 @@ export const semanticOwnReferenceCandidates = (
     }
     const own = staticObjectOwnProperty(node, key);
     if (own.status === "explicit") {
+      if (t.isObjectMethod(own.property) && own.property.kind !== "method") {
+        // An accessor proves descriptor presence, not the accessor function as
+        // its read value. Possible return references cannot prove completeness
+        // (including fallthrough), so value lookup must remain unknown.
+        if (presenceOnly && path.length === 1) nodes.push(node);
+        else {
+          unknown = true;
+          complete = false;
+        }
+        continue;
+      }
       push(
         t.isObjectProperty(own.property) ? own.property.value : own.property,
         path.slice(1),

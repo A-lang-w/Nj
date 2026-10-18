@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import {
+  analyzeJavaScriptStaticSource,
+  analyzeParsedJavaScriptStaticSource,
+} from "./javascriptStaticAnalysis.js";
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
 // esbuild emits this CommonJS `require` shim for a Node/Electron target: the
 // IIFE selects the host `require` when it exists and otherwise returns the
@@ -28,6 +32,14 @@ const DIRECT_CONSUMER =
 
 const electronOf = (source: string) =>
   analyzeJavaScriptStaticSource(source).electron;
+
+// Pruning the shim's alternate needs an affirmative CommonJS host, rather
+// than inferring require's existence from an unshadowed name in unknown code.
+const commonJsElectronOf = (source: string) => {
+  const file = parseJavaScriptSource(source, "bundle.cjs");
+  expect(file).not.toBeNull();
+  return analyzeParsedJavaScriptStaticSource(source, file!).electron;
+};
 
 describe("Electron namespace identity around direct eval", () => {
   it.each(["require", "Q"])("invalidates references loaded by %s", (loader) => {
@@ -94,7 +106,7 @@ describe("host require delegate identity", () => {
   ])("preserves the inherited delegate after %s", (deletion) => {
     for (const loader of ["require", "Q"]) {
       expect(
-        electronOf(
+        commonJsElectronOf(
           `${SHIM}${deletion};new (${loader}("electron").BrowserWindow)({});`,
         ).browser_windows,
       ).toHaveLength(1);
@@ -113,7 +125,7 @@ describe("host require delegate identity", () => {
     (setup) => {
       for (const loader of ["require", "Q"])
         expect(
-          electronOf(
+          commonJsElectronOf(
             `${SHIM}${setup}new (${loader}("electron").BrowserWindow)({});`,
           ).browser_windows,
         ).toHaveLength(1);
@@ -151,7 +163,7 @@ describe("host require delegate identity", () => {
 
   it("preserves a load before the module can escape after deletion", () => {
     expect(
-      electronOf(
+      commonJsElectronOf(
         `${SHIM}delete module.require;${DIRECT_CONSUMER}external(module);`,
       ).browser_windows,
     ).toHaveLength(1);

@@ -30,9 +30,9 @@ const OWN_DATA_ROOTS = new Set([
 export const semanticGlobalRootHasDataDescriptor = (name: string): boolean =>
   OWN_DATA_ROOTS.has(name);
 
-/** A mutable global location and a captured intrinsic object are different
- * owners. Only a completed, inert assignment can replace the former's seed. */
-export const createSemanticGlobalRootReplacementQuery =
+/** Mutable builtin slots and captured values have different owners. Only a
+ * completed, inert assignment to an initially writable data slot cuts a seed. */
+export const createSemanticBuiltinDataReplacementQuery =
   (
     state: JavaScriptSemanticAnalysisState,
     facts: SemanticGlobalBindingFacts,
@@ -40,11 +40,18 @@ export const createSemanticGlobalRootReplacementQuery =
     proof: {
       readonly opaqueSites: readonly t.Node[];
       readonly freshObject: (node: t.Node) => boolean;
+      readonly owner?: readonly string[];
     },
   ) =>
   (name: string, read: t.Node): SemanticIterationSource | undefined => {
-    if (!facts.complete || !semanticGlobalRootHasDataDescriptor(name))
-      return undefined;
+    const owner = proof.owner ?? ["global"];
+    const location = [...owner, name];
+    const knownDataSlot =
+      owner.length === 1
+        ? semanticGlobalRootHasDataDescriptor(name)
+        : location.join(".") === "global.require.main" ||
+          location.join(".") === "global.process.mainModule";
+    if (!facts.complete || !knownDataSlot) return undefined;
     const candidates = sources.get(name) ?? [];
     let replacement: SemanticIterationSource | undefined;
     for (const source of candidates)
@@ -86,9 +93,9 @@ export const createSemanticGlobalRootReplacementQuery =
       )
         continue;
       const changesLocation =
-        path.length <= 2 &&
+        path.length <= location.length &&
         path.every((key, index) =>
-          semanticPropertyPathKeyMatches(key, index === 0 ? "global" : name),
+          semanticPropertyPathKeyMatches(key, location[index]!),
         );
       // Rebinding a global-object alias also makes weak namespace candidates
       // uncertain. It cannot justify a strong cut through that alias.

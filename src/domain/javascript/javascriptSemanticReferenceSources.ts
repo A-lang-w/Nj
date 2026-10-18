@@ -262,7 +262,7 @@ const referenceSelectionStable = (
 
 const syntaxDataSources = new WeakMap<t.Node, boolean>();
 
-/** Only plain data literals exclude accessor execution before a selected slot. */
+/** Prove inert evaluation and reads without traversing deferred callable bodies. */
 const syntaxDataSource = (root: t.Node): boolean => {
   const cached = syntaxDataSources.get(root);
   if (cached !== undefined) return cached;
@@ -273,13 +273,50 @@ const syntaxDataSource = (root: t.Node): boolean => {
     enter: (node) => {
       if (
         readExactJavaScriptLiteral(node).found ||
+        t.isBigIntLiteral(node) ||
         t.isFunctionExpression(node) ||
         t.isArrowFunctionExpression(node) ||
-        (t.isObjectMethod(node, { kind: "method" }) &&
-          semanticStaticPropertyKey(node.key, node.computed) !== null) ||
         t.isRegExpLiteral(node)
       ) {
         for (const child of childNodes(node)) skipped.add(child);
+        return;
+      }
+      if (t.isClassExpression(node)) {
+        if (node.superClass != null || (node.decorators?.length ?? 0) > 0) {
+          safe = false;
+          return;
+        }
+        for (const child of childNodes(node))
+          if (child !== node.body) skipped.add(child);
+        return;
+      }
+      if (t.isClassBody(node)) return;
+      if (
+        t.isObjectMethod(node, { kind: "method" }) ||
+        t.isClassMethod(node) ||
+        t.isClassPrivateMethod(node) ||
+        t.isClassProperty(node) ||
+        t.isClassPrivateProperty(node) ||
+        t.isClassAccessorProperty(node)
+      ) {
+        const computed = "computed" in node && node.computed;
+        // Static initializers/accessors can replace constructor metadata or
+        // run user code; keep their value and effect proofs unresolved.
+        if (
+          (node.decorators?.length ?? 0) > 0 ||
+          (computed && semanticStaticPropertyKey(node.key, true) === null) ||
+          ("static" in node &&
+            node.static &&
+            !t.isClassMethod(node, { kind: "method" }) &&
+            !t.isClassPrivateMethod(node))
+        ) {
+          safe = false;
+          return;
+        }
+        // Computed keys run now, even when their final spelling is known.
+        // Method bodies and instance field initializers run only on later use.
+        for (const child of childNodes(node))
+          if (!computed || child !== node.key) skipped.add(child);
         return;
       }
       if (t.isObjectExpression(node) || t.isArrayExpression(node)) return;
@@ -287,9 +324,16 @@ const syntaxDataSource = (root: t.Node): boolean => {
         t.isObjectProperty(node) &&
         semanticStaticPropertyKey(node.key, node.computed) !== null
       ) {
-        skipped.add(node.key);
+        if (!node.computed) skipped.add(node.key);
         return;
       }
+      if (
+        t.isUnaryExpression(node, { operator: "void" }) ||
+        (t.isUnaryExpression(node) &&
+          (node.operator === "+" || node.operator === "-") &&
+          semanticStaticPropertyKey(node, true) !== null)
+      )
+        return;
       if (unwrapJavaScriptExpression(node).node !== node) return;
       safe = false;
     },
@@ -483,10 +527,14 @@ const syntaxDataProperty = (
     node = unwrapJavaScriptExpression(source.prototype).node;
   }
   if (t.isArrayExpression(node)) {
+    if (key === "length") return "defined";
     const index = semanticArrayIndex(key);
     return index === null ? undefined : (node.elements[index] ?? undefined);
   }
-  if (t.isFunction(node) && semanticSourceFunctionOwnPropertyDefined(node, key))
+  if (
+    (t.isFunction(node) || t.isClassExpression(node)) &&
+    semanticSourceFunctionOwnPropertyDefined(node, key)
+  )
     return "defined";
   // Primitive prototype initializers are ignored at runtime, and neither they
   // nor an unmodeled intrinsic prototype establish a selected data value.
@@ -511,6 +559,7 @@ const syntaxReferenceSourceDefined = (
     readExactJavaScriptLiteral(node).found ||
     t.isObjectExpression(node) ||
     t.isArrayExpression(node) ||
+    t.isClassExpression(node) ||
     t.isFunction(node)
   );
 };
