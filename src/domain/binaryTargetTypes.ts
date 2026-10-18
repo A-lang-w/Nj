@@ -61,39 +61,26 @@ export const isElfMetadataArchitecture = (
 ): architecture is ElfMetadataArchitecture =>
   (ELF_METADATA_ARCHITECTURES as readonly string[]).includes(architecture);
 
-/** Families REA admits only through a Ghidra analysis lane, whatever the adapter. */
-export const GHIDRA_ONLY_ARCHITECTURES = [
-  "mips",
-  "riscv",
-  "powerpc",
+/**
+ * Families REA recognizes from an ELF machine value alone. No PE COFF machine
+ * or Mach-O CPU type maps to them, so they never appear outside `format: "elf"`.
+ */
+export const ELF_ONLY_ARCHITECTURES = [
   "hexagon",
   "sparc",
 ] as const satisfies readonly BinaryArchitecture[];
-export type GhidraOnlyArchitecture = (typeof GHIDRA_ONLY_ARCHITECTURES)[number];
+export type ElfOnlyArchitecture = (typeof ELF_ONLY_ARCHITECTURES)[number];
 
-const GHIDRA_ONLY_ARCHITECTURE_LABELS = {
-  mips: "MIPS",
-  riscv: "RISC-V",
-  powerpc: "PowerPC",
-  hexagon: "Hexagon",
-  sparc: "SPARC",
-} as const satisfies Record<GhidraOnlyArchitecture, string>;
-
-/** Name the family the way adapters and documents refer to it. */
-export const ghidraOnlyArchitectureLabel = (
-  architecture: GhidraOnlyArchitecture,
-): string => GHIDRA_ONLY_ARCHITECTURE_LABELS[architecture];
-
-/** Families REA admits only through a Ghidra lane; other adapters decline them. */
-export const isGhidraOnlyArchitecture = (
+/** Family that only an ELF header can declare. */
+export const isElfOnlyArchitecture = (
   architecture: BinaryArchitecture,
-): architecture is GhidraOnlyArchitecture =>
-  (GHIDRA_ONLY_ARCHITECTURES as readonly string[]).includes(architecture);
+): architecture is ElfOnlyArchitecture =>
+  (ELF_ONLY_ARCHITECTURES as readonly string[]).includes(architecture);
 
 /** Recognized family with no ELF metadata member; the header alone is the fact. */
 export type HeaderArchitecture = Exclude<
   BinaryArchitecture,
-  GhidraOnlyArchitecture | RawOnlyArchitecture
+  ElfMetadataArchitecture | RawOnlyArchitecture | ElfOnlyArchitecture
 >;
 
 /** Raw ELF facts; family recognition does not establish ISA or ABI support. */

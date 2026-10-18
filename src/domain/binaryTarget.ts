@@ -257,8 +257,9 @@ const parseElf = (
           riscv: metadata,
         });
   }
-  // These families carry no ELF metadata member because the admitted machine
-  // value alone binds them to one Ghidra language selection.
+  // Neither family carries an ELF metadata member: `hexagon` selects one Ghidra
+  // language by machine value, and `sparc` is admitted only under the ELF64
+  // big-endian commitments that select its one language in `elfFixedHeader.ts`.
   if (architecture === "hexagon")
     return ok({
       format: "elf",

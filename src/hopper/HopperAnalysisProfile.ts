@@ -7,11 +7,11 @@ import type {
 } from "../application/AnalysisProvider.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import {
+  isElfMetadataArchitecture,
+  isElfOnlyArchitecture,
   isMachOFormat,
-  ghidraOnlyArchitectureLabel,
-  isGhidraOnlyArchitecture,
+  type BinaryArchitecture,
   type BinaryTarget,
-  type GhidraOnlyArchitecture,
   type HeaderArchitecture,
 } from "../domain/binaryTargetTypes.js";
 import {
@@ -105,12 +105,35 @@ export const resolveHopperAnalysisProfile = async (
   });
 };
 
-/** Ghidra owns these lanes; Hopper names the family it declines rather than guessing. */
+/** Families whose only verified route is a Ghidra lane; Hopper names each one. */
+const HOPPER_DECLINED_ARCHITECTURE_LABELS = {
+  mips: "MIPS",
+  riscv: "RISC-V",
+  powerpc: "PowerPC",
+  hexagon: "Hexagon",
+  sparc: "SPARC",
+} as const;
+
+export type HopperDeclinedArchitecture =
+  keyof typeof HOPPER_DECLINED_ARCHITECTURE_LABELS;
+
+/** Domain facts alone decide this: metadata families and ELF-only families. */
+export const isHopperDeclinedArchitecture = (
+  architecture: BinaryArchitecture,
+): architecture is HopperDeclinedArchitecture =>
+  isElfMetadataArchitecture(architecture) ||
+  isElfOnlyArchitecture(architecture);
+
 export const hopperDeclinedArchitectureReason = (
-  architecture: GhidraOnlyArchitecture,
+  architecture: HopperDeclinedArchitecture,
 ): string => {
-  const label = ghidraOnlyArchitectureLabel(architecture);
-  return `REA's Hopper adapter does not admit ${label} targets. Select a verified Ghidra ${label} profile instead.`;
+  const label = HOPPER_DECLINED_ARCHITECTURE_LABELS[architecture];
+  // Only a metadata family has a pinned, verified Ghidra profile to select; an
+  // ELF-only family is admitted through Ghidra's header-driven import.
+  const advice = isElfMetadataArchitecture(architecture)
+    ? `Select a verified Ghidra ${label} profile instead.`
+    : `Select the Ghidra header-driven import for ${label} targets instead.`;
+  return `REA's Hopper adapter does not admit ${label} targets. ${advice}`;
 };
 
 /** Derive Hopper's complete non-interactive CLI loader selection. */
@@ -127,7 +150,7 @@ export const hopperLoaderArgsForTarget = (
   if (target.format === "raw-binary")
     return err(new ProviderAdapterError("hopper", "resolve_analysis_profile"));
   const architecture = target.architecture;
-  if (isGhidraOnlyArchitecture(architecture))
+  if (isHopperDeclinedArchitecture(architecture))
     return err(
       new AnalysisCapabilityUnavailableError(
         "hopper",

@@ -1,24 +1,32 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  ghidraOnlyArchitectureLabel,
-  isGhidraOnlyArchitecture,
+  BINARY_ARCHITECTURES,
+  isElfOnlyArchitecture,
 } from "./binaryTargetTypes.js";
 
-describe("Ghidra-only families", () => {
-  it.each([
-    ["mips", "MIPS"],
-    ["riscv", "RISC-V"],
-    ["powerpc", "PowerPC"],
-    ["hexagon", "Hexagon"],
-    ["sparc", "SPARC"],
-  ] as const)("declines %s by its documented name", (family, label) => {
-    expect(isGhidraOnlyArchitecture(family)).toBe(true);
-    expect(ghidraOnlyArchitectureLabel(family)).toBe(label);
-  });
+describe("ELF-only families", () => {
+  it.each(["hexagon", "sparc"] as const)(
+    "keeps %s inside the partition that no PE or Mach-O header can declare",
+    (family) => {
+      expect(isElfOnlyArchitecture(family)).toBe(true);
+    },
+  );
 
-  it("leaves header-only families outside the Ghidra-only partition", () => {
-    expect(isGhidraOnlyArchitecture("x86")).toBe(false);
-    expect(isGhidraOnlyArchitecture("arm64")).toBe(false);
+  it("keeps every other family outside the partition", () => {
+    const others = BINARY_ARCHITECTURES.filter(
+      (family) => !isElfOnlyArchitecture(family),
+    );
+    expect(others).toEqual([
+      "x86",
+      "x86_64",
+      "arm",
+      "arm64",
+      "mips",
+      "6502",
+      "riscv",
+      "powerpc",
+      "m68k",
+    ]);
   });
 });
