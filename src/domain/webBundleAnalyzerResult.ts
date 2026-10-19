@@ -4,53 +4,86 @@ import {
   webBundleAnalysisSchema,
   type WebBundleAnalysis,
 } from "./webBundleAnalysis.js";
-import type { IncludedScript } from "./webBundleAnalyzerInspection.js";
-import type { WebBundleScriptOutcome } from "./webBundleScriptAnalysis.js";
+import type {
+  AnalysisAccumulator,
+  IncludedScript,
+} from "./webBundleAnalyzerInspection.js";
+import {
+  webBundleScriptAnalysisSchema,
+  type WebBundleScriptAnalysis,
+} from "./webBundleScriptAnalysis.js";
 
-const NOT_REQUESTED_SOURCE_MAPS: WebBundleAnalysis["observations"]["source_maps"] =
-  { status: "not_requested", requested: 0, processed: 0, items: [] };
-
-/** Combine per-script outcomes, in capture order, into one bundle analysis. */
-export const buildWebBundleAnalysis = (
+export const buildCapturedWebBundleAnalysis = (
   inspection: WebPageInspection,
-  sourceScripts: IncludedScript[],
-  requestedSourceMaps:
-    | WebBundleAnalysis["observations"]["source_maps"]
-    | undefined,
-  outcomes: readonly WebBundleScriptOutcome[],
+  sourceMaps: WebBundleAnalysis["observations"]["source_maps"],
+  rawResults: readonly WebBundleScriptAnalysis[],
 ): WebBundleAnalysis => {
-  const sourceMaps = requestedSourceMaps ?? NOT_REQUESTED_SOURCE_MAPS;
-  if (
-    outcomes.length !== sourceScripts.length ||
-    outcomes.some(
-      (outcome, index) =>
-        (outcome.status === "analyzed"
-          ? outcome.facts.script_key
-          : outcome.script_key) !== sourceScripts[index]?.script_key,
-    )
-  )
-    throw new TypeError(
-      "Web bundle outcomes must name every analyzed script in capture order",
-    );
-  const analyzed = outcomes.flatMap((outcome) =>
-    outcome.status === "analyzed" ? [outcome.facts] : [],
+  const results = rawResults.map((result) =>
+    webBundleScriptAnalysisSchema.parse(result),
   );
-  const failedScripts = analyzed
-    .filter(({ parse }) => parse === "failed")
-    .map(({ script_key }) => script_key);
-  const recoveredScripts = analyzed
-    .filter(({ parse }) => parse === "recovered")
-    .map(({ script_key }) => script_key);
-  const widenedScripts = analyzed
-    .filter(({ returned_reference_widened }) => returned_reference_widened)
-    .map(({ script_key }) => script_key);
-  const resourceLimited = outcomes.flatMap((outcome) =>
-    outcome.status === "resource_limited" ? [outcome] : [],
+  const byKey = new Map<string, WebBundleScriptAnalysis>();
+  for (const result of results) {
+    if (byKey.has(result.script_key))
+      throw new TypeError(
+        `Duplicate script analysis result: ${result.script_key}`,
+      );
+    byKey.set(result.script_key, result);
+  }
+  const sourceScripts = inspection.scripts.items.filter(
+    (script): script is IncludedScript => script.source.included,
   );
+  const expectedKeys = new Set(
+    sourceScripts.map(({ script_key }) => script_key),
+  );
+  for (const key of byKey.keys())
+    if (!expectedKeys.has(key))
+      throw new TypeError(`Unexpected script analysis result: ${key}`);
+  const orderedResults: WebBundleScriptAnalysis[] = sourceScripts.map(
+    (script) =>
+      byKey.get(script.script_key) ?? {
+        status: "unavailable",
+        script_key: script.script_key,
+        reason: "worker_failure",
+        detail: "No analysis result was returned for this captured script.",
+      },
+  );
+  const unavailableAnalyses = orderedResults.filter(
+    (
+      result,
+    ): result is Extract<
+      WebBundleScriptAnalysis,
+      { readonly status: "unavailable" }
+    > => result.status === "unavailable",
+  );
+  const accumulator = mergeScriptResults(
+    orderedResults.filter(
+      (
+        result,
+      ): result is Extract<
+        WebBundleScriptAnalysis,
+        { readonly status: "analyzed" }
+      > => result.status === "analyzed",
+    ),
+  );
+  const attemptedScripts = orderedResults.filter(
+    (result) =>
+      !(result.status === "unavailable" && result.reason === "not_started"),
+  ).length;
   const unavailable = inspection.scripts.items
     .filter((script) => !script.source.included)
     .map(({ script_key }) => script_key);
+  const unavailableSourceReasons = [
+    ...new Set(
+      inspection.scripts.items.flatMap((script) =>
+        script.source.included ? [] : [script.source.reason],
+      ),
+    ),
+  ].sort();
   const omittedScripts = captureBudgetOmission(inspection, "scripts");
+  const omittedSourceScripts = captureBudgetOmission(
+    inspection,
+    "script_sources",
+  );
   const omittedSourceMaps =
     sourceMaps.status === "not_requested"
       ? undefined
@@ -58,59 +91,104 @@ export const buildWebBundleAnalysis = (
   const sourceMapIncomplete =
     sourceMaps.status === "partial" || sourceMaps.status === "unavailable";
   const partial =
-    failedScripts.length > 0 ||
-    recoveredScripts.length > 0 ||
-    resourceLimited.length > 0 ||
-    widenedScripts.length > 0 ||
+    accumulator.failedScripts.length > 0 ||
+    accumulator.recoveredScripts.length > 0 ||
+    accumulator.widenedScripts.length > 0 ||
     unavailable.length > 0 ||
+    unavailableAnalyses.length > 0 ||
     sourceMapIncomplete ||
     omittedScripts !== undefined ||
+    omittedSourceScripts !== undefined ||
     omittedSourceMaps !== undefined;
   return webBundleAnalysisSchema.parse({
-    capture: buildCaptureObservation(inspection, sourceScripts),
+    capture: buildCaptureObservation(
+      inspection,
+      sourceScripts,
+      attemptedScripts,
+    ),
     observations: {
       chunks: {
         nodes: sourceScripts.map(chunkNode),
-        edges: analyzed.flatMap(({ edges }) => edges),
+        edges: accumulator.edges,
       },
-      routes: analyzed.flatMap(({ routes }) => routes),
-      endpoints: analyzed.flatMap(({ endpoints }) => endpoints),
-      webmcp_declarations: analyzed.flatMap(
-        ({ webmcp_declarations }) => webmcp_declarations,
-      ),
+      routes: accumulator.routes,
+      endpoints: accumulator.endpoints,
+      webmcp_declarations: accumulator.webMcp,
       source_maps: sourceMaps,
     },
-    inferences: analyzed.flatMap(({ inferences }) => inferences),
+    inferences: accumulator.inferences,
     unknowns: buildUnknowns({
       unavailable,
-      failedScripts,
-      recoveredScripts,
-      resourceLimited,
-      widenedScripts,
+      unavailableSourceReasons,
+      failedScripts: accumulator.failedScripts,
+      recoveredScripts: accumulator.recoveredScripts,
+      widenedScripts: accumulator.widenedScripts,
+      unavailableAnalyses,
       sourceMaps,
       omittedScripts,
+      omittedSourceScripts,
       omittedSourceMaps,
     }),
     completeness: buildCompleteness({
       partial,
-      parsedScripts: analyzed.length - failedScripts.length,
-      parseFailures: failedScripts.length,
-      visitedNodes: analyzed.reduce(
-        (sum, { visited_ast_nodes }) => sum + visited_ast_nodes,
-        0,
-      ),
+      parsedScripts: accumulator.parsedScripts,
+      parseFailures: accumulator.failedScripts.length,
+      visitedNodes: accumulator.visitedNodes,
     }),
     limitations: bundleLimitations(),
   });
 };
 
+const mergeScriptResults = (
+  results: readonly Extract<
+    WebBundleScriptAnalysis,
+    { readonly status: "analyzed" }
+  >[],
+): AnalysisAccumulator => {
+  const accumulator: AnalysisAccumulator = {
+    edges: [],
+    routes: [],
+    endpoints: [],
+    webMcp: [],
+    inferences: [],
+    seen: new Set(),
+    visitedNodes: 0,
+    parsedScripts: 0,
+    failedScripts: [],
+    recoveredScripts: [],
+    widenedScripts: [],
+  };
+  for (const result of results) {
+    accumulator.visitedNodes += result.visited_ast_nodes;
+    if (result.parse_status === "failed") {
+      accumulator.failedScripts.push(result.script_key);
+      continue;
+    }
+    accumulator.parsedScripts += 1;
+    if (result.parse_status === "recovered")
+      accumulator.recoveredScripts.push(result.script_key);
+    if (result.widened_return_references)
+      accumulator.widenedScripts.push(result.script_key);
+    accumulator.edges.push(...result.observations.edges);
+    accumulator.routes.push(...result.observations.routes);
+    accumulator.endpoints.push(...result.observations.endpoints);
+    accumulator.webMcp.push(...result.observations.webmcp_declarations);
+    accumulator.inferences.push(...result.inferences);
+  }
+  return accumulator;
+};
+
 const buildCaptureObservation = (
   inspection: WebPageInspection,
   sourceScripts: IncludedScript[],
+  attemptedScripts: number,
 ) => ({
   target_url: inspection.target.url,
   scripts_observed: inspection.scripts.total,
-  scripts_analyzed: sourceScripts.length,
+  // This preserves the historical meaning: source scripts submitted for
+  // analysis, including worker/deadline failures; explicitly unstarted suffixes
+  // are excluded. Successfully parsed scripts are counted separately below.
+  scripts_analyzed: attemptedScripts,
   source_artifacts: sourceScripts.map(sourceArtifact),
 });
 
@@ -132,15 +210,17 @@ const chunkNode = (script: IncludedScript) => {
 
 interface UnknownsInput {
   readonly unavailable: string[];
+  readonly unavailableSourceReasons: readonly string[];
   readonly failedScripts: readonly string[];
   readonly recoveredScripts: readonly string[];
-  readonly resourceLimited: readonly Extract<
-    WebBundleScriptOutcome,
-    { status: "resource_limited" }
-  >[];
   readonly widenedScripts: readonly string[];
+  readonly unavailableAnalyses: readonly Extract<
+    WebBundleScriptAnalysis,
+    { readonly status: "unavailable" }
+  >[];
   readonly sourceMaps: WebBundleAnalysis["observations"]["source_maps"];
   readonly omittedScripts: number | null | undefined;
+  readonly omittedSourceScripts: number | null | undefined;
   readonly omittedSourceMaps: number | null | undefined;
 }
 
@@ -154,12 +234,27 @@ const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
           affected_script_keys: [],
         },
       ]),
+  ...(input.omittedSourceScripts === undefined
+    ? []
+    : [
+        {
+          dimension: "script_source",
+          reason: captureBudgetReason(
+            "script source artifacts",
+            input.omittedSourceScripts,
+          ),
+          affected_script_keys: [],
+        },
+      ]),
   ...(input.unavailable.length === 0
     ? []
     : [
         {
           dimension: "script_source" as const,
-          reason: "Source artifact was not captured",
+          reason:
+            input.unavailableSourceReasons.length === 0
+              ? "Source artifact was not captured"
+              : `Source artifacts were not captured: ${input.unavailableSourceReasons.join("; ")}`,
           affected_script_keys: input.unavailable,
         },
       ]),
@@ -172,6 +267,15 @@ const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
           affected_script_keys: [...input.failedScripts],
         },
       ]),
+  ...(input.unavailableAnalyses.length === 0
+    ? []
+    : groupUnavailableAnalyses(input.unavailableAnalyses).map(
+        ({ reason, detail, affectedScriptKeys }) => ({
+          dimension: "javascript_analysis" as const,
+          reason: analysisUnavailableReason(reason, detail),
+          affected_script_keys: affectedScriptKeys,
+        }),
+      )),
   ...(input.widenedScripts.length === 0
     ? []
     : [
@@ -191,11 +295,6 @@ const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
           affected_script_keys: [...input.recoveredScripts],
         },
       ]),
-  ...input.resourceLimited.map(({ script_key, reason }) => ({
-    dimension: "javascript_analysis" as const,
-    reason,
-    affected_script_keys: [script_key],
-  })),
   ...(input.omittedSourceMaps === undefined
     ? []
     : [
@@ -227,7 +326,7 @@ const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
 
 const captureBudgetOmission = (
   inspection: WebPageInspection,
-  section: "scripts" | "source_maps",
+  section: "scripts" | "script_sources" | "source_maps",
 ): number | null | undefined => {
   const exclusions = inspection.completeness.excluded.filter(
     (exclusion) =>
@@ -238,6 +337,42 @@ const captureBudgetOmission = (
   if (exclusions.some(({ count }) => count === null)) return null;
   return exclusions.reduce((sum, { count }) => sum + (count ?? 0), 0);
 };
+
+const groupUnavailableAnalyses = (
+  unavailable: UnknownsInput["unavailableAnalyses"],
+): {
+  readonly reason: (typeof unavailable)[number]["reason"];
+  readonly detail: string | undefined;
+  readonly affectedScriptKeys: string[];
+}[] => {
+  const groups = new Map<
+    (typeof unavailable)[number]["reason"],
+    Map<string | undefined, string[]>
+  >();
+  for (const { reason, detail, script_key } of unavailable) {
+    let byDetail = groups.get(reason);
+    if (byDetail === undefined) {
+      byDetail = new Map();
+      groups.set(reason, byDetail);
+    }
+    const keys = byDetail.get(detail) ?? [];
+    keys.push(script_key);
+    byDetail.set(detail, keys);
+  }
+  return [...groups].flatMap(([reason, byDetail]) =>
+    [...byDetail].map(([detail, affectedScriptKeys]) => ({
+      reason,
+      detail,
+      affectedScriptKeys,
+    })),
+  );
+};
+
+const analysisUnavailableReason = (
+  reason: UnknownsInput["unavailableAnalyses"][number]["reason"],
+  detail: string | undefined,
+): string =>
+  `Analysis was unavailable for captured scripts (${reason}); findings from those scripts are unknown.${detail === undefined ? "" : ` Worker detail: ${JSON.stringify(detail)}`}`;
 
 const captureBudgetReason = (label: string, count: number | null): string =>
   count === null

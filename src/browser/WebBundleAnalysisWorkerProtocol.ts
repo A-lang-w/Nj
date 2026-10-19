@@ -1,52 +1,75 @@
 import { z } from "zod";
-import { webPageInspectionSchema } from "../domain/browserObservationSchemas.js";
 import { digestSchema } from "../domain/digests.js";
-import { JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS } from "../domain/javascript/javascriptAnalysisResourceControls.js";
-import { JAVASCRIPT_ANALYSIS_WORKER_DEFAULTS } from "../javascript/analysis/JavaScriptAnalysisWorkerProtocol.js";
+import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
+import { webPageInspectionSchema } from "../domain/browserObservationSchemas.js";
+import { webTextArtifactSchema } from "../domain/webContentArtifact.js";
 
-/** Per-script bounds shared with the isolated JavaScript analysis boundary. */
-export const WEB_BUNDLE_ANALYSIS_WORKER_LIMITS = {
-  heapMb: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.heapMb,
-  scriptTimeoutMs: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.timeoutMs,
-  /** Worker initialization before the parent admits any script. */
-  startupTimeoutMs: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.timeoutMs,
-  resultBytes: JAVASCRIPT_ANALYSIS_WORKER_DEFAULTS.checkpointBytes,
-  frameBytes: 4 * 1024,
+/** Independent per-script worker limits for source records and control frames. */
+export const WEB_BUNDLE_WORKER_LIMITS = {
+  heapMb: 1024,
+  scriptTimeoutMs: 30_000,
+  totalTimeoutMs: 300_000,
+  protocolBytes: 64 * 1024,
+  sourceBytes: 8 * WEB_RUNTIME_LIMITS.sourceBytes,
+  resultBytes: 8 * 1024 * 1024,
 } as const;
 
-/** One captured script; the worker requires included source. */
-export const webBundleWorkerScriptSchema =
+const includedSourceSchema = z.strictObject({
+  included: z.literal(true),
+  artifact: webTextArtifactSchema.strict(),
+});
+
+const browserScriptSchema =
   webPageInspectionSchema.shape.scripts.shape.items.element;
 
-const index = z.number().int().min(0);
+/** Derive producer metadata rules; the worker requires captured source text. */
+export const includedWebScriptSchema = browserScriptSchema
+  .extend({ source: includedSourceSchema })
+  .strict();
 
-/** The parent admits exactly one script under an already-running deadline. */
 export const webBundleWorkerRequestSchema = z.strictObject({
   kind: z.literal("analyze"),
-  index,
-  script_bytes: z.number().int().min(0),
-});
-
-/** Control frames carry indexes and digests only; facts travel in private files. */
-export const webBundleWorkerFrameSchema = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("ready") }),
-  z.strictObject({ kind: z.literal("start"), index }),
-  z.strictObject({
-    kind: z.literal("done"),
-    index,
-    bytes: z.number().int().min(0),
+  id: z.uuid(),
+  source: z.strictObject({
+    bytes: z.number().int().min(0).max(WEB_BUNDLE_WORKER_LIMITS.sourceBytes),
     sha256: digestSchema,
   }),
+  result_budget_bytes: z
+    .number()
+    .int()
+    .min(0)
+    .max(WEB_BUNDLE_WORKER_LIMITS.resultBytes),
+});
+
+const identity = { id: z.uuid() };
+
+/** Control frames contain descriptors and progress only, never source or findings. */
+export const webBundleWorkerMessageSchema = z.discriminatedUnion("kind", [
   z.strictObject({
-    kind: z.literal("oversized"),
-    index,
-    bytes: z.number().int().min(0),
+    kind: z.literal("ready"),
+    heap_limit_bytes: z.number().int().positive().nullable(),
+  }),
+  z.strictObject({
+    kind: z.literal("phase"),
+    ...identity,
+    phase: z.literal("analyze"),
+  }),
+  z.strictObject({
+    kind: z.literal("complete"),
+    ...identity,
+    result: z.strictObject({
+      bytes: z.number().int().nonnegative(),
+      sha256: digestSchema,
+    }),
+  }),
+  z.strictObject({
+    kind: z.literal("failure"),
+    ...identity,
+    reason: z.enum(["input", "resource", "output", "io"]),
+    message: z.string(),
   }),
 ]);
-export type WebBundleWorkerFrame = z.output<typeof webBundleWorkerFrameSchema>;
 
-/** Private files exchanged for one script index inside the owned root. */
-export const webBundleWorkerFileNames = (scriptIndex: number) => ({
-  script: `${String(scriptIndex)}.script.json`,
-  facts: `${String(scriptIndex)}.facts.json`,
-});
+export type WebBundleWorkerMessage = z.output<
+  typeof webBundleWorkerMessageSchema
+>;

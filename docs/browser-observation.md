@@ -350,6 +350,40 @@ validation and resource bounds. Omitted script metadata makes its affected
 section explicitly truncated.
 Disallowed-origin entries are filtered before retention.
 
+Selected script-source collection shares a 32 MiB aggregate UTF-8 retention
+budget and a 20-second deadline across the capture. An oversized source is
+omitted while later smaller sources may still fit. When the deadline expires,
+remaining source reads are skipped. Script metadata, per-item omission reasons,
+and `script_sources` completeness remain available. A single CDP response can
+still be materialized up to the separate 64 MiB transport limit before source
+admission; the retention budget does not bound that transient allocation.
+
+Bundle parsing and semantic inspection run sequentially in an owned child,
+without executing captured code. `max_heap_mb` defaults to 1024 MiB V8
+old-space; `analysis_timeout_ms` defaults to 30000 per script, including startup
+and transfer. A failed or timed-out script becomes an explicit unknown while
+completed findings and later scripts remain available. `total_analysis_timeout_ms`
+defaults to 300000 across script analysis; expiry returns a typed timeout with
+partial Evidence and identifies unstarted scripts. These controls are also
+available as CLI flags with hyphenated names. Capture and optional source-map
+fetching have separate budgets.
+
+One web-bundle capture/analysis is admitted per REA process at a time. Completed
+script results share an 8 MiB serialized transfer budget, with host heap
+reservation checked before decoding and validating another result.
+Exhausted result capacity stops further script launches and returns a typed
+resource failure with completed facts and explicit unstarted-script unknowns.
+Worker control frames are limited to 64 KiB. Cleanup must confirm child termination
+before releasing its private files; failed cleanup retains its exact owner and
+blocks replacement until retry succeeds. Cancellation retains completed bundle
+facts, including cancellation during final cleanup.
+
+The worker heap setting is not a process-family RSS limit. Node enforces V8
+old-space flags; Bun ignores them. Windows Bun instead uses an owned process
+commit limit with a 512 MiB runtime reserve; other Bun hosts have no enforced
+memory limit. These bounds do not establish an aggregate host-memory limit
+across other REA operations or external processes.
+
 Resource-tree inventories distinguish a valid empty `resources` array from a
 missing or malformed collection. Invalid resource entries are omitted with
 incomplete coverage, while valid resources from that frame and other frames
@@ -375,12 +409,6 @@ selected session. An optional method is unavailable only when the browser
 rejects it as unknown; other command rejections retain their reported failure.
 
 Network and console coverage starts only after REA attaches and enables the relevant CDP domains. `prior_activity_available` is always `false`; absence from these arrays is not evidence that an event never occurred. Scripts are different: scripts the page parsed before REA attached are still reported under `scripts`. A page that loaded before attach can therefore list its scripts while `network.requests` lacks the requests that fetched them. If CDP reuses a request ID without supplying redirect metadata, REA retains the predecessor observation and marks network coverage incomplete.
-
-Bundle analysis parses each captured script in an owned worker process with a 1024 MiB heap and a 300-second per-script deadline, matching the JavaScript application analysis worker. After worker startup, the parent starts one absolute deadline before staging and requesting each script; that deadline includes source transfer, analysis, and reading, decoding and validating the resulting facts. A delayed start or completion message cannot renew or bypass it, including when the parent's event loop was blocked. Bun ignores V8 heap flags: on Windows the owned Job Object enforces the heap budget plus Bun's runtime reserve, and elsewhere under Bun only the deadline applies. A script that exhausts the heap or deadline, or whose facts exceed the 8 MiB per-script result budget, adds a `javascript_analysis` unknown naming that script and makes completeness partial. Later scripts keep their findings, using a replacement worker after heap exhaustion or timeout. Cancellation stops the worker. A cancellation or cleanup failure that arrives after every script finished keeps the completed bundle analysis as partial Evidence; an earlier one keeps the captured page inspection.
-
-Only the admitted script's source is staged, and its source/result files are removed before the next admission. Validated outcomes are retained before file removal, so a failure to remove the final script's files preserves the completed analysis. The private directory continues to own those files, and successful directory cleanup resolves their cleanup uncertainty. Workers wait for the parent's next request, so a timed-out worker cannot write results for later scripts while it is stopping. Each browser provider owns its active analyses and retained cleanup failures. Provider shutdown stops new admissions, cancels and waits for active analyses, and retries failed worker or private-directory cleanup. Shutdown reports any remaining cleanup failure; a later close retries it without requiring another analysis or involving other providers.
-
-Bundle analysis is serialized within each browser provider, including resource acquisition and cleanup, to bound concurrent worker memory and CPU use. Queued requests can be cancelled before acquiring resources. Failed result-file closes stay owned and are retried before the private directory is removed. If analysis and cleanup both fail, the original typed failure and cancellation reason remain available alongside cleanup diagnostics; successful cleanup retries clear only the cleanup uncertainty.
 
 Source maps are not fetched by inspection. Bundle analysis fetches them only when `fetch_source_maps` is selected, with exact-origin redirect checks and no credentials, cookies, or referrer. Each fetch operation has a 30-second deadline and a 64 MiB aggregate streamed-response budget across redirects. A deadline or byte-limit failure remains explicitly unavailable and makes bundle completeness partial. Source-map decoding also bounds raw resolved identities to 64 MiB and aggregate inline evidence to 32 MiB. Failed maps preserve their failure context when it fits; if another context cannot fit, collection stops with the full requested count, the returned processed count, and an explicit unknown-results limitation. Retained mappings and original sources are returned inline. See [source-location limits](web-source-location.md) for the structural decoder bounds. Original source artifacts with `.ts`, `.tsx`, `.mts`, or `.cts` suffixes carry `text/typescript`; other source names retain `text/javascript`.
 

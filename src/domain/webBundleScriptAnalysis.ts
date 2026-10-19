@@ -1,34 +1,122 @@
 import { z } from "zod";
 
-import { ANALYSIS_RESOURCE_KINDS } from "./analysisErrorCore.js";
 import { webBundleAnalysisSchema } from "./webBundleAnalysis.js";
 
-const observations = webBundleAnalysisSchema.shape.observations.shape;
-
-/**
- * Facts one captured script contributes to a bundle analysis. Every
- * deduplication key the analyzer uses is scoped by script_key, so independently
- * analyzed scripts concatenate in capture order without changing results.
- */
-export const webBundleScriptFactsSchema = z.strictObject({
-  script_key: z.string(),
-  parse: z.enum(["parsed", "recovered", "failed"]),
-  returned_reference_widened: z.boolean(),
-  visited_ast_nodes: z.number().int().min(0),
-  edges: observations.chunks.shape.edges,
-  routes: observations.routes,
-  endpoints: observations.endpoints,
-  webmcp_declarations: observations.webmcp_declarations,
-  inferences: webBundleAnalysisSchema.shape.inferences,
+const observationsSchema = z.strictObject({
+  edges: webBundleAnalysisSchema.shape.observations.shape.chunks.shape.edges,
+  routes: webBundleAnalysisSchema.shape.observations.shape.routes,
+  endpoints: webBundleAnalysisSchema.shape.observations.shape.endpoints,
+  webmcp_declarations:
+    webBundleAnalysisSchema.shape.observations.shape.webmcp_declarations,
 });
-export type WebBundleScriptFacts = z.infer<typeof webBundleScriptFactsSchema>;
 
-/** One script either produced its complete facts or stopped at a resource bound. */
-export type WebBundleScriptOutcome =
-  | { readonly status: "analyzed"; readonly facts: WebBundleScriptFacts }
-  | {
-      readonly status: "resource_limited";
-      readonly script_key: string;
-      readonly resource: (typeof ANALYSIS_RESOURCE_KINDS)[number];
-      readonly reason: string;
+/** Serializable result for one captured script, suitable for worker transport. */
+export const webBundleScriptAnalysisSchema = z
+  .discriminatedUnion("status", [
+    z.strictObject({
+      status: z.literal("analyzed"),
+      script_key: z.string(),
+      parse_status: z.enum(["parsed", "recovered", "failed"]),
+      visited_ast_nodes: z.number().int().min(0),
+      widened_return_references: z.boolean(),
+      observations: observationsSchema,
+      inferences: webBundleAnalysisSchema.shape.inferences,
+    }),
+    z.strictObject({
+      status: z.literal("unavailable"),
+      script_key: z.string(),
+      reason: z.enum([
+        "worker_failure",
+        "deadline",
+        "resource_constraint",
+        "cancelled",
+        "not_started",
+      ]),
+      detail: z.string().optional(),
+    }),
+  ])
+  .superRefine((result, context) => {
+    if (result.status !== "analyzed") return;
+
+    const checkScriptKey = (
+      scriptKey: string,
+      path: (string | number)[],
+    ): void => {
+      if (scriptKey !== result.script_key)
+        context.addIssue({
+          code: "custom",
+          path,
+          message: "Per-script analysis evidence must name its owning script",
+        });
     };
+
+    result.observations.edges.forEach((edge, index) => {
+      checkScriptKey(edge.from_script_key, [
+        "observations",
+        "edges",
+        index,
+        "from_script_key",
+      ]);
+      checkScriptKey(edge.location.script_key, [
+        "observations",
+        "edges",
+        index,
+        "location",
+        "script_key",
+      ]);
+    });
+    for (const collection of ["routes", "endpoints"] as const)
+      result.observations[collection].forEach((finding, index) =>
+        checkScriptKey(finding.location.script_key, [
+          "observations",
+          collection,
+          index,
+          "location",
+          "script_key",
+        ]),
+      );
+    result.observations.webmcp_declarations.forEach((declaration, index) =>
+      checkScriptKey(declaration.location.script_key, [
+        "observations",
+        "webmcp_declarations",
+        index,
+        "location",
+        "script_key",
+      ]),
+    );
+    result.inferences.forEach((inference, inferenceIndex) =>
+      inference.basis.forEach((basis, basisIndex) =>
+        checkScriptKey(basis.script_key, [
+          "inferences",
+          inferenceIndex,
+          "basis",
+          basisIndex,
+          "script_key",
+        ]),
+      ),
+    );
+
+    if (result.parse_status === "failed") {
+      const hasFindings =
+        result.observations.edges.length > 0 ||
+        result.observations.routes.length > 0 ||
+        result.observations.endpoints.length > 0 ||
+        result.observations.webmcp_declarations.length > 0 ||
+        result.inferences.length > 0;
+      if (
+        result.visited_ast_nodes !== 0 ||
+        result.widened_return_references ||
+        hasFindings
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["parse_status"],
+          message:
+            "A failed script parse cannot carry visited nodes or derived findings",
+        });
+    }
+  });
+
+export type WebBundleScriptAnalysis = z.infer<
+  typeof webBundleScriptAnalysisSchema
+>;
