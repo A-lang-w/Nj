@@ -556,3 +556,71 @@ it("parses the Rizin inferior TTY as an option and passes it to the manager", as
     inferiorTty: "/dev/pts/7",
   });
 });
+
+it("reports concurrent CLI admission as retryable capacity and admits work after release", async () => {
+  const { directory, path } = await createArtifact();
+  const commands = new Map<string, { run(input: unknown): Promise<unknown> }>();
+  const cli = {
+    command: (
+      name: string,
+      definition: { run(input: unknown): Promise<unknown> },
+    ) => {
+      commands.set(name, definition);
+      return cli;
+    },
+  } as unknown as CliInstance;
+  let entered!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const createService = vi.fn(
+    (environment = process.env) =>
+      new CoreReverseEngineeringService({
+        environment,
+        commands: createReverseEngineeringCommandPort(environment),
+        runOwned: async () => {
+          entered();
+          await gate;
+          return providerSnapshot();
+        },
+      }),
+  );
+  registerReverseEngineeringCommands(
+    cli,
+    pino({ enabled: false }),
+    {},
+    undefined,
+    createService,
+  );
+  const invoke = () =>
+    commands.get(CLI_COMMANDS.inspectWithObjdump)!.run({
+      args: { path, operation: "file_headers" },
+      options: { followDebugLinks: false },
+    });
+  const running = invoke();
+  try {
+    await started;
+    expect(await invoke()).toMatchObject({
+      code: "resource_constraint",
+      retryable: true,
+      remediation: {
+        action:
+          "Wait for an active analysis to complete, then retry within the reported admission limits.",
+      },
+      details: { resource: "capacity" },
+    });
+    expect(createService).toHaveBeenCalledTimes(1);
+    release();
+    expect(await running).toMatchObject({ provider: { id: "gnu.objdump" } });
+    expect(await invoke()).toMatchObject({ provider: { id: "gnu.objdump" } });
+    expect(createService).toHaveBeenCalledTimes(2);
+  } finally {
+    release();
+    await running;
+    await rm(directory, { recursive: true, force: true });
+  }
+});

@@ -122,7 +122,7 @@ export const registerReverseEngineeringCommands = (
       return err(
         new AnalysisResourceConstraintError(
           "reverse_engineering_cleanup",
-          "transport",
+          "capacity",
           "A CLI provider command is already running.",
           { max_concurrent_operations: 1 },
         ),
