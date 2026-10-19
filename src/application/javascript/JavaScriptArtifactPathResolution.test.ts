@@ -1853,30 +1853,45 @@ describe("legacy subpath separator and backslash refusals", () => {
       }),
     ).toMatchObject({ resolution_status: "rejected", resolved_path: null });
   });
+});
 
-  // A whole-segment percent-encoded dot reaches a file only after URL
-  // dot-segment rewriting — including the control-character spellings that
-  // become %2e once HTML/URL stripping removes the tab — so those subpaths
-  // refuse with the canonical-syntax limitation like the acceptance suite
-  // pins, while partial escapes inside one filename stay loadable.
-  it("rejects whole-segment encoded dots on legacy ESM subpaths with the canonical-syntax limitation", () => {
+describe("legacy ESM URL normalization", () => {
+  it("normalizes legacy encoded dot segments while retaining URL directory form", () => {
     const files = fileMap([
       file("src/importer.mjs", "root"),
-      file(
-        "node_modules/legacy/package.json",
-        "root",
-        '{"name":"legacy","main":"lib.js"}',
-      ),
-      file("node_modules/legacy/lib.js", "root"),
+      file("node_modules/legacy/package.json", "root", '{"name":"legacy"}'),
       file("node_modules/legacy/feature.js", "root"),
-      file("node_modules/legacy/child/feature.js", "root"),
+      file("node_modules/outside.js", "root"),
     ]);
-    for (const declaredPath of [
-      "legacy/child/%2e%2e/feature.js",
-      "legacy/child/%2\te%2\te/feature.js",
-      "legacy/child/.%2\nE/feature.js",
-      "legacy/feature.js/%2e",
-    ])
+    for (const [declaredPath, resolvedPath, commonJsMatches] of [
+      ["legacy/%2e/feature.js", "node_modules/legacy/feature.js", false],
+      [
+        "legacy/child/%2e%2e/feature.js",
+        "node_modules/legacy/feature.js",
+        false,
+      ],
+      [
+        "legacy/child/%2\te%2\te/feature.js",
+        "node_modules/legacy/feature.js",
+        false,
+      ],
+      [
+        "legacy/child/.%2\nE/feature.js",
+        "node_modules/legacy/feature.js",
+        false,
+      ],
+      ["legacy/%2e%2e/outside.js", "node_modules/outside.js", false],
+      [
+        "legacy/hidden%2f/../feature.js",
+        "node_modules/legacy/feature.js",
+        true,
+      ],
+      [
+        "legacy/hidden%5c/../feature.js",
+        "node_modules/legacy/feature.js",
+        true,
+      ],
+    ] as const) {
       expect(
         resolve({
           declaredPath,
@@ -1886,12 +1901,35 @@ describe("legacy subpath separator and backslash refusals", () => {
           files,
         }),
       ).toMatchObject({
-        resolution_status: "rejected",
-        resolved_path: null,
-        limitations: expect.arrayContaining([
-          "Encoded dot or separator bytes are rejected before artifact path resolution.",
-        ]),
+        resolution_status: "resolved",
+        resolved_path: resolvedPath,
       });
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "src/importer.mjs",
+          context: "module-specifier",
+          moduleKind: "require",
+          files,
+        }),
+      ).toMatchObject({
+        resolution_status: commonJsMatches ? "resolved" : "not-found",
+        resolved_path: commonJsMatches ? resolvedPath : null,
+      });
+    }
+    expect(
+      resolve({
+        declaredPath: "legacy/feature.js/%2e",
+        sourcePath: "src/importer.mjs",
+        context: "module-specifier",
+        moduleKind: "import",
+        files,
+      }),
+    ).toMatchObject({
+      resolution_status: "rejected",
+      resolved_path: null,
+      limitations: [expect.stringContaining("URL directory form")],
+    });
   });
 });
 
@@ -3312,6 +3350,40 @@ describe("url-reference JavaScript artifact path resolution", () => {
 });
 
 describe("package exports pattern keys", () => {
+  it.each([
+    { mapKind: "exports", target: "./*", request: "fixture/x/feature.js/" },
+    { mapKind: "exports", target: "./*/", request: "fixture/x/feature.js" },
+    { mapKind: "imports", target: "./*/", request: "#x/feature.js" },
+  ] as const)(
+    "retains directory form for $mapKind pattern target $target",
+    ({ mapKind, target, request }) => {
+      const files = aliasFiles({
+        "package.json": JSON.stringify({
+          name: "fixture",
+          [mapKind]: {
+            [mapKind === "imports" ? "#x/*" : "./x/*"]: [target, "./safe.js"],
+          },
+        }),
+        "main.js": "",
+        "feature.js": "",
+        "safe.js": "",
+      });
+      for (const moduleKind of ["import", "require"] as const)
+        expect(
+          resolve({
+            declaredPath: request,
+            sourcePath: "main.js",
+            context: "module-specifier",
+            moduleKind,
+            files,
+          }),
+        ).toMatchObject({
+          resolution_status: moduleKind === "import" ? "rejected" : "not-found",
+          resolved_path: null,
+          limitations: [expect.stringContaining("URL has directory form")],
+        });
+    },
+  );
   it.each(["imports", "exports"] as const)(
     "preserves a Node-selected normalized pattern URL outside its %s package",
     (mapKind) => {
@@ -3799,7 +3871,7 @@ describe("package import alias pattern captures", () => {
     expect(outcome.resolved_path).not.toBe("safe.js");
   });
 
-  it("matches a hashless pattern key but reaches no file when the capture truncates the URL", () => {
+  it("rejects a directory URL when a hashless pattern capture truncates its pathname", () => {
     const files = aliasFiles({
       "package.json": JSON.stringify({
         imports: { "*": "./src/*.js" },
@@ -3815,8 +3887,9 @@ describe("package import alias pattern captures", () => {
       files,
     });
     expect(outcome).toMatchObject({
-      resolution_status: "not-found",
+      resolution_status: "rejected",
       resolved_path: null,
+      limitations: [expect.stringContaining("URL has directory form")],
     });
     expect(outcome.resolved_path).not.toBe("src/#foo.js");
   });

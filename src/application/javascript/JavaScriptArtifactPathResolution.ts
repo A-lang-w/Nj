@@ -604,23 +604,6 @@ const decodeModuleUrlPath = (
     : decoded;
 };
 
-// True when one path segment carries percent escapes and decodes, as a whole
-// segment, to "." or "..". Raw dot segments are excluded: they belong to URL
-// normalization and its directory-form answers.
-const encodedWholeDotSegment = (path: string): string | null => {
-  for (const segment of path.split("/")) {
-    if (!segment.includes("%")) continue;
-    let decoded: string;
-    try {
-      decoded = decodeURIComponent(segment);
-    } catch {
-      return null;
-    }
-    if (decoded === "." || decoded === "..") return segment;
-  }
-  return null;
-};
-
 const relativeCandidate = (sourcePath: string, declared: string): string =>
   declared.startsWith("/")
     ? declared.slice(1)
@@ -976,29 +959,9 @@ const resolveLegacyEsmSubpath = (
   directory: string,
   subpath: string,
 ): CandidateResolution => {
-  const declaredSubpath = stripQueryAndFragment(htmlUrlText(subpath));
-  // Node refuses a legacy ESM subpath whose percent escapes decode to a path
-  // separator with ERR_INVALID_MODULE_SPECIFIER before any file lookup. A raw
-  // backslash instead follows the file URL's special-scheme rule and resolves
-  // as a separator, so only the encoded spellings refuse here.
-  if (/%(?:2f|5c)/iu.test(declaredSubpath))
-    return unresolvedCandidate("rejected", [
-      "Encoded dot or separator bytes are rejected before artifact path resolution.",
-    ]);
-  // A whole-segment percent-encoded dot names a file only after URL
-  // dot-segment rewriting, including the control-character spellings that
-  // become %2e once HTML/URL stripping removes the tab. Refuse those with
-  // the canonical-syntax message like the acceptance suite pins; raw dot
-  // segments keep flowing to the URL's directory-form answer, and partial
-  // escapes inside an ordinary filename stay loadable.
-  if (encodedWholeDotSegment(declaredSubpath) !== null)
-    return unresolvedCandidate("rejected", [
-      "Encoded dot or separator bytes are rejected before artifact path resolution.",
-    ]);
-  if (declaredSubpath.includes("\0"))
-    return unresolvedCandidate("rejected", [
-      "The decoded module URL path contains NUL.",
-    ]);
+  // Package resolution constructs a URL before loader finalization. Admit
+  // only its surviving pathname: dot segments can remove encoded separators,
+  // and encoded dots can normalize to another retained artifact file.
   const metadataUrl = packageMetadataUrl(
     posix.join(directory, "package.json"),
     subpath,
@@ -1142,6 +1105,15 @@ const resolveExportTarget = (
   if (typeof candidate !== "string") return withTargetSource(candidate);
   if (target.lookupLimitation !== undefined)
     return unresolvedCandidate("unavailable", [target.lookupLimitation]);
+  if (urlPathIsDirectory(target.url.pathname))
+    return withTargetSource(
+      unresolvedCandidate(
+        input.moduleKind === "require" ? "not-found" : "rejected",
+        [
+          "The selected package URL has directory form; package targets are exact files, so no file, extension or directory index lookup was attempted.",
+        ],
+      ),
+    );
   return (
     resolveFileCandidates(input, [candidate]) ??
     withTargetSource(exactPackageTargetNotFound(candidate, mapKind))
