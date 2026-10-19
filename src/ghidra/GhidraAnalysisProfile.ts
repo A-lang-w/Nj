@@ -292,7 +292,7 @@ export const resolveGhidraAnalysisProfile = async (
               language_id: "MIPS:LE:32:default",
               compiler_spec_id: "default",
               file_offset: 2048,
-              entry_seed: "psx-header-entry-gp-sp-bss-v1",
+              entry_seed: "psx-header-entry-gp-sp-bss-v2",
               processor_limitations:
                 "generic-mips-decoder-no-gte-or-load-delay-execution",
             }

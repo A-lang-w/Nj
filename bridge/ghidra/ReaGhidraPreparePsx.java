@@ -54,7 +54,9 @@ public final class ReaGhidraPreparePsx extends GhidraScript {
             currentProgram.getProgramContext().setValue(currentProgram.getRegister("sp"), entry, entry, stack);
             currentProgram.getProgramContext().setValue(frame, entry, entry, stack);
         }
-        currentProgram.getProgramContext().setValue(currentProgram.getRegister("gp"), entry, entry, BigInteger.valueOf(values[3]));
+        // A zero GP declares no small-data base; leave the register unknown rather than zero.
+        if (values[3] != 0)
+            currentProgram.getProgramContext().setValue(currentProgram.getRegister("gp"), entry, entry, BigInteger.valueOf(values[3]));
         addEntryPoint(entry);
         disassemble(entry);
         if (getInstructionAt(entry) == null)

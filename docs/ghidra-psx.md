@@ -13,9 +13,10 @@ The `psx-exe-r3000a-static-v1` profile imports the complete original file with
 Ghidra's BinaryLoader, then maps only the declared payload at the header's
 load address. File offset `0x800` corresponds to that address; the entry can
 be elsewhere in the payload. The pre-analysis script verifies the original
-header against the committed profile, seeds the entry function and declared
-GP and nonzero-base SP, and creates an uninitialized BSS block when declared.
-A zero stack base means the incoming stack is unknown, not zero. The reserved
+header against the committed profile, seeds the entry function, nonzero GP and
+nonzero-base SP, and creates an uninitialized BSS block when declared.
+A zero GP or stack base means the incoming value is unknown, not zero, so
+GP-relative accesses are not resolved against address 0. The reserved
 data-address/data-size fields are retained without inventing another mapping.
 
 The admitted load/BSS ranges fit original PlayStation 2 MiB RAM, through its
