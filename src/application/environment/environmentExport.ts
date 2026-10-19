@@ -12,6 +12,7 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { RegularFileChangedError } from "../../filesystem/RegularFile.js";
 import { sealOwnedJsonInput } from "../OwnedJsonInput.js";
 import { nativeJsonParseRequiredBytes } from "../JsonInputFile.js";
 import { readRegularFile } from "../RegularFileRead.js";
@@ -219,6 +220,18 @@ const readInput = async (
     });
   } catch (cause: unknown) {
     if (cause instanceof AnalysisResourceConstraintError) return err(cause);
+    if (cause instanceof RegularFileChangedError)
+      return err(
+        inputError(
+          {
+            path: [role],
+            reason: "invalid_value",
+            expected: "one stable regular file snapshot",
+            message: `The ${role} file changed while it was read.`,
+          },
+          `${path} changed while being read; retry with stable input files.`,
+        ),
+      );
     if (NOT_A_FILE_CODES.has(systemCode(cause) ?? ""))
       return err(
         inputError(
