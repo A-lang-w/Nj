@@ -31,6 +31,11 @@ import { parseExecutableHeader } from "../../../src/domain/binaryTarget.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
+const TINY_PE_97 = Buffer.from(
+  "TVoAAFBFAABMAQEAaipYwwAAAAAAAAAABAADAQsBCAAEAAAAAAAAAAQAAAAMAAAABAAAAAwAAAAAAEAABAAAAAQAAAAEAAAAAAAAAAQAAAAAAAAAaAAAAGQAAAAAAAAAAg==",
+  "base64",
+);
+
 it.each([0x01c0, 0x01c2, 0x01c4, 0xaa64])(
   "retains original PE COFF machine %i through file-backed target resolution",
   async (peMachine) => {
@@ -1029,6 +1034,22 @@ describe("DOS binary target I/O", () => {
     expect(await parseBinaryTarget(path)).toMatchObject({
       ok: false,
       error: { message: "Cannot open artifact: truncated DOS MZ load module" },
+    });
+  });
+
+  it("no longer refuses an overlapped-header PE as an invalid new-header offset", async () => {
+    const directory = await createTestTempDirectory("rea-tiny-pe-target-");
+    const path = join(directory, "tiny.97.exe");
+    await writeFile(path, TINY_PE_97);
+
+    const result = await parseBinaryTarget(path, {
+      cwd: directory,
+      hostArchitecture: "x64",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { reason: "truncated PE optional header" },
     });
   });
 });

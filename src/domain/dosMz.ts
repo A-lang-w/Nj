@@ -40,6 +40,10 @@ export type MzWindowsHeaderObservation =
  * A bounded prefix that does not reach the candidate requests one bounded read
  * from its owner instead of treating unexamined bytes as absent.
  */
+
+export const minimumWindowsHeaderOffset = (signature: string): number =>
+  signature === "PE" ? 4 : 64;
+
 export const observeMzWindowsHeader = (
   bytes: Buffer,
   fileSize = bytes.length,
