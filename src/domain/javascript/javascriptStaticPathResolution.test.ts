@@ -393,7 +393,8 @@ const parsePathExpression = (expression: string) =>
 
 const analyzePathConsumers = (expression: string) => {
   const property = `preload: ${expression}`;
-  const genericPrefix = 'import path from "node:path"; const options = { ';
+  const genericPrefix =
+    'import path, {dirname} from "node:path"; import {fileURLToPath} from "node:url"; const options = { ';
   const windowPrefix = "new BrowserWindow({ webPreferences: { ";
   const windowExpression = `${windowPrefix}${property} } })`;
   const utilityExpression = `utilityProcess.fork(${expression})`;
@@ -420,7 +421,14 @@ const assertPathProjection = (
     callee: import("@babel/types").Node,
     fact?: "source-directory",
   ) => {
-    if (fact === "source-directory") return true;
+    if (fact === "source-directory") {
+      const name = calleeName(
+        callee.type === "CallExpression" ? callee.callee : callee,
+      );
+      return (
+        name === "__dirname" || name === "dirname" || name.endsWith(".dirname")
+      );
+    }
     const name = calleeName(callee);
     return name.endsWith(".resolve") && !name.includes("win32");
   };

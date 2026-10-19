@@ -27,6 +27,7 @@ import {
 import type { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
 import { assignmentValueSources } from "./javascriptSemanticRequireOrigin.js";
+import { semanticRuntimeExportValueSources } from "./javascriptModuleDeclaration.js";
 
 interface Candidate {
   readonly node: t.Node;
@@ -62,7 +63,7 @@ export const createSemanticElectronAppPathChangeQuery = (
     ReturnType<typeof createSemanticModuleInterop>,
     "intrinsicInvocation" | "intrinsicPath"
   >,
-): ((call: t.CallExpression | t.OptionalCallExpression) => boolean) => {
+): ((node: t.Node) => boolean) => {
   const directReturns = createSemanticReturnedReferences(state, "direct-call");
   const awaitedReturns = createSemanticReturnedReferences(
     state,
@@ -297,11 +298,13 @@ export const createSemanticElectronAppPathChangeQuery = (
     }
     return false;
   };
-  return (call) =>
-    possiblePath(call.callee) ||
-    interop.intrinsicInvocation(call, (callee) =>
-      possiblePath(callee)
-        ? ["electron-app-path-change"]
-        : interop.intrinsicPath(callee),
-    )?.path[0] === "electron-app-path-change";
+  return (node) =>
+    t.isCallExpression(node) || t.isOptionalCallExpression(node)
+      ? possiblePath(node.callee) ||
+        interop.intrinsicInvocation(node, (callee) =>
+          possiblePath(callee)
+            ? ["electron-app-path-change"]
+            : interop.intrinsicPath(callee),
+        )?.path[0] === "electron-app-path-change"
+      : semanticRuntimeExportValueSources(node).some(possiblePath);
 };

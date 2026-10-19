@@ -823,9 +823,7 @@ export interface JavaScriptElectronIdentity {
   readonly invocationPath: (
     node: t.CallExpression | t.OptionalCallExpression,
   ) => readonly string[] | undefined;
-  readonly mayChangeAppPath: (
-    node: t.CallExpression | t.OptionalCallExpression,
-  ) => boolean;
+  readonly mayChangeAppPath: (node: t.Node) => boolean;
 }
 
 export function* indexJavaScriptElectronIdentitySteps(

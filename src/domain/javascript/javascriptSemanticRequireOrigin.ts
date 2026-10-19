@@ -1,5 +1,4 @@
 import {
-  semanticProjectedSourcesAtRead as moduleObjectSourcesAtRead,
   semanticProjectedSourceFactsAtRead,
   semanticProjectedSourceEligibilityAtRead,
   semanticNormalizeCapturedSelections,
@@ -1002,6 +1001,26 @@ const hasCommonJsModuleSource = (
     }
     if (!t.isIdentifier(value)) continue;
     const binding = resolveSemanticBindingState(state, value, value.name);
+    const mainModulePath =
+      value.name === "require" &&
+      state.program.sourceType === "script" &&
+      path.length === (target === "module" ? 1 : 2) &&
+      semanticAliasSelectionChoices(path[0]!).some(
+        (key) => key === null || semanticPropertyPathKeyMatches(key, "main"),
+      ) &&
+      (target === "module" ||
+        semanticAliasSelectionChoices(path[1]!).some(
+          (key) =>
+            key === null || semanticPropertyPathKeyMatches(key, "require"),
+        ));
+    // Native wrapper require.main is a Module, with a process-relative loader.
+    // Its selected binding writes below can replace that source with local data.
+    if (
+      mainModulePath &&
+      binding === undefined &&
+      !semanticResolutionBlocked(state, value, "require")
+    )
+      return true;
     const copyAdmitsModuleDelegate =
       value.name !== "module" ||
       target !== "delegate" ||
@@ -1029,6 +1048,11 @@ const hasCommonJsModuleSource = (
     }
     if (binding === undefined) continue;
     const read = semanticBindingAtRead(binding, value, state.parentsByNode);
+    const retainsMainModule =
+      mainModulePath &&
+      commonJsWrapperBindingDeclaration(value, "require", state) !==
+        undefined &&
+      !read.hasDefiniteInitializer;
     if (
       value.name === "module" &&
       copyAdmitsModuleDelegate &&
@@ -1044,6 +1068,18 @@ const hasCommonJsModuleSource = (
     )
       return true;
     let eligibility = next.eligibility;
+    const facts = eligibility
+      ? undefined
+      : semanticProjectedSourceFactsAtRead(
+          binding,
+          value,
+          path,
+          state,
+          includeUnknown,
+          next.readAt ?? value,
+          next.capturedSelections,
+        );
+    if (retainsMainModule && (eligibility || facts?.retainsOrigin)) return true;
     let sources = eligibility
       ? semanticProjectedSourceEligibilityAtRead(
           binding,
@@ -1053,15 +1089,7 @@ const hasCommonJsModuleSource = (
           next.readAt ?? value,
           next.capturedSelections,
         )
-      : moduleObjectSourcesAtRead(
-          binding,
-          value,
-          path,
-          state,
-          includeUnknown,
-          next.readAt ?? value,
-          next.capturedSelections,
-        );
+      : facts?.sources;
     if (sources === undefined) {
       if (target !== "delegate") return true;
       // An opaque member effect can obscure a selected native delegate, but

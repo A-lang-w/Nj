@@ -615,7 +615,9 @@ export const commonJsWrapperBindingDeclaration = (
   // specifier resolution mode does not establish that distinction.
   if (
     state.program.sourceType !== "script" ||
-    !["module", "exports", "require"].includes(name) ||
+    !["module", "exports", "require", "__dirname", "__filename"].includes(
+      name,
+    ) ||
     !t.isIdentifier(node, { name })
   )
     return undefined;

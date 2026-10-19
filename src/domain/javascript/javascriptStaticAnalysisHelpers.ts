@@ -413,13 +413,8 @@ const isDirectoryPath = (
   nodePathResolve?: JavaScriptStaticPathIntrinsicQuery,
 ): boolean => {
   if (node !== undefined) node = unwrapJavaScriptExpression(node).node;
-  if (t.isIdentifier(node, { name: "__dirname" }))
-    return nodePathResolve?.(node, "source-directory") === true;
-  if (!t.isCallExpression(node)) return false;
-  const name = calleeName(node.callee);
   return (
-    (name === "dirname" || name.endsWith(".dirname")) &&
-    isFileIdentity(argumentNode(node.arguments[0]))
+    node !== undefined && nodePathResolve?.(node, "source-directory") === true
   );
 };
 

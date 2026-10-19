@@ -165,6 +165,16 @@ const cases = [
     possible: true,
   },
   {
+    name: "main module receiver",
+    load: 'require.main.require("../shared/window.cjs");',
+    possible: true,
+  },
+  {
+    name: "local main module receiver",
+    load: 'const require={main:{require(){}}};require.main.require("../shared/window.cjs");',
+    possible: false,
+  },
+  {
     name: "captured delegate",
     load: 'const load=(0,module.require);load("../shared/window.cjs");',
     possible: true,

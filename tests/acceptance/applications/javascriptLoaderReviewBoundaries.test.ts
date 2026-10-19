@@ -335,8 +335,8 @@ const loaderCases = [
     name: "shared deep child local write",
     source:
       'const old={child:{inner:{make:()=>module}}};const box={...old};old.child={inner:box.child.inner};old.child.inner.make=()=>({require(){}});box.child.inner.make().require("../shared/window.cjs");',
-    unknownOwner: true,
-    unknownLoad: true,
+    unknownOwner: false,
+    unknownLoad: false,
     absentUnknownExpression:
       'box.child.inner.make().require("../shared/window.cjs")',
   },
