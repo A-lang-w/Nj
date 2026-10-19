@@ -158,6 +158,28 @@ describe("replayEnvironmentTool selection", () => {
     expect(unmatched.replay.recorded_query).toBe("?query=probe&type=dash-db");
   });
 
+  it("prefers a recorded segment equal to the argument over one that only matches after decoding", () => {
+    const users = { ...tool("get_users_by_id"), record_ordinals: [901, 902] };
+    const exchange = (ordinal: number, path: string): RecordedExchange => ({
+      ordinal,
+      path,
+      query: null,
+      status: 200,
+      contentType: null,
+      bodyText: null,
+    });
+    const exchanges = new Map<number, RecordedExchange>([
+      [901, exchange(901, "/api/users/a%252Fb")],
+      [902, exchange(902, "/api/users/a%2Fb")],
+    ]);
+    expect(
+      selectReplayExchange(users, exchanges, { id: "a%2Fb" }),
+    ).toMatchObject({ exchange: { ordinal: 902 }, exact: true });
+    expect(selectReplayExchange(users, exchanges, { id: "a/b" })).toMatchObject(
+      { exchange: { ordinal: 902 }, exact: true },
+    );
+  });
+
   it("prefers path matches over query matches and keeps manifest order on ties", () => {
     const search = tool("get_search");
     const [first, second] = search.record_ordinals;

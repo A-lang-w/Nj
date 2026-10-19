@@ -5,6 +5,8 @@ import type { OptionalProviderLoadResult } from "../application/OptionalObservat
 
 /** Teardown handle every MCP transport returns to the runtime. */
 export interface McpServerHandle {
+  /** Optional transport barrier before shared provider teardown. */
+  readonly prepareShutdown?: () => Promise<void>;
   readonly close: () => Promise<void>;
 }
 

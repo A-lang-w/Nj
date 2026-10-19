@@ -7,7 +7,7 @@ import {
   readRequestBody,
   WebStandardStreamableHTTPServerTransport,
   type McpServer,
-  type McpServerFactory,
+  type McpRequestContext,
   type Server,
 } from "@modelcontextprotocol/server";
 import { randomUUID } from "node:crypto";
@@ -17,7 +17,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import { isIPv4, isIPv6 } from "node:net";
+import { isIPv4, isIPv6, type AddressInfo } from "node:net";
 import type { Logger } from "pino";
 
 import {
@@ -26,6 +26,13 @@ import {
   writeWebResponse,
 } from "./nodeHttpBridge.js";
 import { StreamableHttpListenError } from "./streamableHttpListenError.js";
+import {
+  NodeHttpRequestOwner,
+  type HttpAdmissionLifetime,
+  type NodeHttpExchangeContext,
+} from "./NodeHttpRequestOwner.js";
+import { RequestTrackingMcpServer } from "../RequestTrackingMcpServer.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 
 /** MCP endpoint path shared by `rea mcp --http` and agent environment servers. */
 export const MCP_HTTP_PATH = "/mcp";
@@ -41,7 +48,13 @@ export interface ServeStreamableHttpOptions {
   readonly host: string;
   readonly port: number;
   /** Called once; the instance serves every session in turn on a fresh transport. */
-  readonly createMcpServer: McpServerFactory;
+  readonly createMcpServer: (
+    context: McpRequestContext,
+  ) => RequestTrackingMcpServer | Promise<RequestTrackingMcpServer>;
+  /** Maximum time a client session handover waits for cancelled tool/completion handlers. */
+  readonly sessionDrainTimeoutMs?: number;
+  /** Concurrent HTTP input/route work (default 8); unread uploads retain their permit. */
+  readonly maxConcurrentDispatches?: number;
   readonly routes?: readonly StreamableHttpRoute[];
   readonly logger?: Logger;
   /** Reports listener failures after binding; request failures are logged instead. */
@@ -53,6 +66,8 @@ export interface ServeStreamableHttpOptions {
 export interface StreamableHttpServer {
   /** The bound MCP endpoint URL. */
   readonly url: string;
+  /** Stop incoming dispatch and drain handlers before shared provider owners close. */
+  readonly prepareShutdown: () => Promise<void>;
   readonly close: () => Promise<void>;
 }
 
@@ -66,15 +81,8 @@ const normalizedHostname = (host: string): string | undefined => {
 };
 const isLoopbackIpv4 = (address: string): boolean =>
   isIPv4(address) && address.startsWith("127.");
-/** Loopback by address class and localhost names, so no spelling of a local bind skips validation. */
-const isLoopbackHostname = (hostname: string): boolean => {
-  if (
-    hostname === "localhost" ||
-    hostname === "localhost." ||
-    hostname.endsWith(".localhost") ||
-    hostname.endsWith(".localhost.")
-  )
-    return true;
+/** Classify the native bound IP; configured DNS names are not binding evidence. */
+const isLoopbackAddress = (hostname: string): boolean => {
   if (isLoopbackIpv4(hostname)) return true;
   if (!hostname.startsWith("[") || !hostname.endsWith("]")) return false;
   const inner = hostname.slice(1, -1);
@@ -85,14 +93,15 @@ const isLoopbackHostname = (hostname: string): boolean => {
   const hex = /^([0-9a-f]{1,4}):[0-9a-f]{1,4}$/u.exec(mapped);
   return hex !== null && Number.parseInt(hex[1] ?? "0", 16) >> 8 === 0x7f;
 };
-/** Host and Origin allowlist when the configured host or the address it bound is loopback, including both names; undefined relaxes validation. */
+/** Classify the bound address first, then allow its address and configured name. */
 export const hostHeaderAllowlist = (
   host: string,
-  boundAddress = host,
+  boundAddress: string,
 ): string[] | undefined => {
-  const names = [normalizedHostname(host), normalizedHostname(boundAddress)];
+  const bound = normalizedHostname(boundAddress);
+  if (bound === undefined || !isLoopbackAddress(bound)) return undefined;
+  const names = [normalizedHostname(host), bound];
   const known = names.filter((name): name is string => name !== undefined);
-  if (!known.some((name) => isLoopbackHostname(name))) return undefined;
   return [...new Set([...localhostAllowedHostnames(), ...known])];
 };
 
@@ -117,6 +126,21 @@ const describe = (cause: unknown): string =>
 const NO_SHUTDOWN_HOOK = (): void => undefined;
 const SHUTTING_DOWN = (): Response =>
   jsonError(503, -32000, "Server shutting down");
+const SESSION_NOT_FOUND = (): Response =>
+  jsonError(404, -32001, "Session not found");
+const DEFAULT_SESSION_DRAIN_TIMEOUT_MS = 10_000;
+const DEFAULT_MAX_CONCURRENT_DISPATCHES = 8;
+
+class SessionDrainTimeoutError extends AnalysisResourceConstraintError {
+  constructor(timeoutMs: number) {
+    super(
+      "mcp_http_session",
+      "transport",
+      "Previous MCP session still has running requests; retry after they finish",
+      { drain_timeout_ms: timeoutMs },
+    );
+  }
+}
 
 /** Split a header field on `separator` outside quoted strings, honouring backslash escapes (RFC 9110). */
 const splitUnquoted = (value: string, separator: string): string[] => {
@@ -196,25 +220,91 @@ const isInitializePost = async (request: Request): Promise<boolean> => {
   }
 };
 
-/** The connected transport of one session and the SDK close that ends it as a server shutdown. */
-interface LiveSession {
-  readonly transport: WebStandardStreamableHTTPServerTransport;
-  readonly shutdown: () => Promise<void>;
+/** Owns parsing and dispatch as well as the connected transport of one session. */
+class LiveSession {
+  #closed = false;
+  readonly #bodyAbort = new AbortController();
+  readonly #shutdown: () => Promise<void>;
+
+  constructor(
+    readonly transport: WebStandardStreamableHTTPServerTransport,
+    private readonly instance: RequestTrackingMcpServer,
+  ) {
+    this.#shutdown = transport.close.bind(transport);
+  }
+
+  /** Install after connect, so the SDK and Evidence adapter have bound their callbacks. */
+  fenceDispatch(): void {
+    const dispatch = this.transport.onmessage;
+    this.transport.onmessage = (...args) => {
+      if (!this.#closed) dispatch?.(...args);
+    };
+  }
+
+  handle(request: Request): Promise<Response> {
+    if (this.#closed) return Promise.resolve(SESSION_NOT_FOUND());
+    // DELETE awaits this session's close; including it in its own drain would deadlock.
+    if (request.method === "DELETE")
+      return this.transport.handleRequest(request);
+    return Promise.resolve(
+      this.instance.runRequest(undefined, async () => {
+        if (this.#closed) return SESSION_NOT_FOUND();
+        const bodyAbort = new AbortController();
+        try {
+          const guarded =
+            request.body === null
+              ? request
+              : new Request(request, {
+                  body: request.body.pipeThrough(
+                    new TransformStream<Uint8Array, Uint8Array>(),
+                    {
+                      signal: AbortSignal.any([
+                        this.#bodyAbort.signal,
+                        bodyAbort.signal,
+                      ]),
+                    },
+                  ),
+                  duplex: "half",
+                } as RequestInit);
+          const response = await this.transport.handleRequest(guarded);
+          if (!this.#closed) return response;
+          // The SDK may have crossed an await before close and created its SSE
+          // response afterwards. Cancel that stream before releasing its owner.
+          await response.body?.cancel();
+          return SESSION_NOT_FOUND();
+        } finally {
+          // Header/size refusals can leave the SDK body unread. Its forwarding
+          // stream belongs to this dispatch, not the remaining session lifetime.
+          bodyAbort.abort();
+        }
+      }),
+    );
+  }
+
+  shutdown(): Promise<void> {
+    this.#closed = true;
+    this.#bodyAbort.abort();
+    return this.#shutdown();
+  }
 }
 
 /** Owns the single connected server and the transport of its current session. */
 export class McpSessionSlot {
   #live: LiveSession | undefined;
-  #arming: Promise<WebStandardStreamableHTTPServerTransport> | undefined;
+  #arming: Promise<LiveSession> | undefined;
   #closed = false;
   #hookRan = false;
+  #draining = false;
+  #ending: Promise<void> | undefined;
   /** The instance's own close hook, captured once; it runs exactly once, when the listener closes. */
   readonly #shutdownHook: () => void;
 
   constructor(
-    private readonly instance: McpServer | Server,
+    private readonly instance: RequestTrackingMcpServer,
     private readonly logger: Logger | undefined,
+    private readonly drainTimeoutMs = DEFAULT_SESSION_DRAIN_TIMEOUT_MS,
   ) {
+    instance.enableRequestTracking();
     const protocol = protocolOf(instance);
     const captured = protocol.onclose ?? NO_SHUTDOWN_HOOK;
     let running = false;
@@ -234,6 +324,17 @@ export class McpSessionSlot {
 
   /** Route one MCP request; a new client's initialize replaces a session its predecessor left open. */
   async handle(request: Request): Promise<Response> {
+    try {
+      return await this.#handle(request);
+    } catch (cause: unknown) {
+      if (!(cause instanceof SessionDrainTimeoutError)) throw cause;
+      return jsonError(503, -32000, cause.message);
+    }
+  }
+
+  async #handle(request: Request): Promise<Response> {
+    if (this.#closed) return SHUTTING_DOWN();
+    if (this.#draining) await this.#live?.transport.close();
     if (this.#closed) return SHUTTING_DOWN();
     const open = this.#live;
     if (
@@ -246,75 +347,109 @@ export class McpSessionSlot {
       this.logger?.info("MCP HTTP session replaced by a new client");
       await open.transport.close();
     }
-    const transport = await this.#current();
+    if (this.#closed) return SHUTTING_DOWN();
+    const session = await this.#current();
     // Shutdown may have closed the slot while this request was arming it.
     if (this.#closed) return SHUTTING_DOWN();
-    return transport.handleRequest(request);
+    return session.handle(request);
   }
 
-  /** End the live session as part of server shutdown, so the instance's onclose runs; later requests are refused. */
-  async close(): Promise<void> {
+  /** Cancel and drain MCP work before any shared provider shutdown hook can run. */
+  async prepareShutdown(): Promise<void> {
     this.#closed = true;
     await this.#arming?.catch(() => undefined);
     const open = this.#live;
     // The session stays owned until its shutdown succeeds, so a retry can finish it.
-    await open?.shutdown();
+    try {
+      await open?.transport.close();
+    } catch (cause: unknown) {
+      // Shutdown may have joined a handover that already started its bounded
+      // drain. Retry that timeout with shutdown's completion-based wait.
+      if (!(cause instanceof SessionDrainTimeoutError)) throw cause;
+      await open?.transport.close();
+    }
     if (this.#live === open) this.#live = undefined;
+  }
+
+  /** Finish shutdown once every consumer of the shared providers has settled. */
+  async close(): Promise<void> {
+    await this.prepareShutdown();
     // Without a live transport nothing fires the instance's hook; run it here, once.
     this.#shutdownHook();
   }
 
-  #current(): Promise<WebStandardStreamableHTTPServerTransport> {
+  #current(): Promise<LiveSession> {
     if (this.#closed)
       return Promise.reject(new Error("MCP HTTP session slot is closed"));
-    if (this.#live !== undefined) return Promise.resolve(this.#live.transport);
+    if (this.#live !== undefined) return Promise.resolve(this.#live);
     this.#arming ??= this.#arm().finally(() => {
       this.#arming = undefined;
     });
     return this.#arming;
   }
 
-  async #arm(): Promise<WebStandardStreamableHTTPServerTransport> {
+  async #arm(): Promise<LiveSession> {
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: () => this.logger?.info("MCP HTTP session opened"),
       onsessionclosed: () =>
         this.logger?.info("MCP HTTP session closed by the client"),
     });
-    const shutdown = transport.close.bind(transport);
+    const session = new LiveSession(transport, this.instance);
     // The SDK closes the transport on DELETE; that ends the session, not the server.
-    transport.close = () => this.#endSession(transport, shutdown);
+    transport.close = () => this.#endSession(session);
     await this.instance.connect(transport);
-    this.#live = { transport, shutdown };
-    return transport;
+    session.fenceDispatch();
+    this.#live = session;
+    return session;
   }
 
   /** Close one session's transport while the instance's onclose hooks wait for close(). */
-  async #endSession(
-    transport: WebStandardStreamableHTTPServerTransport,
-    shutdown: () => Promise<void>,
-  ): Promise<void> {
+  async #endSession(session: LiveSession): Promise<void> {
+    if (this.#live !== session) return;
+    if (this.#ending !== undefined) return this.#ending;
+    this.#draining = true;
+    const ending = this.#finishSession(session).finally(() => {
+      if (this.#ending === ending) this.#ending = undefined;
+    });
+    this.#ending = ending;
+    return ending;
+  }
+
+  async #finishSession(session: LiveSession): Promise<void> {
     const protocol = protocolOf(this.instance);
     protocol.onclose = NO_SHUTDOWN_HOOK;
     try {
-      await shutdown();
-      // Only a completed shutdown releases the session; a failed one stays live for a retry.
-      if (this.#live?.transport === transport) this.#live = undefined;
+      await session.shutdown();
+      if (
+        !(await this.instance.drainRequests(
+          this.#closed ? undefined : this.drainTimeoutMs,
+        ))
+      )
+        throw new SessionDrainTimeoutError(this.drainTimeoutMs);
+      // A timed-out handler remains owned and blocks reuse until a later drain succeeds.
+      if (this.#live === session) this.#live = undefined;
+      this.#draining = false;
     } finally {
       protocol.onclose = this.#shutdownHook;
     }
   }
 }
 
-const endpointUrl = (
-  address: ReturnType<ReturnType<typeof createHttpServer>["address"]>,
-): string => {
-  if (address === null || typeof address === "string")
-    throw new TypeError("MCP HTTP listener has no TCP address");
+const endpointUrl = (address: AddressInfo): string => {
   const host =
     address.family === "IPv6" ? `[${address.address}]` : address.address;
   return `http://${host}:${String(address.port)}${MCP_HTTP_PATH}`;
 };
+
+interface NodeRequestTarget {
+  readonly route: (request: Request) => Promise<{
+    readonly response: Response;
+    readonly admissionLifetime: HttpAdmissionLifetime;
+  }>;
+  readonly origin: () => string;
+  readonly logger: Logger | undefined;
+}
 
 /** Serve one MCP server, plus plain routes, over streamable HTTP until closed. */
 export const serveStreamableHttp = async (
@@ -332,42 +467,62 @@ export const serveStreamableHttp = async (
   let slot: McpSessionSlot | undefined;
   let origin = "";
   let stopped = false;
-  const route = async (request: Request): Promise<Response> => {
-    if (stopped) return jsonError(503, -32000, "Server shutting down");
+  const route: NodeRequestTarget["route"] = async (request) => {
+    const local = (response: Response) => ({
+      response,
+      admissionLifetime: "response" as const,
+    });
+    if (stopped) return local(jsonError(503, -32000, "Server shutting down"));
     // One loopback allowlist gates Host (DNS rebinding) and Origin (browser pages); a missing Origin passes.
     const refused =
       allowedHosts === undefined
         ? undefined
         : (hostHeaderValidationResponse(request, allowedHosts) ??
           originValidationResponse(request, allowedHosts));
-    if (refused !== undefined) return refused;
+    if (refused !== undefined) return local(refused);
+    if (slot === undefined)
+      return local(jsonError(503, -32000, "Server starting"));
     const { pathname } = new URL(request.url);
     if (pathname === MCP_HTTP_PATH)
-      return slot === undefined
-        ? jsonError(503, -32000, "Server starting")
-        : slot.handle(request);
+      return {
+        response: await slot.handle(request),
+        admissionLifetime: "dispatch",
+      };
     const match = routes.find(
       (candidate) =>
         candidate.path === pathname && candidate.method === request.method,
     );
-    return match === undefined
-      ? jsonError(404, -32601, `No route for ${request.method} ${pathname}`)
-      : match.handle(request);
+    return local(
+      match === undefined
+        ? jsonError(404, -32601, `No route for ${request.method} ${pathname}`)
+        : await match.handle(request),
+    );
   };
   const httpServer = createHttpServer();
-  const handleRequest = (
-    request: IncomingMessage,
-    response: ServerResponse,
-  ): Promise<void> =>
-    serveNodeRequest(
-      { route, origin: () => origin, logger },
-      request,
-      response,
-    );
-  const closeListener = async (): Promise<void> => {
-    stopped = true;
-    await closeHttpServer(httpServer);
-  };
+  const target: NodeRequestTarget = { route, origin: () => origin, logger };
+  const requests = new NodeHttpRequestOwner(
+    options.maxConcurrentDispatches ?? DEFAULT_MAX_CONCURRENT_DISPATCHES,
+    {
+      serve: (request, response, context) =>
+        serveNodeRequest(target, request, response, context),
+      refuse: (reason) =>
+        jsonError(
+          503,
+          -32000,
+          reason === "capacity"
+            ? "HTTP request capacity is full; retry after pending dispatches finish"
+            : "HTTP response cleanup failed; this server is not accepting new requests",
+        ),
+    },
+  );
+  const prepareTransportShutdown = stagedClose([
+    async () => {
+      stopped = true;
+      await closeHttpServer(httpServer);
+    },
+    () => slot?.prepareShutdown() ?? Promise.resolve(),
+    () => requests.drain(),
+  ]);
   try {
     httpServer.listen(port, host);
     await once(httpServer, "listening");
@@ -377,32 +532,41 @@ export const serveStreamableHttp = async (
   const bound = httpServer.address();
   let url: string;
   try {
+    if (bound === null || typeof bound === "string")
+      throw new TypeError("MCP HTTP listener has no TCP address");
     url = endpointUrl(bound);
     origin = new URL(url).origin;
+    allowedHosts = hostHeaderAllowlist(host, bound.address);
   } catch (cause: unknown) {
-    await closeListener().catch(() => undefined);
+    await prepareTransportShutdown().catch(() => undefined);
     throw new StreamableHttpListenError(cause);
   }
-  allowedHosts = hostHeaderAllowlist(
-    host,
-    bound !== null && typeof bound === "object" ? bound.address : host,
-  );
   httpServer.on("request", (request, response) => {
-    void handleRequest(request, response);
+    void requests.handle(request, response).catch((cause: unknown) => {
+      logger?.warn(
+        { error: describe(cause) },
+        "MCP HTTP request did not complete",
+      );
+      response.destroy();
+    });
   });
   // Bind failures already rejected the listening wait above; only later listener errors are reported.
   httpServer.on("error", (error) => options.onerror?.(error));
-  let instance: McpServer | Server;
+  let instance: RequestTrackingMcpServer;
   try {
     instance = await options.createMcpServer({ era: "legacy" });
   } catch (cause: unknown) {
-    // No instance exists yet, so the listener is the only resource to release.
-    await closeListener().catch(() => undefined);
+    // Starting responses may still be in flight; application routes stay unavailable.
+    await prepareTransportShutdown().catch(() => undefined);
     throw cause;
   }
   protocolOf(instance).onerror = (error) =>
     logger?.warn({ error: error.message }, "MCP HTTP request rejected");
-  const live = new McpSessionSlot(instance, logger);
+  const live = new McpSessionSlot(
+    instance,
+    logger,
+    options.sessionDrainTimeoutMs,
+  );
   slot = live;
   if (allowedHosts === undefined)
     logger?.warn(
@@ -413,12 +577,15 @@ export const serveStreamableHttp = async (
   logger
     ?.child({}, { level: "info" })
     .info({ transport: "streamable-http", url }, "MCP transport listening");
-  const close = stagedClose([
-    closeListener,
+  const prepareShutdown = stagedClose([
+    prepareTransportShutdown,
     () => live.close(),
+  ]);
+  const close = stagedClose([
+    prepareShutdown,
     ...(closeInstance ? [() => instance.close()] : []),
   ]);
-  return { url, close };
+  return { url, prepareShutdown, close };
 };
 
 /** Stop accepting, drop open connections and release the port. */
@@ -437,13 +604,10 @@ const closeHttpServer = (
 
 /** Translate one node:http exchange through `route`, logging a failure and answering it when headers are still open. */
 const serveNodeRequest = async (
-  target: {
-    readonly route: (request: Request) => Promise<Response>;
-    readonly origin: () => string;
-    readonly logger: Logger | undefined;
-  },
+  target: NodeRequestTarget,
   request: IncomingMessage,
   response: ServerResponse,
+  context: NodeHttpExchangeContext,
 ): Promise<void> => {
   const { route, origin, logger } = target;
   // A reply sent before an incoming body was fully consumed leaves the rest on the socket, which
@@ -455,6 +619,16 @@ const serveNodeRequest = async (
     request.headers["transfer-encoding"] !== undefined;
   let webRequest: Request | undefined;
   const unreadBody = (): boolean => declaresBody && !request.readableEnded;
+  let reported = false;
+  let admissionLifetime: HttpAdmissionLifetime = "response";
+  const settled = (): void => {
+    if (reported) return;
+    reported = true;
+    context.onDispatchSettled({
+      hasUnreadBody: unreadBody(),
+      admissionLifetime,
+    });
+  };
   try {
     try {
       webRequest = toWebRequest(request, response, origin());
@@ -471,13 +645,21 @@ const serveNodeRequest = async (
             : `Unsupported method ${request.method ?? ""}`,
         ),
         response,
-        { closeConnection: true },
+        { closeConnection: true, onBodyCleanup: context.onBodyCleanup },
       );
       return;
     }
-    const webResponse = await route(webRequest);
+    let webResponse: Response;
+    try {
+      const routed = await route(webRequest);
+      webResponse = routed.response;
+      admissionLifetime = routed.admissionLifetime;
+    } finally {
+      settled();
+    }
     await writeWebResponse(webResponse, response, {
       closeConnection: unreadBody(),
+      onBodyCleanup: context.onBodyCleanup,
     });
   } catch (cause: unknown) {
     // A client that left mid-stream is routine; a failure before headers is not.
@@ -490,8 +672,10 @@ const serveNodeRequest = async (
       await writeWebResponse(
         jsonError(500, -32603, "Internal server error"),
         response,
-        { closeConnection: unreadBody() },
+        { closeConnection: unreadBody(), onBodyCleanup: context.onBodyCleanup },
       ).catch(() => undefined);
+  } finally {
+    settled();
   }
 };
 
