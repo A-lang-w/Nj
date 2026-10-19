@@ -132,8 +132,7 @@ const stringField = (
   maxLength = 8192,
 ): string | null => {
   if (value === undefined) return null;
-  if (typeof value !== "string")
-    throw formatError(`${label} is not a string.`);
+  if (typeof value !== "string") throw formatError(`${label} is not a string.`);
   if (value.length > maxLength)
     throw formatError(`${label} exceeds ${String(maxLength)} characters.`);
   return value;
@@ -150,9 +149,7 @@ const stringArray = (value: unknown, label: string): string[] => {
     if (typeof item !== "string")
       throw formatError(`${label}[${String(index)}] is not a string.`);
     if (item.length > 8192)
-      throw formatError(
-        `${label}[${String(index)}] exceeds 8192 characters.`,
-      );
+      throw formatError(`${label}[${String(index)}] exceeds 8192 characters.`);
     return item;
   });
 };
@@ -165,6 +162,30 @@ const messageKeysIn = (value: string | null): string[] => {
 const unique = (values: readonly string[]): string[] => [
   ...new Set(values.filter((value) => value !== "")),
 ];
+
+/**
+ * Collect `__MSG_*__` placeholders from every string in the admitted manifest.
+ * The manifest byte budget already bounds this walk; iteration avoids recursion
+ * limits on deeply nested values and preserves document order for stable output.
+ */
+const messageKeysInManifest = (manifest: Record<string, unknown>): string[] => {
+  const keys: string[] = [];
+  const queue: unknown[] = Object.values(manifest);
+  for (let index = 0; index < queue.length; index += 1) {
+    const value = queue[index];
+    if (typeof value === "string") {
+      keys.push(...messageKeysIn(value));
+      continue;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) queue.push(item);
+      continue;
+    }
+    if (value !== null && typeof value === "object")
+      for (const item of Object.values(value)) queue.push(item);
+  }
+  return keys;
+};
 
 const boundedList = (
   values: readonly string[],
@@ -251,8 +272,7 @@ const containerFrom = (bytes: Uint8Array): ContainerFacts | null => {
 };
 
 const fileEntry = (entry: Entry): FileEntry => {
-  if (entry.directory)
-    throw formatError("manifest.json is a directory entry.");
+  if (entry.directory) throw formatError("manifest.json is a directory entry.");
   return entry as FileEntry;
 };
 
@@ -346,7 +366,8 @@ const objectField = (
 
 const booleanOrNull = (value: unknown, label: string): boolean | null => {
   if (value === undefined) return null;
-  if (typeof value !== "boolean") throw formatError(`${label} is not a boolean.`);
+  if (typeof value !== "boolean")
+    throw formatError(`${label} is not a boolean.`);
   return value;
 };
 
@@ -380,7 +401,10 @@ const contentScripts = (value: unknown) => {
 const background = (value: unknown) => {
   const record = objectField(value, "background");
   if (record === null) return null;
-  const serviceWorker = stringField(record.service_worker, "background.service_worker");
+  const serviceWorker = stringField(
+    record.service_worker,
+    "background.service_worker",
+  );
   const scripts = stringArray(record.scripts, "background.scripts");
   const page = stringField(record.page, "background.page");
   const kind =
@@ -527,9 +551,7 @@ const projectManifest = (
   const manifest = parsed as Record<string, unknown>;
   const version = manifest.manifest_version;
   const manifestVersion =
-    version === 2 || version === 3
-      ? version
-      : ("other" as const);
+    version === 2 || version === 3 ? version : ("other" as const);
   if (
     version !== undefined &&
     typeof version !== "number" &&
@@ -538,12 +560,6 @@ const projectManifest = (
     throw formatError("manifest_version is not a number or string.");
   const name = stringField(manifest.name, "name");
   const description = stringField(manifest.description, "description");
-  const actionTitle = actionKeys(manifest).flatMap((key) => {
-    const record = objectField(manifest[key], key);
-    return record === null
-      ? []
-      : messageKeysIn(stringField(record.default_title, `${key}.default_title`));
-  });
   const commands = objectField(manifest.commands, "commands");
   const externally = objectField(
     manifest.externally_connectable,
@@ -559,11 +575,7 @@ const projectManifest = (
     description,
     default_locale: stringField(manifest.default_locale, "default_locale"),
     message_keys: boundedList(
-      unique([
-        ...messageKeysIn(name),
-        ...messageKeysIn(description),
-        ...actionTitle,
-      ]),
+      unique(messageKeysInManifest(manifest)),
       64,
       "message keys",
     ),
@@ -572,7 +584,10 @@ const projectManifest = (
       manifest.optional_permissions,
       "optional_permissions",
     ),
-    host_permissions: stringArray(manifest.host_permissions, "host_permissions"),
+    host_permissions: stringArray(
+      manifest.host_permissions,
+      "host_permissions",
+    ),
     optional_host_permissions: stringArray(
       manifest.optional_host_permissions,
       "optional_host_permissions",
@@ -651,7 +666,9 @@ export const parseBrowserExtension = async (
 ): Promise<BrowserExtensionReport> => {
   abortIfNeeded(signal);
   if (bytes.length !== artifact.bytes)
-    throw formatError("Artifact byte length does not match the admitted snapshot.");
+    throw formatError(
+      "Artifact byte length does not match the admitted snapshot.",
+    );
   const container = containerFrom(bytes);
   if (container !== null && !isZip(container.zip))
     throw formatError(
@@ -692,6 +709,8 @@ export const parseBrowserExtension = async (
   };
   const parsed = browserExtensionSchema.safeParse(report);
   if (!parsed.success)
-    throw formatError("Extension projection does not match its output contract.");
+    throw formatError(
+      "Extension projection does not match its output contract.",
+    );
   return parsed.data;
 };

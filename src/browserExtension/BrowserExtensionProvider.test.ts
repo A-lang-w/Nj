@@ -139,10 +139,14 @@ describe("BrowserExtensionProvider", () => {
 
   it("does not tell a fixed manifest limit to raise max_entries", async () => {
     const root = await createTestTempDirectory("rea-browser-extension-limit-");
-    const scripts = Array.from({ length: 1001 }, () => ({ matches: ["https://example.com/*"] }));
+    const scripts = Array.from({ length: 1001 }, () => ({
+      matches: ["https://example.com/*"],
+    }));
     const zip = storedZip(
       "manifest.json",
-      Buffer.from(JSON.stringify({ manifest_version: 3, content_scripts: scripts })),
+      Buffer.from(
+        JSON.stringify({ manifest_version: 3, content_scripts: scripts }),
+      ),
     );
     const path = join(root, "too-many.zip");
     await writeFile(path, zip);

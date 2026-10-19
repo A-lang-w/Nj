@@ -1,7 +1,10 @@
 import { crc32 } from "node:zlib";
 import { describe, expect, it } from "vitest";
 
-import { BrowserExtensionParseError, parseBrowserExtension } from "./parseBrowserExtension.js";
+import {
+  BrowserExtensionParseError,
+  parseBrowserExtension,
+} from "./parseBrowserExtension.js";
 
 const u16 = (value: number): Buffer => {
   const bytes = Buffer.alloc(2);
@@ -65,7 +68,9 @@ const storedZip = (name: string, data: Buffer): Buffer => {
   return Buffer.concat([local, central, end]);
 };
 
-const storedZipEntries = (files: readonly (readonly [string, Buffer])[]): Buffer => {
+const storedZipEntries = (
+  files: readonly (readonly [string, Buffer])[],
+): Buffer => {
   const locals: Buffer[] = [];
   const centrals: Buffer[] = [];
   let offset = 0;
@@ -128,13 +133,7 @@ const storedZipEntries = (files: readonly (readonly [string, Buffer])[]): Buffer
 };
 
 const crx3 = (zip: Buffer, header = Buffer.from([0x0a])): Buffer =>
-  Buffer.concat([
-    Buffer.from("Cr24"),
-    u32(3),
-    u32(header.length),
-    header,
-    zip,
-  ]);
+  Buffer.concat([Buffer.from("Cr24"), u32(3), u32(header.length), header, zip]);
 
 const crx2 = (zip: Buffer, key: Buffer, signature: Buffer): Buffer =>
   Buffer.concat([
@@ -147,8 +146,7 @@ const crx2 = (zip: Buffer, key: Buffer, signature: Buffer): Buffer =>
     zip,
   ]);
 
-const manifest = (value: unknown): Buffer =>
-  Buffer.from(JSON.stringify(value));
+const manifest = (value: unknown): Buffer => Buffer.from(JSON.stringify(value));
 
 const input = {
   path: "/artifacts/extension.crx",
@@ -233,7 +231,9 @@ describe("parseBrowserExtension", () => {
       commands: ["open-panel"],
       unknown_keys: ["custom_key"],
     });
-    expect(report.limitations.join("\n")).toContain("signature was not verified");
+    expect(report.limitations.join("\n")).toContain(
+      "signature was not verified",
+    );
     expect(report.limitations.join("\n")).toContain("left unresolved");
   });
 
@@ -268,9 +268,9 @@ describe("parseBrowserExtension", () => {
   it("refuses a nested manifest, a non-package file, and an over-budget entry list", async () => {
     const nested = storedZip("addon/manifest.json", manifest(sample));
     await expect(inspect(nested)).rejects.toThrow(/no root manifest.json/);
-    await expect(inspect(Buffer.from("not-a-package"), "/tmp/notes.txt")).rejects.toBeInstanceOf(
-      BrowserExtensionParseError,
-    );
+    await expect(
+      inspect(Buffer.from("not-a-package"), "/tmp/notes.txt"),
+    ).rejects.toBeInstanceOf(BrowserExtensionParseError);
     const zip = storedZip("manifest.json", manifest({ manifest_version: 3 }));
     await expect(
       parseBrowserExtension(
@@ -278,28 +278,55 @@ describe("parseBrowserExtension", () => {
         { path: input.path, sha256: "b".repeat(64), bytes: zip.length },
         { ...input, max_entries: 0 },
       ),
-    ).rejects.toMatchObject({ code: "limit", resource: "capacity", limit: "max_entries" });
+    ).rejects.toMatchObject({
+      code: "limit",
+      resource: "capacity",
+      limit: "max_entries",
+    });
   });
 
   it("rejects duplicate root manifests, oversized unpacked manifests, silent truncation, and short object policies", async () => {
-    const first = manifest({ manifest_version: 3, name: "One", permissions: ["storage"] });
-    const second = manifest({ manifest_version: 3, name: "Two", permissions: ["tabs"] });
+    const first = manifest({
+      manifest_version: 3,
+      name: "One",
+      permissions: ["storage"],
+    });
+    const second = manifest({
+      manifest_version: 3,
+      name: "Two",
+      permissions: ["tabs"],
+    });
     const duplicate = storedZipEntries([
       ["manifest.json", first],
       ["manifest.json", second],
     ]);
-    await expect(inspect(duplicate)).rejects.toThrow(/multiple root manifest.json/);
+    await expect(inspect(duplicate)).rejects.toThrow(
+      /multiple root manifest.json/,
+    );
     const raw = manifest({ manifest_version: 3, name: "Big" });
     await expect(
       parseBrowserExtension(
         raw,
-        { path: "/work/manifest.json", sha256: "c".repeat(64), bytes: raw.length },
+        {
+          path: "/work/manifest.json",
+          sha256: "c".repeat(64),
+          bytes: raw.length,
+        },
         { ...input, path: "/work/manifest.json", max_manifest_bytes: 8 },
       ),
     ).rejects.toMatchObject({ code: "limit", limit: "max_manifest_bytes" });
-    const keys = Array.from({ length: 65 }, (_, index) => `__MSG_k${String(index)}__`).join(" ");
+    const keys = Array.from(
+      { length: 65 },
+      (_, index) => `__MSG_k${String(index)}__`,
+    ).join(" ");
     await expect(
-      inspect(storedZip("manifest.json", manifest({ manifest_version: 3, description: keys })), "/work/manifest.json"),
+      inspect(
+        storedZip(
+          "manifest.json",
+          manifest({ manifest_version: 3, description: keys }),
+        ),
+        "/work/manifest.json",
+      ),
     ).rejects.toMatchObject({ code: "limit", limit: "fixed" });
     const policy = "script-src 'self' ".padEnd(9000, "a");
     const report = await inspect(
@@ -315,5 +342,26 @@ describe("parseBrowserExtension", () => {
       kind: "object",
       extension_pages: policy,
     });
+  });
+});
+
+describe("parseBrowserExtension message placeholders", () => {
+  it("collects placeholders from every manifest string", async () => {
+    const report = await inspect(
+      storedZip(
+        "manifest.json",
+        manifest({
+          manifest_version: 3,
+          name: "Example",
+          commands: { open: { description: "__MSG_openDescription__" } },
+          custom_key: { nested: ["__MSG_nestedKey__"] },
+        }),
+      ),
+    );
+    expect(report.manifest.message_keys).toEqual([
+      "openDescription",
+      "nestedKey",
+    ]);
+    expect(report.limitations.join("\n")).toContain("left unresolved");
   });
 });

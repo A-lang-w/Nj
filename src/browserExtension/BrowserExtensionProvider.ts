@@ -132,13 +132,17 @@ const failurePrimary = (
           remediationAction: budgetRemediation(cause, input),
         },
       );
-    return new AnalysisInputError(OPERATION, { cause, userMessage: cause.message }, [
-      {
-        path: ["path"],
-        reason: "invalid_format",
-        message: cause.message,
-      },
-    ]);
+    return new AnalysisInputError(
+      OPERATION,
+      { cause, userMessage: cause.message },
+      [
+        {
+          path: ["path"],
+          reason: "invalid_format",
+          message: cause.message,
+        },
+      ],
+    );
   }
   if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
     return new AnalysisArtifactChangedError(

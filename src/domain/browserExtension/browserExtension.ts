@@ -129,11 +129,7 @@ export const browserExtensionSchema = z.strictObject({
     path: z.string().min(1),
     sha256,
     bytes: uint,
-    manifest_version: z.union([
-      z.literal(2),
-      z.literal(3),
-      z.literal("other"),
-    ]),
+    manifest_version: z.union([z.literal(2), z.literal(3), z.literal("other")]),
     name: z.string().max(8192).nullable(),
     version: z.string().max(128).nullable(),
     description: z.string().max(8192).nullable(),

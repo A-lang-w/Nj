@@ -48,6 +48,7 @@ export const registerBrowserExtensionCommands = (
               service,
               "rea-browser-extension",
               "inspect_browser_extension",
+              signal,
             ),
         );
       }),

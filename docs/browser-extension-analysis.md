@@ -30,12 +30,12 @@ Pass the CRX, XPI, ZIP, or the unpacked `manifest.json`.
 
 ## What is read
 
-| Input | Recognition |
-| --- | --- |
-| `Cr24` version 2 | CRX2. Public-key and signature lengths are measured. Those bytes are not decoded or checked. |
-| `Cr24` version 3 | CRX3. The header length is measured and skipped. The protobuf is not decoded. |
-| ZIP local-file header | ZIP or XPI. Suffix is not required. |
-| UTF-8 JSON file named `manifest.json` | Unpacked manifest. Other files in the directory are not opened. |
+| Input                                 | Recognition                                                                                  |
+| ------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `Cr24` version 2                      | CRX2. Public-key and signature lengths are measured. Those bytes are not decoded or checked. |
+| `Cr24` version 3                      | CRX3. The header length is measured and skipped. The protobuf is not decoded.                |
+| ZIP local-file header                 | ZIP or XPI. Suffix is not required.                                                          |
+| UTF-8 JSON file named `manifest.json` | Unpacked manifest. Other files in the directory are not opened.                              |
 
 The ZIP payload must contain exactly one root `manifest.json`. A nested
 `addon/manifest.json` or a second root `manifest.json` is a format failure.
@@ -67,8 +67,8 @@ Observed fields:
   paths or entries, and `externally_connectable.matches`
 - top-level keys that this projection does not interpret
 
-`__MSG_*__` placeholders are listed in `message_keys` and left unresolved.
-Locale catalogs are not opened.
+`__MSG_*__` placeholders in any manifest string are listed in `message_keys` and
+left unresolved. Locale catalogs are not opened.
 
 ## Workflow
 
