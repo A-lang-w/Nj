@@ -6,5 +6,5 @@
 - [x] Add the `sibling-pair-variance` rule, its names and its limitation.
 - [x] Document both; extend the tool contract text.
 - [x] Add service, CLI, MCP and rule tests.
-- [ ] Run static, formatting, duplication, documentation and test gates.
-- [ ] Rebuild a rich capture with both changes and record the results.
+- [x] Run static, formatting, duplication, documentation and test gates.
+- [x] Rebuild a rich capture with both changes and record the results.
