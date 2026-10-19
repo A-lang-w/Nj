@@ -190,7 +190,11 @@ const visitReader = async (
       reader,
       prefix,
       containerSha256,
-      iterator: reader.entries(context.signal)[Symbol.asyncIterator](),
+      // Inventory recorded any subdirectory it could not list as omitted. A
+      // relevant file that went unreadable since still fails the visit check.
+      iterator: reader
+        .entries(context.signal, { omitUnreadableDirectories: true })
+        [Symbol.asyncIterator](),
     },
   ];
   const ownedReaders: {

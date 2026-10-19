@@ -122,11 +122,26 @@ export class DirectoryArtifactReader implements ArtifactReader {
     examine: () => void,
   ): AsyncIterable<ArtifactEntry> {
     const root = await this.#resolveRoot();
-    const handle = new OwnedDirectoryHandle(
-      await opendir(directory).catch((cause: unknown) => {
-        throw directoryIoFailure("open directory", directory, cause);
-      }),
-    );
+    let opened: Awaited<ReturnType<typeof opendir>>;
+    try {
+      opened = await opendir(directory);
+    } catch (cause: unknown) {
+      // A caller that opts in records a child directory this user may not list
+      // as an omitted subtree. The root and other failures stay terminal.
+      if (
+        directory !== root &&
+        options?.omitUnreadableDirectories === true &&
+        isAccessDenied(cause)
+      ) {
+        options?.onOmission?.({
+          path: relative(root, directory).split(sep).join("/"),
+          kind: "unreadable-directory",
+        });
+        return;
+      }
+      throw directoryIoFailure("open directory", directory, cause);
+    }
+    const handle = new OwnedDirectoryHandle(opened);
     this.#directories.add(handle);
     const childDirectories: string[] = [];
     let traversal:
@@ -391,6 +406,18 @@ const directoryIoFailure = (
     { cause },
   );
 };
+
+const isAccessDenied = (cause: unknown): boolean =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "code" in cause &&
+  (cause.code === "EACCES" || cause.code === "EPERM");
+
+/** An entry this reader could not read because the user may not (EACCES, EPERM). */
+export const isDirectoryAccessDenied = (failure: unknown): boolean =>
+  failure instanceof ArtifactReaderFailure &&
+  failure.reason === "io" &&
+  isAccessDenied(failure.cause);
 
 const failureMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
