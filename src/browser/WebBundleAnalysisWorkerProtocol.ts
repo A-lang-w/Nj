@@ -14,11 +14,6 @@ export const WEB_BUNDLE_ANALYSIS_WORKER_LIMITS = {
   frameBytes: 4 * 1024,
 } as const;
 
-/** Byte length of each private script file, in capture order. */
-export const webBundleWorkerManifestSchema = z.strictObject({
-  script_bytes: z.array(z.number().int().min(0)),
-});
-
 /** One captured script; the worker requires included source. */
 export const webBundleWorkerScriptSchema =
   webPageInspectionSchema.shape.scripts.shape.items.element;
@@ -29,6 +24,7 @@ const index = z.number().int().min(0);
 export const webBundleWorkerRequestSchema = z.strictObject({
   kind: z.literal("analyze"),
   index,
+  script_bytes: z.number().int().min(0),
 });
 
 /** Control frames carry indexes and digests only; facts travel in private files. */
@@ -54,6 +50,3 @@ export const webBundleWorkerFileNames = (scriptIndex: number) => ({
   script: `${String(scriptIndex)}.script.json`,
   facts: `${String(scriptIndex)}.facts.json`,
 });
-
-/** Manifest file name inside the owned root. */
-export const WEB_BUNDLE_WORKER_MANIFEST = "manifest.json";

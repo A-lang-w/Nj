@@ -1,13 +1,19 @@
 import { access } from "node:fs/promises";
 import { readdirSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { analyzeWebBundle } from "../../../src/application/BrowserObservationService.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { analyzeWebBundleScript } from "../../../src/domain/webBundleAnalyzerInspection.js";
-import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisOutputError,
+} from "../../../src/domain/analysisErrorCore.js";
+import { resolvedAnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
@@ -109,6 +115,108 @@ const endpoints = (outcome: unknown): string[] =>
   (
     outcome as { facts: { endpoints: { value: string }[] } }
   ).facts.endpoints.map(({ value }) => value);
+
+it("stages only the admitted script and releases it before the next admission", async () => {
+  const staged: string[][] = [];
+  const dependencies = tracked({
+    launcher: async (options) => {
+      const spawned = await spawnOwnedProviderProcess(options);
+      const root = options.cwd;
+      if (root === undefined) throw new Error("Missing worker root");
+      let pending = "";
+      spawned.process.stdout?.on("data", (chunk: Buffer) => {
+        pending += chunk.toString("utf8");
+        let newline: number;
+        while ((newline = pending.indexOf("\n")) >= 0) {
+          const line = pending.slice(0, newline);
+          pending = pending.slice(newline + 1);
+          if (line.includes('"start"'))
+            staged.push(
+              readdirSync(root).filter((name) => name.endsWith(".script.json")),
+            );
+        }
+      });
+      return spawned;
+    },
+  });
+  const result = await analyzeWebBundleScripts(
+    [small(0), small(1), small(2)],
+    {},
+    dependencies,
+  );
+  if (!result.ok) throw result.error.error;
+  expect(staged).toEqual([
+    ["0.script.json"],
+    ["1.script.json"],
+    ["2.script.json"],
+  ]);
+  expect(result.value).toHaveLength(3);
+  await released(dependencies.roots);
+}, 60_000);
+
+it.each(["read", "decode"])(
+  "keeps facts %s under the script deadline",
+  async (phase) => {
+    const budget = 750;
+    let arm = false;
+    let stalled = false;
+    const originalClose = OwnedFileHandle.prototype.close;
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        if (arm && !stalled && phase === "read") {
+          stalled = true;
+          await waitForAbortableDelay(budget + 250);
+        }
+        await originalClose.call(this);
+      });
+    const originalDecode = TextDecoder.prototype.decode;
+    const decode = vi
+      .spyOn(TextDecoder.prototype, "decode")
+      .mockImplementation(function (this: TextDecoder, ...args) {
+        if (arm && !stalled && phase === "decode") {
+          stalled = true;
+          Atomics.wait(
+            new Int32Array(new SharedArrayBuffer(4)),
+            0,
+            0,
+            budget + 250,
+          );
+        }
+        return originalDecode.apply(this, args);
+      });
+    const dependencies = tracked({
+      limits: { scriptTimeoutMs: budget },
+      launcher: async (options) => {
+        const spawned = await spawnOwnedProviderProcess(options);
+        spawned.process.stdout?.on("data", (chunk: Buffer) => {
+          if (chunk.toString("utf8").includes('"kind":"done","index":0'))
+            arm = true;
+        });
+        return spawned;
+      },
+    });
+    try {
+      const result = await analyzeWebBundleScripts(
+        [small(0), small(1)],
+        {},
+        dependencies,
+      );
+      if (!result.ok) throw result.error.error;
+      expect(stalled).toBe(true);
+      expect(result.value[0]).toMatchObject({
+        status: "resource_limited",
+        resource: "cpu",
+      });
+      expect(endpoints(result.value[1])).toEqual(["/api/kept-1"]);
+      await released(dependencies.roots);
+    } finally {
+      close.mockRestore();
+      decode.mockRestore();
+    }
+  },
+  60_000,
+);
 
 describe("owned web bundle analysis worker bounds", () => {
   it.runIf(javaScriptRuntime(process.versions).id === "node")(
@@ -372,6 +480,203 @@ const request = (endpoint: string, allowedOrigin: string) =>
     target_id: "allowed-page",
     observation_ms: 0,
   });
+
+it.each([false, true])(
+  "serializes acquisitions and preserves queue order when cancellation is %s",
+  async (cancelQueued) => {
+    const acquired = deferred();
+    const resume = deferred();
+    const controller = new AbortController();
+    const reason = new Error("cancel queued analysis");
+    let liveRoots = 0;
+    let maximumRoots = 0;
+    const roots: string[] = [];
+    const owner = new WebBundleAnalysisOwner({
+      createRuntime: async () => {
+        const root = await PrivateRuntimeRoot.create({
+          prefix: "rea-wb-test-",
+        });
+        roots.push(root.path);
+        liveRoots += 1;
+        maximumRoots = Math.max(maximumRoots, liveRoots);
+        if (roots.length === 1) {
+          acquired.resolve();
+          await resume.promise;
+        }
+        return {
+          path: root.path,
+          close: async () => {
+            await root.close();
+            liveRoots -= 1;
+          },
+        };
+      },
+    });
+    const first = owner.analyze([small(0)]);
+    await acquired.promise;
+    const second = owner.analyze([small(1)], { signal: controller.signal });
+    const third = owner.analyze([small(2)]);
+    try {
+      if (cancelQueued) {
+        controller.abort(reason);
+        const cancelled = await second;
+        if (cancelled.ok) throw new Error("Queued cancellation was ignored");
+        expect(cancelled.error.error).toBeInstanceOf(AnalysisCancelledError);
+        expect(cancelled.error.error.cause).toBe(reason);
+      }
+      await waitForAbortableDelay(50);
+      expect(roots).toHaveLength(1);
+      if (cancelQueued) {
+        const closing = owner.close();
+        resume.resolve();
+        await closing;
+        expect((await first).ok).toBe(false);
+        expect((await third).ok).toBe(false);
+        expect(roots).toHaveLength(1);
+      } else {
+        resume.resolve();
+        const results = await Promise.all([first, second, third]);
+        for (const [index, result] of results.entries()) {
+          if (!result.ok) throw result.error.error;
+          expect(endpoints(result.value[0])).toEqual([
+            `/api/kept-${String(index)}`,
+          ]);
+        }
+        expect(roots).toHaveLength(3);
+      }
+      expect(maximumRoots).toBe(1);
+      await released(roots);
+    } finally {
+      resume.resolve();
+      await owner.close();
+      await Promise.all([first, second, third]);
+    }
+  },
+  60_000,
+);
+
+it.each(["cancel", "failure"])(
+  "preserves the primary %s alongside failed cleanup",
+  async (kind) => {
+    const controller = new AbortController();
+    const reason = new Error("original caller reason");
+    const primary = new AnalysisOutputError(
+      "analyze_web_bundle",
+      "original protocol failure",
+      {
+        cause: reason,
+        diagnostics: { phase: "fixture" },
+      },
+    );
+    let allowCleanup = false;
+    const roots: string[] = [];
+    const owner = new WebBundleAnalysisOwner({
+      createRuntime: async () => {
+        const root = await PrivateRuntimeRoot.create({
+          prefix: "rea-wb-test-",
+        });
+        roots.push(root.path);
+        if (kind === "cancel") controller.abort(reason);
+        return {
+          path: root.path,
+          close: async () => {
+            if (!allowCleanup) throw new Error("injected root release failure");
+            await root.close();
+          },
+        };
+      },
+      launcher: async () => {
+        throw primary;
+      },
+    });
+    try {
+      const result = await owner.analyze([small(0)], {
+        signal: controller.signal,
+      });
+      if (result.ok) throw new Error("Expected analysis and cleanup failures");
+      const error = result.error.error;
+      expect(error.cleanupIncomplete).toBe(true);
+      expect(error.cause).toBeInstanceOf(AggregateError);
+      if (kind === "cancel") {
+        expect(error.cleanupPrimary).toBeInstanceOf(AnalysisCancelledError);
+        expect(error.cleanupPrimary?.cause).toBe(reason);
+      } else {
+        expect(error.cleanupPrimary).toBe(primary);
+        expect(error.cleanupPrimary?.diagnostics).toEqual({ phase: "fixture" });
+      }
+      allowCleanup = true;
+      await owner.close();
+      expect(error.cleanupIncomplete).toBe(false);
+      expect(resolvedAnalysisError(error)).toBe(error.cleanupPrimary);
+      await released(roots);
+    } finally {
+      allowCleanup = true;
+      await owner.close();
+    }
+  },
+  60_000,
+);
+
+it("retains failed facts descriptors and closes them before removing the root", async () => {
+  let armClose = false;
+  let allowCleanup = false;
+  let retained: OwnedFileHandle | undefined;
+  let rootCloses = 0;
+  const roots: string[] = [];
+  const originalClose = OwnedFileHandle.prototype.close;
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(async function (this: OwnedFileHandle) {
+      if (armClose) retained ??= this;
+      if (this === retained && !allowCleanup)
+        throw new Error("injected facts descriptor close failure");
+      await originalClose.call(this);
+    });
+  const owner = new WebBundleAnalysisOwner({
+    createRuntime: async () => {
+      const root = await PrivateRuntimeRoot.create({ prefix: "rea-wb-test-" });
+      roots.push(root.path);
+      return {
+        path: root.path,
+        close: async () => {
+          rootCloses += 1;
+          await root.close();
+        },
+      };
+    },
+    launcher: async (options) => {
+      const spawned = await spawnOwnedProviderProcess(options);
+      spawned.process.stdout?.on("data", (chunk: Buffer) => {
+        if (chunk.toString("utf8").includes('"done"')) armClose = true;
+      });
+      return spawned;
+    },
+  });
+  try {
+    const result = await owner.analyze([small(0)]);
+    if (result.ok) throw new Error("Expected descriptor cleanup failure");
+    expect(result.error.error.cleanupIncomplete).toBe(true);
+    expect(retained?.handle.fd).toBeGreaterThanOrEqual(0);
+    expect(result.error.error.cleanupResources).toContain(
+      join(roots[0] ?? "", "0.facts.json"),
+    );
+    expect(rootCloses).toBe(0);
+    await expect(owner.close()).rejects.toBeInstanceOf(ProviderCleanupError);
+    expect(rootCloses).toBe(0);
+    allowCleanup = true;
+    await owner.close();
+    expect(retained?.handle.fd).toBe(-1);
+    expect(rootCloses).toBe(1);
+    expect(result.error.error.cleanupIncomplete).toBe(false);
+    await released(roots);
+  } finally {
+    allowCleanup = true;
+    await owner.close();
+    if (retained !== undefined && retained.handle.fd >= 0)
+      await originalClose.call(retained);
+    close.mockRestore();
+  }
+}, 60_000);
 
 it("cancels active analysis at provider shutdown and retains an unverified stop for retry", async () => {
   const browser = await startFakeCdpBrowser();

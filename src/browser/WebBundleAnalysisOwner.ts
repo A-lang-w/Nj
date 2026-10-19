@@ -1,6 +1,7 @@
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -8,6 +9,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import type { IncludedScript } from "../domain/webBundleAnalyzerInspection.js";
 import type { WebBundleScriptOutcome } from "../domain/webBundleScriptAnalysis.js";
 import { prepareProcessOwnershipInspection } from "../process/ProcessOwnershipObservation.js";
+import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
 import {
   OwnedWebBundleWorker,
   type WebBundleAnalysisWorkerDependencies,
@@ -34,7 +36,6 @@ interface OwnedAnalysis {
   readonly worker: OwnedWebBundleWorker;
   readonly lease: AnalysisCleanupLease;
   active: boolean;
-  previousError: string | null;
 }
 
 /** Own active requests and failed cleanup without borrowing another provider's resources. */
@@ -42,6 +43,7 @@ export class WebBundleAnalysisOwner implements WebBundleScriptAnalyzer {
   readonly #owned = new Set<OwnedAnalysis>();
   readonly #active = new Set<Promise<ScriptResult>>();
   readonly #shutdown = new AbortController();
+  #tail: Promise<void> = Promise.resolve();
   #closePromise: Promise<void> | undefined;
 
   constructor(
@@ -70,10 +72,9 @@ export class WebBundleAnalysisOwner implements WebBundleScriptAnalyzer {
     const record: OwnedAnalysis = {
       worker,
       active: true,
-      previousError: null,
       lease: new AnalysisCleanupLease(
         async () => {
-          const failure = await worker.close(record.previousError);
+          const failure = await worker.close();
           if (failure !== undefined) throw failure;
         },
         {
@@ -84,14 +85,32 @@ export class WebBundleAnalysisOwner implements WebBundleScriptAnalyzer {
       ),
     };
     this.#owned.add(record);
+    const predecessor = this.#tail;
     // Register before preparation or acquisition can yield to provider shutdown.
     const running = Promise.resolve()
-      .then(() => this.#run(record, signal))
+      .then(async () => {
+        if (
+          (await waitForAbortable(predecessor, signal)) === ABORTED ||
+          signal.aborted
+        ) {
+          this.#owned.delete(record);
+          return err({
+            error: new AnalysisCancelledError(OPERATION, {
+              cause: signal.reason,
+            }),
+          });
+        }
+        return this.#run(record, signal);
+      })
       .finally(() => {
         record.active = false;
         this.#active.delete(running);
       });
     this.#active.add(running);
+    // A cancelled waiter cannot let its successor overtake an active worker.
+    this.#tail = Promise.allSettled([predecessor, running]).then(
+      () => undefined,
+    );
     return running;
   }
 
@@ -123,19 +142,30 @@ export class WebBundleAnalysisOwner implements WebBundleScriptAnalyzer {
     } catch (cause: unknown) {
       result = err(record.worker.failure(cause));
     }
-    record.previousError = result.ok ? null : result.error.message;
     const cleanup = await this.#release(record);
     const completed = result.ok ? { completed: result.value } : {};
-    if (cleanup !== undefined) return err({ error: cleanup, ...completed });
-    if (!result.ok) return err({ error: result.error });
-    return signal.aborted
-      ? err({
-          error: new AnalysisCancelledError(OPERATION, {
-            cause: signal.reason,
-          }),
-          ...completed,
-        })
-      : result;
+    const outcome: ScriptResult = !result.ok
+      ? err({ error: result.error })
+      : signal.aborted
+        ? err({
+            error: new AnalysisCancelledError(OPERATION, {
+              cause: signal.reason,
+            }),
+            ...completed,
+          })
+        : result;
+    if (cleanup !== undefined)
+      return err({
+        error: outcome.ok
+          ? cleanup
+          : analysisErrorWithCleanupFailure(
+              outcome.error.error,
+              cleanup,
+              OPERATION,
+            ).bindCleanupDependencies([outcome.error.error, cleanup]),
+        ...completed,
+      });
+    return outcome;
   }
 
   async #release(

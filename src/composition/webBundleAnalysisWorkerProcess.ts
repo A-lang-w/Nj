@@ -9,10 +9,8 @@ import {
 } from "../domain/webBundleAnalyzerInspection.js";
 import {
   WEB_BUNDLE_ANALYSIS_WORKER_LIMITS as LIMITS,
-  WEB_BUNDLE_WORKER_MANIFEST,
   webBundleWorkerFileNames,
   webBundleWorkerFrameSchema,
-  webBundleWorkerManifestSchema,
   webBundleWorkerRequestSchema,
   webBundleWorkerScriptSchema,
   type WebBundleWorkerFrame,
@@ -51,17 +49,14 @@ const readJson = async (path: string, bytes: number): Promise<unknown> => {
 /** Analyze scripts from the parent-selected index, one private file each. */
 const execute = async (): Promise<void> => {
   const root = process.cwd();
-  const manifestBytes = count(process.argv[2]);
+  const scriptCount = count(process.argv[2]);
   const start = count(process.argv[3]);
   const resultBytes = count(process.argv[4]);
-  const { script_bytes: scriptBytes } = webBundleWorkerManifestSchema.parse(
-    await readJson(join(root, WEB_BUNDLE_WORKER_MANIFEST), manifestBytes),
-  );
   const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
   const requests = input[Symbol.asyncIterator]();
   try {
     await send({ kind: "ready" });
-    for (let index = start; index < scriptBytes.length; index += 1) {
+    for (let index = start; index < scriptCount; index += 1) {
       const next = await requests.next();
       if (next.done || Buffer.byteLength(next.value) > LIMITS.frameBytes)
         throw new TypeError(
@@ -73,7 +68,7 @@ const execute = async (): Promise<void> => {
         throw new TypeError(
           "Web bundle worker request names an unexpected script",
         );
-      await analyzeScript(root, index, scriptBytes[index] ?? 0, resultBytes);
+      await analyzeScript(root, index, request.script_bytes, resultBytes);
     }
   } finally {
     input.close();
