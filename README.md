@@ -150,7 +150,7 @@ use `npx rea-agents@latest` followed by the command. With Bun, use
 
 ## Reproducible development
 
-The repository pins Node.js in [.nvmrc](.nvmrc) and locks npm dependencies in
+The repository pins Node.js in `.nvmrc` and locks npm dependencies in
 `package-lock.json`. The following commands are the complete local workflow:
 
 1. Setup: `nvm use` followed by `npm ci`.
