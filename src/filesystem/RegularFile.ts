@@ -5,11 +5,14 @@ import { lstat, open, stat, type FileHandle } from "node:fs/promises";
 
 import { OwnedFileHandle } from "./OwnedFileHandle.js";
 
-/** Cancellation observed at a file operation's explicit checkpoint. */
+/** Cancellation at an explicit checkpoint, retaining concurrent IO failure as cause. */
 export class RegularFileOperationCancelled extends Error {
   readonly _tag = "RegularFileOperationCancelled";
-  constructor(readonly reason: unknown) {
-    super("Regular file operation cancelled", { cause: reason });
+  constructor(
+    readonly reason: unknown,
+    options: ErrorOptions = { cause: reason },
+  ) {
+    super("Regular file operation cancelled", options);
     this.name = this._tag;
   }
 }

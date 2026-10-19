@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate, setTimeout as delay } from "node:timers/promises";
 import type { IPty } from "@lydell/node-pty";
+import { RegularFileOperationCancelled } from "../../filesystem/RegularFile.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
@@ -570,12 +571,15 @@ export const observeSelectedExecutable = async (
         let position = 0;
         while (true) {
           assertNotCancelled(signal);
-          const { bytesRead } = await handle.read(
-            buffer,
-            0,
-            buffer.length,
-            position,
-          );
+          const { bytesRead } = await handle
+            .read(buffer, 0, buffer.length, position)
+            .catch((cause: unknown) => {
+              if (signal?.aborted === true)
+                throw new RegularFileOperationCancelled(signal.reason, {
+                  cause,
+                });
+              throw cause;
+            });
           assertNotCancelled(signal);
           if (bytesRead === 0) break;
           hash.update(buffer.subarray(0, bytesRead));

@@ -10,6 +10,8 @@ const injected = vi.hoisted(() => ({
   closeFailure: undefined as Error | undefined,
   primaryFailure: undefined as Error | undefined,
   abortOnClose: undefined as (() => void) | undefined,
+  abortOnRead: undefined as (() => void) | undefined,
+  readFailure: undefined as Error | undefined,
   opened: [] as string[],
   closed: [] as string[],
   handles: [] as {
@@ -29,6 +31,13 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       injected.opened.push(path);
       if (path !== injected.path) return handle;
       const nativeClose = handle.close.bind(handle);
+      if (injected.readFailure !== undefined) {
+        const failure = injected.readFailure;
+        vi.spyOn(handle, "read").mockImplementation(async () => {
+          injected.abortOnRead?.();
+          throw failure;
+        });
+      }
       injected.handles.push({
         isOpen: () => handle.fd >= 0,
         close: nativeClose,
@@ -48,6 +57,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import { ProcessCaptureResourceScope } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
+import { RegularFileOperationCancelled } from "../../../src/filesystem/RegularFile.js";
 import { ProcessCaptureReadFailure } from "../../../src/process/capture/ProcessCaptureRead.js";
 import { observeSelectedExecutable } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 
@@ -91,6 +101,8 @@ afterEach(async () => {
   injected.closeFailure = undefined;
   injected.primaryFailure = undefined;
   injected.abortOnClose = undefined;
+  injected.abortOnRead = undefined;
+  injected.readFailure = undefined;
   injected.opened = [];
   injected.closed = [];
   await Promise.all(
@@ -226,3 +238,61 @@ it("returns a completed executable observation when descriptor close succeeds wi
   expect(injected.handles[0]?.isOpen()).toBe(false);
   await scope.close();
 });
+
+it.each(["none", "read", "close"] as const)(
+  "retains read, cancellation and close facts when cancellation arrives during %s",
+  async (phase) => {
+    const path = await createExecutable("selected executable read rejection");
+    const readFailure = Object.assign(
+      new Error("injected executable read failure"),
+      { code: "EIO" },
+    );
+    const closeFailure = new Error("injected executable close failure");
+    const controller = new AbortController();
+    const reason = new Error(
+      "cancel while selected executable read is pending",
+    );
+    injected.path = path;
+    injected.readFailure = readFailure;
+    injected.closeFailure = closeFailure;
+    if (phase === "read") injected.abortOnRead = () => controller.abort(reason);
+    if (phase === "close")
+      injected.abortOnClose = () => controller.abort(reason);
+    const scope = new ProcessCaptureResourceScope();
+    const failure = await caughtFailure(() =>
+      scope.run(() =>
+        observeSelectedExecutable(path, controller.signal, undefined, scope),
+      ),
+    );
+    expect(failure.cleanupCause).toBe(closeFailure);
+    expect(failure.cleanupIncomplete).toBe(true);
+    expect(failure.cleanupLeases).toHaveLength(1);
+    expect(failure.outcome.kind).toBe("failed");
+    if (failure.outcome.kind !== "failed")
+      throw new Error("Expected the physical read failure");
+    if (phase === "read") {
+      expect(failure.cause).toBe(reason);
+      expect(failure.cancellation?.reason).toBe(reason);
+      expect(failure.userCategory).toBe("cancelled");
+      expect(failure.outcome.cause).toBeInstanceOf(
+        RegularFileOperationCancelled,
+      );
+      if (!(failure.outcome.cause instanceof RegularFileOperationCancelled))
+        throw new Error("Expected recorded read cancellation");
+      expect(failure.outcome.cause.cause).toBe(readFailure);
+    } else {
+      // A later abort during close must not relabel an already failed read.
+      expect(failure.cause).toBe(readFailure);
+      expect(failure.outcome.cause).toBe(readFailure);
+      expect(failure.cancellation).toBeUndefined();
+    }
+    expect(injected.handles[0]?.isOpen()).toBe(true);
+    injected.abortOnClose = undefined;
+    injected.closeFailure = undefined;
+    await scope.retryCleanup();
+    expect(failure.cleanupIncomplete).toBe(false);
+    expect(injected.handles[0]?.isOpen()).toBe(false);
+    expect(failure.cleanupCause).toBe(closeFailure);
+    await scope.close();
+  },
+);

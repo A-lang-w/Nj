@@ -7,22 +7,22 @@ import { promisify } from "node:util";
 import { Cli } from "incur";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { observeJavaScriptRuntime } from "../../../src/application/javascript/JavaScriptRuntimeObservationService.js";
-import type { JavaScriptRuntimeObservationPort } from "../../../src/application/javascript/JavaScriptRuntimeObservationPort.js";
-import { V8InspectorProvider } from "../../../src/inspector/V8InspectorProvider.js";
-import { observeJavaScriptRuntimeInputSchema } from "../../../src/domain/javascript/javascriptRuntimeObservation.js";
-import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { registerJavaScriptRuntimeObservationCommands } from "../../../src/cliJavaScriptRuntimeCommands.js";
-import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
-import { ok } from "../../../src/domain/result.js";
-import { silentLogger } from "../../../src/logger.js";
+import { observeJavaScriptRuntime } from "../../src/application/javascript/JavaScriptRuntimeObservationService.js";
+import type { JavaScriptRuntimeObservationPort } from "../../src/application/javascript/JavaScriptRuntimeObservationPort.js";
+import { V8InspectorProvider } from "../../src/inspector/V8InspectorProvider.js";
+import { observeJavaScriptRuntimeInputSchema } from "../../src/domain/javascript/javascriptRuntimeObservation.js";
+import { startFakeV8Inspector } from "../fixtures/inspector/fakeV8Inspector.js";
+import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { registerJavaScriptRuntimeObservationCommands } from "../../src/cliJavaScriptRuntimeCommands.js";
+import { ProviderCleanupError } from "../../src/domain/providerCleanupError.js";
+import { ok } from "../../src/domain/result.js";
+import { silentLogger } from "../../src/logger.js";
 
 const runtimeFactory = vi.hoisted(() => ({
   provider: undefined as JavaScriptRuntimeObservationPort | undefined,
 }));
 
-vi.mock("../../../src/composition/javascriptRuntimeObservation.js", () => ({
+vi.mock("../../src/composition/javascriptRuntimeObservation.js", () => ({
   createJavaScriptRuntimeObservationProvider: () => {
     if (runtimeFactory.provider === undefined)
       throw new Error("No runtime observation provider was configured");

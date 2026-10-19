@@ -15,6 +15,7 @@ import {
 } from "../../fixtures/artifactInventory.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { artifactOccurrenceAt } from "../../fixtures/artifactEntryOrder.js";
+import { asarHeaderBytes } from "../../fixtures/asarHeader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("ZIP signature detection", () => {
@@ -60,35 +61,15 @@ describe("ZIP signature detection", () => {
   it("requires container magic for asar, pkg, and dmg suffixes", async () => {
     const root = await createTestTempDirectory("rea-container-magic-");
     const asar = join(root, "app.asar");
+    const truncatedAsar = join(root, "truncated.asar");
     const textAsar = join(root, "notes.asar");
     const pkg = join(root, "install.pkg");
     const textPkg = join(root, "notes.pkg");
     const dmg = join(root, "image.dmg");
     const textDmg = join(root, "notes.dmg");
-    const headerSize = 20;
-    await writeFile(
-      asar,
-      Buffer.from([
-        4,
-        0,
-        0,
-        0,
-        headerSize,
-        0,
-        0,
-        0,
-        headerSize - 4,
-        0,
-        0,
-        0,
-        2,
-        0,
-        0,
-        0,
-        0x7b,
-        0x7d,
-      ]),
-    );
+    const asarBytes = asarHeaderBytes('{"files":{}}');
+    await writeFile(asar, asarBytes);
+    await writeFile(truncatedAsar, asarBytes.subarray(0, asarBytes.length - 1));
     await writeFile(textAsar, Buffer.from("not an asar"));
     await writeFile(pkg, Buffer.from("xar!"));
     await writeFile(textPkg, Buffer.from("not a pkg"));
@@ -99,6 +80,15 @@ describe("ZIP signature detection", () => {
     expect(
       (await classifyAndHashRoot(asar, false, await lstat(asar))).format,
     ).toBe("asar");
+    expect(
+      (
+        await classifyAndHashRoot(
+          truncatedAsar,
+          false,
+          await lstat(truncatedAsar),
+        )
+      ).format,
+    ).toBe("file");
     expect(
       (await classifyAndHashRoot(textAsar, false, await lstat(textAsar)))
         .format,
