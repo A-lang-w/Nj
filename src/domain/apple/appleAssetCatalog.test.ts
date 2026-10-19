@@ -117,5 +117,4 @@ describe("compiled Apple asset catalog projection", () => {
     expect(page.next_offset).toBeNull();
     expect(page.truncated).toBe(false);
   });
-
 });
