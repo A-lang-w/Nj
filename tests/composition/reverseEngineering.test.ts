@@ -167,6 +167,58 @@ describe("reverse engineering command services", () => {
   });
 });
 
+it.each([
+  ["file_headers", true, ["-f"], false],
+  ["section_headers", true, ["-h"], false],
+  ["symbols", true, ["-t"], false],
+  ["relocations", true, ["-r"], false],
+  ["disassemble", true, ["-d"], false],
+  ["disassemble_all", true, ["-D"], false],
+  ["dwarf", true, ["-W", "-WK"], true],
+  ["dwarf", false, ["-W", "-WN"], false],
+] as const)(
+  "scopes the debug-link limitation to %s with following %s",
+  async (operation, followDebugLinks, flags, warns) => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-objdump-limitations-"));
+    const path = join(directory, "fixture.bin");
+    await writeFile(path, "inert artifact");
+    const calls: (readonly string[])[] = [];
+    const service = new ReverseEngineeringService({
+      environment: { REA_OBJDUMP_COMMAND: "/tools/objdump" },
+      run: async (_command, args) => {
+        calls.push(args);
+        return { stdout: "captured output", stderr: "" };
+      },
+    });
+    try {
+      const result = await service.inspectWithObjdump({
+        path,
+        operation,
+        follow_debug_links: followDebugLinks,
+      });
+      if (!result.ok) throw result.error;
+      expect(calls).toEqual([[...flags, path]]);
+      expect(result.value.parameters).toMatchObject({
+        operation,
+        follow_debug_links: followDebugLinks,
+      });
+      expect(result.value.raw_result).toMatchObject({
+        stdout: "captured output",
+        exit_code: 0,
+        completion_status: "complete",
+      });
+      expect(
+        result.value.limitations.some((text) =>
+          text.startsWith("DWARF output"),
+        ),
+      ).toBe(warns);
+    } finally {
+      await service.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
 it("uses one selected environment snapshot for provider selection and execution", async () => {
   const directory = await mkdtemp(join(tmpdir(), "rea-provider-environment-"));
   const path = join(directory, "fixture.bin");
