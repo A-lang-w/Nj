@@ -254,6 +254,7 @@ const parseCaptureEvidence = (
   if (capture.data.format !== "har")
     return err(
       inputError(
+        operation,
         [
           {
             path: ["evidence", "normalized_result", "format"],
