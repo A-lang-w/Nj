@@ -118,7 +118,7 @@ const expectWorkflowQuestionsRetained = (
     expect.arrayContaining(
       result.residual_unknowns.map((question) =>
         expect.objectContaining({
-          question,
+          question: `${question} (Evidence ${evidence.evidence_id})`,
           supporting_evidence_ids: [evidence.evidence_id],
         }),
       ),
@@ -679,6 +679,14 @@ describe("direct analysis composed snapshot replay", () => {
       expect(second).toEqual(first);
       expect(fixture.calls).toEqual(callsAfterFirst);
       expect(fixture.starts).toEqual(startsAfterFirst);
+      if (scenario.tool === "inspect_native_api") {
+        const replayed = await readAnalysisSnapshot(fixture.snapshotPath);
+        if (!replayed.ok) throw replayed.error;
+        expectWorkflowQuestionsRetained(replayed.value, scenario.tool);
+        expect(replayed.value.evidence_bundle.unknowns).toEqual(
+          loaded.value.evidence_bundle.unknowns,
+        );
+      }
     });
   }
 });
