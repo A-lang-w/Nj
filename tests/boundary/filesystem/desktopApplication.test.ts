@@ -14,6 +14,7 @@ import { expect, it, onTestFinished } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createDesktopApplicationService } from "../../../src/composition/desktop.js";
 import { desktopApplicationSchema } from "../../../src/domain/desktopApplication.js";
+import { createDesktopApplicationEvidence } from "../../../src/domain/desktopApplicationEvidence.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
 import {
@@ -956,3 +957,77 @@ it.each([
     ]);
   },
 );
+
+it("bounds diagnostic previews while preserving complete caller-provided issue facts", async () => {
+  const root = await createTestTempDirectory("rea-desktop-diagnostic-preview-");
+  const malformed = Buffer.alloc(64);
+  malformed.write("MZ");
+  malformed.writeUInt32LE(0xffffffff, 0x3c);
+  await put(root, "broken.exe", malformed);
+  const { report, evidence } = await inspect(root);
+  const source = structuredClone(report);
+  const row = source.files.find((file) => file.path === "broken.exe");
+  if (row === undefined) throw new Error("Missing diagnostic fixture");
+  const longReason = "A" + "😀".repeat(1000);
+  row.issues = [longReason, "second probe reason"];
+  const callerEvidence = createDesktopApplicationEvidence(
+    {
+      path: root,
+      max_entries: 20_000,
+      max_probe_bytes: 8 * 1024 * 1024,
+    },
+    source,
+    evidence.provider,
+  );
+  const summarized = inspectAnalysisView({
+    source: { kind: "inline", evidence: callerEvidence },
+    view: { kind: "summary" },
+  });
+  if (!summarized.ok) throw summarized.error;
+  expect(summarized.value.normalized_result).toMatchObject({
+    summary: {
+      probe_issues: {
+        file_count: 1,
+        issue_count: 2,
+        preview_truncated: false,
+        preview: [
+          {
+            file_id: row.file_id,
+            path_preview: "broken.exe",
+            read_status: "partial",
+            issue_count: 2,
+            first_issue_preview: "A" + "😀".repeat(127),
+            text_truncated: true,
+          },
+        ],
+      },
+    },
+  });
+  for (const ids of [undefined, []]) {
+    const selected = inspectAnalysisView({
+      source: { kind: "inline", evidence: callerEvidence },
+      view: {
+        kind: "desktop-application",
+        collection: "files",
+        has_issues: true,
+        ...(ids === undefined ? {} : { file_ids: ids }),
+        fields: ["issues"],
+      },
+    });
+    if (!selected.ok) throw selected.error;
+    expect(selected.value.normalized_result).toMatchObject({
+      items:
+        ids === undefined
+          ? [
+              {
+                file_id: row.file_id,
+                issues: [longReason, "second probe reason"],
+              },
+            ]
+          : [],
+      source_coverage: { status: "partial" },
+    });
+    expect(selected.value.evidence_links).toEqual([callerEvidence.evidence_id]);
+  }
+  expect(row.issues[0]).toBe(longReason);
+});

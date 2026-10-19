@@ -41,6 +41,9 @@ Read exact files in one request:
 
 Collections are `files`, `omissions`, `candidates`, `components` and `next_probes`.
 Files and omissions accept exact `paths` and batched `file_ids` / `omission_ids`.
+Files also accept `has_issues: true` to select probe diagnostics directly, or
+`false` to select rows without reported issues. This filter uses the retained
+issue facts; it does not re-read targets or infer that uninspected files are healthy.
 When both are supplied, all filters apply; an empty selection returns no rows.
 Omission records retain the observed path, kind and stable `omission_id`; their
 payloads are not read, and other special-entry metadata remains unavailable.
@@ -51,6 +54,18 @@ always included. Selection changes delivery, not source inspection. Pages keep
 source coverage and parent Evidence links. Page exhaustion does not establish
 absence in a partial source. Complete Evidence remains accessible through
 `get_evidence` and Evidence bundle export.
+
+The summary's `probe_issues` counts files with reported issues and their retained
+issue entries. It previews at most two such files, including stable `file_id`,
+read status and the first issue. Path/reason previews use at most 256 UTF-16 units
+each without splitting surrogate pairs; `text_truncated` marks shortened text,
+and `preview_truncated` marks additional files. These are display prefixes;
+full caller paths and all reasons remain in Evidence. Counts describe retained
+observations, while source coverage still identifies partial inspection.
+
+Use `inspect_analysis_view` with `collection: "files", has_issues: true` and
+`fields: ["path", "read_status", "issues"]` for exact reasons, with the usual
+paging and parent links. It intersects with exact paths and batched file IDs.
 
 An ASAR inventory probe first selects its exact path with `open_binary`; then
 call `inspect_artifact` on that active target. Directory inspection itself does

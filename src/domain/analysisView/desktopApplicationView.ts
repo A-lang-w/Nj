@@ -24,6 +24,22 @@ import type {
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { ok, err, type Result } from "../result.js";
 
+// Bound diagnostic context independently of the retained report size. Previews
+// are display values; stable file IDs select the original paths and all issues.
+const DIAGNOSTIC_PREVIEW_FILES = 2;
+const DIAGNOSTIC_PREVIEW_UNITS = 256;
+
+const hasProbeIssues = (file: {
+  readonly issues: readonly string[];
+}): boolean => file.issues.length > 0;
+
+const diagnosticTextPreview = (value: string) => {
+  let end = Math.min(value.length, DIAGNOSTIC_PREVIEW_UNITS);
+  const last = value.charCodeAt(end - 1);
+  if (end < value.length && last >= 0xd800 && last <= 0xdbff) end--;
+  return { text: value.slice(0, end), truncated: end < value.length };
+};
+
 const page = {
   kind: z.literal("desktop-application"),
   offset: z.number().int().nonnegative().default(0),
@@ -35,6 +51,7 @@ export const desktopViewRequestSchema = z.discriminatedUnion("collection", [
     collection: z.literal("files"),
     paths: z.array(z.string()).optional(),
     file_ids: z.array(desktopFileSchema.shape.file_id).optional(),
+    has_issues: z.boolean().optional(),
     fields: z.array(desktopFileSchema.keyof()).optional(),
   }),
   z.strictObject({
@@ -79,6 +96,27 @@ export const desktopSummarySchema = z.strictObject({
     candidates: z.number().int().nonnegative(),
     components: z.number().int().nonnegative(),
     next_probes: z.number().int().nonnegative(),
+  }),
+  probe_issues: z.strictObject({
+    file_count: z.number().int().nonnegative(),
+    issue_count: z.number().int().nonnegative(),
+    preview: z
+      .array(
+        z.strictObject({
+          file_id: desktopFileSchema.shape.file_id,
+          path_preview: z.string(),
+          read_status: desktopFileSchema.shape.read_status,
+          issue_count: z.number().int().positive(),
+          first_issue_preview: z.string(),
+          text_truncated: z.boolean(),
+        }),
+      )
+      .max(DIAGNOSTIC_PREVIEW_FILES),
+    preview_truncated: z
+      .boolean()
+      .describe(
+        "More retained files have probe issues than fit in the preview.",
+      ),
   }),
   candidates: z.array(
     desktopCandidateSchema.omit({ basis_file_ids: true }).extend({
@@ -175,7 +213,36 @@ export const projectDesktopApplicationView = (
     ],
   };
   if (view.kind === "summary") {
-    const byId = new Map(report.files.map((file) => [file.file_id, file.path]));
+    const byId = new Map<string, string>();
+    const probeIssues: z.infer<typeof desktopSummarySchema>["probe_issues"] = {
+      file_count: 0,
+      issue_count: 0,
+      preview: [],
+      preview_truncated: false,
+    };
+    // Reuse the path-index pass; do not allocate another full file selection or
+    // traverse every issue string just to form this bounded diagnostic summary.
+    for (const file of report.files) {
+      byId.set(file.file_id, file.path);
+      if (!hasProbeIssues(file)) continue;
+      probeIssues.file_count++;
+      probeIssues.issue_count += file.issues.length;
+      if (probeIssues.preview.length === DIAGNOSTIC_PREVIEW_FILES) continue;
+      const firstIssue = file.issues[0];
+      if (firstIssue === undefined) continue;
+      const path = diagnosticTextPreview(file.path);
+      const issue = diagnosticTextPreview(firstIssue);
+      probeIssues.preview.push({
+        file_id: file.file_id,
+        path_preview: path.text,
+        read_status: file.read_status,
+        issue_count: file.issues.length,
+        first_issue_preview: issue.text,
+        text_truncated: path.truncated || issue.truncated,
+      });
+    }
+    probeIssues.preview_truncated =
+      probeIssues.file_count > probeIssues.preview.length;
     const summarizeBasis = <T extends { basis_file_ids: string[] }>(row: T) => {
       const { basis_file_ids, ...value } = row;
       return {
@@ -218,6 +285,7 @@ export const projectDesktopApplicationView = (
           components: report.components.length,
           next_probes: report.next_probes.length,
         },
+        probe_issues: probeIssues,
         candidates: report.candidates.map(summarizeBasis),
         components: report.components.map(summarizeBasis),
         next_probe_groups: [...groups.values()],
@@ -233,12 +301,20 @@ export const projectDesktopApplicationView = (
     const paths = view.paths === undefined ? undefined : new Set(view.paths);
     const ids = view.collection === "files" ? view.file_ids : view.omission_ids;
     const selected = ids === undefined ? undefined : new Set(ids);
-    if (paths !== undefined || selected !== undefined)
+    const withIssues =
+      view.collection === "files" ? view.has_issues : undefined;
+    if (
+      paths !== undefined ||
+      selected !== undefined ||
+      withIssues !== undefined
+    )
       rows = report[view.collection].filter(
         (row) =>
           (paths === undefined || paths.has(row.path)) &&
           (selected === undefined ||
-            selected.has("file_id" in row ? row.file_id : row.omission_id)),
+            selected.has("file_id" in row ? row.file_id : row.omission_id)) &&
+          (withIssues === undefined ||
+            ("issues" in row && hasProbeIssues(row) === withIssues)),
       );
   }
   if (view.collection === "candidates" && view.families !== undefined) {

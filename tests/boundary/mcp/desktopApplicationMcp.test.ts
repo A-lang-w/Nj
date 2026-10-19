@@ -12,6 +12,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { desktopApplicationSchema } from "../../../src/domain/desktopApplication.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
+import { buildNativePeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
@@ -183,6 +184,124 @@ it("advertises exact schemas and retains a compact directory answer with typed s
   expect(parseEvidence(complete.structuredContent).evidence_id).toBe(
     view.parent_evidence_id,
   );
+});
+
+it("surfaces unavailable probes and filters their complete retained diagnostics through MCP", async () => {
+  const session = createTestBinarySession(() => {
+    throw new Error("Directory inspection must not acquire a deep provider");
+  });
+  const harness = await createApplicationMcpHarness({ session });
+  onTestFinished(harness.close);
+  const client = harness.client;
+  const schemas = await advertisedMcpToolSchemas(
+    client,
+    "inspect_desktop_application",
+  );
+  const views = await advertisedMcpToolSchemas(client, "inspect_analysis_view");
+  const partialRoot = await createTestTempDirectory(
+    "rea-desktop-probe-issues-mcp-",
+  );
+  await mkdir(join(partialRoot, "clean"));
+  for (let index = 0; index < 20; index++)
+    await writeFile(
+      join(partialRoot, `probe${String(index).padStart(2, "0")}.exe`),
+      buildNativePeFixture(),
+    );
+  const partial = await client.callTool({
+    name: "inspect_desktop_application",
+    arguments: { path: partialRoot, max_probe_bytes: 4096 },
+  });
+  expect(partial.isError).not.toBe(true);
+  expect(
+    schemas.ajv.validate(schemas.outputSchema, partial.structuredContent),
+  ).toBe(true);
+  const partialEvidence = parseEvidence(partial.structuredContent);
+  const partialView = analysisViewResultSchema.parse(
+    partialEvidence.normalized_result,
+  );
+  expect(partialView).toMatchObject({
+    kind: "summary",
+    summary: {
+      probe_issues: {
+        file_count: expect.any(Number),
+        issue_count: expect.any(Number),
+        preview_truncated: true,
+      },
+    },
+  });
+  const partialSource = session.evidenceById(partialView.parent_evidence_id);
+  const partialReport = desktopApplicationSchema.parse(
+    partialSource?.normalized_result,
+  );
+  const failed = partialReport.files.filter((file) => file.issues.length > 0);
+  expect(failed.length).toBeGreaterThan(2);
+  expect(
+    failed.every((file) =>
+      file.issues.some((reason) => /budget/iu.test(reason)),
+    ),
+  ).toBe(true);
+  expect(partialView).toMatchObject({
+    summary: {
+      source_coverage: { status: "partial", bytes_read: expect.any(Number) },
+      probe_issues: {
+        file_count: failed.length,
+        issue_count: failed.reduce((sum, file) => sum + file.issues.length, 0),
+        preview: failed.slice(0, 2).map((file) => ({
+          file_id: file.file_id,
+          path_preview: file.path,
+          read_status: file.read_status,
+          issue_count: file.issues.length,
+          first_issue_preview: file.issues[0],
+          text_truncated: false,
+        })),
+      },
+    },
+  });
+  for (const [hasIssues, offset, paths, total] of [
+    [true, 0, failed.slice(0, 2).map((file) => file.path), failed.length],
+    [true, failed.length - 1, [failed.at(-1)!.path], failed.length],
+    [false, 0, ["clean"], 1],
+  ] as const) {
+    const args = {
+      source: {
+        kind: "retained-evidence",
+        evidence_id: partialView.parent_evidence_id,
+      },
+      view: {
+        kind: "desktop-application",
+        collection: "files",
+        has_issues: hasIssues,
+        ...(hasIssues ? {} : { paths: ["clean"] }),
+        fields: ["path", "read_status", "issues"],
+        offset,
+        limit: 2,
+      },
+    };
+    expect(views.ajv.validate(views.inputSchema, args)).toBe(true);
+    const response = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: args,
+    });
+    expect(response.isError).not.toBe(true);
+    expect(
+      views.ajv.validate(views.outputSchema, response.structuredContent),
+    ).toBe(true);
+    const evidence = parseEvidence(response.structuredContent);
+    expect(evidence.evidence_links).toEqual([partialView.parent_evidence_id]);
+    expect(evidence.normalized_result).toMatchObject({
+      items: paths.map((path) => {
+        const file = partialReport.files.find((row) => row.path === path)!;
+        return {
+          file_id: file.file_id,
+          path,
+          read_status: file.read_status,
+          issues: file.issues,
+        };
+      }),
+      source_coverage: { status: "partial" },
+      coverage: { total, exhausted: offset + paths.length === total },
+    });
+  }
 });
 
 it.skipIf(process.platform === "win32")(
