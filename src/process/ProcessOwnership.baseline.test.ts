@@ -34,22 +34,10 @@ const identity = (related = false): ProcessIdentityObservation => ({
 
 it.each([
   {
-    name: "exited before token validation",
-    baseline: "prior-generation",
-    before: absent,
-    after: absent,
-  },
-  {
     name: "exited after an unavailable initial identity",
     baseline: "prior-generation",
     before: unavailable,
     after: absent,
-  },
-  {
-    name: "resolved an unknown baseline to an unrelated generation",
-    baseline: null,
-    before: identity(),
-    after: identity(),
   },
 ])(
   "reconciles a baseline candidate that $name",

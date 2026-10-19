@@ -1,3 +1,4 @@
+import { processIdentityHasExited } from "./ProcessLifecycle.js";
 import type {
   ProcessIdentityObservation,
   ProcessNativeRelationObservation,
@@ -5,15 +6,6 @@ import type {
   ProcessRunTokenObservation,
   ProcessTableEntry,
 } from "./ProcessOwnership.js";
-
-/** Positive native exit settles cleanup without establishing ownership or signal authority. */
-export const processIdentityHasExited = (
-  identity: ProcessIdentityObservation,
-): boolean =>
-  identity.state === "absent" ||
-  (identity.state === "readable" &&
-    identity.lifecycle?.state === "observed" &&
-    identity.lifecycle.lifecycle === "zombie");
 
 export interface RetainedProcessOwnershipCandidate {
   readonly pid: number;

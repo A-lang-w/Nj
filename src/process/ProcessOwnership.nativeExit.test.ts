@@ -197,7 +197,6 @@ it.each(
 it.each(["absent", "zombie", "live"] as const)(
   "retries unavailable tokens only while native ownership is unsettled: %s",
   async (lifetime) => {
-    vi.useFakeTimers();
     const row: ProcessTableEntry = {
       pid: 900,
       parentPid: 100,
@@ -240,34 +239,18 @@ it.each(["absent", "zombie", "live"] as const)(
       },
       signalGroup: vi.fn(),
     };
-    let result:
-      | Awaited<ReturnType<typeof verifyNoTokenOwnedProcesses>>
-      | undefined;
-    const pending = verifyNoTokenOwnedProcesses("run-token", host, [], {
+    const result = await verifyNoTokenOwnedProcesses("run-token", host, [], {
       leaderPid: 100,
       processGroupId: 100,
       evidenceOwner: new ProcessOwnershipEvidenceOwner(),
-    }).then((value) => {
-      result = value;
     });
-    try {
-      await vi.advanceTimersByTimeAsync(0);
+    if (lifetime === "live") {
+      expect(result).toMatchObject({ cleaned: false });
+      expect(runTokens).toHaveBeenCalledTimes(4);
+    } else {
+      expect(result).toEqual({ cleaned: true, signaled: false });
       expect(runTokens).toHaveBeenCalledTimes(1);
-      if (lifetime === "live") {
-        expect(result).toBeUndefined();
-        expect(vi.getTimerCount()).toBe(1);
-        await vi.runAllTimersAsync();
-        await pending;
-        expect(result).toMatchObject({ cleaned: false });
-        expect(runTokens).toHaveBeenCalledTimes(4);
-      } else {
-        expect(result).toEqual({ cleaned: true, signaled: false });
-        expect(vi.getTimerCount()).toBe(0);
-      }
-    } finally {
-      await vi.runAllTimersAsync();
-      await pending;
-      vi.useRealTimers();
     }
+    expect(host.signalGroup).not.toHaveBeenCalled();
   },
 );

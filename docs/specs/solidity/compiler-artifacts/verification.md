@@ -1,6 +1,28 @@
 # Compiler artifact verification
 
-## Current integration verification — 19 October 2026
+## Main integration verification — 19 October 2026
+
+Integration base: `10f1994fe`, Linux x64, pinned Node 24.18.0 and npm 11.16.0.
+The merged runtime and required artifacts built successfully.
+
+- All eight `check:ci` tasks and architecture checks passed.
+- Focused selection: 501 tests passed across 33 files, including the current
+  process lifecycle and recorded-PID trace policy controls.
+- Test discovery accounted for all 1,687 files exactly once.
+- Real solc 0.8.30 CLI/stdio-MCP verification passed all 80 cases.
+- Real recorded-crash CLI/stdio-MCP verification passed all 44 cases with
+  executable, memory, network and cleanup guards enabled. Trace coverage retains
+  the upstream declaration of unverified access surfaces.
+- Process cleanup uses the shared native lifecycle and timer owners. Final
+  terminal observations settle retained candidates without granting signal
+  authority; unrelated Linux EIO remains a failure rather than a permission
+  exemption. The selected process regressions passed all 91 cases.
+
+The earlier full hosted qualification below applies to its pinned head. Current
+hosted qualification and platform results are recorded in the PR body; these
+local Linux results alone do not establish native macOS/Windows execution.
+
+## Qualification at `7dafeb5e6` — 19 October 2026
 
 Integration base: `aacf740a0` (REA 6.7.0), Linux x64, Node 24.18.0,
 npm 11.16.0, unchanged `solc 0.8.30+commit.73712a01.Emscripten.clang`
