@@ -66,6 +66,32 @@ it("ends a HEAD reply after the headers and cancels a body the handler attached"
   expect(pulls).toBeLessThanOrEqual(1);
 });
 
+it("finishes a HEAD reply without waiting on a teed body whose sibling stays live", async () => {
+  const cached = new Response(
+    new ReadableStream<Uint8Array>({
+      pull: () => new Promise(() => undefined),
+    }),
+    { headers: { "content-type": "text/event-stream" } },
+  );
+  let finished = false;
+  const server = createServer((_request, response) => {
+    void writeWebResponse(cached.clone(), response).then(() => {
+      finished = true;
+    });
+  });
+  servers.push(server);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+  const response = await fetch(`http://127.0.0.1:${String(port)}/events`, {
+    method: "HEAD",
+  });
+  expect(response.status).toBe(200);
+  await vi.waitFor(() => {
+    expect(finished).toBe(true);
+  });
+});
+
 it("forwards method, URL, headers and the request body as a web Request", async () => {
   const seen: Request[] = [];
   const origin = await serve(async (request) => {

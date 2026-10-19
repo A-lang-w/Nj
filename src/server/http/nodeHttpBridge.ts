@@ -81,7 +81,8 @@ export const writeWebResponse = async (
   target.flushHeaders();
   if (response.body === null || target.req.method === "HEAD") {
     target.end();
-    await response.body?.cancel().catch(() => undefined);
+    // Not awaited: cancelling one branch of a teed body settles only once its sibling is consumed or cancelled too.
+    void response.body?.cancel().catch(() => undefined);
     return;
   }
   await pipeline(Readable.fromWeb(response.body), target);
