@@ -12,7 +12,7 @@ import {
 } from "./javascriptSemanticState.js";
 import type { JavaScriptIntrinsicInvocation } from "./javascriptElectronMemberWrites.js";
 import {
-  hasJavaScriptViteInheritedIndex,
+  hasJavaScriptViteInheritedProperty,
   isJavaScriptViteDefaultUndefined,
   type JavaScriptViteHelperCandidate,
 } from "./javascriptViteHelper.js";
@@ -629,7 +629,7 @@ export class ViteCacheIdentities {
           }
           const key =
             index === null
-              ? hasJavaScriptViteInheritedIndex(keys.length, this.state)
+              ? hasJavaScriptViteInheritedProperty(keys.length, this.state)
                 ? null
                 : undefined
               : semanticStaticPropertyKey(index, true);

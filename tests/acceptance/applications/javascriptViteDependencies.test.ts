@@ -2259,7 +2259,7 @@ const allScenarios: readonly ViteScenario[] = [
     file,
     source: `${mutation}\n${mapDependencies('["./first.js", "./last.js"]', "[, 0]")}`,
     callSource: "__vite__mapDeps([, 0])",
-    resolved: ["first.js"],
+    resolved: unknown ? [] : ["first.js"],
     unknown,
   })),
   ...(
@@ -2455,6 +2455,83 @@ const allScenarios: readonly ViteScenario[] = [
     ),
     resolved: ["first.js"],
     unknown: false,
+  },
+  ...([false, true] as const).map((prefix) => ({
+    file: `coercing-index-${prefix ? "after-prefix" : "first"}.js`,
+    callSource: `__vite__mapDeps([${prefix ? "0," : ""}key,0])`,
+    source: mapDependenciesWithEffects(
+      prefix
+        ? "const key = runtimeKey; __vite__mapDeps([0,key,0]);"
+        : 'const initialize = __vite__mapDeps; initialize([]); const key = {cache: __vite__mapDeps.f, [Symbol.toPrimitive]() { this.cache[0] = "./last.js"; return 1; }}; __vite__mapDeps([key,0]);',
+    ),
+    resolved: prefix ? ["first.js"] : [],
+    unknown: true,
+  })),
+  ...(
+    [
+      ["sparse", 1, '["./first.js", , "./last.js"]'],
+      ["out-of-bounds", 5, '["./first.js"]'],
+      ["negative", -1, '["./first.js"]'],
+      ["named", "named", '["./first.js"]'],
+    ] as const
+  ).map(([name, key, table]) => {
+    const callSource = `__vite__mapDeps([${JSON.stringify(key)},0])`;
+    return {
+      file: `effectful-${name}-table-read.js`,
+      callSource,
+      source: mapDependenciesWithEffects(
+        `Object.defineProperty(Array.prototype, ${JSON.stringify(String(key))}, {get() { this[0] = "./last.js"; return 1; }, configurable: true}); ${callSource};`,
+        table,
+      ),
+      resolved: [],
+      unknown: true,
+    };
+  }),
+  {
+    file: "owned-unknown-table-slot-before-known.js",
+    callSource: "__vite__mapDeps([1,2])",
+    source: mapDependenciesWithEffects(
+      'Object.defineProperty(Array.prototype, "1", {get() { return 1; }, configurable: true}); __vite__mapDeps([1,2]);',
+      '["./first.js", null, "./last.js"]',
+    ),
+    resolved: ["last.js"],
+    unknown: true,
+  },
+  {
+    file: "inert-unknown-key-before-known.js",
+    callSource: "__vite__mapDeps([null,0])",
+    source: mapDependencies('["./first.js"]', "[null,0]"),
+    resolved: ["first.js"],
+    unknown: true,
+  },
+  {
+    file: "effectful-input-elision-before-known.js",
+    callSource: "__vite__mapDeps([,0])",
+    source: mapDependenciesWithEffects(
+      'Object.defineProperty(Array.prototype, "0", {get() { this[1] = 1; return 0; }, configurable: true}); __vite__mapDeps([,0]);',
+      '["./first.js", "./last.js"]',
+    ),
+    resolved: [],
+    unknown: true,
+  },
+  {
+    file: "known-prefix-before-effectful-table-read.js",
+    callSource: "__vite__mapDeps([2,1,0])",
+    source: mapDependenciesWithEffects(
+      'Object.defineProperty(Array.prototype, "1", {get() { return 1; }, configurable: true}); __vite__mapDeps([2,1,0]);',
+      '["./first.js", , "./last.js"]',
+    ),
+    resolved: ["last.js"],
+    unknown: true,
+  },
+  {
+    file: "effectful-late-index-expression-before-map.js",
+    callSource: "__vite__mapDeps([0,key,external()])",
+    source: mapDependenciesWithEffects(
+      "const key = runtimeKey; __vite__mapDeps([0,key,external()]);",
+    ),
+    resolved: [],
+    unknown: true,
   },
 ];
 

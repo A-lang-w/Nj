@@ -5,10 +5,11 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
-  hasJavaScriptViteInheritedIndex,
+  hasJavaScriptViteInheritedProperty,
   isJavaScriptViteDefaultUndefined,
   readJavaScriptViteHelper,
   type JavaScriptViteHelperCandidate,
+  type JavaScriptViteCacheTable,
 } from "./javascriptViteHelper.js";
 import { invalidateJavaScriptViteCachesSteps } from "./javascriptViteCacheOwnership.js";
 import {
@@ -17,6 +18,7 @@ import {
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
+import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
 import type { ParsedJavaScriptSource } from "./javascriptSourceParser.js";
 
 type ViteDependencyTable = readonly (string | undefined)[];
@@ -63,7 +65,7 @@ export function* classifyParsedJavaScriptViteDependencySpecifiersSteps(
   );
   const classifiedCalls: {
     readonly node: ViteDependencyCall;
-    readonly table: ViteDependencyTable | null | undefined;
+    readonly table: JavaScriptViteCacheTable | null | undefined;
   }[] = [];
   yield* traverseJavaScriptAstSteps(file.program, {
     enter: (node) => {
@@ -97,11 +99,11 @@ function* viteBindingTablesSteps(
 ): Generator<
   void,
   {
-    tables: Map<string, ViteDependencyTable | null>;
+    tables: Map<string, JavaScriptViteCacheTable | null>;
     cacheHelpers: Map<string, JavaScriptViteHelperCandidate>;
   }
 > {
-  const tables = new Map<string, ViteDependencyTable | null>();
+  const tables = new Map<string, JavaScriptViteCacheTable | null>();
   const cacheHelpers = new Map<string, JavaScriptViteHelperCandidate>();
   for (const [index, candidate] of candidates.entries()) {
     if (index % 1024 === 0) yield;
@@ -125,8 +127,8 @@ function* viteBindingTablesSteps(
 
 function* exactTableSlotsSteps(
   table: t.ArrayExpression,
-): Generator<void, ViteDependencyTable> {
-  const slots: (string | undefined)[] = [];
+): Generator<void, JavaScriptViteCacheTable> {
+  const slots: (string | null | undefined)[] = [];
   for (const [index, element] of table.elements.entries()) {
     if (index > 0 && index % 1024 === 0) yield;
     if (t.isSpreadElement(element)) {
@@ -139,7 +141,9 @@ function* exactTableSlotsSteps(
     slots.push(
       literal?.found && typeof literal.value === "string"
         ? literal.value
-        : undefined,
+        : element === null
+          ? undefined
+          : null,
     );
   }
   return slots;
@@ -148,7 +152,7 @@ function* exactTableSlotsSteps(
 /** An inert unary index cannot execute code; unsupported slots stay unknown. */
 const inertIndexSlot = (
   value: t.Node,
-): { readonly numeric?: number } | undefined => {
+): { readonly numeric: number } | undefined => {
   if (
     !t.isUnaryExpression(value) ||
     !(value.operator === "+" || value.operator === "-") ||
@@ -163,7 +167,7 @@ const inertIndexSlot = (
 
 function* selectedDependencySpecifiersSteps(
   node: ViteDependencyCall,
-  table: ViteDependencyTable | null | undefined,
+  table: JavaScriptViteCacheTable | null | undefined,
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void, ViteDependencyTable> {
   if (table == null || !(yield* usesDefaultTableSteps(node, state)))
@@ -172,29 +176,55 @@ function* selectedDependencySpecifiersSteps(
   if (argument === undefined) return [undefined];
   const indexes = unwrapJavaScriptExpression(argument).node;
   if (!t.isArrayExpression(indexes)) return [undefined];
+  // all arguments are evaluated before map starts, including a later slot.
+  // validate the whole literal before a mapped read can stop exact decoding.
+  for (const [index, element] of indexes.elements.entries()) {
+    if (index > 0 && index % 1024 === 0) yield;
+    if (element === null) continue;
+    const value = unwrapJavaScriptExpression(element).node;
+    if (
+      !t.isIdentifier(value) &&
+      !readExactJavaScriptLiteral(value).found &&
+      inertIndexSlot(value) === undefined
+    )
+      return [undefined];
+  }
   const selected: (string | undefined)[] = [];
   for (const [index, element] of indexes.elements.entries()) {
     if (index > 0 && index % 1024 === 0) yield;
     if (element === null) {
       // native map visits inherited indexes even when the input has an elision.
-      if (hasJavaScriptViteInheritedIndex(index, state))
+      if (hasJavaScriptViteInheritedProperty(index, state)) {
         selected.push(undefined);
+        return selected;
+      }
       continue;
     }
     const value = unwrapJavaScriptExpression(element).node;
     const inert = inertIndexSlot(value);
-    if (
-      !t.isIdentifier(value) &&
-      !readExactJavaScriptLiteral(value).found &&
-      inert === undefined
-    )
-      return [undefined];
+    const literal = readExactJavaScriptLiteral(value);
     const numeric = t.isNumericLiteral(value) ? value.value : inert?.numeric;
     selected.push(
       numeric !== undefined && Number.isSafeInteger(numeric) && numeric >= 0
-        ? table[numeric]
+        ? (table[numeric] ?? undefined)
         : undefined,
     );
+    const key = literal.found
+      ? String(literal.value)
+      : inert === undefined
+        ? undefined
+        : String(inert.numeric);
+    const propertyIndex = key === undefined ? null : semanticArrayIndex(key);
+    const own =
+      key === "length" ||
+      (propertyIndex !== null && table[propertyIndex] !== undefined);
+    // key coercion and inherited getters can change every subsequent read.
+    // unknown owned values remain inert, preserving unrelated exact slots.
+    if (
+      key === undefined ||
+      (!own && hasJavaScriptViteInheritedProperty(key, state))
+    )
+      return selected;
   }
   return selected;
 }

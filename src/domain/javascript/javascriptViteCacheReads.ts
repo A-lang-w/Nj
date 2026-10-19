@@ -4,6 +4,7 @@ import { readExactJavaScriptLiteral } from "./javascriptAstValues.js";
 import { SemanticPropertyPathCoverage } from "./javascriptSemanticPropertyPaths.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import type { ViteCacheIdentity } from "./javascriptViteCacheIdentityTypes.js";
+import type { JavaScriptViteCacheTable } from "./javascriptViteHelper.js";
 
 const ARRAY_READS = new Set([
   "at",
@@ -25,7 +26,7 @@ export interface ViteCacheReadProof {
 
 /** possible ownership cannot prove an unchanged intrinsic receiver or method. */
 export function* createViteCacheReadProofSteps(
-  tables: ReadonlyMap<string, readonly (string | undefined)[] | null>,
+  tables: ReadonlyMap<string, JavaScriptViteCacheTable | null>,
   state: JavaScriptSemanticAnalysisState,
   readIdentity: (node: t.Node) => ViteCacheIdentity | undefined,
 ): Generator<void, ViteCacheReadProof> {
@@ -36,7 +37,7 @@ export function* createViteCacheReadProofSteps(
     let dense = table !== null;
     for (const value of table ?? []) {
       if (examined++ % 1024 === 0) yield;
-      if (value === undefined) dense = false;
+      if (value == null) dense = false;
     }
     if (dense) denseOwners.add(owner);
   }

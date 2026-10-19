@@ -15,18 +15,16 @@ type ViteHelper =
   | t.FunctionExpression
   | t.FunctionDeclaration;
 
-/** an elision is absent only when visible writes cannot supply its prototype slot. */
-export const hasJavaScriptViteInheritedIndex = (
-  index: number,
+/** null is an owned unknown value; undefined leaves property ownership unproven. */
+export type JavaScriptViteCacheTable = readonly (string | null | undefined)[];
+
+/** a missing property is inert only when visible writes cannot supply an accessor. */
+export const hasJavaScriptViteInheritedProperty = (
+  key: string | number,
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>
   ["Array", "Object"].some((namespace) =>
-    state.ambientWrites.covers([
-      "global",
-      namespace,
-      "prototype",
-      String(index),
-    ]),
+    state.ambientWrites.covers(["global", namespace, "prototype", String(key)]),
   );
 
 export interface JavaScriptViteHelperCandidate {

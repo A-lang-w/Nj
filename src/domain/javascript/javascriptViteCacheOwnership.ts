@@ -27,10 +27,12 @@ import type {
   ViteCacheValue,
 } from "./javascriptViteCacheIdentityTypes.js";
 import { semanticObjectPropertyReferencesSteps } from "./javascriptSemanticObjectReferences.js";
-import type { JavaScriptViteHelperCandidate } from "./javascriptViteHelper.js";
+import type {
+  JavaScriptViteCacheTable,
+  JavaScriptViteHelperCandidate,
+} from "./javascriptViteHelper.js";
 import { collectSemanticEsmExport } from "./javascriptSemanticProjection.js";
 
-type CacheTable = readonly (string | undefined)[];
 type CachePath = readonly (string | null)[];
 type Call = t.CallExpression | t.OptionalCallExpression;
 
@@ -78,7 +80,7 @@ const arrayInvocation = (
 /** invalidate admitted Vite caches through shared identity and mutation owners. */
 export function* invalidateJavaScriptViteCachesSteps(
   program: t.Program,
-  tables: Map<string, CacheTable | null>,
+  tables: Map<string, JavaScriptViteCacheTable | null>,
   cacheHelpers: ReadonlyMap<string, JavaScriptViteHelperCandidate>,
   initializations: ReadonlySet<t.Node | undefined>,
   admittedNodes: WeakSet<t.Node>,
