@@ -898,6 +898,27 @@ it("checks client array constraints in schema positions while preserving literal
   );
 });
 
+it("rejects empty-string literals and visits array-valued schema children", () => {
+  const metadata = {
+    type: "object",
+    properties: { value: { type: "string", const: "" } },
+    default: { const: "" },
+    examples: [{ enum: [""] }],
+  };
+  expect(
+    emptyStringLiteralSchemaError({ ...metadata, properties: {} }, "literal"),
+  ).toBeUndefined();
+  expect(emptyStringLiteralSchemaError(metadata, "literal")).toBe(
+    "literal.properties.value.const is an empty string",
+  );
+  expect(
+    emptyStringLiteralSchemaError(
+      { type: "array", items: [{ type: "string", const: "" }] },
+      "literal",
+    ),
+  ).toBe("literal.items[0].const is an empty string");
+});
+
 it.each([false, true])(
   "rejects references to another tool's nested IDs (earlier compilation fails: %s)",
   (invalidPrevious) => {
