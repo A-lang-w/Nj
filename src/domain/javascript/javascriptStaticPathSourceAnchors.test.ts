@@ -95,3 +95,27 @@ it("does not use a URL string as a filesystem source-file anchor", () => {
     { preload_path: null },
   ]);
 });
+
+it.each([false, true])(
+  "proves the CommonJS filename dirname owner: local=%s",
+  (local) => {
+    const analysis = analyzeJavaScriptStaticSource(
+      `const path=require('node:path');const helper={dirname:()=>'.'};const{BrowserWindow}=require('electron');new BrowserWindow({webPreferences:{preload:path.resolve(runtimeBase,${local ? "helper" : "path"}.dirname(__filename),'decoy.cjs')}});`,
+    );
+    expect(analysis.electron.browser_windows).toMatchObject([
+      { preload_path: local ? null : "decoy.cjs" },
+    ]);
+  },
+);
+
+it.each([false, true])(
+  "preserves the utility-process dirname parameter until assigned: assigned=%s",
+  (assigned) => {
+    const analysis = analyzeJavaScriptStaticSource(
+      `var __dirname;${assigned ? "__dirname='relative';" : ""}const path=require('node:path');const{utilityProcess}=require('electron');utilityProcess.fork(path.join(__dirname,'worker.cjs'));`,
+    );
+    expect(analysis.electron.utility_processes).toMatchObject([
+      { module_path: assigned ? null : "worker.cjs" },
+    ]);
+  },
+);

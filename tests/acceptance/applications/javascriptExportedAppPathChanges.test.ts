@@ -7,17 +7,31 @@ import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js
 
 cliTest.for(
   (["CLI", "stdio MCP"] as const).flatMap((surface) =>
-    [false, true].map((replaced) => ({ surface, replaced })),
+    (["ESM", "CommonJS"] as const).flatMap((format) =>
+      [false, true].map((replaced) => ({ surface, format, replaced })),
+    ),
   ),
 )(
-  "retains exported app setter uncertainty (replaced=$replaced) through $surface",
-  async ({ surface, replaced }, { cli }) => {
+  "retains $format exported app setter uncertainty (replaced=$replaced) through $surface",
+  async ({ surface, format, replaced }, { cli }) => {
     const root = await createTestTempDirectory("rea-exported-app-path-");
+    const files: Record<string, string> =
+      format === "CommonJS"
+        ? {
+            "a/package.json": '{"main":"main.cjs"}',
+            "a/setter.cjs": `throw new Error('Static fixture must never execute');const {app}=require('electron');${replaced ? "app.setAppPath=()=>{};" : ""}const change=app.setAppPath;module.exports={change,app};`,
+            "a/main.cjs": `throw new Error('Static fixture must never execute');const {change,app}=require('./setter.cjs');const path=require('node:path');change.call(app,path.join(__dirname,'lib'));require('./win.cjs');`,
+            "a/win.cjs": `throw new Error('Static fixture must never execute');const {BrowserWindow}=require('electron');new BrowserWindow().loadFile('index.html');`,
+          }
+        : {
+            "a/package.json": '{"main":"main.mjs"}',
+            "a/main.mjs": `throw new Error('Static fixture must never execute');import {app,change} from '../shared/change.mjs';import {BrowserWindow} from 'electron';change.call(app,'./lib');new BrowserWindow().loadFile('index.html');`,
+            "shared/change.mjs": `throw new Error('Static fixture must never execute');import {app} from 'electron';${replaced ? "app.setAppPath=()=>{};" : ""}const change=app.setAppPath;export {app,change};`,
+          };
     await writeFixtureFiles(root, {
-      "a/package.json": '{"main":"main.mjs"}',
-      "a/main.mjs": `throw new Error('Static fixture must never execute');import {app,change} from '../shared/change.mjs';import {BrowserWindow} from 'electron';change.call(app,'./lib');new BrowserWindow().loadFile('index.html');`,
+      ...files,
       "a/index.html": "application page",
-      "shared/change.mjs": `throw new Error('Static fixture must never execute');import {app} from 'electron';${replaced ? "app.setAppPath=()=>{};" : ""}const change=app.setAppPath;export {app,change};`,
+      "a/lib/index.html": "changed application page",
       "shared/index.html": "source-relative decoy",
       "index.html": "artifact-root decoy",
     });

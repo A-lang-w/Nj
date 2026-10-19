@@ -87,3 +87,50 @@ it.each([
     );
   },
 );
+
+it.each(cases)(
+  "retains the captured CommonJS namespace setter after %s",
+  (_name, body, possible, calls) => {
+    const defining = `const {app}=require('electron');${body}module.exports={change,app};`;
+    for (const [index, expected] of calls.entries()) {
+      let changed = 0;
+      const module = { exports: {} };
+      runInNewContext(defining, {
+        module,
+        exports: module.exports,
+        flag: index === 1,
+        require: () => ({ app: { setAppPath: () => changed++ } }),
+      });
+      expect(changed).toBe(0);
+      runInNewContext("change.call(app,'./lib');", module.exports);
+      expect(changed).toBe(expected);
+    }
+    const analysis = analyzeJavaScriptStaticSource(defining);
+    expect(analysis.parse_error_count).toBe(0);
+    expect((analysis.electron.app_path_changes ?? []).length > 0).toBe(
+      possible,
+    );
+  },
+);
+
+it.each([
+  ["module.exports=change;", true],
+  ["exports.change=change;", true],
+  ["module.exports.change=change;", true],
+  ["Object.defineProperty(exports,'change',{value:change});", true],
+  ["exports.change=change;module.exports={};", false],
+  ["const module={exports:{}};module.exports={change};", false],
+  ["const exports={};exports.change=change;", false],
+  ["export const namespace={change,app};", true],
+] as const)(
+  "follows shared runtime export values and receivers in %s",
+  (published, possible) => {
+    const analysis = analyzeJavaScriptStaticSource(
+      `const {app}=require('electron');const change=app.setAppPath;${published}`,
+    );
+    expect(analysis.parse_error_count).toBe(0);
+    expect((analysis.electron.app_path_changes ?? []).length > 0).toBe(
+      possible,
+    );
+  },
+);

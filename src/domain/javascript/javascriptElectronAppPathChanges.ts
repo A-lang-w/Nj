@@ -28,6 +28,13 @@ import type { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
 import { assignmentValueSources } from "./javascriptSemanticRequireOrigin.js";
 import { semanticRuntimeExportValueSources } from "./javascriptModuleDeclaration.js";
+import {
+  commonJsRuntimeExportValue,
+  indexCommonJsExportReceiversSteps,
+  type CommonJsExportReceiverEffect,
+  type CommonJsExportSite,
+} from "./javascriptCommonJsExportReceivers.js";
+import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 
 interface Candidate {
   readonly node: t.Node;
@@ -37,6 +44,7 @@ interface Candidate {
     | readonly SemanticCapturedSelection[]
     | undefined;
   readonly awaitDepths: readonly number[];
+  readonly escaping?: true;
 }
 
 const isSetterPath = (path: SemanticAliasSelectionPath): boolean =>
@@ -69,7 +77,10 @@ export const createSemanticElectronAppPathChangeQuery = (
     state,
     "awaited-call",
   );
-  const possiblePath = (root: t.Node): boolean => {
+  let commonJsReceivers:
+    | ReadonlyMap<CommonJsExportSite, CommonJsExportReceiverEffect>
+    | undefined;
+  const possiblePath = (root: t.Node, escaping = false): boolean => {
     const pending: Candidate[] = [];
     const seen = new WeakMap<t.Node, Set<string>>();
     let scheduled = 0;
@@ -87,6 +98,7 @@ export const createSemanticElectronAppPathChangeQuery = (
           node,
           path: undefined,
           awaitDepths: candidate.awaitDepths.length > 0 ? [0] : [],
+          ...(candidate.escaping ? { escaping: true as const } : {}),
         };
       const capturedSelections = semanticNormalizeCapturedSelections(
         candidate.capturedSelections,
@@ -103,6 +115,7 @@ export const createSemanticElectronAppPathChangeQuery = (
           ownEnumerable,
         ]),
         candidate.awaitDepths,
+        candidate.escaping,
       ]);
       const contexts = seen.get(node) ?? new Set<string>();
       if (contexts.has(key)) return;
@@ -111,7 +124,12 @@ export const createSemanticElectronAppPathChangeQuery = (
       seen.set(node, contexts);
       pending.push({ ...candidate, node, capturedSelections });
     };
-    enqueue({ node: root, path: [], awaitDepths: [] });
+    enqueue({
+      node: root,
+      path: [],
+      awaitDepths: [],
+      ...(escaping ? { escaping: true as const } : {}),
+    });
     while (pending.length > 0) {
       const current = pending.pop()!;
       if (widened && current.path !== undefined) {
@@ -259,9 +277,10 @@ export const createSemanticElectronAppPathChangeQuery = (
           enqueue({ ...current, node: source });
       } else if (
         (t.isObjectExpression(node) || t.isArrayExpression(node)) &&
-        (path === undefined || path.length > 0)
+        (path === undefined || path.length > 0 || current.escaping)
       ) {
-        const [key, ...remaining] = path ?? [null];
+        const [key, ...remaining] =
+          path?.length === 0 ? [null] : (path ?? [null]);
         for (const choice of semanticAliasSelectionChoices(key!)) {
           const sources = t.isObjectExpression(node)
             ? semanticObjectPropertyReferences(node, [choice], state)
@@ -298,13 +317,35 @@ export const createSemanticElectronAppPathChangeQuery = (
     }
     return false;
   };
-  return (node) =>
-    t.isCallExpression(node) || t.isOptionalCallExpression(node)
-      ? possiblePath(node.callee) ||
+  return (node) => {
+    if (
+      (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+      (possiblePath(node.callee) ||
         interop.intrinsicInvocation(node, (callee) =>
           possiblePath(callee)
             ? ["electron-app-path-change"]
             : interop.intrinsicPath(callee),
-        )?.path[0] === "electron-app-path-change"
-      : semanticRuntimeExportValueSources(node).some(possiblePath);
+        )?.path[0] === "electron-app-path-change")
+    )
+      return true;
+    if (
+      semanticRuntimeExportValueSources(node).some((value) =>
+        possiblePath(value, true),
+      )
+    )
+      return true;
+    const exported = commonJsRuntimeExportValue(node, state);
+    if (
+      exported?.value == null ||
+      (!t.isAssignmentExpression(node) && !t.isCallExpression(node))
+    )
+      return false;
+    commonJsReceivers ??= completeSemanticSteps(
+      indexCommonJsExportReceiversSteps(state),
+    );
+    return (
+      commonJsReceivers.get(node) !== "detached" &&
+      possiblePath(exported.value, true)
+    );
+  };
 };

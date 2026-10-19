@@ -2,6 +2,7 @@ import * as t from "@babel/types";
 
 import {
   semanticStaticPropertyKey,
+  semanticFinalObjectProperty,
   semanticWriteTargets,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -87,6 +88,30 @@ export const commonJsDefinedExport = (
     exportedName: semanticStaticPropertyKey(key, true) ?? "*",
     receiver,
     descriptor,
+  };
+};
+
+/** Runtime values published by the CommonJS syntax owner, before receiver applicability. */
+export const commonJsRuntimeExportValue = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+):
+  | { readonly exportedName: string; readonly value: t.Node | null }
+  | undefined => {
+  if (t.isAssignmentExpression(node)) {
+    const exportedName = commonJsExportName(node.left, state);
+    return exportedName === undefined
+      ? undefined
+      : { exportedName, value: node.operator === "=" ? node.right : null };
+  }
+  const defined = commonJsDefinedExport(node, state);
+  if (defined === undefined) return undefined;
+  const descriptor = unwrapJavaScriptExpression(defined.descriptor).node;
+  return {
+    exportedName: defined.exportedName,
+    value: t.isObjectExpression(descriptor)
+      ? (semanticFinalObjectProperty(descriptor, "value") ?? null)
+      : null,
   };
 };
 
