@@ -176,15 +176,11 @@ itWithCaptureCapability(
 itWithCaptureCapability(
   "keeps the process deadline bounded when the wall clock moves backward",
   async () => {
-    const wallStart = Date.now();
-    let wallReads = 0;
-    const now = vi.spyOn(Date, "now").mockImplementation(() => {
-      wallReads += 1;
-      return wallReads === 1 ? wallStart : wallStart - 60_000 + wallReads;
-    });
+    let wallNow = Date.now();
+    const now = vi.spyOn(Date, "now").mockImplementation(() => wallNow);
     const controller = new AbortController();
     let fallback: ReturnType<typeof setTimeout> | undefined;
-    let runningObserved = false;
+    let reachedRunning = false;
     let fallbackFired = false;
     const clearFallback = () => {
       clearTimeout(fallback);
@@ -211,25 +207,30 @@ itWithCaptureCapability(
         undefined,
         {
           async report(update) {
-            if (update.phase === "running" && !runningObserved) {
-              runningObserved = true;
+            if (update.phase === "running" && !reachedRunning) {
+              reachedRunning = true;
+              wallNow -= 60_000;
               // The deadline starts after native ownership preparation and
               // executable inspection. Bound only the same running interval.
               fallback = setTimeout(() => {
                 fallbackFired = true;
                 controller.abort();
               }, 1_500);
-            } else if (update.phase !== "running") clearFallback();
+            } else if (
+              update.phase === "settling" ||
+              update.phase === "cleanup"
+            )
+              clearFallback();
           },
         },
       );
-      if (!result.ok) throw result.error;
-      expect(runningObserved).toBe(true);
+      expect(reachedRunning).toBe(true);
       expect(
         fallbackFired,
         "the monotonic deadline precedes the caller safety abort",
       ).toBe(false);
-      expect(result.value.exit.reason).toBe("timeout");
+      const { capture } = captureObservations(result);
+      expect(capture.exit.reason).toBe("timeout");
     } finally {
       controller.abort();
       clearFallback();
@@ -617,7 +618,7 @@ itWithCaptureCapability(
     }
 
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 50);
+    let reachedRunning = false;
     const cancelled = await captureProcessScenario(
       parseProcessScenario({
         executable: process.execPath,
@@ -627,9 +628,43 @@ itWithCaptureCapability(
         idle_timeout_ms: 5_000,
       }),
       controller.signal,
+      process.platform,
+      process.env,
+      undefined,
+      undefined,
+      {
+        async report(update) {
+          if (update.phase === "running") {
+            reachedRunning = true;
+            controller.abort();
+          }
+        },
+      },
     );
     if (cancelled.ok) throw new Error("expected cancellation");
-    expect(cancelled.error.message).toContain("cancelled");
+    expect(reachedRunning).toBe(true);
+    if (!(cancelled.error instanceof ProcessCaptureError))
+      throw cancelled.error;
+    if (cancelled.error.cleanupIncomplete)
+      expectUnverifiedHostCleanup(cancelled.error);
+    else
+      expect(cancelled.error.cleanupReport).toMatchObject({
+        owned_process_group: { state: "cleaned" },
+        terminal_renderer: { state: "cleaned" },
+        temporary_root: { state: "cleaned" },
+      });
+    const cancellation = cancelled.error.cleanupIncomplete
+      ? cancelled.error.cause
+      : cancelled.error;
+    expect(cancellation, cancelled.error.message).toMatchObject({
+      reason: "cancelled",
+      userCategory: "cancelled",
+    });
+    expect(cancelled.error.partialObservation).toMatchObject({
+      observations: {
+        exit: { state: "available", value: { reason: "cancelled" } },
+      },
+    });
   },
 );
 

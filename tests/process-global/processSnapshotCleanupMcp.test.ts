@@ -9,7 +9,6 @@ const injected = vi.hoisted(() => ({
   failClose: false,
   opens: 0,
   handle: undefined as Awaited<ReturnType<typeof open>> | undefined,
-  nativeClose: undefined as (() => Promise<void>) | undefined,
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -22,7 +21,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       injected.opens += 1;
       injected.handle = handle;
       const nativeClose = handle.close.bind(handle);
-      injected.nativeClose = nativeClose;
       handle.close = async () => {
         if (injected.failClose)
           throw new Error("controlled file close failure");
@@ -172,6 +170,5 @@ it("retains and retries the exact snapshot file handle through public MCP captur
     await rm(root, { recursive: true, force: true });
     injected.path = "";
     injected.handle = undefined;
-    injected.nativeClose = undefined;
   }
 });
