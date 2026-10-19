@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 import { AnalysisUnsupportedTargetError } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import type {
@@ -265,17 +263,11 @@ export const scenarioCaptureRecords = (
   };
 };
 
-const capturedBodiesSchema = z.object({
-  events: z.object({
-    items: z.array(
-      z.object({
-        kind: z.unknown(),
-        phase: z.unknown().optional(),
-        body: z.object({ content: z.unknown() }).optional(),
-      }),
-    ),
-  }),
-});
+/** An own data member of admitted parent data; the clone admission already refused accessors. */
+const member = (value: unknown, key: string): unknown =>
+  typeof value === "object" && value !== null && Object.hasOwn(value, key)
+    ? (value as Readonly<Record<string, unknown>>)[key]
+    : undefined;
 
 /**
  * Bytes the manifest derives from a borrowed scenario: validation decodes and re-encodes one body at
@@ -283,16 +275,19 @@ const capturedBodiesSchema = z.object({
  * body. Response bodies stay borrowed, as HAR response text does.
  */
 const derivedTextBytes = (value: unknown): number => {
-  const parsed = capturedBodiesSchema.safeParse(value);
-  if (!parsed.success) return 0;
+  const items = member(member(value, "events"), "items");
   let largestBody = 0;
   let requestText = 0;
-  for (const event of parsed.data.events.items) {
-    const content = event.body?.content;
-    if (event.kind !== "network-content" || typeof content !== "string")
+  // Each event is read on its own, so a body without content leaves the others counted.
+  for (const event of Array.isArray(items) ? items : []) {
+    const content = member(member(event, "body"), "content");
+    if (
+      member(event, "kind") !== "network-content" ||
+      typeof content !== "string"
+    )
       continue;
     largestBody = Math.max(largestBody, content.length);
-    if (event.phase === "request")
+    if (member(event, "phase") === "request")
       requestText += textBytes(Math.ceil((content.length * 3) / 4));
   }
   return 64 + largestBody * 2 + requestText;
