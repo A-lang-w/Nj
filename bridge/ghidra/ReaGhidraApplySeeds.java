@@ -6,6 +6,8 @@ import ghidra.program.model.address.AddressSpace;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.MemoryBlock;
+import ghidra.program.model.symbol.RefType;
+import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.SourceType;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -23,15 +25,23 @@ import java.util.Set;
  * reconcile exact function bodies after analysis when passed {@code reconcile}.
  *
  * The single argument is REA's canonical seed snapshot: one
- * {@code 0x<hex>\t(function|code|label)[\tname]} line per ordinary seed, or an
- * exact {@code entry\tfunction_body\tstart-end[,start-end...][\tname]} seed.
+ * {@code 0x<hex>\t(function|code|label)[\tname]} line per ordinary seed, an
+ * exact {@code entry\tfunction_body\tstart-end[,start-end...][\tname]} seed,
+ * or {@code source\tcomputed_target\ttarget\t(call|jump)}.
  * Exact bodies are applied before inferred functions, then code and labels. The
  * outcome is stored as a program property that the bridge reports during its handshake.
  */
 public final class ReaGhidraApplySeeds extends GhidraScript {
     static final String REPORT_OPTION = "REA analysis seeds";
 
-    private record Seed(Address address, String kind, String name, AddressSet body) {}
+    private record Seed(
+        Address address,
+        String kind,
+        String name,
+        AddressSet body,
+        Address target,
+        String transferKind
+    ) {}
 
     @Override
     public void run() throws Exception {
@@ -68,6 +78,8 @@ public final class ReaGhidraApplySeeds extends GhidraScript {
             String kind = fields[1];
             AddressSet body = null;
             String name = null;
+            Address target = null;
+            String transferKind = null;
             if (kind.equals("function_body")) {
                 if (fields.length < 3) {
                     throw new IllegalArgumentException("REA function_body seed has no ranges");
@@ -83,13 +95,24 @@ public final class ReaGhidraApplySeeds extends GhidraScript {
                     body.add(new AddressRangeImpl(start, end));
                 }
                 name = fields.length == 4 ? fields[3] : null;
+            } else if (kind.equals("computed_target")) {
+                if (fields.length != 4 || !fields[2].startsWith("0x") ||
+                    !(fields[3].equals("call") || fields[3].equals("jump"))) {
+                    throw new IllegalArgumentException("REA computed_target seed is malformed");
+                }
+                try {
+                    target = space.getAddress(Long.parseUnsignedLong(fields[2].substring(2), 16));
+                } catch (ghidra.program.model.address.AddressOutOfBoundsException e) {
+                    target = null;
+                }
+                transferKind = fields[3];
             } else {
                 if (fields.length > 3) {
                     throw new IllegalArgumentException("REA ordinary seed has too many fields");
                 }
                 name = fields.length == 3 ? fields[2] : null;
             }
-            seeds.add(new Seed(address, kind, name, body));
+            seeds.add(new Seed(address, kind, name, body, target, transferKind));
         }
 
         // Highest address first: a function body computed before analysis stops at
@@ -107,6 +130,7 @@ public final class ReaGhidraApplySeeds extends GhidraScript {
         int functionBodyUpdated = 0, functionBodyFailed = 0;
         int functionBodyConflictsRemoved = 0;
         int labelApplied = 0, labelFailed = 0;
+        int computedTargetApplied = 0, computedTargetExisting = 0, computedTargetFailed = 0;
         Set<Address> declaredFunctionEntries = new HashSet<>();
         for (Seed seed : seeds) {
             if (seed.address() != null &&
@@ -114,14 +138,21 @@ public final class ReaGhidraApplySeeds extends GhidraScript {
                 declaredFunctionEntries.add(seed.address());
             }
         }
-        for (String pass : new String[] { "function_body", "function", "code", "label" }) {
+        for (String pass : new String[] {
+            "function_body", "function", "code", "computed_target", "label"
+        }) {
             for (Seed seed : seeds) {
                 if (!seed.kind().equals(pass)) continue;
                 monitor.checkCancelled();
                 MemoryBlock block = seed.address() == null
                     ? null
                     : currentProgram.getMemory().getBlock(seed.address());
-                if (block == null || (!pass.equals("label") && !block.isInitialized())) {
+                MemoryBlock targetBlock = seed.target() == null
+                    ? null
+                    : currentProgram.getMemory().getBlock(seed.target());
+                if (block == null || (!pass.equals("label") && !block.isInitialized()) ||
+                    (pass.equals("computed_target") &&
+                        (targetBlock == null || !targetBlock.isInitialized()))) {
                     unmapped++;
                     continue;
                 }
@@ -194,6 +225,43 @@ public final class ReaGhidraApplySeeds extends GhidraScript {
                             if (logged++ < 20) println("REA seed failed: function " + seed.address() + " " + why(seed.address()));
                         }
                     }
+                    case "computed_target" -> {
+                        try {
+                            if (!decoded(seed.address())) {
+                                computedTargetFailed++;
+                                if (logged++ < 20) println(
+                                    "REA seed failed: computed_target " + seed.address() + " " +
+                                    why(seed.address())
+                                );
+                                break;
+                            }
+                            RefType type = seed.transferKind().equals("call")
+                                ? RefType.COMPUTED_CALL
+                                : RefType.COMPUTED_JUMP;
+                            boolean existing = false;
+                            for (Reference reference :
+                                    currentProgram.getReferenceManager().getReferencesFrom(seed.address())) {
+                                if (reference.getToAddress().equals(seed.target()) &&
+                                    reference.getReferenceType().equals(type)) {
+                                    existing = true;
+                                    break;
+                                }
+                            }
+                            if (existing) computedTargetExisting++;
+                            else {
+                                currentProgram.getReferenceManager().addMemoryReference(
+                                    seed.address(), seed.target(), type, SourceType.USER_DEFINED, 0
+                                );
+                                computedTargetApplied++;
+                            }
+                        } catch (Exception e) {
+                            computedTargetFailed++;
+                            if (logged++ < 20) println(
+                                "REA seed failed: computed_target " + seed.address() + " " +
+                                e.getMessage()
+                            );
+                        }
+                    }
                     default -> {
                         try {
                             createLabel(seed.address(), seed.name(), true, SourceType.USER_DEFINED);
@@ -220,6 +288,9 @@ public final class ReaGhidraApplySeeds extends GhidraScript {
             ",\"code_failed\":" + codeFailed +
             ",\"label_applied\":" + labelApplied +
             ",\"label_failed\":" + labelFailed +
+            ",\"computed_target_applied\":" + computedTargetApplied +
+            ",\"computed_target_existing\":" + computedTargetExisting +
+            ",\"computed_target_failed\":" + computedTargetFailed +
             ",\"unmapped\":" + unmapped + "}";
         currentProgram.getOptions(Program.PROGRAM_INFO).setString(REPORT_OPTION, report);
         println("REA seeds applied: " + report);

@@ -35,6 +35,7 @@ export const ghidraSeedCommitmentSchema = z.strictObject({
     function_body: count,
     code: count,
     label: count,
+    computed_target: count.optional(),
   }),
 });
 export type GhidraSeedCommitment = z.infer<typeof ghidraSeedCommitmentSchema>;
@@ -57,11 +58,19 @@ export const ghidraSeedReportSchema = z.strictObject({
   code_failed: count,
   label_applied: count,
   label_failed: count,
+  computed_target_applied: count.optional(),
+  computed_target_existing: count.optional(),
+  computed_target_failed: count.optional(),
   unmapped: count,
 });
 export type GhidraSeedReport = z.infer<typeof ghidraSeedReportSchema>;
 
-type SeedKind = "function" | "function_body" | "code" | "label";
+type SeedKind =
+  | "function"
+  | "function_body"
+  | "code"
+  | "label"
+  | "computed_target";
 interface SeedRange {
   readonly start: bigint;
   readonly end: bigint;
@@ -71,6 +80,8 @@ interface SeedEntry {
   readonly kind: SeedKind;
   readonly name?: string;
   readonly ranges?: readonly SeedRange[];
+  readonly target?: bigint;
+  readonly transferKind?: "call" | "jump";
 }
 
 const seedLineError = (line: number, constraint: string) =>
@@ -86,8 +97,10 @@ const seedLineError = (line: number, constraint: string) =>
 /**
  * Parse ordinary `address<TAB>kind[<TAB>name]` seeds and exact function-body
  * seeds of the form `entry<TAB>function_body<TAB>start-end[,start-end...]
- * [<TAB>name]`. Range ends are inclusive. Blank lines and `#` comments are
- * ignored. Addresses are hexadecimal offsets in the default address space.
+ * [<TAB>name]`, or computed targets of the form
+ * `source<TAB>computed_target<TAB>target<TAB>(call|jump)`. Range ends are
+ * inclusive. Blank lines and `#` comments are ignored. Addresses are
+ * hexadecimal offsets in the default address space.
  */
 export const parseGhidraSeeds = (
   text: string,
@@ -104,7 +117,7 @@ export const parseGhidraSeeds = (
       return err(
         seedLineError(
           number,
-          "expected address<TAB>kind[<TAB>name] or a function_body range seed",
+          "expected an ordinary, function_body, or computed_target seed",
         ),
       );
     const [address, kind] = fields;
@@ -114,19 +127,31 @@ export const parseGhidraSeeds = (
       kind !== "function" &&
       kind !== "function_body" &&
       kind !== "code" &&
-      kind !== "label"
+      kind !== "label" &&
+      kind !== "computed_target"
     )
       return err(
         seedLineError(
           number,
-          "kind must be function, function_body, code or label",
+          "kind must be function, function_body, code, label or computed_target",
         ),
       );
-    if (kind !== "function_body" && fields.length > 3)
+    if (
+      kind !== "function_body" &&
+      kind !== "computed_target" &&
+      fields.length > 3
+    )
       return err(seedLineError(number, `${kind} seed has too many fields`));
     const rangeText = kind === "function_body" ? fields[2] : undefined;
-    const name = kind === "function_body" ? fields[3] : fields[2];
+    const name =
+      kind === "computed_target"
+        ? undefined
+        : kind === "function_body"
+          ? fields[3]
+          : fields[2];
     let ranges: readonly SeedRange[] | undefined;
+    let target: bigint | undefined;
+    let transferKind: "call" | "jump" | undefined;
     if (kind === "function_body") {
       if (rangeText === undefined || rangeText === "")
         return err(
@@ -169,6 +194,26 @@ export const parseGhidraSeeds = (
         );
       ranges = parsedRanges;
     }
+    if (kind === "computed_target") {
+      const targetText = fields[2];
+      const transfer = fields[3];
+      if (
+        targetText === undefined ||
+        !/^0x[0-9a-fA-F]{1,16}$/u.test(targetText)
+      )
+        return err(
+          seedLineError(
+            number,
+            "a computed_target seed requires a 0x-prefixed target",
+          ),
+        );
+      if (transfer !== "call" && transfer !== "jump")
+        return err(
+          seedLineError(number, "a computed_target seed requires call or jump"),
+        );
+      target = BigInt(targetText);
+      transferKind = transfer;
+    }
     if (
       name !== undefined &&
       (name.length === 0 ||
@@ -197,6 +242,8 @@ export const parseGhidraSeeds = (
       kind,
       ...(name === undefined ? {} : { name }),
       ...(ranges === undefined ? {} : { ranges }),
+      ...(target === undefined ? {} : { target }),
+      ...(transferKind === undefined ? {} : { transferKind }),
     });
     if (entries.length > MAX_GHIDRA_SEED_ENTRIES)
       return err(
@@ -220,7 +267,9 @@ const normalizedSeeds = (entries: readonly SeedEntry[]): string =>
                 `0x${start.toString(16)}-0x${end.toString(16)}`,
             )
             .join(",")}${entry.name === undefined ? "" : `\t${entry.name}`}\n`
-        : `0x${entry.address.toString(16)}\t${entry.kind}${entry.name === undefined ? "" : `\t${entry.name}`}\n`,
+        : entry.kind === "computed_target"
+          ? `0x${entry.address.toString(16)}\tcomputed_target\t0x${entry.target?.toString(16)}\t${entry.transferKind}\n`
+          : `0x${entry.address.toString(16)}\t${entry.kind}${entry.name === undefined ? "" : `\t${entry.name}`}\n`,
     )
     .join("");
 
@@ -274,7 +323,13 @@ export const resolveGhidraAnalysisSeeds = async (
         );
       }
       const normalized = normalizedSeeds(entries);
-      const tally = { function: 0, function_body: 0, code: 0, label: 0 };
+      const tally = {
+        function: 0,
+        function_body: 0,
+        code: 0,
+        label: 0,
+        computed_target: 0,
+      };
       for (const entry of entries) tally[entry.kind] += 1;
       return ok<GhidraSeedCommitment>({
         format: GHIDRA_SEED_FORMAT,
@@ -329,7 +384,8 @@ const totalEntries = (commitment: GhidraSeedCommitment): number =>
   commitment.entries.function +
   commitment.entries.function_body +
   commitment.entries.code +
-  commitment.entries.label;
+  commitment.entries.label +
+  (commitment.entries.computed_target ?? 0);
 
 /** Fail closed when the session did not apply exactly the committed seeds. */
 export const ghidraSeedFailure = (
@@ -362,10 +418,10 @@ export const ghidraSeedLimitations = (
   commitment === undefined
     ? []
     : [
-        `Ghidra analysis was seeded before auto-analysis and exact bodies were reconciled after analysis from ${commitment.path} (sha256 ${commitment.sha256}: ${commitment.entries.function} function, ${commitment.entries.function_body} exact function-body, ${commitment.entries.code} code, ${commitment.entries.label} label entries). Seeded functions, bodies, code and names are caller assertions, not Ghidra discoveries.`,
+        `Ghidra analysis was seeded before auto-analysis and exact bodies were reconciled after analysis from ${commitment.path} (sha256 ${commitment.sha256}: ${commitment.entries.function} function, ${commitment.entries.function_body} exact function-body, ${commitment.entries.code} code, ${commitment.entries.label} label, ${commitment.entries.computed_target ?? 0} computed-target entries). Seeded functions, bodies, code, names and transfer targets are caller assertions, not Ghidra discoveries.`,
         ...(report === undefined
           ? []
           : [
-              `Seed outcome${report.phase === undefined ? "" : ` (${report.phase})`}: ${report.function_created} functions created, ${report.function_existing} already present, ${report.function_failed} failed; exact bodies: ${report.function_body_created} created, ${report.function_body_existing} already exact, ${report.function_body_updated} updated, ${report.function_body_failed} failed, ${report.function_body_conflicts_removed ?? 0} conflicting inferred functions removed; ${report.code_decoded} code seeds decoded, ${report.code_failed} failed; ${report.label_applied} labels applied, ${report.label_failed} failed; ${report.unmapped} seeds outside initialized memory.`,
+              `Seed outcome${report.phase === undefined ? "" : ` (${report.phase})`}: ${report.function_created} functions created, ${report.function_existing} already present, ${report.function_failed} failed; exact bodies: ${report.function_body_created} created, ${report.function_body_existing} already exact, ${report.function_body_updated} updated, ${report.function_body_failed} failed, ${report.function_body_conflicts_removed ?? 0} conflicting inferred functions removed; ${report.code_decoded} code seeds decoded, ${report.code_failed} failed; ${report.label_applied} labels applied, ${report.label_failed} failed; computed targets: ${report.computed_target_applied ?? 0} applied, ${report.computed_target_existing ?? 0} already present, ${report.computed_target_failed ?? 0} failed; ${report.unmapped} seeds outside initialized memory.`,
             ]),
       ];

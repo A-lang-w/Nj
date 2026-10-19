@@ -69,6 +69,7 @@ await writeFile(
     "0x8c010006\tfunction_body\t0x8c010006-0x8c01000f\tinvalid_delay_slot",
     "0x8c01000a\tcode",
     "0x8c010010\tfunction_body\t0x8c010010-0x8c010015\tliteral_tail_transfer",
+    "0x8c010012\tcomputed_target\t0x8c010000\tcall",
     "",
   ].join("\n"),
 );
@@ -178,11 +179,23 @@ try {
     literalTransferFunction,
     "seeded literal-transfer function was exported",
   );
+  const seededTransfer = literalTransferFunction.instructions.find(
+    ({ address }) => address === "0x8c010012",
+  );
+  assert.ok(
+    seededTransfer.references.some(
+      ({ target_address, source, type }) =>
+        target_address === "0x8c010000" &&
+        source === "user_defined" &&
+        type === "COMPUTED_CALL",
+    ),
+    "authenticated computed-target seed was not retained as a user reference",
+  );
   assert.deepEqual(literalTransferFunction.recognized_computed_transfers, [
     {
       source: "0x8c010012",
       target: "0x8c010000",
-      kind: "call",
+      kind: "jump",
       mechanism: "pc-relative-literal-load",
       architecture: "sh4",
       register: "r2",
