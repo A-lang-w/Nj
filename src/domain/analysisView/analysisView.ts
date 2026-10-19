@@ -1,5 +1,12 @@
 import { z } from "zod";
 import {
+  desktopViewRequestSchema,
+  desktopViewItemsSchema,
+  desktopSummarySchema,
+  projectDesktopApplicationView,
+} from "./desktopApplicationView.js";
+import { desktopCoverageSchema } from "../desktopApplication.js";
+import {
   javascriptModuleReferencesRequestSchema,
   javascriptModuleReferenceSchema,
 } from "./javascriptModuleReferences.js";
@@ -10,10 +17,7 @@ import {
 } from "./javascriptFactsView.js";
 import { javaScriptSourceSelectionSchema } from "../javascript/javascriptSourceSelection.js";
 
-import {
-  AnalysisInputError,
-  AnalysisUnsupportedTargetError,
-} from "../analysisErrorCore.js";
+import { AnalysisUnsupportedTargetError } from "../analysisErrorCore.js";
 import {
   INSPECT_ANALYSIS_VIEW_OPERATION,
   analysisViewInputError,
@@ -24,7 +28,7 @@ import { evidenceSchema, type Evidence } from "../evidence.js";
 import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { binaryLayoutSchema } from "../native/binaryLayout.js";
+import { safeParseOwnedBinaryLayout } from "../native/binaryLayout.js";
 import { functionDossierSchema } from "../hopperValues.js";
 import {
   artifactGraphManifestSchema,
@@ -95,6 +99,12 @@ import {
   captureSummarySchema,
 } from "./webNetworkCaptureView.js";
 import type { WebNetworkApiSurfaceAccumulator } from "./WebNetworkApiSurfaceAccumulator.js";
+import type { EnvironmentManifestAccumulator } from "./EnvironmentManifestAccumulator.js";
+import {
+  projectEnvironmentManifestView,
+  environmentManifestFields,
+  environmentManifestViewRequestSchema,
+} from "./environmentManifestView.js";
 import {
   pcapViewRequestSchema,
   pcapViewPageSchema,
@@ -222,6 +232,7 @@ const inventoryViewSchema = z.discriminatedUnion("collection", [
 /** Caller-selected projection of already completed analysis Evidence. */
 export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   summaryViewSchema,
+  desktopViewRequestSchema,
   facetViewSchema,
   itemViewSchema,
   pageViewSchema,
@@ -237,6 +248,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   managedMembersViewRequestSchema,
   androidViewRequestSchema,
   apiSurfaceViewSchema,
+  environmentManifestViewRequestSchema,
   captureViewRequestSchema,
   qlogViewRequestSchema,
   pcapViewRequestSchema,
@@ -347,6 +359,7 @@ const viewResultBase = {
   parent_evidence_id: prefixedDigestSchema("ev"),
   parent_operation: z.enum([
     "inspect_binary_layout",
+    "inspect_desktop_application",
     "analyze_javascript_application",
     "analyze_function",
     "inspect_artifact",
@@ -415,6 +428,12 @@ export const artifactInventorySummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.enum(["inspect_artifact", "inventory_artifact"]),
   summary: inventorySummarySchema,
+});
+
+export const desktopApplicationSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_desktop_application"),
+  summary: desktopSummarySchema,
 });
 
 /** Exact summary carrier for WASM inspection's optional delivery contract. */
@@ -500,9 +519,17 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     }),
   }),
   z.strictObject({
+    ...viewResultBase,
+    ...environmentManifestFields,
+    kind: z.literal("environment-manifest"),
+    parent_operation: z.literal("inspect_web_network_capture"),
+    view: environmentManifestViewRequestSchema,
+  }),
+  z.strictObject({
     ...summaryViewResultBase,
     summary: z.union([
       layoutSummarySchema,
+      desktopSummarySchema,
       javascriptSummarySchema,
       inventorySummarySchema,
       wasmSummarySchema,
@@ -572,6 +599,14 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: wasmViewRequestSchema,
     item: wasmViewItemSchema,
     ...viewResultBase,
+  }),
+  z.strictObject({
+    kind: z.literal("desktop-application"),
+    view: desktopViewRequestSchema,
+    items: desktopViewItemsSchema,
+    ...viewResultBase,
+    source_coverage: desktopCoverageSchema,
+    parent_operation: z.literal("inspect_desktop_application"),
   }),
   z.strictObject({
     kind: z.literal("macho"),
@@ -670,7 +705,15 @@ export interface AnalysisViewParent {
 /** View payload before the content digest is attached. */
 export type UnsignedAnalysisView =
   | Omit<
+      Extract<AnalysisViewResult, { readonly kind: "desktop-application" }>,
+      "view_digest"
+    >
+  | Omit<
       Extract<AnalysisViewResult, { readonly kind: "api-surface" }>,
+      "view_digest"
+    >
+  | Omit<
+      Extract<AnalysisViewResult, { readonly kind: "environment-manifest" }>,
       "view_digest"
     >
   | Omit<
@@ -741,8 +784,8 @@ const parseJavaScriptParent = (
   input: unknown,
 ): Result<JavaScriptApplicationAnalysisResult, AnalysisError> => {
   try {
-    // Only the existing realm-private graph proofs permit reuse. Imported or
-    // merely frozen graphs still receive full canonical validation.
+    // The format owner authenticates imported results completely before reuse;
+    // mutable or merely frozen inputs still receive canonical validation.
     const steps = parseOwnedJavaScriptApplicationAnalysisSteps(input);
     let step = steps.next();
     while (!step.done) step = steps.next();
@@ -795,6 +838,7 @@ const parentArtifactPath = (parent: AnalysisViewParent): string => {
 
 /** Named source owners for views that need no extra decoder or accumulator. */
 const retainedViewProjectors = new Map<string, typeof projectWasmArtifactView>([
+  ["inspect_desktop_application", projectDesktopApplicationView],
   ["inspect_wasm_artifact", projectWasmArtifactView],
   ["inspect_macho", projectMachoView],
   ["decode_interface_builder", projectInterfaceBuilderView],
@@ -812,6 +856,7 @@ export const projectAnalysisView = (
   parent: AnalysisViewParent,
   view: AnalysisViewRequest,
   apiSurfaceAccumulator?: WebNetworkApiSurfaceAccumulator,
+  manifestAccumulator?: EnvironmentManifestAccumulator,
 ): Result<AnalysisViewResult, AnalysisError> => {
   const digest = parentDigest(parent.evidenceId);
   if (!digestSchema.safeParse(digest).success)
@@ -832,6 +877,14 @@ export const projectAnalysisView = (
     );
     return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
   }
+  if (view.kind === "environment-manifest") {
+    const projected = projectEnvironmentManifestView(
+      parent,
+      view,
+      manifestAccumulator,
+    );
+    return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
+  }
   if (parent.operation === "inspect_web_network_capture") {
     const projected = projectWebNetworkCaptureView(parent, view);
     return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
@@ -841,7 +894,7 @@ export const projectAnalysisView = (
     return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
   }
   if (parent.operation === "inspect_binary_layout") {
-    const layout = binaryLayoutSchema.safeParse(parent.normalizedResult);
+    const layout = safeParseOwnedBinaryLayout(parent.normalizedResult);
     if (!layout.success)
       return err(
         analysisViewInputError([

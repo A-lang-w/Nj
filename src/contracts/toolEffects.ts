@@ -125,6 +125,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     executesForeignCode: true,
     idempotent: false,
   }),
+  inspect_desktop_application: evidence,
   inspect_go_binary: evidence,
   inspect_rust_binary: evidence,
   inspect_sqlite_database: effects({
@@ -231,7 +232,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     accessesNetwork: true,
     idempotent: false,
   }),
-  frida_session_status: effects(),
+  frida_session_status: evidence,
   close_frida_session: effects({
     mutatesTarget: true,
     mutatesSession: true,
