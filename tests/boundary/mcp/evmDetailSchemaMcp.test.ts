@@ -45,5 +45,7 @@ it("advertises the shared EVM detail guidance and default", async () => {
     enum: ["complete", "summary"],
     default: "complete",
   });
-  expect(detail?.description).toContain("summary retains that complete Evidence");
+  expect(detail?.description).toContain(
+    "summary retains that complete Evidence",
+  );
 });
