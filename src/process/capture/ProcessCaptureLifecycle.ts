@@ -599,7 +599,7 @@ export const observeSelectedExecutable = async (
     if (
       cause instanceof ProcessCaptureReadFailure &&
       !cause.cleanupIncomplete &&
-      cause.userCategory !== "cancelled" &&
+      cause.cancellation === undefined &&
       cause.outcome.kind === "failed"
     ) {
       const reason = filesystemFailure(cause.outcome.cause);

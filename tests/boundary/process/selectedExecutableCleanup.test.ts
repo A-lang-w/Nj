@@ -238,6 +238,80 @@ it("preserves selected executable IO failure when descriptor close also fails", 
   await scope.close();
 });
 
+it.each([
+  [false, false],
+  [false, true],
+  [true, false],
+  [true, true],
+])(
+  "retains pending read failure and cancellation (system error: %s, close denied: %s)",
+  async (systemError, closeDenied) => {
+    const path = await createExecutable("selected executable read failure");
+    const primary = new Error("physical executable read rejected");
+    if (systemError) Object.assign(primary, { code: "EIO", syscall: "read" });
+    const reason = { request: "cancel while the descriptor read is pending" };
+    const controller = new AbortController();
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    injected.path = path;
+    injected.closeFailure = closeDenied
+      ? new Error("descriptor close denied after failed read")
+      : undefined;
+    const scope = new ProcessCaptureResourceScope();
+    const fileSystem = {
+      open: async (selected: string, flags: number) => {
+        const handle = await open(selected, flags);
+        handle.read = async () => {
+          enter();
+          await pending;
+          throw primary;
+        };
+        return handle;
+      },
+      stat: (selected: string) => stat(selected, { bigint: true }),
+    };
+
+    const reading = caughtFailure(() =>
+      scope.run(() =>
+        observeSelectedExecutable(path, controller.signal, fileSystem, scope),
+      ),
+    );
+    await entered;
+    controller.abort(reason);
+    release();
+    const failure = await reading;
+    expect(failure.cause).toBe(primary);
+    expect(failure.outcome).toMatchObject({ kind: "failed", cause: primary });
+    expect(failure.cancellation?.reason).toBe(reason);
+    expect(failure.userCategory).toBeUndefined();
+    expect(failure.cleanupIncomplete).toBe(closeDenied);
+    expect(failure.cleanupCause).toBe(injected.closeFailure);
+    expect(failure.cleanupLeases).toHaveLength(closeDenied ? 1 : 0);
+    expect(injected.closed).toEqual([path]);
+
+    injected.closeFailure = undefined;
+    await scope.retryCleanup();
+    expect(failure.cleanupIncomplete).toBe(false);
+    expect(injected.handles[0]?.isOpen()).toBe(false);
+    await expect(
+      scope.run(() =>
+        observeSelectedExecutable(path, undefined, undefined, scope),
+      ),
+    ).resolves.toMatchObject({
+      sha256: createHash("sha256")
+        .update("selected executable read failure")
+        .digest("hex"),
+    });
+    await scope.close();
+  },
+);
+
 it("keeps the exact cancellation reason when cancellation arrives during descriptor close", async () => {
   const path = await createExecutable(
     "selected executable cancelled during close",
