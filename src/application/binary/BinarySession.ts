@@ -25,6 +25,7 @@ import { OFFICIAL_TOOL_CONTRACTS } from "../../contracts/officialToolContracts.j
 import { ENHANCED_TOOL_CONTRACTS } from "../../contracts/enhancedToolContracts.js";
 import type {
   BinarySessionPort,
+  BinarySessionCloseOptions,
   SavedAnalysisSnapshot,
 } from "./BinarySessionPort.js";
 import {
@@ -466,9 +467,7 @@ export class BinarySession
 
   /** Close the active target, if any. */
   close(
-    options: Pick<ExecutionOptions, "progress"> & {
-      readonly retainProviderDocuments?: boolean;
-    } = {},
+    options: BinarySessionCloseOptions = {},
   ): Promise<Result<null, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
       await this.#drainCalls(admittedThrough);
@@ -480,7 +479,7 @@ export class BinarySession
   closeWithSnapshot(
     path: string,
     overwrite: boolean,
-    options: Pick<ExecutionOptions, "progress"> = {},
+    options: BinarySessionCloseOptions = {},
   ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
       await this.#drainCalls(admittedThrough);
@@ -505,9 +504,7 @@ export class BinarySession
   }
 
   async #closeActive(
-    options: Pick<ExecutionOptions, "progress"> & {
-      readonly retainProviderDocuments?: boolean;
-    },
+    options: BinarySessionCloseOptions,
     clearRecords = true,
   ): Promise<Result<null, AnalysisError>> {
     const previous = this.#active;
@@ -542,6 +539,9 @@ export class BinarySession
           next,
           "close_binary",
         );
+    // External writers own their cleanup independently of analysis clients.
+    // Settle that owner within this transition before deciding close completion.
+    await options.afterResourceClose?.();
     if (!closed.ok && resourceFailure !== undefined)
       return err(
         analysisErrorWithCleanupFailure(

@@ -34,6 +34,12 @@ export interface SavedAnalysisSnapshot {
   readonly evidence_records: number;
 }
 
+/** Cleanup extension runs inside the close transition before final ownership checks. */
+export type BinarySessionCloseOptions = Pick<ExecutionOptions, "progress"> & {
+  readonly retainProviderDocuments?: boolean;
+  readonly afterResourceClose?: () => Promise<void>;
+};
+
 /** Target lifecycle used by CLI and MCP without exposing a concrete provider. */
 export interface BinarySessionPort
   extends AnalysisOperationPort, InvestigationRecordPort {
@@ -80,15 +86,13 @@ export interface BinarySessionPort
     },
   ): Promise<Result<BinaryTarget, AnalysisError>>;
   close(
-    options?: Pick<ExecutionOptions, "progress"> & {
-      readonly retainProviderDocuments?: boolean;
-    },
+    options?: BinarySessionCloseOptions,
   ): Promise<Result<null, AnalysisError>>;
   /** Save a snapshot and close while excluding later provider requests. */
   closeWithSnapshot(
     path: string,
     overwrite: boolean,
-    options?: Pick<ExecutionOptions, "progress">,
+    options?: BinarySessionCloseOptions,
   ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>>;
   status(options?: { readonly signal?: AbortSignal }): Promise<JsonValue>;
   activeTarget(): BinaryTarget | undefined;
