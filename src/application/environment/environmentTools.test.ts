@@ -6,6 +6,7 @@ import {
   environmentCard,
   environmentToolDefinitions,
   environmentToolInputSchema,
+  REPLAY_CATALOG_INSTRUCTIONS,
 } from "./environmentTools.js";
 
 const source = environmentServeSource();
@@ -28,7 +29,7 @@ describe("environmentToolDefinitions", () => {
     const users = tool("get_users_by_id");
     const definition = definitions.find(({ name }) => name === users.name);
     expect(definition?.description).toBe(
-      `GET ${users.path_template}; replays retained records [${users.record_ordinals.join(", ")}]; evidence ${source.evidenceId}`,
+      `${REPLAY_CATALOG_INSTRUCTIONS} GET ${users.path_template}; replays retained records [${users.record_ordinals.join(", ")}]; evidence ${source.evidenceId}`,
     );
     expect(definition?.tool).toBe(users);
   });
@@ -89,6 +90,84 @@ describe("environmentToolDefinitions", () => {
     ).toBe(
       "Request body; the capture retained no JSON body shape for this tool.",
     );
+  });
+});
+
+describe("environment catalog description budgets", () => {
+  it("bounds observation and record samples without changing the retained manifest", () => {
+    const users = tool("get_users_by_id");
+    const observations = Array.from(
+      { length: 10_000 },
+      (_, index) => `${String(index)}-${"x".repeat(200)}`,
+    );
+    const ordinals = Array.from({ length: 10_000 }, (_, index) => index);
+    const expanded = {
+      ...users,
+      params: users.params.map((param) => ({
+        ...param,
+        observed_values: observations,
+      })),
+      record_ordinals: ordinals,
+    };
+    const [definition] = environmentToolDefinitions(
+      { ...source.manifest, tools: [expanded] },
+      source.evidenceId,
+    );
+    expect(definition?.tool).toBe(expanded);
+    expect(expanded.params[0]?.observed_values).toBe(observations);
+    expect(expanded.record_ordinals).toBe(ordinals);
+    for (const description of [
+      definition?.description,
+      definition?.inputSchema.properties.id?.description,
+    ]) {
+      expect(Buffer.byteLength(description ?? "")).toBeLessThan(1536);
+      expect(description).toContain(
+        "/10000 shown; full list in manifest Evidence",
+      );
+    }
+    expect(definition?.description).toContain(source.evidenceId);
+    expect(definition?.inputSchema.properties.id?.description).toContain(
+      observations[0],
+    );
+  });
+
+  it("reports an omitted oversized value instead of publishing an unbounded or partial observation", () => {
+    const users = tool("get_users_by_id");
+    const schema = environmentToolInputSchema({
+      ...users,
+      params: users.params.map((param) => ({
+        ...param,
+        observed_values: ["😀".repeat(400), "other"],
+      })),
+    });
+    const description = schema.properties.id?.description;
+    expect(description).toBe(
+      "Path segment 2 (numeric); observed: … (0/2 shown; full list in manifest Evidence)",
+    );
+    expect(description).not.toContain("\uFFFD");
+  });
+
+  it("applies the same sample budget to captured request-body key descriptions", () => {
+    const folders = tool("post_folders");
+    if (folders.body_shape === null)
+      throw new Error("Missing fixture body shape");
+    const properties = Object.fromEntries(
+      Array.from({ length: 10_000 }, (_, index) => [
+        `${String(index)}-${"x".repeat(200)}`,
+        "string" as const,
+      ]),
+    );
+    const bodyShape = { ...folders.body_shape, properties };
+    const schema = environmentToolInputSchema({
+      ...folders,
+      body_shape: bodyShape,
+    });
+    const description = schema.properties.body?.description;
+    expect(Buffer.byteLength(description ?? "")).toBeLessThan(1300);
+    expect(description).toContain(
+      "/10000 shown; full list in manifest Evidence",
+    );
+    expect(Object.keys(bodyShape.properties)).toHaveLength(10_000);
   });
 });
 

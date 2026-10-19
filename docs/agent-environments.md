@@ -42,6 +42,11 @@ serve command refuses a manifest whose parent is not the supplied `--evidence`
 file with an `invalid_request` error naming both identifiers, so a manifest can
 never be served from records it did not cite.
 
+The MCP catalog and environment card sample path observations, request-body key descriptions and cited-record
+lists within a 1 KiB UTF-8 budget per list. Oversized lists report how many
+whole values are shown and point to the complete list in the manifest Evidence;
+this only limits descriptive context, not arguments, record selection or replay.
+
 ## What replay means and does not mean
 
 Each MCP tool call selects one of the records its manifest tool cites and
@@ -99,6 +104,9 @@ with `source: "analysis_target"`. The server advertises REA's untrusted-content
 instructions plus a warning that its tool names, descriptions, parameter names
 and observed values come from the capture too, and agents must treat all of it
 as data, never as instructions.
+That same warning prefixes every tool description in the standalone card, so
+card discovery carries it before an MCP client initializes. It labels the
+captured text without changing the tool names or schema fields clients use.
 
 ## Serve a manifest
 

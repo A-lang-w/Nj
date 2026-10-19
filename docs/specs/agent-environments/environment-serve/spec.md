@@ -34,6 +34,11 @@ later increment.
   description reads `METHOD template; replays retained records [ordinals];
   evidence ev_…`. The served catalog stays separate from REA's own tool
   contracts and digests.
+- Prefix tool descriptions with the shared captured-catalog warning so
+  standalone card readers receive the trust notice before MCP initialization.
+- Bound each path-observation, body-key and cited-ordinal description sample to 1 KiB
+  of UTF-8 whole values before joining them, with a separate omitted-count and
+  manifest-Evidence notice. Keep complete arrays and replay semantics unchanged.
 - Replay by selecting, among the tool's cited records, the one whose path
   segments at the parameter indexes match the most supplied values, then the
   most of those segments equal to the value as written rather than only after
