@@ -112,9 +112,8 @@ it.each(
     const identity = (): ProcessIdentityObservation => {
       identityReads += 1;
       if (
-        tokenRead &&
-        (lifetime === "unavailable" ||
-          (lifetime === "unavailable-zombie" && identityReads % 2 === 1))
+        (tokenRead && lifetime === "unavailable") ||
+        (lifetime === "unavailable-zombie" && identityReads % 2 === 1)
       )
         return { state: "unavailable", reason: "identity read denied" };
       return {
@@ -190,5 +189,83 @@ it.each(
       if (related) expect(evidenceOwner.candidates).toHaveLength(1);
     }
     expect(signalGroup).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["absent", "zombie", "live"] as const)(
+  "retries unavailable tokens only while native ownership is unsettled: %s",
+  async (lifetime) => {
+    vi.useFakeTimers();
+    const row: ProcessTableEntry = {
+      pid: 900,
+      parentPid: 100,
+      processGroupId: 100,
+      state: "S",
+      command: "settled-retry-fixture",
+    };
+    let identityReads = 0;
+    const runTokens = vi.fn(
+      async () =>
+        new Map([
+          [row.pid, { state: "unavailable" as const, reason: "EACCES" }],
+        ]),
+    );
+    const host: ProcessOwnershipHost = {
+      listProcesses: async () => [row],
+      environment: async () => ({}),
+      runTokens,
+      processIdentities: async () => {
+        identityReads += 1;
+        const after = identityReads > 1;
+        const identity: ProcessIdentityObservation =
+          after && lifetime === "absent"
+            ? { state: "absent", reason: "not-found-in-caller-pid-namespace" }
+            : {
+                state: "readable",
+                identity: "same-generation",
+                lifecycle: {
+                  state: "observed",
+                  lifecycle:
+                    after && lifetime === "zombie" ? "zombie" : "non-zombie",
+                },
+                relation: {
+                  state: "observed",
+                  parentPid: 100,
+                  processGroupId: 100,
+                },
+              };
+        return new Map([[row.pid, identity]]);
+      },
+      signalGroup: vi.fn(),
+    };
+    let result:
+      | Awaited<ReturnType<typeof verifyNoTokenOwnedProcesses>>
+      | undefined;
+    const pending = verifyNoTokenOwnedProcesses("run-token", host, [], {
+      leaderPid: 100,
+      processGroupId: 100,
+      evidenceOwner: new ProcessOwnershipEvidenceOwner(),
+    }).then((value) => {
+      result = value;
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runTokens).toHaveBeenCalledTimes(1);
+      if (lifetime === "live") {
+        expect(result).toBeUndefined();
+        expect(vi.getTimerCount()).toBe(1);
+        await vi.runAllTimersAsync();
+        await pending;
+        expect(result).toMatchObject({ cleaned: false });
+        expect(runTokens).toHaveBeenCalledTimes(4);
+      } else {
+        expect(result).toEqual({ cleaned: true, signaled: false });
+        expect(vi.getTimerCount()).toBe(0);
+      }
+    } finally {
+      await vi.runAllTimersAsync();
+      await pending;
+      vi.useRealTimers();
+    }
   },
 );

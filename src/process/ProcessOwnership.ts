@@ -1320,19 +1320,19 @@ const scanWithOwnershipEvidence = async (
     },
   );
   let facts = initialFacts;
-  for (
-    let attempt = 0;
-    attempt < TOKEN_READ_RETRY_ATTEMPTS &&
-    facts.some(({ token }) => token.state === "unavailable");
-    attempt += 1
-  ) {
-    await new Promise<void>((resolve) =>
-      setTimeout(resolve, TOKEN_READ_RETRY_DELAY_MS),
-    );
+  for (let attempt = 0; attempt < TOKEN_READ_RETRY_ATTEMPTS; attempt += 1) {
     const pendingPids = new Set(
       facts
-        .filter(({ token }) => token.state === "unavailable")
+        .filter(
+          (fact) =>
+            fact.token.state === "unavailable" &&
+            !isSettledProcessOwnershipFact(fact),
+        )
         .map(({ process }) => process.pid),
+    );
+    if (pendingPids.size === 0) break;
+    await new Promise<void>((resolve) =>
+      setTimeout(resolve, TOKEN_READ_RETRY_DELAY_MS),
     );
     const retryRows = candidates.filter(({ pid }) => pendingPids.has(pid));
     const retries = await readProcessOwnershipFacts(retryRows, host);
