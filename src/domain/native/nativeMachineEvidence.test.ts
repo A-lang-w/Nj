@@ -1,11 +1,27 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  nativeDelaySlotSchema,
   nativeMachineEvidenceInputSchema,
   nativeMachineEvidenceResultSchema,
 } from "./nativeMachineEvidence.js";
 
 describe("native machine evidence", () => {
+  it("preserves an unresolved physical delay slot without assigning a later instruction", () => {
+    const owner = nativeDelaySlotSchema.parse({
+      state: "owner",
+      slots: [],
+      unresolved_slots: ["0x8c010008"],
+      provenance: "ghidra-listing-delay-slot-depth",
+    });
+    expect(owner).toEqual({
+      state: "owner",
+      slots: [],
+      unresolved_slots: ["0x8c010008"],
+      provenance: "ghidra-listing-delay-slot-depth",
+    });
+  });
+
   it("applies bounded defaults without selecting retained output", () => {
     expect(nativeMachineEvidenceInputSchema.parse({})).toEqual({
       max_functions: 10_000,

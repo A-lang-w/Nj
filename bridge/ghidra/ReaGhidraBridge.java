@@ -1427,10 +1427,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 int depth = owner.getDelaySlotDepth();
                 if (depth <= 0) continue;
                 JsonArray slotAddresses = new JsonArray();
-                Instruction slot = owner;
+                JsonArray unresolvedSlotAddresses = new JsonArray();
+                Address expectedSlotAddress = owner.getMaxAddress().next();
                 for (int ordinal = 1; ordinal <= depth; ordinal++) {
-                    slot = currentProgram.getListing().getInstructionAfter(slot.getAddress());
-                    if (slot == null) break;
+                    Instruction slot = currentProgram.getListing().getInstructionAt(expectedSlotAddress);
+                    if (slot == null) {
+                        unresolvedSlotAddresses.add(canonicalAddress(expectedSlotAddress));
+                        break;
+                    }
                     slotAddresses.add(canonicalAddress(slot.getAddress()));
                     JsonObject ownership = new JsonObject();
                     ownership.addProperty("state", "slot");
@@ -1438,11 +1442,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     ownership.addProperty("ordinal", ordinal);
                     ownership.addProperty("provenance", "ghidra-listing-delay-slot-depth");
                     delaySlots.put(slot.getAddress(), ownership);
+                    expectedSlotAddress = slot.getMaxAddress().next();
                 }
-                if (slotAddresses.size() > 0) {
+                if (slotAddresses.size() > 0 || unresolvedSlotAddresses.size() > 0) {
                     JsonObject ownership = new JsonObject();
                     ownership.addProperty("state", "owner");
                     ownership.add("slots", slotAddresses);
+                    ownership.add("unresolved_slots", unresolvedSlotAddresses);
                     ownership.addProperty("provenance", "ghidra-listing-delay-slot-depth");
                     delaySlots.put(owner.getAddress(), ownership);
                 }

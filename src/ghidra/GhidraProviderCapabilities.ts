@@ -78,7 +78,7 @@ export const limitationsFor = (operation: string): readonly string[] => {
       return [
         ...common,
         "The export is an address-ordered snapshot of Ghidra's analyzed Program. Per-function failures and all bound omissions are explicit; pseudocode remains provider output rather than original source.",
-        "Body bytes are loader-adjusted initialized-memory observations. Delay-slot ownership comes from Ghidra Listing delay-slot depth and does not infer architecture behavior independently.",
+        "Body bytes are loader-adjusted initialized-memory observations. Delay-slot ownership comes from Ghidra Listing delay-slot depth, requires physical instruction continuity, and does not infer architecture behavior independently.",
       ];
     case "read_bytes":
       return [

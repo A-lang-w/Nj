@@ -36,11 +36,12 @@ export const nativeMachineEvidenceInputSchema = z.strictObject({
     ),
 });
 
-const delaySlot = z.discriminatedUnion("state", [
+export const nativeDelaySlotSchema = z.discriminatedUnion("state", [
   z.strictObject({ state: z.literal("none") }),
   z.strictObject({
     state: z.literal("owner"),
-    slots: z.array(z.string()).min(1),
+    slots: z.array(z.string()),
+    unresolved_slots: z.array(z.string()).optional().default([]),
     provenance: z.literal("ghidra-listing-delay-slot-depth"),
   }),
   z.strictObject({
@@ -63,7 +64,7 @@ const exportedInstruction = nativeInstructionSchema
     references: true,
     pcode: true,
   })
-  .safeExtend({ delay_slot: delaySlot });
+  .safeExtend({ delay_slot: nativeDelaySlotSchema });
 
 const bodyBytes = z.strictObject({
   start: z.string(),

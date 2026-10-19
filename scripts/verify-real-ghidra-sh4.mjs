@@ -37,11 +37,16 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 //   0x8c010000 e02a  mov #42,r0
 //   0x8c010002 000b  rts
 //   0x8c010004 0009  nop (delay slot)
-const bytes = Buffer.from("2ae00b000900", "hex");
+//   0x8c010006 432b  jmp @r3
+//   0x8c010008 0000  invalid physical delay-slot word
+//   0x8c01000a 6254  mov.b @r5+,r2 (must not become the delay slot)
+//   0x8c01000c 000b  rts
+//   0x8c01000e 0009  nop (delay slot)
+const bytes = Buffer.from("2ae00b0009002b43000054620b000900", "hex");
 const sha256 = createHash("sha256").update(bytes).digest("hex");
 assert.equal(
   sha256,
-  "430a7dbe1b059cddaf6e1530c64da4f2c5e490c8259ebf7491df7720141d7015",
+  "f376bc0aee8e1b7d031233e4ab5ce6737bb835fb42d42a35450a8035678b933b",
 );
 await mkdir(join(root, "build"), { recursive: true });
 const workspace = await mkdtemp(join(root, "build", "rea-sh4-proof-"));
@@ -49,6 +54,15 @@ const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const path = join(workspace, "image.bin");
 await writeFile(path, bytes);
+const seeds = join(workspace, "seeds.tsv");
+await writeFile(
+  seeds,
+  [
+    "0x8c010006\tfunction_body\t0x8c010006-0x8c01000f\tinvalid_delay_slot",
+    "0x8c01000a\tcode",
+    "",
+  ].join("\n"),
+);
 const entrypoint = join(root, "scripts", "rea.mjs");
 const env = {
   ...process.env,
@@ -57,6 +71,7 @@ const env = {
   TEMP: runtime,
   REA_LOG_LEVEL: "silent",
   REA_ANALYSIS_PROVIDER: "ghidra",
+  REA_GHIDRA_SEED_FILE: seeds,
   REA_PROCESS_RUN_ID: run.run_id,
 };
 const transport = new StdioClientTransport({
@@ -118,6 +133,35 @@ try {
     await call("procedure_pseudo_code", { procedure: "0x8c010000" }),
   );
   assert.match(pseudo.normalized_result, /return\s+(?:42|0x2a)\s*;/iu);
+  const machinePath = join(workspace, "machine-evidence.json");
+  await call("export_native_machine_evidence", {
+    max_functions: 10,
+    max_instructions: 100,
+    max_body_bytes: 1024,
+    max_decompile_instructions: 100,
+    output_path: machinePath,
+  });
+  const machine = JSON.parse(await readFile(machinePath, "utf8"));
+  const invalidSlotFunction = machine.functions.find(
+    ({ procedure }) => procedure.address === "0x8c010006",
+  );
+  assert.ok(
+    invalidSlotFunction,
+    "seeded invalid-delay-slot function was exported",
+  );
+  const invalidSlotBranch = invalidSlotFunction.instructions.find(
+    ({ address }) => address === "0x8c010006",
+  );
+  const instructionAfterGap = invalidSlotFunction.instructions.find(
+    ({ address }) => address === "0x8c01000a",
+  );
+  assert.deepEqual(invalidSlotBranch?.delay_slot, {
+    state: "owner",
+    slots: [],
+    unresolved_slots: ["0x8c010008"],
+    provenance: "ghidra-listing-delay-slot-depth",
+  });
+  assert.deepEqual(instructionAfterGap?.delay_slot, { state: "none" });
 
   // Rejected selections must not replace the live session.
   for (const [entryPoint, reason] of [
@@ -190,6 +234,7 @@ try {
     cli_mcp_load_image_parity: true,
     instructions: true,
     decompilation: true,
+    invalid_delay_slot_gap: true,
     misaligned_entry_preserves_session: true,
     invalid_mapping_preserves_session: true,
     source_unchanged: true,
