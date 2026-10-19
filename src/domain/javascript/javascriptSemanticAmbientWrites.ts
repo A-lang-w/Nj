@@ -63,6 +63,7 @@ import {
   semanticOwnReferenceCandidates,
   semanticClassPropertyDescriptors,
 } from "./javascriptSemanticObjectReferences.js";
+import { createSemanticSuperLookup } from "./javascriptSemanticReceiverOwners.js";
 import {
   semanticRequireShimOrigin,
   createSemanticRequireShimInertQuery,
@@ -364,6 +365,7 @@ export const createAmbientPathResolver = (
     state,
     facts?.definiteObject,
   );
+  const superLookup = createSemanticSuperLookup(state);
   const receiverReferences = createSemanticReceiverReferences(
     state,
     facts?.definiteObject,
@@ -751,6 +753,11 @@ export const createAmbientPathResolver = (
       constructed?: SemanticConstructedReceiver;
       capturedPrototype?: SemanticConstructedReceiver;
       inheritedMember?: boolean;
+      readContext?: {
+        readonly read: t.ThisExpression | t.Super;
+        /** Receiver evaluation bounds initialization, independently of slot mutation captures. */
+        readonly initializedAt?: t.Node;
+      };
     }[] = [
       {
         node,
@@ -775,6 +782,18 @@ export const createAmbientPathResolver = (
       SemanticConstructedReceiver,
       WeakMap<t.Node, Map<boolean, object>>
     >();
+    // A getter's this/super projection is a distinct evaluation from the
+    // outer lookup selecting it. Keep these finite AST read contexts apart.
+    const readExpansions = new WeakMap<t.Node, WeakMap<object, object>>();
+    const expansionAtRead = (read: t.Node | undefined, key: object) => {
+      if (read === undefined) return key;
+      const contexts =
+        readExpansions.get(read) ?? new WeakMap<object, object>();
+      const context = contexts.get(key) ?? {};
+      contexts.set(key, context);
+      readExpansions.set(read, contexts);
+      return context;
+    };
     const shiftedOwnOnly = (slots: readonly number[], offset: number) =>
       slots.map((slot) => slot + offset).filter((slot) => slot >= 0);
     const followStores = (
@@ -1362,6 +1381,11 @@ export const createAmbientPathResolver = (
         modes.set(mode, expansionKey);
         nodes.set(root, modes);
       }
+      expansionKey = expansionAtRead(current.readContext?.read, expansionKey);
+      expansionKey = expansionAtRead(
+        current.readContext?.initializedAt,
+        expansionKey,
+      );
       const selectionKind =
         (suffix?.includes(SEMANTIC_PHYSICAL_PROTOTYPE) ? 1 : 0) |
         (suffix?.includes(SEMANTIC_SOURCE_PROTO_DESCRIPTOR) ? 2 : 0);
@@ -1432,6 +1456,9 @@ export const createAmbientPathResolver = (
           ownOnly: ownSlots,
           copySelection: current.copySelection,
           ...(current.readsAtSelf && { readsAtSelf: true }),
+          ...(current.readContext === undefined
+            ? {}
+            : { readContext: current.readContext }),
           ...(capturedPrototype == null
             ? {}
             : { capturedPrototype, inheritedMember }),
@@ -1451,6 +1478,9 @@ export const createAmbientPathResolver = (
           ),
           copySelection: current.copySelection,
           readsAtSelf: true,
+          ...(current.readContext === undefined
+            ? {}
+            : { readContext: current.readContext }),
         });
       const continueReturned = (
         callee: t.Node,
@@ -1796,6 +1826,28 @@ export const createAmbientPathResolver = (
         );
         continue;
       }
+      if (possibleWrites && t.isSuper(root) && suffix?.length !== 0) {
+        // Getter results keep raw source expressions. Resolve a super member
+        // from its lexical home while the receiver index retains the original
+        // property-read receiver for any selected accessor's this value.
+        const lookup = superLookup(root);
+        if (lookup !== undefined)
+          pending.push({
+            ...current,
+            node: lookup.base,
+            suffix:
+              suffix === undefined
+                ? undefined
+                : [...lookup.projection, ...suffix],
+            captures: [
+              ...lookup.projection.map(() => current.node),
+              ...captures,
+            ],
+            ownOnly: shiftedOwnOnly(ownOnly, lookup.projection.length),
+            readContext: { ...current.readContext, read: root },
+          });
+        continue;
+      }
       if (possibleWrites && t.isThisExpression(root)) {
         if (receiverReferences.wrapper(root))
           retain(
@@ -1812,6 +1864,11 @@ export const createAmbientPathResolver = (
             suffix,
             captures,
             constructed: receiver,
+            readContext: {
+              ...current.readContext,
+              read:
+                members.length > 0 ? root : (current.readContext?.read ?? root),
+            },
           });
         for (const receiver of receiverReferences(root))
           if (t.isProgram(receiver))
@@ -1828,6 +1885,16 @@ export const createAmbientPathResolver = (
               ownOnly,
               copySelection: current.copySelection,
               readsAtSelf: true,
+              readContext: {
+                ...current.readContext,
+                read:
+                  members.length > 0
+                    ? root
+                    : (current.readContext?.read ?? root),
+                ...(t.isIdentifier(receiver) || t.isThisExpression(receiver)
+                  ? { initializedAt: receiver }
+                  : {}),
+              },
             });
         continue;
       }
@@ -1844,6 +1911,9 @@ export const createAmbientPathResolver = (
               captures,
               ownOnly,
               constructed: receiver,
+              ...(current.readContext === undefined
+                ? {}
+                : { readContext: current.readContext }),
             });
           if (completion.complete) {
             for (const source of completion.sources)
@@ -1896,7 +1966,11 @@ export const createAmbientPathResolver = (
         t.isClass(root) &&
         typeof classKey === "string" &&
         classKey !== "prototype"
-          ? staticClassSlots(root, classKey, classRead)
+          ? staticClassSlots(
+              root,
+              classKey,
+              current.readContext?.initializedAt ?? classRead,
+            )
           : undefined;
       for (const value of classSlot?.values ?? [])
         continueWith(value, suffix?.slice(1), captures.slice(1));
@@ -2403,6 +2477,9 @@ export const createAmbientPathResolver = (
             pending.push({
               node: initializer.node,
               readsAtSelf: true,
+              ...(current.readContext === undefined
+                ? {}
+                : { readContext: current.readContext }),
               captures: referenceCaptures,
               ownOnly: [
                 ...shiftedOwnOnly(
@@ -2427,6 +2504,9 @@ export const createAmbientPathResolver = (
         for (const initializer of initializers)
           pending.push({
             node: initializer.node,
+            ...(current.readContext === undefined
+              ? {}
+              : { readContext: current.readContext }),
             ...(current.capturedPrototype === undefined
               ? {}
               : {

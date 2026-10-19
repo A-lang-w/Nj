@@ -26,6 +26,10 @@ import {
   semanticAmbientOwnSlotFactsReady,
   semanticAmbientPrototypeUnchanged,
 } from "./javascriptSemanticAmbientWrites.js";
+import {
+  createSemanticLexicalReceiverOwner,
+  createSemanticSuperLookup,
+} from "./javascriptSemanticReceiverOwners.js";
 import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
 import {
   semanticArrayIndex,
@@ -914,6 +918,25 @@ const createSemanticCallableReferences = (
     state,
     classTargets,
   );
+  const superLookup = createSemanticSuperLookup(state);
+  const lexicalReceiverOwner = createSemanticLexicalReceiverOwner(state);
+  const staticReceiver = (node: t.ThisExpression): t.Class | undefined => {
+    const owner = lexicalReceiverOwner(node);
+    if (
+      !t.isStaticBlock(owner) &&
+      !(
+        (t.isClassProperty(owner) ||
+          t.isClassPrivateProperty(owner) ||
+          t.isClassAccessorProperty(owner)) &&
+        owner.static
+      )
+    )
+      return undefined;
+    const body = state.parentsByNode.get(owner);
+    const declaring =
+      body === undefined ? undefined : state.parentsByNode.get(body);
+    return t.isClass(declaring) ? declaring : undefined;
+  };
   const classLineages = new WeakMap<t.Class, ClassLineage>();
   const interop = createSemanticModuleInterop(state);
   const isDefinitelyObject = definiteObjectProof ?? interop.isDefinitelyObject;
@@ -1155,7 +1178,13 @@ const createSemanticCallableReferences = (
       if (widening) completeExpansion(frame, expanded);
       else work.push({ kind: "complete", frame });
       const pending: Candidate[] = [];
-      if (t.isThisExpression(node) && thisReferences !== undefined) {
+      const lexicalStatic = t.isThisExpression(node)
+        ? staticReceiver(node)
+        : undefined;
+      if (
+        t.isThisExpression(node) &&
+        (thisReferences !== undefined || lexicalStatic !== undefined)
+      ) {
         if (item.initializers.has(node)) {
           complete = false;
           frame.blockers.add(node);
@@ -1168,10 +1197,14 @@ const createSemanticCallableReferences = (
           for (const source of item.initializers)
             if ("type" in source && t.isThisExpression(source))
               initializers.add(source);
-          const selected = thisReferences(node);
-          expandsReceiver ||= selected !== undefined;
+          const selected = thisReferences?.(node);
+          expandsReceiver ||=
+            selected !== undefined || lexicalStatic !== undefined;
           const receivers: NonNullable<Candidate["descriptorReceiver"]>[] =
-            selected?.receivers.map((node) => ({ node })) ?? [];
+            lexicalStatic === undefined
+              ? (selected?.receivers.map((node) => ({ node })) ?? [])
+              : [{ node: lexicalStatic }];
+          if (lexicalStatic !== undefined) complete = false;
           if (
             selected?.owner === item.receiverContext?.owner &&
             item.receiverContext !== undefined
@@ -1180,6 +1213,17 @@ const createSemanticCallableReferences = (
           for (const receiver of receivers)
             pending.push({ ...item, ...receiver, initializers });
         }
+      } else if (t.isSuper(node) && item.path.length > 0) {
+        // Possible lexical-home lookup is not proof that a runtime prototype
+        // or its selected member still has its source identity.
+        complete = false;
+        const lookup = superLookup(node);
+        if (lookup !== undefined)
+          pending.push({
+            ...item,
+            node: lookup.base,
+            path: [...lookup.projection, ...item.path],
+          });
       } else if (widening && t.isFunction(node)) {
         retain(node, []);
         const receiverContext =

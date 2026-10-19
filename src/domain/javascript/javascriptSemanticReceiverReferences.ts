@@ -35,6 +35,7 @@ import {
   semanticStrictContext,
   type SemanticGlobalBindingFacts,
 } from "./javascriptSemanticOpaqueEffects.js";
+import { createSemanticLexicalReceiverOwner } from "./javascriptSemanticReceiverOwners.js";
 import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
 import {
@@ -146,57 +147,7 @@ export const createSemanticReceiverReferences = (
   const prior = customContext ? undefined : receiverQueries.get(state);
   if (prior !== undefined) return prior;
   const privateTargets = createSemanticPrivateMemberTargets(state);
-  const owners = new WeakMap<t.Node, t.Node>();
-  const lexicalOwner = (node: t.Node): t.Node => {
-    const visited: t.Node[] = [];
-    let current = node;
-    let owner: t.Node = state.program;
-    for (;;) {
-      const cached = owners.get(current);
-      if (cached !== undefined) {
-        owner = cached;
-        break;
-      }
-      visited.push(current);
-      let parent = state.parentsByNode.get(current);
-      if (parent === undefined) break;
-      // Parameter decorators can sit below patterns and TSParameterProperty.
-      // Their expressions execute outside the decorated function or class.
-      if (t.isDecorator(current)) {
-        while (
-          parent !== undefined &&
-          !t.isFunction(parent) &&
-          !t.isClass(parent) &&
-          !t.isClassProperty(parent) &&
-          !t.isClassPrivateProperty(parent) &&
-          !t.isClassAccessorProperty(parent)
-        )
-          parent = state.parentsByNode.get(parent);
-        current = parent ?? state.program;
-        continue;
-      }
-      if (
-        (t.isFunction(parent) &&
-          !t.isArrowFunctionExpression(parent) &&
-          !(
-            (t.isObjectMethod(parent) || t.isClassMethod(parent)) &&
-            parent.computed &&
-            parent.key === current
-          )) ||
-        t.isStaticBlock(parent) ||
-        ((t.isClassProperty(parent) ||
-          t.isClassPrivateProperty(parent) ||
-          t.isClassAccessorProperty(parent)) &&
-          parent.value === current)
-      ) {
-        owner = parent;
-        break;
-      }
-      current = parent;
-    }
-    for (const visitedNode of visited) owners.set(visitedNode, owner);
-    return owner;
-  };
+  const lexicalOwner = createSemanticLexicalReceiverOwner(state);
   let receivers: WeakMap<t.Function, Set<t.Node>> | undefined;
   let constructed = new WeakMap<t.Node, SemanticConstructedReceiver[]>();
   let unknownReceivers = new WeakMap<
@@ -447,9 +398,20 @@ export const createSemanticReceiverReferences = (
       },
       true,
     );
+    const lexicalReceiverUses = new Map<t.Node, Set<t.Function>>();
+    const receiverRoots = new Set<t.Node>();
+    const absentReceivers = new WeakSet<t.Node>();
     const retain = (target: t.Function, receiver?: t.Node) => {
       const values = indexed.get(target) ?? new Set<t.Node>();
-      if (receiver !== undefined) values.add(receiver);
+      if (t.isSuper(receiver)) {
+        const owner = lexicalOwner(receiver);
+        const uses = lexicalReceiverUses.get(owner) ?? new Set<t.Function>();
+        uses.add(target);
+        lexicalReceiverUses.set(owner, uses);
+      } else {
+        receiverRoots.add(target);
+        if (receiver !== undefined) values.add(receiver);
+      }
       indexed.set(target, values);
     };
     const privateReceivers = (
@@ -482,9 +444,113 @@ export const createSemanticReceiverReferences = (
       values: readonly t.Node[],
       name?: t.PrivateName,
     ) => {
-      retain(target);
+      if (values.length === 0) retain(target);
       for (const receiver of values) retain(target, receiver);
       if (name !== undefined) privateParentUses.push({ name, target });
+    };
+    const receiverNonNullish = (value: t.Node | undefined): boolean =>
+      value !== undefined &&
+      (definiteObject(value) ||
+        (t.isLiteral(value) && !t.isNullLiteral(value)) ||
+        ["globalThis", "global", "window", "self", "module"].some((name) =>
+          isUnshadowedGlobal(value, state, name),
+        ));
+    // Source-home lookup and invocation receivers have different owners.
+    // Propagate the full receiver representation before selecting escaped
+    // getter contents, and again after escapes add unknown caller alternatives.
+    const propagateLexicalReceivers = () => {
+      const reachable = new Set(receiverRoots);
+      const roots = [
+        ...reachable,
+        ...[...lexicalReceiverUses.keys()].filter(
+          (owner) => !t.isFunction(owner),
+        ),
+      ];
+      for (let cursor = 0; cursor < roots.length; cursor++)
+        for (const target of lexicalReceiverUses.get(roots[cursor]!) ?? [])
+          if (!reachable.has(target)) {
+            reachable.add(target);
+            roots.push(target);
+          }
+      // An unobserved cycle has no recovered activation that could exclude an
+      // unknown caller. Keep the same global fallback as an unobserved method.
+      for (const owner of lexicalReceiverUses.keys())
+        if (t.isFunction(owner) && !reachable.has(owner))
+          retain(owner, state.program);
+      const pending = [...lexicalReceiverUses.keys()];
+      const queued = new Set(pending);
+      for (let cursor = 0; cursor < pending.length; cursor++) {
+        const owner = pending[cursor]!;
+        queued.delete(owner);
+        const declaringBody = state.parentsByNode.get(owner);
+        const declaring =
+          declaringBody === undefined
+            ? undefined
+            : state.parentsByNode.get(declaringBody);
+        const isStatic =
+          t.isStaticBlock(owner) ||
+          ((t.isClassProperty(owner) ||
+            t.isClassPrivateProperty(owner) ||
+            t.isClassAccessorProperty(owner)) &&
+            owner.static);
+        const values =
+          isStatic && t.isClass(declaring)
+            ? [declaring]
+            : t.isFunction(owner)
+              ? [
+                  ...(indexed.get(owner) ?? [state.program]),
+                  ...inheritedReceiver(owner),
+                ]
+              : [...inheritedReceiver(owner)];
+        for (const target of lexicalReceiverUses.get(owner) ?? []) {
+          const prior = indexed.get(target)?.size ?? 0;
+          for (const value of values) {
+            retain(target, value);
+            if (
+              !receiverNonNullish(value) &&
+              !semanticStrictContext(target, state)
+            )
+              retain(target, state.program);
+          }
+          if (
+            absentReceivers.has(owner) &&
+            !semanticStrictContext(target, state)
+          )
+            retain(target, state.program);
+          let changed = (indexed.get(target)?.size ?? 0) !== prior;
+          if (absentReceivers.has(owner) && !absentReceivers.has(target)) {
+            absentReceivers.add(target);
+            changed = true;
+          }
+          const copy = <T>(map: WeakMap<t.Node, T[]>) => {
+            const source = map.get(owner) ?? [];
+            const selected = map.get(target) ?? [];
+            for (const value of source)
+              if (!selected.includes(value)) {
+                selected.push(value);
+                changed = true;
+              }
+            map.set(target, selected);
+          };
+          copy(constructed);
+          copy(unknownReceivers);
+          if (
+            unknownActivations.has(owner) &&
+            !unknownActivations.has(target)
+          ) {
+            unknownActivations.add(target);
+            changed = true;
+          }
+          if (
+            changed &&
+            lexicalReceiverUses.has(target) &&
+            !queued.has(target)
+          ) {
+            queued.add(target);
+            pending.push(target);
+          }
+        }
+      }
     };
     const addUnknown = (
       owner: t.Node,
@@ -794,17 +860,13 @@ export const createSemanticReceiverReferences = (
           receiver === undefined
             ? undefined
             : unwrapJavaScriptExpression(receiver).node;
-        const nonNullish =
-          value !== undefined &&
-          (definiteObject(value) ||
-            (t.isLiteral(value) && !t.isNullLiteral(value)) ||
-            ["globalThis", "global", "window", "self", "module"].some((name) =>
-              isUnshadowedGlobal(value, state, name),
-            ));
+        if (receiver === undefined) absentReceivers.add(target);
+        const nonNullish = t.isSuper(value) || receiverNonNullish(value);
         if (!nonNullish && !semanticStrictContext(target, state))
           retain(target, state.program);
       }
     });
+    propagateLexicalReceivers();
     // Recovered calls are not a complete use set: stored, returned or passed
     // callable values can be invoked through a receiver we did not recover.
     const inactiveTargets = new Set<t.Function>();
@@ -1051,6 +1113,7 @@ export const createSemanticReceiverReferences = (
       )
         retain(target);
     }
+    propagateLexicalReceivers();
   };
   const returned = createSemanticReturnedReferences(state, isDefinitelyObject);
   const inheritedReceiver = (owner: t.Node): readonly t.Node[] => {
