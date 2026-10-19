@@ -589,6 +589,16 @@ const contextualCandidate = (
       "File URL authorities or invalid file URL forms cannot be mapped to artifact-local paths.",
     ]);
   }
+  if (
+    context === "module-specifier" &&
+    input.moduleKind === "require" &&
+    declared.includes("\\") &&
+    (!hasScheme(declared) || /^[a-z]:/iu.test(declared)) &&
+    !declared.includes("\0")
+  )
+    return unresolvedCandidate("unavailable", [
+      "Windows CommonJS request separators require target-platform path semantics that the selected logical artifact inventory does not establish.",
+    ]);
   const hasUrlPathSemantics =
     context === "module-specifier" && input.moduleKind === "import";
   if (hasUrlPathSemantics) declared = htmlUrlText(declared);
@@ -1578,6 +1588,19 @@ const resolveFileCandidates = (
   return null;
 };
 
+/** Classify the extension as inventory does; retain exact archive occurrence bytes. */
+const runtimeArchiveRoot = (path: string): string | undefined => {
+  const components = path.split("/");
+  const archive = components.findLastIndex(
+    (component, index) =>
+      index < components.length - 1 &&
+      component.toLowerCase().endsWith(".asar"),
+  );
+  return archive < 0
+    ? undefined
+    : `${components.slice(0, archive + 1).join("/")}/`;
+};
+
 /** One archive-path admission rule serves files, directories and their metadata. */
 const crossesRuntimeArchiveBoundary = (
   input: ResolveArtifactPathInput,
@@ -1586,19 +1609,14 @@ const crossesRuntimeArchiveBoundary = (
   // Electron's archive filesystem normalizes a relative module path before
   // opening it, including entry into an inventoried archive occurrence and
   // escape from one, after the existing artifact-root confinement check.
-  const sourceArchiveEnd = input.sourcePath.lastIndexOf(".asar/");
-  const targetArchiveEnd = path.lastIndexOf(".asar/");
+  const sourceArchive = runtimeArchiveRoot(input.sourcePath);
+  const targetArchive = runtimeArchiveRoot(path);
   return (
     input.context === "module-specifier" &&
     input.moduleKind !== undefined &&
-    ((sourceArchiveEnd >= 0 &&
-      !path.startsWith(
-        input.sourcePath.slice(0, sourceArchiveEnd + ".asar/".length),
-      )) ||
-      (targetArchiveEnd >= 0 &&
-        !input.sourcePath.startsWith(
-          path.slice(0, targetArchiveEnd + ".asar/".length),
-        )))
+    ((sourceArchive !== undefined && !path.startsWith(sourceArchive)) ||
+      (targetArchive !== undefined &&
+        !input.sourcePath.startsWith(targetArchive)))
   );
 };
 

@@ -60,6 +60,23 @@ import {
 type PropertyPath = JavaScriptSemanticPropertyPath;
 type ValueEffect = "write" | "escape";
 
+/** Only replacing or possibly selecting an iterator-bearing prototype slot changes iteration. */
+const arrayPrototypeIterationMayChange = (path: PropertyPath): boolean => {
+  // The default constructor points back to Array, so each constructor.prototype
+  // pair may return to this same iterator-bearing prototype.
+  let offset = 0;
+  while (path[offset] === "constructor" && path[offset + 1] === "prototype")
+    offset += 2;
+  const key = path[offset];
+  return (
+    key === undefined ||
+    key === null ||
+    typeof key === "object" ||
+    semanticArrayIndex(key) !== null ||
+    key === "__proto__"
+  );
+};
+
 /** Preserve uncertainty from property writes and references exposed to calls, yielding during traversal and fixpoint iteration. */
 
 /** Setter keys of one object literal; a computed setter key may match any key. */
@@ -359,12 +376,14 @@ export function* collectSemanticMemberMutationsSteps(
             );
           if (
             (expression.name === "Array" &&
-              (current.path[0] === "prototype" || current.path[0] === null)) ||
+              (current.path[0] === "prototype" || current.path[0] === null) &&
+              arrayPrototypeIterationMayChange(current.path.slice(1))) ||
             (["globalThis", "global", "window", "self"].includes(
               expression.name,
             ) &&
               (current.path[0] === "Array" || current.path[0] === null) &&
-              (current.path[1] === "prototype" || current.path[1] === null))
+              (current.path[1] === "prototype" || current.path[1] === null) &&
+              arrayPrototypeIterationMayChange(current.path.slice(2)))
           )
             state.arrayIterationUnknown = true;
           continue;
@@ -633,8 +652,12 @@ export function* collectSemanticMemberMutationsSteps(
   ): readonly ReferencedValue[] {
     if (
       t.isArrayExpression(expression) &&
-      ((path[0] === "__proto__" && (effect === "escape" || path.length > 1)) ||
-        (path[0] === "constructor" && path[1] === "prototype"))
+      ((path[0] === "__proto__" &&
+        (effect === "escape" || path.length > 1) &&
+        arrayPrototypeIterationMayChange(path.slice(1))) ||
+        (path[0] === "constructor" &&
+          path[1] === "prototype" &&
+          arrayPrototypeIterationMayChange(path.slice(2))))
     )
       state.arrayIterationUnknown = true;
     const references = referencedValues(

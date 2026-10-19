@@ -53,11 +53,22 @@ export const classifyPackageImportSpecifier = (
 export const isPackageImportPatternKey = (key: string): boolean =>
   key.includes("*") || key.endsWith("/");
 
+/** Node import patterns contain one star matching at least one character. */
+const packageImportPatternMatches = (pattern: string, key: string): boolean => {
+  const wildcard = pattern.indexOf("*");
+  return (
+    wildcard !== -1 &&
+    pattern.lastIndexOf("*") === wildcard &&
+    key.length >= pattern.length &&
+    key.startsWith(pattern.slice(0, wildcard)) &&
+    key.endsWith(pattern.slice(wildcard + 1))
+  );
+};
+
 /**
  * Look up one exact `#` key in a package `imports` value.
- * A missing exact key is reported as missing when every declared key is also
- * exact; if the map contains pattern keys, the miss stays pattern-unresolved
- * rather than claiming the specifier is undefined.
+ * Only a matching wildcard keeps an exact miss unresolved. Unrelated patterns
+ * cannot select a target and therefore do not hide an undefined specifier.
  */
 export const lookupExactPackageImport = (
   imports: unknown,
@@ -72,7 +83,7 @@ export const lookupExactPackageImport = (
       target: Reflect.get(imports, key),
       declared,
     };
-  return declared.some(isPackageImportPatternKey)
+  return declared.some((pattern) => packageImportPatternMatches(pattern, key))
     ? { kind: "pattern-unresolved", declared }
     : { kind: "missing-key", declared };
 };

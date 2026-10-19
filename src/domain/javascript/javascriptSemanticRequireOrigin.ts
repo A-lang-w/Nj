@@ -25,6 +25,7 @@ import {
   semanticDefiniteEffectPrecedesReference,
 } from "./javascriptSemanticMutationInitializers.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import {
   semanticCopiedReferencePath,
   semanticReferenceIterationUnknown,
@@ -97,6 +98,7 @@ export const invalidateSemanticRequireDelegateWrites = (
   state: JavaScriptSemanticAnalysisState,
 ): void => {
   moduleRequireWrites.delete(state);
+  moduleReturnedReferences.delete(state);
 };
 
 const commonJsDelegateChangedAt = (
@@ -341,6 +343,10 @@ const moduleRequireWrites = new WeakMap<
   JavaScriptSemanticAnalysisState,
   readonly t.Node[]
 >();
+const moduleReturnedReferences = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  ReturnType<typeof createSemanticReturnedReferences>
+>();
 
 type ModuleObjectSource = {
   readonly node: t.Node;
@@ -438,10 +444,7 @@ const moduleObjectSourcesAtRead = (
     }
     const remaining = path.slice(effect.path.length);
     for (const source of effect.assignedSources) {
-      if (semanticReferenceIterationUnknown(source, state)) {
-        if (includeUnknown) return undefined;
-        continue;
-      }
+      if (semanticReferenceIterationUnknown(source, state)) return undefined;
       if (semanticReferenceSourcesInactive(source, state)) continue;
       const [key, ...suffix] = remaining;
       for (const choice of key === undefined
@@ -459,20 +462,14 @@ const moduleObjectSourcesAtRead = (
   if (replacement !== undefined) return sources;
   const read = semanticBindingAtRead(binding, reference, state.parentsByNode);
   for (const initializer of read.binding.initializers) {
-    if (semanticReferenceIterationUnknown(initializer, state)) {
-      if (includeUnknown) return undefined;
-      continue;
-    }
+    if (semanticReferenceIterationUnknown(initializer, state)) return undefined;
     sources.push({
       node: initializer.node,
       path: [...initializer.projection, ...path],
     });
   }
   for (const initializer of read.binding.referenceInitializers) {
-    if (semanticReferenceIterationUnknown(initializer, state)) {
-      if (includeUnknown) return undefined;
-      continue;
-    }
+    if (semanticReferenceIterationUnknown(initializer, state)) return undefined;
     if (semanticReferenceSourcesInactive(initializer, state)) continue;
     const [key, ...suffix] = path;
     for (const choice of key === undefined
@@ -578,6 +575,24 @@ const hasCommonJsModuleSource = (
             : value.right,
           path,
         },
+      );
+      continue;
+    }
+    if (
+      t.isCallExpression(value) ||
+      t.isOptionalCallExpression(value) ||
+      t.isNewExpression(value)
+    ) {
+      let returned = moduleReturnedReferences.get(state);
+      if (returned === undefined) {
+        returned = createSemanticReturnedReferences(state);
+        moduleReturnedReferences.set(state, returned);
+      }
+      enqueue(
+        ...returned(value.callee).map((source) => ({
+          node: source.node,
+          path: [...source.projection, ...path],
+        })),
       );
       continue;
     }

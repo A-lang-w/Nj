@@ -9,6 +9,84 @@ import { artifactLocalIdentity } from "./JavaScriptArtifactGraphContext.js";
 import { applicationNodeIdentitySchema } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import { analyzeJavaScriptStaticSource } from "../../domain/javascript/javascriptStaticAnalysis.js";
 
+describe("Windows CommonJS request classification", () => {
+  it.each([
+    "..\\shared\\window.cjs",
+    ".\\window.cjs",
+    "fixture\\window.cjs",
+    "C:shared\\window.cjs",
+  ])(
+    "retains unknown Windows CommonJS request semantics for %s",
+    (declaredPath) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/main.cjs",
+          context: "module-specifier",
+          moduleKind: "require",
+          files: fileMap([
+            file("app/main.cjs", "root"),
+            file("app/window.cjs", "root"),
+            file("shared/window.cjs", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        declared_path: declaredPath,
+        resolution_status: "unavailable",
+        resolved_path: null,
+      });
+    },
+  );
+
+  it.each([
+    "node:\\fs",
+    "node:fs\\extra",
+    "https:\\example.invalid\\window.cjs",
+  ])(
+    "does not treat the rejected scheme request %s as an unknown Windows path",
+    (declaredPath) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/main.cjs",
+          context: "module-specifier",
+          moduleKind: "require",
+          files: fileMap([file("app/main.cjs", "root")]),
+        }),
+      ).toMatchObject({
+        declared_path: declaredPath,
+        resolution_status: "rejected",
+        resolved_path: null,
+      });
+    },
+  );
+
+  it("keeps rejected and URL-owned backslash requests distinct from CommonJS host syntax", () => {
+    const files = fileMap([
+      file("app/main.cjs", "root"),
+      file("app/window.cjs", "root"),
+    ]);
+    for (const [declaredPath, moduleKind, status, resolvedPath] of [
+      [".\\window\0.cjs", "require", "rejected", null],
+      [".\\window.cjs", "import", "rejected", null],
+      ["./window.cjs", "require", "resolved", "app/window.cjs"],
+      ["node:fs", "require", "external", null],
+    ] as const)
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/main.cjs",
+          context: "module-specifier",
+          moduleKind,
+          files,
+        }),
+      ).toMatchObject({
+        resolution_status: status,
+        resolved_path: resolvedPath,
+      });
+  });
+});
+
 describe("runtime host path classification", () => {
   it.each([
     "/discard%2F/../shared/window.cjs",
@@ -3604,6 +3682,61 @@ it.each(["sub\\main.cjs", ".\\main.cjs", "C:main.cjs"])(
 );
 
 describe("package metadata at archive module boundaries", () => {
+  it.each(["APP.ASAR", "app.AsAr"])(
+    "preserves archive component bytes while admitting %s runtime crossings",
+    (archive) => {
+      const directory = `resources/${archive}`;
+      const files = fileMap([
+        file("main.cjs", "outer"),
+        file(`${directory}/main.cjs`, "archive"),
+        file(
+          `${directory}/pkg/package.json`,
+          "archive",
+          '{"main":"actual.cjs"}',
+        ),
+        file(`${directory}/pkg/actual.cjs`, "archive"),
+        file(`${directory}/pkg/index.js`, "archive"),
+        file("resources/pkg/package.json", "outer", '{"main":"actual.cjs"}'),
+        file("resources/pkg/actual.cjs", "outer"),
+        file("resources/pkg/index.js", "outer"),
+      ]);
+      for (const [sourcePath, declaredPath, target] of [
+        ["main.cjs", `./${directory}/pkg`, `${directory}/pkg/actual.cjs`],
+        [`${directory}/main.cjs`, "../pkg", "resources/pkg/actual.cjs"],
+      ] as const)
+        expect(
+          resolve({
+            sourcePath,
+            declaredPath,
+            context: "module-specifier",
+            moduleKind: "require",
+            files,
+          }),
+        ).toMatchObject({
+          resolution_status: "resolved",
+          resolved_path: target,
+        });
+    },
+  );
+
+  it("does not admit same-archive or similarly named foreign containers", () => {
+    for (const directory of ["resources/APP.ASAR", "resources/APP.ASAR-extra"])
+      expect(
+        resolve({
+          sourcePath: `${directory}/main.cjs`,
+          declaredPath: "./window.cjs",
+          context: "module-specifier",
+          moduleKind: "require",
+          files: fileMap([
+            file(`${directory}/main.cjs`, "source"),
+            file(`${directory}/window.cjs`, "foreign"),
+          ]),
+        }),
+      ).toMatchObject({
+        resolution_status: "unavailable",
+        resolved_path: null,
+      });
+  });
   it.each([
     ["resources/app.asar/main.cjs", "../pkg", "resources/pkg"],
     ["app/main.cjs", "../resources/code.asar/pkg", "resources/code.asar/pkg"],
