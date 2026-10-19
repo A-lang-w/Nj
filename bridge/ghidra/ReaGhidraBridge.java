@@ -56,8 +56,11 @@ import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileOptions;
 import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.decompiler.DecompiledFunction;
+import ghidra.app.decompiler.ClangBreak;
 import ghidra.app.decompiler.ClangCaseToken;
+import ghidra.app.decompiler.ClangCommentToken;
 import ghidra.app.decompiler.ClangNode;
+import ghidra.app.decompiler.ClangToken;
 import ghidra.framework.Application;
 import ghidra.app.util.bin.format.pdb.PdbParserConstants;
 import ghidra.framework.options.Options;
@@ -2331,27 +2334,81 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
 
         JumpTable[] recoveredJumpTables = highFunction.getJumpTables();
-        List<ClangNode> caseTokens = new ArrayList<>();
+        List<ClangNode> markupTokens = new ArrayList<>();
         if (decompilation.getCCodeMarkup() != null) {
-            decompilation.getCCodeMarkup().flatten(caseTokens);
+            decompilation.getCCodeMarkup().flatten(markupTokens);
         }
         for (int index = 0; index < recoveredJumpTables.length; index += 1) {
-            jumpTables.add(inferredJumpTable(recoveredJumpTables[index], caseTokens));
+            jumpTables.add(inferredJumpTable(recoveredJumpTables[index], markupTokens));
         }
         result.add(
             "unresolved_indirect_branches",
             unresolvedIndirectBranches(
                 function,
                 recoveredJumpTables,
-                decompiledText(decompilation)
+                markupTokens
             )
         );
         return result;
     }
 
-    private static final Pattern DECOMPILER_JUMP_TABLE_FAILURE = Pattern.compile(
-        "Could not recover jumptable at (?:([A-Za-z_][A-Za-z0-9_]*):+)?(?:0x)?([0-9A-Fa-f]+)[^\\r\\n*]*"
-    );
+    private static final String DECOMPILER_JUMP_TABLE_FAILURE =
+        "WARNING: Could not recover jumptable at ";
+
+    /**
+     * Printed warning coordinates omit overlay identity and use addressable
+     * units, which need not be bytes. Ghidra's comment markup already carries
+     * the exact source Address, including its overlay and byte offset.
+     * The default C-style comments are split into word tokens: retain their
+     * boundaries and source identity instead of joining unrelated comments.
+     */
+    private Map<Address, String> decompilerJumpTableFailures(List<ClangNode> tokens) throws Exception {
+        Map<Address, String> warnings = new HashMap<>();
+        Address source = null;
+        StringBuilder text = new StringBuilder();
+        for (ClangNode node : tokens) {
+            monitor.checkCancelled();
+            if (!(node instanceof ClangCommentToken comment)) {
+                if (node instanceof ClangBreak ||
+                    (node instanceof ClangToken token && token.getText() != null && token.getText().isBlank())) continue;
+                source = null;
+                text.setLength(0);
+                continue;
+            }
+            String fragment = comment.getText();
+            if (fragment == null) {
+                source = null;
+                text.setLength(0);
+                continue;
+            }
+            if (fragment.startsWith("/*")) {
+                source = comment.getMinAddress();
+                text.setLength(0);
+                fragment = fragment.substring(2);
+            }
+            if (source == null || !source.isMemoryAddress() ||
+                !source.equals(comment.getMinAddress()) || !source.equals(comment.getMaxAddress())) {
+                source = null;
+                text.setLength(0);
+                continue;
+            }
+            boolean complete = fragment.endsWith("*/");
+            if (complete) fragment = fragment.substring(0, fragment.length() - 2);
+            if (!fragment.isBlank()) {
+                if (text.length() > 0) text.append(' ');
+                text.append(fragment.strip());
+            }
+            if (complete) {
+                String warning = text.toString();
+                if (warning.startsWith(DECOMPILER_JUMP_TABLE_FAILURE) &&
+                    warning.length() > DECOMPILER_JUMP_TABLE_FAILURE.length())
+                    warnings.putIfAbsent(source, warning.substring("WARNING: ".length()));
+                source = null;
+                text.setLength(0);
+            }
+        }
+        return warnings;
+    }
 
     /**
      * Report computed jumps that Ghidra's listing keeps inside this function
@@ -2366,27 +2423,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private JsonArray unresolvedIndirectBranches(
         Function function,
         JumpTable[] recoveredJumpTables,
-        String pseudocode
+        List<ClangNode> markupTokens
     ) throws Exception {
         Set<Address> switches = new HashSet<>();
         for (JumpTable table : recoveredJumpTables) switches.add(table.getSwitchAddress());
-        // Keyed by address space and offset: an unprefixed warning address is
-        // in the default space, and a prefixed one must name the branch's space.
-        Map<String, String> failedRecoveries = new TreeMap<>();
-        if (pseudocode != null) {
-            java.util.regex.Matcher matcher = DECOMPILER_JUMP_TABLE_FAILURE.matcher(pseudocode);
-            while (matcher.find()) {
-                try {
-                    failedRecoveries.putIfAbsent(
-                        warningSpaceKey(matcher.group(1), Long.parseUnsignedLong(matcher.group(2), 16)),
-                        matcher.group(0).trim()
-                    );
-                }
-                catch (NumberFormatException ignored) {
-                    // A warning without a parseable address cannot be attributed.
-                }
-            }
-        }
+        Map<Address, String> failedRecoveries = decompilerJumpTableFailures(markupTokens);
         JsonArray branches = new JsonArray();
         InstructionIterator instructions = currentProgram.getListing().getInstructions(
             function.getBody(), true
@@ -2398,11 +2439,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (!flow.isJump() || !flow.isComputed() || flow.isCall() || flow.isTerminal()) continue;
             Address address = instruction.getAddress();
             if (switches.contains(address)) continue;
-            String warning = address.isMemoryAddress()
-                ? failedRecoveries.get(
-                    warningSpaceKey(address.getAddressSpace().getName(), address.getOffset())
-                )
-                : null;
+            String warning = failedRecoveries.get(address);
             JsonObject branch = new JsonObject();
             String branchAddress = canonicalAddress(address);
             branch.addProperty("branch_address", branchAddress);
@@ -2441,13 +2478,6 @@ public final class ReaGhidraBridge extends HeadlessScript {
             branches.add(branch);
         }
         return branches;
-    }
-
-    /** An absent or default-space name both denote the default address space. */
-    private String warningSpaceKey(String space, long offset) {
-        String defaultSpace = currentProgram.getAddressFactory().getDefaultAddressSpace().getName();
-        String normalized = space == null || space.equals(defaultSpace) ? "" : space;
-        return normalized + ":" + Long.toUnsignedString(offset, 16);
     }
 
     private static JsonObject unavailableNativeApiBoundary(String reason) {
