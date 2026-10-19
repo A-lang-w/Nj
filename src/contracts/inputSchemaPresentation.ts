@@ -27,6 +27,13 @@ const resolveReference = (
   let value: unknown = root;
   for (const token of reference.slice(2).split("/")) {
     const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
+    if (Array.isArray(value)) {
+      if (!/^(?:0|[1-9]\d*)$/u.test(key)) return undefined;
+      const index = Number(key);
+      if (index >= value.length) return undefined;
+      value = value[index];
+      continue;
+    }
     if (!isObject(value) || !Object.hasOwn(value, key)) return undefined;
     value = value[key];
   }
@@ -358,7 +365,9 @@ const normalizeAdvertisedSchema = (
     if (!Array.isArray(branches)) continue;
     const normalized = normalizeList(branches);
     const schemas = normalized.map((result) => result.schema);
-    const branchesChanged = normalized.some((result) => result.changed);
+    const branchesChanged =
+      normalized.some((result) => result.changed) ||
+      branches.some((branch) => referencesChangingTarget(branch, root, active));
     if (combinator === "oneOf" && branchesChanged) {
       const booleanLiteralsOnly = branches.every(isBooleanLiteralSchema);
       if (booleanLiteralsOnly) {

@@ -653,6 +653,38 @@ describe("advertised empty-string literals", () => {
     expect(() => presentInputJsonSchema(canonical, () => undefined)).not.toThrow();
   });
 
+  it("relaxes a oneOf whose branch is a reference to a widened definition", () => {
+    const canonical = {
+      $defs: { empty: { type: "string", const: "" } },
+      type: "object",
+      properties: {
+        value: { oneOf: [{ $ref: "#/$defs/empty" }, { type: "string" }] },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    const canonicalValidate = new Ajv2020({ strict: false }).compile(canonical);
+    const advertisedValidate = new Ajv2020({ strict: false }).compile(
+      advertised,
+    );
+    expect(canonicalValidate({ value: "route" })).toBe(true);
+    expect(advertisedValidate({ value: "route" })).toBe(true);
+    expect(advertised).toHaveProperty(["properties", "value", "anyOf"]);
+    expect(advertised).not.toHaveProperty(["properties", "value", "oneOf"]);
+  });
+
+  it("resolves array-indexed references before keeping a negative constraint", () => {
+    const canonical = {
+      $defs: { group: { anyOf: [{ type: "string", const: "" }] } },
+      type: "object",
+      properties: { value: { not: { $ref: "#/$defs/group/anyOf/0" } } },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.properties).toEqual({ value: {} });
+    expect(advertised.$defs).toEqual({
+      group: { anyOf: [{ type: "string" }] },
+    });
+  });
+
   it("widens an affected oneOf to anyOf without losing branch guidance", () => {
     const canonical = {
       type: "object",
