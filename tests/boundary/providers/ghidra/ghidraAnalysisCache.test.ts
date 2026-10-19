@@ -10,6 +10,8 @@ import {
   type GhidraLaunchSession,
 } from "../../../../src/ghidra/GhidraLauncher.js";
 import { z } from "zod";
+import { ghidraAnalysisPlan } from "../../../../src/ghidra/GhidraHeadlessArguments.js";
+import { AnalysisCancelledError } from "../../../../src/domain/analysisErrorCore.js";
 
 const descriptorSchema = z.object({
   directory: z.string(),
@@ -44,6 +46,7 @@ async function fixture(): Promise<{
     },
     options: {
       environment: { REA_GHIDRA_CACHE_DIR: join(root, "cache") },
+      configurationDirectoryName: "ghidra_fixture",
       analyzeHeadlessPath: join(root, "analyzeHeadless"),
       bridgeScriptPath,
       platform: "darwin",
@@ -97,7 +100,7 @@ describe("immutable Ghidra analysis reuse", () => {
     if (!cache?.archivePath) throw new Error("Expected a valid cache hit");
     await rm(join(saved.directory, saved.archive));
     expect(await readFile(cache.archivePath)).toEqual(saved.bytes);
-    const args = ghidraHeadlessArguments({
+    const argumentOptions = {
       projectRoot: next.runtimeRoot,
       targetPath: next.targetPath,
       bridgeScriptPath: options.bridgeScriptPath,
@@ -105,12 +108,19 @@ describe("immutable Ghidra analysis reuse", () => {
       ghidraLogPath: join(next.runtimeRoot, "ghidra.log"),
       scriptLogPath: join(next.runtimeRoot, "script.log"),
       analysisCache: cache,
-    });
+    };
+    const args = ghidraHeadlessArguments(argumentOptions);
     expect(args).toContain("-noanalysis");
     expect(args).toContain(cache.archivePath);
-    expect(args.indexOf(cache.descriptorPath)).toBeLessThan(
-      args.indexOf(options.bridgeScriptPath),
-    );
+    expect(ghidraAnalysisPlan(argumentOptions)).toEqual({
+      required: false,
+      postAnalysisScripts: [
+        {
+          name: "ReaGhidraAnalysisCache.java",
+          arguments: [cache.descriptorPath],
+        },
+      ],
+    });
   });
 
   it("rejects corrupt archives and interrupted publication while retaining the prior manifest", async () => {
@@ -196,6 +206,42 @@ describe("immutable Ghidra analysis reuse", () => {
     } finally {
       report.mockRestore();
     }
+  });
+});
+
+describe("Ghidra cache recovery", () => {
+  it("preserves cancellation provenance after cleaning prepared files", async () => {
+    const { session, options } = await fixture();
+    const reason = new Error("caller cancelled cache preparation");
+    await expect(
+      prepareGhidraAnalysisCache(session, options, AbortSignal.abort(reason)),
+    ).rejects.toMatchObject({ _tag: "AnalysisCancelledError", cause: reason });
+  });
+
+  it("attempts independent cleanup and preserves the primary failure when removal fails", async () => {
+    const { session, options } = await fixture();
+    const archive = join(session.runtimeRoot, "cached-analysis.gzf");
+    const descriptor = join(session.runtimeRoot, "analysis-cache.json");
+    await mkdir(archive);
+    await writeFile(descriptor, "partial descriptor");
+    const reason = new Error("caller cancelled cache preparation");
+    const failure = await prepareGhidraAnalysisCache(
+      session,
+      options,
+      AbortSignal.abort(reason),
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(AnalysisCancelledError);
+    if (!(failure instanceof AnalysisCancelledError))
+      throw new Error("Expected cancellation");
+    expect(failure.cause).toBeInstanceOf(AggregateError);
+    if (!(failure.cause instanceof AggregateError))
+      throw new Error("Expected cleanup details");
+    expect(failure.cause.errors).toHaveLength(2);
+    expect(failure.cause.errors[0]).toMatchObject({ cause: reason });
+    await expect(readFile(descriptor)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await rm(archive, { recursive: true });
   });
 
   it("keeps persistence opt-in and preserves the Windows read-only boundary", async () => {

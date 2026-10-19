@@ -34,15 +34,76 @@ const requireOutput = (result, operation, contract) => {
   return contract.outputSchema.parse(jsonValue(result));
 };
 
-const operationResultKey = (contract) => {
-  const shape = contract.outputSchema.shape;
-  if (shape === undefined)
-    throw new Error(`${contract.name} has an unsupported MCP output schema`);
-  const evidence = Object.hasOwn(shape, "normalized_result");
-  const lifecycle = Object.hasOwn(shape, "result");
+const operationResultKey = (output, operation) => {
+  if (output.delivery === "retained-inventory")
+    throw new Error(
+      `${operation} requires the asynchronous inventory result reader`,
+    );
+  const evidence = Object.hasOwn(output, "normalized_result");
+  const lifecycle = Object.hasOwn(output, "result");
   if (evidence === lifecycle)
-    throw new Error(`${contract.name} has an unsupported MCP output schema`);
+    throw new Error(`${operation} has an unsupported MCP output`);
   return evidence ? "normalized_result" : "result";
+};
+
+/** Read every retained row with validated identity, coverage and forward progress. */
+export const requireMcpInventoryResult = async (
+  result,
+  operation,
+  callTool,
+) => {
+  const output = requireOutput(result, operation, toolContract(operation));
+  if (output.delivery !== "retained-inventory") {
+    const rows = output.normalized_result;
+    if (!Array.isArray(rows))
+      throw new Error(`${operation} is not an inventory`);
+    return rows;
+  }
+
+  const { source, view } = output.continuation.arguments;
+  if (
+    source.evidence_id !== output.evidence_id ||
+    output.evidence_reference.evidence_id !== output.evidence_id ||
+    view.offset !== 0
+  )
+    throw new Error(
+      `${operation} supplied an inconsistent retained continuation`,
+    );
+
+  const rows = [];
+  let offset = 0;
+  while (true) {
+    const response = await callTool({
+      name: output.continuation.name,
+      arguments: { source, view: { ...view, offset } },
+    });
+    const page = requireMcpEvidenceResult(response, "inspect_analysis_view");
+    const coverage = page.coverage;
+    if (
+      page.kind !== "page" ||
+      page.parent_evidence_id !== output.evidence_id ||
+      page.parent_operation !== operation ||
+      page.view.collection !== view.collection ||
+      page.view.offset !== offset ||
+      coverage.total !== output.total_items ||
+      coverage.examined !== page.items.length
+    )
+      throw new Error(
+        `${operation} returned inconsistent retained page coverage`,
+      );
+
+    rows.push(...page.items);
+    if (coverage.exhausted) {
+      if (coverage.next_offset !== null || rows.length !== output.total_items)
+        throw new Error(
+          `${operation} ended before its complete inventory was read`,
+        );
+      return rows;
+    }
+    if (page.items.length === 0 || coverage.next_offset !== rows.length)
+      throw new Error(`${operation} returned a non-advancing inventory page`);
+    offset = coverage.next_offset;
+  }
 };
 
 /** Expand compact session metadata once at the verifier boundary. */
@@ -86,17 +147,19 @@ export const expandCapabilitiesOutput = (capabilities) => ({
 /** Validate an Evidence-producing tool output and return its normalized result. */
 export const requireMcpEvidenceResult = (result, operation) => {
   const contract = toolContract(operation);
-  if (operationResultKey(contract) !== "normalized_result")
+  const output = requireOutput(result, operation, contract);
+  if (operationResultKey(output, operation) !== "normalized_result")
     throw new Error(`${operation} requires the lifecycle result extractor`);
-  return requireOutput(result, operation, contract).normalized_result;
+  return output.normalized_result;
 };
 
 /** Validate a lifecycle tool output and return its operation result. */
 export const requireMcpLifecycleResult = (result, operation) => {
   const contract = toolContract(operation);
-  if (operationResultKey(contract) !== "result")
+  const output = requireOutput(result, operation, contract);
+  if (operationResultKey(output, operation) !== "result")
     throw new Error(`${operation} requires the Evidence result extractor`);
-  const projected = requireOutput(result, operation, contract).result;
+  const projected = output.result;
   return operation === "binary_session"
     ? expandMcpSessionStatus(projected)
     : projected;
@@ -108,8 +171,9 @@ export const requireMcpOperationResult = (
   operation,
   contract = toolContract(operation),
 ) => {
-  const key = operationResultKey(contract);
-  const projected = requireOutput(result, operation, contract)[key];
+  const output = requireOutput(result, operation, contract);
+  const key = operationResultKey(output, operation);
+  const projected = output[key];
   return operation === "binary_session"
     ? expandMcpSessionStatus(projected)
     : projected;

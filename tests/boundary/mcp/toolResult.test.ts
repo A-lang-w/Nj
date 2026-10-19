@@ -7,7 +7,10 @@ import {
 } from "@modelcontextprotocol/server";
 
 import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
-import { resolveProcessResult } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
+import {
+  resolveProcessResult,
+  type ProcessCaptureCleanupOutcome,
+} from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { ToolContract } from "../../../src/contracts/toolContractTypes.js";
 import { err } from "../../../src/domain/result.js";
@@ -23,13 +26,71 @@ import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { evidenceResultOf } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
-import type { IncompleteProcessCaptureObservations } from "../../../src/domain/process/processCapture.js";
+import type {
+  IncompleteProcessCaptureObservations,
+  ProcessCaptureCleanupReport,
+} from "../../../src/domain/process/processCapture.js";
 const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
+
+it.each(["list_procedures", "list_strings"] as const)(
+  "validates retained %s delivery against its canonical contract",
+  (operation) => {
+    const rows = Array.from({ length: 200 }, (_, index) => ({
+      address: `0x${index.toString(16)}`,
+      value: `inventory row ${index}`,
+    }));
+    const evidence = createEvidence(
+      undefined,
+      { id: "fixture", name: "Fixture", version: "1" },
+      { operation, parameters: {}, result: rows },
+    );
+    const contract = toolContract(operation);
+    const boundedDelivery = new ToolResultDelivery(4096);
+    const result = boundedDelivery.toEvidenceToolResult(evidence, contract, {
+      ok: true,
+      value: "recorded",
+    });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      delivery: "retained-inventory",
+      total_items: rows.length,
+      evidence_id: evidence.evidence_id,
+    });
+    expect(
+      contract.outputSchema.safeParse(result.structuredContent).success,
+    ).toBe(true);
+
+    const unretained = boundedDelivery.toEvidenceToolResult(
+      evidence,
+      contract,
+      undefined,
+    );
+    expect(unretained.isError).toBe(true);
+    expect(unretained.structuredContent).not.toHaveProperty("continuation");
+
+    const retentionFailure = new HopperProcessError(76);
+    expect(
+      boundedDelivery.toEvidenceToolResult(
+        evidence,
+        contract,
+        err(retentionFailure),
+      ),
+    ).toEqual(
+      boundedDelivery.toErrorToolResult(
+        retentionFailure,
+        contract.returnsTargetContent,
+      ),
+    );
+  },
+);
 const UNTRUSTED_TARGET_CONTENT = {
   provenance: { untrusted_content: true, source: "analysis_target" },
 };
 const emptyFilesystemCoverage =
   emptyProcessCapture().truncation_details.filesystem_before;
+const historicalCleanupOutcome = (
+  report: ProcessCaptureCleanupReport,
+): ProcessCaptureCleanupOutcome => ({ report, cleanupLease: undefined });
 
 const captureWithObservedOutput = () =>
   accountFullyObservedProcessCapture({
@@ -80,7 +141,7 @@ describe("completed partial process capture MCP projection", () => {
       resolveProcessResult(
         capture,
         new Error("final filesystem snapshot failed"),
-        cleanup,
+        historicalCleanupOutcome(cleanup),
       );
     } catch (cause: unknown) {
       if (!(cause instanceof ProcessCaptureError)) throw cause;
@@ -128,7 +189,11 @@ describe("completed partial process capture MCP projection", () => {
 
     let failure: ProcessCaptureError | undefined;
     try {
-      resolveProcessResult(capture, executionFailure, cleanup);
+      resolveProcessResult(
+        capture,
+        executionFailure,
+        historicalCleanupOutcome(cleanup),
+      );
     } catch (cause: unknown) {
       if (!(cause instanceof ProcessCaptureError)) throw cause;
       failure = cause;
@@ -267,7 +332,7 @@ describe("incomplete partial process observations MCP projection", () => {
       resolveProcessResult(
         undefined,
         new Error("capture failed before completion"),
-        cleanup,
+        historicalCleanupOutcome(cleanup),
         observations,
         { scenario, rootPid },
       );

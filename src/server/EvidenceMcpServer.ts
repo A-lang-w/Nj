@@ -1,7 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import {
-  McpServer,
   isCallToolResult,
   isJSONRPCRequest,
   isJSONRPCNotification,
@@ -40,6 +39,7 @@ import {
   measureMcpResultWithinBudget,
   TARGET_CONTENT_RESULT_META,
 } from "./toolResultEncoding.js";
+import { RequestTrackingMcpServer } from "./RequestTrackingMcpServer.js";
 
 export type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
 
@@ -104,7 +104,7 @@ export const forgetPendingMcpRequest = (
 };
 
 /** Bind oversized MCP error recovery to this server's Evidence ledger. */
-export class EvidenceMcpServer extends McpServer {
+export class EvidenceMcpServer extends RequestTrackingMcpServer {
   readonly catalogIdentity: ReturnType<typeof createCatalogIdentity>;
   private readonly compactPresentation:
     | CompactInputSchemaPresentation
@@ -126,9 +126,12 @@ export class EvidenceMcpServer extends McpServer {
         ? undefined
         : { budgetBytes: compactPresentation.budgetBytes };
     this.catalogIdentity =
-      this.compactPresentation === undefined
+      this.compactPresentation === undefined && !this.omitOutputSchemas
         ? CATALOG_IDENTITY
-        : createCatalogIdentity(this.compactPresentation);
+        : createCatalogIdentity(
+            this.compactPresentation,
+            this.omitOutputSchemas ? "off" : "full",
+          );
   }
 
   /**

@@ -1,7 +1,7 @@
 import { posix, win32 } from "node:path";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import type { GhidraAnalysisCache } from "./GhidraAnalysisCache.js";
-import { GHIDRA_SEED_SCRIPT } from "./GhidraAnalysisSeeds.js";
+import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
 
 /** Paths encoded into one bounded analyzeHeadless invocation. */
 export interface GhidraHeadlessArgumentOptions {
@@ -149,21 +149,25 @@ function preparationScripts(
 ): readonly string[] {
   const args: string[] = [];
   if (options.dosCom)
-    args.push("-preScript", script("ReaGhidraPrepareCom.java"));
+    args.push("-preScript", script(GHIDRA_BRIDGE_SOURCES.prepareCom));
   if (options.rawBinary)
     args.push(
       "-preScript",
-      script("ReaGhidraPrepareRaw.java"),
+      script(GHIDRA_BRIDGE_SOURCES.prepareRaw),
       options.rawBinary.languageId,
       options.rawBinary.baseAddr,
     );
   // Import preparation precedes seeds; analyzer options are applied before auto-analysis.
   if (options.seedPath)
-    args.push("-preScript", script(GHIDRA_SEED_SCRIPT), options.seedPath);
+    args.push(
+      "-preScript",
+      script(GHIDRA_BRIDGE_SOURCES.applySeeds),
+      options.seedPath,
+    );
   if (options.disabledAnalyzers?.length)
     args.push(
       "-preScript",
-      script("ReaGhidraAnalysisOptions.java"),
+      script(GHIDRA_BRIDGE_SOURCES.analysisOptions),
       options.disabledAnalyzers.join(","),
     );
   return args;
@@ -178,15 +182,18 @@ export function ghidraAnalysisPlan(
 
   if (cache?.archivePath === undefined) {
     if ((options.platform ?? process.platform) !== "win32")
-      scripts.push({ name: "ReaGhidraNoReturnFix.java", arguments: [] });
+      scripts.push({ name: GHIDRA_BRIDGE_SOURCES.noReturnFix, arguments: [] });
 
     if (options.mipsSoftFloat)
-      scripts.push({ name: "ReaGhidraMipsSoftFloat.java", arguments: [] });
+      scripts.push({
+        name: GHIDRA_BRIDGE_SOURCES.mipsSoftFloat,
+        arguments: [],
+      });
   }
 
   if (cache !== undefined)
     scripts.push({
-      name: "ReaGhidraAnalysisCache.java",
+      name: GHIDRA_BRIDGE_SOURCES.analysisCache,
       arguments: [cache.descriptorPath],
     });
 

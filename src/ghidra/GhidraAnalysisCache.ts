@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 
 import type {
   GhidraHeadlessLauncherOptions,
@@ -56,12 +57,23 @@ async function cacheIdentity(
 
 async function fileDigest(path: string, signal?: AbortSignal): Promise<string> {
   const hash = createHash("sha256");
-  for await (const chunk of createReadStream(
-    path,
-    signal === undefined ? {} : { signal },
-  ))
-    hash.update(chunk);
+  try {
+    for await (const chunk of createReadStream(
+      path,
+      signal === undefined ? {} : { signal },
+    ))
+      hash.update(chunk);
+  } catch (cause) {
+    if (cause instanceof Error && cause.name === "AbortError")
+      throw new AnalysisCancelledError("open_binary", { cause });
+    throw cause;
+  }
   return hash.digest("hex");
+}
+
+function checkCancellation(signal?: AbortSignal): void {
+  if (signal?.aborted)
+    throw new AnalysisCancelledError("open_binary", { cause: signal.reason });
 }
 
 function absent(error: unknown): boolean {
@@ -122,7 +134,7 @@ async function prepareCache(
   if (!root || (options.platform ?? process.platform) === "win32")
     return undefined;
 
-  signal?.throwIfAborted();
+  checkCancellation(signal);
   const identity = await cacheIdentity(session, options.bridgeScriptPath);
   const directory = join(root, identity);
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -144,10 +156,23 @@ async function prepareCache(
     }),
     { mode: 0o600, flag: "wx" },
   );
+  checkCancellation(signal);
   return { descriptorPath, ...(reused ? { archivePath } : {}) };
 }
 
-/** Cache storage is an optimization: a failure is reported, then ordinary analysis remains available. */
+/** Attempt both removals even if one fails; the session still owns their runtime root. */
+async function removePreparedCache(runtimeRoot: string): Promise<unknown[]> {
+  const results = await Promise.allSettled(
+    ["cached-analysis.gzf", "analysis-cache.json"].map((name) =>
+      rm(join(runtimeRoot, name), { force: true }),
+    ),
+  );
+  return results.flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : [],
+  );
+}
+
+/** Fall back to ordinary analysis only after releasing the failed cache preparation. */
 export async function prepareGhidraAnalysisCache(
   session: GhidraLaunchSession,
   options: GhidraHeadlessLauncherOptions,
@@ -156,22 +181,24 @@ export async function prepareGhidraAnalysisCache(
   try {
     return await prepareCache(session, options, signal);
   } catch (failure) {
-    const failures: unknown[] = [failure];
-    for (const name of ["cached-analysis.gzf", "analysis-cache.json"]) {
-      try {
-        await rm(join(session.runtimeRoot, name), { force: true });
-      } catch (cleanup) {
-        failures.push(cleanup);
-      }
-    }
-    if (signal?.aborted)
-      throw new AggregateError(
-        failures,
-        "Analysis cache preparation was cancelled",
-      );
+    const cleanupFailures = await removePreparedCache(session.runtimeRoot);
+    const combinedFailure =
+      cleanupFailures.length === 0
+        ? failure
+        : new AggregateError(
+            [failure, ...cleanupFailures],
+            "Analysis cache preparation failed and cleanup remains incomplete",
+            { cause: failure },
+          );
+    if (failure instanceof AnalysisCancelledError)
+      throw cleanupFailures.length === 0
+        ? failure
+        : new AnalysisCancelledError("open_binary", { cause: combinedFailure });
+    if (cleanupFailures.length > 0) throw combinedFailure;
+
     console.error(
       "REA analysis cache unavailable; running normal analysis:",
-      new AggregateError(failures),
+      failure,
     );
     return undefined;
   }

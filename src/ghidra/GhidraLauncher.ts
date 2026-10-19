@@ -11,14 +11,14 @@ export {
   ghidraHeadlessArguments,
   type GhidraHeadlessArgumentOptions,
 } from "./GhidraHeadlessArguments.js";
-import { parseGhidraJavaProperties } from "./GhidraJavaProperties.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   snapshotGhidraAnalysisSeeds,
   type GhidraSeedCommitment,
 } from "./GhidraAnalysisSeeds.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import { mkdir, readFile, realpath } from "node:fs/promises";
+import { mkdir, realpath } from "node:fs/promises";
 import { basename, dirname, join, win32 } from "node:path";
 
 import writeFileAtomic from "write-file-atomic";
@@ -30,6 +30,9 @@ import {
   WindowsBatchCommandError,
 } from "../process/WindowsBatchCommand.js";
 
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
@@ -40,6 +43,7 @@ import {
   cleanupOwnedProcessGroup,
   cleanupWindowsProcessTree,
   type ProcessCleanupResult,
+  type ProcessCleanupFailure,
 } from "../process/ProcessOwnership.js";
 import {
   type ProviderProcessLaunch,
@@ -47,7 +51,10 @@ import {
   spawnOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
 import { ghidraJavaEnvironment } from "./GhidraInstallation.js";
-import { ghidraJavaLaunch } from "./GhidraJavaLaunch.js";
+import {
+  ghidraJavaLaunch,
+  GhidraLaunchSupportError,
+} from "./GhidraJavaLaunch.js";
 import type { GhidraTransportKind } from "./GhidraTransport.js";
 import {
   snapshotGhidraExtensions,
@@ -77,6 +84,8 @@ export type GhidraLaunch = ProviderProcessLaunch & {
   readonly projectRoot: string;
   readonly ghidraLogPath: string;
   readonly scriptLogPath: string;
+  /** Value supplied to the JVM as -Xmx, not a measurement of effective memory. */
+  readonly configuredMaxHeap?: string;
   readonly launchSupport?: readonly GhidraLaunchSupportDiagnostic[];
 };
 
@@ -95,31 +104,83 @@ export type GhidraLaunchSupportDiagnostic = {
 export interface GhidraLauncher {
   launch(
     session: GhidraLaunchSession,
-    options?: { readonly signal?: AbortSignal },
+    options?: {
+      readonly signal?: AbortSignal;
+      readonly resourceScope?: ArtifactResourceScope;
+    },
   ): Promise<Result<GhidraLaunch, GhidraLaunchError | AnalysisCancelledError>>;
 }
+
+/** A rollback attempt failed without releasing its process owner. */
+export type GhidraLaunchRollbackFailure =
+  | { readonly kind: "incomplete"; readonly result: ProcessCleanupFailure }
+  | { readonly kind: "rejected"; readonly cause: unknown };
 
 /** Local launch failure retained as the cause of a provider-neutral error. */
 export class GhidraLaunchError extends Error {
   readonly #partialLaunch: GhidraLaunch | undefined;
   readonly #capturedOutput: AnalysisCapturedOutput | undefined;
   readonly launchSupport: readonly GhidraLaunchSupportDiagnostic[];
+  readonly rollbackFailure: GhidraLaunchRollbackFailure | undefined;
+  readonly cleanupFailure: AnalysisError | undefined;
+  /** Known producer outcome, independent of a signal that changes during finalization. */
+  readonly primaryFailure: AnalysisError | undefined;
 
   constructor(
     message: string,
     options?: ErrorOptions & {
       readonly partialLaunch?: GhidraLaunch;
+      readonly rollbackFailure?: GhidraLaunchRollbackFailure;
+      readonly cleanupFailure?: AnalysisError;
+      readonly primaryFailure?: AnalysisError;
       readonly capturedOutput?: AnalysisCapturedOutput;
       readonly launchSupport?: readonly GhidraLaunchSupportDiagnostic[];
     },
   ) {
-    const { partialLaunch, capturedOutput, launchSupport, ...errorOptions } =
-      options ?? {};
+    const {
+      partialLaunch,
+      capturedOutput,
+      launchSupport,
+      rollbackFailure,
+      cleanupFailure,
+      primaryFailure,
+      ...errorOptions
+    } = options ?? {};
     super(message, errorOptions);
     this.name = "GhidraLaunchError";
     this.#partialLaunch = partialLaunch;
-    this.#capturedOutput =
-      capturedOutput === undefined ? undefined : { ...capturedOutput };
+    this.rollbackFailure = rollbackFailure;
+    this.primaryFailure =
+      primaryFailure ??
+      (errorOptions.cause instanceof AnalysisError
+        ? errorOptions.cause
+        : errorOptions.cause instanceof GhidraLaunchError
+          ? errorOptions.cause.primaryFailure
+          : undefined);
+    const inherited =
+      errorOptions.cause instanceof DarwinProcessOwnershipInspectionError ||
+      errorOptions.cause instanceof GhidraLaunchError
+        ? errorOptions.cause.cleanupFailure
+        : errorOptions.cause instanceof AnalysisError &&
+            errorOptions.cause.cleanupIncomplete
+          ? errorOptions.cause
+          : undefined;
+    this.cleanupFailure =
+      cleanupFailure === undefined
+        ? inherited
+        : inherited === undefined || inherited === cleanupFailure
+          ? cleanupFailure
+          : analysisErrorWithCleanupFailure(
+              inherited,
+              cleanupFailure,
+            ).bindCleanupDependencies([inherited, cleanupFailure]);
+    const output =
+      capturedOutput ??
+      (errorOptions.cause instanceof DarwinProcessOwnershipInspectionError ||
+      errorOptions.cause instanceof GhidraLaunchError
+        ? errorOptions.cause.capturedOutput
+        : undefined);
+    this.#capturedOutput = output === undefined ? undefined : { ...output };
     this.launchSupport = (launchSupport ?? []).map((output) => ({ ...output }));
   }
 
@@ -144,12 +205,20 @@ export class GhidraLaunchError extends Error {
 const ghidraLaunchCommandOutput = (
   cause: unknown,
 ): AnalysisCapturedOutput | undefined => {
+  if (cause instanceof DarwinProcessOwnershipInspectionError)
+    return cause.capturedOutput;
   const failure = execFileOutputFailure(cause);
   if (failure === undefined) return undefined;
   return {
     stdout: failure.stdout,
     stderr: failure.stderr,
     truncated: failure.outputTruncated,
+    ...(failure.stdoutBytes === undefined
+      ? {}
+      : { stdout_bytes: failure.stdoutBytes }),
+    ...(failure.stderrBytes === undefined
+      ? {}
+      : { stderr_bytes: failure.stderrBytes }),
     exit_code: typeof failure.code === "number" ? failure.code : null,
     signal: failure.signal,
   };
@@ -159,6 +228,8 @@ const ghidraLaunchCommandOutput = (
 export interface GhidraHeadlessLauncherOptions {
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly analyzeHeadlessPath: string;
+  /** Release coordinate owned by installation inspection; null must not be guessed. */
+  readonly configurationDirectoryName: string | null;
   readonly javaHome?: string;
   readonly javaVmName?: string;
   readonly bridgeScriptPath: string;
@@ -194,25 +265,13 @@ interface LaunchContext {
   readonly platform: NodeJS.Platform;
   readonly launchSupport: GhidraLaunchSupportDiagnostic[];
   readonly signal: AbortSignal | undefined;
+  readonly resourceScope: ArtifactResourceScope | undefined;
 }
 
 interface PreparedAnalysisInputs {
   readonly seedPath?: string;
   readonly extensions: readonly GhidraExtension[];
   readonly cache?: GhidraAnalysisCache;
-}
-
-interface LaunchFailureState {
-  readonly primary: GhidraLaunchError | AnalysisCancelledError;
-  readonly capturedOutput: AnalysisCapturedOutput | undefined;
-}
-
-interface IncompleteRollback {
-  readonly context: LaunchContext;
-  readonly cause: unknown;
-  readonly started: SpawnedOwnedProviderProcess;
-  readonly failure: LaunchFailureState;
-  readonly cleanupFailure: unknown;
 }
 
 /** Launch Ghidra without copying scripts into or modifying its installation. */
@@ -227,56 +286,56 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
 
   async launch(
     session: GhidraLaunchSession,
-    options: { readonly signal?: AbortSignal } = {},
+    options: {
+      readonly signal?: AbortSignal;
+      readonly resourceScope?: ArtifactResourceScope;
+    } = {},
   ): Promise<Result<GhidraLaunch, GhidraLaunchError | AnalysisCancelledError>> {
     if (isAborted(options.signal))
-      return err(new AnalysisCancelledError("open_binary"));
-    const paths = ghidraRuntimePaths(session.runtimeRoot);
-    const platform = this.options.platform ?? process.platform;
-    let started: SpawnedOwnedProviderProcess | undefined;
-    const launchSupport: GhidraLaunchSupportDiagnostic[] = [];
+      return err(
+        new AnalysisCancelledError("open_binary", {
+          cause: options.signal?.reason,
+        }),
+      );
+
     const context: LaunchContext = {
       session,
-      paths,
-      platform,
-      launchSupport,
+      paths: ghidraRuntimePaths(session.runtimeRoot),
+      platform: this.options.platform ?? process.platform,
+      launchSupport: [],
       signal: options.signal,
+      resourceScope: options.resourceScope,
     };
-    try {
-      await this.validatePsp(options.signal);
-      const headlessArguments = await this.prepareArguments(context);
-      const command = await this.inspectCommand(context, headlessArguments);
+    let started: SpawnedOwnedProviderProcess | undefined;
+    let configuredMaxHeap: string | undefined;
 
-      started = await (this.options.spawnProcess ?? spawnOwnedProviderProcess)({
-        command: command.command,
-        arguments: command.arguments,
-        runId: session.runId,
-        // POSIX launches the inspected JVM directly; script wrappers cannot
-        // preserve JVM property paths containing spaces as single arguments.
-        expectedCommand: platform !== "win32" ? command.command : null,
-        windowsVerbatimArguments: platform === "win32",
-        platform,
-        env: command.environment,
-        hostEnvironment: {},
-        ...(options.signal === undefined ? {} : { signal: options.signal }),
-      });
-      const partialLaunch = ownedGhidraLaunch(
-        started,
-        paths,
-        platform,
-        launchSupport,
-      );
+    try {
+      await this.validatePsp(context);
+      const arguments_ = await this.prepareArguments(context);
+      const command = await this.inspectCommand(context, arguments_);
+      configuredMaxHeap = command.configuredMaxHeap;
+      started = await this.spawn(context, command);
       await this.writeOwnership(context, started, command.command);
-      if (isAborted(options.signal)) {
-        throw new AnalysisCancelledError("open_binary");
-      }
-      return ok(partialLaunch);
+      if (isAborted(options.signal))
+        throw new AnalysisCancelledError("open_binary", {
+          cause: options.signal?.reason,
+        });
+
+      return ok(
+        ownedGhidraLaunch(
+          started,
+          context.paths,
+          context.platform,
+          context.launchSupport,
+          configuredMaxHeap,
+        ),
+      );
     } catch (cause: unknown) {
-      return this.rollbackFailure(context, cause, started);
+      return this.rollbackFailure(context, cause, started, configuredMaxHeap);
     }
   }
 
-  private async validatePsp(signal?: AbortSignal): Promise<void> {
+  private async validatePsp(context: LaunchContext): Promise<void> {
     const psp = this.options.pspExtension;
     if (psp !== undefined) {
       const installedRoot = await realpath(
@@ -292,10 +351,15 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         throw new GhidraLaunchError(
           "Allegrex profile does not belong to the selected Ghidra installation.",
         );
+      if (context.resourceScope === undefined)
+        throw new GhidraLaunchError(
+          "PSP inspection requires a caller-owned resource scope.",
+        );
       const inspected = await inspectGhidraPspExtension(
         psp.root,
         psp.ghidra_version,
-        signal,
+        context.resourceScope,
+        context.signal,
       );
       if (inspected.sha256 !== psp.sha256)
         throw new GhidraLaunchError(
@@ -317,29 +381,49 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
 
   private async prepareRuntime(context: LaunchContext): Promise<void> {
     const { paths, platform } = context;
+    if (this.options.configurationDirectoryName === null)
+      throw new GhidraLaunchError(
+        "Ghidra configuration directory identity is unresolved; restore application.version and application.release.name in the selected installation's application.properties.",
+      );
     await createGhidraRuntimeDirectories(
       paths,
       platform,
-      await ghidraConfigReleaseDirectory(this.options.analyzeHeadlessPath),
+      this.options.configurationDirectoryName,
     );
   }
 
   private async snapshotAnalysisInputs(
     context: LaunchContext,
   ): Promise<PreparedAnalysisInputs> {
-    const { session, signal } = context;
-    const seedPath =
-      this.options.analysisSeeds === undefined
-        ? undefined
-        : await snapshotGhidraAnalysisSeeds(
-            this.options.analysisSeeds,
-            session.runtimeRoot,
-          );
-    const extensions = await snapshotGhidraExtensions(
-      this.options.analysisExtensions ?? [],
-      session.runtimeRoot,
-    );
-    if (isAborted(signal)) throw new AnalysisCancelledError("open_binary");
+    const { session, signal, resourceScope } = context;
+    let seedPath: string | undefined;
+    let extensions: readonly GhidraExtension[] = [];
+    if (
+      this.options.analysisSeeds !== undefined ||
+      (this.options.analysisExtensions?.length ?? 0) > 0
+    ) {
+      if (resourceScope === undefined)
+        throw new GhidraLaunchError(
+          "Configured Ghidra artifacts require a caller-owned resource scope.",
+        );
+      if (this.options.analysisSeeds !== undefined)
+        seedPath = await snapshotGhidraAnalysisSeeds(
+          this.options.analysisSeeds,
+          session.runtimeRoot,
+          resourceScope,
+          signal,
+        );
+      extensions = await snapshotGhidraExtensions(
+        this.options.analysisExtensions ?? [],
+        session.runtimeRoot,
+        resourceScope,
+        signal,
+      );
+    }
+    if (isAborted(signal))
+      throw new AnalysisCancelledError("open_binary", {
+        cause: signal?.reason,
+      });
 
     const cache = await prepareGhidraAnalysisCache(
       session,
@@ -427,61 +511,35 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
     context: LaunchContext,
     headlessArguments: readonly string[],
   ): Promise<Awaited<ReturnType<typeof ghidraJavaLaunch>>> {
-    const scriptCommand = this.buildHeadlessScriptCommand(
-      context,
-      headlessArguments,
-    );
-    const environment = this.buildLaunchEnvironment(context, scriptCommand);
-
-    if (context.platform === "win32") return { ...scriptCommand, environment };
-
-    return this.inspectJavaCommand(context, headlessArguments, environment);
-  }
-
-  private buildHeadlessScriptCommand(
-    context: LaunchContext,
-    headlessArguments: readonly string[],
-  ): ReturnType<typeof ghidraHeadlessCommand> {
-    return ghidraHeadlessCommand({
+    const { paths, platform, signal } = context;
+    const scriptCommand = ghidraHeadlessCommand({
       environment: this.options.environment,
-      platform: context.platform,
+      platform,
       analyzeHeadlessPath: this.options.analyzeHeadlessPath,
       arguments: headlessArguments,
       ...(this.options.comSpec === undefined
         ? {}
         : { comSpec: this.options.comSpec }),
     });
-  }
-
-  private buildLaunchEnvironment(
-    context: LaunchContext,
-    scriptCommand: ReturnType<typeof ghidraHeadlessCommand>,
-  ): Readonly<NodeJS.ProcessEnv> {
-    return ghidraLaunchEnvironment(
-      context.paths,
+    const environment = ghidraLaunchEnvironment(
+      paths,
       this.options.javaHome,
-      context.platform,
+      platform,
       scriptCommand.command,
       this.options.environment,
     );
-  }
-
-  private inspectJavaCommand(
-    context: LaunchContext,
-    headlessArguments: readonly string[],
-    environment: Readonly<NodeJS.ProcessEnv>,
-  ): Promise<Awaited<ReturnType<typeof ghidraJavaLaunch>>> {
-    const { paths, platform, signal } = context;
-    const javaHome = this.options.javaHome;
-    if (javaHome === undefined)
+    if (platform !== "win32" && this.options.javaHome === undefined)
       throw new GhidraLaunchError(
         "POSIX Ghidra requires its inspected JDK home",
       );
-
-    return (this.options.javaLaunch ?? ghidraJavaLaunch)({
+    const inspectedJavaLaunch = await (
+      this.options.javaLaunch ?? ghidraJavaLaunch
+    )({
       platform,
       analyzeHeadlessPath: this.options.analyzeHeadlessPath,
-      javaHome,
+      ...(this.options.javaHome === undefined
+        ? {}
+        : { javaHome: this.options.javaHome }),
       ...(this.options.javaVmName === undefined
         ? {}
         : { javaVmName: this.options.javaVmName }),
@@ -491,7 +549,36 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
       environment,
       onStderr: (mode, stderr) =>
         this.captureLaunchSupport(context, mode, stderr),
-      ...(signal === undefined ? {} : { signal }),
+      ...(signal === undefined ? {} : { signal: signal }),
+    });
+    return platform === "win32"
+      ? { ...scriptCommand, environment }
+      : inspectedJavaLaunch;
+  }
+
+  private async spawn(
+    context: LaunchContext,
+    command: Awaited<ReturnType<typeof ghidraJavaLaunch>>,
+  ): Promise<SpawnedOwnedProviderProcess> {
+    const { session, platform, signal } = context;
+    return await (this.options.spawnProcess ?? spawnOwnedProviderProcess)({
+      command: command.command,
+      arguments: command.arguments,
+      runId: session.runId,
+      // POSIX launches the inspected JVM directly; script wrappers cannot
+      // preserve JVM property paths containing spaces as single arguments.
+      expectedCommand: platform !== "win32" ? command.command : null,
+      windowsVerbatimArguments: platform === "win32",
+      platform,
+      env: command.environment,
+      hostEnvironment: {},
+      ...(signal === undefined ? {} : { signal: signal }),
+    }).catch((cause: unknown) => {
+      // The spawn boundary throws the exact opaque reason at preparation
+      // checkpoints. Wrap it before interpreting any typed provider facts.
+      if (signal?.aborted === true && cause === signal.reason)
+        throw new AnalysisCancelledError("open_binary", { cause });
+      throw cause;
     });
   }
 
@@ -545,98 +632,93 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
     );
   }
 
+  private describeLaunchFailure(
+    context: LaunchContext,
+    cause: unknown,
+  ): GhidraLaunchError {
+    const { launchSupport } = context;
+    const cancellation =
+      cause instanceof AnalysisCancelledError
+        ? cause
+        : (cause instanceof GhidraLaunchSupportError ||
+              cause instanceof DarwinProcessOwnershipInspectionError) &&
+            cause.cancellation !== undefined
+          ? new AnalysisCancelledError("open_binary", {
+              cause: cause.cancellation.reason,
+            })
+          : undefined;
+    const capturedOutput = ghidraLaunchCommandOutput(cause);
+    return new GhidraLaunchError("Ghidra headless launch failed", {
+      cause,
+      ...(cancellation === undefined ? {} : { primaryFailure: cancellation }),
+      launchSupport,
+      ...(capturedOutput === undefined ? {} : { capturedOutput }),
+    });
+  }
+
   private async rollbackFailure(
     context: LaunchContext,
     cause: unknown,
     started: SpawnedOwnedProviderProcess | undefined,
-  ): Promise<Result<GhidraLaunch, GhidraLaunchError | AnalysisCancelledError>> {
+    configuredMaxHeap: string | undefined,
+  ): Promise<Result<GhidraLaunch, GhidraLaunchError>> {
     const failure = this.describeLaunchFailure(context, cause);
-    if (started === undefined) return err(failure.primary);
+    if (started === undefined) return err(failure);
 
-    const cleanupFailure = await this.cleanupFailedLaunch(started, context);
-    if (cleanupFailure === undefined) return err(failure.primary);
+    const rollback = await this.cleanupFailedLaunch(started, context.platform);
+    if (rollback.ok) return err(failure);
 
+    const partialLaunch = ownedGhidraLaunch(
+      started,
+      context.paths,
+      context.platform,
+      context.launchSupport,
+      configuredMaxHeap,
+    );
+    const primaryMessage =
+      failure.primaryFailure?.message ??
+      `Ghidra headless launch failed: ${cause instanceof Error ? cause.message : String(cause)}`;
     return err(
-      this.incompleteRollbackError({
-        context,
-        cause,
-        started,
-        failure,
-        cleanupFailure,
-      }),
+      new GhidraLaunchError(
+        `${primaryMessage}; process cleanup remains incomplete`,
+        {
+          cause: new AggregateError(
+            [
+              failure,
+              rollback.error.kind === "rejected"
+                ? rollback.error.cause
+                : rollback.error.result,
+            ],
+            "Ghidra launch rollback did not release its process",
+            { cause: failure },
+          ),
+          partialLaunch,
+          rollbackFailure: rollback.error,
+          ...(failure.primaryFailure === undefined
+            ? {}
+            : { primaryFailure: failure.primaryFailure }),
+          ...(failure.cleanupFailure === undefined
+            ? {}
+            : { cleanupFailure: failure.cleanupFailure }),
+          ...(failure.capturedOutput === undefined
+            ? {}
+            : { capturedOutput: failure.capturedOutput }),
+          launchSupport: context.launchSupport,
+        },
+      ),
     );
-  }
-
-  private describeLaunchFailure(
-    context: LaunchContext,
-    cause: unknown,
-  ): LaunchFailureState {
-    const { launchSupport, signal } = context;
-    const capturedOutput = ghidraLaunchCommandOutput(cause);
-    const launchFailure = new GhidraLaunchError(
-      "Ghidra headless launch failed",
-      {
-        cause,
-        launchSupport,
-        ...(capturedOutput === undefined ? {} : { capturedOutput }),
-      },
-    );
-    const primary = isAborted(signal)
-      ? new AnalysisCancelledError("open_binary", { cause: launchFailure })
-      : launchFailure;
-
-    return { primary, capturedOutput };
   }
 
   private async cleanupFailedLaunch(
     started: SpawnedOwnedProviderProcess,
-    context: LaunchContext,
-  ): Promise<unknown | undefined> {
+    platform: NodeJS.Platform,
+  ): Promise<Result<null, GhidraLaunchRollbackFailure>> {
     try {
-      const cleanup = await cleanupStartedProcess(started, context.platform);
-      if (!cleanup.cleaned)
-        return new Error(
-          `Ghidra process cleanup was incomplete: ${cleanup.reason}`,
-        );
-    } catch (failure: unknown) {
-      return failure;
+      const result = await cleanupStartedProcess(started, platform);
+      return result.cleaned ? ok(null) : err({ kind: "incomplete", result });
+    } catch (cause: unknown) {
+      return err({ kind: "rejected", cause });
     }
-    return undefined;
-  }
-
-  private incompleteRollbackError({
-    context,
-    cause,
-    started,
-    failure,
-    cleanupFailure,
-  }: IncompleteRollback): GhidraLaunchError {
-    const { paths, platform, launchSupport, signal } = context;
-    const partialLaunch = ownedGhidraLaunch(
-      started,
-      paths,
-      platform,
-      launchSupport,
-    );
-    const message = isAborted(signal)
-      ? failure.primary.message
-      : `Ghidra headless launch failed: ${cause instanceof Error ? cause.message : String(cause)}`;
-
-    return new GhidraLaunchError(
-      `${message}; process cleanup remains incomplete`,
-      {
-        cause: new AggregateError(
-          [failure.primary, cleanupFailure],
-          "Ghidra launch rollback did not release its process",
-          { cause: failure.primary },
-        ),
-        partialLaunch,
-        launchSupport,
-        ...(failure.capturedOutput === undefined
-          ? {}
-          : { capturedOutput: failure.capturedOutput }),
-      },
-    );
   }
 }
 
@@ -645,11 +727,13 @@ const ownedGhidraLaunch = (
   paths: ReturnType<typeof ghidraRuntimePaths>,
   platform: NodeJS.Platform,
   launchSupport: readonly GhidraLaunchSupportDiagnostic[],
+  configuredMaxHeap?: string,
 ): GhidraLaunch => ({
   ...ownedGhidraProcess(spawned, platform),
   projectRoot: paths.projectRoot,
   ghidraLogPath: paths.ghidraLogPath,
   scriptLogPath: paths.scriptLogPath,
+  ...(configuredMaxHeap === undefined ? {} : { configuredMaxHeap }),
   ...(launchSupport.length === 0 ? {} : { launchSupport: [...launchSupport] }),
 });
 
@@ -746,32 +830,6 @@ const ghidraRuntimePaths = (runtimeRoot: string) => ({
  * that no supported JDK was found. Create the release directory while this
  * process still owns the runtime, leaving Ghidra only a file write inside it.
  */
-const ghidraConfigReleaseDirectory = async (
-  analyzeHeadlessPath: string,
-): Promise<string> => {
-  const installRoot = dirname(dirname(analyzeHeadlessPath));
-  try {
-    const properties = await readFile(
-      join(installRoot, "Ghidra", "application.properties"),
-      "latin1",
-    );
-    const parsed = parseGhidraJavaProperties(properties);
-    if (!parsed.ok) return basename(installRoot);
-    const version = parsed.value.get("application.version");
-    const release = parsed.value.get("application.release.name");
-    return version === undefined ||
-      release === undefined ||
-      release.length === 0
-      ? basename(installRoot)
-      : `ghidra_${version}_${release}`;
-  } catch (cause: unknown) {
-    // An unreadable properties file leaves the release coordinate unknown; the
-    // conventional extraction directory carries the same name.
-    void cause;
-    return basename(installRoot);
-  }
-};
-
 const createGhidraRuntimeDirectories = async (
   paths: ReturnType<typeof ghidraRuntimePaths>,
   platform: NodeJS.Platform,

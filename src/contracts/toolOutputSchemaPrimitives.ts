@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  pageViewSchema,
+  retainedEvidenceReferenceSchema,
+} from "../domain/analysisView/analysisView.js";
 
 import {
   procedureClassificationSchema,
@@ -32,13 +36,41 @@ export const evidenceResultOf = <Schema extends z.ZodType>(schema: Schema) =>
     .strictObject({ ...evidenceSchema.shape, normalized_result: schema })
     .superRefine(validateAnalysisProfileProvider);
 
+/** A complete inventory is delivered inline or through a typed retained continuation. */
+export const inventoryResultOf = <Schema extends z.ZodType>(
+  schema: Schema,
+  operation: "list_procedures" | "list_strings",
+  collection: "procedures" | "strings",
+) =>
+  z
+    .union([
+      evidenceResultOf(schema),
+      z.strictObject({
+        operation: z.literal(operation),
+        delivery: z.literal("retained-inventory"),
+        total_items: z.number().int().nonnegative(),
+        message: z.string(),
+        evidence_id: retainedEvidenceReferenceSchema.shape.evidence_id,
+        evidence_reference: retainedEvidenceReferenceSchema,
+        continuation: z.strictObject({
+          name: z.literal("inspect_analysis_view"),
+          arguments: z.strictObject({
+            source: retainedEvidenceReferenceSchema,
+            view: pageViewSchema.extend({ collection: z.literal(collection) }),
+          }),
+        }),
+      }),
+      // MCP requires an object root even when the alternatives are both objects.
+    ])
+    .meta({ type: "object" });
+
 /** Wrap a lifecycle result while preserving its exact schema type. */
 export const lifecycleResultOf = <Schema extends z.ZodType>(schema: Schema) =>
   z.object({ result: schema });
 
 /** Resolve a required named output schema or reject contract drift. */
 export const requireOutputSchema = <
-  Schemas extends Readonly<Record<string, z.ZodObject>>,
+  Schemas extends Readonly<Record<string, z.ZodType<Record<string, unknown>>>>,
   Name extends keyof Schemas & string,
 >(
   schemas: Schemas,
@@ -260,6 +292,12 @@ const providerDiagnostics = z.record(z.string(), jsonValueSchema);
 
 const providerAvailability = z.discriminatedUnion("status", [
   z.object({
+    status: z.literal("unknown"),
+    code: z.null(),
+    reason: z.string().min(1),
+    diagnostics: providerDiagnostics,
+  }),
+  z.object({
     status: z.literal("available"),
     code: z.null(),
     reason: z.null(),
@@ -463,6 +501,7 @@ export const expandToolAvailability = (
 
 export const sessionProvider = z
   .object({
+    cleanup_pending: z.boolean(),
     capabilities: z.array(providerCapabilitySet),
     analysis_run: analysisRun,
     analysis_activity: analysisActivity,

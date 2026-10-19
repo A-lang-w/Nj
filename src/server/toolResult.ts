@@ -216,47 +216,11 @@ export class ToolResultDelivery {
     };
   }
 
-  /** Estimate inventory response size without serializing the complete Evidence tree. */
-  private inventoryNeedsPagedDelivery(
-    value: JsonValue,
-    contract: ToolContract,
-    recovery: Readonly<Record<string, JsonValue>>,
-  ): boolean {
-    if (
-      (contract.name !== "list_strings" &&
-        contract.name !== "list_procedures") ||
-      recovery.evidence_reference === undefined ||
-      recovery.continuation === undefined ||
-      value === null ||
-      typeof value !== "object" ||
-      Array.isArray(value) ||
-      !Array.isArray(value.normalized_result)
-    )
-      return false;
-
-    const estimatedCopyBudget = this.resultBudgetBytes / 4;
-    let rowBytes = 0;
-    for (const row of value.normalized_result) {
-      rowBytes += Buffer.byteLength(JSON.stringify(row), "utf8") + 1;
-      if (rowBytes >= estimatedCopyBudget) return true;
-    }
-    return false;
-  }
-
   private successResult(
     value: JsonValue,
     contract: ToolContract,
     recovery: Readonly<Record<string, JsonValue>> = {},
   ): CallToolResult {
-    if (this.inventoryNeedsPagedDelivery(value, contract, recovery)) {
-      const inventoryDelivery = this.retainedInventoryResult(
-        value,
-        contract,
-        recovery,
-      );
-      if (inventoryDelivery !== undefined) return inventoryDelivery;
-    }
-
     const encoded = encodeToolResult(
       value,
       this.resultBudgetBytes,

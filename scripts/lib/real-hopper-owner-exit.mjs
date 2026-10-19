@@ -14,7 +14,7 @@ import {
 } from "../../dist/process/ProcessOwnershipObservation.js";
 import { startUnrelatedHopperSentinel } from "./unrelated-hopper-sentinel.mjs";
 import {
-  requireMcpEvidenceResult,
+  requireMcpInventoryResult,
   requireMcpLifecycleResult,
 } from "./mcp-verifier-results.mjs";
 
@@ -75,12 +75,13 @@ export async function verifyLinuxHopperOwnerExit({
           ),
           "open_binary",
         );
-        const procedures = requireMcpEvidenceResult(
+        const procedures = await requireMcpInventoryResult(
           await client.callTool(
             { name: "list_procedures", arguments: {} },
             options,
           ),
           "list_procedures",
+          (request) => client.callTool(request, options),
         );
         assert.ok(procedures.length > 0);
         const status = requireMcpLifecycleResult(
