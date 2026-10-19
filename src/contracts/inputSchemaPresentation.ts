@@ -9,6 +9,15 @@ import {
 const isObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const literalSchemaType = (value: unknown): string | undefined => {
+  if (value === null) return "null";
+  if (typeof value === "string") return "string";
+  if (typeof value === "boolean") return "boolean";
+  if (typeof value === "number")
+    return Number.isInteger(value) ? "integer" : "number";
+  return undefined;
+};
+
 const resolveReference = (
   root: Readonly<Record<string, unknown>>,
   reference: string,
@@ -241,9 +250,22 @@ const normalizeAdvertisedSchema = (value: unknown): SchemaNormalization => {
   }
   if (Array.isArray(node.enum) && node.enum.some((item) => item === "")) {
     // An empty enum member is rejected by Gemini function declarations; widen
-    // to the declared type so canonical-valid empty strings stay accepted.
+    // to every member type so canonical-valid values stay accepted.
+    const members = node.enum;
     delete node.enum;
-    if (node.type === undefined) node.type = "string";
+    if (
+      node.type === undefined &&
+      node.anyOf === undefined &&
+      node.oneOf === undefined
+    ) {
+      const types = [...new Set(members.map(literalSchemaType))];
+      const defined = types.filter((type): type is string => type !== undefined);
+      if (defined.length === types.length) {
+        if (defined.length === 1) node.type = defined[0];
+        else if (defined.length > 1)
+          node.anyOf = defined.map((type) => ({ type }));
+      }
+    }
     changed = true;
   }
 
