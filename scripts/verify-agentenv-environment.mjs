@@ -20,6 +20,10 @@ const AGENTENV_PIN = "agentenv-framework 0.9.1334";
 const PUBLIC_ECR_QUOTA =
   /public\.ecr\.aws[\s\S]{0,400}?(?:429 Too Many Requests|toomanyrequests)/u;
 const QUOTA_RETRY_PAUSE_MS = 90_000;
+// Both bundle attempts share this budget inside the 30-minute job; a retry needs real time left.
+const RUN_BUDGET_MS = 22 * 60_000;
+const FIRST_ATTEMPT_MS = 15 * 60_000;
+const MIN_RETRY_MS = 5 * 60_000;
 const TEMPLATE_RULES = [
   "after-uid-literal",
   "opaque-token",
@@ -52,9 +56,10 @@ const environment = Object.fromEntries(
 const failures = [];
 let cases = 0;
 const receipt = {};
+let knownContainers;
 try {
   const containersBefore = await containers();
-  const knownContainers = new Set(containersBefore.map((entry) => entry.id));
+  knownContainers = new Set(containersBefore.map((entry) => entry.id));
   receipt.docker_before = {
     containers: containersBefore.length,
     images: (await imageIds()).length,
@@ -146,9 +151,11 @@ try {
   assert.ok(dockerfile.includes("/tmp/rea-agents.tgz"));
   cases++;
   // The agentenv runner builds the image, deploys it on the local sandbox and runs the verifier.
-  // Bounded well under the 30-minute job so a hung run ends with this receipt, not the runner's kill.
+  // One deadline for both attempts, well under the 30-minute job, so a hung or retried run ends
+  // with this receipt rather than the runner's kill.
   const started = Date.now();
-  const runBundle = () =>
+  const deadline = started + RUN_BUDGET_MS;
+  const runBundle = (timeoutMs) =>
     runOwnedCommand(
       {
         command: agentEnv,
@@ -157,21 +164,24 @@ try {
         runId: `rea-agentenv-run-${randomUUID()}`,
         hostEnvironment: environment,
       },
-      { timeoutMs: 15 * 60_000, diagnosticBytes: 4 * 1024 * 1024 },
+      { timeoutMs, diagnosticBytes: 4 * 1024 * 1024 },
     );
   let attempts = 1;
   let snapshot;
   try {
-    snapshot = await runBundle();
+    snapshot = await runBundle(
+      Math.min(FIRST_ATTEMPT_MS, deadline - Date.now()),
+    );
   } catch (cause) {
     if (
       !(cause instanceof OwnedCommandFailure) ||
-      !PUBLIC_ECR_QUOTA.test(cause.snapshot?.stderr.text ?? "")
+      !PUBLIC_ECR_QUOTA.test(cause.snapshot?.stderr.text ?? "") ||
+      deadline - Date.now() - QUOTA_RETRY_PAUSE_MS < MIN_RETRY_MS
     )
       throw cause;
     attempts = 2;
     await pause(QUOTA_RETRY_PAUSE_MS);
-    snapshot = await runBundle();
+    snapshot = await runBundle(deadline - Date.now());
   }
   receipt.agent_env_run = {
     exit_code: snapshot.exitCode,
@@ -192,23 +202,34 @@ try {
     ),
   );
   cases++;
-  const containersAfter = await containers();
-  const added = containersAfter.filter(
-    (entry) => !knownContainers.has(entry.id),
-  );
-  const helpers = added.filter((entry) => IMAGE_STORE_HELPER.test(entry.name));
-  const leaked = added.filter((entry) => !IMAGE_STORE_HELPER.test(entry.name));
-  receipt.docker_after = {
-    containers: containersAfter.length,
-    images: (await imageIds()).length,
-    image_store_helpers: helpers.map((entry) => entry.name),
-    new_containers: leaked.map((entry) => `${entry.id} ${entry.name}`),
-  };
-  assert.deepEqual(leaked, []);
-  cases++;
 } catch (cause) {
   failures.push(cause);
 } finally {
+  // The container inventory runs whether the bundle passed, failed or timed out, so a failed
+  // receipt still says what the run left behind.
+  if (knownContainers !== undefined)
+    try {
+      const containersAfter = await containers();
+      const added = containersAfter.filter(
+        (entry) => !knownContainers.has(entry.id),
+      );
+      const helpers = added.filter((entry) =>
+        IMAGE_STORE_HELPER.test(entry.name),
+      );
+      const leaked = added.filter(
+        (entry) => !IMAGE_STORE_HELPER.test(entry.name),
+      );
+      receipt.docker_after = {
+        containers: containersAfter.length,
+        images: (await imageIds()).length,
+        image_store_helpers: helpers.map((entry) => entry.name),
+        new_containers: leaked.map((entry) => `${entry.id} ${entry.name}`),
+      };
+      assert.deepEqual(leaked, []);
+      if (failures.length === 0) cases++;
+    } catch (cause) {
+      failures.push(cause);
+    }
   try {
     await runtime.close();
   } catch (cause) {

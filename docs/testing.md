@@ -1565,12 +1565,14 @@ network for `pip` on the runner and for `npm` inside the image build. Both
 variables are required; the verifier resolves nothing from `PATH` and installs
 nothing. Its disposable CI runner creates the virtual environment in runner
 storage, exports both paths and uses the runner's own Docker; no developer host
-configuration changes. The `agent-env run` itself is bounded to 15 minutes
-inside the 30-minute job, so a hung run ends with the verifier's failed receipt
-rather than the runner's kill. The framework builds its gateway and service-db
+configuration changes. `agent-env run` attempts share one 22-minute budget
+inside the 30-minute job (the first attempt at most 15 minutes), so a hung or
+retried run ends with the verifier's failed receipt rather than the runner's
+kill. The framework builds its gateway and service-db
 images from `public.ecr.aws` on every fresh runner, and hosted runners share
 that registry's anonymous pull quota; when the run fails with that registry's
-`429 Too Many Requests`, the verifier waits 90 seconds and runs once more,
+`429 Too Many Requests` and at least five minutes of the budget would remain
+after the pause, the verifier waits 90 seconds and runs once more,
 recording `attempts: 2` and `retried_for` in the receipt. Any other failure
 ends the lane at once.
 
@@ -1582,7 +1584,8 @@ registry package, and runs `agent-env run` on the bundle. It checks that the
 export reports the planned file set with the inputs copied byte-exact, that
 the runner exits `0` with `tasks/smoke.json` reported as passed and the
 verifier's description naming the tool count, and that no container exists
-after the run that did not exist before. The one exception is the framework's
+after the run that did not exist before; the container inventory runs even when
+the run fails or times out, so a failed receipt still lists what it left. The one exception is the framework's
 own image-store helper, `agentenv-registry` (or `agentenv-registry-<port>`),
 a `registry:2` container the local provider starts on first use and keeps
 running across runs; a first run on a fresh host creates it, so the receipt
