@@ -642,10 +642,10 @@ const contextualCandidate = (
     if (input.moduleKind !== "require") {
       if (hasUrlPathSemantics) {
         const sourceUrl = packageMetadataUrl(input.sourcePath, declared);
-        const normalized = URL.parse(
-          declared,
-          sourceUrl.ok ? sourceUrl.value : sourceUrl.error.structuralUrl,
-        );
+        const base = sourceUrl.ok
+          ? sourceUrl.value
+          : sourceUrl.error.structuralUrl;
+        const normalized = URL.parse(declared, base);
         if (normalized === null)
           return unresolvedCandidate("rejected", [
             "The module URL cannot be parsed.",
@@ -654,8 +654,18 @@ const contextualCandidate = (
           return unresolvedCandidate("rejected", [
             "The module URL escapes the selected logical artifact root.",
           ]);
+        // A logical inventory base can already contain a literal POSIX
+        // backslash. Protect only that inherited spelling during request
+        // admission; a newly declared encoded separator remains rejected.
+        let separatorValidationPath = normalized.pathname;
+        if (/%5c/iu.test(base.pathname)) {
+          const validationBase = new URL(base);
+          validationBase.pathname = base.pathname.replace(/%5c/giu, "%255C");
+          separatorValidationPath = new URL(declared, validationBase).pathname;
+        }
         const decoded = decodeModuleUrlPath(
           normalized.pathname.slice(PACKAGE_ARTIFACT_ROOT_URL.pathname.length),
+          separatorValidationPath,
         );
         if (typeof decoded !== "string") return decoded;
         if (
@@ -727,8 +737,9 @@ const contextualCandidate = (
 
 const decodeModuleUrlPath = (
   declared: string,
+  separatorValidationPath = declared,
 ): string | CandidateResolution => {
-  if (/%(?:2f|5c)/iu.test(declared))
+  if (/%(?:2f|5c)/iu.test(separatorValidationPath))
     return unresolvedCandidate("rejected", [
       "ES module URL paths cannot contain percent-encoded slash or backslash bytes.",
     ]);

@@ -337,13 +337,16 @@ export const isCommonJsRequireDelegate = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
   includeUnknown = false,
-): boolean => hasCommonJsModuleSource(node, state, includeUnknown, "delegate");
+  readAt?: t.Node,
+): boolean =>
+  hasCommonJsModuleSource(node, state, includeUnknown, "delegate", readAt);
 
 const hasCommonJsModuleSource = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
   includeUnknown: boolean,
   target: "module" | "delegate",
+  readAt?: t.Node,
 ): boolean => {
   type Work = ModuleObjectSource & {
     readonly ancestors: ReadonlySet<object>;
@@ -351,7 +354,7 @@ const hasCommonJsModuleSource = (
     readonly awaitDepths: readonly number[];
   };
   const pending: Work[] = [
-    { node, path: [], ancestors: new Set(), awaitDepths: [] },
+    { node, path: [], readAt, ancestors: new Set(), awaitDepths: [] },
   ];
   // Keep depths separate and join finite key alternatives at each source read.
   const selections = new SemanticAliasSelections(() => {
@@ -643,7 +646,9 @@ export const semanticModuleRequireCallAt = (
     )
   )
     target = unwrapJavaScriptExpression(target.object).node;
-  return isCommonJsRequireDelegate(target, state, includeUnknown);
+  // The callee is selected before the current invocation can escape or mutate
+  // its receiver. Earlier captured member reads retain their own source site.
+  return isCommonJsRequireDelegate(target, state, includeUnknown, node);
 };
 
 const writesModuleRequire = (

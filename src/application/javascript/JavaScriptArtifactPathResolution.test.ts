@@ -87,6 +87,83 @@ describe("Windows CommonJS request classification", () => {
   });
 });
 
+describe("literal POSIX inventory base segments", () => {
+  it.each(
+    ["literal\\dir", "resources/app.asar/literal\\dir"].flatMap((directory) =>
+      ([undefined, "import", "require", "compiler-dependent"] as const).map(
+        (moduleKind) => ({ directory, moduleKind }),
+      ),
+    ),
+  )(
+    "resolves an ordinary relative request from $directory with mode $moduleKind",
+    ({ directory, moduleKind }) => {
+      const sourcePath = `${directory}/a.js`;
+      const target = `${directory}/b.js`;
+      const files = fileMap([
+        file(sourcePath, "container"),
+        file(target, "container"),
+        file(`${directory.replaceAll("\\", "/")}/b.js`, "container"),
+      ]);
+      expect(
+        resolve({
+          declaredPath: "./b.js",
+          sourcePath,
+          context: "module-specifier",
+          ...(moduleKind === undefined ? {} : { moduleKind }),
+          files,
+        }),
+      ).toMatchObject({
+        resolution_status: "resolved",
+        resolved_path: target,
+      });
+    },
+  );
+
+  it.each([
+    "./bad%5Cb.js",
+    "./bad%2Fb.js",
+    "./bad%00b.js",
+    "./bad%xxb.js",
+    ".\\b.js",
+  ])(
+    "still rejects newly declared unsafe module URL syntax %s inside a literal inventory directory",
+    (declaredPath) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "literal\\dir/a.js",
+          context: "module-specifier",
+          moduleKind: "import",
+          files: fileMap([file("literal\\dir/b.js", "container")]),
+        }),
+      ).toMatchObject({ resolution_status: "rejected", resolved_path: null });
+    },
+  );
+
+  it.each([
+    "./discard%5C/../b.js",
+    "./discard%2F/../b.js",
+    "./discard%00/../b.js",
+    "./discard%xx/../b.js",
+  ])(
+    "normalizes discarded request segments without rejecting inherited inventory bytes: %s",
+    (declaredPath) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "literal\\dir/a.js",
+          context: "module-specifier",
+          moduleKind: "import",
+          files: fileMap([file("literal\\dir/b.js", "container")]),
+        }),
+      ).toMatchObject({
+        resolution_status: "resolved",
+        resolved_path: "literal\\dir/b.js",
+      });
+    },
+  );
+});
+
 describe("runtime host path classification", () => {
   it.each([
     "/discard%2F/../shared/window.cjs",
