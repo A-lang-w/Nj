@@ -43,6 +43,7 @@ export type GhidraSeedCommitment = z.infer<typeof ghidraSeedCommitmentSchema>;
 export const ghidraSeedReportSchema = z.strictObject({
   format: z.literal(GHIDRA_SEED_FORMAT),
   sha256: digest,
+  phase: z.enum(["pre_analysis", "post_analysis_reconcile"]).optional(),
   entries: count,
   function_created: count,
   function_existing: count,
@@ -51,6 +52,7 @@ export const ghidraSeedReportSchema = z.strictObject({
   function_body_existing: count,
   function_body_updated: count,
   function_body_failed: count,
+  function_body_conflicts_removed: count.optional(),
   code_decoded: count,
   code_failed: count,
   label_applied: count,
@@ -360,10 +362,10 @@ export const ghidraSeedLimitations = (
   commitment === undefined
     ? []
     : [
-        `Ghidra analysis was seeded before auto-analysis from ${commitment.path} (sha256 ${commitment.sha256}: ${commitment.entries.function} function, ${commitment.entries.function_body} exact function-body, ${commitment.entries.code} code, ${commitment.entries.label} label entries). Seeded functions, bodies, code and names are caller assertions, not Ghidra discoveries.`,
+        `Ghidra analysis was seeded before auto-analysis and exact bodies were reconciled after analysis from ${commitment.path} (sha256 ${commitment.sha256}: ${commitment.entries.function} function, ${commitment.entries.function_body} exact function-body, ${commitment.entries.code} code, ${commitment.entries.label} label entries). Seeded functions, bodies, code and names are caller assertions, not Ghidra discoveries.`,
         ...(report === undefined
           ? []
           : [
-              `Seed outcome: ${report.function_created} functions created, ${report.function_existing} already present, ${report.function_failed} failed; exact bodies: ${report.function_body_created} created, ${report.function_body_existing} already exact, ${report.function_body_updated} updated, ${report.function_body_failed} failed; ${report.code_decoded} code seeds decoded, ${report.code_failed} failed; ${report.label_applied} labels applied, ${report.label_failed} failed; ${report.unmapped} seeds outside initialized memory.`,
+              `Seed outcome${report.phase === undefined ? "" : ` (${report.phase})`}: ${report.function_created} functions created, ${report.function_existing} already present, ${report.function_failed} failed; exact bodies: ${report.function_body_created} created, ${report.function_body_existing} already exact, ${report.function_body_updated} updated, ${report.function_body_failed} failed, ${report.function_body_conflicts_removed ?? 0} conflicting inferred functions removed; ${report.code_decoded} code seeds decoded, ${report.code_failed} failed; ${report.label_applied} labels applied, ${report.label_failed} failed; ${report.unmapped} seeds outside initialized memory.`,
             ]),
       ];

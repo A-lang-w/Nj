@@ -830,6 +830,17 @@ export const ghidraHeadlessArguments = (
           ),
           options.disabledAnalyzers.join(","),
         ]),
+    // Auto-analysis may rediscover provider-only function entries inside an
+    // authenticated exact body. Reconcile the same committed snapshot after
+    // analysis so those bodies, rather than the inferred splits, reach users.
+    ...(options.seedPath === undefined
+      ? []
+      : [
+          "-postScript",
+          scriptPath.join(bridgeDirectory, GHIDRA_BRIDGE_SOURCES.applySeeds),
+          options.seedPath,
+          "reconcile",
+        ]),
     ...((options.platform ?? process.platform) === "win32"
       ? []
       : [

@@ -13,11 +13,14 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Set;
 
 /**
- * Apply caller-declared analysis seeds before default auto-analysis.
+ * Apply caller-declared analysis seeds before default auto-analysis, or
+ * reconcile exact function bodies after analysis when passed {@code reconcile}.
  *
  * The single argument is REA's canonical seed snapshot: one
  * {@code 0x<hex>\t(function|code|label)[\tname]} line per ordinary seed, or an
@@ -33,9 +36,13 @@ public final class ReaGhidraApplySeeds extends GhidraScript {
     @Override
     public void run() throws Exception {
         String[] args = getScriptArgs();
-        if (args.length != 1) {
-            throw new IllegalArgumentException("REA seed script requires exactly one seed file");
+        if (args.length < 1 || args.length > 2 ||
+            (args.length == 2 && !args[1].equals("reconcile"))) {
+            throw new IllegalArgumentException(
+                "REA seed script requires one seed file and optional reconcile mode"
+            );
         }
+        boolean reconcile = args.length == 2;
         Path path = Path.of(args[0]);
         if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
             throw new IllegalArgumentException("REA seed file is not a regular file");
@@ -98,7 +105,15 @@ public final class ReaGhidraApplySeeds extends GhidraScript {
         int functionCreated = 0, functionExisting = 0, functionFailed = 0;
         int functionBodyCreated = 0, functionBodyExisting = 0;
         int functionBodyUpdated = 0, functionBodyFailed = 0;
+        int functionBodyConflictsRemoved = 0;
         int labelApplied = 0, labelFailed = 0;
+        Set<Address> declaredFunctionEntries = new HashSet<>();
+        for (Seed seed : seeds) {
+            if (seed.address() != null &&
+                (seed.kind().equals("function") || seed.kind().equals("function_body"))) {
+                declaredFunctionEntries.add(seed.address());
+            }
+        }
         for (String pass : new String[] { "function_body", "function", "code", "label" }) {
             for (Seed seed : seeds) {
                 if (!seed.kind().equals(pass)) continue;
@@ -120,6 +135,24 @@ public final class ReaGhidraApplySeeds extends GhidraScript {
                     }
                     case "function_body" -> {
                         try {
+                            if (reconcile) {
+                                List<Address> conflicts = new ArrayList<>();
+                                var overlapping = currentProgram.getFunctionManager().getFunctions(
+                                    seed.body(), true
+                                );
+                                while (overlapping.hasNext()) {
+                                    Address entry = overlapping.next().getEntryPoint();
+                                    if (!entry.equals(seed.address()) &&
+                                        !declaredFunctionEntries.contains(entry)) {
+                                        conflicts.add(entry);
+                                    }
+                                }
+                                for (Address entry : conflicts) {
+                                    if (currentProgram.getFunctionManager().removeFunction(entry)) {
+                                        functionBodyConflictsRemoved++;
+                                    }
+                                }
+                            }
                             Function existing = getFunctionAt(seed.address());
                             if (existing == null) {
                                 if (decoded(seed.address()) && currentProgram.getFunctionManager().createFunction(
@@ -173,6 +206,7 @@ public final class ReaGhidraApplySeeds extends GhidraScript {
             }
         }
         String report = "{\"format\":\"rea-ghidra-seeds-v2\",\"sha256\":\"" + sha256 + "\"" +
+            ",\"phase\":\"" + (reconcile ? "post_analysis_reconcile" : "pre_analysis") + "\"" +
             ",\"entries\":" + seeds.size() +
             ",\"function_created\":" + functionCreated +
             ",\"function_existing\":" + functionExisting +
@@ -181,6 +215,7 @@ public final class ReaGhidraApplySeeds extends GhidraScript {
             ",\"function_body_existing\":" + functionBodyExisting +
             ",\"function_body_updated\":" + functionBodyUpdated +
             ",\"function_body_failed\":" + functionBodyFailed +
+            ",\"function_body_conflicts_removed\":" + functionBodyConflictsRemoved +
             ",\"code_decoded\":" + codeDecoded +
             ",\"code_failed\":" + codeFailed +
             ",\"label_applied\":" + labelApplied +

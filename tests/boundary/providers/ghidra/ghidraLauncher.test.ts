@@ -318,6 +318,19 @@ describe("Ghidra configured import language and seeds", () => {
       expect(arguments_[seeds + 1]).toBe(seedPath);
       expect(prepare).toBeLessThan(seeds);
       expect(seeds).toBeLessThan(arguments_.indexOf("-postScript"));
+      const occurrences = arguments_
+        .map((value, index) =>
+          value === path.join(bridgeDirectory, "ReaGhidraApplySeeds.java")
+            ? index
+            : -1,
+        )
+        .filter((index) => index >= 0);
+      expect(occurrences).toHaveLength(2);
+      const reconcile = occurrences[1];
+      if (reconcile === undefined) throw new Error("Missing reconcile script");
+      expect(arguments_[reconcile - 1]).toBe("-postScript");
+      expect(arguments_[reconcile + 1]).toBe(seedPath);
+      expect(arguments_[reconcile + 2]).toBe("reconcile");
     },
   );
 

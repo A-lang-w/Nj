@@ -30,11 +30,12 @@ try {
   const seeds = join(workspace, "seeds.tsv");
   // Falling through from the lower entry reaches the higher entry. Creating
   // the higher function first is what keeps the two function bodies separate.
-  await writeFile(target, Buffer.from([0x90, 0x90, 0xc3]));
+  await writeFile(target, Buffer.from([0x90, 0x90, 0xc3, 0x90, 0xc3]));
   await writeFile(
     seeds,
     [
       "0x0\tfunction_body\t0x0-0x0\tseed_low",
+      "0x2\tfunction_body\t0x2-0x4\tseed_reconciled",
       "0x100000000\tfunction\tout_of_range",
       "0x1\tfunction\tseed_high",
       "0x1000\tlabel\tseed_global",
@@ -93,7 +94,7 @@ try {
   await rm(workspace, { recursive: true, force: true });
 }
 console.log(
-  "Real Ghidra pre-script regression passed: exact function body, descending function order, out-of-range seed, BSS label, BSS code rejection, analyzer option readback, unknown-analyzer abort before post-scripts, and owned-process cleanup.",
+  "Real Ghidra seed regression passed: exact pre-analysis bodies, post-analysis inferred-function removal and body reconciliation, descending function order, out-of-range seed, BSS label, BSS code rejection, analyzer option readback, unknown-analyzer abort before post-scripts, and owned-process cleanup.",
 );
 
 async function runHeadless(target, project, scriptArguments) {
