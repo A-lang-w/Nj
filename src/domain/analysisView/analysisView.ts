@@ -1,5 +1,12 @@
 import { z } from "zod";
 import {
+  desktopViewRequestSchema,
+  desktopViewItemsSchema,
+  desktopSummarySchema,
+  projectDesktopApplicationView,
+} from "./desktopApplicationView.js";
+import { desktopCoverageSchema } from "../desktopApplication.js";
+import {
   javascriptModuleReferencesRequestSchema,
   javascriptModuleReferenceSchema,
 } from "./javascriptModuleReferences.js";
@@ -225,6 +232,7 @@ const inventoryViewSchema = z.discriminatedUnion("collection", [
 /** Caller-selected projection of already completed analysis Evidence. */
 export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   summaryViewSchema,
+  desktopViewRequestSchema,
   facetViewSchema,
   itemViewSchema,
   pageViewSchema,
@@ -351,6 +359,7 @@ const viewResultBase = {
   parent_evidence_id: prefixedDigestSchema("ev"),
   parent_operation: z.enum([
     "inspect_binary_layout",
+    "inspect_desktop_application",
     "analyze_javascript_application",
     "analyze_function",
     "inspect_artifact",
@@ -419,6 +428,12 @@ export const artifactInventorySummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.enum(["inspect_artifact", "inventory_artifact"]),
   summary: inventorySummarySchema,
+});
+
+export const desktopApplicationSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_desktop_application"),
+  summary: desktopSummarySchema,
 });
 
 /** Exact summary carrier for WASM inspection's optional delivery contract. */
@@ -507,13 +522,17 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     ...viewResultBase,
     ...environmentManifestFields,
     kind: z.literal("environment-manifest"),
-    parent_operation: z.literal("inspect_web_network_capture"),
+    parent_operation: z.enum([
+      "inspect_web_network_capture",
+      "capture_browser_scenario",
+    ]),
     view: environmentManifestViewRequestSchema,
   }),
   z.strictObject({
     ...summaryViewResultBase,
     summary: z.union([
       layoutSummarySchema,
+      desktopSummarySchema,
       javascriptSummarySchema,
       inventorySummarySchema,
       wasmSummarySchema,
@@ -583,6 +602,14 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: wasmViewRequestSchema,
     item: wasmViewItemSchema,
     ...viewResultBase,
+  }),
+  z.strictObject({
+    kind: z.literal("desktop-application"),
+    view: desktopViewRequestSchema,
+    items: desktopViewItemsSchema,
+    ...viewResultBase,
+    source_coverage: desktopCoverageSchema,
+    parent_operation: z.literal("inspect_desktop_application"),
   }),
   z.strictObject({
     kind: z.literal("macho"),
@@ -680,6 +707,10 @@ export interface AnalysisViewParent {
 
 /** View payload before the content digest is attached. */
 export type UnsignedAnalysisView =
+  | Omit<
+      Extract<AnalysisViewResult, { readonly kind: "desktop-application" }>,
+      "view_digest"
+    >
   | Omit<
       Extract<AnalysisViewResult, { readonly kind: "api-surface" }>,
       "view_digest"
@@ -784,7 +815,9 @@ const unsupportedParent = (
   new AnalysisUnsupportedTargetError(
     INSPECT_ANALYSIS_VIEW_OPERATION,
     parentArtifactPath(parent),
-    `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views. Use completed binary layout, JavaScript application, native function, artifact inventory/inspection, WASM, Mach-O, Interface Builder, EVM, managed artifact or member, Android package, Dart AOT, or web network capture Evidence.`,
+    parent.operation === "capture_browser_scenario"
+      ? `Parent Evidence operation "capture_browser_scenario" supports only the environment-manifest view.`
+      : `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views. Use completed binary layout, JavaScript application, native function, artifact inventory/inspection, WASM, Mach-O, Interface Builder, EVM, managed artifact or member, Android package, Dart AOT, or web network capture Evidence.`,
   );
 
 const parentArtifactPath = (parent: AnalysisViewParent): string => {
@@ -810,6 +843,7 @@ const parentArtifactPath = (parent: AnalysisViewParent): string => {
 
 /** Named source owners for views that need no extra decoder or accumulator. */
 const retainedViewProjectors = new Map<string, typeof projectWasmArtifactView>([
+  ["inspect_desktop_application", projectDesktopApplicationView],
   ["inspect_wasm_artifact", projectWasmArtifactView],
   ["inspect_macho", projectMachoView],
   ["decode_interface_builder", projectInterfaceBuilderView],
