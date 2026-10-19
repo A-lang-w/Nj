@@ -469,11 +469,13 @@ is acknowledged with `202`; responses arrive as JSON or SSE frames; `DELETE
 a server shutdown: the process keeps listening, the instance keeps its providers
 and the shared active target, and the next client opens a fresh session against
 them. A client ending or replacing a session cancels its running tool calls and
-prompt completions, then waits
-up to ten seconds for their handlers and cleanup to finish before reusing the
+prompt completions, stops request-body reads and fences further message dispatch,
+then waits up to ten seconds for request dispatch, handlers and cleanup to finish before reusing the
 server. A timeout returns `503`; the old calls remain owned, and later requests
 retry the drain rather than starting another session against those resources.
-Tool callbacks whose validation finishes after cancellation never start.
+Requests that finish parsing or SDK dispatch after their session closed are
+refused, and their response streams are cancelled. Tool callbacks whose
+validation finishes after cancellation never start.
 Provider-backed prompt completions use the same request owner and drain, so a
 cancelled completion cannot keep using providers after handover or shutdown.
 HTTP factories enable `RequestTrackingMcpServer` tracking so completion is tracked

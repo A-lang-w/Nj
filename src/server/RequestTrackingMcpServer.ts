@@ -56,7 +56,7 @@ export class RequestTrackingMcpServer extends McpServer {
     );
   }
 
-  /** Run a tool or completion callback under the HTTP owner's shared drain. */
+  /** Retain HTTP dispatch, tool and completion work under the HTTP owner's shared drain. */
   runRequest<T>(
     signal: AbortSignal | undefined,
     callback: () => T | Promise<T>,

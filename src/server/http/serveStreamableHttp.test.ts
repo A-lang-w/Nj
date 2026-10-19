@@ -925,6 +925,147 @@ it.each(["replacement", "DELETE"])(
   },
 );
 
+it.each(["replacement", "DELETE", "shutdown"])(
+  "refuses an old session's tool body that finishes reading after %s",
+  async (ending) => {
+    const server = createEchoServer(() => undefined);
+    const called = vi.fn(() => ({ content: [] }));
+    server.registerTool("record", { inputSchema: z.object({}) }, called);
+    const slot = new McpSessionSlot(server, undefined);
+    const opened = await slot.handle(initializeRequest());
+    const sessionId = opened.headers.get("mcp-session-id");
+    expect(sessionId).toEqual(expect.any(String));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let reading!: () => void;
+    const readStarted = new Promise<void>((resolve) => {
+      reading = resolve;
+    });
+    const body = new ReadableStream<Uint8Array>(
+      {
+        async pull(controller) {
+          reading();
+          await gate;
+          controller.enqueue(
+            new TextEncoder().encode(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: 2,
+                method: "tools/call",
+                params: { name: "record", arguments: {} },
+              }),
+            ),
+          );
+          controller.close();
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const pending = slot.handle(
+      new Request("http://127.0.0.1/mcp", {
+        method: "POST",
+        headers: {
+          accept: "application/json, text/event-stream",
+          "content-type": "application/json",
+          "mcp-session-id": sessionId ?? "",
+        },
+        body,
+        // Node requires duplex for streaming Web Requests.
+        duplex: "half",
+      } as RequestInit),
+    );
+    try {
+      // With no stream prefetch, this proves the SDK is waiting on the old body.
+      await readStarted;
+      if (ending === "shutdown") await slot.close();
+      else {
+        if (ending === "DELETE") {
+          const deleted = await slot.handle(
+            new Request("http://127.0.0.1/mcp", {
+              method: "DELETE",
+              headers: { "mcp-session-id": sessionId ?? "" },
+            }),
+          );
+          expect(deleted.status).toBe(200);
+        }
+        const next = await slot.handle(initializeRequest());
+        expect(next.status).toBe(200);
+        expect(next.headers.get("mcp-session-id")).not.toBe(sessionId);
+      }
+      release();
+      const refused = await pending;
+      expect(refused.status).toBe(404);
+      await expect(refused.json()).resolves.toMatchObject({
+        error: { message: "Session not found" },
+      });
+      expect(called).not.toHaveBeenCalled();
+    } finally {
+      release();
+      await pending;
+      await slot.close();
+    }
+  },
+);
+
+it.each(["replacement", "shutdown"])(
+  "does not start old-session tools across %s at sampled SDK dispatch orderings",
+  async (ending) => {
+    const late: number[] = [];
+    for (let offset = 0; offset < 40; offset += 1) {
+      let ended = false;
+      let connections = 0;
+      const server = createEchoServer(() => undefined);
+      const connectServer = server.connect.bind(server);
+      server.connect = async (transport) => {
+        connections += 1;
+        if (connections > 1) ended = true;
+        await connectServer(transport);
+      };
+      server.registerTool("record", { inputSchema: z.object({}) }, () => {
+        if (ended) late.push(offset);
+        return { content: [] };
+      });
+      const slot = new McpSessionSlot(server, undefined);
+      const opened = await slot.handle(initializeRequest());
+      const pending = slot.handle(
+        new Request("http://127.0.0.1/mcp", {
+          method: "POST",
+          headers: {
+            accept: "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-session-id": opened.headers.get("mcp-session-id") ?? "",
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 2,
+            method: "tools/call",
+            params: { name: "record", arguments: {} },
+          }),
+        }),
+      );
+      try {
+        // Exercise public Request/SDK scheduling, without mocking dispatch or
+        // requiring one particular number of internal SDK await boundaries.
+        for (let step = 0; step < offset; step += 1) await Promise.resolve();
+        if (ending === "replacement") {
+          expect((await slot.handle(initializeRequest())).status).toBe(200);
+        } else {
+          await slot.close();
+          ended = true;
+        }
+        const response = await pending;
+        await response.body?.cancel();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      } finally {
+        await slot.close();
+      }
+    }
+    expect(late).toEqual([]);
+  },
+);
+
 it.each(["after timeout", "during drain"])(
   "automatically completes shutdown %s when the retained handler settles",
   async (shutdownTiming) => {

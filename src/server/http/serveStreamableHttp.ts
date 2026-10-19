@@ -119,6 +119,8 @@ const describe = (cause: unknown): string =>
 const NO_SHUTDOWN_HOOK = (): void => undefined;
 const SHUTTING_DOWN = (): Response =>
   jsonError(503, -32000, "Server shutting down");
+const SESSION_NOT_FOUND = (): Response =>
+  jsonError(404, -32001, "Session not found");
 const DEFAULT_SESSION_DRAIN_TIMEOUT_MS = 10_000;
 
 class SessionDrainTimeoutError extends AnalysisResourceConstraintError {
@@ -210,16 +212,66 @@ const isInitializePost = async (request: Request): Promise<boolean> => {
   }
 };
 
-/** The connected transport of one session and the SDK close that ends it as a server shutdown. */
-interface LiveSession {
-  readonly transport: WebStandardStreamableHTTPServerTransport;
-  readonly shutdown: () => Promise<void>;
+/** Owns parsing and dispatch as well as the connected transport of one session. */
+class LiveSession {
+  #closed = false;
+  readonly #bodyAbort = new AbortController();
+  readonly #shutdown: () => Promise<void>;
+
+  constructor(
+    readonly transport: WebStandardStreamableHTTPServerTransport,
+    private readonly instance: RequestTrackingMcpServer,
+  ) {
+    this.#shutdown = transport.close.bind(transport);
+  }
+
+  /** Install after connect, so the SDK and Evidence adapter have bound their callbacks. */
+  fenceDispatch(): void {
+    const dispatch = this.transport.onmessage;
+    this.transport.onmessage = (...args) => {
+      if (!this.#closed) dispatch?.(...args);
+    };
+  }
+
+  handle(request: Request): Promise<Response> {
+    if (this.#closed) return Promise.resolve(SESSION_NOT_FOUND());
+    // DELETE awaits this session's close; including it in its own drain would deadlock.
+    if (request.method === "DELETE")
+      return this.transport.handleRequest(request);
+    return Promise.resolve(
+      this.instance.runRequest(undefined, async () => {
+        if (this.#closed) return SESSION_NOT_FOUND();
+        const guarded =
+          request.body === null
+            ? request
+            : new Request(request, {
+                body: request.body.pipeThrough(
+                  new TransformStream<Uint8Array, Uint8Array>(),
+                  { signal: this.#bodyAbort.signal },
+                ),
+                duplex: "half",
+              } as RequestInit);
+        const response = await this.transport.handleRequest(guarded);
+        if (!this.#closed) return response;
+        // The SDK may have crossed an await before close and created its SSE
+        // response afterwards. Cancel that stream before releasing its owner.
+        await response.body?.cancel();
+        return SESSION_NOT_FOUND();
+      }),
+    );
+  }
+
+  shutdown(): Promise<void> {
+    this.#closed = true;
+    this.#bodyAbort.abort();
+    return this.#shutdown();
+  }
 }
 
 /** Owns the single connected server and the transport of its current session. */
 export class McpSessionSlot {
   #live: LiveSession | undefined;
-  #arming: Promise<WebStandardStreamableHTTPServerTransport> | undefined;
+  #arming: Promise<LiveSession> | undefined;
   #closed = false;
   #hookRan = false;
   #draining = false;
@@ -275,10 +327,11 @@ export class McpSessionSlot {
       this.logger?.info("MCP HTTP session replaced by a new client");
       await open.transport.close();
     }
-    const transport = await this.#current();
+    if (this.#closed) return SHUTTING_DOWN();
+    const session = await this.#current();
     // Shutdown may have closed the slot while this request was arming it.
     if (this.#closed) return SHUTTING_DOWN();
-    return transport.handleRequest(request);
+    return session.handle(request);
   }
 
   /** End the live session as part of server shutdown, so the instance's onclose runs; later requests are refused. */
@@ -300,54 +353,49 @@ export class McpSessionSlot {
     this.#shutdownHook();
   }
 
-  #current(): Promise<WebStandardStreamableHTTPServerTransport> {
+  #current(): Promise<LiveSession> {
     if (this.#closed)
       return Promise.reject(new Error("MCP HTTP session slot is closed"));
-    if (this.#live !== undefined) return Promise.resolve(this.#live.transport);
+    if (this.#live !== undefined) return Promise.resolve(this.#live);
     this.#arming ??= this.#arm().finally(() => {
       this.#arming = undefined;
     });
     return this.#arming;
   }
 
-  async #arm(): Promise<WebStandardStreamableHTTPServerTransport> {
+  async #arm(): Promise<LiveSession> {
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: () => this.logger?.info("MCP HTTP session opened"),
       onsessionclosed: () =>
         this.logger?.info("MCP HTTP session closed by the client"),
     });
-    const shutdown = transport.close.bind(transport);
+    const session = new LiveSession(transport, this.instance);
     // The SDK closes the transport on DELETE; that ends the session, not the server.
-    transport.close = () => this.#endSession(transport, shutdown);
+    transport.close = () => this.#endSession(session);
     await this.instance.connect(transport);
-    this.#live = { transport, shutdown };
-    return transport;
+    session.fenceDispatch();
+    this.#live = session;
+    return session;
   }
 
   /** Close one session's transport while the instance's onclose hooks wait for close(). */
-  async #endSession(
-    transport: WebStandardStreamableHTTPServerTransport,
-    shutdown: () => Promise<void>,
-  ): Promise<void> {
-    if (this.#live?.transport !== transport) return;
+  async #endSession(session: LiveSession): Promise<void> {
+    if (this.#live !== session) return;
     if (this.#ending !== undefined) return this.#ending;
     this.#draining = true;
-    const ending = this.#finishSession(transport, shutdown).finally(() => {
+    const ending = this.#finishSession(session).finally(() => {
       if (this.#ending === ending) this.#ending = undefined;
     });
     this.#ending = ending;
     return ending;
   }
 
-  async #finishSession(
-    transport: WebStandardStreamableHTTPServerTransport,
-    shutdown: () => Promise<void>,
-  ): Promise<void> {
+  async #finishSession(session: LiveSession): Promise<void> {
     const protocol = protocolOf(this.instance);
     protocol.onclose = NO_SHUTDOWN_HOOK;
     try {
-      await shutdown();
+      await session.shutdown();
       if (
         !(await this.instance.drainRequests(
           this.#closed ? undefined : this.drainTimeoutMs,
@@ -355,7 +403,7 @@ export class McpSessionSlot {
       )
         throw new SessionDrainTimeoutError(this.drainTimeoutMs);
       // A timed-out handler remains owned and blocks reuse until a later drain succeeds.
-      if (this.#live?.transport === transport) this.#live = undefined;
+      if (this.#live === session) this.#live = undefined;
       this.#draining = false;
     } finally {
       protocol.onclose = this.#shutdownHook;
