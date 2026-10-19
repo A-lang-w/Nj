@@ -54,7 +54,7 @@ it("preserves failed Inspector cleanup when cancellation occurs during observati
   expect(result.error.userCategory).toBe("cancelled");
 });
 
-it("does not publish targets when cancellation arrives during provider cleanup", async () => {
+it("retains target Evidence when cancellation arrives during provider cleanup", async () => {
   const controller = new AbortController();
   const provider: JavaScriptRuntimeObservationPort = {
     identity: () => ({
@@ -89,6 +89,12 @@ it("does not publish targets when cancellation arrives during provider cleanup",
     error: {
       _tag: "AnalysisCancelledError",
       operation: "list_javascript_runtime_targets",
+      partialObservation: {
+        normalized_result: {
+          runtime: { product: "node.js/v24" },
+          targets: [],
+        },
+      },
     },
   });
   if (!result.ok) {
@@ -226,3 +232,88 @@ it("converts a raw runtime observation retained by cleanup failure", async () =>
     });
   }
 });
+
+it("reports non-JSON Inspector output before late cancellation", async () => {
+  const controller = new AbortController();
+  const value = {
+    runtime: {
+      product: "node.js/v24",
+      protocol_version: "1.3",
+      v8_version: "13",
+    },
+    targets: [],
+    excluded: { unsupported_location: 0, unconnectable: 0 },
+    limitations: [] as string[],
+  };
+  Reflect.set(value, "limitations", [undefined]);
+  const provider: JavaScriptRuntimeObservationPort = {
+    identity: () => ({
+      id: "test-inspector",
+      name: "Test Inspector",
+      version: "1",
+    }),
+    listTargets: async () => {
+      controller.abort();
+      return ok(value);
+    },
+    observe: async () =>
+      err(new AnalysisCancelledError("observe_javascript_runtime")),
+  };
+
+  await expect(
+    listJavaScriptRuntimeTargets(
+      provider,
+      { inspector_endpoint: "http://127.0.0.1:9229" },
+      { signal: controller.signal },
+    ),
+  ).resolves.toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError", partialObservation: undefined },
+  });
+});
+
+it.each(["list", "observe"] as const)(
+  "preserves a pre-abort reason before Inspector %s provider work",
+  async (kind) => {
+    const reason = new Error(`stop Inspector ${kind}`);
+    const controller = new AbortController();
+    controller.abort(reason);
+    let providerCalls = 0;
+    const provider: JavaScriptRuntimeObservationPort = {
+      identity: () => ({ id: "test", name: "Test", version: "1" }),
+      listTargets: async () => {
+        providerCalls += 1;
+        return err(
+          new AnalysisCancelledError("list_javascript_runtime_targets"),
+        );
+      },
+      observe: async () => {
+        providerCalls += 1;
+        return err(new AnalysisCancelledError("observe_javascript_runtime"));
+      },
+    };
+    const result =
+      kind === "list"
+        ? await listJavaScriptRuntimeTargets(
+            provider,
+            { inspector_endpoint: "http://127.0.0.1:9229" },
+            { signal: controller.signal },
+          )
+        : await observeJavaScriptRuntime(
+            provider,
+            {
+              inspector_endpoint: "http://127.0.0.1:9229",
+              target_id: "target",
+              observation_ms: 0,
+            },
+            { signal: controller.signal },
+          );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+      expect(result.error.cause).toBe(reason);
+    }
+    expect(providerCalls).toBe(0);
+  },
+);

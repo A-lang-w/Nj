@@ -166,19 +166,16 @@ export class WebRuntimeService {
         ),
       );
     return completeProviderEvidence(
-      ok(
-        createEvidence(undefined, this.provider.identity(), {
-          predicateType: `rea.${operation.replaceAll("_", "-")}`,
-          operation,
-          parameters: jsonObjectSchema.parse(input),
-          result,
-          confidence: "observed",
-          authority: "external-service",
-          limitations: result.limitations,
-        }),
-      ),
-      operation,
-      options,
+      createEvidence(undefined, this.provider.identity(), {
+        predicateType: `rea.${operation.replaceAll("_", "-")}`,
+        operation,
+        parameters: jsonObjectSchema.parse(input),
+        result,
+        confidence: "observed",
+        authority: "external-service",
+        limitations: result.limitations,
+      }),
+      options?.signal,
     );
   }
 }
@@ -190,7 +187,9 @@ const parseInput = <T>(
   options: ExecutionOptions | undefined,
 ): Result<T, AnalysisError> => {
   if (options?.signal?.aborted)
-    return err(new AnalysisCancelledError(operation));
+    return err(
+      new AnalysisCancelledError(operation, { cause: options.signal.reason }),
+    );
   const parsed = schema.safeParse(rawInput);
   return parsed.success
     ? ok(parsed.data)
