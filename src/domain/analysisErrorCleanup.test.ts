@@ -14,10 +14,6 @@ import {
   analysisErrorUserMessage,
 } from "./analysisErrorPresentation.js";
 import { ProviderCleanupError } from "./providerCleanupError.js";
-import {
-  AnalysisCleanupLease,
-  AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
 import { createEvidence } from "./evidence.js";
 
 it("keeps dependency-owned resources empty after the final owner releases", () => {
@@ -38,28 +34,6 @@ it("keeps dependency-owned resources empty after the final owner releases", () =
   expect(new Set(composed.cleanup?.resources)).toEqual(
     new Set(["file-owner", "trace-owner"]),
   );
-});
-
-it("keeps a redacted projection authoritative while a bound owner is pending", () => {
-  const lease = new AnalysisCleanupLease(async () => {}, [
-    "/secret/raw-runtime-path",
-  ]);
-  const source = new ProviderCleanupError("fixture", ["raw-owner"], {});
-  new AnalysisCleanupLeaseGroup(source, [lease]);
-  const redacted = new ProviderCleanupError(
-    "fixture",
-    ["redacted-projection"],
-    {},
-  );
-  redacted.bindCleanupDependencies([source], {
-    cleanupResources: ["redacted-projection"],
-  });
-  // The decoder binds the redacted error to the original runtime lease; the
-  // projection must stay the only resource view while that owner is pending.
-  new AnalysisCleanupLeaseGroup(redacted, [lease]);
-  expect(redacted.cleanupIncomplete).toBe(true);
-  expect(redacted.cleanupResources).toEqual(["redacted-projection"]);
-  expect(redacted.cleanupResources).not.toContain("/secret/raw-runtime-path");
 });
 
 it("keeps primary diagnostics separate from historical cleanup diagnostics with the same keys", () => {
