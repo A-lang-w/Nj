@@ -1,3 +1,6 @@
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { err, ok, type Result } from "../../domain/result.js";
+import { ENVIRONMENT_SERVE_OPERATION } from "./environmentSource.js";
 import type {
   EnvironmentManifest,
   EnvironmentManifestTool,
@@ -148,49 +151,129 @@ export const environmentToolArguments = (
   };
 };
 
-/** Map one manifest tool to its advertised MCP input schema. */
-export const environmentToolInputSchema = (
+/** Lazily render properties so admission precedes retaining a whole schema. */
+function* environmentToolProperties(
   tool: EnvironmentManifestTool,
-): EnvironmentToolInputSchema => {
-  // A Map, not an object literal, so names such as `constructor` are never mistaken for taken.
-  const properties = new Map<string, EnvironmentToolProperty>();
-  const args = environmentToolArguments(tool);
+  args: EnvironmentToolArguments,
+): IterableIterator<readonly [string, EnvironmentToolProperty, boolean]> {
   for (const param of tool.params)
-    properties.set(args.path.get(param.name) ?? param.name, {
-      type: "string",
-      description: `Path segment ${String(param.index)} (${param.rule}); observed: ${describeList(param.observed_values, param.observed_values.length)}`,
-    });
+    yield [
+      args.path.get(param.name) ?? param.name,
+      {
+        type: "string",
+        description: `Path segment ${String(param.index)} (${param.rule}); observed: ${describeList(param.observed_values, param.observed_values.length)}`,
+      },
+      true,
+    ];
   for (const [name, argument] of args.query)
-    properties.set(argument, {
-      type: "string",
-      description: `Query parameter ${describeText(name, "query name")}; optional, matched against the recorded query on replay.`,
-    });
+    yield [
+      argument,
+      {
+        type: "string",
+        description: `Query parameter ${describeText(name, "query name")}; optional, matched against the recorded query on replay.`,
+      },
+      false,
+    ];
   if (args.body !== undefined)
-    properties.set(args.body, {
-      type: "object",
-      description: bodyDescription(tool),
-    });
-  return {
-    type: "object",
-    properties: Object.fromEntries(properties),
-    required: tool.params.map(
-      (param) => args.path.get(param.name) ?? param.name,
-    ),
-    additionalProperties: false,
-  };
-};
+    yield [
+      args.body,
+      { type: "object", description: bodyDescription(tool) },
+      false,
+    ];
+}
 
-/** Map every manifest tool to an MCP tool definition in manifest order. */
+/** Serialization reservation calibrated with 1500 fields and eight concurrent SDK discovery requests. */
+export const ENVIRONMENT_CATALOG_LIMIT_BYTES = 1024 * 1024;
+const EMPTY_PROPERTY_BYTES =
+  JSON.stringify({ type: "string", description: "" }).length + 4;
+const EMPTY_TOOL_BYTES = JSON.stringify({
+  name: "",
+  description: "",
+  inputSchema: {
+    type: "object",
+    properties: {},
+    required: [],
+    additionalProperties: false,
+  },
+}).length;
+
+/** Admit complete discovery before binding; six bytes per UTF-16 unit covers JSON escaping and UTF-8 expansion. */
 export const environmentToolDefinitions = (
   manifest: EnvironmentManifest,
   evidenceId: string,
-): readonly EnvironmentToolDefinition[] =>
-  manifest.tools.map((tool) => ({
-    name: tool.name,
-    description: `${REPLAY_CATALOG_INSTRUCTIONS} ${describeText(tool.method, "method")} ${describeText(tool.path_template, "path")}; replays retained records [${describeList(tool.record_ordinals, tool.record_ordinals.length)}]; evidence ${evidenceId}`,
-    inputSchema: environmentToolInputSchema(tool),
-    tool,
-  }));
+  name: string = manifest.name,
+): Result<
+  readonly EnvironmentToolDefinition[],
+  AnalysisResourceConstraintError
+> => {
+  let remaining = ENVIRONMENT_CATALOG_LIMIT_BYTES;
+  const reserve = (bytes: number): boolean => {
+    if (bytes > remaining) return false;
+    remaining -= bytes;
+    return true;
+  };
+  const text = (value: string): boolean => reserve(2 + value.length * 6);
+  const refused = () =>
+    err(
+      new AnalysisResourceConstraintError(
+        ENVIRONMENT_SERVE_OPERATION,
+        "capacity",
+        "Environment discovery exceeds its serialization reservation budget",
+        {
+          max_catalog_bytes: ENVIRONMENT_CATALOG_LIMIT_BYTES,
+          reserved_bytes: ENVIRONMENT_CATALOG_LIMIT_BYTES - remaining,
+          json_bytes_per_utf16_unit: 6,
+        },
+        {
+          retryable: false,
+          remediationAction:
+            "Project a smaller capture or manifest before serving it; complete inputs remain in Evidence.",
+        },
+      ),
+    );
+  if (!text(name) || !reserve(JSON.stringify(environmentCard("", [])).length))
+    return refused();
+  const definitions: EnvironmentToolDefinition[] = [];
+  for (const tool of manifest.tools) {
+    if (!reserve(EMPTY_TOOL_BYTES) || !text(tool.name)) return refused();
+    const count =
+      tool.params.length +
+      tool.query_parameter_names.length +
+      (WRITE_METHODS.has(tool.method) ? 1 : 0);
+    // A lower bound rejects enormous argument lists before constructing their alias map.
+    if (!reserve(count * EMPTY_PROPERTY_BYTES)) return refused();
+    const description = `${REPLAY_CATALOG_INSTRUCTIONS} ${describeText(tool.method, "method")} ${describeText(tool.path_template, "path")}; replays retained records [${describeList(tool.record_ordinals, tool.record_ordinals.length)}]; evidence ${evidenceId}`;
+    if (!text(description)) return refused();
+    const args = environmentToolArguments(tool);
+    const properties = new Map<string, EnvironmentToolProperty>();
+    const required: string[] = [];
+    for (const [argument, property, mandatory] of environmentToolProperties(
+      tool,
+      args,
+    )) {
+      if (
+        !text(argument) ||
+        !text(property.description) ||
+        (mandatory && !text(argument))
+      )
+        return refused();
+      properties.set(argument, property);
+      if (mandatory) required.push(argument);
+    }
+    definitions.push({
+      name: tool.name,
+      description,
+      inputSchema: {
+        type: "object",
+        properties: Object.fromEntries(properties),
+        required,
+        additionalProperties: false,
+      },
+      tool,
+    });
+  }
+  return ok(definitions);
+};
 
 /** The environment card served at `/.well-known/agent-env.json`; key order is part of the contract. */
 export interface EnvironmentCard {

@@ -116,10 +116,11 @@ const serveEnvironmentCommand = async (
   const listenerFailed = new Promise<Error>((resolve) => {
     failListener = resolve;
   });
-  let served: Awaited<ReturnType<typeof serveEnvironment>>;
+  let served: import("../server/environment/serveEnvironment.js").ServedEnvironment;
   try {
-    served = await serveEnvironment({
+    const started = await serveEnvironment({
       source: source.value,
+      signal,
       ...endpoint.value,
       ...(environmentName.value === undefined
         ? {}
@@ -127,7 +128,10 @@ const serveEnvironmentCommand = async (
       logger: listenerLogger(environment, logger),
       onerror: (error) => failListener(error),
     });
+    if (!started.ok) return cliError(started.error);
+    served = started.value;
   } catch (cause: unknown) {
+    if (signal.aborted && cause === signal.reason) return cancelled();
     if (!(cause instanceof StreamableHttpListenError)) throw cause;
     return cliError(transportError(endpoint.value, cause));
   }

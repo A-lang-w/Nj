@@ -3,9 +3,12 @@ import { join } from "node:path";
 
 import { describe, expect } from "vitest";
 
+import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
+
 import {
   analysisViewCaptureEvidence,
   analysisViewCaptureFixture,
+  environmentManifestCaptureFixture,
 } from "../../fixtures/analysisView.js";
 import { writeEnvironmentServeFiles } from "../../fixtures/environmentServe.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -95,3 +98,43 @@ describe("rea environment-serve refusals", () => {
     },
   );
 });
+
+cliTest(
+  "refuses a fully authenticated capture whose discovery exceeds capacity before listening",
+  async ({ cli }) => {
+    const records = environmentManifestCaptureFixture();
+    const first = records.records[0]!;
+    first.reported.request.url = `https://example.test/api/users/2?${Array.from({ length: 10000 }, (_, index) => `q_${index}=x`).join("&")}`;
+    const capture = analysisViewCaptureEvidence(records);
+    const manifest = inspectAnalysisView({
+      source: { kind: "inline", evidence: capture },
+      view: { kind: "environment-manifest" },
+    });
+    if (!manifest.ok) throw manifest.error;
+    const root = await createTestTempDirectory(
+      "rea-environment-catalog-capacity-",
+    );
+    const files = await writeEnvironmentServeFiles(root, {
+      capture,
+      manifest: manifest.value,
+    });
+    const result = await cli.run({
+      arguments: [
+        "environment-serve",
+        files.manifestPath,
+        "--evidence",
+        files.capturePath,
+        "--port",
+        "0",
+        "--json",
+      ],
+      timeoutMs: 30000,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "resource_constraint",
+      details: { operation: "environment-serve", resource: "capacity" },
+    });
+    expect(result.stderr).not.toContain("MCP transport listening");
+  },
+);

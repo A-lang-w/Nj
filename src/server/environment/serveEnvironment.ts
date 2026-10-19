@@ -22,6 +22,8 @@ import {
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { isExactJsonNumber } from "../../domain/exactJsonNumber.js";
 import { safeParseJson } from "../../domain/safeJson.js";
+import type { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { ok, type Result } from "../../domain/result.js";
 import { PRODUCT_IDENTITY } from "../../identity.js";
 import {
   jsonRpcErrorResponse,
@@ -205,6 +207,7 @@ export interface ServeEnvironmentOptions {
   readonly source: EnvironmentSource;
   readonly host: string;
   readonly port: number;
+  readonly signal?: AbortSignal;
   /** Served name; defaults to the manifest's environment name. */
   readonly environmentName?: string;
   readonly logger?: Logger;
@@ -220,14 +223,21 @@ export interface ServedEnvironment extends StreamableHttpServer {
 /** Serve one manifest as an agent environment until closed. */
 export const serveEnvironment = async (
   options: ServeEnvironmentOptions,
-): Promise<ServedEnvironment> => {
+): Promise<Result<ServedEnvironment, AnalysisResourceConstraintError>> => {
   const { source, host, port, logger } = options;
   const name = options.environmentName ?? source.manifest.name;
-  const tools = environmentToolDefinitions(source.manifest, source.evidenceId);
+  const prepared = environmentToolDefinitions(
+    source.manifest,
+    source.evidenceId,
+    name,
+  );
+  if (!prepared.ok) return prepared;
+  const tools = prepared.value;
   const card = environmentCard(name, tools);
   const served = await serveStreamableHttp({
     host,
     port,
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
     createMcpServer: () => createEnvironmentMcpServer(name, source, tools),
     routes: environmentRoutes(card),
     ...(logger === undefined ? {} : { logger }),
@@ -239,5 +249,5 @@ export const serveEnvironment = async (
       options.onerror?.(error);
     },
   });
-  return { ...served, card };
+  return ok({ ...served, card });
 };

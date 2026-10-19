@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { environmentServeSource } from "../../../tests/fixtures/environmentServe.js";
 import {
   environmentCard,
-  environmentToolDefinitions,
+  environmentToolDefinitions as prepareDefinitions,
   REPLAY_CATALOG_INSTRUCTIONS,
 } from "../../application/environment/environmentTools.js";
 import { TARGET_CONTENT_RESULT_META } from "../toolResultEncoding.js";
@@ -19,11 +19,25 @@ import {
   ENVIRONMENT_RPC_PATH,
   environmentRoutes,
   MAX_RPC_BATCH_MESSAGES,
-  serveEnvironment,
+  serveEnvironment as startEnvironment,
   type ServedEnvironment,
 } from "./serveEnvironment.js";
 
 const source = environmentServeSource();
+const environmentToolDefinitions = (
+  ...args: Parameters<typeof prepareDefinitions>
+) => {
+  const result = prepareDefinitions(...args);
+  if (!result.ok) throw result.error;
+  return result.value;
+};
+const serveEnvironment = async (
+  ...args: Parameters<typeof startEnvironment>
+) => {
+  const result = await startEnvironment(...args);
+  if (!result.ok) throw result.error;
+  return result.value;
+};
 const definitions = environmentToolDefinitions(
   source.manifest,
   source.evidenceId,

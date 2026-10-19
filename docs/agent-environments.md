@@ -49,6 +49,15 @@ show a marked prefix. Complete values remain in manifest Evidence. Argument
 names longer than 64 characters use collision-safe `path_<n>` or `query_<n>` aliases; replay maps
 those aliases to the complete captured names.
 
+Discovery is admitted as a complete catalog under a 1 MiB serialization
+reservation before the listener binds. Reservation charges up to six bytes per
+UTF-16 code unit for JSON escaping/UTF-8 expansion, plus schema overhead;
+a catalog may therefore be refused even when its compact JSON is smaller.
+This was calibrated with 1500 query fields and eight concurrent SDK discovery
+requests (183,798-byte card, 507.27 MiB sampled process-family RSS). Over-capacity
+catalogs return `resource_constraint`, retain complete input Evidence, and require
+a smaller capture or manifest. Fields and tools are never silently omitted.
+
 ## What replay means and does not mean
 
 Each MCP tool call selects one of the records its manifest tool cites and
@@ -85,6 +94,8 @@ when both kinds of match are available, the record whose segment equals the
 value as written is chosen. `recorded_query` keeps the `?` of an explicit empty
 query, and a recorded path or query longer than 1 KiB is cut in the reply with
 `recorded_line_truncated: true`; selection always uses the full recorded line.
+`content_type` also has a 1 KiB display bound with `content_type_truncated`; body
+interpretation uses the full recorded media type.
 When no record matches, the tool still answers from the tool's first cited
 record and reports `exact_match: false`. `body` is parsed JSON when the
 recorded content type is JSON-like (`application/json`, `application/*+json`,
@@ -133,7 +144,8 @@ listener serves one MCP client at a time with the same session, `Host` header
 and shutdown contract as [transports](mcp-contracts.md#transports) describes.
 It runs until SIGINT or SIGTERM, then closes the listener, prints one
 `{"status":"stopped", …}` document and exits `130` or `143`.
-Signals during input loading cancel the readers and stop startup before binding;
+Signals during input loading or DNS/bind cancel the owning reader/listener before
+a listening announcement;
 that path returns a structured `cancelled` result instead of a stopped-listener
 document, with the same signal exit status.
 

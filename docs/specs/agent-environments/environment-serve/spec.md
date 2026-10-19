@@ -107,6 +107,22 @@ transitions. One MCP client is served at a time, as the shared listener
 defines. Non-loopback binds relax the `Host` check and are not exercised; a
 listener `error` after binding is wired but not provoked by a test.
 
+## Resource and cancellation boundaries
+
+- Whole discovery admission reserves at most 1 MiB using six bytes per UTF-16
+  unit plus schema overhead before retaining each schema property. Aggregate
+  tools, arguments and selected environment identity participate; oversized
+  catalogs fail with a non-retryable capacity error before bind. The calibration
+  used 1500 query fields with eight concurrent discovery requests; compact wire
+  size can be smaller than the conservative reservation.
+- Query matching scans selected names one field at a time; path scoring scans
+  once and retains only supplied parameter coordinates. Native form-decoding
+  semantics, malformed escape handling and complete captured facts are preserved.
+- Content-type display is bounded to 1 KiB and reports `content_type_truncated`;
+  complete media-type semantics remain available to body interpretation.
+- Cancellation also owns DNS/listen startup; an observed abort closes the
+  listener before its URL is announced.
+
 ## Deferred issue criteria
 
 Exporting a manifest and its evidence as an agent-environment bundle with a

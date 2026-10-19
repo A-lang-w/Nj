@@ -5,12 +5,26 @@ import type { EnvironmentManifestTool } from "./environmentSource.js";
 import {
   environmentCard,
   environmentToolArguments,
-  environmentToolDefinitions,
-  environmentToolInputSchema,
+  environmentToolDefinitions as prepareDefinitions,
   REPLAY_CATALOG_INSTRUCTIONS,
 } from "./environmentTools.js";
 
 const source = environmentServeSource();
+const environmentToolDefinitions = (
+  ...args: Parameters<typeof prepareDefinitions>
+) => {
+  const result = prepareDefinitions(...args);
+  if (!result.ok) throw result.error;
+  return result.value;
+};
+const environmentToolInputSchema = (tool: EnvironmentManifestTool) => {
+  const [definition] = environmentToolDefinitions(
+    { ...source.manifest, tools: [tool] },
+    source.evidenceId,
+  );
+  if (definition === undefined) throw new Error("Missing tool definition");
+  return definition.inputSchema;
+};
 const definitions = environmentToolDefinitions(
   source.manifest,
   source.evidenceId,
