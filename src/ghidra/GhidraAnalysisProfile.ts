@@ -1,4 +1,6 @@
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { stat } from "node:fs/promises";
+import { join } from "node:path";
 import type {
   AnalysisProfileResolution,
   ProviderIdentity,
@@ -28,6 +30,7 @@ import {
   ghidraPowerPcProfileParameters,
 } from "./GhidraPowerPcProfile.js";
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
+import { hashStableFile } from "../filesystem/StableFileHash.js";
 
 import {
   ghidraProcessorUnsupportedReason,
@@ -123,6 +126,10 @@ export const resolveGhidraAnalysisProfile = async (
         ),
       );
     const language = ghidraRawBinaryLanguage(target.architecture);
+    const languageArtifact =
+      target.architecture === "sh4"
+        ? await sh4LanguageArtifact(installation, resources, signal)
+        : undefined;
     return Promise.resolve(
       ok({
         profile: createAnalysisProfile(provider, {
@@ -159,6 +166,9 @@ export const resolveGhidraAnalysisProfile = async (
           loader: "BinaryLoader",
           language_id: language.languageId,
           compiler_spec_id: language.compilerSpecId,
+          ...(languageArtifact === undefined
+            ? {}
+            : { language_artifact: languageArtifact }),
           language_selection: "caller-supplied-v1",
           entry_point: target.entryPoint,
           entry_seed: "external-entry-and-function-before-analysis-v1",
@@ -324,6 +334,39 @@ export const resolveGhidraAnalysisProfile = async (
       }),
     }),
   );
+};
+
+const sh4LanguageArtifact = async (
+  installation: Extract<GhidraInstallationInspection, { status: "available" }>,
+  resources: ArtifactResourceScope,
+  signal?: AbortSignal,
+): Promise<
+  | { readonly path: string; readonly sha256: string; readonly bytes: number }
+  | undefined
+> => {
+  const path = join(
+    installation.installDir,
+    "Ghidra/Processors/SuperH4/data/languages/SuperH4_le.sla",
+  );
+  try {
+    const metadata = await stat(path);
+    if (!metadata.isFile()) return undefined;
+  } catch (cause: unknown) {
+    if (
+      typeof cause === "object" &&
+      cause !== null &&
+      "code" in cause &&
+      cause.code === "ENOENT"
+    )
+      return undefined;
+    throw cause;
+  }
+  const digest = await hashStableFile(path, {
+    ...(signal === undefined ? {} : { signal }),
+    retainFailedClose: (handle) =>
+      resources.retain({ kind: "file-handle", resource: path, handle }),
+  });
+  return { path, ...digest };
 };
 
 /** Read the import-language commitment back from a resolved profile. */
