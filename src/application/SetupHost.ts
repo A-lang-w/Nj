@@ -1,3 +1,7 @@
+import {
+  isClientConfigurationCleanupFailure,
+  retryClientConfigurationCleanup,
+} from "./ClientConfigurationCleanup.js";
 import { access } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -43,10 +47,7 @@ import {
 } from "./SetupClientConfiguration.js";
 import { failedConfigurationMessage } from "./SetupClients.js";
 import { setupInstallFailure } from "./SetupInstallFailure.js";
-import {
-  RegularFileCleanupFailure,
-  retryRegularFileCleanup,
-} from "./RegularFileRead.js";
+import { RegularFileCleanupFailure } from "./RegularFileRead.js";
 import {
   explicitSetupRegistrationEnvironment,
   providerRegistrationEnvironment,
@@ -221,10 +222,13 @@ export const systemSetupHost = (
           result.packageFailure,
           "linux",
         );
-        return result.verificationFailure !== undefined
+        const detail =
+          result.verificationFailure?.message ??
+          result.pythonRuntimeFailure?.message;
+        return detail !== undefined
           ? {
               ...failure,
-              remediation: `${result.verificationFailure.message} ${failure.remediation}`,
+              remediation: `${detail} ${failure.remediation}`,
             }
           : failure;
       }
@@ -403,43 +407,20 @@ const runClientConfigurationOperation = async <Value>(
       try {
         return await operation();
       } catch (cause: unknown) {
-        if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
-        let retained = cause;
-        let primary: unknown;
-        const observations: {
-          readonly reason: string;
-          readonly resources: readonly string[];
-        }[] = [];
-        let rollbackMessage = "";
-        // Nested descriptor operations can each fail close. Only walk explicit
-        // owned-operation outcomes; an arbitrary cause is not an ownership grant.
-        for (;;) {
-          const cleanup = await retryRegularFileCleanup(retained, resources);
-          if (cleanup.cleanup !== undefined) observations.push(cleanup.cleanup);
-          if (retained instanceof ClientConfigurationCleanupRollbackFailure)
-            rollbackMessage = ` ${failedConfigurationMessage(retained.configurationFailure)}`;
-          primary =
-            cleanup.outcome.kind === "failed"
-              ? cleanup.outcome.cause
-              : retained.cleanupCause;
-          if (
-            cleanup.outcome.kind !== "failed" ||
-            !(primary instanceof RegularFileCleanupFailure)
-          )
-            break;
-          retained = primary;
-        }
-        const cleanup =
-          observations.length === 0
-            ? undefined
-            : {
-                reason: observations.map(({ reason }) => reason).join("; "),
-                resources: observations.flatMap(({ resources }) => resources),
-              };
+        if (!isClientConfigurationCleanupFailure(cause)) throw cause;
+        const cleanup = await retryClientConfigurationCleanup(cause, resources);
+        const rollback = cleanup.failures.find(
+          (failure) =>
+            failure instanceof ClientConfigurationCleanupRollbackFailure,
+        );
+        const rollbackMessage =
+          rollback instanceof ClientConfigurationCleanupRollbackFailure
+            ? ` ${failedConfigurationMessage(rollback.configurationFailure)}`
+            : "";
         throw configurationCleanupError(
-          `Could not safely access client configuration at ${cause.path}: ${errorMessage(primary)}.${rollbackMessage}`,
+          `Could not safely access client configuration at ${cause.path}: ${errorMessage(cleanup.primary)}.${rollbackMessage}`,
           cause,
-          cleanup,
+          cleanup.cleanup,
         );
       }
     });

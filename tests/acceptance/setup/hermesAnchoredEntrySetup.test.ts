@@ -68,7 +68,7 @@ for (const version of ["1.1", "1.2"] as const) {
           "--json",
         ];
         const applied = await run(setup);
-        expect(applied.exitCode).toBe(0);
+        expect(applied.exitCode, JSON.stringify(applied)).toBe(0);
         expect(applied.json).toMatchObject({ status: "ready" });
         const configured = await readFile(config, "utf8");
         expect(parse(configured, { version })).toMatchObject({
@@ -86,20 +86,20 @@ for (const version of ["1.1", "1.2"] as const) {
           expect(configured).toContain("# Keep nested reference comment");
         expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
         const doctor = await run(["doctor", "--client", "hermes", "--json"]);
-        expect(doctor.exitCode).toBe(0);
+        expect(doctor.exitCode, JSON.stringify(doctor)).toBe(0);
         expect(doctor.json).toMatchObject({
           healthy: true,
           identity: { registrations: [{ client: "hermes", state: "aligned" }] },
         });
         const repeated = await run(setup);
-        expect(repeated.exitCode).toBe(0);
+        expect(repeated.exitCode, JSON.stringify(repeated)).toBe(0);
         expect(repeated.json).toMatchObject({
           plannedActions: [],
           appliedActions: [],
         });
         expect(await readFile(config, "utf8")).toBe(configured);
         const removed = await run(["uninstall", "--json"]);
-        expect(removed.exitCode).toBe(0);
+        expect(removed.exitCode, JSON.stringify(removed)).toBe(0);
         expect(parse(await readFile(config, "utf8"), { version })).toEqual({
           model: "custom",
           mcp_servers: { other },
