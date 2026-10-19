@@ -359,7 +359,7 @@ describe("live server identity over MCP", () => {
         session.close(),
       ]);
     }
-  }, 10_000);
+  });
 
   it("compares the caller's digest against the selected compact tools/list catalog", async () => {
     const session = createTestBinarySession(availabilityProvider());
@@ -401,7 +401,7 @@ describe("live server identity over MCP", () => {
         session.close(),
       ]);
     }
-  }, 10_000);
+  });
 });
 
 describe("active-target availability over MCP", () => {
@@ -409,7 +409,11 @@ describe("active-target availability over MCP", () => {
     const session = createTestBinarySession(
       availabilityProvider(["inspect_macho", "inspect_artifact"]),
     );
-    const server = createServer({ kind: "session", session });
+    // Availability does not depend on compiling every advertised output schema.
+    const server = createServer(
+      { kind: "session", session },
+      { environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" } },
+    );
     const client = new Client({ name: "availability-test", version: "1" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
@@ -459,7 +463,7 @@ describe("active-target availability over MCP", () => {
         session.close(),
       ]);
     }
-  }, 10_000);
+  });
 });
 
 const PLIST_XML =
