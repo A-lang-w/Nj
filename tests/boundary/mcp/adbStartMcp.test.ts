@@ -97,7 +97,10 @@ it
             action: "android.intent.action.MAIN",
             data_uri: "https://example.invalid/launch",
             component: "com.example/.Main",
-            extras: [{ key: "mode", type: "string" as const, value: "test" }],
+            extras: [
+              { key: "mode", type: "string" as const, value: "test" },
+              { key: "empty", type: "string" as const, value: "" },
+            ],
           };
     const success = await client.callTool({
       name: operation,
@@ -181,6 +184,7 @@ it
                 "-d https://example.invalid/launch",
                 "-n com.example/.Main",
                 "--es mode test",
+                "--es empty ''",
               ]),
         ].join(" "),
       ),
