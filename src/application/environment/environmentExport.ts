@@ -208,11 +208,16 @@ const readInput = async (
 ): Promise<Result<EnvironmentExportFile, AnalysisError>> => {
   let bytes: Buffer;
   try {
-    // Admit the whole read before materializing it; the bundle needs these exact bytes.
-    const refused = headroomRefusal(path, (await stat(path)).size);
-    if (refused !== undefined) return err(refused);
-    bytes = await readRegularFile(path);
+    // Admit the whole read against the opened file's own size, before materializing the
+    // exact bytes the bundle copies.
+    bytes = await readRegularFile(path, {
+      admit: (state) => {
+        const refused = headroomRefusal(path, state.size);
+        if (refused !== undefined) throw refused;
+      },
+    });
   } catch (cause: unknown) {
+    if (cause instanceof AnalysisResourceConstraintError) return err(cause);
     if (NOT_A_FILE_CODES.has(systemCode(cause) ?? ""))
       return err(
         inputError(
