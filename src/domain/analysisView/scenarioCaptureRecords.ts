@@ -228,11 +228,13 @@ export const scenarioCaptureRecords = (
   const index = indexTransactions(capture.events.items);
   const records: WebNetworkCaptureRecord[] = [];
   let withoutBody = 0;
+  let representedCount = 0;
   let redactedBodies = 0;
   for (const [ordinal, observed] of index.requests.entries()) {
     const projected = record(ordinal, observed, index, purpose);
     records.push(projected.record);
     if (!projected.represented) continue;
+    representedCount += 1;
     if (!projected.body) withoutBody += 1;
     if (projected.redacted) redactedBodies += 1;
   }
@@ -248,12 +250,12 @@ export const scenarioCaptureRecords = (
         : []),
       ...(withoutBody > 0
         ? [
-            `${String(withoutBody)} of ${String(records.length)} scenario transactions with a usable request line retained no response body; tools citing them replay only the recorded status and content type, either of which may be absent.`,
+            `${String(withoutBody)} of ${String(representedCount)} scenario transactions with a usable request line retained no response body; tools citing them replay only the recorded status and content type, either of which may be absent.`,
           ]
         : []),
       ...(redactedBodies > 0
         ? [
-            `${String(redactedBodies)} of ${String(records.length)} scenario transactions retained a response body with declared secret values replaced by redaction markers; tools citing them replay the redacted bytes.`,
+            `${String(redactedBodies)} of ${String(representedCount)} scenario transactions with a usable request line retained a response body with declared secret values replaced by redaction markers; tools citing them replay the redacted bytes.`,
           ]
         : []),
     ],

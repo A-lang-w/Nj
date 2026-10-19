@@ -58,7 +58,7 @@ describe("scenarioCaptureRecords", () => {
       request: { method: "GET", url: "http://127.0.0.1:3101/api/slow" },
     });
     expect(projected.limitations).toContain(
-      "1 of 8 scenario transactions with a usable request line retained no response body; tools citing them replay only the recorded status and content type, either of which may be absent.",
+      "1 of 7 scenario transactions with a usable request line retained no response body; tools citing them replay only the recorded status and content type, either of which may be absent.",
     );
   });
 
@@ -131,7 +131,7 @@ describe("scenarioCaptureRecords", () => {
     expect(projected.limitations).toEqual(
       expect.arrayContaining([
         "1 of 2 scenario transactions with a usable request line retained no response body; tools citing them replay only the recorded status and content type, either of which may be absent.",
-        "1 of 2 scenario transactions retained a response body with declared secret values replaced by redaction markers; tools citing them replay the redacted bytes.",
+        "1 of 2 scenario transactions with a usable request line retained a response body with declared secret values replaced by redaction markers; tools citing them replay the redacted bytes.",
       ]),
     );
   });
