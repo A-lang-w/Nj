@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,6 +46,11 @@ await Promise.all([
   mkdir(profile),
   mkdir(target, { recursive: true }),
 ]);
+// The analyzer resolves its input before recording Evidence, and the macOS
+// tmpdir() prefix is a symlink (/var/folders -> /private/var/folders), so the
+// recorded identity is the resolved path while the caller-facing input stays
+// in its original form.
+const resolvedTarget = await realpath(target);
 const environment = {
   PATH: process.env.PATH ?? "",
   HOME: account,
@@ -183,7 +194,7 @@ const fixture = await createOpenAiModelFixture({
       const evidence = toolContract(
         "analyze_javascript_application",
       ).outputSchema.parse(found);
-      assert.equal(evidence.subject.local_path, target);
+      assert.equal(evidence.subject.local_path, resolvedTarget);
       const shape = evidence.normalized_result.graph.nodes
         .flatMap((node) => node.observations)
         .map((observation) => observation.properties)
