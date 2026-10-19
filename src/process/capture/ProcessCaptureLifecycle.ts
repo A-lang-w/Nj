@@ -459,7 +459,9 @@ const captureCoverageUnknowns = (
     unknowns.push({
       scope: "process",
       reason:
-        "Process sampling stopped with incomplete observations; sample_limit is reported in truncation_details.process.",
+        details.process.first_sampling_failure !== null
+          ? `Process sampling has incomplete observations: ${details.process.first_sampling_failure}. See truncation_details.process.`
+          : "The process sample limit was reached; see truncation_details.process.",
     });
   return unknowns;
 };
@@ -561,16 +563,23 @@ export const observeSelectedExecutable = async (
               "Selected executable path changed while it was being opened.",
           };
 
-        // IO above can settle after cancellation. Do not construct a stream with an
-        // already-aborted signal: Node can emit a second, unhandled AbortError.
-        assertNotCancelled(signal);
+        // Reads borrow the descriptor; only withProcessCaptureFile closes it.
+        // An aborted ReadStream can invalidate its FileHandle despite autoClose:false.
         const hash = createHash("sha256");
-        for await (const chunk of handle.createReadStream({
-          autoClose: false,
-          signal,
-        })) {
+        const buffer = Buffer.allocUnsafe(64 * 1024);
+        let position = 0;
+        while (true) {
           assertNotCancelled(signal);
-          hash.update(chunk);
+          const { bytesRead } = await handle.read(
+            buffer,
+            0,
+            buffer.length,
+            position,
+          );
+          assertNotCancelled(signal);
+          if (bytesRead === 0) break;
+          hash.update(buffer.subarray(0, bytesRead));
+          position += bytesRead;
         }
         assertNotCancelled(signal);
         const finalIdentity = identityFromStats(

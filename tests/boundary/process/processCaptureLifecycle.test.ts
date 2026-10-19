@@ -30,6 +30,7 @@ import {
 } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { parseProcessScenario } from "../../../src/domain/process/processScenario.js";
 import { emptyProcessCapture } from "../../../src/domain/process/processCapture.fixture.js";
+import { processSourceTruncated } from "../../../src/domain/process/processCaptureCoverage.js";
 import type { ProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
 
 const processFixture = fileURLToPath(
@@ -542,7 +543,7 @@ itWithCaptureCapability(
         file.path.endsWith(":escape"),
       );
       expect(escaped?.symlink_target).toBe("/etc/passwd");
-      expect(capture.truncated).toBe(false);
+      expect(processSourceTruncated(capture, "filesystem")).toBe(false);
       expect(JSON.stringify(capture.files_after)).not.toContain(root);
       expect(
         capture.files_after.some((file) => file.path.includes("passwd")),
@@ -595,7 +596,11 @@ itWithCaptureCapability(
       controller.signal,
     );
     if (cancelled.ok) throw new Error("expected cancellation");
-    expect(cancelled.error.message).toContain("cancelled");
+    expect(cancelled.error).toMatchObject({
+      reason: "cancelled",
+      userCategory: "cancelled",
+    });
+    expect(projectAnalysisError(cancelled.error).category).toBe("cancelled");
   },
 );
 

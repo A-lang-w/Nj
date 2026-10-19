@@ -283,7 +283,7 @@ itWithCaptureCapability(
 );
 
 itWithCaptureCapability(
-  "reports unknown resource cleanup when temporary-root preparation fails",
+  "reports no resources to release when temporary-root preparation fails",
   async () => {
     const scenario = await writeScenario(
       "rea-process-progress-prepare-failed-",
@@ -311,9 +311,9 @@ itWithCaptureCapability(
       terminal: true,
       details: {
         disposition: "failed",
-        owned_process_group: "unverified",
-        terminal_renderer: "unverified",
-        temporary_root: "unverified",
+        owned_process_group: "not_required",
+        terminal_renderer: "not_required",
+        temporary_root: "not_required",
       },
     });
   },

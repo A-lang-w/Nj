@@ -103,45 +103,14 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       if (args[0] === race.target && race.mode === "directory_missing")
         race.opened = true;
       if (args[0] === race.target && race.mode === "cancel_directory_close") {
-        const iterator = directory[Symbol.asyncIterator]();
-        let closed = false;
-        const closeBeforeCancel = async () => {
-          if (closed) return;
-          closed = true;
-          try {
-            await directory.close();
-          } catch (cause: unknown) {
-            if (
-              !(cause instanceof Error) ||
-              !("code" in cause) ||
-              cause.code !== "ERR_DIR_CLOSED"
-            )
-              throw cause;
-          }
+        const close = directory.close.bind(directory);
+        // The producer reads with Dir.read() and closes through its exact owner.
+        // Keep the real receiver; a Proxy breaks Node's private Dir fields.
+        directory.close = async () => {
+          await close();
           race.closeCompleted = true;
           race.controller?.abort(race.reason);
         };
-        const wrappedIterator = {
-          [Symbol.asyncIterator]() {
-            return this;
-          },
-          async next() {
-            const next = await iterator.next();
-            if (next.done) await closeBeforeCancel();
-            return next;
-          },
-          async return() {
-            const result = await iterator.return?.();
-            await closeBeforeCancel();
-            return result ?? { done: true, value: undefined };
-          },
-        };
-        return new Proxy(directory, {
-          get(target, property, receiver) {
-            if (property === Symbol.asyncIterator) return () => wrappedIterator;
-            return Reflect.get(target, property, receiver);
-          },
-        });
       }
       // The selected directory's next lstat is snapshotRoots' post-enumeration
       // identity check. The deletion itself happens in that lstat wrapper.
@@ -152,8 +121,30 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 import { parseProcessScenario } from "../../src/domain/process/processScenario.js";
 import { classifyFilesystemEffects } from "../../src/process/capture/ProcessFilesystemEffects.js";
-import { snapshotRoots } from "../../src/process/capture/FilesystemSnapshot.js";
+import {
+  ProcessCaptureSnapshotFailure,
+  snapshotRoots,
+} from "../../src/process/capture/FilesystemSnapshot.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+
+const expectCancelledSnapshot = async (
+  operation: Promise<unknown>,
+  reason: Error,
+): Promise<ProcessCaptureSnapshotFailure> => {
+  const failure: unknown = await operation.catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(ProcessCaptureSnapshotFailure);
+  if (!(failure instanceof ProcessCaptureSnapshotFailure))
+    throw new Error("Expected the retained snapshot failure");
+  expect(failure.cause).toBe(reason);
+  expect(failure).toMatchObject({
+    reason: "cancelled",
+    userCategory: "cancelled",
+    cleanupIncomplete: false,
+    cleanupLeases: [],
+    snapshot: { completeRoots: [], truncated: true },
+  });
+  return failure;
+};
 
 const resetRace = () => {
   race.mode = "";
@@ -335,7 +326,8 @@ it.skipIf(process.platform === "win32")(
       race.target = link;
       race.controller = controller;
       race.reason = reason;
-      await expect(snapshotRoots(scenario, controller.signal)).rejects.toBe(
+      await expectCancelledSnapshot(
+        snapshotRoots(scenario, controller.signal),
         reason,
       );
     }),
@@ -358,13 +350,14 @@ it.skipIf(process.platform === "win32")(
       race.target = link;
       race.controller = controller;
       race.reason = reason;
-      await expect(snapshotRoots(scenario, controller.signal)).rejects.toBe(
+      await expectCancelledSnapshot(
+        snapshotRoots(scenario, controller.signal),
         reason,
       );
     }),
 );
 
-it("observes cancellation after the selected directory iterator closes", async () =>
+it("observes cancellation after the selected owned directory closes", async () =>
   withTemporaryRoot("rea-snapshot-directory-close-cancel-", async (root) => {
     const directory = join(root, "selected");
     await mkdir(directory);
@@ -380,9 +373,12 @@ it("observes cancellation after the selected directory iterator closes", async (
     race.target = directory;
     race.controller = controller;
     race.reason = reason;
-    await expect(snapshotRoots(scenario, controller.signal)).rejects.toBe(
+    const failure = await expectCancelledSnapshot(
+      snapshotRoots(scenario, controller.signal),
       reason,
     );
+    expect(failure.readFailures).toHaveLength(1);
+    expect(failure.readFailures[0]?.outcome.kind).toBe("completed");
     expect(race.closeCompleted).toBe(true);
   }));
 
@@ -427,7 +423,15 @@ it.skipIf(process.platform === "win32")(
       race.mode = "readlink_eio";
       race.target = link;
       await expect(snapshotRoots(scenario)).rejects.toMatchObject({
-        code: "EIO",
+        reason: "capture_failed",
+        cause: { code: "EIO" },
+        cleanupIncomplete: false,
+        cleanupLeases: [],
+        snapshot: {
+          files: [expect.objectContaining({ path: "root_0:." })],
+          completeRoots: [],
+          truncated: true,
+        },
       });
     }),
 );

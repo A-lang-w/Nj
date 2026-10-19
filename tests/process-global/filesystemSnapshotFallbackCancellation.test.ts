@@ -58,7 +58,9 @@ import { parseProcessScenario } from "../../src/domain/process/processScenario.j
 import {
   hashFile,
   snapshotRoots,
+  ProcessCaptureSnapshotFailure,
 } from "../../src/process/capture/FilesystemSnapshot.js";
+import { ProcessCaptureReadFailure } from "../../src/process/capture/ProcessCaptureRead.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 afterEach(() => {
@@ -99,7 +101,31 @@ it.each(["hash", "snapshot"] as const)(
             }),
             controller.signal,
           );
-    await expect(result).rejects.toBe(reason);
+    const failure: unknown = await result.catch((cause: unknown) => cause);
+    const readFailure =
+      operation === "hash"
+        ? failure
+        : failure instanceof ProcessCaptureSnapshotFailure
+          ? failure.readFailures[0]
+          : undefined;
+    expect(failure).toBeInstanceOf(
+      operation === "hash"
+        ? ProcessCaptureReadFailure
+        : ProcessCaptureSnapshotFailure,
+    );
+    expect(failure).toMatchObject({
+      cause: reason,
+      reason: "cancelled",
+      userCategory: "cancelled",
+      cleanupIncomplete: false,
+      cleanupLeases: [],
+    });
+    expect(readFailure).toBeInstanceOf(ProcessCaptureReadFailure);
+    if (!(readFailure instanceof ProcessCaptureReadFailure))
+      throw new Error("Expected the retained cancelled read");
+    expect(readFailure.cancellation?.reason).toBe(reason);
+    expect(readFailure.outcome).toMatchObject({ kind: "failed" });
+    expect(readFailure.cleanupLeases).toEqual([]);
     expect(controller.signal.aborted).toBe(true);
     expect(observation.handles).toHaveLength(1);
     await expect(observation.handles[0]?.stat()).rejects.toMatchObject({
