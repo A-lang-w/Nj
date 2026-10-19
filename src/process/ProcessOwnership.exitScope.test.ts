@@ -5,6 +5,7 @@ import {
   verifyNoTokenOwnedProcesses,
   type ProcessIdentityObservation,
   type ProcessOwnershipHost,
+  type ProcessRunTokenObservation,
   type ProcessTableEntry,
 } from "./ProcessOwnership.js";
 import { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
@@ -33,46 +34,87 @@ const identity = (
   },
 });
 
-it("retains a live token-cleared child when its verified parent exits during observation", async () => {
-  const parent = row(200, 1);
-  const child = row(300, parent.pid);
-  const owner = new ProcessOwnershipEvidenceOwner();
-  let parentReads = 0;
-  const host: ProcessOwnershipHost = {
-    listProcesses: async () => [parent, child],
-    environment: async (pid) =>
-      pid === parent.pid ? { REA_PROCESS_RUN_ID: "run" } : {},
-    processIdentities: async (rows) =>
-      new Map<number, ProcessIdentityObservation>(
-        rows.map((process) => [
-          process.pid,
-          process.pid === parent.pid && ++parentReads > 2
-            ? { state: "absent" as const, reason: "not-in-snapshot" }
-            : identity(
-                process,
-                process.pid === parent.pid && parentReads === 2,
-              ),
-        ]),
-      ),
-    signalGroup: vi.fn(),
-  };
-  const result = await verifyNoTokenOwnedProcesses("run", host, undefined, {
-    leaderPid: 100,
-    processGroupId: 100,
-    evidenceOwner: owner,
-  });
-  // The fixture's child never exited or changed generation. Its previously
-  // observed parent edge must survive the parent's later terminal observation.
-  expect(result.cleaned).toBe(false);
-  expect(owner.candidates).toContainEqual(
-    expect.objectContaining({
-      pid: child.pid,
-      identity: "start:300",
-      applicability: "related-ownership-unresolved",
-    }),
-  );
-  expect(host.signalGroup).not.toHaveBeenCalled();
-});
+it.each(["readable", "retried", "reused"] as const)(
+  "keeps child scope tied to its native generation after parent exit (%s)",
+  async (mode) => {
+    const parent = row(200, 1);
+    const child = row(300, parent.pid);
+    const owner = new ProcessOwnershipEvidenceOwner();
+    let parentReads = 0;
+    let childTokenReads = 0;
+    let reparented = false;
+    const host: ProcessOwnershipHost = {
+      listProcesses: async () => [parent, child],
+      environment: async (pid) =>
+        pid === parent.pid ? { REA_PROCESS_RUN_ID: "run" } : {},
+      runTokens: async (selected) =>
+        new Map<number, ProcessRunTokenObservation>(
+          selected.map((process) => [
+            process.pid,
+            process.pid === parent.pid
+              ? { state: "readable", runId: "run" }
+              : ++childTokenReads === 1 && mode !== "readable"
+                ? { state: "unavailable", reason: "EACCES" }
+                : { state: "readable", runId: undefined },
+          ]),
+        ),
+      processIdentities: async (selected) =>
+        new Map<number, ProcessIdentityObservation>(
+          selected.map((process) => {
+            if (process.pid === parent.pid && ++parentReads > 2) {
+              reparented = true;
+              return [
+                process.pid,
+                { state: "absent", reason: "not-in-snapshot" },
+              ];
+            }
+            const observed =
+              process.pid === child.pid && reparented
+                ? { ...process, parentPid: 1 }
+                : process;
+            const current = identity(
+              observed,
+              process.pid === parent.pid && parentReads === 2,
+            );
+            return [
+              process.pid,
+              process.pid === child.pid &&
+              reparented &&
+              mode === "reused" &&
+              current.state === "readable"
+                ? { ...current, identity: "start:replacement" }
+                : current,
+            ];
+          }),
+        ),
+      signalGroup: vi.fn(),
+    };
+    const result = await verifyNoTokenOwnedProcesses("run", host, undefined, {
+      leaderPid: 100,
+      processGroupId: 100,
+      evidenceOwner: owner,
+    });
+    if (mode === "reused") {
+      // A replacement process cannot inherit the original child's history.
+      expect(result.cleaned).toBe(true);
+      expect(owner.candidates).not.toContainEqual(
+        expect.objectContaining({ pid: child.pid }),
+      );
+    } else {
+      // The original child stays live even though its parent has exited.
+      expect(result.cleaned).toBe(false);
+      expect(owner.candidates).toContainEqual(
+        expect.objectContaining({
+          pid: child.pid,
+          identity: "start:300",
+          applicability: "related-ownership-unresolved",
+        }),
+      );
+    }
+    expect(host.signalGroup).not.toHaveBeenCalled();
+    expect(owner.coverage.snapshotCount).toBe(1);
+  },
+);
 
 it("shares native exit waiting before signaling healthy groups in one cleanup attempt", async () => {
   const root = row(100, 1);
