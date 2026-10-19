@@ -8,6 +8,7 @@ import { readAssemblyReferenceName } from "../dotnet/ManagedMetadataInventoryRow
 import { ManagedReaderFailure } from "../dotnet/ManagedReaderFailure.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { abortIfNeeded } from "./ArtifactHash.js";
+import { hasMachoMagic } from "./apple/MachoLoadCommandReader.js";
 
 export interface DesktopReadBudget {
   bytes: number;
@@ -149,9 +150,7 @@ export const inspectDesktopFile = async (
   const native =
     prefix.length >= 4 &&
     (prefix.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])) ||
-      [
-        0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe, 0xcafebabe, 0xbebafeca,
-      ].includes(prefix.readUInt32LE(0)));
+      hasMachoMagic(prefix));
   if (native)
     fact({
       kind: "native-image-header",

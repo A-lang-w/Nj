@@ -22,6 +22,12 @@ import {
 } from "../../../src/dotnet/ManagedPe.fixture.js";
 import { readManagedMetadataLayout } from "../../../src/dotnet/ManagedMetadataLayout.js";
 import { readAssemblyReference } from "../../../src/dotnet/ManagedMetadataInventoryRows.js";
+import {
+  CPU,
+  FILE_TYPE,
+  fatImage,
+  machoImage,
+} from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { DesktopApplicationReader } from "../../../src/artifacts/DesktopApplicationReader.js";
@@ -887,14 +893,35 @@ it("yields between reference-name batches so accepted cancellation precedes insp
 });
 
 it.each([
-  ["GameAssembly.so", Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0])],
-  [
-    "Contents/Frameworks/GameAssembly.dylib",
-    Buffer.from([0xcf, 0xfa, 0xed, 0xfe, 7, 0, 0, 1]),
-  ],
-] as const)(
-  "joins IL2CPP metadata with Unix library %s",
-  async (path, image) => {
+  {
+    format: "ELF",
+    path: "GameAssembly.so",
+    image: Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]),
+  },
+  {
+    format: "thin Mach-O",
+    path: "Contents/Frameworks/GameAssembly.dylib",
+    image: Buffer.from([0xcf, 0xfa, 0xed, 0xfe, 7, 0, 0, 1]),
+  },
+  ...[false, true].map((littleEndian) => ({
+    format: `FAT64 ${littleEndian ? "little" : "big"}-endian`,
+    path: "Contents/Frameworks/GameAssembly.dylib",
+    image: Buffer.from(
+      fatImage(
+        [
+          {
+            cpu: CPU.arm64,
+            bytes: machoImage({ cpu: CPU.arm64, fileType: FILE_TYPE.dylib }),
+          },
+        ],
+        true,
+        littleEndian,
+      ),
+    ),
+  })),
+])(
+  "joins IL2CPP metadata with $format library $path",
+  async ({ path, image }) => {
     const root = await createTestTempDirectory("rea-desktop-unix-il2cpp-");
     await put(root, path, image);
     const metadata = Buffer.alloc(8);
@@ -906,6 +933,17 @@ it.each([
       metadata,
     );
     const { report } = await inspect(root);
+    // Native probes read a fixed prefix and, where present, the existing PCK
+    // trailer; the FAT architecture table and slice payload are not traversed.
+    expect(report.coverage.bytes_read).toBeLessThanOrEqual(
+      64 + 12 + metadata.length,
+    );
+    expect(
+      report.files.find((file) => file.path === path)?.ranges[0],
+    ).toMatchObject({
+      offset: 0,
+      bytes: Math.min(image.length, 64),
+    });
     expect(report.candidates.map((candidate) => candidate.family)).toEqual([
       "unity-il2cpp",
     ]);
