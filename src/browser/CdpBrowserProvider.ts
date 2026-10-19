@@ -12,7 +12,8 @@ import {
   type BrowserTargetList,
   type WebPageInspection,
 } from "../domain/browserObservationSchemas.js";
-import { analyzeCapturedWebBundle } from "../domain/webBundleAnalyzer.js";
+import { isIncludedScript } from "../domain/webBundleAnalyzerInspection.js";
+import { buildWebBundleAnalysis } from "../domain/webBundleAnalyzerResult.js";
 import {
   webBundleAnalysisSchema,
   type AnalyzeWebBundleInput,
@@ -77,6 +78,10 @@ import { captureCdpScreenshot } from "./CdpScreenshot.js";
 import { comparePngScreenshots } from "./PngVisualDiff.js";
 
 import { CDP_BROWSER_PROVIDER_IDENTITY } from "./providerIdentities.js";
+import {
+  analyzeWebBundleScripts,
+  type WebBundleScriptAnalyzer,
+} from "./WebBundleAnalysisWorker.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {
   CdpTargetSessionOwner,
@@ -93,6 +98,10 @@ const CLEANUP_DOMAINS = [
 /** Passive browser observation through a selected user-owned CDP endpoint. */
 export class CdpBrowserProvider implements BrowserObservationPort {
   readonly #owner = new CdpTargetSessionOwner();
+
+  constructor(
+    readonly analyzeScripts: WebBundleScriptAnalyzer = analyzeWebBundleScripts,
+  ) {}
 
   close(): Promise<void> {
     return this.#owner.close();
@@ -182,9 +191,22 @@ export class CdpBrowserProvider implements BrowserObservationPort {
             options.signal,
           )
         : undefined;
+      const sourceScripts =
+        captured.inspection.scripts.items.filter(isIncludedScript);
+      const outcomes = await this.analyzeScripts(sourceScripts, options);
+      // A worker failure, cancellation or cleanup failure keeps the capture.
+      if (!outcomes.ok)
+        return err(
+          outcomes.error.retainPartialObservation(captured.inspection),
+        );
       return ok(
         webBundleAnalysisSchema.parse(
-          analyzeCapturedWebBundle(captured.inspection, sourceMaps),
+          buildWebBundleAnalysis(
+            captured.inspection,
+            sourceScripts,
+            sourceMaps,
+            outcomes.value,
+          ),
         ),
       );
     } catch (cause: unknown) {

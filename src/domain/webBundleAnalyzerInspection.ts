@@ -4,6 +4,7 @@ import { sanitizeEndpointCandidate } from "./browserObservation.js";
 import { compositeKey } from "./unicodeCodePointOrder.js";
 import type { WebPageInspection } from "./browserObservationSchemas.js";
 import type { WebBundleAnalysis } from "./webBundleAnalysis.js";
+import type { WebBundleScriptFacts } from "./webBundleScriptAnalysis.js";
 import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascript/javascriptSemanticAnalysis.js";
 import { completeSemanticSteps } from "./javascript/javascriptSemanticTraversal.js";
@@ -41,7 +42,7 @@ export type IncludedScript = Omit<BrowserScript, "source"> & {
   readonly source: IncludedSource;
 };
 
-export interface AnalysisAccumulator {
+interface AnalysisAccumulator {
   readonly edges: ChunkEdge[];
   readonly routes: Finding[];
   readonly endpoints: Finding[];
@@ -49,23 +50,19 @@ export interface AnalysisAccumulator {
   readonly inferences: Inference[];
   readonly seen: Set<string>;
   visitedNodes: number;
-  parsedScripts: number;
-  readonly failedScripts: string[];
-  readonly recoveredScripts: string[];
+  parse: WebBundleScriptFacts["parse"];
 }
 
-export const analyzeScript = (
+const analyzeScript = (
   script: IncludedScript,
   accumulator: AnalysisAccumulator,
 ): void => {
   const file = parseJavaScriptSource(script.source.artifact.text);
   if (file === null) {
-    accumulator.failedScripts.push(script.script_key);
+    accumulator.parse = "failed";
     return;
   }
-  accumulator.parsedScripts += 1;
-  if ((file.errors?.length ?? 0) > 0)
-    accumulator.recoveredScripts.push(script.script_key);
+  if ((file.errors?.length ?? 0) > 0) accumulator.parse = "recovered";
   detectVendorFingerprints(script, accumulator);
   const index = completeSemanticSteps(
     indexJavaScriptBindingsWithReceiversSteps(file.program),
@@ -459,7 +456,25 @@ const basis = (script: IncludedScript, detector: string) => ({
   detector,
 });
 
-export const emptyAccumulator = (): AnalysisAccumulator => ({
+/** Analyze one captured script in isolation; its facts do not depend on other scripts. */
+export const analyzeWebBundleScript = (
+  script: IncludedScript,
+): WebBundleScriptFacts => {
+  const accumulator = emptyAccumulator();
+  analyzeScript(script, accumulator);
+  return {
+    script_key: script.script_key,
+    parse: accumulator.parse,
+    visited_ast_nodes: accumulator.visitedNodes,
+    edges: accumulator.edges,
+    routes: accumulator.routes,
+    endpoints: accumulator.endpoints,
+    webmcp_declarations: accumulator.webMcp,
+    inferences: accumulator.inferences,
+  };
+};
+
+const emptyAccumulator = (): AnalysisAccumulator => ({
   edges: [],
   routes: [],
   endpoints: [],
@@ -467,9 +482,7 @@ export const emptyAccumulator = (): AnalysisAccumulator => ({
   inferences: [],
   seen: new Set(),
   visitedNodes: 0,
-  parsedScripts: 0,
-  failedScripts: [],
-  recoveredScripts: [],
+  parse: "parsed",
 });
 
 export const isIncludedScript = (

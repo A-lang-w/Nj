@@ -2,11 +2,65 @@ import { describe, expect, it } from "vitest";
 
 import { webPageInspectionSchema } from "./browserObservationSchemas.js";
 import { analyzeJavaScriptStaticSource } from "./javascript/javascriptStaticAnalysis.js";
-import { analyzeCapturedWebBundle } from "./webBundleAnalyzer.js";
-import { webBundleAnalysisSchema } from "./webBundleAnalysis.js";
+import {
+  analyzeWebBundleScript,
+  isIncludedScript,
+} from "./webBundleAnalyzerInspection.js";
+import { buildWebBundleAnalysis } from "./webBundleAnalyzerResult.js";
+import {
+  webBundleAnalysisSchema,
+  type WebBundleAnalysis,
+} from "./webBundleAnalysis.js";
 import { createWebTextArtifact } from "./webContentArtifact.js";
+import type { WebPageInspection } from "./browserObservationSchemas.js";
 
 const origin = "https://app.example.test";
+
+/** The provider composition, with every script analyzed in this process. */
+const analyzeCapturedWebBundle = (
+  captured: WebPageInspection,
+  sourceMaps?: WebBundleAnalysis["observations"]["source_maps"],
+): WebBundleAnalysis => {
+  const scripts = captured.scripts.items.filter(isIncludedScript);
+  return buildWebBundleAnalysis(
+    captured,
+    scripts,
+    sourceMaps,
+    scripts.map((script) => ({
+      status: "analyzed",
+      facts: analyzeWebBundleScript(script),
+    })),
+  );
+};
+
+it("keeps a resource-limited script as an explicit unknown", () => {
+  const captured = inspection(`fetch("/api/limited");`);
+  const scripts = captured.scripts.items.filter(isIncludedScript);
+  const result = buildWebBundleAnalysis(captured, scripts, undefined, [
+    {
+      status: "resource_limited",
+      script_key: scripts[0]?.script_key ?? "",
+      resource: "memory",
+      reason: "Static analysis of this script exhausted the worker heap.",
+    },
+  ]);
+  expect(result.observations.endpoints).toEqual([]);
+  expect(result.capture.scripts_analyzed).toBe(1);
+  expect(result.completeness).toEqual({
+    status: "partial",
+    parsed_scripts: 0,
+    parse_failures: 0,
+    visited_ast_nodes: 0,
+  });
+  expect(result.unknowns).toContainEqual({
+    dimension: "javascript_analysis",
+    reason: "Static analysis of this script exhausted the worker heap.",
+    affected_script_keys: [scripts[0]?.script_key],
+  });
+  expect(() =>
+    buildWebBundleAnalysis(captured, scripts, undefined, []),
+  ).toThrow(TypeError);
+});
 
 it("retains standalone GraphQL Source operations in captured scripts", () => {
   const result = analyzeCapturedWebBundle(
