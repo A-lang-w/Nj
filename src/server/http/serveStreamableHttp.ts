@@ -1,6 +1,7 @@
 import {
   hostHeaderValidationResponse,
   isInitializeRequest,
+  isJsonContentType,
   localhostAllowedHostnames,
   originValidationResponse,
   readRequestBody,
@@ -145,17 +146,22 @@ const quality = (range: string): number => {
 };
 /** The headers the SDK requires of a streamable POST; a request without them is left to the transport's refusal. */
 const hasStreamablePostHeaders = (request: Request): boolean => {
+  const accept = request.headers.get("accept") ?? "";
   // Exact media ranges with a positive weight: `application/json-patch+json`, `text/event-streaming`
   // and `application/json;q=0` do not count.
   const accepted = new Set(
-    splitUnquoted(request.headers.get("accept") ?? "", ",")
+    splitUnquoted(accept, ",")
       .filter((range) => quality(range) > 0)
       .map(mediaType),
   );
+  // The SDK's own checks too: its Accept test is a case-sensitive substring match, so a header it
+  // would refuse with 406 (such as `Application/JSON`) must not close the live session first.
   return (
     accepted.has("application/json") &&
     accepted.has("text/event-stream") &&
-    mediaType(request.headers.get("content-type") ?? "") === "application/json"
+    accept.includes("application/json") &&
+    accept.includes("text/event-stream") &&
+    isJsonContentType(request.headers.get("content-type"))
   );
 };
 

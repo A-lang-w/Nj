@@ -791,14 +791,16 @@ it("closes the connection when a route read only part of the body and keeps it a
   }
 });
 
-it("does not let a zero-quality or quoted Accept range qualify a session takeover", async () => {
+it("does not let a zero-quality, quoted or SDK-refused Accept qualify a session takeover", async () => {
   const { served } = await start();
   const { client } = await connect(served.url);
   const url = new URL(served.url);
   // The second header holds one range: the comma and `text/event-stream` sit inside a quoted parameter.
+  // The third is valid HTTP, but the SDK matches media types with case and would answer 406.
   for (const accept of [
     "application/json;q=0, text/event-stream",
     'application/json;note=", text/event-stream;x=1"',
+    "Application/JSON, Text/Event-Stream",
   ]) {
     const refused = await rawHttpRequest(url, {
       method: "POST",
