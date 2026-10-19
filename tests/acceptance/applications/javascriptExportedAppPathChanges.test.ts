@@ -5,22 +5,38 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
 
+const cases = [
+  ...(["ESM", "CommonJS", "Object.assign"] as const).flatMap((format) =>
+    [false, true].map((replaced) => ({ format, replaced })),
+  ),
+  { format: "local exports Object.assign", replaced: false },
+  { format: "detached exports Object.assign", replaced: false },
+] as const;
+
 cliTest.for(
   (["CLI", "stdio MCP"] as const).flatMap((surface) =>
-    (["ESM", "CommonJS"] as const).flatMap((format) =>
-      [false, true].map((replaced) => ({ surface, format, replaced })),
-    ),
+    cases.map((testCase) => ({ surface, ...testCase })),
   ),
 )(
   "retains $format exported app setter uncertainty (replaced=$replaced) through $surface",
   async ({ surface, format, replaced }, { cli }) => {
     const root = await createTestTempDirectory("rea-exported-app-path-");
-    const files: Record<string, string> =
+    const connected =
+      format !== "local exports Object.assign" &&
+      format !== "detached exports Object.assign";
+    const possible = connected && !replaced;
+    const publication =
       format === "CommonJS"
+        ? "module.exports={change,app};"
+        : format === "local exports Object.assign"
+          ? "function publish(exports){Object.assign(exports,{change,app})}publish({});"
+          : `${format === "detached exports Object.assign" ? "module.exports={};" : ""}Object.assign(exports,{change,app});`;
+    const files: Record<string, string> =
+      format !== "ESM"
         ? {
             "a/package.json": '{"main":"main.cjs"}',
-            "a/setter.cjs": `throw new Error('Static fixture must never execute');const {app}=require('electron');${replaced ? "app.setAppPath=()=>{};" : ""}const change=app.setAppPath;module.exports={change,app};`,
-            "a/main.cjs": `throw new Error('Static fixture must never execute');const {change,app}=require('./setter.cjs');const path=require('node:path');change.call(app,path.join(__dirname,'lib'));require('./win.cjs');`,
+            "a/setter.cjs": `throw new Error('Static fixture must never execute');const {app}=require('electron');${replaced ? "app.setAppPath=()=>{};" : ""}const change=app.setAppPath;${publication}`,
+            "a/main.cjs": `throw new Error('Static fixture must never execute');const {change,app}=require('./setter.cjs');const path=require('node:path');${connected ? "" : "if(typeof change==='function')"}change.call(app,path.join(__dirname,'lib'));require('./win.cjs');`,
             "a/win.cjs": `throw new Error('Static fixture must never execute');const {BrowserWindow}=require('electron');new BrowserWindow().loadFile('index.html');`,
           }
         : {
@@ -49,7 +65,7 @@ cliTest.for(
       expect.arrayContaining([
         expect.objectContaining({
           properties: expect.objectContaining({
-            resolution_status: replaced ? "resolved" : "unavailable",
+            resolution_status: possible ? "unavailable" : "resolved",
           }),
         }),
       ]),
@@ -58,8 +74,8 @@ cliTest.for(
       ({ relation, source_node_id }) =>
         relation === "maps_to" && source_node_id === roles[0]?.node_id,
     );
-    expect(mapped).toHaveLength(replaced ? 1 : 0);
-    if (replaced)
+    expect(mapped).toHaveLength(possible ? 0 : 1);
+    if (!possible)
       expect(mapped[0]?.properties.resolved_path).toBe("a/index.html");
   },
 );

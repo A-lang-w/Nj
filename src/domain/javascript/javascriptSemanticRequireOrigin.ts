@@ -1001,6 +1001,19 @@ const hasCommonJsModuleSource = (
     }
     if (!t.isIdentifier(value)) continue;
     const binding = resolveSemanticBindingState(state, value, value.name);
+    const processMainModulePath =
+      semanticGlobalProcessOrigin(value, state) !== undefined &&
+      path.length === (target === "module" ? 1 : 2) &&
+      semanticAliasSelectionChoices(path[0]!).some(
+        (key) =>
+          key === null || semanticPropertyPathKeyMatches(key, "mainModule"),
+      ) &&
+      (target === "module" ||
+        semanticAliasSelectionChoices(path[1]!).some(
+          (key) =>
+            key === null || semanticPropertyPathKeyMatches(key, "require"),
+        ));
+    if (processMainModulePath) return true;
     const mainModulePath =
       value.name === "require" &&
       state.program.sourceType === "script" &&

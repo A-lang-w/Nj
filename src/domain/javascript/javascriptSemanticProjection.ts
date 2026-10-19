@@ -39,7 +39,7 @@ import {
   semanticImportEqualsSpecifier,
 } from "./javascriptModuleDeclaration.js";
 import {
-  commonJsRuntimeExportValue,
+  commonJsRuntimeExportValues,
   type CommonJsExportReceiverEffect,
   type CommonJsExportSite,
 } from "./javascriptCommonJsExportReceivers.js";
@@ -474,17 +474,16 @@ const collectCommonJsExport = (
   state: JavaScriptSemanticAnalysisState,
   receiverEffect: CommonJsExportReceiverEffect | undefined,
 ): void => {
-  const exported = commonJsRuntimeExportValue(node, state);
-  if (exported === undefined) return;
   if (receiverEffect === "detached") return;
   // Compound and logical writes also depend on the previous value, so remain
   // unknown.
-  addCommonJsExport(
-    node,
-    state,
-    exported.exportedName,
-    receiverEffect === "uncertain" ? null : exported.value,
-  );
+  for (const exported of commonJsRuntimeExportValues(node, state))
+    addCommonJsExport(
+      node,
+      state,
+      exported.exportedName,
+      receiverEffect === "uncertain" ? null : exported.value,
+    );
 };
 
 const addCommonJsExport = (

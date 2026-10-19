@@ -170,6 +170,16 @@ const cases = [
     possible: true,
   },
   {
+    name: "process main module receiver",
+    load: 'process.mainModule.require("../shared/window.cjs");',
+    possible: true,
+  },
+  {
+    name: "local process main module receiver",
+    load: 'const process={mainModule:{require(){}}};process.mainModule.require("../shared/window.cjs");',
+    possible: false,
+  },
+  {
     name: "local main module receiver",
     load: 'const require={main:{require(){}}};require.main.require("../shared/window.cjs");',
     possible: false,

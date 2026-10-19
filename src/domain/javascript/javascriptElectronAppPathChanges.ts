@@ -29,7 +29,7 @@ import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceS
 import { assignmentValueSources } from "./javascriptSemanticRequireOrigin.js";
 import { semanticRuntimeExportValueSources } from "./javascriptModuleDeclaration.js";
 import {
-  commonJsRuntimeExportValue,
+  commonJsRuntimeExportValues,
   indexCommonJsExportReceiversSteps,
   type CommonJsExportReceiverEffect,
   type CommonJsExportSite,
@@ -334,9 +334,9 @@ export const createSemanticElectronAppPathChangeQuery = (
       )
     )
       return true;
-    const exported = commonJsRuntimeExportValue(node, state);
+    const exported = commonJsRuntimeExportValues(node, state);
     if (
-      exported?.value == null ||
+      !exported.some(({ value }) => value !== null) ||
       (!t.isAssignmentExpression(node) && !t.isCallExpression(node))
     )
       return false;
@@ -345,7 +345,7 @@ export const createSemanticElectronAppPathChangeQuery = (
     );
     return (
       commonJsReceivers.get(node) !== "detached" &&
-      possiblePath(exported.value, true)
+      exported.some(({ value }) => value !== null && possiblePath(value, true))
     );
   };
 };
