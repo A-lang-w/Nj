@@ -230,6 +230,7 @@ import type {
   RecordedCrashPartialObservation,
 } from "./native/recordedCrash.js";
 import type { WebPageInspection } from "./browserObservationSchemas.js";
+import type { WebBundleAnalysis } from "./webBundleAnalysis.js";
 import type { WebExecution } from "./webExecution.js";
 import type { WebEventListeners } from "./webEventListeners.js";
 
@@ -251,6 +252,7 @@ export type AnalysisPartialObservation =
   | ElectronActivePartialObservation
   | BrowserScenarioPartialObservation
   | WebPageInspection
+  | WebBundleAnalysis
   | WebExecution
   | WebEventListeners
   | JavaScriptRuntimeObservation

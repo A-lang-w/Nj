@@ -82,6 +82,7 @@ import {
   analyzeWebBundleScripts,
   type WebBundleScriptAnalyzer,
 } from "./WebBundleAnalysisWorker.js";
+import type { WebBundleScriptOutcome } from "../domain/webBundleScriptAnalysis.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {
   CdpTargetSessionOwner,
@@ -191,22 +192,25 @@ export class CdpBrowserProvider implements BrowserObservationPort {
             options.signal,
           )
         : undefined;
-      const sourceScripts =
-        captured.inspection.scripts.items.filter(isIncludedScript);
+      const { inspection } = captured;
+      const sourceScripts = inspection.scripts.items.filter(isIncludedScript);
       const outcomes = await this.analyzeScripts(sourceScripts, options);
-      // A worker failure, cancellation or cleanup failure keeps the capture.
-      if (!outcomes.ok)
-        return err(
-          outcomes.error.retainPartialObservation(captured.inspection),
-        );
-      return ok(
+      const analysis = (completed: readonly WebBundleScriptOutcome[]) =>
         webBundleAnalysisSchema.parse(
           buildWebBundleAnalysis(
-            captured.inspection,
+            inspection,
             sourceScripts,
             sourceMaps,
-            outcomes.value,
+            completed,
           ),
+        );
+      if (outcomes.ok) return ok(analysis(outcomes.value));
+      // Late cancellation or cleanup failure keeps the completed analysis;
+      // an earlier failure keeps the captured page inspection.
+      const { error, completed } = outcomes.error;
+      return err(
+        error.retainPartialObservation(
+          completed === undefined ? inspection : analysis(completed),
         ),
       );
     } catch (cause: unknown) {

@@ -2,6 +2,10 @@ import { access } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
+import { analyzeWebBundle } from "../../../src/application/BrowserObservationService.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import { analyzeWebBundleScript } from "../../../src/domain/webBundleAnalyzerInspection.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
@@ -76,7 +80,7 @@ const endpoints = (outcome: unknown): string[] =>
     outcome as { facts: { endpoints: { value: string }[] } }
   ).facts.endpoints.map(({ value }) => value);
 
-describe("owned web bundle analysis worker", () => {
+describe("owned web bundle analysis worker bounds", () => {
   it("reports heap exhaustion for one script and keeps the others", async () => {
     const dependencies = tracked({ limits: { heapMb: 96 } });
     const result = await analyzeWebBundleScripts(
@@ -84,7 +88,7 @@ describe("owned web bundle analysis worker", () => {
       {},
       dependencies,
     );
-    if (!result.ok) throw result.error;
+    if (!result.ok) throw result.error.error;
     expect(result.value.map(({ status }) => status)).toEqual([
       "analyzed",
       "resource_limited",
@@ -106,7 +110,7 @@ describe("owned web bundle analysis worker", () => {
       {},
       dependencies,
     );
-    if (!result.ok) throw result.error;
+    if (!result.ok) throw result.error.error;
     expect(result.value[0]).toMatchObject({
       status: "resource_limited",
       resource: "cpu",
@@ -123,13 +127,15 @@ describe("owned web bundle analysis worker", () => {
         limits: { resultBytes: 16 },
       },
     );
-    if (!result.ok) throw result.error;
+    if (!result.ok) throw result.error.error;
     expect(result.value[0]).toMatchObject({
       status: "resource_limited",
       resource: "capacity",
     });
   }, 60_000);
+});
 
+describe("owned web bundle analysis worker lifecycle", () => {
   it("cancels during active analysis with the caller's reason and releases the worker", async () => {
     const controller = new AbortController();
     const reason = new Error("caller stopped analysis");
@@ -152,11 +158,38 @@ describe("owned web bundle analysis worker", () => {
       dependencies,
     );
     if (result.ok) throw new Error("expected cancellation");
-    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-    expect(result.error.cause).toBe(reason);
+    expect(result.error.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.error.cause).toBe(reason);
+    expect(result.error.completed).toBeUndefined();
     expect(pid).toBeDefined();
     expect(() => process.kill(pid ?? 0, 0)).toThrow();
     await released(dependencies.roots);
+  }, 60_000);
+
+  it("keeps every frame from many scripts while the parent is stalled", async () => {
+    const scripts = Array.from({ length: 40 }, (_, index) =>
+      script(index % 10, `fetch("/api/burst-${String(index)}");`),
+    ).map((item, index) => ({
+      ...item,
+      script_key: `scr_${String(index % 10).repeat(64)}_${String(index)}`,
+    }));
+    const result = await analyzeWebBundleScripts(
+      scripts,
+      {},
+      {
+        launcher: async (options) => {
+          const spawned = await spawnOwnedProviderProcess(options);
+          // Block the parent event loop while the worker emits every frame.
+          const until = Date.now() + 2_000;
+          while (Date.now() < until);
+          return spawned;
+        },
+      },
+    );
+    if (!result.ok) throw result.error.error;
+    expect(result.value.map(endpoints)).toEqual(
+      scripts.map((_, index) => [`/api/burst-${String(index)}`]),
+    );
   }, 60_000);
 
   it("reports an unexplained worker exit as a provider failure", async () => {
@@ -169,8 +202,8 @@ describe("owned web bundle analysis worker", () => {
     });
     const result = await analyzeWebBundleScripts([small(1)], {}, dependencies);
     if (result.ok) throw new Error("expected worker failure");
-    expect(result.error).toBeInstanceOf(ProviderAdapterError);
-    expect(result.error).toMatchObject({
+    expect(result.error.error).toBeInstanceOf(ProviderAdapterError);
+    expect(result.error.error).toMatchObject({
       diagnostics: { script_index: 0, exit_code: 3 },
     });
     await released(dependencies.roots);
@@ -198,10 +231,12 @@ describe("owned web bundle analysis worker", () => {
       },
     );
     if (first.ok) throw new Error("expected cleanup failure");
-    expect(first.error).toBeInstanceOf(WebBundleAnalysisCleanupFailure);
-    expect(first.error).toMatchObject({
+    expect(first.error.error).toBeInstanceOf(WebBundleAnalysisCleanupFailure);
+    expect(first.error.error).toMatchObject({
       diagnostics: { cleanup_failures: ["injected root release failure"] },
     });
+    // The analysis finished before cleanup failed, so its outcome survives.
+    expect(endpoints(first.error.completed?.[0])).toEqual(["/api/kept-1"]);
     await access(roots[0] ?? "");
     failClose = false;
     const second = await analyzeWebBundleScripts(
@@ -211,7 +246,7 @@ describe("owned web bundle analysis worker", () => {
         createRuntime,
       },
     );
-    if (!second.ok) throw second.error;
+    if (!second.ok) throw second.error.error;
     expect(endpoints(second.value[0])).toEqual(["/api/kept-2"]);
     await released(roots);
   }, 60_000);
@@ -256,7 +291,9 @@ describe("CdpBrowserProvider bundle analysis through the owned analyzer", () => 
     const cancelled = new AnalysisCancelledError("analyze_web_bundle", {
       cause: new Error("caller reason"),
     });
-    const provider = new CdpBrowserProvider(async () => err(cancelled));
+    const provider = new CdpBrowserProvider(async () =>
+      err({ error: cancelled }),
+    );
     const result = await provider.analyzeBundle(
       request(browser.endpoint, browser.allowedOrigin),
     );
@@ -264,6 +301,33 @@ describe("CdpBrowserProvider bundle analysis through the owned analyzer", () => 
     expect(result.error).toBe(cancelled);
     expect(result.error.partialObservation).toMatchObject({
       target: { target_id: "allowed-page" },
+    });
+  });
+
+  it("keeps a completed analysis as partial Evidence when cleanup fails afterwards", async () => {
+    const browser = await startFakeCdpBrowser();
+    trackBrowser(browser);
+    const cleanup = new ProviderCleanupError("web-bundle-analysis", ["run"], {
+      reason: "injected",
+    });
+    const provider = new CdpBrowserProvider(async (scripts) =>
+      err({
+        error: cleanup,
+        completed: scripts.map((item) => ({
+          status: "analyzed" as const,
+          facts: analyzeWebBundleScript(item),
+        })),
+      }),
+    );
+    const result = await analyzeWebBundle(
+      provider,
+      request(browser.endpoint, browser.allowedOrigin),
+    );
+    if (result.ok) throw new Error("expected cleanup failure");
+    expect(result.error).toBe(cleanup);
+    expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+      operation: "analyze_web_bundle",
+      normalized_result: { completeness: { status: "complete" } },
     });
   });
 });

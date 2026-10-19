@@ -3,7 +3,10 @@ import type {
   InspectWebPageInput,
   ListBrowserTargetsInput,
 } from "../domain/browserObservation.js";
-import type { AnalyzeWebBundleInput } from "../domain/webBundleAnalysis.js";
+import {
+  webBundleAnalysisSchema,
+  type AnalyzeWebBundleInput,
+} from "../domain/webBundleAnalysis.js";
 import type { ObserveWebSessionInput } from "../domain/browserSession.js";
 import type { DiscoverWebMcpToolsInput } from "../domain/webMcpDiscovery.js";
 import type { BrowserCaptureComparisonInput } from "../domain/browserCaptureComparison.js";
@@ -247,7 +250,11 @@ const browserEvidence = (
   );
 };
 
-/** Convert a provider-retained page capture without claiming bundle analysis completed. */
+/**
+ * Convert a provider-retained page capture without claiming bundle analysis
+ * completed, or a bundle analysis that completed before cancellation or
+ * cleanup failure.
+ */
 const retainPageInspection = (
   error: AnalysisError,
   input: InspectWebPageInput | AnalyzeWebBundleInput,
@@ -255,6 +262,32 @@ const retainPageInspection = (
   errorOperation: "inspect_web_page" | "analyze_web_bundle",
 ): Result<Evidence, AnalysisError> => {
   const partial = error.partialObservation;
+  if (
+    errorOperation === "analyze_web_bundle" &&
+    "fetch_source_maps" in input &&
+    partial !== undefined &&
+    "observations" in partial &&
+    "capture" in partial
+  ) {
+    const analysis = webBundleAnalysisSchema.safeParse(partial);
+    if (!analysis.success)
+      return err(
+        error instanceof AnalysisCancelledError
+          ? new AnalysisOutputError(
+              errorOperation,
+              "Browser provider retained a malformed completed bundle analysis.",
+              { cause: analysis.error },
+            )
+          : error,
+      );
+    error.partialObservation = createBrowserEvidence(
+      "analyze_web_bundle",
+      input,
+      analysis.data,
+      provider.identity(),
+    );
+    return err(error);
+  }
   if (
     partial === undefined ||
     "evidence_id" in partial ||
