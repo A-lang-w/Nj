@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
 import {
   describeEvidenceBundleFailure,
@@ -91,7 +91,7 @@ const readBundle = async (
     if (failure.kind === "single-record")
       return err(
         new EvidenceFileError("read", "wrong-kind", {
-          path: resolve(path),
+          path: absoluteCallerPath(path),
           cause,
           userMessage: failure.message,
         }),
