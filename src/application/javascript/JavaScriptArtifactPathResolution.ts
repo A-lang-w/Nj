@@ -1414,7 +1414,7 @@ const readPackageMetadata = (
       limitation: `Directory package metadata ${path} is not valid package JSON.`,
     };
   }
-  if (typeof value !== "object" || value === null)
+  if (typeof value !== "object" || value === null || Array.isArray(value))
     return {
       kind: "unavailable",
       limitation: `Directory package metadata ${path} is not valid package JSON.`,

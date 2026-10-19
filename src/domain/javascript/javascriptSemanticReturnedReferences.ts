@@ -294,6 +294,16 @@ export const createSemanticReturnedReferences = (
       const current = work.pop();
       if (current === undefined) break;
       const { node } = current;
+      // An exact empty selection with an invocation is the value being called,
+      // not a container whose callable children are potential escape targets.
+      // Ordinary objects and arrays cannot supply that callable receiver. An
+      // unknown projection still visits the full closure after budget widening.
+      if (
+        current.invocation !== undefined &&
+        current.path?.length === 0 &&
+        (t.isObjectExpression(node) || t.isArrayExpression(node))
+      )
+        continue;
       const pending: Candidate[] = [];
       if (t.isIdentifier(node)) {
         const binding = resolveSemanticBindingState(state, node, node.name);

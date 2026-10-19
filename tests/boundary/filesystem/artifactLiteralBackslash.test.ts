@@ -18,6 +18,44 @@ import {
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
+import type { JavaScriptApplicationGraph } from "../../../src/domain/javascript/javascriptApplicationGraph.js";
+
+const loaderImports = (graph: JavaScriptApplicationGraph) =>
+  graph.edges.filter(
+    ({ relation, properties }) =>
+      relation === "imports" &&
+      properties.specifier === "./b.js" &&
+      (properties.kind === "static-import" ||
+        properties.kind === "dynamic-import" ||
+        properties.kind === "require"),
+  );
+
+const forwardedExports = (graph: JavaScriptApplicationGraph) =>
+  graph.edges.filter(
+    ({ relation, properties }) =>
+      relation === "imports" &&
+      properties.specifier === "./b.js" &&
+      (properties.module_link_kind === "export" ||
+        properties.module_link_kind === "commonjs-export"),
+  );
+
+const writeLoaderExportFixture = async (
+  source: string,
+  directory: string,
+  targetBody: string,
+): Promise<void> => {
+  await mkdir(join(source, directory), { recursive: true });
+  for (const [name, body] of [
+    [
+      "a.mjs",
+      "import { marker } from './b.js'; export { marker }; import('./b.js');\n",
+    ],
+    ["a.cjs", "module.exports = require('./b.js');\n"],
+    ["a.ts", "import { marker } from './b.js'; export { marker };\n"],
+    ["b.js", targetBody],
+  ] as const)
+    await writeFile(join(source, directory, name), body);
+};
 
 const NAMES = [
   "literal\\name.txt",
@@ -192,28 +230,68 @@ it("rejects inherited encoded separators with the real Node ESM loader before fi
   });
 });
 
+it("keeps loader modes separate from forwarded export relationships", async () => {
+  const root = await createTestTempDirectory("rea-loader-export-contract-");
+  const source = join(root, "source");
+  await writeLoaderExportFixture(
+    source,
+    "ordinary",
+    "export const marker = 'target';\n",
+  );
+  const result = await analyzeJavaScriptApplication({
+    input_path: source,
+    format: "directory",
+  });
+  if (!result.ok) throw result.error;
+  const { graph } = javascriptApplicationAnalysisResultSchema.parse(
+    result.value.normalized_result,
+  );
+  const imports = loaderImports(graph);
+  expect(imports).toHaveLength(4);
+  expect(
+    imports.map(({ properties }) => [
+      properties.kind,
+      properties.resolution_mode,
+    ]),
+  ).toEqual(
+    expect.arrayContaining([
+      ["require", "require"],
+      ["dynamic-import", "import"],
+      ["static-import", "import"],
+      ["static-import", "compiler-dependent"],
+    ]),
+  );
+  const exports = forwardedExports(graph);
+  expect(exports).toHaveLength(3);
+  expect(
+    exports.map(({ properties }) => [
+      properties.module_link_kind,
+      properties.exported_name,
+      properties.resolution_mode,
+    ]),
+  ).toEqual(
+    expect.arrayContaining([
+      ["export", "marker", undefined],
+      ["export", "marker", "compiler-dependent"],
+      ["commonjs-export", "default", undefined],
+    ]),
+  );
+  for (const { properties } of [...imports, ...exports])
+    expect(properties).toMatchObject({
+      resolved_path: "ordinary/b.js",
+      resolution_status: "resolved",
+    });
+});
+
 it.skipIf(process.platform === "win32").each(["directory", "asar"] as const)(
   "preserves loader-specific relative paths inside a literal POSIX directory from %s",
   async (format) => {
     const root = await createTestTempDirectory("rea-backslash-import-base-");
     const source = join(root, "source");
     const literal = "literal\\dir";
-    await mkdir(join(source, literal), { recursive: true });
     await mkdir(join(source, "literal", "dir"), { recursive: true });
     const body = "export const marker = 'literal';\n";
-    await writeFile(
-      join(source, literal, "a.mjs"),
-      "import { marker } from './b.js'; export { marker }; import('./b.js');\n",
-    );
-    await writeFile(
-      join(source, literal, "a.cjs"),
-      "module.exports = require('./b.js');\n",
-    );
-    await writeFile(
-      join(source, literal, "a.ts"),
-      "import { marker } from './b.js'; export { marker };\n",
-    );
-    await writeFile(join(source, literal, "b.js"), body);
+    await writeLoaderExportFixture(source, literal, body);
     await writeFile(
       join(source, "literal", "dir", "b.js"),
       "export const marker = 'decoy';\n",
@@ -232,10 +310,8 @@ it.skipIf(process.platform === "win32").each(["directory", "asar"] as const)(
     const parsed = javascriptApplicationAnalysisResultSchema.parse(
       result.value.normalized_result,
     );
-    const imports = parsed.graph.edges.filter(
-      ({ properties }) => properties.specifier === "./b.js",
-    );
-    expect(imports.length).toBeGreaterThan(0);
+    const imports = loaderImports(parsed.graph);
+    expect(imports).toHaveLength(4);
     expect(
       new Set(imports.map(({ properties }) => properties.resolution_mode)),
     ).toEqual(new Set(["require", "import", "compiler-dependent"]));
@@ -263,6 +339,30 @@ it.skipIf(process.platform === "win32").each(["directory", "asar"] as const)(
             resolved_path: `${literal}/b.js`,
           }),
         ]);
+    }
+    const exports = forwardedExports(parsed.graph);
+    expect(exports).toHaveLength(3);
+    for (const exported of exports) {
+      const sourceNode = parsed.graph.nodes.find(
+        ({ node_id }) => node_id === exported.source_node_id,
+      );
+      const path = sourceNode?.observations.find(
+        ({ properties }) => typeof properties.module_path === "string",
+      )?.properties.module_path;
+      expect([
+        `${literal}/a.cjs`,
+        `${literal}/a.mjs`,
+        `${literal}/a.ts`,
+      ]).toContain(path);
+      expect(exported.properties).toMatchObject({
+        resolved_path: path === `${literal}/a.cjs` ? `${literal}/b.js` : null,
+        resolution_status:
+          path === `${literal}/a.cjs`
+            ? "resolved"
+            : path === `${literal}/a.mjs`
+              ? "rejected"
+              : "unavailable",
+      });
     }
     expect(parsed.graph.nodes).toEqual(
       expect.arrayContaining([

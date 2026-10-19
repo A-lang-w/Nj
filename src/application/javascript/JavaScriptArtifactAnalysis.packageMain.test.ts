@@ -51,7 +51,7 @@ it.each([
   },
 );
 
-it.each(["{", "null", "[]"])(
+it.each(["{", "null", "[]", "[{}]", "123", '"root"', "false"])(
   "keeps malformed package metadata %s out of known launch fallback",
   (text) => {
     expect(packageObservation(text)).toMatchObject({

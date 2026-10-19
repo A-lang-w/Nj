@@ -43,6 +43,8 @@ import {
   type SemanticAliasSelectionPath,
 } from "./javascriptSemanticAliasSelections.js";
 import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
+import { isUnmodifiedImportMetaUrl } from "./javascriptSemanticAmbientWrites.js";
+import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
 
 export interface JavaScriptRequireOrigin {
   readonly origin: JavaScriptModuleOrigin;
@@ -114,23 +116,35 @@ const commonJsLoaderAt = (
 ): JavaScriptRequireLoaderFact =>
   commonJsDelegateChangedAt(node, state) ? "unknown" : "commonjs-loader";
 
-/** Classify a bare `require(...)` using the shared lexical binding owner. */
+/** Associate wrapper lookups with their loader; this does not claim execution. */
 export const semanticRequireLoaderAt = (
   node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
   state: JavaScriptSemanticAnalysisState,
   factoryBindingIds: ReadonlySet<string>,
 ): JavaScriptRequireLoaderFact => {
   const callee = unwrapJavaScriptExpression(node.callee).node;
-  const loader = t.isIdentifier(callee, { name: "require" })
-    ? callee
-    : (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
-        ["resolve", "main"].includes(
-          semanticStaticPropertyKey(callee.property, callee.computed) ?? "",
-        ) &&
-        t.isIdentifier(callee.object, { name: "require" })
+  const loader =
+    (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+    ["resolve", "main"].includes(
+      semanticStaticPropertyKey(callee.property, callee.computed) ?? "",
+    )
       ? callee.object
-      : undefined;
-  if (loader === undefined) return "local";
+      : callee;
+  return requireLoaderValueAt(loader, node, state, factoryBindingIds);
+};
+
+/** Classify Node's wrapper and exact factory bindings by their lexical owner. */
+const requireLoaderValueAt = (
+  value: t.Node,
+  node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  state: JavaScriptSemanticAnalysisState,
+  factoryBindingIds: ReadonlySet<string>,
+): JavaScriptRequireLoaderFact => {
+  const callee = unwrapJavaScriptExpression(value).node;
+  // Only the selected require function is callable as the host loader.
+  // Its resolve/main members remain association facts in the wrapper above.
+  if (!t.isIdentifier(callee, { name: "require" })) return "local";
+  const loader = callee;
   const binding = resolveSemanticBindingState(state, loader, "require");
   if (binding === undefined) {
     if (semanticResolutionBlocked(state, loader, "require")) return "unknown";
@@ -233,6 +247,13 @@ const isSemanticCreateRequireBinding = (
 ): boolean => {
   if (binding.initializers.length !== 1) return false;
   const initializer = semanticStableInitializer(binding, state)?.node;
+  return isSemanticCreateRequireCall(initializer, state);
+};
+
+const isSemanticCreateRequireCall = (
+  initializer: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): initializer is t.CallExpression => {
   if (!t.isCallExpression(initializer)) return false;
   const callee = unwrapJavaScriptExpression(initializer.callee).node;
   if (t.isIdentifier(callee)) {
@@ -265,6 +286,228 @@ const isSemanticCreateRequireBinding = (
     origin?.importedPath.length === 0 &&
     ["module", "node:module"].includes(origin.specifier)
   );
+};
+
+/** Follow the shared selected-source facts to the factory that created a loader. */
+const createdRequireSourcesAt = (
+  root: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): { readonly sourceRelative: boolean } | undefined => {
+  const pending: ModuleObjectSource[] = [{ node: root, path: [] }];
+  const seen = new WeakMap<t.Node, Set<string>>();
+  let count = 0;
+  let found = false;
+  let createdBinding = false;
+  let unknown = false;
+  let sourceRelative = true;
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    const node = unwrapJavaScriptExpression(current.node).node;
+    const key = JSON.stringify([current.path, loaderSourceContextKey(current)]);
+    const paths = seen.get(node) ?? new Set<string>();
+    if (paths.has(key)) continue;
+    paths.add(key);
+    seen.set(node, paths);
+    if (++count > SEMANTIC_ALIAS_SELECTION_LIMIT) {
+      state.valueResourceLimits.add("alias-selections");
+      return { sourceRelative: false };
+    }
+    if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+      pending.push(
+        ...inheritLoaderSourceContext(current, [
+          loaderMemberSource(current, node),
+        ]),
+      );
+    } else if (t.isIdentifier(node)) {
+      const binding = resolveSemanticBindingState(state, node, node.name);
+      if (binding === undefined) {
+        unknown ||= current.path.length === 0;
+        continue;
+      }
+      // Eligibility is separate from the selected value: replacing a known
+      // loader with an opaque value keeps a gap, while a proven local function
+      // no longer claims the previous factory's base or identity.
+      createdBinding ||= binding.initializers.some((source) =>
+        isSemanticCreateRequireCall(source.node, state),
+      );
+      const sources = moduleObjectSourcesAtRead(
+        binding,
+        node,
+        current.path,
+        state,
+        true,
+        current.readAt ?? node,
+        current.capturedSelections,
+      );
+      if (sources === undefined) {
+        unknown = true;
+        const retained = semanticBindingAtRead(
+          binding,
+          node,
+          state.parentsByNode,
+        ).binding;
+        pending.push(
+          ...inheritLoaderSourceContext(
+            current,
+            projectedLoaderSources(
+              current,
+              [...retained.initializers, ...retained.referenceInitializers]
+                .filter(
+                  (source) => !semanticReferenceSourcesInactive(source, state),
+                )
+                .map((source) => ({
+                  node: source.node,
+                  path: [...source.projection, ...current.path],
+                })),
+            ),
+          ),
+        );
+      } else
+        pending.push(
+          ...inheritLoaderSourceContext(
+            current,
+            projectedLoaderSources(current, sources),
+          ),
+        );
+    } else if (t.isObjectExpression(node) || t.isArrayExpression(node)) {
+      if (current.path.length === 0) continue;
+      pending.push(
+        ...inheritLoaderSourceContext(
+          current,
+          loaderObjectPropertySources(current, node, state),
+        ),
+      );
+    } else if (t.isSequenceExpression(node)) {
+      const last = node.expressions.at(-1);
+      if (last !== undefined) pending.push({ ...current, node: last });
+    } else if (t.isConditionalExpression(node) || t.isLogicalExpression(node)) {
+      pending.push(
+        {
+          ...current,
+          node: t.isConditionalExpression(node) ? node.consequent : node.left,
+        },
+        {
+          ...current,
+          node: t.isConditionalExpression(node) ? node.alternate : node.right,
+        },
+      );
+    } else if (
+      current.path.length === 0 &&
+      isSemanticCreateRequireCall(node, state)
+    ) {
+      found = true;
+      unknown ||= state.conditionallySkippedExpressions.has(node);
+      sourceRelative &&= isUnmodifiedImportMetaUrl(node.arguments[0], state);
+    }
+  }
+  return found || (createdBinding && unknown)
+    ? { sourceRelative: found && sourceRelative && !unknown }
+    : undefined;
+};
+
+const loaderInvocationInterops = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  {
+    readonly writes: number;
+    readonly interop: ReturnType<typeof createSemanticModuleInterop>;
+  }
+>();
+
+const loaderInvocationInterop = (state: JavaScriptSemanticAnalysisState) => {
+  const prior = loaderInvocationInterops.get(state);
+  if (prior?.writes === state.ambientWriteEffects.length) return prior.interop;
+  const interop = createSemanticModuleInterop(state);
+  for (const effect of state.ambientWriteEffects)
+    if (effect.path[0] === "global")
+      interop.retainWrite(effect.node ?? state.program, [
+        "intrinsic",
+        ...effect.path
+          .slice(1)
+          .map((key) =>
+            key === null || typeof key === "object" ? null : String(key),
+          ),
+      ]);
+  loaderInvocationInterops.set(state, {
+    writes: state.ambientWriteEffects.length,
+    interop,
+  });
+  return interop;
+};
+
+export interface JavaScriptRequireCallFact {
+  readonly loader: JavaScriptRequireLoaderFact;
+  readonly arguments:
+    | readonly t.CallExpression["arguments"][number][]
+    | undefined;
+  readonly sourceRelative: boolean;
+}
+
+/** Classify the selected loader and normalize invocation arguments once. */
+export const semanticRequireCallAt = (
+  node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  state: JavaScriptSemanticAnalysisState,
+  factoryBindingIds: ReadonlySet<string>,
+): JavaScriptRequireCallFact | undefined => {
+  if (semanticModuleRequireCallAt(node, state))
+    return { loader: "unknown", arguments: undefined, sourceRelative: false };
+  if (t.isNewExpression(node)) {
+    const loader = requireLoaderValueAt(
+      node.callee,
+      node,
+      state,
+      factoryBindingIds,
+    );
+    const created = createdRequireSourcesAt(node.callee, state);
+    if (created !== undefined || loader !== "local")
+      return {
+        loader: created === undefined ? loader : "create-require",
+        arguments: node.arguments,
+        sourceRelative: created?.sourceRelative ?? loader !== "create-require",
+      };
+  }
+  const interop = loaderInvocationInterop(state);
+  if (!t.isNewExpression(node)) {
+    const invocation = interop.intrinsicInvocation(node, (callee) => {
+      const loader = requireLoaderValueAt(
+        callee,
+        node,
+        state,
+        factoryBindingIds,
+      );
+      if (loader !== "local" && loader !== "create-require")
+        return ["require-loader", loader, "relative"];
+      const created = createdRequireSourcesAt(callee, state);
+      if (created !== undefined)
+        return [
+          "require-loader",
+          "create-require",
+          created.sourceRelative ? "relative" : "unknown",
+        ];
+      return interop.intrinsicPath(callee);
+    });
+    if (invocation?.path[0] === "require-loader")
+      return {
+        loader:
+          invocation.kind === "opaque"
+            ? "unknown"
+            : (invocation.path[1] as JavaScriptRequireLoaderFact),
+        arguments: invocation.arguments,
+        sourceRelative:
+          invocation.kind === "known" && invocation.path[2] === "relative",
+      };
+  }
+  const factory = semanticFactoryRequireLoaderAt(
+    node,
+    state,
+    factoryBindingIds,
+  );
+  return factory === undefined
+    ? undefined
+    : {
+        loader: factory,
+        arguments: node.arguments.slice(t.isIdentifier(node.callee) ? 0 : 1),
+        sourceRelative: true,
+      };
 };
 
 /** The RHS call runs before its assignment replaces Node's wrapper loader. */
@@ -327,6 +570,108 @@ type ModuleObjectSource = {
     | undefined;
 };
 
+/** Both loader queries retain the same read and shallow-copy selection owner. */
+const loaderSourceContextKey = (source: ModuleObjectSource): string =>
+  JSON.stringify([
+    source.readAt?.start,
+    source.readAt?.end,
+    source.capturedSelections?.map(({ at, depth, ownEnumerable }) => [
+      at.start,
+      at.end,
+      depth,
+      ownEnumerable,
+    ]),
+  ]);
+
+const inheritLoaderSourceContext = (
+  current: ModuleObjectSource,
+  sources: readonly ModuleObjectSource[],
+): ModuleObjectSource[] =>
+  sources.map((source) => ({
+    ...(current.readAt === undefined ? {} : { readAt: current.readAt }),
+    ...source,
+    capturedSelections: semanticNormalizeCapturedSelections(
+      source.capturedSelections ?? current.capturedSelections,
+      source.path.length,
+    ),
+  }));
+
+const loaderMemberSource = (
+  current: ModuleObjectSource,
+  member: t.MemberExpression | t.OptionalMemberExpression,
+): ModuleObjectSource => ({
+  node: member.object,
+  readAt: current.readAt ?? member,
+  capturedSelections: semanticShiftCapturedSelections(
+    current.capturedSelections,
+    1,
+  ),
+  path: [
+    semanticStaticPropertyKey(member.property, member.computed),
+    ...current.path,
+  ],
+});
+
+const projectedLoaderSources = (
+  current: ModuleObjectSource,
+  sources: readonly ModuleObjectSource[],
+): ModuleObjectSource[] =>
+  sources.map((source) => ({
+    ...source,
+    readAt:
+      current.path.length === 0 ? undefined : (current.readAt ?? current.node),
+    capturedSelections: [
+      ...(semanticShiftCapturedSelections(
+        current.capturedSelections,
+        source.path.length - current.path.length,
+      ) ?? []),
+      ...(source.capturedSelections ?? []),
+    ],
+  }));
+
+const loaderObjectPropertySources = (
+  current: ModuleObjectSource,
+  object: t.ObjectExpression | t.ArrayExpression,
+  state: JavaScriptSemanticAnalysisState,
+): ModuleObjectSource[] => {
+  const [key, ...remaining] = current.path;
+  if (key === undefined) return [];
+  return semanticAliasSelectionChoices(key).flatMap((choice) =>
+    (t.isObjectExpression(object)
+      ? semanticObjectPropertyReferences(object, [choice], state)
+      : semanticArrayPropertyReferences(object, [choice])
+    )
+      .filter(
+        (source) =>
+          !source.inherited ||
+          !current.capturedSelections?.some(
+            (capture) => capture.depth === 1 && capture.ownEnumerable,
+          ),
+      )
+      .map((source) => ({
+        node: source.node,
+        path: [...source.path, ...remaining],
+        capturedSelections: [
+          ...(semanticShiftCapturedSelections(
+            current.capturedSelections,
+            source.path.length - 1,
+          ) ?? []),
+          ...(source.capturedSelectionAt === undefined
+            ? []
+            : [
+                {
+                  at: source.capturedSelectionAt,
+                  depth: source.path.length,
+                  ...(source.ownEnumerable
+                    ? { ownEnumerable: true as const }
+                    : {}),
+                },
+              ]),
+        ],
+      })),
+  );
+};
+
 const isCommonJsModuleObject = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
@@ -378,17 +723,7 @@ const hasCommonJsModuleSource = (
     const byMode =
       contexts.get(value) ??
       new Map<string, { readonly identities: Map<string, object> }>();
-    const modeKey = JSON.stringify([
-      awaitDepths,
-      next.readAt?.start,
-      next.readAt?.end,
-      next.capturedSelections?.map(({ at, depth, ownEnumerable }) => [
-        at.start,
-        at.end,
-        depth,
-        ownEnumerable,
-      ]),
-    ]);
+    const modeKey = JSON.stringify([awaitDepths, loaderSourceContextKey(next)]);
     let context = byMode.get(modeKey);
     if (context === undefined) {
       context = { identities: new Map() };
@@ -424,16 +759,8 @@ const hasCommonJsModuleSource = (
       ...sources: ModuleObjectSource[]
     ) => {
       pending.push(
-        ...sources.map((source) => ({
-          ...(next.readAt === undefined ? {} : { readAt: next.readAt }),
-          ...(next.capturedSelections === undefined
-            ? {}
-            : { capturedSelections: next.capturedSelections }),
+        ...inheritLoaderSourceContext(next, sources).map((source) => ({
           ...source,
-          capturedSelections: semanticNormalizeCapturedSelections(
-            source.capturedSelections ?? next.capturedSelections,
-            source.path.length,
-          ),
           ancestors,
           awaitDepths: depths,
         })),
@@ -452,55 +779,18 @@ const hasCommonJsModuleSource = (
       continue;
     }
     if (t.isMemberExpression(value) || t.isOptionalMemberExpression(value)) {
-      enqueue({
-        node: value.object,
-        readAt: next.readAt ?? value,
-        capturedSelections: semanticShiftCapturedSelections(
-          next.capturedSelections,
-          1,
-        ),
-        path: [
-          semanticStaticPropertyKey(value.property, value.computed),
-          ...path,
-        ],
-      });
+      enqueue(loaderMemberSource({ ...next, path }, value));
       continue;
     }
     if (
       path.length > 0 &&
       (t.isObjectExpression(value) || t.isArrayExpression(value))
     ) {
-      const [key, ...remaining] = path;
-      if (key !== undefined)
-        for (const choice of semanticAliasSelectionChoices(key))
-          enqueueAt(
-            // Awaiting a fresh container does not await one of its children.
-            awaitDepths.filter((depth) => depth !== path.length),
-            ...(t.isObjectExpression(value)
-              ? semanticObjectPropertyReferences(value, [choice], state)
-              : semanticArrayPropertyReferences(value, [choice])
-            ).map((source) => ({
-              node: source.node,
-              path: [...source.path, ...remaining],
-              capturedSelections: [
-                ...(semanticShiftCapturedSelections(
-                  next.capturedSelections,
-                  source.path.length - 1,
-                ) ?? []),
-                ...(source.capturedSelectionAt === undefined
-                  ? []
-                  : [
-                      {
-                        at: source.capturedSelectionAt,
-                        depth: source.path.length,
-                        ...(source.ownEnumerable
-                          ? { ownEnumerable: true as const }
-                          : {}),
-                      },
-                    ]),
-              ],
-            })),
-          );
+      enqueueAt(
+        // Awaiting a fresh container does not await one of its children.
+        awaitDepths.filter((depth) => depth !== path.length),
+        ...loaderObjectPropertySources({ ...next, path }, value, state),
+      );
       continue;
     }
     if (t.isConditionalExpression(value) || t.isLogicalExpression(value)) {
@@ -613,19 +903,7 @@ const hasCommonJsModuleSource = (
       next.capturedSelections,
     );
     if (sources === undefined) return true;
-    enqueue(
-      ...sources.map((source) => ({
-        ...source,
-        readAt: path.length === 0 ? undefined : (next.readAt ?? value),
-        capturedSelections: [
-          ...(semanticShiftCapturedSelections(
-            next.capturedSelections,
-            source.path.length - path.length,
-          ) ?? []),
-          ...(source.capturedSelections ?? []),
-        ],
-      })),
-    );
+    enqueue(...projectedLoaderSources({ ...next, node: value, path }, sources));
   }
   return false;
 };
@@ -673,7 +951,17 @@ export const semanticModuleRequireCallAt = (
     target = unwrapJavaScriptExpression(target.object).node;
   // The callee is selected before the current invocation can escape or mutate
   // its receiver. Earlier captured member reads retain their own source site.
-  return isCommonJsRequireDelegate(target, state, includeUnknown, node);
+  if (isCommonJsRequireDelegate(target, state, includeUnknown, node))
+    return true;
+  if (t.isNewExpression(node)) return false;
+  const interop = loaderInvocationInterop(state);
+  return (
+    interop.intrinsicInvocation(node, (callee) =>
+      isCommonJsRequireDelegate(callee, state, false, node)
+        ? ["commonjs-require-delegate"]
+        : interop.intrinsicPath(callee),
+    )?.path[0] === "commonjs-require-delegate"
+  );
 };
 
 const writesModuleRequire = (

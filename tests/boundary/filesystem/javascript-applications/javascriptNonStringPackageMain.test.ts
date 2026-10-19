@@ -5,6 +5,7 @@ import { expect, it } from "vitest";
 
 import { analyzeJavaScriptArtifactFiles } from "../../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
 import { buildJavaScriptArtifactGraph } from "../../../../src/application/javascript/JavaScriptArtifactGraphBuilder.js";
+import { resolveArtifactPathByContext } from "../../../../src/application/javascript/JavaScriptArtifactPathResolution.js";
 import { createJavaScriptArtifactReader } from "../../../../src/artifacts/javascript/JavaScriptArtifactReader.js";
 import { scanCanonicalArtifactInventory } from "../../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
@@ -66,38 +67,69 @@ it.each(
   },
 );
 
-it.each([{ request: "./b" }])(
-  "retains unknown launch ownership for invalid package JSON despite an index",
-  async ({ request }) => {
+it.each(
+  (
+    [
+      ["{", false],
+      ["[]", false],
+      ["[{}]", false],
+      ["123", false],
+      ['"root"', false],
+      ["null", false],
+      ["false", false],
+      ["{}", true],
+      ['{"main":[]}', true],
+    ] as const
+  ).map(([text, valid]) => ({ text, valid, request: "./b" })),
+)(
+  "distinguishes malformed package root $text from a valid index fallback",
+  async ({ text, valid, request }) => {
     const root = await createTestTempDirectory("rea-invalid-package-main-");
     await writeFixtureFiles(root, {
       "a/package.json": JSON.stringify({ main: "main.cjs" }),
       "a/main.cjs": windowSource,
       "a/index.html": "first application page",
-      "b/package.json": "{",
+      "b/package.json": text,
       "b/index.js": "module.exports={};",
       "index.html": "artifact-root decoy",
     });
     const require = createRequire(join(root, "node-control.cjs"));
-    expect(() => require.resolve(request)).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_PACKAGE_CONFIG" }),
-    );
+    if (valid) expect(require.resolve(request)).toBe(join(root, "b/index.js"));
+    else
+      expect(() => require.resolve(request)).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_PACKAGE_CONFIG" }),
+      );
     const snapshot = await scanCanonicalArtifactInventory(root, {});
     const reader = createJavaScriptArtifactReader(root, "directory");
     try {
       const files = await readJavaScriptArtifactFiles(reader, snapshot);
-      const graph = buildJavaScriptArtifactGraph(
-        snapshot,
-        files,
-        analyzeJavaScriptArtifactFiles(files),
-      );
+      const analysis = analyzeJavaScriptArtifactFiles(files);
+      expect(
+        analysis.packages.find(({ path }) => path === "b/package.json"),
+      ).toMatchObject({
+        status: valid ? "included" : "invalid",
+        main_entrypoint: valid ? "" : null,
+      });
+      expect(
+        resolveArtifactPathByContext({
+          sourcePath: "a/main.cjs",
+          declaredPath: "../b",
+          context: "module-specifier",
+          moduleKind: "require",
+          files: new Map(files.files.map((file) => [file.path, file])),
+        }),
+      ).toMatchObject({
+        resolution_status: valid ? "resolved" : "unavailable",
+        resolved_path: valid ? "b/index.js" : null,
+      });
+      const graph = buildJavaScriptArtifactGraph(snapshot, files, analysis);
       const role = graph.nodes.find(({ kind }) => kind === "electron-renderer");
       expect(role?.observations).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             properties: expect.objectContaining({
-              resolution_status: "unavailable",
-              resolved_path: null,
+              resolution_status: valid ? "resolved" : "unavailable",
+              resolved_path: valid ? "a/index.html" : null,
             }),
           }),
         ]),

@@ -7,6 +7,58 @@ import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js
 
 const cases = [
   {
+    name: "require.resolve does not execute its resolved module",
+    load: 'require.resolve("../shared/window.cjs");',
+    possible: false,
+  },
+  {
+    name: "require.main is not an implicit module loader",
+    load: 'require.main("../shared/window.cjs");',
+    possible: false,
+  },
+  {
+    name: "createRequire alias retains its source module base",
+    mainFile: "main.mjs",
+    load: 'import {createRequire} from "node:module";const load=createRequire(import.meta.url);load("../shared/window.cjs");',
+    possible: true,
+  },
+  {
+    name: "local createRequire name stays inert",
+    mainFile: "main.mjs",
+    load: 'const createRequire=()=>()=>{};const load=createRequire(import.meta.url);load("../shared/window.cjs");',
+    possible: false,
+  },
+  {
+    name: "Reflect.apply retains module delegate ownership",
+    load: 'Reflect.apply(module.require,module,["../shared/window.cjs"]);',
+    possible: true,
+  },
+  {
+    name: "local Reflect.apply stays inert",
+    load: 'const Reflect={apply(){}};Reflect.apply(module.require,module,["../shared/window.cjs"]);',
+    possible: false,
+  },
+  {
+    name: "noncallable generic receiver excludes callable children",
+    load: 'const get=()=>({});const invoke=get.call;const holder={invoke,other:()=>module};holder.invoke(null).require("../shared/window.cjs");',
+    possible: false,
+  },
+  {
+    name: "callable generic receiver retains its return",
+    load: 'const get=()=>({});const invoke=get.call;const holder=()=>module;holder.invoke=invoke;holder.other=()=>({});holder.invoke(null).require("../shared/window.cjs");',
+    possible: true,
+  },
+  {
+    name: "destructured module alias retains own copied delegate",
+    load: 'let selected;({selected}={selected:module});selected.require=module.require;const copy={...module};const load=copy.require;load.call(module,"../shared/window.cjs");',
+    possible: true,
+  },
+  {
+    name: "destructured local alias does not change module copies",
+    load: 'let selected;({selected}={selected:{require(){}}});selected.require=module.require;const copy={...module};const load=copy.require;load.call(module,"../shared/window.cjs");',
+    possible: false,
+  },
+  {
     name: "inherited delegate excluded from rest",
     load: 'const {...h}=module;h.require.call(module,"../shared/window.cjs");',
     possible: false,
@@ -69,11 +121,13 @@ cliTest.for(
   ),
 )(
   "preserves $name loader owner uncertainty through $surface",
-  async ({ surface, load, possible }, { cli }) => {
+  async (testCase, { cli }) => {
+    const { surface, load, possible } = testCase;
+    const mainFile = "mainFile" in testCase ? testCase.mainFile : "main.cjs";
     const root = await createTestTempDirectory("rea-sequence-loader-");
     await writeFixtureFiles(root, {
-      "a/package.json": '{"main":"main.cjs"}',
-      "a/main.cjs": `throw new Error('Static fixture must never execute');${load}`,
+      "a/package.json": JSON.stringify({ main: mainFile }),
+      [`a/${mainFile}`]: `throw new Error('Static fixture must never execute');${load}`,
       "a/index.html": "possible page",
       "b/package.json": '{"main":"main.cjs"}',
       "b/main.cjs": `throw new Error('Static fixture must never execute');require('../shared/window.cjs');`,

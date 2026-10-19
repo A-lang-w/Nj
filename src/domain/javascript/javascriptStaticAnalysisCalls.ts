@@ -50,8 +50,7 @@ import {
 import { semanticTopLevelEffectFollowsCapture } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticFactoryLoaderMemberAt,
-  semanticFactoryRequireLoaderAt,
-  semanticRequireLoaderAt,
+  semanticRequireCallAt,
   semanticModuleRequireCallAt,
   semanticModuleRequireReceiver,
 } from "./javascriptSemanticRequireOrigin.js";
@@ -257,64 +256,17 @@ const requireCallSpecifier = (
   bindings: JavaScriptSemanticAnalysisState,
   context: FindingContext,
 ): { readonly specifier: string | undefined } | null => {
-  // Parsing a module.require call does not establish the delegate's identity.
-  // Retain the unchecked load so graph ownership cannot read it as absence.
-  if (semanticModuleRequireCallAt(node, bindings)) {
-    context.accumulator.unknownFindings += 1;
-    return { specifier: undefined };
-  }
-  const bareRequire = t.isIdentifier(node.callee, { name: "require" });
-  if (bareRequire) {
-    const loader = semanticRequireLoaderAt(
-      node,
-      bindings,
-      context.accumulator.factoryRequireBindingIds,
-    );
-    if (loader === "local") return null;
-    const binding =
-      loader === "create-require"
-        ? resolveSemanticBindingState(bindings, node.callee, "require")
-        : undefined;
-    const initializer =
-      binding === undefined
-        ? undefined
-        : semanticStableInitializer(binding, bindings)?.node;
-    const unknownBase =
-      loader === "create-require" &&
-      (!t.isCallExpression(initializer) ||
-        !isUnmodifiedImportMetaUrl(initializer.arguments[0], bindings));
-    if (loader === "unknown" || unknownBase)
-      context.accumulator.unknownFindings += 1;
-    return {
-      specifier:
-        loader === "unknown" || unknownBase
-          ? undefined
-          : argumentValue(node.arguments[0]),
-    };
-  }
-  const factoryLoader = semanticFactoryRequireLoaderAt(
+  const call = semanticRequireCallAt(
     node,
     bindings,
     context.accumulator.factoryRequireBindingIds,
   );
-  if (factoryLoader === "factory-loader")
-    return {
-      specifier: argumentValue(
-        node.arguments[
-          t.isMemberExpression(unwrapJavaScriptExpression(node.callee).node) ||
-          t.isOptionalMemberExpression(
-            unwrapJavaScriptExpression(node.callee).node,
-          )
-            ? 1
-            : 0
-        ],
-      ),
-    };
-  if (factoryLoader === "unknown") {
+  if (call === undefined || call.loader === "local") return null;
+  if (call.loader === "unknown" || !call.sourceRelative) {
     context.accumulator.unknownFindings += 1;
     return { specifier: undefined };
   }
-  return null;
+  return { specifier: argumentValue(call.arguments?.[0]) };
 };
 
 /** Examine member-loader receivers only after shared alias mutation facts settle. */

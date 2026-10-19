@@ -22,6 +22,8 @@ import { expandSemanticGetterResult } from "./javascriptSemanticGetterResults.js
 export interface JavaScriptSemanticObjectReference {
   readonly node: t.Node;
   readonly path: PropertyPath;
+  /** This selection crossed the object's prototype, rather than an own slot. */
+  readonly inherited?: true;
   /** A shallow copy selects this prefix now while retaining its child identity. */
   readonly capturedSelectionAt?: t.Node;
   readonly ownEnumerable?: true;
@@ -679,6 +681,7 @@ class ObjectReferenceWalk {
       this.#references.push({
         node: property.value,
         path: [selected, ...this.#remaining],
+        inherited: true,
       });
     return true;
   }

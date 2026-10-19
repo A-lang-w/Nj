@@ -961,6 +961,37 @@ describe("legacy package main lookup", () => {
 });
 
 describe("legacy package main metadata validation and fallback", () => {
+  it.each(
+    ["[]", "[{}]", "123", '"root"', "null", "false"].flatMap((text) =>
+      (["import", "require", "compiler-dependent"] as const).map(
+        (moduleKind) => ({ text, moduleKind }),
+      ),
+    ),
+  )(
+    "blocks index fallback for non-object package root $text in $moduleKind mode",
+    ({ text, moduleKind }) => {
+      expect(
+        resolve({
+          declaredPath: "fixture",
+          sourcePath: "app/entry.js",
+          context: "module-specifier",
+          moduleKind,
+          files: fileMap([
+            file("app/entry.js", "root"),
+            file("app/node_modules/fixture/package.json", "root", text),
+            file("app/node_modules/fixture/index.js", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        resolution_status: "unavailable",
+        resolved_path: null,
+        limitations: expect.arrayContaining([
+          expect.stringContaining("not valid package JSON"),
+        ]),
+      });
+    },
+  );
+
   it("still rejects non-string package main metadata", () => {
     expect(
       resolve({
