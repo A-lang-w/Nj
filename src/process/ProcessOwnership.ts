@@ -12,7 +12,10 @@ import { launcherIdentityFailure } from "./ProcessOwnershipIdentity.js";
 import { descendantsOf, liveProcesses } from "./ProcessOwnershipProcessTree.js";
 import { readProcessRunTokens } from "./ProcessRunTokenObservations.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
+import {
+  isSettledProcessOwnershipFact,
+  ProcessOwnershipEvidenceOwner,
+} from "./ProcessOwnershipEvidence.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -188,7 +191,12 @@ export interface ProcessOwnershipHost {
 /** Whether one live process exposed its ownership token to the host. */
 export type ProcessRunTokenObservation =
   | { readonly state: "readable"; readonly runId: string | undefined }
-  | { readonly state: "unavailable"; readonly reason: string };
+  | {
+      readonly state: "unavailable";
+      readonly reason: string;
+      /** Native credential read during token inspection; requires matching surrounding identities. */
+      readonly effectiveUid?: number;
+    };
 
 /** Narrow Windows P0 seam for bounded process-tree termination. */
 export interface WindowsProcessTreeHost {
@@ -1354,16 +1362,14 @@ const scanWithOwnershipEvidence = async (
   const identities = new Map<number, string | null>();
 
   for (const fact of facts) {
+    if (isSettledProcessOwnershipFact(fact)) continue;
     if (fact.state === "replaced")
       failures.push({
         pid: fact.process.pid,
         reason: "process-identity-unavailable",
         diagnostic: "process identity changed during token validation",
       });
-    else if (
-      fact.state === "unavailable" &&
-      fact.identityAfter.state !== "absent"
-    )
+    else if (fact.state === "unavailable")
       failures.push({
         pid: fact.process.pid,
         reason: "process-identity-unavailable",
@@ -1382,7 +1388,6 @@ const scanWithOwnershipEvidence = async (
         reason: "run-token-mismatch",
       });
     if (fact.token.state !== "unavailable") continue;
-    if (fact.identityAfter.state === "absent") continue;
     const relationBefore =
       fact.identityBefore.state === "readable"
         ? fact.identityBefore.relation
@@ -1402,7 +1407,7 @@ const scanWithOwnershipEvidence = async (
     const observedUid =
       fact.state === "same-generation" &&
       fact.identityAfter.state === "readable"
-        ? fact.identityAfter.effectiveUid
+        ? (fact.identityAfter.effectiveUid ?? fact.token.effectiveUid)
         : undefined;
     if (
       knownUnrelated &&

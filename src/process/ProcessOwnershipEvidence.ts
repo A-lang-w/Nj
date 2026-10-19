@@ -6,6 +6,16 @@ import type {
   ProcessTableEntry,
 } from "./ProcessOwnership.js";
 
+/** A settled fact retires only the observed lifetime, never a reused or unknown one. */
+export const isSettledProcessOwnershipFact = (
+  fact: ProcessOwnershipFact,
+): boolean =>
+  fact.state === "absent" ||
+  (fact.state === "same-generation" &&
+    fact.identityAfter.state === "readable" &&
+    fact.identityAfter.lifecycle?.state === "observed" &&
+    fact.identityAfter.lifecycle.lifecycle === "zombie");
+
 export interface RetainedProcessOwnershipCandidate {
   readonly pid: number;
   /** Undefined means the generation has never been established, not PID ownership. */
@@ -203,14 +213,10 @@ export class ProcessOwnershipEvidenceOwner {
       // bounded observations, not claims about later PID reuse or global
       // liveness.
       if (
-        fact.state === "absent" ||
+        isSettledProcessOwnershipFact(fact) ||
         (previous.identity !== undefined &&
           fact.identityAfter.state === "readable" &&
-          fact.identityAfter.identity !== previous.identity) ||
-        (fact.state === "same-generation" &&
-          fact.identityAfter.state === "readable" &&
-          fact.identityAfter.lifecycle?.state === "observed" &&
-          fact.identityAfter.lifecycle.lifecycle === "zombie")
+          fact.identityAfter.identity !== previous.identity)
       ) {
         this.#candidates.delete(pid);
         retiredPids.add(pid);
@@ -272,11 +278,7 @@ export class ProcessOwnershipEvidenceOwner {
       if (
         this.#candidates.has(pid) ||
         (retiredPids.has(pid) && fact.state !== "same-generation") ||
-        fact.state === "absent" ||
-        (fact.state === "same-generation" &&
-          fact.identityAfter.state === "readable" &&
-          fact.identityAfter.lifecycle?.state === "observed" &&
-          fact.identityAfter.lifecycle.lifecycle === "zombie")
+        isSettledProcessOwnershipFact(fact)
       )
         continue;
       const identity = fact.identityAfter;

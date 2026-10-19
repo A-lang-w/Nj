@@ -480,6 +480,53 @@ export const parseProcessEnvironment = (
       }),
   );
 
+/** Read credentials only when Linux refuses access to the ownership token. */
+const readLinuxProcessRunToken = async (
+  pid: number,
+  signal?: AbortSignal,
+): Promise<ProcessRunTokenObservation> => {
+  try {
+    const environment = parseProcessEnvironment(
+      await readFile(`/proc/${pid}/environ`, { encoding: "utf8", signal }),
+    );
+    return { state: "readable", runId: environment.REA_PROCESS_RUN_ID };
+  } catch (cause: unknown) {
+    if (isExpectedAbort(cause, signal)) throw cause;
+    const failure = {
+      state: "unavailable" as const,
+      reason: errorMessage(cause),
+    };
+    if (
+      !(cause instanceof Error) ||
+      !("code" in cause) ||
+      (cause.code !== "EACCES" && cause.code !== "EPERM")
+    )
+      return failure;
+    try {
+      const status = await readFile(`/proc/${pid}/status`, {
+        encoding: "utf8",
+        signal,
+      });
+      const records = status
+        .split("\n")
+        .filter((line) => line.startsWith("Uid:"));
+      const match =
+        records.length === 1
+          ? /^Uid:[ \t]+(\d+)[ \t]+(\d+)[ \t]+(\d+)[ \t]+(\d+)[ \t]*$/u.exec(
+              records[0]!,
+            )
+          : null;
+      const effectiveUid = match === null ? undefined : Number(match[2]);
+      return effectiveUid !== undefined && Number.isSafeInteger(effectiveUid)
+        ? { ...failure, effectiveUid }
+        : failure;
+    } catch (credentialCause: unknown) {
+      if (isExpectedAbort(credentialCause, signal)) throw credentialCause;
+      return failure;
+    }
+  }
+};
+
 const identityFact = (
   observations: ReadonlyMap<number, ProcessIdentityObservation> | undefined,
   pid: number,
@@ -902,6 +949,14 @@ export const createSystemProcessOwnershipHost = (
     },
     async runTokens(processes, signal) {
       signal?.throwIfAborted();
+      if (platform === "linux") {
+        const tokens = new Map<number, ProcessRunTokenObservation>();
+        for (const { pid } of processes) {
+          signal?.throwIfAborted();
+          tokens.set(pid, await readLinuxProcessRunToken(pid, signal));
+        }
+        return tokens;
+      }
       if (platform !== "darwin" || processes.length === 0) return new Map();
       try {
         return (await darwinTokens?.read(processes, signal)) ?? new Map();
