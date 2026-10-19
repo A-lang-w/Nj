@@ -403,8 +403,9 @@ its providers, and `1` when that cleanup fails.
 SIGTERM, closes the listener, then prints one structured
 `{"status":"stopped", …}` document naming the URL, environment and tool count
 and exits `130` or `143` through the shared cancellation handler below.
-Refusals before binding (unreadable files, non-Evidence JSON, a manifest whose
-parent is not the supplied evidence, an unbindable port) print a structured
+Refusals before binding (unreadable files, non-Evidence JSON, capture Evidence
+in a format other than HAR, a manifest whose parent is not the supplied
+evidence, an unbindable port) print a structured
 error and exit `1`, as does a listener that fails after binding.
 
 A `cancelled` result does not by itself determine the exit status; it depends on
