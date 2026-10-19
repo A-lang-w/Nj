@@ -10,7 +10,7 @@
  *
  * Usage: node scripts/verify-real-reverse-providers.mjs [objdump] [rizin] [gdb]
  */
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,6 +19,8 @@ import { fileURLToPath } from "node:url";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+
+import { openInferiorTty, closeInferiorTty } from "./verify-inferior-tty.mjs";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const requested = process.argv
@@ -102,44 +104,6 @@ const cliFailure = (args) => {
     return String(cause.stdout ?? cause.message ?? cause).slice(0, 400);
   }
 };
-
-/** Allocate a real terminal for a live inferior and hand back its device path. */
-const openInferiorTty = () =>
-  new Promise((resolvePromise, reject) => {
-    const helper = spawn(
-      "python3",
-      [
-        "-c",
-        [
-          "import os, pty, select, sys",
-          "master, slave = pty.openpty()",
-          "print(os.ttyname(slave), flush=True)",
-          "while True:",
-          "    ready, _, _ = select.select([master, sys.stdin], [], [], 1)",
-          "    if sys.stdin in ready and not sys.stdin.readline():",
-          "        break",
-          "    if master in ready:",
-          "        try: os.read(master, 65536)",
-          "        except OSError: break",
-        ].join("\n"),
-      ],
-      { stdio: ["pipe", "pipe", "inherit"] },
-    );
-    let buffered = "";
-    const onData = (chunk) => {
-      buffered += chunk.toString();
-      const newline = buffered.indexOf("\n");
-      if (newline < 0) return;
-      helper.stdout.off("data", onData);
-      resolvePromise({ helper, path: buffered.slice(0, newline).trim() });
-    };
-    helper.stdout.on("data", onData);
-    helper.once("error", reject);
-    setTimeout(
-      () => reject(new Error("inferior TTY helper did not report a path")),
-      10_000,
-    );
-  });
 
 const verifyObjdump = async (fixture, expectedDigest) => {
   const observed = {
@@ -286,6 +250,7 @@ const verifyGdb = async (fixture, expectedDigest) => {
     }
 
     const expectations = [
+      { command: "set mi-async on", terminal: /^\d+\^done(?:,|$)/u },
       { command: `file ${fixture}`, terminal: /^\d+\^done(?:,|$)/u },
       { command: "break main", terminal: /^\d+\^done(?:,|$)/u },
       { command: "run", terminal: /^\d+\^running(?:,|$)/u },
@@ -321,6 +286,89 @@ const verifyGdb = async (fixture, expectedDigest) => {
           JSON.stringify((result.records ?? []).slice(-4)),
         );
     }
+
+    // Real asynchronous execution must not hold the control path behind run.
+    for (const command of ["set confirm off", "set args wait", "run"]) {
+      const configured = await callTool(client, "gdb_console", {
+        session_id: sessionId,
+        command,
+      });
+      check(
+        `gdb prepared asynchronous interrupt with ${command}`,
+        configured.isError !== true &&
+          structured(configured).normalized_result?.completion_status ===
+            "complete" &&
+          !/^\d+\^error(?:,|$)/u.test(
+            structured(configured).normalized_result?.mi ?? "",
+          ),
+        JSON.stringify(structured(configured).normalized_result),
+      );
+    }
+    const continuing = callTool(client, "gdb_console", {
+      session_id: sessionId,
+      command: "continue",
+    });
+    // Poll the bounded status owner for the newly observed running target.
+    let runningObserved = false;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const current = structured(
+        await callTool(client, "gdb_session_status", { session_id: sessionId }),
+      );
+      const recent = current.recent_mi_records ?? [];
+      const lastRunning = recent.findLastIndex((line) =>
+        String(line).startsWith("*running"),
+      );
+      const lastStopped = recent.findLastIndex((line) =>
+        String(line).startsWith("*stopped"),
+      );
+      if (lastRunning > lastStopped) {
+        runningObserved = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    check(
+      "gdb observed a running inferior before interrupt",
+      runningObserved,
+      "bounded status readback",
+    );
+    const interrupted = await callTool(client, "gdb_console", {
+      session_id: sessionId,
+      command: "interrupt",
+    });
+    check(
+      "gdb interrupt reached the running command",
+      interrupted.isError !== true &&
+        structured(interrupted).normalized_result?.completion_status ===
+          "complete",
+      JSON.stringify(structured(interrupted).normalized_result),
+    );
+    const continued = await continuing;
+    const continuedResult = structured(continued).normalized_result ?? {};
+    check(
+      "gdb continued command settled on the interrupt stop",
+      continued.isError !== true &&
+        continuedResult.completion_status === "complete" &&
+        continuedResult.records?.some(
+          (line) =>
+            String(line).startsWith('*stopped,reason="signal-received"') &&
+            String(line).includes('signal-name="SIGINT"'),
+        ),
+      JSON.stringify(continuedResult),
+    );
+    // Explicitly end the owned fixture so closing does not leave a sleeper.
+    const terminated = await callTool(client, "gdb_console", {
+      session_id: sessionId,
+      command: "kill",
+    });
+    check(
+      "gdb terminated the selected fixture before close",
+      terminated.isError !== true &&
+        /^\d+\^done(?:,|$)/u.test(
+          structured(terminated).normalized_result?.mi ?? "",
+        ),
+      JSON.stringify(structured(terminated).normalized_result),
+    );
 
     const rejected = await callTool(client, "gdb_console", {
       session_id: sessionId,
@@ -366,8 +414,7 @@ const verifyGdb = async (fixture, expectedDigest) => {
   } finally {
     await client.close().catch(() => undefined);
     await transport.close().catch(() => undefined);
-    helper?.stdin?.end();
-    helper?.kill("SIGKILL");
+    if (helper !== undefined) await closeInferiorTty(helper);
   }
 
   await new Promise((resolveWait) => setTimeout(resolveWait, 1_000));
@@ -420,8 +467,7 @@ const verifyGdb = async (fixture, expectedDigest) => {
       );
     }
   } finally {
-    controlTty.helper.stdin?.end();
-    controlTty.helper.kill("SIGKILL");
+    await closeInferiorTty(controlTty.helper);
   }
 };
 
@@ -433,8 +479,10 @@ const buildFixture = () => {
     source,
     [
       "#include <stdio.h>",
+      "#include <unistd.h>",
       "static int step(int value) { return value * 3 + 1; }",
-      "int main(void) {",
+      "int main(int argc, char **argv) {",
+      "  if (argc > 1) sleep(30);",
       "  int accumulated = 0;",
       "  for (int index = 0; index < 4; index += 1) accumulated += step(index);",
       '  printf("%d\\n", accumulated);',

@@ -3,6 +3,7 @@ import {
   reportLifecycleStart,
 } from "./lifecycleProgress.js";
 import { err, ok } from "../domain/result.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { Result } from "../domain/result.js";
@@ -30,6 +31,7 @@ export const registerCloseLifecycleTool = ({
   logger,
   closeContract,
   closeProcessResources,
+  retryReverseEngineeringCleanup,
 }: LifecycleToolRegistration): void => {
   const closeWithResources = async <Value>(
     closeSession: () => Promise<Result<Value, AnalysisError>>,
@@ -37,6 +39,12 @@ export const registerCloseLifecycleTool = ({
     const [sessionClose, resourceClose] = await Promise.allSettled([
       closeResult(closeSession),
       closeResult(closeProcessResources),
+    ]);
+    // An admitted reverse command may still be draining behind the session
+    // transition; retry its retained owners only after that has settled.
+    const [reverseCleanup] = await Promise.allSettled([
+      retryReverseEngineeringCleanup?.(closeContract.name) ??
+        Promise.resolve(ok(null)),
     ]);
     if (sessionClose.status === "rejected") {
       if (resourceClose.status === "rejected")
@@ -54,11 +62,23 @@ export const registerCloseLifecycleTool = ({
           { error: resourceClose.value.error.message },
           "Process capture cleanup failed while closing the session",
         );
+      if (reverseCleanup.status === "rejected")
+        logger.warn(
+          { error: String(reverseCleanup.reason) },
+          "Reverse-engineering cleanup threw while closing the session",
+        );
+      else if (!reverseCleanup.value.ok)
+        logger.warn(
+          { error: reverseCleanup.value.error.message },
+          "Reverse-engineering cleanup failed while closing the session",
+        );
       throw sessionClose.reason;
     }
     if (resourceClose.status === "rejected") throw resourceClose.reason;
+    if (reverseCleanup.status === "rejected") throw reverseCleanup.reason;
     const closed = sessionClose.value;
     const resources = resourceClose.value;
+    const reverse = reverseCleanup.value;
     if (!closed.ok) {
       if (!resources.ok)
         return err(
@@ -67,7 +87,23 @@ export const registerCloseLifecycleTool = ({
             resources.error,
           ).bindCleanupDependencies([closed.error, resources.error]),
         );
+      if (!reverse.ok)
+        // Live provider ownership outranks the session failure: keep the
+        // reverse cleanup report primary and the close error as context.
+        return err(
+          reverse.error.retainSecondaryFailure(closed.error, {
+            close_error: projectAnalysisError(closed.error),
+          }),
+        );
       return closed;
+    }
+    if (!reverse.ok) {
+      if (!resources.ok)
+        logger.warn(
+          { error: resources.error.message },
+          "Process capture cleanup failed while closing the session",
+        );
+      return reverse;
     }
     return resources.ok ? closed : resources;
   };

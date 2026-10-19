@@ -1135,7 +1135,7 @@ const managerWithFakeSpawner = (
     platform: "linux",
     environment: { REA_GDB_COMMAND: "fake-gdb" },
     spawnProcess,
-    verifyInferiorOutputSink: async () => undefined,
+    verifyInferiorOutputSink: async () => "durable",
     ...options,
   });
   managers.push(manager);
@@ -1239,6 +1239,47 @@ it("rejects a pre-cancelled GDB start and an unconfigured executable", async () 
     expect(missing.error._tag).toBe("AnalysisCapabilityUnavailableError");
     expect(missing.error.message).toContain("does-not-exist-gdb");
   }
+});
+
+it("restores the caller's run ID for the inferior through a startup directive", async () => {
+  const seen: string[][] = [];
+  const spawn = async (options: OwnedProviderProcessSpawnOptions) => {
+    seen.push([...options.arguments]);
+    return createFakeSpawner().spawnProcess(options);
+  };
+  for (const [environment, expected] of [
+    [{}, "unset environment REA_PROCESS_RUN_ID"],
+    [
+      { REA_PROCESS_RUN_ID: "caller-run" },
+      "set environment REA_PROCESS_RUN_ID caller-run",
+    ],
+  ] as const) {
+    seen.length = 0;
+    const manager = new GdbSessionManager({
+      platform: "linux",
+      environment,
+      spawnProcess: spawn,
+    });
+    managers.push(manager);
+    await manager.start();
+    expect(seen[0]).toContain("-iex");
+    expect(seen[0]?.at(-1)).toBe(expected);
+  }
+});
+
+it("refuses a caller run ID that cannot be expressed as one directive", async () => {
+  const manager = new GdbSessionManager({
+    platform: "linux",
+    environment: { REA_PROCESS_RUN_ID: "a\nb" },
+    spawnProcess: async () => {
+      throw new Error("must not spawn");
+    },
+  });
+  managers.push(manager);
+
+  const started = await manager.start();
+
+  expect(started.ok).toBe(false);
 });
 
 it("retries MI2 after an MI3 process exits before its startup prompt", async () => {
@@ -1820,6 +1861,33 @@ it.each([
   },
 );
 
+it("retains ownership when descriptor readback omits input confirmation", async () => {
+  const commands: string[] = [];
+  const fake = createFakeSpawner((child, token, command) => {
+    commands.push(command);
+    const response = command.includes("inferior-tty-show")
+      ? '^done,inferior_tty_terminal="/dev/pts/42"'
+      : command.includes("list-thread-groups")
+        ? '^done,groups=[{id="i1",pid="123"}]'
+        : "^done";
+    child.stdout.write(`${token}${response}\n`);
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    // Exercise malformed output from the injected descriptor boundary.
+    verifyInferiorOutputSink: async () => undefined as never,
+  });
+  const started = await expectGdbSessionStarted(manager, undefined, {
+    inferiorTty: "/dev/pts/42",
+  });
+
+  const closed = await manager.close(started.value.session_id);
+
+  expect(closed.ok).toBe(false);
+  expect(manager.status(started.value.session_id)).toBeDefined();
+  expect(commands).not.toContain("-target-detach");
+  expect(fake.children[0]?.killSignals).toEqual([]);
+});
+
 it("detaches a live inferior before the shared stop helper signals GDB", async () => {
   const tty = "/dev/pts/42";
   const commands: string[] = [];
@@ -1976,6 +2044,7 @@ it.each([
         if (capturedStartTime === undefined)
           throw new Error("Controlled inferior identity was unreadable");
         rememberIdentity({ pid: observedPid, startTime: capturedStartTime });
+        return "durable";
       },
       readInferiorProcessStartTime: async (observedPid) => {
         if (observedPid !== pid || !inferiorAlive) return null;
@@ -2490,8 +2559,14 @@ it("reports cancellation if owned-process stop rejects during an active command"
   );
 
   expect(cancelled.ok).toBe(false);
-  if (!cancelled.ok)
-    expect(cancelled.error._tag).toBe("AnalysisCancelledError");
+  expect(cancelled).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCancelledError",
+      cleanupIncomplete: true,
+      cleanup: { resources: [started.value.session_id] },
+    },
+  });
   expect(stopCalls).toBe(1);
 });
 
@@ -2508,11 +2583,15 @@ it("returns a tagged cleanup failure thrown while closing", async () => {
 
   expect(closed).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisTimeoutError", operation: "close_gdb_session" },
+    error: {
+      _tag: "AnalysisCapabilityUnavailableError",
+      operation: "close_gdb_session",
+      cleanupIncomplete: true,
+    },
   });
 });
 
-it("rethrows an unexpected non-domain cleanup failure while closing", async () => {
+it("retains an unexpected non-domain cleanup failure with its owner while closing", async () => {
   const fake = createFakeSpawner();
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
     stopProcess: async () => {
@@ -2521,9 +2600,13 @@ it("rethrows an unexpected non-domain cleanup failure while closing", async () =
   });
   const started = await expectGdbSessionStarted(manager);
 
-  await expect(manager.close(started.value.session_id)).rejects.toThrow(
-    "unexpected cleanup failure",
-  );
+  await expect(manager.close(started.value.session_id)).resolves.toMatchObject({
+    ok: false,
+    error: {
+      cleanupIncomplete: true,
+      message: expect.stringContaining("unexpected cleanup failure"),
+    },
+  });
 });
 
 it("returns partial command evidence when the active MI request times out after stop", async () => {
@@ -2957,8 +3040,11 @@ it("drains buffered startup stdout before capturing early-exit Evidence", async 
       setImmediate(() => {
         child.exitLeader(7);
         setImmediate(() => {
-          child.stdout.write('~"late startup record"\n');
-          child.closeInheritedOutput();
+          child.stdout.end('~"late startup record"\n');
+          setTimeout(() => {
+            child.stderr.write("late startup stderr");
+            child.closeInheritedOutput();
+          }, 20);
         });
       });
       return {
@@ -2978,6 +3064,10 @@ it("drains buffered startup stdout before capturing early-exit Evidence", async 
 
   expect(started.ok).toBe(false);
   expect(children).toHaveLength(2);
+  if (!started.ok)
+    expect(started.error.capturedOutput?.stderr).toContain(
+      "late startup stderr",
+    );
   if (!started.ok)
     expect(started.error.partialObservation).toMatchObject({
       raw_result: {
@@ -3018,3 +3108,109 @@ it("reports command timeout when an incomplete stop cannot confirm process exit"
     );
   }
 });
+
+it("allows interrupt to reach a running command before its async stop", async () => {
+  let running!: () => void;
+  const observedRun = new Promise<void>((resolve) => {
+    running = resolve;
+  });
+  const commands: string[] = [];
+  const fake = createFakeSpawner((child, token, command) => {
+    commands.push(command);
+    if (command.includes('console "run"')) {
+      child.stdout.write(`${token}^running\n`);
+      running();
+    } else if (command.includes("interrupt")) {
+      child.stdout.write(`${token}^done\n`);
+    } else
+      child.stdout.write(
+        command.includes("list-thread-groups")
+          ? `${token}^done,groups=[]\n`
+          : `${token}^done\n`,
+      );
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    commandTimeoutMs: 500,
+  });
+  const started = await expectGdbSessionStarted(manager);
+  const child = fake.children[0]!;
+  const originalKill = child.kill.bind(child);
+  child.kill = (signal) => {
+    if (signal !== "SIGINT") return originalKill(signal);
+    child.killSignals.push(signal);
+    child.stdout.write(
+      '*stopped,reason="signal-received",signal-name="SIGINT"\n',
+    );
+    return true;
+  };
+  const run = manager.execute(started.value.session_id, "run");
+  await observedRun;
+  const interrupt = await manager.execute(
+    started.value.session_id,
+    "interrupt",
+  );
+  expect(interrupt).toMatchObject({ ok: true });
+  expect(child.killSignals).toEqual(["SIGINT"]);
+  expect(await run).toMatchObject({
+    ok: true,
+    value: {
+      result: {
+        mi: expect.stringContaining("^running"),
+        completion_status: "complete",
+      },
+    },
+  });
+  expect(commands.some((command) => command.includes("interrupt"))).toBe(true);
+});
+
+it.each(["cancel", "timeout"] as const)(
+  "retains a %s running command until async stop before cleanup",
+  async (mode) => {
+    let running!: () => void;
+    const observedRun = new Promise<void>((resolve) => {
+      running = resolve;
+    });
+    const commands: string[] = [];
+    const fake = createFakeSpawner((child, token, command) => {
+      commands.push(command);
+      if (command.includes('console "run"')) {
+        child.stdout.write(`${token}^running\n`);
+        running();
+      } else
+        child.stdout.write(
+          command.includes("list-thread-groups")
+            ? `${token}^done,groups=[]\n`
+            : `${token}^done\n`,
+        );
+    });
+    const manager = managerWithFakeSpawner(fake.spawnProcess, {
+      commandTimeoutMs: 40,
+    });
+    const started = await expectGdbSessionStarted(manager);
+    const controller = new AbortController();
+    const run = manager.execute(
+      started.value.session_id,
+      "run",
+      controller.signal,
+    );
+    await observedRun;
+    if (mode === "cancel") controller.abort();
+    const result = await run;
+    expect(result).toMatchObject({
+      ok: false,
+      error: { cleanupIncomplete: true },
+    });
+    expect(
+      commands.some((command) => command.includes("list-thread-groups")),
+    ).toBe(false);
+    expect(fake.children[0]?.killSignals).toEqual([]);
+    await expect(
+      manager.close(started.value.session_id),
+    ).resolves.toMatchObject({ ok: false, error: { cleanupIncomplete: true } });
+    fake.children[0]?.stdout.write('*stopped,reason="signal-received"\n');
+    await expect(
+      manager.close(started.value.session_id),
+    ).resolves.toMatchObject({ ok: true });
+    if (!result.ok) expect(result.error.cleanupIncomplete).toBe(false);
+  },
+);

@@ -289,6 +289,7 @@ export const SCOPES = {
   reverse_providers: [
     ".github/workflows/real-reverse-providers.yml",
     "scripts/verify-real-reverse-providers.mjs",
+    "scripts/verify-inferior-tty.mjs",
     "docs/reverse-engineering-tools.md",
     "src/objdump/**",
     "src/rizin/**",
@@ -302,6 +303,7 @@ export const SCOPES = {
     "src/composition/reverseEngineering.ts",
     "src/cli/reverseEngineeringCommands.ts",
     "src/cliCommandNames.ts",
+    "src/process/ProcessOwnership*.ts",
     "src/process/OwnedCommand.ts",
     "src/process/ProviderProcess.ts",
     "src/process/ownedDebuggerSession.ts",

@@ -306,9 +306,12 @@ it.each([
 it.each([
   ".github/workflows/real-reverse-providers.yml",
   "scripts/verify-real-reverse-providers.mjs",
+  "scripts/verify-inferior-tty.mjs",
   "src/server/registerGdbTools.ts",
   "src/server/registerReverseEngineeringTools.ts",
   "src/gdb/GdbSessionManager.ts",
+  "src/process/ProcessOwnership.ts",
+  "src/process/ProcessOwnershipObservation.ts",
 ])("selects the real reverse-provider lane for %s", async (path) => {
   const { directory, base } = await fixture();
   const head = await change(directory, [path]);

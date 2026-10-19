@@ -26,6 +26,33 @@ import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseE
 registerSharedReverseEngineeringEdgeCaseTests();
 registerOwnedRizinCommandEvidenceTests({ sweepTokenOwnedProcesses: true });
 
+it("preserves guidance when the host cannot enforce requested descendant ownership", async () => {
+  const service = new CoreReverseEngineeringService({
+    commands: createReverseEngineeringCommandPort({}),
+    runOwned: async () => {
+      throw Object.assign(
+        new Error(
+          "Token-owned process cleanup requires a host ownership baseline; use Linux or macOS.",
+        ),
+        { code: "ERR_PROCESS_OWNERSHIP_UNAVAILABLE" },
+      );
+    },
+  });
+  try {
+    expect(
+      await service.inspectWithObjdump({ operation: "architectures" }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCapabilityUnavailableError",
+        reason: expect.stringContaining("host ownership baseline"),
+      },
+    });
+  } finally {
+    await service.close();
+  }
+});
+
 it("records pathless objdump architecture support as provider capability evidence", async () => {
   const { directory, path } = await createArtifact();
   expect(objdumpCommand({ operation: "architectures" })).toEqual(["-i"]);
@@ -264,20 +291,19 @@ it("cancels an artifact stream when cancellation races with its listener registr
 
 it("cancels before stream listeners when the signal changes after stat", async () => {
   const { directory, path } = await createArtifact();
-  let abortedReads = 0;
-  const signal = {
-    get aborted() {
-      abortedReads += 1;
-      return abortedReads >= 5;
-    },
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    dispatchEvent: () => true,
-    onabort: null,
-    reason: undefined,
-    throwIfAborted: () => {},
-  } as AbortSignal;
-  const stat = vi.fn(async () => ({ isFile: () => true }) as unknown as Stats);
+  // Tie cancellation to the metadata boundary instead of counting unrelated
+  // reads of signal.aborted in admission and provider resolution.
+  const controller = new AbortController();
+  const signal = controller.signal;
+  const stat = vi.fn(
+    async () =>
+      ({
+        isFile: () => {
+          controller.abort();
+          return true;
+        },
+      }) as unknown as Stats,
+  );
   const run = vi.fn(async () => ({ stdout: "", stderr: "" }));
   const service = new ReverseEngineeringService({ stat, run });
 
@@ -291,8 +317,6 @@ it("cancels before stream listeners when the signal changes after stat", async (
       ok: false,
       error: { _tag: "AnalysisCancelledError" },
     });
-    // Cancellation checks may be repeated by the digest cleanup path.
-    expect(abortedReads).toBeGreaterThanOrEqual(5);
     expect(stat).toHaveBeenCalledTimes(1);
     expect(run).not.toHaveBeenCalled();
   } finally {
@@ -849,7 +873,7 @@ it("preserves a provider timeout when cancellation arrives during the final dige
           stderr: "timeout diagnostic",
         },
         partialObservation: {
-          raw_result: {
+          normalized_result: {
             stdout: "partial timeout output",
             completion_status: "unknown",
           },
@@ -946,7 +970,7 @@ it("preserves completed command Evidence while its post-run digest awaits cleanu
       error: {
         _tag: "AnalysisOutputError",
         partialObservation: {
-          raw_result: {
+          normalized_result: {
             exit_code: 0,
             completion_status: "complete",
             artifact_sha256_after: null,
@@ -984,7 +1008,7 @@ it("records an explicit loss marker when provider bytes are invalid UTF-8", asyn
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value).toMatchObject({
-        raw_result: { stdout: "captured � output" },
+        normalized_result: { stdout: "captured � output" },
       });
       expect(result.value.limitations).toContain(
         "Captured stdout bytes contain invalid or incomplete UTF-8; replacement characters in the text capture do not preserve the original bytes.",
@@ -1105,7 +1129,14 @@ it("settles a stalled artifact open on cancellation and closes the late handle o
 
 it("maps a stalled artifact open to the digest deadline error", async () => {
   const { directory, path } = await createArtifact();
-  const openArtifact = vi.fn(() => new Promise<FileHandle>(() => undefined));
+  let announceOpen!: () => void;
+  const openStarted = new Promise<void>((resolve) => {
+    announceOpen = resolve;
+  });
+  const openArtifact = vi.fn(() => {
+    announceOpen();
+    return new Promise<FileHandle>(() => undefined);
+  });
   const service = new ReverseEngineeringService({
     open: openArtifact,
     run: async () => ({ stdout: "", stderr: "" }),
@@ -1117,7 +1148,7 @@ it("maps a stalled artifact open to the digest deadline error", async () => {
       path,
       operation: "file_headers",
     });
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await openStarted;
     await vi.advanceTimersByTimeAsync(120_000);
 
     await expect(resultPromise).resolves.toMatchObject({
@@ -1164,3 +1195,108 @@ it("reports a rejected artifact open without leaving the digest timer armed", as
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+it.each([false, true])(
+  "bounds interrupted fstat close and retains its exact cleanup owner (provider failed: %s)",
+  async (providerFailed) => {
+    const { directory, path } = await createArtifact();
+    const controller = new AbortController();
+    const handle = await open(path, "r");
+    const metadata = await handle.stat();
+    let settleStat!: () => void;
+    let settleClose!: () => void;
+    let statStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      statStarted = resolve;
+    });
+    let closes = 0;
+    const tracked = new Proxy(handle, {
+      get(target, property) {
+        if (property === "stat")
+          return () => {
+            statStarted();
+            return new Promise((resolve) => {
+              settleStat = () => {
+                resolve(metadata);
+              };
+            });
+          };
+        if (property === "close")
+          return () => {
+            closes++;
+            return new Promise<void>((resolve) => {
+              settleClose = () => {
+                void target.close().then(resolve);
+              };
+            });
+          };
+        const value = Reflect.get(target, property) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as FileHandle;
+    const service = new ReverseEngineeringService({
+      open: (() => {
+        let calls = 0;
+        return async () => {
+          calls++;
+          return providerFailed && calls === 1 ? open(path, "r") : tracked;
+        };
+      })(),
+      run: async () => {
+        if (providerFailed)
+          throw Object.assign(new Error("provider timeout"), {
+            code: "ETIMEDOUT",
+            stdout: "partial",
+            stderr: "deadline",
+            signal: null,
+            killed: true,
+          });
+        return { stdout: "", stderr: "" };
+      },
+    });
+    try {
+      const pending = service.inspectWithObjdump(
+        { path, operation: "file_headers" },
+        { signal: controller.signal },
+      );
+      await started;
+      controller.abort();
+      const result = await Promise.race([
+        pending,
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 700)),
+      ]);
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: providerFailed
+            ? "ProviderAdapterError"
+            : "AnalysisCancelledError",
+          cleanupIncomplete: true,
+        },
+      });
+      if (result && !result.ok && providerFailed)
+        expect(result.error.cleanupPrimary?._tag).toBe("AnalysisTimeoutError");
+      if (result && !result.ok)
+        expect(result.error.cleanupResources).toEqual([
+          expect.stringMatching(/^artifact-descriptor:/u),
+        ]);
+      await expect(service.close()).rejects.toMatchObject({
+        cleanupIncomplete: true,
+      });
+      expect(closes).toBe(1);
+      settleStat();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      settleClose();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await expect(service.close()).resolves.toBeUndefined();
+      if (result && !result.ok)
+        expect(result.error.cleanupIncomplete).toBe(false);
+      expect(closes).toBe(1);
+    } finally {
+      settleStat?.();
+      settleClose?.();
+      await handle.close().catch(() => undefined);
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);

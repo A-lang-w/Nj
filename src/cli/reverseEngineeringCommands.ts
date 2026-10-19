@@ -6,6 +6,7 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { evidenceSchema, type Evidence } from "../domain/evidence.js";
 import type { Result } from "../domain/result.js";
@@ -23,19 +24,19 @@ import {
 import { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
 
 const executeWithCleanup = async (
-  service: ReverseEngineeringService,
   execute: () => Promise<Result<Evidence, AnalysisError>>,
+  close: () => Promise<void>,
 ): Promise<Result<Evidence, AnalysisError>> => {
   let result: Result<Evidence, AnalysisError>;
   try {
     result = await execute();
   } catch (cause) {
-    await service.close().catch(() => undefined);
+    await close().catch(() => undefined);
     throw cause;
   }
   const hadIncompleteCleanup = !result.ok && result.error.cleanupIncomplete;
   try {
-    await service.close();
+    await close();
   } catch (cause) {
     if (result.ok) return err(asCleanupError(cause));
     const cleanup = cause instanceof AnalysisError ? cause.cleanup : undefined;
@@ -102,7 +103,49 @@ export const registerReverseEngineeringCommands = (
     new GdbSessionManager({ environment: providerEnvironment }),
   createService: typeof createReverseEngineeringService = createReverseEngineeringService,
 ): void => {
-  const service = createService(environment);
+  // Closed services cannot run again, but failed cleanup must outlive a run.
+  // This registration owns every service until its own close confirms release.
+  let retainedService: ReverseEngineeringService | undefined;
+  let running = false;
+  const closeRetained = async (
+    service: ReverseEngineeringService,
+  ): Promise<void> => {
+    await service.close();
+    retainedService = undefined;
+  };
+  const runWithService = async (
+    execute: (
+      service: ReverseEngineeringService,
+    ) => Promise<Result<Evidence, AnalysisError>>,
+  ): Promise<Result<Evidence, AnalysisError>> => {
+    if (running)
+      return err(
+        new AnalysisResourceConstraintError(
+          "reverse_engineering_cleanup",
+          "transport",
+          "A CLI provider command is already running.",
+          { max_concurrent_operations: 1 },
+        ),
+      );
+    running = true;
+    try {
+      if (retainedService !== undefined) {
+        try {
+          await closeRetained(retainedService);
+        } catch (cause) {
+          return err(asCleanupError(cause));
+        }
+      }
+      const service = createService(environment);
+      retainedService = service;
+      return await executeWithCleanup(
+        () => execute(service),
+        () => closeRetained(service),
+      );
+    } finally {
+      running = false;
+    }
+  };
   cli.command(CLI_COMMANDS.inspectWithObjdump, {
     description:
       "Inspect a local artifact with GNU objdump and retain its raw output as Evidence",
@@ -134,7 +177,7 @@ export const registerReverseEngineeringCommands = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectWithObjdump, async () => {
-          const result = await executeWithCleanup(service, () =>
+          const result = await runWithService((service) =>
             service.inspectWithObjdump(
               {
                 ...args,
@@ -156,7 +199,7 @@ export const registerReverseEngineeringCommands = (
           logger,
           CLI_COMMANDS.listObjdumpArchitectures,
           async () => {
-            const result = await executeWithCleanup(service, () =>
+            const result = await runWithService((service) =>
               service.inspectWithObjdump(
                 { operation: "architectures" },
                 { signal },
@@ -181,7 +224,7 @@ export const registerReverseEngineeringCommands = (
     run: ({ args }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.executeRizinCommand, async () => {
-          const result = await executeWithCleanup(service, () =>
+          const result = await runWithService((service) =>
             service.executeRizinCommand(args, { signal }),
           );
           return result.ok ? result.value : projectAnalysisError(result.error);
