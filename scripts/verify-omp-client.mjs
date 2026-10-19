@@ -1,12 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  realpath,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +9,7 @@ import {
   toolContract,
 } from "../dist/contracts/toolContracts.js";
 import { exec } from "./lib/verify-package-core.mjs";
+import { assertJavaScriptApplicationInputPaths } from "./lib/javascript-application-paths.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
 
@@ -67,7 +62,6 @@ const environment = {
 };
 const target = join(lab, "fixture α测试");
 await mkdir(target);
-const canonicalTarget = await realpath(target);
 await writeFile(
   join(target, "app.js"),
   'export function result() { return { clientCompatibility: "REA_CLIENT_FIXTURE", count: 7 }; }\n',
@@ -163,9 +157,7 @@ const fixture = await createOpenAiModelFixture({
     const evidence = toolContract(
       "analyze_javascript_application",
     ).outputSchema.parse(JSON.parse(evidenceReply.content));
-    assert.equal(evidence.parameters.input_path, target);
-    assert.equal(evidence.subject.local_path, canonicalTarget);
-    assert.equal(evidence.normalized_result.input_path, canonicalTarget);
+    await assertJavaScriptApplicationInputPaths(evidence, target);
     const shape = evidence.normalized_result.graph.nodes
       .flatMap((node) => node.observations)
       .map((observation) => observation.properties)

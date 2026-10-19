@@ -12,6 +12,7 @@ import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { exec } from "./lib/verify-package-core.mjs";
+import { assertJavaScriptApplicationInputPaths } from "./lib/javascript-application-paths.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import {
   TOOL_CONTRACTS,
@@ -124,7 +125,6 @@ assert.deepEqual(configured.mcpServers.other, {
 });
 const target = join(lab, "fixture α测试");
 await mkdir(target, { recursive: true });
-const canonicalTarget = await realpath(target);
 await writeFile(
   `${target}/app.js`,
   'export function result() { return { clientCompatibility: "REA_CLIENT_FIXTURE", count: 7 }; }\n',
@@ -196,9 +196,7 @@ const fixture = await createOpenAiModelFixture({
         "analyze_javascript_application",
       ).outputSchema.parse(JSON.parse(artifact.toString("utf8")));
       assert(extractEvidence(evidence));
-      assert.equal(evidence.parameters.input_path, target);
-      assert.equal(evidence.subject.local_path, canonicalTarget);
-      assert.equal(evidence.normalized_result.input_path, canonicalTarget);
+      await assertJavaScriptApplicationInputPaths(evidence, target);
       const shape = evidence.normalized_result.graph.nodes
         .flatMap((n) => n.observations)
         .map((o) => o.properties)

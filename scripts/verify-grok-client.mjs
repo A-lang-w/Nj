@@ -1,12 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  realpath,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +10,7 @@ import {
   toolContract,
 } from "../dist/contracts/toolContracts.js";
 import { exec } from "./lib/verify-package-core.mjs";
+import { assertJavaScriptApplicationInputPaths } from "./lib/javascript-application-paths.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
 
@@ -68,7 +63,6 @@ const environment = {
 };
 const target = join(lab, "fixture α测试");
 await mkdir(target);
-const canonicalTarget = await realpath(target);
 await writeFile(
   join(target, "app.js"),
   'export function result() { return { clientCompatibility: "REA_CLIENT_FIXTURE", count: 7 }; }\n' +
@@ -128,13 +122,11 @@ const call = (name, args) => {
     ],
   };
 };
-const verifyEvidence = (bytes) => {
+const verifyEvidence = async (bytes) => {
   const evidence = toolContract(
     "analyze_javascript_application",
   ).outputSchema.parse(JSON.parse(bytes.toString("utf8")));
-  assert.equal(evidence.parameters.input_path, target);
-  assert.equal(evidence.subject.local_path, canonicalTarget);
-  assert.equal(evidence.normalized_result.input_path, canonicalTarget);
+  await assertJavaScriptApplicationInputPaths(evidence, target);
   const shapes = evidence.normalized_result.graph.nodes
     .flatMap((node) => node.observations)
     .map((observation) => observation.properties)
@@ -300,7 +292,7 @@ const fixture = await createOpenAiModelFixture({
       const marker = "Full output written to: ";
       const start = last.indexOf(marker);
       if (start < 0) {
-        verifyEvidence(Buffer.from(last, "utf8"));
+        await verifyEvidence(Buffer.from(last, "utf8"));
         finalSeen = true;
         return { role: "assistant", content: "REA_CLIENT_COMPATIBILITY_OK" };
       }
@@ -319,7 +311,7 @@ const fixture = await createOpenAiModelFixture({
         "Unexpected native MCP spill path",
       );
       retainedArtifact = file;
-      expectedProjection = verifyEvidence(await readFile(file));
+      expectedProjection = await verifyEvidence(await readFile(file));
       spillQueryRequested = true;
       return call("run_terminal_command", {
         command: [process.execPath, "-e", recoveryCode, file]
