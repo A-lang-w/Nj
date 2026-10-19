@@ -178,13 +178,13 @@ const NOT_A_FILE_CODES = new Set([
   "ENAMETOOLONG",
 ]);
 
-/** Refuse, as a resource constraint, a file whose whole read and native parse would not fit live heap headroom. */
+/** Refuse a whole read, native parse and owned snapshot traversal that cannot fit live heap headroom. */
 const headroomRefusal = (
   path: string,
   inputBytes: number,
 ): AnalysisResourceConstraintError | undefined => {
   const heap = getHeapStatistics();
-  const requiredBytes = nativeJsonParseRequiredBytes(inputBytes) * 2;
+  const requiredBytes = nativeJsonParseRequiredBytes(inputBytes, true);
   return requiredBytes <= heap.total_available_size
     ? undefined
     : new AnalysisResourceConstraintError(

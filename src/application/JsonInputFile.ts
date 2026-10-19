@@ -35,16 +35,19 @@ const PACKED_TOKEN_PART_CODE_UNITS = 64 * 1024;
 const NATIVE_PARSE_READ_BUDGET = 8 * 1024 * 1024;
 
 /** Heap a whole-file native JSON.parse may need: the assembler's 64x container expansion plus byte and text copies. */
-export const nativeJsonParseRequiredBytes = (inputBytes: number): number =>
+export const nativeJsonParseRequiredBytes = (
+  inputBytes: number,
+  snapshot = false,
+): number =>
   // The assembler estimate reserves up to 128 bytes per two-byte container.
   // Allow that 64x expansion plus byte/text copies before native JSON.parse,
   // whose individual container allocations cannot be intercepted.
-  inputBytes * 72 + READ_CHUNK_BYTES;
+  (inputBytes * 72 + READ_CHUNK_BYTES) * (snapshot ? 2 : 1);
 
 /** Snapshot mode also reserves one projection for cooperative sealing bookkeeping. */
 const nativeParseFits = (inputBytes: number, snapshot = false): boolean =>
   inputBytes <= NATIVE_PARSE_READ_BUDGET &&
-  nativeJsonParseRequiredBytes(inputBytes) * (snapshot ? 2 : 1) <=
+  nativeJsonParseRequiredBytes(inputBytes, snapshot) <=
     getHeapStatistics().total_available_size;
 
 /** One selected root member; repeated keys begin again with last-value semantics. */

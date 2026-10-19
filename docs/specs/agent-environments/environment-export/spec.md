@@ -33,7 +33,9 @@ previous increment.
   copies of the inputs (mode `0600`, so captured content stays readable by its
   owner only whatever the umask), `artifacts/check_<name>/verify.py` and
   `tasks/smoke.json`, where `<name>` defaults to the manifest's kebab-case name
-  and `--name` must be a kebab-case label of at most 64 characters.
+  and `--name` must be a kebab-case label of at most 64 characters that is not a
+  device name Windows reserves (`con`, `prn`, `aux`, `nul`, `com1`–`com9`,
+  `lpt1`–`lpt9`), since the env folder could not be created there.
 - The Dockerfile reads `FROM node:24.18.0-bookworm-slim`, sets
   `MCP_HOST=0.0.0.0` and `MCP_PORT=18765`, installs Debian's `python3` for the
   framework's readiness probe, installs

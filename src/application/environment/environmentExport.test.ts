@@ -12,6 +12,7 @@ import {
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { PACKAGE_METADATA } from "../../generatedPackageMetadata.js";
+import { nativeJsonParseRequiredBytes } from "../JsonInputFile.js";
 import {
   exportEnvironmentBundle,
   readEnvironmentExportInputs,
@@ -269,4 +270,35 @@ describe("exportEnvironmentBundle file modes", () => {
       }
     },
   );
+});
+
+describe("readEnvironmentExportInputs heap admission", () => {
+  it("reserves headroom for snapshot sealing after the native parse", async () => {
+    const root = await createTestTempDirectory(
+      "rea-environment-export-copies-",
+    );
+    const files = await writeEnvironmentServeFiles(
+      root,
+      environmentServeFixture(),
+    );
+    const { size } = await stat(files.manifestPath);
+    // Room for parsing, but not for the owned snapshot traversal that follows it.
+    vi.mocked(v8.getHeapStatistics).mockReturnValueOnce({
+      ...v8.getHeapStatistics(),
+      total_available_size: nativeJsonParseRequiredBytes(size) * 1.5,
+    });
+    const refused = await readEnvironmentExportInputs(
+      files.manifestPath,
+      files.capturePath,
+    );
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      reportedLimits: {
+        input_path: files.manifestPath,
+        required_heap_bytes: nativeJsonParseRequiredBytes(size, true),
+      },
+    });
+  });
 });

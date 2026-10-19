@@ -21,9 +21,10 @@ export const BUNDLE_MCP_PORT = 18765;
 export const BUNDLE_TARBALL_NAME = "rea-agents.tgz";
 
 /** Folder and env id rule: a kebab-case label the agentenv framework accepts as a local id. */
-const BUNDLE_NAME =
-  /^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+const BUNDLE_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const BUNDLE_NAME_MAX_LENGTH = 64;
+/** Win32 reserves these device names for files and folders, so the env folder can never take one. */
+const WINDOWS_RESERVED_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/u;
 
 /** Where the Dockerfile installs the CLI from. */
 export type EnvironmentPackageSource =
@@ -84,6 +85,22 @@ const nameError = (name: string): AnalysisInputError =>
         expected: BUNDLE_NAME.source,
         message:
           "The bundle name is the env folder and env id; use lowercase letters, digits and single hyphens, excluding Windows device names.",
+      },
+    ],
+  );
+
+const reservedNameError = (name: string): AnalysisInputError =>
+  new AnalysisInputError(
+    ENVIRONMENT_EXPORT_OPERATION,
+    {
+      userMessage: `The bundle name ${JSON.stringify(name)} is a device name Windows reserves, so it cannot name the env folder; pass --name with another label.`,
+    },
+    [
+      {
+        path: ["name"],
+        reason: "invalid_value",
+        message:
+          "con, prn, aux, nul, com1-com9 and lpt1-lpt9 are reserved file names on Windows.",
       },
     ],
   );
@@ -277,6 +294,7 @@ export const planEnvironmentBundle = (
   const name = options.name ?? source.manifest.name;
   if (!BUNDLE_NAME.test(name) || name.length > BUNDLE_NAME_MAX_LENGTH)
     return err(nameError(name));
+  if (WINDOWS_RESERVED_NAME.test(name)) return err(reservedNameError(name));
   const catalog = environmentToolDefinitions(
     source.manifest,
     source.evidenceId,

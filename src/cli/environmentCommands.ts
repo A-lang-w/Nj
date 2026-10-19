@@ -190,6 +190,9 @@ const exportEnvironmentCommand = async (
     input.evidence,
   );
   if (!inputs.ok) return cliError(inputs.error);
+  // Loaded here, as for environment-serve, so registering the command catalog never loads it.
+  const { loadEnvironmentSource } =
+    await import("../application/environment/environmentSource.js");
   const source = loadEnvironmentSource(
     inputs.value.manifest.value,
     inputs.value.evidence.value,
