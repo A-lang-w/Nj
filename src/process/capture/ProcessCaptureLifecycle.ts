@@ -6,6 +6,10 @@ import { join } from "node:path";
 import { setImmediate, setTimeout as delay } from "node:timers/promises";
 import type { IPty } from "@lydell/node-pty";
 
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+} from "../../artifacts/AnalysisCleanupLease.js";
 import type { ProcessCapture } from "../../domain/process/processCaptureParsing.js";
 import type { ProcessScenario } from "../../domain/process/processScenario.js";
 import {
@@ -1105,6 +1109,7 @@ class ProcessCaptureResourceOwner {
     | ProcessCaptureCleanupReport["owned_process_group"]
     | undefined;
   #temporaryRoot: ProcessCaptureCleanupReport["temporary_root"] | undefined;
+  #failedResources: readonly string[] = [];
 
   constructor(private readonly options: ProcessCaptureResourceCleanupOptions) {
     this.#host = options.host ?? processCaptureCleanupHost;
@@ -1114,12 +1119,17 @@ class ProcessCaptureResourceOwner {
       this.#ownedProcessGroup = { state: "not_required", reason: null };
   }
 
+  /** Resources whose latest cleanup attempt did not confirm release. */
+  get failedCleanupResources(): readonly string[] {
+    return this.#failedResources;
+  }
+
   async close(): Promise<ProcessCaptureCleanupReport> {
     for (const timer of this.options.timers) timer.cancel();
     await this.#releaseRenderer();
     await this.#releaseOwnedProcessGroup();
     await this.#releaseTemporaryRoot();
-    return {
+    const report: ProcessCaptureCleanupReport = {
       owned_process_group: this.#ownedProcessGroup ?? {
         state: "unverified",
         reason: "owned process cleanup was not attempted",
@@ -1133,6 +1143,8 @@ class ProcessCaptureResourceOwner {
         reason: "temporary root cleanup was not attempted",
       },
     };
+    this.#failedResources = failedCleanupResources(report);
+    return report;
   }
 
   async #releaseRenderer(): Promise<void> {
@@ -1210,7 +1222,10 @@ export const releaseProcessResources = async (
 
 /** Run-local owner collection for resources whose first cleanup did not finish. */
 export class ProcessCaptureResourceScope {
-  readonly #pending = new Set<ProcessCaptureResourceOwner>();
+  readonly #pending = new Map<
+    ProcessCaptureResourceOwner,
+    AnalysisCleanupLease
+  >();
   readonly #active = new Set<Promise<unknown>>();
   #draining: Promise<void> | undefined;
   #closed = false;
@@ -1241,7 +1256,24 @@ export class ProcessCaptureResourceScope {
     const owner = new ProcessCaptureResourceOwner(options);
     const report = await owner.close();
     if (cleanupReportFailure(report) !== undefined) {
-      this.#pending.add(owner);
+      // Retain the exact owner behind a cleanup lease so errors produced from
+      // this report can clear their cleanup status only after this owner
+      // confirms release. The lease's live attribution follows the owner's
+      // latest failed resources across retries.
+      const lease = new AnalysisCleanupLease(
+        async () => {
+          const retryReport = await owner.close();
+          const retryFailure = cleanupReportFailure(retryReport);
+          if (retryFailure !== undefined) throw new Error(retryFailure);
+        },
+        {
+          get cleanupResources() {
+            return owner.failedCleanupResources;
+          },
+        },
+      );
+      this.#pending.set(owner, lease);
+      retainedCleanupLeases.set(report, [lease]);
     }
     return report;
   }
@@ -1264,42 +1296,85 @@ export class ProcessCaptureResourceScope {
   async #drainAndRetry(): Promise<void> {
     while (this.#active.size > 0) await Promise.allSettled(this.#active);
     const failures: string[] = [];
-    for (const owner of this.#pending) {
+    for (const [owner, lease] of this.#pending) {
       try {
-        const report = await owner.close();
-        if (cleanupReportFailure(report) === undefined)
-          this.#pending.delete(owner);
-        else
-          failures.push(cleanupReportFailure(report) ?? "cleanup incomplete");
+        await lease.release();
+        this.#pending.delete(owner);
       } catch (cause: unknown) {
         failures.push(
           cause instanceof Error ? cause.message || cause.name : String(cause),
         );
       }
     }
-    if (failures.length > 0)
-      throw new AggregateError(
+    if (failures.length > 0) {
+      const remaining = [...this.#pending.values()];
+      const aggregate = new AggregateError(
         failures,
         `Process capture cleanup remains incomplete: ${failures.join("; ")}`,
       );
+      const retryError = new ProcessCaptureError(
+        "Process capture cleanup remains incomplete",
+        {
+          cause: aggregate,
+          reason: "cleanup_incomplete",
+          cleanup: {
+            reason: aggregate.message,
+            resources: [
+              ...new Set(
+                remaining.flatMap((lease) => lease.cleanupResources ?? []),
+              ),
+            ],
+          },
+          executionFailure: failures.join("; "),
+        },
+      );
+      // The retry aggregate stays incomplete until every owner it reports is
+      // released; releasing one child cannot clear another child's status.
+      new AnalysisCleanupLeaseGroup(retryError, remaining);
+      throw retryError;
+    }
   }
 }
+
+/** Exact cleanup leases retained for reports returned by scope releases. */
+const retainedCleanupLeases = new WeakMap<
+  ProcessCaptureCleanupReport,
+  readonly AnalysisCleanupLease[]
+>();
+
+/**
+ * Bind a cleanup error to the exact owners a scope retained for its report, so
+ * owner-confirmed retry clears the published cleanup status without rewriting
+ * the historical report.
+ */
+const bindRetainedCleanupLeases = (
+  report: ProcessCaptureCleanupReport,
+  error: ProcessCaptureError,
+): void => {
+  const leases = retainedCleanupLeases.get(report);
+  if (leases === undefined || leases.length === 0) return;
+  new AnalysisCleanupLeaseGroup(error, leases);
+};
+
+/** Resources in a cleanup report whose release was not confirmed. */
+const failedCleanupResources = (
+  report: ProcessCaptureCleanupReport,
+): readonly string[] =>
+  Object.entries(report)
+    .filter(
+      ([, outcome]) =>
+        outcome.state === "failed" || outcome.state === "unverified",
+    )
+    .map(([resource]) => resource);
 
 export const cleanupReportFailure = (
   report: ProcessCaptureCleanupReport,
 ): string | undefined => {
-  const failures = Object.entries(report).filter(
-    ([, outcome]) =>
-      outcome.state === "failed" || outcome.state === "unverified",
-  );
-  return failures.length === 0
-    ? undefined
-    : failures
-        .map(
-          ([resource, outcome]) =>
-            `${resource}: ${outcome.reason ?? outcome.state}`,
-        )
-        .join("; ");
+  const failures = failedCleanupResources(report).map((resource) => {
+    const outcome = report[resource as keyof ProcessCaptureCleanupReport];
+    return `${resource}: ${outcome.reason ?? outcome.state}`;
+  });
+  return failures.length === 0 ? undefined : failures.join("; ");
 };
 
 export const captureTerminalFrames = (options: {
@@ -1429,22 +1504,20 @@ export const resolveProcessResult = (
     }
   }
   if (cleanupFailure !== undefined) {
-    const cleanupResources = Object.entries(cleanup)
-      .filter(
-        ([, outcome]) =>
-          outcome.state === "failed" || outcome.state === "unverified",
-      )
-      .map(([resource]) => resource);
     const cleanupError = new ProcessCaptureError(cleanupFailure, {
       cause: executionFailure,
       reason: "cleanup_incomplete",
-      cleanup: { reason: cleanupFailure, resources: cleanupResources },
+      cleanup: {
+        reason: cleanupFailure,
+        resources: failedCleanupResources(cleanup),
+      },
       ...(executionFailureReason === undefined
         ? {}
         : { executionFailure: executionFailureReason }),
       ...(partialObservation === undefined ? {} : { partialObservation }),
       cleanupReport: cleanup,
     });
+    bindRetainedCleanupLeases(cleanup, cleanupError);
     if (executionFailure instanceof ProcessCaptureError)
       throw executionFailure.withFinalization({
         ...(executionFailureReason === undefined

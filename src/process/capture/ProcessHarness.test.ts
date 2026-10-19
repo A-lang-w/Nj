@@ -1,4 +1,7 @@
 import { expect, it, vi } from "vitest";
+import { mkdtemp, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import {
@@ -32,6 +35,7 @@ import { DarwinProcessOwnershipInspectionError } from "../DarwinProcessRunTokenR
 import {
   partialProcessCaptureObservationSchema,
   processCaptureSchema,
+  type ProcessCaptureCleanupReport,
 } from "../../domain/process/processCapture.js";
 const emptyFilesystemCoverage =
   emptyProcessCapture().truncation_details.filesystem_before;
@@ -412,6 +416,171 @@ it.each(["termination", "verification"] as const)(
     expect(removeTemporaryRoot).toHaveBeenCalledTimes(1);
   },
 );
+
+const deniedRootHost = (
+  denied: ReadonlySet<string>,
+): ProcessCaptureCleanupHost => ({
+  platform: "linux",
+  cleanupProcessGroup: async () => ({ cleaned: true, signaled: false }),
+  verifyTokenOwnedProcesses: async () => ({ cleaned: true, signaled: false }),
+  removeTemporaryRoot: async (path) => {
+    if (denied.has(path)) throw new Error(`removal denied for ${path}`);
+    await rm(path, { recursive: true, force: true });
+  },
+});
+
+const projectCleanupError = (
+  report: ProcessCaptureCleanupReport,
+  primary: unknown,
+): ProcessCaptureError => {
+  try {
+    resolveProcessResult(undefined, primary, report);
+  } catch (cause: unknown) {
+    expect(cause).toBeInstanceOf(ProcessCaptureError);
+    return cause as ProcessCaptureError;
+  }
+  throw new Error("expected cleanup failure");
+};
+
+it("clears cleanup_incomplete on the originating error after the exact owner confirms retry", async () => {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "rea-5144-"));
+  try {
+    const denied = new Set([temporaryRoot]);
+    const scope = new ProcessCaptureResourceScope();
+    const report = await scope.release({
+      timers: new Set(),
+      terminal: undefined,
+      renderer: undefined,
+      runId: "fixture-run",
+      temporaryRoot,
+      host: deniedRootHost(denied),
+    });
+    expect(report.temporary_root).toMatchObject({ state: "failed" });
+
+    const typedPrimaryFailure = new ProcessCaptureError(
+      "capture snapshot failed",
+      { cause: new Error("snapshot unavailable") },
+    );
+    const error = projectCleanupError(report, typedPrimaryFailure);
+    expect(error.cleanupIncomplete).toBe(true);
+    expect(projectAnalysisError(error).code).toBe("cleanup_incomplete");
+
+    denied.clear();
+    await scope.retryCleanup();
+    await scope.close();
+    await expect(stat(temporaryRoot)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+
+    expect(error.cleanupIncomplete).toBe(false);
+    expect(projectAnalysisError(error).code).toBe("process_capture_failed");
+    // The original failure facts and the historical cleanup report survive;
+    // only the live cleanup marker clears.
+    expect(error.executionFailure).toBe("capture snapshot failed");
+    expect(error.cleanupReport).toBe(report);
+    expect(error.cleanup).toMatchObject({
+      resources: ["temporary_root"],
+      reason: expect.stringContaining("temporary_root"),
+    });
+    expect(error.cleanupResources).toEqual([]);
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+it("keeps a still-pending owner incomplete while a peer owner confirms retry", async () => {
+  const firstRoot = await mkdtemp(join(tmpdir(), "rea-5144-a-"));
+  const secondRoot = await mkdtemp(join(tmpdir(), "rea-5144-b-"));
+  try {
+    const denied = new Set([firstRoot, secondRoot]);
+    const scope = new ProcessCaptureResourceScope();
+    const release = (temporaryRoot: string) =>
+      scope.release({
+        timers: new Set(),
+        terminal: undefined,
+        renderer: undefined,
+        runId: "fixture-run",
+        temporaryRoot,
+        host: deniedRootHost(denied),
+      });
+    const firstReport = await release(firstRoot);
+    const secondReport = await release(secondRoot);
+    const firstError = projectCleanupError(
+      firstReport,
+      new Error("first capture failed"),
+    );
+    const secondError = projectCleanupError(
+      secondReport,
+      new Error("second capture failed"),
+    );
+    expect(firstError.cleanupIncomplete).toBe(true);
+    expect(secondError.cleanupIncomplete).toBe(true);
+
+    denied.delete(firstRoot);
+    const retryAggregate = await scope
+      .retryCleanup()
+      .then(
+        () => {
+          throw new Error("expected retry to remain incomplete");
+        },
+        (cause: unknown) => cause,
+      );
+    expect(retryAggregate).toBeInstanceOf(ProcessCaptureError);
+    expect(
+      (retryAggregate as ProcessCaptureError).cleanupIncomplete,
+    ).toBe(true);
+    await expect(stat(firstRoot)).rejects.toMatchObject({ code: "ENOENT" });
+
+    expect(firstError.cleanupIncomplete).toBe(false);
+    expect(projectAnalysisError(firstError).code).not.toBe(
+      "cleanup_incomplete",
+    );
+    expect(secondError.cleanupIncomplete).toBe(true);
+    expect(projectAnalysisError(secondError).code).toBe("cleanup_incomplete");
+
+    // The retry aggregate stays incomplete until its own owners are released.
+    denied.delete(secondRoot);
+    await scope.retryCleanup();
+    await scope.close();
+    expect(
+      (retryAggregate as ProcessCaptureError).cleanupIncomplete,
+    ).toBe(false);
+    expect(secondError.cleanupIncomplete).toBe(false);
+  } finally {
+    await rm(firstRoot, { recursive: true, force: true });
+    await rm(secondRoot, { recursive: true, force: true });
+  }
+});
+
+it("does not treat an empty unrelated scope as recovery proof", async () => {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "rea-5144-"));
+  try {
+    const denied = new Set([temporaryRoot]);
+    const scope = new ProcessCaptureResourceScope();
+    const unrelated = new ProcessCaptureResourceScope();
+    const report = await scope.release({
+      timers: new Set(),
+      terminal: undefined,
+      renderer: undefined,
+      runId: "fixture-run",
+      temporaryRoot,
+      host: deniedRootHost(denied),
+    });
+    const error = projectCleanupError(
+      report,
+      new Error("capture snapshot failed"),
+    );
+    expect(error.cleanupIncomplete).toBe(true);
+
+    await unrelated.retryCleanup();
+    await unrelated.close();
+
+    expect(error.cleanupIncomplete).toBe(true);
+    expect(projectAnalysisError(error).code).toBe("cleanup_incomplete");
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
 
 it("waits for token-owned processes to exit after one cleanup signal", async () => {
   vi.useFakeTimers();
