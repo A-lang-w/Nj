@@ -46,6 +46,12 @@ type FixtureMode =
   | "silent"
   | "exit"
   | "old_oom_then_malformed"
+  | "prefix_cut_identifier_exit_tools"
+  | "oom_exit_tools"
+  | "flood_then_oom_exit_tools"
+  | "flood_then_exit_tools"
+  | "flood_then_malformed"
+  | "flood_silent"
   | "diagnostic_output";
 
 export class GhidraFixtureLauncher implements GhidraLauncher {
@@ -77,6 +83,7 @@ export class GhidraFixtureLauncher implements GhidraLauncher {
     if (
       process.platform === "win32" &&
       this.mode !== "silent" &&
+      this.mode !== "flood_silent" &&
       this.mode !== "exit"
     ) {
       // The owned writer normalizes only its child's default file owner.
