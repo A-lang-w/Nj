@@ -2,6 +2,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
+import { createPackageWithOptions } from "@electron/asar";
 import { expect, it, onTestFinished } from "vitest";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -11,6 +12,86 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { desktopApplicationSchema } from "../../../src/domain/desktopApplication.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
+import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
+import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
+import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
+
+it.each([false, true])(
+  "follows the ASAR selection probe with a previously active target: %s",
+  async (previous) => {
+    const root = await createTestTempDirectory("rea-desktop-asar-probe-");
+    const source = join(root, "source");
+    const installation = join(root, "installation");
+    const resources = join(installation, "resources");
+    await mkdir(source);
+    await mkdir(resources, { recursive: true });
+    await writeFile(
+      join(source, "selected.js"),
+      "export const selected = true;\n",
+    );
+    const archive = join(resources, "app.asar");
+    await createPackageWithOptions(source, archive, {});
+    const session = createTestBinarySession(new ArtifactProvider(process.env));
+    const harness = await createApplicationMcpHarness({ session });
+    onTestFinished(harness.close);
+    if (previous) {
+      const other = join(root, "previous");
+      await mkdir(other);
+      await writeFile(
+        join(other, "previous.js"),
+        "export const previous = true;\n",
+      );
+      const path = join(root, "previous.asar");
+      await createPackageWithOptions(other, path, {});
+      const opened = await harness.client.callTool({
+        name: "open_binary",
+        arguments: { path },
+      });
+      expect(opened.isError).not.toBe(true);
+    }
+    const result = await harness.client.callTool({
+      name: "inspect_desktop_application",
+      arguments: { path: installation, detail: "complete" },
+    });
+    expect(result.isError).not.toBe(true);
+    const report = desktopApplicationSchema.parse(
+      parseEvidence(result.structuredContent).normalized_result,
+    );
+    const archiveFile = report.files.find(
+      (row) => row.path === "resources/app.asar",
+    );
+    if (archiveFile === undefined) throw new Error("Missing selected archive");
+    const probe = report.next_probes.find(
+      (row) =>
+        row.file_id === archiveFile.file_id &&
+        row.operation !== "analyze_javascript_application",
+    );
+    if (probe === undefined) throw new Error("Missing archive selection probe");
+    expect(probe.operation).toBe("open_binary");
+    const selected = await harness.client.callTool({
+      name: probe.operation,
+      arguments: { path: probe.path },
+    });
+    expect(selected.isError).not.toBe(true);
+    const inspected = await harness.client.callTool({
+      name: "inspect_artifact",
+      arguments: {},
+    });
+    expect(inspected.isError).not.toBe(true);
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(inspected.structuredContent).normalized_result,
+    );
+    const inventory = artifactInventoryResultSchema.parse(
+      inspection.substeps[0]?.evidence.normalized_result,
+    );
+    expect(inventory.occurrences.map((row) => row.logical_path)).toContain(
+      "selected.js",
+    );
+    expect(inventory.occurrences.map((row) => row.logical_path)).not.toContain(
+      "previous.js",
+    );
+  },
+);
 
 it("advertises exact schemas and retains a compact directory answer with typed selected pages", async () => {
   const root = await createTestTempDirectory("rea-desktop-mcp-");

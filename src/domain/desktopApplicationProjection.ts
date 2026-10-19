@@ -108,9 +108,9 @@ export const projectDesktopApplication = (
   );
   for (const file of electron) {
     probe(
-      "inspect_artifact",
+      "open_binary",
       file,
-      "Inventory the candidate ASAR before selecting JavaScript sources.",
+      "Select this ASAR target with open_binary, then call inspect_artifact to inventory it before selecting JavaScript sources.",
     );
     probe(
       "analyze_javascript_application",

@@ -149,7 +149,6 @@ export const desktopProbeSchema = z.strictObject({
     "inspect_managed_artifact",
     "open_binary",
     "analyze_javascript_application",
-    "inspect_artifact",
   ]),
   path: localPathStringSchema,
   file_id: prefixedDigestSchema("dsf"),

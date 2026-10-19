@@ -52,6 +52,11 @@ source coverage and parent Evidence links. Page exhaustion does not establish
 absence in a partial source. Complete Evidence remains accessible through
 `get_evidence` and Evidence bundle export.
 
+An ASAR inventory probe first selects its exact path with `open_binary`; then
+call `inspect_artifact` on that active target. Directory inspection itself does
+not select or replace the session target. The JavaScript application workflow
+accepts its own selected path directly.
+
 ## CLI
 
 The one-shot CLI returns complete Evidence by default. For compact output,
