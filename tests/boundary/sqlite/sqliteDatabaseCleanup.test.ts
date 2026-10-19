@@ -14,6 +14,8 @@ import {
   waitForProviderProcessReady,
 } from "../../fixtures/providerProcess.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
+import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { createSqliteDatabaseFixture } from "../../fixtures/sqlite/database.js";
 import {
   createTestWorkspace,
@@ -478,4 +480,65 @@ it("tracks every unresolved owner in a close aggregate until each root releases"
   await provider.close();
   expect(aggregate.cleanupIncomplete).toBe(false);
   expect(aggregate.cleanupResources).toEqual([]);
+});
+
+it("resolves a synthesized descriptor failure once its artifact leases release", async () => {
+  const workspace = await createTestWorkspace("rea-sqlite-descriptor-close-");
+  const database = createSqliteDatabaseFixture(workspace.root);
+  database.close();
+  const roots: PrivateRuntimeRoot[] = [];
+  let removalAllowed = false;
+  let descriptorAllowed = false;
+  const artifactResources = new ArtifactResourceScope();
+  artifactResources.retain({
+    kind: "lease",
+    resource: "sqlite-artifact-descriptor",
+    lease: {
+      release: async () => {
+        if (!descriptorAllowed) throw new Error("descriptor close denied");
+      },
+    },
+  });
+  const provider = new SqliteDatabaseProvider(
+    {},
+    () => {
+      throw new Error("SQLite worker deliberately unavailable");
+    },
+    async () => {
+      const root = await PrivateRuntimeRoot.create({ parent: workspace.root });
+      roots.push(root);
+      return {
+        path: root.path,
+        close: async () => {
+          if (!removalAllowed) throw new Error("snapshot removal denied");
+          await root.close();
+        },
+      };
+    },
+    artifactResources,
+  );
+  onTestFinished(async () => {
+    descriptorAllowed = true;
+    removalAllowed = true;
+    await provider.close().catch(() => {});
+    await Promise.all(roots.map((root) => root.close()));
+    await removeTestWorkspace(workspace.root);
+  });
+
+  await provider.inspect({ path: database.path });
+  const failure: unknown = await provider
+    .close()
+    .catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(ProviderCleanupError);
+  if (!(failure instanceof ProviderCleanupError))
+    throw new Error("expected the descriptor/root aggregate");
+  expect(failure.cleanupIncomplete).toBe(true);
+
+  // The descriptors and the retained root all release on the next close.
+  descriptorAllowed = true;
+  removalAllowed = true;
+  await provider.close();
+  // The caller's aggregate must report completed cleanup: its synthesized
+  // descriptor child resolves with the artifact leases it was bound to.
+  expect(failure.cleanupIncomplete).toBe(false);
 });
