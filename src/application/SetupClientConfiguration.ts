@@ -12,7 +12,7 @@ import {
   clientConfigurationValuesEqual,
   clientServerListedDisabled,
   clientServerPath,
-  codexServerToolsSchema,
+  codexServerToolSchema,
   legacyClientServerPath,
   OMP_DISABLED_SERVERS_KEY,
   parseClientConfiguration,
@@ -826,10 +826,21 @@ const codexTools = (
     !Object.hasOwn(registration, "tools")
   )
     return undefined;
-  const parsed = codexServerToolsSchema.safeParse(
-    Reflect.get(registration, "tools"),
-  );
-  return parsed.success ? parsed.data : undefined;
+  const rawTools: unknown = Reflect.get(registration, "tools");
+  if (
+    typeof rawTools !== "object" ||
+    rawTools === null ||
+    Array.isArray(rawTools)
+  )
+    return undefined;
+  const validTools: Record<string, Record<string, unknown>> = {};
+  for (const [toolName, toolConfig] of Object.entries(rawTools)) {
+    const parsed = codexServerToolSchema.safeParse(toolConfig);
+    if (parsed.success) {
+      validTools[toolName] = parsed.data;
+    }
+  }
+  return Object.keys(validTools).length > 0 ? validTools : undefined;
 };
 
 const positiveTimeout = (

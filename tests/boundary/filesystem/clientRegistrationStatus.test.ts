@@ -469,6 +469,8 @@ function registerClientToolPolicyTests(): void {
   it.each([
     'tools = ["*"]',
     '[mcp_servers.rea.tools]\nbinary_session = "approve"',
+    "[mcp_servers.rea.tools.binary_session]\napproval_mode = 12",
+    '[mcp_servers.rea.tools.binary_session]\napproval_mode = "unsupported"',
   ])(
     "reports malformed Codex tools setting %s as invalid",
     async (toolsFragment) => {
@@ -493,6 +495,28 @@ function registerClientToolPolicyTests(): void {
       ]);
     },
   );
+
+  it("accepts recognized and unknown future settings under a Codex per-tool table", async () => {
+    const home = await createTestTempDirectory("rea-codex-future-tools-");
+    await mkdir(join(home, ".codex"));
+    const entry = resolve("scripts/rea.mjs");
+    await writeFile(
+      join(home, ".codex/config.toml"),
+      `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 450\n\n[mcp_servers.rea.tools.binary_session]\napproval_mode = "approve"\ncustom_future_flag = true\n`,
+    );
+
+    const statuses = await readClientRegistrationStatuses(home, entry, {
+      environment: {},
+    });
+
+    expect(statuses).toEqual([
+      expect.objectContaining({
+        client: "codex",
+        state: "aligned",
+        remediation: null,
+      }),
+    ]);
+  });
 
   it("reports a non-array Copilot CLI tools setting as invalid", async () => {
     const home = await createTestTempDirectory("rea-copilot-invalid-tools-");
