@@ -369,6 +369,7 @@ it("retains the partial capture without taskkill when Windows lineage is unavail
 });
 
 it("retains the initial snapshot when the final state read fails", async () => {
+  stubVerifiedElectronCleanup();
   const initialState = {
     windows: [],
     metrics: [],
