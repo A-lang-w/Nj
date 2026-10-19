@@ -203,7 +203,7 @@ type AmbientProjection = AmbientPath | undefined;
 type AmbientReplacementKey = string | typeof SEMANTIC_PHYSICAL_PROTOTYPE;
 const capturedReplacement = (
   sources: readonly SemanticIterationSource[] | undefined,
-  read: t.Node | undefined,
+  read: AmbientCapture | undefined,
   state: JavaScriptSemanticAnalysisState,
   completedAt?: t.Node,
 ): SemanticIterationSource | undefined => {
@@ -214,9 +214,10 @@ const capturedReplacement = (
       (source.mutation === completedAt ||
         semanticDefiniteMutationPrecedesRead(
           source.mutation,
-          read,
+          captureNode(read)!,
           state.parentsByNode,
         )) &&
+      !captureExcludesMutation(read, source.mutation, state) &&
       (selected === undefined ||
         semanticEffectTiming(source.mutation, selected.mutation, state) ===
           "before")
@@ -235,7 +236,32 @@ const propertySelector = (
       : key;
 const hasInternalSelector = (path: AmbientSelectionProjection): boolean =>
   path?.some((key) => typeof key === "symbol") === true;
-type AmbientCaptures = readonly (t.Node | undefined)[];
+interface AmbientBoundedCapture {
+  readonly node: t.Node;
+  readonly invokedAt: t.Node;
+}
+type AmbientCapture = t.Node | AmbientBoundedCapture;
+type AmbientCaptures = readonly (AmbientCapture | undefined)[];
+const captureNode = (
+  capture: AmbientCapture | undefined,
+): t.Node | undefined =>
+  capture === undefined
+    ? undefined
+    : "type" in capture
+      ? capture
+      : capture.node;
+const captureExcludesMutation = (
+  capture: AmbientCapture | undefined,
+  mutation: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (capture === undefined) return false;
+  return (
+    semanticEffectTiming(captureNode(capture)!, mutation, state) === "after" ||
+    (!("type" in capture) &&
+      semanticEffectTiming(capture.invokedAt, mutation, state) === "after")
+  );
+};
 
 /** Builtin exports select the same possible values as their ambient owners. */
 const builtinValuePaths = (
@@ -754,7 +780,9 @@ export const createAmbientPathResolver = (
       capturedPrototype?: SemanticConstructedReceiver;
       inheritedMember?: boolean;
       readContext?: {
-        readonly read: t.ThisExpression | t.Super;
+        readonly read?: t.ThisExpression | t.Super;
+        /** Evaluation of a returned expression is bounded by its invocation. */
+        readonly invokedAt?: t.Node | undefined;
         /** Receiver evaluation bounds initialization, independently of slot mutation captures. */
         readonly initializedAt?: t.Node;
       };
@@ -784,8 +812,8 @@ export const createAmbientPathResolver = (
     >();
     // A getter's this/super projection is a distinct evaluation from the
     // outer lookup selecting it. Keep these finite AST read contexts apart.
-    const readExpansions = new WeakMap<t.Node, WeakMap<object, object>>();
-    const expansionAtRead = (read: t.Node | undefined, key: object) => {
+    const readExpansions = new WeakMap<object, WeakMap<object, object>>();
+    const expansionAtRead = (read: object | undefined, key: object) => {
       if (read === undefined) return key;
       const contexts =
         readExpansions.get(read) ?? new WeakMap<object, object>();
@@ -793,6 +821,28 @@ export const createAmbientPathResolver = (
       contexts.set(key, context);
       readExpansions.set(read, contexts);
       return context;
+    };
+    // Intern finite source-read/invocation pairs. Bounds belong only to
+    // expression-produced slots, never to later consumer suffix captures.
+    const boundedCaptures = new WeakMap<
+      t.Node,
+      WeakMap<t.Node, AmbientBoundedCapture>
+    >();
+    const boundCapture = (
+      node: t.Node,
+      invokedAt: t.Node | undefined,
+    ): AmbientCapture => {
+      if (invokedAt === undefined) return node;
+      const byInvocation =
+        boundedCaptures.get(node) ??
+        new WeakMap<t.Node, AmbientBoundedCapture>();
+      let capture = byInvocation.get(invokedAt);
+      if (capture === undefined) {
+        capture = { node, invokedAt };
+        byInvocation.set(invokedAt, capture);
+        boundedCaptures.set(node, byInvocation);
+      }
+      return capture;
     };
     const shiftedOwnOnly = (slots: readonly number[], offset: number) =>
       slots.map((slot) => slot + offset).filter((slot) => slot >= 0);
@@ -836,11 +886,13 @@ export const createAmbientPathResolver = (
           path[0] === null;
         const lookup =
           source.propertyLookup === undefined
-            ? owner
+            ? (source.target?.object ?? owner)
             : source.propertyLookup.target;
         const physicalStore =
           facts?.storeKinds?.get(source) === "prototype" ||
           (facts?.storeKinds?.get(source) === undefined &&
+            // Projected legacy setters need class-prototype descriptor facts;
+            // only already-classified physical mutations may cross a prefix.
             path?.length === 1 &&
             (path[0] === "__proto__" || copiedPrototype) &&
             ((source.propertyLookup !== undefined && lookup === undefined) ||
@@ -855,6 +907,21 @@ export const createAmbientPathResolver = (
                     syntaxReferences,
                   )))));
         if (physicalStore) {
+          // A projected owner (for example C.prototype) keeps its address
+          // prefix in the store index. Select its physical link at that depth.
+          const offset = Math.max(0, (path?.length ?? 1) - 1);
+          if (
+            suffix !== undefined &&
+            path
+              ?.slice(0, offset)
+              .some(
+                (key, index) =>
+                  key !== null &&
+                  suffix[index] !== null &&
+                  key !== suffix[index],
+              )
+          )
+            continue;
           const physicalProjection = copiedPrototype
             ? [...sourceProjection, "__proto__"]
             : sourceProjection;
@@ -862,6 +929,7 @@ export const createAmbientPathResolver = (
             ? [sourceProjection.length]
             : [];
           if (
+            offset === 0 &&
             prototypeReplacement !== undefined &&
             source !== prototypeReplacement &&
             semanticEffectTiming(
@@ -871,17 +939,16 @@ export const createAmbientPathResolver = (
             ) === "before"
           )
             continue;
-          const read = captures[0];
-          if (
-            read !== undefined &&
-            semanticEffectTiming(read, source.mutation, state) === "after"
-          )
+          const selectedCapture = captures[offset];
+          const read = captureNode(selectedCapture);
+          if (captureExcludesMutation(selectedCapture, source.mutation, state))
             continue;
           if (semanticReferenceSourcesInactive(source, state, "syntax-only"))
             continue;
-          const selector = suffix?.[0];
+          const selector = suffix?.[offset];
           const key = propertySelector(selector);
           const nativeRead =
+            offset === 0 &&
             selector === "__proto__" &&
             (context?.constructed !== undefined ||
               owner === undefined ||
@@ -904,25 +971,28 @@ export const createAmbientPathResolver = (
               suffix:
                 suffix === undefined
                   ? undefined
-                  : [...physicalProjection, ...suffix.slice(1)],
+                  : [...physicalProjection, ...suffix.slice(offset + 1)],
               captures: [
                 ...physicalProjection.map(() => source.mutation),
-                ...captures.slice(1),
+                ...captures.slice(offset + 1),
               ],
               ownOnly: [
                 ...physicalOwnOnly,
-                ...shiftedOwnOnly(ownOnly, physicalProjection.length - 1),
+                ...shiftedOwnOnly(
+                  ownOnly,
+                  physicalProjection.length - offset - 1,
+                ),
               ],
               copySelection: copiedPrototype ? "__proto__" : copySelection,
             });
           else if (
-            !ownOnly.includes(0) &&
+            !ownOnly.includes(offset) &&
             (suffix === undefined ||
               (typeof key === "string" &&
                 (owner === undefined ||
                   !ownSourceSlotPresent(
                     owner,
-                    [key],
+                    [...(path?.slice(0, offset) ?? []), key],
                     read ?? source.mutation,
                   ))))
           )
@@ -932,14 +1002,14 @@ export const createAmbientPathResolver = (
               suffix:
                 suffix === undefined
                   ? undefined
-                  : [...physicalProjection, ...suffix],
+                  : [...physicalProjection, ...suffix.slice(offset)],
               captures: [
                 ...physicalProjection.map(() => source.mutation),
-                ...captures,
+                ...captures.slice(offset),
               ],
               ownOnly: [
                 ...physicalOwnOnly,
-                ...shiftedOwnOnly(ownOnly, physicalProjection.length),
+                ...shiftedOwnOnly(ownOnly, physicalProjection.length - offset),
               ],
               copySelection: copiedPrototype ? "__proto__" : copySelection,
             });
@@ -1058,9 +1128,8 @@ export const createAmbientPathResolver = (
         // replace this reference and must not replay costly timing queries.
         // Unknown order remains a possible alias, including deferred calls.
         if (
-          selectedAt !== undefined &&
           source.mutation !== completedAt &&
-          semanticEffectTiming(selectedAt, source.mutation, state) === "after"
+          captureExcludesMutation(selectedAt, source.mutation, state)
         )
           continue;
         const remaining =
@@ -1202,7 +1271,7 @@ export const createAmbientPathResolver = (
       SemanticSharedStorageIdentity,
       Set<string>
     >();
-    const storageCaptureIds = new WeakMap<t.Node, number>();
+    const storageCaptureIds = new WeakMap<AmbientCapture, number>();
     let nextStorageCaptureId = 0;
     const selectStorage = (
       storage: SemanticFunctionValueProjection,
@@ -1230,9 +1299,16 @@ export const createAmbientPathResolver = (
       const captures = readCaptures.slice(offset);
       const replacement =
         typeof suffix[0] === "string" && captures[0] !== undefined
-          ? facts?.builtinMemberReplacement?.(owner, suffix[0], captures[0])
+          ? facts?.builtinMemberReplacement?.(
+              owner,
+              suffix[0],
+              captureNode(captures[0])!,
+            )
           : undefined;
-      if (replacement !== undefined) {
+      if (
+        replacement !== undefined &&
+        !captureExcludesMutation(captures[0], replacement.mutation, state)
+      ) {
         pending.push({
           node: replacement.node,
           suffix: suffix.slice(1),
@@ -1363,7 +1439,9 @@ export const createAmbientPathResolver = (
           ? undefined
           : [...members, ...current.suffix];
       let captures: AmbientCaptures = [
-        ...members.map(() => current.node),
+        ...members.map(() =>
+          boundCapture(current.node, current.readContext?.invokedAt),
+        ),
         ...current.captures,
       ];
       let ownOnly = shiftedOwnOnly(current.ownOnly ?? [], members.length);
@@ -1382,6 +1460,10 @@ export const createAmbientPathResolver = (
         nodes.set(root, modes);
       }
       expansionKey = expansionAtRead(current.readContext?.read, expansionKey);
+      expansionKey = expansionAtRead(
+        current.readContext?.invokedAt,
+        expansionKey,
+      );
       // Re-entering a class through an earlier field initializer is a distinct
       // slot capture, just like a recovered static `this` receiver. Joining it
       // with the outer read can erase the selected inherited getter before
@@ -1453,6 +1535,7 @@ export const createAmbientPathResolver = (
           | null
           | undefined = current.capturedPrototype,
         inheritedMember = current.inheritedMember,
+        readContext = current.readContext,
       ) =>
         pending.push({
           node,
@@ -1461,9 +1544,7 @@ export const createAmbientPathResolver = (
           ownOnly: ownSlots,
           copySelection: current.copySelection,
           ...(current.readsAtSelf && { readsAtSelf: true }),
-          ...(current.readContext === undefined
-            ? {}
-            : { readContext: current.readContext }),
+          ...(readContext === undefined ? {} : { readContext }),
           ...(capturedPrototype == null
             ? {}
             : { capturedPrototype, inheritedMember }),
@@ -1491,7 +1572,14 @@ export const createAmbientPathResolver = (
         callee: t.Node,
         path: AmbientSelectionProjection,
         readCaptures: AmbientCaptures = captures,
+        invocationCapture?: AmbientCapture,
       ) => {
+        const invokedAt =
+          invocationCapture === undefined
+            ? undefined
+            : "type" in invocationCapture
+              ? invocationCapture
+              : invocationCapture.invokedAt;
         for (const source of returnedReferences(callee).references)
           continueWith(
             source.node,
@@ -1506,6 +1594,17 @@ export const createAmbientPathResolver = (
                   ...path,
                 ],
             [...source.projection.map(() => source.node), ...readCaptures],
+            undefined,
+            undefined,
+            undefined,
+            source.synchronous !== true
+              ? { ...current.readContext, invokedAt: undefined }
+              : invokedAt === undefined
+                ? current.readContext
+                : {
+                    ...current.readContext,
+                    invokedAt,
+                  },
           );
       };
       if (
@@ -1547,7 +1646,7 @@ export const createAmbientPathResolver = (
         const field = suffix[2];
         // ArraySetLength always stores a number, including after coercion.
         if (t.isArrayExpression(root) && key === "length") continue;
-        const read = captures[0] ?? root;
+        const read = captureNode(captures[0]) ?? root;
         const remaining = suffix.slice(3);
         const updated =
           typeof key === "string"
@@ -1703,6 +1802,24 @@ export const createAmbientPathResolver = (
             root,
           ));
       }
+      if (
+        t.isClass(root) &&
+        suffix?.[0] === "prototype" &&
+        suffix[1] === SEMANTIC_PHYSICAL_PROTOTYPE
+      ) {
+        if (root.superClass != null && !t.isNullLiteral(root.superClass))
+          continueWith(
+            root.superClass,
+            ["prototype", ...suffix.slice(2)],
+            [captures[1], ...captures.slice(2)],
+          );
+        else if (root.superClass == null)
+          retain(
+            ["global", "Object", "prototype", ...suffix.slice(2)],
+            captures.slice(2),
+          );
+        continue;
+      }
       if (current.constructed !== undefined) {
         const receiver = current.constructed;
         const values = constructedValues.get(receiver.identity) ?? new Set();
@@ -1733,8 +1850,11 @@ export const createAmbientPathResolver = (
             continueWith(field.value, suffix?.slice(1), captures.slice(1));
           if (typeof key === "string" && field.key === key && field.own) {
             ownField =
-              facts?.ownSlotUnchanged?.(localRoot, key, captures[0] ?? root) ===
-              true;
+              facts?.ownSlotUnchanged?.(
+                localRoot,
+                key,
+                captureNode(captures[0]) ?? root,
+              ) === true;
             break;
           }
         }
@@ -1761,20 +1881,20 @@ export const createAmbientPathResolver = (
               ) === true &&
               facts?.constructorPrototypeUnchanged?.(
                 node,
-                captures[0] ?? root,
+                captureNode(captures[0]) ?? root,
               ) === true,
           ) &&
           facts?.ownSlotUnchanged?.(
             localRoot,
             key,
-            captures[0] ?? root,
+            captureNode(captures[0]) ?? root,
             undefined,
             new Set(storedOwn.map(([source]) => source.mutation)),
           ) === true &&
           storedOwn.some(([source]) =>
             semanticMutationPrecedesLexicalRead(
               source.mutation,
-              captures[0] ?? root,
+              captureNode(captures[0]) ?? root,
               state.parentsByNode,
             ),
           );
@@ -1834,25 +1954,31 @@ export const createAmbientPathResolver = (
         continue;
       }
       if (possibleWrites && t.isSuper(root) && suffix?.length !== 0) {
-        // Getter results keep raw source expressions. Resolve a super member
-        // from its lexical home while the receiver index retains the original
-        // property-read receiver for any selected accessor's this value.
+        // Super starts at the home's current physical prototype. Keep that
+        // selection in the shared store walk so prototype writes and earlier
+        // captures use the same facts as ordinary prototype reads.
         const lookup = superLookup(root);
-        if (lookup !== undefined)
+        if (lookup !== undefined) {
+          const read = boundCapture(
+            current.node,
+            current.readContext?.invokedAt,
+          );
           pending.push({
             ...current,
-            node: lookup.base,
+            node: lookup.home,
             suffix:
               suffix === undefined
                 ? undefined
-                : [...lookup.projection, ...suffix],
-            captures: [
-              ...lookup.projection.map(() => current.node),
-              ...captures,
-            ],
-            ownOnly: shiftedOwnOnly(ownOnly, lookup.projection.length),
+                : [
+                    ...lookup.projection,
+                    SEMANTIC_PHYSICAL_PROTOTYPE,
+                    ...suffix,
+                  ],
+            captures: [...lookup.projection.map(() => read), read, ...captures],
+            ownOnly: shiftedOwnOnly(ownOnly, lookup.projection.length + 1),
             readContext: { ...current.readContext, read: root },
           });
+        }
         continue;
       }
       if (possibleWrites && t.isThisExpression(root)) {
@@ -1924,7 +2050,12 @@ export const createAmbientPathResolver = (
             });
           if (completion.complete) {
             for (const source of completion.sources)
-              continueReturned(source, suffix);
+              continueReturned(
+                source,
+                suffix,
+                captures,
+                boundCapture(root, current.readContext?.invokedAt),
+              );
             continue;
           }
         }
@@ -1945,7 +2076,8 @@ export const createAmbientPathResolver = (
           false,
         );
       const classKey = propertySelector(suffix?.[0]);
-      const classRead = captures[0];
+      const classCapture = captures[0];
+      const classRead = captureNode(classCapture);
       if (
         possibleWrites &&
         t.isClass(root) &&
@@ -1963,7 +2095,12 @@ export const createAmbientPathResolver = (
           // Keep the result's lexical this: the accessor index supplies the
           // lookup receiver, including its later stores and allocation.
           for (const getter of descriptor.getters)
-            continueReturned(getter, suffix.slice(2), captures.slice(2));
+            continueReturned(
+              getter,
+              suffix.slice(2),
+              captures.slice(2),
+              captures[1],
+            );
           if (descriptor.inherits && root.superClass != null)
             continueWith(root.superClass, suffix, captures);
         }
@@ -1980,7 +2117,23 @@ export const createAmbientPathResolver = (
             )
           : undefined;
       for (const value of classSlot?.values ?? [])
-        continueWith(value, suffix?.slice(1), captures.slice(1));
+        continueWith(
+          value.node,
+          suffix?.slice(1),
+          captures.slice(1),
+          undefined,
+          undefined,
+          undefined,
+          value.getterResult && classRead !== undefined
+            ? {
+                ...current.readContext,
+                invokedAt:
+                  classCapture !== undefined && !("type" in classCapture)
+                    ? classCapture.invokedAt
+                    : classRead,
+              }
+            : current.readContext,
+        );
       const ownClassSlot =
         classSlot?.ownLocal === true &&
         typeof classKey === "string" &&
@@ -2021,14 +2174,17 @@ export const createAmbientPathResolver = (
       const ownIntact =
         typeof selectedKey === "string" &&
         captures[0] !== undefined &&
-        ownSourceSlotPresent(root, [selectedKey], captures[0]);
+        ownSourceSlotPresent(root, [selectedKey], captureNode(captures[0])!);
       if (
         possibleWrites &&
         replacement === undefined &&
         typeof selectedKey === "string" &&
         captures[0] !== undefined &&
-        sourceFacts.selectedOwnSlot(root, selectedKey, captures[0])?.status ===
-          "unknown"
+        sourceFacts.selectedOwnSlot(
+          root,
+          selectedKey,
+          captureNode(captures[0])!,
+        )?.status === "unknown"
       )
         for (const identity of semanticUnknownReferenceIdentities())
           retain(identity);
@@ -2041,7 +2197,7 @@ export const createAmbientPathResolver = (
             !ownOnly.includes(0) &&
             semanticNativePrototypeGetterPossible(
               root,
-              captures[0],
+              captureNode(captures[0]),
               state,
               sourceFacts,
               syntaxReferences,
@@ -2055,7 +2211,11 @@ export const createAmbientPathResolver = (
         )
           continueWith(literalPrototype, suffix.slice(1), captures.slice(1));
         if (defaultObjectPrototype)
-          retain(["global", "Object", "prototype", ...suffix.slice(1)]);
+          retain(
+            ["global", "Object", "prototype", ...suffix.slice(1)],
+            captures.slice(1),
+            current.copySelection,
+          );
         // A physical operation never selects an own member named __proto__.
         if (selector === SEMANTIC_PHYSICAL_PROTOTYPE) continue;
       }
@@ -2219,12 +2379,15 @@ export const createAmbientPathResolver = (
             facts?.sourceSlotsComplete?.() === true &&
             (argumentReplacement === undefined
               ? ["1", "2", "length"].includes(key) &&
-                facts.ownDescriptorIntact?.(state.program, key, captures[0]) !==
-                  true
+                facts.ownDescriptorIntact?.(
+                  state.program,
+                  key,
+                  captureNode(captures[0])!,
+                ) !== true
               : facts.ownSlotUnchanged?.(
                   state.program,
                   key,
-                  captures[0],
+                  captureNode(captures[0])!,
                   argumentReplacement.mutation,
                 ) !== true);
           if (
@@ -2233,7 +2396,7 @@ export const createAmbientPathResolver = (
             ((key == null || typeof key === "string") &&
               semanticCommonJsWrapperArgumentValueChanged(
                 key,
-                captures[0],
+                captureNode(captures[0]),
                 state,
               ))
           )
@@ -2348,7 +2511,10 @@ export const createAmbientPathResolver = (
           const member = suffix?.[0];
           const memberReplacement =
             typeof member === "string" && captures[0] !== undefined
-              ? facts?.globalRootReplacement?.(member, captures[0])
+              ? facts?.globalRootReplacement?.(
+                  member,
+                  captureNode(captures[0])!,
+                )
               : undefined;
           if (rootReplacement !== undefined)
             continueCaptured(rootReplacement.node);
@@ -2701,6 +2867,8 @@ export const createAmbientPathResolver = (
               ? root.tag
               : root.callee,
           suffix,
+          captures,
+          boundCapture(root, current.readContext?.invokedAt),
         );
         continue;
       }
@@ -2776,6 +2944,7 @@ export const createAmbientPathResolver = (
                     property.node,
                     suffix?.slice(1),
                     captures.slice(1),
+                    captures[0],
                   );
                 else
                   continueWith(
@@ -2993,7 +3162,7 @@ export const createAmbientPathResolver = (
               path,
               read,
               false,
-              captures as readonly t.Node[],
+              captures.map((capture) => captureNode(capture)!),
             );
             if (!references.complete) return true;
             for (const reference of references.nodes) selected.add(reference);
@@ -3360,9 +3529,9 @@ export const createSemanticModuleStorageQuery = (
         reads.set(JSON.stringify(path), {
           path: path as AmbientPath,
           captures: [
-            ...Array<t.Node | undefined>(path.length - suffix.length).fill(
-              captures[offset - 1],
-            ),
+            ...Array<AmbientCapture | undefined>(
+              path.length - suffix.length,
+            ).fill(captures[offset - 1]),
             ...suffix,
           ],
         });
@@ -3380,7 +3549,7 @@ export const createSemanticModuleStorageQuery = (
               read.path[index] === null ||
               key === read.path[index],
           ) ||
-          semanticEffectTiming(capture, node, state) === "after"
+          captureExcludesMutation(capture, node, state)
         )
           return false;
         if (sources.length === 0) return true;

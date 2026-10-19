@@ -290,7 +290,7 @@ class GetterResultWalker {
     const { owner, receiver = owner } = this.job.invocation;
     if (!t.isSuper(expression.object)) return false;
     const lookup = this.#superLookup(expression.object);
-    if (lookup === undefined || !t.isClass(lookup.home)) return false;
+    if (lookup?.base === undefined || !t.isClass(lookup.home)) return false;
     const key = semanticStaticPropertyKey(
       expression.property,
       expression.computed,

@@ -117,6 +117,30 @@ const helperMutationCases = [
     "main.js",
   ],
   [
+    'var Q=(e=>typeof require<"u"?require:e)(function(){});const home={__proto__:{value:{}},get result(){return super.value}};Object.setPrototypeOf(home,{value:globalThis});home.result.Q=other;',
+    0,
+    'new(Q("electron").BrowserWindow)({});',
+    "main.js",
+  ],
+  [
+    'var Q=(e=>typeof require<"u"?require:e)(function(){});class A{}class B extends A{get result(){return super.value}}Reflect.setPrototypeOf(B.prototype,{value:globalThis});new B().result.Q=other;',
+    0,
+    'new(Q("electron").BrowserWindow)({});',
+    "main.js",
+  ],
+  [
+    'var Q=(e=>typeof require<"u"?require:e)(function(){});const home={__proto__:{value:{}},get result(){return super.value}};function get(){return home.result}const target=get();Object.setPrototypeOf(home,{value:globalThis});target.Q=other;',
+    1,
+    'new(Q("electron").BrowserWindow)({});',
+    "main.js",
+  ],
+  [
+    'var Q=(e=>typeof require<"u"?require:e)(function(){});const box={};function get(){return box}const obj=get();box.value=globalThis;obj.value.Q=other;',
+    0,
+    'new(Q("electron").BrowserWindow)({});',
+    "main.js",
+  ],
+  [
     'var Q=(e=>typeof require<"u"?require:e)(function(){});',
     1,
     'new(Q.call(null,"electron").BrowserWindow)({});',

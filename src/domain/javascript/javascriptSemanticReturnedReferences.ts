@@ -45,6 +45,8 @@ import {
 
 /** A reference potentially handed to a caller or generator consumer. */
 export interface SemanticReturnedReference {
+  /** The producing callable evaluates this expression during a synchronous call. */
+  readonly synchronous?: true;
   readonly node: t.Node;
   readonly projection: JavaScriptSemanticPropertyPath;
 }
@@ -557,7 +559,8 @@ export const createSemanticStaticClassSlotReferences = (
   const lineages = new WeakMap<t.Class, ClassLineage>();
   return (owner: t.Class, key: string, read: t.Node | undefined) => {
     const owners: t.Class[] = [];
-    const values: t.Node[] = [];
+    const values: { readonly node: t.Node; readonly getterResult?: true }[] =
+      [];
     let own = false;
     let local = true;
     for (const declaring of classLineage(owner, state, lineages).classes) {
@@ -621,9 +624,9 @@ export const createSemanticStaticClassSlotReferences = (
           for (const { node } of semanticCallableResultExpressions(
             member.value,
           ))
-            if (node !== null) values.push(node);
+            if (node !== null) values.push({ node, getterResult: true });
         } else if (member.kind !== "set" && member.value !== null)
-          values.push(member.value);
+          values.push({ node: member.value });
       local &&=
         !declaring.decorators?.length &&
         selected.members.every(
@@ -1222,7 +1225,7 @@ const createSemanticCallableReferences = (
         // or its selected member still has its source identity.
         complete = false;
         const lookup = superLookup(node);
-        if (lookup !== undefined)
+        if (lookup?.base !== undefined)
           pending.push({
             ...item,
             node: lookup.base,
@@ -1852,7 +1855,19 @@ export const createSemanticReturnedReferences = (
     const selected = targets(callee);
     const references = selected.references.flatMap(({ node: callable }) =>
       completion(callable).expressions.flatMap(({ node, delegated }) =>
-        node === null ? [] : [{ node, projection: delegated ? [null] : [] }],
+        node === null
+          ? []
+          : [
+              {
+                node,
+                projection: delegated ? [null] : [],
+                ...(t.isFunction(callable) &&
+                !callable.async &&
+                !callable.generator
+                  ? { synchronous: true as const }
+                  : {}),
+              },
+            ],
       ),
     );
     const output = {

@@ -59,8 +59,9 @@ export const createSemanticLexicalReceiverOwner = (
   };
 };
 
-/** This is possible source lookup, never proof that a home's runtime prototype
- * is unchanged. The invocation keeps the lexical receiver independently. */
+/** The home is lexical; its declared base is only a possible source lookup.
+ * Consumers with mutation facts select the home's physical prototype instead.
+ * The invocation keeps the lexical receiver independently. */
 export const createSemanticSuperLookup = (
   state: JavaScriptSemanticAnalysisState,
 ) => {
@@ -70,19 +71,17 @@ export const createSemanticSuperLookup = (
     const parent = state.parentsByNode.get(owner);
     if (t.isObjectMethod(owner) && t.isObjectExpression(parent)) {
       const prototype = semanticObjectPrototypeProperty(parent);
-      return prototype === undefined
-        ? undefined
-        : { owner, home: parent, base: prototype.value, projection: [] };
+      return { owner, home: parent, base: prototype?.value, projection: [] };
     }
     const home =
       parent === undefined ? undefined : state.parentsByNode.get(parent);
-    if (!t.isClass(home) || home.superClass == null) return undefined;
+    if (!t.isClass(home)) return undefined;
     const isStatic =
       t.isStaticBlock(owner) || ("static" in owner && owner.static);
     return {
       owner,
       home,
-      base: home.superClass,
+      base: home.superClass ?? undefined,
       projection: isStatic ? [] : ["prototype"],
     };
   };
