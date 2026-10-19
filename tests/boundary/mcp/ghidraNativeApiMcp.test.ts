@@ -136,6 +136,10 @@ describe("Ghidra MCP native API evidence", () => {
 
 it("retains unavailable Ghidra native API observations across provenance and exact replay", async () => {
   const residual = "The controlled provider omitted native API boundary facts.";
+  const residuals = [
+    residual,
+    "Which indirect branches does this function contain? The provider did not report an indirect-branch inventory.",
+  ];
   // This wire fixture is controlled and never launches Ghidra.
   const harness = await connectGhidraMcp(
     "ghidra-native-api-unavailable-identity",
@@ -195,7 +199,12 @@ it("retains unavailable Ghidra native API observations across provenance and exa
           reason: residual,
           residual_unknowns: [residual],
         },
-        residual_unknowns: [residual],
+        unsupported_branches: [
+          "structured-boundary-types",
+          "jump-table-data-mapping",
+          "indirect-branch-inventory",
+        ],
+        residual_unknowns: residuals,
       });
       return evidence;
     };
@@ -227,26 +236,20 @@ it("retains unavailable Ghidra native API observations across provenance and exa
     const unknownPage = toolContract("list_unknowns").outputSchema.parse(
       listed.structuredContent,
     ).result;
-    expect(unknownPage.total).toBe(3);
+    expect(unknownPage.total).toBe(6);
+    expect(unknownPage.items).toHaveLength(6);
     expect(unknownPage.items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          question: expect.stringContaining(first.evidence_id),
-          supporting_evidence_ids: [first.evidence_id],
-        }),
-        expect.objectContaining({
-          question: expect.stringContaining(replay.evidence_id),
-          supporting_evidence_ids: [replay.evidence_id],
-        }),
-        expect.objectContaining({
-          question: expect.stringContaining(second.evidence_id),
-          supporting_evidence_ids: [second.evidence_id],
-        }),
-      ]),
+      expect.arrayContaining(
+        [first, replay, second].flatMap(({ evidence_id }) =>
+          residuals.map((question) =>
+            expect.objectContaining({
+              question: `${question} (Evidence ${evidence_id})`,
+              supporting_evidence_ids: [evidence_id],
+            }),
+          ),
+        ),
+      ),
     );
-    expect(
-      unknownPage.items.every(({ question }) => question.includes(residual)),
-    ).toBe(true);
   } finally {
     await harness.close();
   }
