@@ -6,6 +6,7 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { evidenceSchema, type Evidence } from "../domain/evidence.js";
 import type { Result } from "../domain/result.js";
@@ -23,19 +24,19 @@ import {
 import { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
 
 const executeWithCleanup = async (
-  service: ReverseEngineeringService,
   execute: () => Promise<Result<Evidence, AnalysisError>>,
+  close: () => Promise<void>,
 ): Promise<Result<Evidence, AnalysisError>> => {
   let result: Result<Evidence, AnalysisError>;
   try {
     result = await execute();
   } catch (cause) {
-    await service.close().catch(() => undefined);
+    await close().catch(() => undefined);
     throw cause;
   }
   const hadIncompleteCleanup = !result.ok && result.error.cleanupIncomplete;
   try {
-    await service.close();
+    await close();
   } catch (cause) {
     if (result.ok) return err(asCleanupError(cause));
     const cleanup = cause instanceof AnalysisError ? cause.cleanup : undefined;
@@ -102,16 +103,48 @@ export const registerReverseEngineeringCommands = (
     new GdbSessionManager({ environment: providerEnvironment }),
   createService: typeof createReverseEngineeringService = createReverseEngineeringService,
 ): void => {
-  // A run's cleanup closes its service permanently, so each command invocation
-  // creates and closes its own service instead of sharing one registration-wide
-  // instance that later runs would find already closed.
+  // Closed services cannot run again, but failed cleanup must outlive a run.
+  // This registration owns every service until its own close confirms release.
+  let retainedService: ReverseEngineeringService | undefined;
+  let running = false;
+  const closeRetained = async (
+    service: ReverseEngineeringService,
+  ): Promise<void> => {
+    await service.close();
+    retainedService = undefined;
+  };
   const runWithService = async (
     execute: (
       service: ReverseEngineeringService,
     ) => Promise<Result<Evidence, AnalysisError>>,
   ): Promise<Result<Evidence, AnalysisError>> => {
-    const service = createService(environment);
-    return executeWithCleanup(service, () => execute(service));
+    if (running)
+      return err(
+        new AnalysisResourceConstraintError(
+          "reverse_engineering_cleanup",
+          "transport",
+          "A CLI provider command is already running.",
+          { max_concurrent_operations: 1 },
+        ),
+      );
+    running = true;
+    try {
+      if (retainedService !== undefined) {
+        try {
+          await closeRetained(retainedService);
+        } catch (cause) {
+          return err(asCleanupError(cause));
+        }
+      }
+      const service = createService(environment);
+      retainedService = service;
+      return await executeWithCleanup(
+        () => execute(service),
+        () => closeRetained(service),
+      );
+    } finally {
+      running = false;
+    }
   };
   cli.command(CLI_COMMANDS.inspectWithObjdump, {
     description:

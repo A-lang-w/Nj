@@ -216,14 +216,17 @@ export const spawnOwnedProviderProcess = async (
   await prepareProcessOwnershipInspection(options.signal);
   options.signal?.throwIfAborted();
   const platform = options.platform ?? process.platform;
-  // The token sweep depends on the host's prelaunch identity baseline, which
-  // only hosts providing that primitive expose (linux and darwin). A POSIX
-  // platform test cannot decide this: android/Termux is POSIX without a
-  // baseline, and Windows keeps its Job Object launcher instead.
-  const captureOwnershipBaseline =
-    options.sweepTokenOwnedProcesses === true && platform !== "win32"
-      ? systemProcessOwnershipHost.captureBaseline
-      : undefined;
+  // A requested sweep is part of the cleanup contract, never an optional
+  // optimization. Hosts without identity baselines must refuse before launch.
+  const requiresTokenSweep =
+    options.sweepTokenOwnedProcesses === true && platform !== "win32";
+  const captureOwnershipBaseline = requiresTokenSweep
+    ? systemProcessOwnershipHost.captureBaseline
+    : undefined;
+  if (requiresTokenSweep && captureOwnershipBaseline === undefined)
+    throw new Error(
+      "Token-owned process cleanup requires a host ownership baseline; use a supported Linux or macOS host (or Windows Job Objects).",
+    );
   let captureBaseline: ProcessOwnershipBaseline | undefined;
   if (captureOwnershipBaseline !== undefined) {
     captureBaseline = await captureOwnershipBaseline(options.signal);

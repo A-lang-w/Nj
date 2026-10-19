@@ -262,6 +262,40 @@ it("leaves analysis unbound when a command returns before its writer finishes", 
   await session.close();
 });
 
+it.each([false, true])(
+  "close retains an external writer until its owner settles (active: %s)",
+  async (active) => {
+    const [target] = await createBinarySessionTargets();
+    const session = createTestBinarySession(createCacheProvider([]));
+    if (active) expect((await session.open(target)).ok).toBe(true);
+    const failure = new ProviderCleanupError("rizin", ["owned-debugger"], {
+      reason: "writer still live",
+    });
+    await session.withAdmittedExternalMutation(
+      target,
+      undefined,
+      async () => err(failure),
+      (_value, error) => error,
+    );
+    expect(await session.close()).toEqual(err(failure));
+    expect(await session.open(target)).toEqual(err(failure));
+    const mutate = vi.fn(async () => resultOk("must not run"));
+    expect(
+      await session.withAdmittedExternalMutation(
+        target,
+        undefined,
+        mutate,
+        (_value, error) => error,
+      ),
+    ).toEqual(err(failure));
+    expect(mutate).not.toHaveBeenCalled();
+    failure.resolveCleanup();
+    expect((await session.close()).ok).toBe(true);
+    expect((await session.open(target)).ok).toBe(true);
+    await session.close();
+  },
+);
+
 it("lets a retried open resolve a retained external-mutation cleanup failure", async () => {
   const [target] = await createBinarySessionTargets();
   const session = createTestBinarySession(createCacheProvider([]));

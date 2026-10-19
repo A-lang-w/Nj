@@ -373,6 +373,76 @@ it("runs an independent service for each command so cleanup cannot close later r
   }
 });
 
+it("retains failed run services and settles their owners before another CLI launch", async () => {
+  const { directory, path } = await createArtifact();
+  const commands = new Map<string, { run(input: unknown): Promise<unknown> }>();
+  const cli = {
+    command: (
+      name: string,
+      definition: { run(input: unknown): Promise<unknown> },
+    ) => {
+      commands.set(name, definition);
+      return cli;
+    },
+  } as unknown as CliInstance;
+  let mayStop = false;
+  const owner = {
+    stop: vi.fn(async () =>
+      mayStop
+        ? { status: "verified-cleanup" as const }
+        : { status: "incomplete" as const, reason: "writer still live" },
+    ),
+  } as unknown as ProviderProcessSupervisor;
+  const createService = vi.fn(
+    (environment = process.env) =>
+      new CoreReverseEngineeringService({
+        environment,
+        commands: createReverseEngineeringCommandPort(environment),
+        runOwned: async () => {
+          throw new OwnedCommandFailure(
+            "process",
+            "cleanup incomplete",
+            providerSnapshot(),
+            "writer still live",
+            undefined,
+            ["owned-run"],
+            owner,
+          );
+        },
+      }),
+  );
+  registerReverseEngineeringCommands(
+    cli,
+    pino({ enabled: false }),
+    {},
+    undefined,
+    createService,
+  );
+  const invoke = () =>
+    commands.get(CLI_COMMANDS.inspectWithObjdump)!.run({
+      args: { path, operation: "file_headers" },
+      options: { followDebugLinks: false },
+    });
+  try {
+    expect(await invoke()).toMatchObject({ code: "cleanup_incomplete" });
+    expect(
+      await commands
+        .get(CLI_COMMANDS.executeRizinCommand)!
+        .run({ args: { path, command: "iI" } }),
+    ).toMatchObject({ code: "cleanup_incomplete" });
+    expect(createService).toHaveBeenCalledTimes(1);
+    mayStop = true;
+    expect(await invoke()).toMatchObject({ provider: { id: "gnu.objdump" } });
+    expect(createService).toHaveBeenCalledTimes(2);
+    expect(owner.stop).toHaveBeenCalledTimes(4);
+  } finally {
+    mayStop = true;
+    for (const result of createService.mock.results)
+      if (result.type === "return") await result.value.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 it("parses the Rizin inferior TTY as an option and passes it to the manager", async () => {
   const commands = new Map<
     string,

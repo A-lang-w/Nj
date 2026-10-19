@@ -544,7 +544,15 @@ export class BinarySession
         ),
       );
     if (!closed.ok) return closed;
-    return resourceFailure === undefined ? ok(null) : err(resourceFailure);
+    if (resourceFailure !== undefined) return err(resourceFailure);
+    if (clearRecords) {
+      // Closing analysis resources cannot acknowledge another owner's writer.
+      // That owner resolves its retained failure only after confirmed cleanup.
+      if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true)
+        return err(this.#externalMutationCleanupFailure);
+      this.#externalMutationCleanupFailure = undefined;
+    }
+    return ok(null);
   }
 
   async #retireClient(
