@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { mkdir, realpath, symlink, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect } from "vitest";
@@ -8,6 +8,76 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { parseApplicationGraphEvidence } from "../../../src/application/javascript/JavaScriptApplicationEvidenceGraph.js";
+import { createEvidence } from "../../../src/domain/evidence.js";
+
+cliTest(
+  "retains the selected directory alias separately from the analyzed artifact identity",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-js-selected-path-");
+    const physical = join(root, "physical");
+    const selected = join(root, "selected");
+    await mkdir(physical);
+    await writeFile(
+      join(physical, "index.mjs"),
+      "export const result = () => ({ ok: true });\n",
+    );
+    await symlink(
+      physical,
+      selected,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const canonical = await realpath(physical);
+    const output = await cli.run({
+      arguments: [
+        "analyze-javascript-application",
+        selected,
+        "--artifact-format",
+        "directory",
+        "--format",
+        "json",
+      ],
+    });
+    expect(output.exitCode, output.stderr).toBe(0);
+    expect(output.json).toMatchObject({
+      subject: { local_path: canonical },
+      parameters: { input_path: selected, format: "directory" },
+      normalized_result: { input_path: canonical },
+    });
+
+    await unlink(selected);
+    const parsed = parseApplicationGraphEvidence(output.json);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error(JSON.stringify(parsed.error));
+    expect(parsed.value.evidence.parameters.input_path).toBe(selected);
+    expect(parsed.value.evidence.subject?.local_path).toBe(canonical);
+
+    const evidence = parsed.value.evidence;
+    const legacyParameters = { ...evidence.parameters };
+    delete legacyParameters.input_path;
+    const legacy = createEvidence(
+      {
+        path: canonical,
+        sha256: parsed.value.rootArtifactSha256,
+        format: "directory",
+      },
+      evidence.provider,
+      {
+        predicateType: evidence.predicate_type,
+        operation: evidence.operation,
+        parameters: legacyParameters,
+        result: evidence.normalized_result,
+        confidence: evidence.confidence,
+        authority: evidence.authority,
+        limitations: evidence.limitations,
+        locations: evidence.locations,
+      },
+    );
+    expect(
+      parseApplicationGraphEvidence(JSON.parse(JSON.stringify(legacy))).ok,
+    ).toBe(true);
+  },
+);
 
 const filter = "evidence_id,normalized_result.graph.nodes[0,1].node_id";
 

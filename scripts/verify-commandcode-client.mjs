@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -51,6 +57,7 @@ await Promise.all([
   mkdir(profile, { recursive: true }),
   mkdir(join(lab, "tmp")),
 ]);
+const canonicalTarget = await realpath(target);
 await exec("git", ["init", "--quiet", workspace], { timeout: 30_000 });
 await writeFile(
   join(target, "app.js"),
@@ -228,7 +235,9 @@ const fixture = await createOpenAiModelFixture({
     const evidence = toolContract(
       "analyze_javascript_application",
     ).outputSchema.parse(JSON.parse(last));
-    assert.equal(evidence.subject.local_path, target);
+    assert.equal(evidence.parameters.input_path, target);
+    assert.equal(evidence.subject.local_path, canonicalTarget);
+    assert.equal(evidence.normalized_result.input_path, canonicalTarget);
     const shapes = evidence.normalized_result.graph.nodes
       .flatMap((node) => node.observations)
       .map((observation) => observation.properties)

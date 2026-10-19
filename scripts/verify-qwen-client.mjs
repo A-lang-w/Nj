@@ -124,6 +124,7 @@ assert.deepEqual(configured.mcpServers.other, {
 });
 const target = join(lab, "fixture α测试");
 await mkdir(target, { recursive: true });
+const canonicalTarget = await realpath(target);
 await writeFile(
   `${target}/app.js`,
   'export function result() { return { clientCompatibility: "REA_CLIENT_FIXTURE", count: 7 }; }\n',
@@ -195,7 +196,9 @@ const fixture = await createOpenAiModelFixture({
         "analyze_javascript_application",
       ).outputSchema.parse(JSON.parse(artifact.toString("utf8")));
       assert(extractEvidence(evidence));
-      assert.equal(evidence.subject.local_path, target);
+      assert.equal(evidence.parameters.input_path, target);
+      assert.equal(evidence.subject.local_path, canonicalTarget);
+      assert.equal(evidence.normalized_result.input_path, canonicalTarget);
       const shape = evidence.normalized_result.graph.nodes
         .flatMap((n) => n.observations)
         .map((o) => o.properties)

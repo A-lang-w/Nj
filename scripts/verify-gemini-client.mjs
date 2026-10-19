@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -159,6 +165,7 @@ assert(
 );
 const target = join(lab, "fixture α测试");
 await mkdir(target);
+const canonicalTarget = await realpath(target);
 await writeFile(
   join(target, "app.js"),
   'export function result() { return { clientCompatibility: "REA_CLIENT_FIXTURE", count: 7 }; }\n',
@@ -307,7 +314,9 @@ const fixture = await createGeminiModelFixture({
       const evidence = toolContract(
         "analyze_javascript_application",
       ).outputSchema.parse(observed);
-      assert.equal(evidence.subject.local_path, target);
+      assert.equal(evidence.parameters.input_path, target);
+      assert.equal(evidence.subject.local_path, canonicalTarget);
+      assert.equal(evidence.normalized_result.input_path, canonicalTarget);
       const shape = evidence.normalized_result.graph.nodes
         .flatMap((n) => n.observations)
         .map((o) => o.properties)
