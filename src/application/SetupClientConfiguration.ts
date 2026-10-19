@@ -13,6 +13,7 @@ import {
   clientServerListedDisabled,
   clientServerPath,
   codexToolApprovalModeSchema,
+  codexToolOutputTokenLimitSchema,
   legacyClientServerPath,
   OMP_DISABLED_SERVERS_KEY,
   parseClientConfiguration,
@@ -833,6 +834,11 @@ const codexToolEntry = (
       const parsedApproval = codexToolApprovalModeSchema.safeParse(prop);
       if (parsedApproval.success) {
         entry[key] = parsedApproval.data;
+      }
+    } else if (key === "output_token_limit") {
+      const parsedLimit = codexToolOutputTokenLimitSchema.safeParse(prop);
+      if (parsedLimit.success) {
+        entry[key] = parsedLimit.data;
       }
     } else {
       entry[key] = prop;

@@ -471,6 +471,9 @@ function registerClientToolPolicyTests(): void {
     '[mcp_servers.rea.tools]\nbinary_session = "approve"',
     "[mcp_servers.rea.tools.binary_session]\napproval_mode = 12",
     '[mcp_servers.rea.tools.binary_session]\napproval_mode = "unsupported"',
+    '[mcp_servers.rea.tools.binary_session]\noutput_token_limit = "bad"',
+    "[mcp_servers.rea.tools.binary_session]\noutput_token_limit = 0",
+    "[mcp_servers.rea.tools.binary_session]\noutput_token_limit = -10",
   ])(
     "reports malformed Codex tools setting %s as invalid",
     async (toolsFragment) => {
@@ -502,7 +505,7 @@ function registerClientToolPolicyTests(): void {
     const entry = resolve("scripts/rea.mjs");
     await writeFile(
       join(home, ".codex/config.toml"),
-      `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 450\n\n[mcp_servers.rea.tools.binary_session]\napproval_mode = "approve"\ncustom_future_flag = true\n`,
+      `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 450\n\n[mcp_servers.rea.tools.binary_session]\napproval_mode = "approve"\noutput_token_limit = 32000\ncustom_future_flag = true\n`,
     );
 
     const statuses = await readClientRegistrationStatuses(home, entry, {

@@ -63,11 +63,16 @@ export const codexToolApprovalModeSchema = z.enum([
   "prompt",
   "auto",
 ]);
+export const codexToolOutputTokenLimitSchema = z.union([
+  z.number().int().positive(),
+  z.bigint().positive(),
+]);
 
 /** Codex per-tool configuration entry (`[mcp_servers.<server>.tools.<tool>]`). */
 export const codexServerToolSchema = z
   .object({
     approval_mode: codexToolApprovalModeSchema.optional(),
+    output_token_limit: codexToolOutputTokenLimitSchema.optional(),
   })
   .passthrough();
 
