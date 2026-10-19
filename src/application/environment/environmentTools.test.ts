@@ -177,6 +177,21 @@ describe("environment catalog description budgets", () => {
     expect(definition?.tool.path_template).toBe(long.path_template);
   });
 
+  it("advertises long path parameters with collision-safe aliases consistently", () => {
+    const users = tool("get_users_by_id");
+    const expanded = {
+      ...users,
+      params: [
+        { ...users.params[0]!, name: "long".repeat(1000) },
+        { ...users.params[0]!, name: "path_1", index: 3 },
+      ],
+    };
+    const schema = environmentToolInputSchema(expanded);
+    expect(schema.required).toEqual(["path_1", "path_path_1"]);
+    expect(Object.keys(schema.properties)).toEqual(schema.required);
+    expect(Buffer.byteLength(JSON.stringify(schema))).toBeLessThan(4096);
+  });
+
   it("advertises an oversized query name under a short, collision-safe alias", () => {
     const longName = "n".repeat(100_000);
     const search = {

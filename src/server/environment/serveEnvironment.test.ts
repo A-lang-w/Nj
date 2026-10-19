@@ -203,6 +203,24 @@ describe("environment routes", () => {
           body: JSON.stringify(body),
         }),
       );
+    for (const id of [
+      "9007199254740993",
+      "9.007199254740993e15",
+      "0.100000000000000005",
+      "-0",
+    ]) {
+      const refused = await rpc.handle(
+        new Request(`http://127.0.0.1${ENVIRONMENT_RPC_PATH}`, {
+          method: "POST",
+          body: `{"jsonrpc":"2.0","id":${id},"method":"data/reset"}`,
+        }),
+      );
+      expect(refused.status).toBe(400);
+      await expect(refused.json()).resolves.toMatchObject({
+        id: null,
+        error: { code: -32600 },
+      });
+    }
     // A notification gets no reply; a batch is answered per request, skipping notifications.
     expect((await post({ jsonrpc: "2.0", method: "data/reset" })).status).toBe(
       202,

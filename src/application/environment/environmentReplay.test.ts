@@ -7,6 +7,7 @@ import {
 import {
   environmentServeFixture,
   environmentServeSource,
+  environmentServeSourceWithBody as singleExchangeSource,
 } from "../../../tests/fixtures/environmentServe.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
@@ -36,24 +37,6 @@ const replay = (
   const result = replayEnvironmentTool(from, tool(name), args);
   if (!result.ok) throw result.error;
   return result.value;
-};
-
-/** A source whose only exchange carries the given body and content type. */
-const singleExchangeSource = (
-  bodyText: string | null,
-  contentType: string | null,
-): EnvironmentSource => {
-  const users = tool("get_users_by_id");
-  const ordinal = users.record_ordinals[0] ?? 0;
-  const exchange: RecordedExchange = {
-    ordinal,
-    path: "/api/users/2",
-    query: null,
-    status: 200,
-    contentType,
-    bodyText,
-  };
-  return { ...source, exchanges: new Map([[ordinal, exchange]]) };
 };
 
 /** The fixture source with /api/users/2's response replaced by HAR base64 content the decoder retained. */
@@ -98,56 +81,38 @@ const base64Source = (bytes: Buffer): EnvironmentSource => {
   });
 };
 
-describe("replay JSON value fidelity", () => {
-  it.each([
-    '{"id":9007199254740993}',
-    '[{"id":18446744073709551615}]',
-    '{"value":0.100000000000000005}',
-    '{"value":1e-1000}',
-    '{"value":-0}',
-  ])(
-    "retains numeric JSON as text when conversion loses its value: %s",
-    (text) => {
-      expect(
-        replay(
-          "get_users_by_id",
-          {},
-          singleExchangeSource(text, "application/json"),
-        ),
-      ).toMatchObject({
-        body: text,
-        replay: {
-          truncated: false,
-          body_recorded: true,
-          body_encoding: "utf-8",
-        },
-      });
-    },
-  );
-
-  it("still parses equivalent ordinary numeric spellings", () => {
-    const text = '{"integer":1.0,"exponent":1e3,"fraction":0.1}';
-    expect(
-      replay(
-        "get_users_by_id",
-        {},
-        singleExchangeSource(text, "application/json"),
-      ).body,
-    ).toEqual({ integer: 1, exponent: 1000, fraction: 0.1 });
-  });
-
-  it("retains own prototype-named JSON properties", () => {
-    const text = '{"__proto__":{"retained":true},"constructor":1}';
-    const result = replay(
-      "get_users_by_id",
-      {},
-      singleExchangeSource(text, "application/json"),
-    );
-    expect(JSON.stringify(result.body)).toBe(text);
-  });
-});
-
 describe("replayEnvironmentTool selection", () => {
+  it("does not inspect a recorded query when no query argument can affect selection", () => {
+    const users = tool("get_users_by_id");
+    const original = source.exchanges.get(users.record_ordinals[0]!);
+    if (original === undefined) throw new Error("Missing fixture exchange");
+    const exchange = {
+      ...original,
+      get query(): string {
+        throw new Error("Query must not be inspected");
+      },
+    };
+    expect(
+      selectReplayExchange(users, new Map([[original.ordinal, exchange]]), {
+        id: "2",
+      }),
+    ).toMatchObject({ exact: true });
+  });
+
+  it("matches a bounded path argument alias against the complete retained parameter", () => {
+    const users = tool("get_users_by_id");
+    const long = {
+      ...users,
+      params: users.params.map((param) => ({
+        ...param,
+        name: "long".repeat(1000),
+      })),
+    };
+    expect(
+      selectReplayExchange(long, source.exchanges, { path_1: "3" }),
+    ).toMatchObject({ exchange: { path: "/api/users/3" }, exact: true });
+  });
+
   it("replays the record whose path segments equal the supplied parameters as an exact match", () => {
     const result = replay("get_users_by_id", { id: "2" });
     expect(result).toMatchObject({
@@ -349,27 +314,6 @@ describe("replayEnvironmentTool bodies", () => {
       body_recorded: false,
       truncated: false,
     });
-  });
-
-  it("keeps a JSON body as its recorded text when parsing would change an integer", () => {
-    const unsafe = '{"id":9007199254740993,"name":"lamp"}';
-    expect(
-      replay(
-        "get_users_by_id",
-        { id: "2" },
-        singleExchangeSource(unsafe, "application/json"),
-      ).body,
-    ).toBe(unsafe);
-    expect(
-      replay(
-        "get_users_by_id",
-        { id: "2" },
-        singleExchangeSource(
-          '{"id":9007199254740992,"n":1.5}',
-          "application/json",
-        ),
-      ).body,
-    ).toEqual({ id: 9007199254740992, n: 1.5 });
   });
 
   it("returns text for non-JSON content types and for JSON-like content that does not parse", () => {

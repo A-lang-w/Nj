@@ -45,7 +45,8 @@ later increment.
   manifest-Evidence notice. Keep complete arrays and replay semantics unchanged.
 - Bound captured method, path and query-name prose to UTF-8-safe display prefixes
   under the same budget, with an explicit full-value Evidence notice. Preserve
-  complete lookup values; long query names use collision-safe aliases.
+  complete lookup values; long path and query names use collision-safe aliases.
+- Parse a recorded query only when supplied query arguments can affect selection.
 - Replay by selecting, among the tool's cited records, the one whose path
   segments at the parameter indexes match the most supplied values, then the
   most of those segments equal to the value as written rather than only after
@@ -111,3 +112,6 @@ listener `error` after binding is wired but not provoked by a test.
 Exporting a manifest and its evidence as an agent-environment bundle with a
 verifier, and the hosted verification lane, are later independent increments
 of #4933. This PR must reference rather than close the whole issue.
+
+Numeric data-plane IDs that lose value through JSON number conversion are invalid
+requests with null response IDs, rather than silently changed correlation values.

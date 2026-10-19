@@ -51,10 +51,11 @@ const describeText = (text: string, label: string): string => {
 
 /** Sample whole values before joining; keep full lists in the manifest that owns them. */
 const describeList = <Value>(
-  values: readonly Value[],
+  values: Iterable<Value>,
+  count: number,
   display: (value: Value) => string = String,
 ): string => {
-  if (values.length === 0) return "none";
+  if (count === 0) return "none";
   const sample: string[] = [];
   let bytes = 0;
   for (const value of values) {
@@ -70,24 +71,31 @@ const describeList = <Value>(
     sample.push(text);
   }
   const listed = sample.join(", ");
-  return sample.length === values.length
+  return sample.length === count
     ? listed
-    : `${listed}${sample.length === 0 ? "" : ", "}… (${String(sample.length)}/${String(values.length)} shown; full list in manifest Evidence)`;
+    : `${listed}${sample.length === 0 ? "" : ", "}… (${String(sample.length)}/${String(count)} shown; full list in manifest Evidence)`;
 };
 
-/** Captured query names longer than this are advertised under a short alias; the manifest keeps the name. */
-export const MAX_QUERY_ARGUMENT_CHARS = 64;
+/** Captured argument names longer than this are advertised under a short alias; the manifest keeps the name. */
+export const MAX_ARGUMENT_NAME_CHARS = 64;
 
-const bodyDescription = (tool: EnvironmentManifestTool): string =>
-  tool.body_shape === null
-    ? "Request body; the capture retained no JSON body shape for this tool."
-    : `Request body; recorded top-level keys: ${describeList(
-        Object.entries(tool.body_shape.properties),
-        ([key, type]) => `${key} (${type})`,
-      )}.`;
+const bodyDescription = (tool: EnvironmentManifestTool): string => {
+  const properties = tool.body_shape?.properties;
+  if (properties === undefined)
+    return "Request body; the capture retained no JSON body shape for this tool.";
+  let count = 0;
+  for (const key in properties) if (Object.hasOwn(properties, key)) count += 1;
+  function* entries(): IterableIterator<string> {
+    for (const key in properties)
+      if (Object.hasOwn(properties, key)) yield `${key} (${properties[key]})`;
+  }
+  return `Request body; recorded top-level keys: ${describeList(entries(), count)}.`;
+};
 
 /** Where each input of one tool lives in the flat argument object the schema advertises. */
 export interface EnvironmentToolArguments {
+  /** Captured path parameter name to its advertised argument name. */
+  readonly path: ReadonlyMap<string, string>;
   /** Query parameter name to argument name. */
   readonly query: ReadonlyMap<string, string>;
   /** Argument name of the write body, for write methods. */
@@ -110,11 +118,21 @@ const freeName = (
 export const environmentToolArguments = (
   tool: EnvironmentManifestTool,
 ): EnvironmentToolArguments => {
-  const taken = new Set(tool.params.map((param) => param.name));
+  const taken = new Set<string>();
+  const path = new Map<string, string>();
+  for (const [index, param] of tool.params.entries()) {
+    const preferred =
+      param.name.length <= MAX_ARGUMENT_NAME_CHARS
+        ? param.name
+        : `path_${String(index + 1)}`;
+    const argument = freeName(taken, preferred, "path_");
+    taken.add(argument);
+    path.set(param.name, argument);
+  }
   const query = new Map<string, string>();
   for (const [index, name] of tool.query_parameter_names.entries()) {
     const preferred =
-      name.length <= MAX_QUERY_ARGUMENT_CHARS
+      name.length <= MAX_ARGUMENT_NAME_CHARS
         ? name
         : `query_${String(index + 1)}`;
     const argument = freeName(taken, preferred, "query_");
@@ -122,6 +140,7 @@ export const environmentToolArguments = (
     query.set(name, argument);
   }
   return {
+    path,
     query,
     body: WRITE_METHODS.has(tool.method)
       ? freeName(taken, "body", "request_")
@@ -135,12 +154,12 @@ export const environmentToolInputSchema = (
 ): EnvironmentToolInputSchema => {
   // A Map, not an object literal, so names such as `constructor` are never mistaken for taken.
   const properties = new Map<string, EnvironmentToolProperty>();
-  for (const param of tool.params)
-    properties.set(param.name, {
-      type: "string",
-      description: `Path segment ${String(param.index)} (${param.rule}); observed: ${describeList(param.observed_values)}`,
-    });
   const args = environmentToolArguments(tool);
+  for (const param of tool.params)
+    properties.set(args.path.get(param.name) ?? param.name, {
+      type: "string",
+      description: `Path segment ${String(param.index)} (${param.rule}); observed: ${describeList(param.observed_values, param.observed_values.length)}`,
+    });
   for (const [name, argument] of args.query)
     properties.set(argument, {
       type: "string",
@@ -154,7 +173,9 @@ export const environmentToolInputSchema = (
   return {
     type: "object",
     properties: Object.fromEntries(properties),
-    required: tool.params.map((param) => param.name),
+    required: tool.params.map(
+      (param) => args.path.get(param.name) ?? param.name,
+    ),
     additionalProperties: false,
   };
 };
@@ -166,7 +187,7 @@ export const environmentToolDefinitions = (
 ): readonly EnvironmentToolDefinition[] =>
   manifest.tools.map((tool) => ({
     name: tool.name,
-    description: `${REPLAY_CATALOG_INSTRUCTIONS} ${describeText(tool.method, "method")} ${describeText(tool.path_template, "path")}; replays retained records [${describeList(tool.record_ordinals)}]; evidence ${evidenceId}`,
+    description: `${REPLAY_CATALOG_INSTRUCTIONS} ${describeText(tool.method, "method")} ${describeText(tool.path_template, "path")}; replays retained records [${describeList(tool.record_ordinals, tool.record_ordinals.length)}]; evidence ${evidenceId}`,
     inputSchema: environmentToolInputSchema(tool),
     tool,
   }));

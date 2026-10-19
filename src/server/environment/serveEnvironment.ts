@@ -20,6 +20,7 @@ import {
   type EnvironmentToolDefinition,
 } from "../../application/environment/environmentTools.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { isExactJsonNumber } from "../../domain/exactJsonNumber.js";
 import { safeParseJson } from "../../domain/safeJson.js";
 import { PRODUCT_IDENTITY } from "../../identity.js";
 import {
@@ -155,7 +156,13 @@ const answerRpc = async (request: Request): Promise<Response> => {
       PAYLOAD_TOO_LARGE,
       `Request body must not exceed ${String(DEFAULT_MAX_REQUEST_BODY_SIZE)} bytes`,
     );
-  const parsed = safeParseJson(read.text);
+  const parsed = safeParseJson(read.text, (key, value, context) =>
+    key === "id" &&
+    typeof value === "number" &&
+    !isExactJsonNumber(value, context?.source)
+      ? Symbol("unrepresentable RPC id")
+      : value,
+  );
   if (!parsed.ok) return jsonRpcErrorResponse(400, PARSE_ERROR, "parse error");
   // A batch is answered message by message; notifications get no reply at all.
   if (Array.isArray(parsed.value)) {

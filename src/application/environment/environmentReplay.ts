@@ -1,10 +1,10 @@
-import { isSafeNumber } from "lossless-json";
-
 import { isJsonLike } from "../../domain/analysisView/EnvironmentManifestAccumulator.js";
 import { mediaTypeEssence } from "../../domain/analysisView/webNetworkRouteTemplates.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import { isExactJsonNumber } from "../../domain/exactJsonNumber.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
+import { safeParseJson } from "../../domain/safeJson.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { environmentToolArguments } from "./environmentTools.js";
 import {
@@ -58,16 +58,18 @@ const decoded = (segment: string): string => {
 /** Count how many supplied path and query values the recorded request line satisfies. */
 const scoreExchange = (
   tool: EnvironmentManifestTool,
+  pathArguments: ReadonlyMap<string, string>,
   queryArguments: ReadonlyMap<string, string>,
   exchange: RecordedExchange,
   args: ReplayArguments,
 ): MatchScore => {
-  const segments = exchange.path.split("/").slice(1);
+  const segments =
+    tool.params.length === 0 ? [] : exchange.path.split("/").slice(1);
   let pathProvided = 0;
   let pathMatches = 0;
   let verbatimMatches = 0;
   for (const param of tool.params) {
-    const value = args[param.name];
+    const value = args[pathArguments.get(param.name) ?? param.name];
     if (typeof value !== "string") continue;
     pathProvided += 1;
     const segment = segments[param.index];
@@ -78,13 +80,14 @@ const scoreExchange = (
     )
       pathMatches += 1;
   }
-  const query = new URLSearchParams(exchange.query ?? "");
+  let query: URLSearchParams | undefined;
   let queryProvided = 0;
   let queryMatches = 0;
   for (const [name, argument] of queryArguments) {
     const value = args[argument];
     if (typeof value !== "string") continue;
     queryProvided += 1;
+    query ??= new URLSearchParams(exchange.query ?? "");
     if (query.getAll(name).includes(value)) queryMatches += 1;
   }
   return {
@@ -111,11 +114,17 @@ export const selectReplayExchange = (
   | { readonly exchange: RecordedExchange; readonly exact: boolean }
   | undefined => {
   let best: { exchange: RecordedExchange; score: MatchScore } | undefined;
-  const queryArguments = environmentToolArguments(tool).query;
+  const argumentsMap = environmentToolArguments(tool);
   for (const ordinal of tool.record_ordinals) {
     const exchange = exchanges.get(ordinal);
     if (exchange === undefined) continue;
-    const score = scoreExchange(tool, queryArguments, exchange, args);
+    const score = scoreExchange(
+      tool,
+      argumentsMap.path,
+      argumentsMap.query,
+      exchange,
+      args,
+    );
     if (best === undefined || outranks(score, best.score))
       best = { exchange, score };
   }
@@ -168,9 +177,7 @@ const replayBody = (
       // HAR's exact-number policy rather than accepting an already-rounded ID.
       if (
         typeof value === "number" &&
-        (context?.source === undefined ||
-          !isSafeNumber(context.source) ||
-          Object.is(value, -0))
+        !isExactJsonNumber(value, context?.source)
       )
         throw new RangeError(
           "JSON numeric conversion would lose recorded data",

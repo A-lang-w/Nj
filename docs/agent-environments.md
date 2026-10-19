@@ -46,7 +46,7 @@ The MCP catalog and environment card use a 1 KiB UTF-8 budget for each
 captured display sample. Observation, body-key and cited-record lists show
 whole values with omission counts; long method, path and query-name displays
 show a marked prefix. Complete values remain in manifest Evidence. Argument
-names longer than 64 characters use collision-safe query aliases; replay maps
+names longer than 64 characters use collision-safe path or query aliases; replay maps
 those aliases to the complete captured names.
 
 ## What replay means and does not mean
@@ -79,6 +79,7 @@ where the answer came from:
 
 `exact_match` is true when every supplied path parameter and query value
 equals the recorded one; it says nothing about parameters the caller omitted.
+Recorded query parsing runs only when supplied query arguments affect selection.
 A path value matches a recorded segment as written or after percent-decoding;
 when both kinds of match are available, the record whose segment equals the
 value as written is chosen. `recorded_query` keeps the `?` of an explicit empty
@@ -220,3 +221,6 @@ only the cited records' request lines and response text in memory. No outbound
 network request is made, no process is launched and nothing is written to
 disk. A listener that fails after binding is logged and ends the command with
 a `resource_constraint` error and exit `1` instead of serving nothing.
+
+Numeric JSON-RPC IDs that cannot be represented and returned exactly are refused
+as invalid requests with a null ID; they are never echoed as a different number.
