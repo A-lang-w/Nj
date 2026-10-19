@@ -43,7 +43,8 @@ export const analysisErrorRemediationAction = (
 ): string => {
   error = resolvedAnalysisError(error);
   if (
-    error instanceof ProviderAdapterError &&
+    (error instanceof ProviderAdapterError ||
+      error instanceof AnalysisCapabilityUnavailableError) &&
     error.remediationAction !== undefined
   )
     return error.remediationAction;
@@ -137,6 +138,7 @@ export const analysisErrorRemediationAction = (
     return error.remediationAction;
   if (error instanceof UnknownRegistryError && error.reason === "not-found")
     return "Check that the unknown_id belongs to this session, then retry.";
+  if (error.userMessage !== undefined) return error.userMessage;
   if (
     UNREADABLE_OUTPUT_TAGS.has(error._tag) ||
     ADAPTER_FAILURE_TAGS.has(error._tag)
