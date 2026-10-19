@@ -859,7 +859,8 @@ export function* indexJavaScriptElectronIdentitySteps(
   yield* collectJavaScriptIdentityWritesSteps(
     program,
     (node, kind) => {
-      if (kind === "opaque-call") return [interop.opaqueMutationPath(node)];
+      if (kind === "opaque-call" || kind === "opaque-recipient")
+        return [interop.opaqueMutationPath(node)];
       const { root, members } = electronMemberPath(node);
       const exported = kind === "binding" ? undefined : nominalRootExport(root);
       const path =

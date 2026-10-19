@@ -6,51 +6,23 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 
-/** Expand only literal array spreads whose positional arguments are all known. */
-export const expandJavaScriptInvocationArguments = (
-  arguments_: readonly t.CallExpression["arguments"][number][],
-): t.CallExpression["arguments"] => {
-  const expanded: t.CallExpression["arguments"] = [];
-  const pending = [...arguments_].reverse();
-  while (pending.length > 0) {
-    const argument = pending.pop();
-    if (argument === undefined) break;
-    const array = t.isSpreadElement(argument)
-      ? unwrapJavaScriptExpression(argument.argument).node
-      : undefined;
-    if (
-      t.isArrayExpression(array) &&
-      array.elements.every(
-        (element) => t.isExpression(element) || t.isSpreadElement(element),
-      )
-    )
-      for (let index = array.elements.length - 1; index >= 0; index -= 1) {
-        const element = array.elements[index];
-        if (element !== null && element !== undefined) pending.push(element);
-      }
-    else expanded.push(argument);
-  }
-  return expanded;
-};
-
+/**
+ * Spread arguments stay opaque, even for a literal array. Spreading runs the
+ * array iterator, which earlier source may have replaced through
+ * `Array.prototype[Symbol.iterator]` or the shared array iterator prototype,
+ * so the syntactic elements are not proof of the values the call receives.
+ * Consumers treat a remaining spread element as an unknown argument list.
+ * `apply` reads its array argument by index instead, so a literal array with
+ * known elements and no holes or spreads keeps its positions.
+ */
 const arrayArguments = (node: t.Node | undefined) => {
   const array =
     node === undefined ? undefined : unwrapJavaScriptExpression(node).node;
-  if (
-    !t.isArrayExpression(array) ||
-    array.elements.some((element) => element === null)
-  )
-    return undefined;
-  const expanded = expandJavaScriptInvocationArguments(
-    array.elements.filter(
-      (element): element is t.Expression | t.SpreadElement => element !== null,
-    ),
+  if (!t.isArrayExpression(array)) return undefined;
+  const elements = array.elements.filter((element): element is t.Expression =>
+    t.isExpression(element),
   );
-  return expanded.every((element) => t.isExpression(element))
-    ? expanded.filter((element): element is t.Expression =>
-        t.isExpression(element),
-      )
-    : undefined;
+  return elements.length === array.elements.length ? elements : undefined;
 };
 
 const invocationArguments = (
@@ -93,9 +65,7 @@ export const resolveJavaScriptIntrinsicInvocation = (
   let arguments_: JavaScriptIntrinsicInvocation["arguments"] =
     // The template object is a runtime allocation, not a source expression.
     // Retain its callable/receiver without inventing positional argument facts.
-    t.isTaggedTemplateExpression(node)
-      ? undefined
-      : expandJavaScriptInvocationArguments(node.arguments);
+    t.isTaggedTemplateExpression(node) ? undefined : node.arguments;
   let receiver: t.Node | undefined;
   const callableReads: t.Node[] = [];
   let explicitReceiver = false;

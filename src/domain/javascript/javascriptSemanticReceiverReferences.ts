@@ -766,13 +766,22 @@ export const createSemanticReceiverReferences = (
         const target = args[0];
         let receiver = target;
         let keys: readonly string[] | undefined;
-        if (setterInvocation.path.join(".") === "intrinsic.Reflect.set") {
-          receiver = args.length < 4 ? target : args[3];
+        const operation = setterInvocation.path.join(".");
+        // Native [[Set]] runs only the selected setter and native [[Get]] only
+        // the selected getter, each with the explicit receiver argument or the
+        // target when that argument is omitted.
+        const invokedAccessor: "get" | "set" =
+          operation === "intrinsic.Reflect.get" ? "get" : "set";
+        if (
+          operation === "intrinsic.Reflect.set" ||
+          operation === "intrinsic.Reflect.get"
+        ) {
+          const receiverIndex = invokedAccessor === "set" ? 3 : 2;
+          receiver =
+            args.length <= receiverIndex ? target : args[receiverIndex];
           const key = intrinsics.staticString(args[1]);
           if (key !== undefined) keys = [key];
-        } else if (
-          setterInvocation.path.join(".") === "intrinsic.Object.assign"
-        ) {
+        } else if (operation === "intrinsic.Object.assign") {
           const copied = new Set<string>();
           const knownSources = args.slice(1).every((source) => {
             if (!t.isObjectExpression(source)) return false;
@@ -818,7 +827,7 @@ export const createSemanticReceiverReferences = (
               if (!t.isObjectMethod(member) && !t.isClassMethod(member))
                 continue;
               retain(member);
-              if (member.kind !== "set") continue;
+              if (member.kind !== invokedAccessor) continue;
               retain(member, receiver);
               const value = unwrapJavaScriptExpression(receiver).node;
               const nonNullish =

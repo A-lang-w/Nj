@@ -1,5 +1,7 @@
 import * as t from "@babel/types";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
+import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
+import { range } from "./javascriptStaticAnalysisHelpers.js";
 
 import {
   resolveSemanticBindingState,
@@ -8,6 +10,7 @@ import {
   isUnshadowedGlobal,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
+  type JavaScriptSemanticInitializer,
 } from "./javascriptSemanticState.js";
 import {
   semanticHostRequireIntact,
@@ -65,7 +68,7 @@ export const semanticRequireShimBinding = (
   )
     return false;
   const atRead = semanticBindingAtRead(
-    binding,
+    withoutExactSelfCopies(binding, state),
     reference,
     state.parentsByNode,
     (initializer, read) =>
@@ -85,6 +88,76 @@ export const semanticRequireShimBinding = (
   // Delegate integrity belongs to the invocation, after any helper binding or
   // alias capture. A later bare require assignment cannot replace this value.
   return true;
+};
+
+/**
+ * `Q = Q` reads and writes one binding, so it cannot introduce a value that
+ * the binding does not already hold at that point; the possible values before
+ * and after the assignment are the same set. Remove such writes before
+ * selecting the value at a read. Any projection, destructuring copy, default
+ * or a name that resolves elsewhere (another binding, `with`, direct eval) is
+ * a real assignment and stays.
+ */
+const withoutExactSelfCopies = (
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptSemanticBindingState => {
+  const isExactSelfCopy = (
+    initializer: JavaScriptSemanticBindingState["referenceInitializers"][number],
+  ): boolean => {
+    if (
+      initializer.projection.length !== 0 ||
+      initializer.selection !== undefined ||
+      initializer.entryBody !== undefined ||
+      initializer.copyKind !== undefined ||
+      initializer.copyProjectionOffset !== undefined ||
+      initializer.fallbackSources !== undefined ||
+      initializer.requiredSources !== undefined
+    )
+      return false;
+    const source = unwrapJavaScriptExpression(initializer.node).node;
+    return (
+      t.isIdentifier(source) &&
+      source.name === binding.name &&
+      !semanticResolutionBlocked(state, source, source.name) &&
+      resolveSemanticBindingState(state, source, source.name)?.bindingId ===
+        binding.bindingId
+    );
+  };
+  // A `var` reassignment is recorded beside the declaration's initializer and
+  // as an assignment definition; other assignments are reference
+  // initializers. Every list can hold copies.
+  const copiedTargets = new Set<string>();
+  const copies = new Set<JavaScriptSemanticInitializer>();
+  for (const initializer of [
+    ...binding.initializers,
+    ...binding.referenceInitializers,
+  ]) {
+    if (!isExactSelfCopy(initializer)) continue;
+    copies.add(initializer);
+    const assignment = state.parentsByNode.get(initializer.node);
+    if (
+      t.isAssignmentExpression(assignment, { operator: "=" }) &&
+      assignment.right === initializer.node &&
+      t.isIdentifier(assignment.left)
+    )
+      copiedTargets.add(JSON.stringify(range(assignment.left)));
+  }
+  if (copies.size === 0) return binding;
+  return {
+    ...binding,
+    initializers: binding.initializers.filter(
+      (initializer) => !copies.has(initializer),
+    ),
+    referenceInitializers: binding.referenceInitializers.filter(
+      (initializer) => !copies.has(initializer),
+    ),
+    definitions: binding.definitions.filter(
+      (definition) =>
+        definition.kind !== "assignment" ||
+        !copiedTargets.has(JSON.stringify(definition.location)),
+    ),
+  };
 };
 
 /**

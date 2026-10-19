@@ -25,6 +25,57 @@ const blockFunctionNames = new WeakMap<
 /** Annex B may copy a block function into a same-named var without an indexed
  * assignment. Preserve the existing conservative source-wide name check until
  * those implicit writes have an explicit scope and timing owner. */
+const referencedNames = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  ReadonlySet<string>
+>();
+
+/**
+ * Whether code at `site` can execute at all. A function declaration whose
+ * name appears nowhere else in this source and that is not exported cannot be
+ * invoked by it. This source is the analysis boundary, as it is for every
+ * other global fact; foreign code calling a script-level declaration is not
+ * modeled. Any other callable may run. This is a reachability bound only; it
+ * says nothing about arguments or order.
+ */
+export const semanticSiteMayExecute = (
+  site: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  let names = referencedNames.get(state);
+  if (names === undefined) {
+    const collected = new Map<string, number>();
+    traverseJavaScriptAst(state.program, {
+      enter(node) {
+        if (t.isIdentifier(node))
+          collected.set(node.name, (collected.get(node.name) ?? 0) + 1);
+      },
+    });
+    // A declaration's own identifier is one occurrence; any other is a use.
+    names = new Set(
+      [...collected].flatMap(([name, count]) => (count > 1 ? [name] : [])),
+    );
+    referencedNames.set(state, names);
+  }
+  let current: t.Node | undefined = site;
+  while (current !== undefined) {
+    if (
+      t.isFunctionDeclaration(current) &&
+      current.id != null &&
+      !names.has(current.id.name)
+    ) {
+      const parent = state.parentsByNode.get(current);
+      if (
+        !t.isExportNamedDeclaration(parent) &&
+        !t.isExportDefaultDeclaration(parent)
+      )
+        return false;
+    }
+    current = state.parentsByNode.get(current);
+  }
+  return true;
+};
+
 export const semanticBindingMayHaveBlockFunctionWrite = (
   binding: JavaScriptSemanticBindingState,
   state: JavaScriptSemanticAnalysisState,

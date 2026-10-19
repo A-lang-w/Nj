@@ -156,7 +156,8 @@ export function* collectJavaScriptIdentityWritesSteps(
   program: t.Program,
   origin: (
     root: t.Node,
-    kind: "binding" | "member" | "opaque-call",
+    /** `opaque-recipient` is a known mutator whose written object is unexamined. */
+    kind: "binding" | "member" | "opaque-call" | "opaque-recipient",
     writeSite: t.Node,
   ) => readonly (readonly (string | null)[])[],
   intrinsicInvocation: (
@@ -212,9 +213,10 @@ export function* collectJavaScriptIdentityWritesSteps(
                 ? true
                 : undefined;
             // A known mutator with an opaque argument list can overwrite any
-            // captured intrinsic. Do not turn an unexamined target into proof.
+            // captured intrinsic or ambient slot, including a spread or
+            // missing recipient. Do not turn an unexamined target into proof.
             if (target === undefined || t.isSpreadElement(target)) {
-              for (const scope of origin(node, "opaque-call", node))
+              for (const scope of origin(node, "opaque-recipient", node))
                 retain(node, scope, recipient);
             }
             if (t.isNode(target) && !t.isSpreadElement(target)) {

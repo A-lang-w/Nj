@@ -78,6 +78,7 @@ import {
   semanticGlobalBindingReadMayHaveChanged,
   semanticAmbientWriteMayMatch,
   semanticOpaqueBindingReadMayHaveChanged,
+  semanticSiteMayExecute,
   semanticStrictContext,
 } from "./javascriptSemanticOpaqueEffects.js";
 
@@ -652,19 +653,33 @@ const writesModuleRequire = (
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
         const invocation = interop.intrinsicInvocation(node);
         const mutation = semanticIntrinsicMutation(invocation);
-        if (
-          invocation !== undefined &&
-          mutation !== undefined &&
-          semanticIntrinsicMutationTargets(
+        if (invocation !== undefined && mutation !== undefined) {
+          const targets = semanticIntrinsicMutationTargets(
             invocation,
             interop.isFreshObject,
-          ).some((target) => target !== undefined && isModuleObject(target))
-        ) {
-          const key =
-            "key" in mutation
-              ? (interop.staticString(mutation.key) ?? null)
-              : null;
-          retain(["commonjs-module", key], node);
+          );
+          // A known mutator whose recipient is unexamined, such as a spread
+          // or missing argument list, can write the module object itself
+          // once it runs. An opaque callee is an uncertain helper identity,
+          // which the escape owner handles; it has no argument facts here.
+          if (
+            invocation.kind === "known" &&
+            targets.some(
+              (target) => target === undefined || t.isSpreadElement(target),
+            )
+          ) {
+            if (semanticSiteMayExecute(node, state)) retain([null], node);
+          } else if (
+            targets.some(
+              (target) => target !== undefined && isModuleObject(target),
+            )
+          ) {
+            const key =
+              "key" in mutation
+                ? (interop.staticString(mutation.key) ?? null)
+                : null;
+            retain(["commonjs-module", key], node);
+          }
         }
       }
     },

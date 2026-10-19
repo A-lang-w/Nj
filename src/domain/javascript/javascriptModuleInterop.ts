@@ -29,7 +29,6 @@ import {
   type JavaScriptIntrinsicInvocation,
 } from "./javascriptElectronMemberWrites.js";
 import {
-  expandJavaScriptInvocationArguments,
   resolveJavaScriptIntrinsicInvocation,
   type JavaScriptBoundHelperRead,
 } from "./javascriptIntrinsicInvocation.js";
@@ -837,7 +836,7 @@ export const createSemanticModuleInterop = (
       const { root, members } = electronMemberPath(current.callee);
       let bindTarget = root;
       let bindingArguments: JavaScriptIntrinsicInvocation["arguments"] =
-        expandJavaScriptInvocationArguments(current.arguments);
+        current.arguments;
       let capturedValue = captured(current.callee);
       const calleePath = capturedValue?.path ?? selectedPath(current.callee);
       let terminal = calleePath?.at(-1) === "bind";

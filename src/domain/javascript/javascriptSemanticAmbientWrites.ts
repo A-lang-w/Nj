@@ -122,6 +122,7 @@ import {
   semanticGlobalBindingReadMayHaveChanged,
   semanticOpaqueBindingReadMayHaveChanged,
   type SemanticGlobalBindingFacts,
+  semanticSiteMayExecute,
 } from "./javascriptSemanticOpaqueEffects.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import { SemanticReferenceStoreIndex } from "./javascriptSemanticReferenceStoreIndex.js";
@@ -3912,6 +3913,10 @@ export function* indexJavaScriptAmbientWritesSteps(
     program,
     (root, kind, writeSite) => {
       if (kind === "opaque-call") return [];
+      // A known mutator whose recipient is unexamined can write any ambient
+      // slot once it runs. Record an unknown identity rather than no write.
+      if (kind === "opaque-recipient")
+        return semanticSiteMayExecute(writeSite, state) ? [[null]] : [];
       // Reassigning a local alias changes the binding, not the referenced object.
       if (kind === "binding") {
         if (

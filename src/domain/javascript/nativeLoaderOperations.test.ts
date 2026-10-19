@@ -191,6 +191,26 @@ const NATIVE_LOADER_CASES = [
     "Reflect.set({set require(value){module.require=other}},'require',module.require,module);",
     0,
   ],
+  // Spreading even a literal array runs the array iterator, so the syntactic
+  // elements are not the values the call receives once it is replaced.
+  [
+    "Array.prototype[Symbol.iterator]=function*(){yield module;yield 'require';yield other};Reflect.set(...[{},'x',module.require]);",
+    0,
+  ],
+  [
+    "Array.prototype[Symbol.iterator]=function*(){yield module;yield {require:other}};Object.assign(...[{},{}]);",
+    0,
+  ],
+  [
+    "const values=[module,'require',other];let index=0;Object.getPrototypeOf([][Symbol.iterator]()).next=function(){return index<values.length?{value:values[index++],done:false}:{done:true}};Reflect.set(...[{},'x',0]);",
+    0,
+  ],
+] as const;
+
+/** Spread arguments stay opaque even when the iterator is intact. */
+const OPAQUE_SPREAD_CASES = [
+  "Reflect.set(...[module,'require',module.require]);",
+  "Reflect.apply(Reflect.set,Reflect,[...[{},'x',0]]);",
 ] as const;
 
 describe("native operations on CommonJS loader owners", () => {
@@ -214,9 +234,9 @@ describe("native operations on CommonJS loader owners", () => {
         const require=id=>module.require(id);
         (function(exports,require,module,__filename,__dirname){${source}})
           ({},require,module,'/tmp/bundle.cjs','/tmp');
-        calls;
+        calls.join();
       `);
-        expect(runtime).toEqual([expected ? "original" : "replacement"]);
+        expect(runtime).toBe(expected ? "original" : "replacement");
         const parsed = parseJavaScriptSource(source, "bundle.cjs");
         expect(parsed).not.toBeNull();
         expect(
@@ -224,6 +244,32 @@ describe("native operations on CommonJS loader owners", () => {
             .browser_windows,
         ).toHaveLength(expected);
       }
+    },
+  );
+});
+
+describe("spread arguments to native loader operations", () => {
+  it.each(OPAQUE_SPREAD_CASES)(
+    "stays conservative while the iterator is intact: %s",
+    (setup) => {
+      const source = `${SHIM}${setup}new (Q("electron").BrowserWindow)({});`;
+      const runtime = runInNewContext(`
+        const calls=[];
+        const electron={BrowserWindow:function(){calls.push('original')}};
+        class Module { require(){ return electron } }
+        const module=new Module;
+        const require=id=>module.require(id);
+        (function(exports,require,module,__filename,__dirname){${source}})
+          ({},require,module,'/tmp/bundle.cjs','/tmp');
+        calls.join();
+      `);
+      expect(runtime).toBe("original");
+      const parsed = parseJavaScriptSource(source, "bundle.cjs");
+      expect(parsed).not.toBeNull();
+      expect(
+        analyzeParsedJavaScriptStaticSource(source, parsed!).electron
+          .browser_windows,
+      ).toEqual([]);
     },
   );
 });
