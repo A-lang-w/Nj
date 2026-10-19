@@ -81,10 +81,15 @@ describe("mutated class constructor parents", () => {
     ).toEqual([]);
   });
 
-  it("retains effects of a replaced prototype lookup helper", () => {
+  it.each([
+    "Object.getPrototypeOf=target=>Object.setPrototypeOf(target,G);Object.getPrototypeOf(C);",
+    "Reflect.getPrototypeOf=target=>Object.setPrototypeOf(target,G);Reflect.getPrototypeOf(C);",
+    "const query=Object.getPrototypeOf;query.call=(_this,target)=>Object.setPrototypeOf(target,G);query.call(null,C);",
+    "const Alias=C;external(Alias);Object.getPrototypeOf(Alias);",
+  ])("retains uncertain prototype inquiry effects: %s", (inquiry) => {
     expect(
       analyze(
-        "class B{}class G{constructor(){return globalThis}}class C extends B{field=(this.Q=other)}Object.getPrototypeOf=target=>Object.setPrototypeOf(target,G);Object.getPrototypeOf(C);new C();",
+        `class B{}class G{constructor(){return globalThis}}class C extends B{field=(this.Q=other)}${inquiry}new C();`,
       ),
     ).toEqual([]);
   });
@@ -101,6 +106,9 @@ describe("mutated class constructor parents", () => {
     "new C();",
     "const otherClass=class extends B{};Object.setPrototypeOf(otherClass,G);new C();",
     "const parent=Object.getPrototypeOf(C);new C();",
+    "const query=Object.getPrototypeOf;const parent=query(C);new C();",
+    "const Alias=C;const parent=Reflect.getPrototypeOf(Alias);new C();",
+    "const parent=Reflect.apply(Object.getPrototypeOf,Object,[C]);new C();",
     "new C();Object.setPrototypeOf(C,G);",
   ])("preserves unchanged constructor receiver separation: %s", (use) => {
     expect(

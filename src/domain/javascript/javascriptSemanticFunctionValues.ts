@@ -20,6 +20,10 @@ export type SemanticFunctionValueProjection = readonly (
   | typeof SEMANTIC_OWN_PROPERTY_DESCRIPTOR
 )[];
 type Projection = SemanticFunctionValueProjection;
+export type SemanticFunctionValueReadPath = readonly (
+  | string
+  | typeof SEMANTIC_PHYSICAL_PROTOTYPE
+)[];
 
 /** An unknown reference may be any nominal ambient owner, including the
  * CommonJS wrapper and shared callable helpers. The root wildcard absorbs
@@ -116,6 +120,7 @@ interface FunctionValue {
     | "primitive"
     | "unknown-external";
   readonly owner?: FunctionValue;
+  readonly prototype?: FunctionValue;
   readonly family?: string;
   readonly ownsPrototype?: boolean;
   readonly external?: boolean;
@@ -466,6 +471,7 @@ const propertyValue = (
     return value.family === undefined ? FUNCTION : exotic(value.family, false);
   }
   if (key === "__proto__") {
+    if (value.prototype !== undefined) return value.prototype;
     if (value.kind === "object-prototype") return undefined;
     if (value.kind === "object-instance" || value.kind === "primitive")
       return value.owner === undefined
@@ -590,12 +596,13 @@ const possiblePropertyValues = (
     return [UNKNOWN_EXTERNAL];
   }
   const selected = propertyValue(value, key, retainReadDependency);
-  // The entry module can be the current wrapper. Retain that alternative in
-  // the possible-reference inventory without promoting it to strict identity.
+  // Entry modules and children reached through self/cyclic loading can be the
+  // current wrapper. Possible aliases do not establish strict loader identity.
   if (
     selected === MODULE_INSTANCE &&
     ((value.path.join(".") === "global.require" && key === "main") ||
-      (value === PROCESS_INSTANCE && key === "mainModule"))
+      (value === PROCESS_INSTANCE && key === "mainModule") ||
+      (value === MODULE_CHILDREN && semanticArrayIndex(key) !== null))
   )
     return [selected, WRAPPER_MODULE_INSTANCE];
   if (selected !== undefined) return [selected];
@@ -640,6 +647,7 @@ const selectedValues = (
     ownFrom: number,
     suffixOffset: number,
   ) => void,
+  readOwnMember?: (owner: FunctionValue, key: string, offset: number) => void,
   retainUnknownDescriptor?: () => void,
 ): readonly FunctionValue[] => {
   let values = [initial];
@@ -728,9 +736,13 @@ const selectedValues = (
         key === null &&
         value === MODULE_CHILDREN &&
         (!descriptor || field === "value" || field === null)
-      )
+      ) {
         next.set("object-instance:module-instance", MODULE_INSTANCE);
+        next.set("object-instance:commonjs-module", WRAPPER_MODULE_INSTANCE);
+      }
       for (const property of keys) {
+        if (typeof property === "string")
+          readOwnMember?.(value, property, index);
         const prototype =
           property === SEMANTIC_PHYSICAL_PROTOTYPE
             ? physicalPrototypeValue(value)
@@ -783,25 +795,101 @@ const selectedValues = (
 
 /** Slot and prototype dependencies of possible value selection, not proof that
  * the source currently reads that value. Capture timing remains with callers. */
-export const semanticFunctionValueReadDependencies = (
-  path: Path,
+export interface SemanticSourceCallableReadContext {
+  readonly classParent: (
+    node: t.Class,
+  ) =>
+    | { readonly path: Path; readonly source?: t.Function | t.Class }
+    | undefined;
+  readonly classOwnPropertyAbsent: (node: t.Class, key: string) => boolean;
+}
+
+export function semanticFunctionValueReadDependencies(
+  path: SemanticFunctionValueReadPath,
   source?: t.Function,
-): readonly SemanticFunctionValueReadDependency[] => {
+): readonly SemanticFunctionValueReadDependency[];
+export function semanticFunctionValueReadDependencies(
+  path: SemanticFunctionValueReadPath,
+  source: t.Function | t.Class,
+  context: SemanticSourceCallableReadContext,
+): readonly SemanticFunctionValueReadDependency[] | undefined;
+export function semanticFunctionValueReadDependencies(
+  path: SemanticFunctionValueReadPath,
+  source?: t.Function | t.Class,
+  context?: SemanticSourceCallableReadContext,
+): readonly SemanticFunctionValueReadDependency[] | undefined {
+  const storagePath = path.map((key) =>
+    key === SEMANTIC_PHYSICAL_PROTOTYPE ? "__proto__" : key,
+  );
+  let complete = true;
+  const classes = new Map<string, t.Class>();
+  const sourceValue = (
+    node: t.Function | t.Class,
+    identity: Path,
+  ): FunctionValue => {
+    const lineage: FunctionValue[] = [];
+    const seen = new Set<t.Class>();
+    let current = node;
+    let currentIdentity = identity;
+    let value: FunctionValue;
+    for (;;) {
+      value = sourceFunctionValue(current, false, currentIdentity);
+      if (!t.isClass(current) || path.length <= 2) break;
+      classes.set(JSON.stringify(currentIdentity), current);
+      if (current.superClass == null || t.isNullLiteral(current.superClass))
+        break;
+      if (seen.has(current)) {
+        complete = false;
+        break;
+      }
+      seen.add(current);
+      const parent = context?.classParent(current);
+      if (parent === undefined) {
+        complete = false;
+        break;
+      }
+      lineage.push(value);
+      if (parent.source !== undefined) {
+        current = parent.source;
+        currentIdentity = parent.path;
+        continue;
+      }
+      const inherited = rootValue(parent.path);
+      const prototype =
+        inherited === undefined
+          ? undefined
+          : selectedValues(
+              inherited.value,
+              parent.path.slice(inherited.length),
+            )[0];
+      if (prototype === undefined) complete = false;
+      else value = prototype;
+      break;
+    }
+    for (let index = lineage.length - 1; index >= 0; index -= 1)
+      value = { ...lineage[index]!, prototype: value };
+    return value;
+  };
   const root =
     source === undefined
       ? rootValue(path)
       : {
-          value: sourceFunctionValue(
-            source,
-            false,
-            semanticCallableValueIdentity(source),
-          ),
+          value: sourceValue(source, semanticCallableValueIdentity(source)),
           length: 2,
         };
   if (root === undefined)
-    return [{ path, offset: path.length - 1, ownFrom: 0 }];
+    return [{ path: storagePath, offset: path.length - 1, ownFrom: 0 }];
   const dependencies = new Map<string, SemanticFunctionValueReadDependency>();
   const retain = (selected: Path, ownFrom: number, offset: number) => {
+    const owner = classes.get(JSON.stringify(selected.slice(0, -1)));
+    const key = selected.at(-1);
+    if (
+      owner !== undefined &&
+      key !== undefined &&
+      key !== "__proto__" &&
+      context?.classOwnPropertyAbsent(owner, key) !== true
+    )
+      complete = false;
     if (
       ![
         "global",
@@ -815,18 +903,43 @@ export const semanticFunctionValueReadDependencies = (
     const dependency = { path: selected, offset, ownFrom };
     dependencies.set(JSON.stringify(dependency), dependency);
   };
-  retain(path.slice(0, root.length), 0, root.length - 1);
+  retain(storagePath.slice(0, root.length), 0, root.length - 1);
   for (let offset = root.length; offset < path.length; offset += 1)
-    retain(path.slice(0, offset + 1), offset, offset);
+    retain(storagePath.slice(0, offset + 1), offset, offset);
   selectedValues(
     root.value,
     path.slice(root.length),
     undefined,
     (selected, ownFrom, offset) =>
       retain(selected, ownFrom, root.length + offset),
+    (owner, key, offset) => {
+      if (key !== "__proto__" || !classes.has(JSON.stringify(owner.path)))
+        return;
+      // An explicit member read searches every constructor's own slots before
+      // reaching the native accessor. Physical prototype operations skip it.
+      const seen = new Set<FunctionValue>();
+      for (
+        let current: FunctionValue | undefined = owner;
+        current !== undefined && !seen.has(current);
+        current = physicalPrototypeValue(current)
+      ) {
+        seen.add(current);
+        retain(
+          [...current.path, key],
+          current.path.length,
+          root.length + offset,
+        );
+        const sourceClass = classes.get(JSON.stringify(current.path));
+        if (
+          sourceClass !== undefined &&
+          context?.classOwnPropertyAbsent(sourceClass, key) !== true
+        )
+          complete = false;
+      }
+    },
   );
-  return [...dependencies.values()];
-};
+  return complete ? [...dependencies.values()] : undefined;
+}
 
 /** Exact selectors are limited to the captures whose dependencies the loader
  * owner already validates. Possible constructor/member values do not grant
@@ -887,6 +1000,7 @@ export const semanticPossibleFunctionValueIdentities = (
                 owner,
                 publishNominal,
               ),
+        undefined,
         undefined,
         retainUnknownDescriptor,
       )

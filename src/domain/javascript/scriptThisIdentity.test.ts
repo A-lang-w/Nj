@@ -205,6 +205,32 @@ describe("source-visible function receivers", () => {
   });
 });
 
+describe("source receiver invocation helper integrity", () => {
+  it.each([
+    "Reflect.apply=function(fn){fn()};Reflect.apply(set,{},[]);",
+    "Reflect.apply=new Proxy(Reflect.apply,{apply(_target,_receiver,args){(0,args[0])()}});Reflect.apply(set,{},[]);",
+    'Object.defineProperty(Reflect,"apply",{get(){return fn=>fn()}});Reflect.apply(set,{},[]);',
+    "Reflect.apply.call=function(_receiver,fn){fn()};Reflect.apply.call(null,set,{},[]);",
+    "const apply=Reflect.apply;apply.call=function(_receiver,fn){fn()};apply.call(null,set,{},[]);",
+    "Reflect.apply=function(fn){fn()};const apply=Reflect.apply.bind(null,set,{},[]);apply();",
+  ])("retains the callback receiver after replacing a helper: %s", (call) => {
+    expect(
+      analyze(`${SHIM}function set(){this.Q=other}${call}${USE}`).electron.ipc,
+    ).toEqual([]);
+  });
+
+  it.each([
+    "const apply=Reflect.apply;Reflect.apply=function(fn){fn()};apply(set,{},[]);",
+    "const apply=Reflect.apply.bind(null,set,{},[]);Reflect.apply=function(fn){fn()};apply();",
+    "Reflect.apply(set,{},[]);Reflect.apply=function(fn){fn()};",
+    "Reflect.apply.unrelated=function(fn){fn()};Reflect.apply(set,{},[]);",
+  ])("preserves intact and captured invocation helpers: %s", (call) => {
+    expect(
+      analyze(`${SHIM}function set(){this.Q=other}${call}${USE}`).electron.ipc,
+    ).toMatchObject([{ channel: "kept" }]);
+  });
+});
+
 describe("public accessor receivers", () => {
   it.each([
     "const box={set value(v){this.Q=other}};box.value=0;",

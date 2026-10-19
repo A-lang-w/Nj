@@ -11,7 +11,11 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
-import { semanticAmbientEscapeEffects } from "./javascriptSemanticAmbientWrites.js";
+import {
+  semanticAmbientEscapeEffects,
+  semanticAmbientOwnSlotFactsReady,
+} from "./javascriptSemanticAmbientWrites.js";
+import { semanticClassPropertyDescriptors } from "./javascriptSemanticObjectReferences.js";
 import {
   semanticBindingAtRead,
   semanticEffectFollowsInitialCapture,
@@ -37,6 +41,7 @@ import {
   semanticCallableValueIdentity,
   semanticFunctionValueReadDependencies,
   type SemanticFunctionValueReadDependency,
+  type SemanticFunctionValueReadPath,
   type SemanticFunctionValueProjection,
 } from "./javascriptSemanticFunctionValues.js";
 import {
@@ -86,8 +91,8 @@ const OWN_DESCRIPTOR_INTRINSICS = new Set([
 
 interface IntrinsicDependency {
   readonly path: readonly string[];
-  readonly readPath?: readonly string[];
-  readonly sourceFunction?: t.Function;
+  readonly readPath?: SemanticFunctionValueReadPath;
+  readonly sourceFunction?: t.Function | t.Class;
   readonly capturedAt?: t.Node;
   readonly captures?: readonly (t.Node | undefined)[];
   /** Supplier aliases are selected at initialization, not helper invocation. */
@@ -139,6 +144,8 @@ export const createSemanticModuleInterop = (
   state: JavaScriptSemanticAnalysisState,
   options?: {
     readonly intrinsicPath?: (node: t.Node) => readonly string[] | undefined;
+    /** A proven computed value may retain a source read at its own capture. */
+    readonly intrinsicValueSource?: (node: t.Node) => t.Node | undefined;
     /** Physical dependencies and capture offsets for a consumer's logical paths. */
     readonly intrinsicReadDependencies?: (
       path: readonly string[],
@@ -149,6 +156,10 @@ export const createSemanticModuleInterop = (
     ) => JavaScriptModuleOrigin | undefined;
     /** Complete canonical effects, kept separate from nominal alias paths. */
     readonly intrinsicWriteFacts?: SemanticGlobalBindingFacts;
+    /** Canonical helpers may need facts independent of a consumer's logical callables. */
+    readonly intrinsicInvocationWriteFacts?: (
+      path: readonly string[],
+    ) => SemanticGlobalBindingFacts | undefined;
     /** Physical bound helper reads can use facts independently of logical receiver paths. */
     readonly boundFunctionWriteFacts?: SemanticGlobalBindingFacts;
     /** Complete normalized source selections, with binding and slot proof at reads. */
@@ -203,24 +214,83 @@ export const createSemanticModuleInterop = (
   }[] = [];
   const intrinsicDependencies = new Map<
     string,
-    readonly SemanticFunctionValueReadDependency[]
+    readonly SemanticFunctionValueReadDependency[] | null
   >();
+  let dependencyFactsReady = semanticFreshObjectFactsReady(state);
+  let dependencySlotsReady = semanticAmbientOwnSlotFactsReady(state);
   const readDependencies = (
-    path: readonly string[],
-    sourceFunction?: t.Function,
+    path: SemanticFunctionValueReadPath,
+    sourceFunction?: t.Function | t.Class,
   ) => {
+    const factsReady = semanticFreshObjectFactsReady(state);
+    const slotsReady = semanticAmbientOwnSlotFactsReady(state);
+    if (
+      dependencyFactsReady !== factsReady ||
+      dependencySlotsReady !== slotsReady
+    ) {
+      // Source ancestry captures refresh with the binding and own-slot owners.
+      dependencyFactsReady = factsReady;
+      dependencySlotsReady = slotsReady;
+      intrinsicDependencies.clear();
+    }
     const key = JSON.stringify(path);
     let dependencies = intrinsicDependencies.get(key);
     if (dependencies === undefined) {
+      // Recursive source-parent aliases cannot establish their own identity.
+      intrinsicDependencies.set(key, null);
+      const canonical: SemanticFunctionValueReadPath = [
+        path[0] === "intrinsic" ? "global" : path[0]!,
+        ...path.slice(1),
+      ];
       dependencies =
-        options?.intrinsicReadDependencies?.(path) ??
-        semanticFunctionValueReadDependencies(
-          [path[0] === "intrinsic" ? "global" : path[0]!, ...path.slice(1)],
-          sourceFunction,
-        );
+        options?.intrinsicReadDependencies?.(
+          path.map((key) =>
+            key === SEMANTIC_PHYSICAL_PROTOTYPE ? "__proto__" : key,
+          ),
+        ) ??
+        (sourceFunction === undefined
+          ? semanticFunctionValueReadDependencies(canonical)
+          : semanticFunctionValueReadDependencies(canonical, sourceFunction, {
+              classParent: (node) => {
+                if (node.superClass == null) return undefined;
+                const selected = options?.sourceFunctionCapture?.(
+                  node.superClass,
+                  [],
+                );
+                if (selected?.projection.length === 0)
+                  return {
+                    path: semanticCallableValueIdentity(selected.node),
+                    source: selected.node,
+                  };
+                const captured = capturedIntrinsic(node.superClass);
+                if (
+                  captured === undefined ||
+                  captured.sourceFunction !== undefined ||
+                  captured.path[0] !== "intrinsic" ||
+                  captured.path[1] === "local-receiver" ||
+                  dependencyReadChanged(captured)
+                )
+                  return undefined;
+                return { path: ["global", ...captured.path.slice(1)] };
+              },
+              classOwnPropertyAbsent: (node, member) => {
+                const descriptor = semanticClassPropertyDescriptors(
+                  node,
+                  member,
+                  "static",
+                );
+                return (
+                  descriptor.inherits &&
+                  descriptor.fields.length === 0 &&
+                  descriptor.getters.length === 0 &&
+                  !descriptor.mayInvokeSetter
+                );
+              },
+            })) ??
+        null;
       intrinsicDependencies.set(key, dependencies);
     }
-    return dependencies;
+    return dependencies === null ? undefined : dependencies;
   };
   const invalidatedBindings = new Map<string, boolean>();
   const invalidatedCalls = new WeakMap<t.Node, boolean>();
@@ -311,6 +381,7 @@ export const createSemanticModuleInterop = (
     const path = intrinsicPath(node);
     if (path === undefined) return undefined;
     const visited = new Set<string>();
+    const visitedValues = new Set<t.Node>();
     let current = node;
     let capturedAt = node;
     let captures: readonly t.Node[] = [];
@@ -322,7 +393,7 @@ export const createSemanticModuleInterop = (
       const { root, members } = electronMemberPath(current);
       projection = [...members, ...projection];
       captures = [...members.map(() => current), ...captures];
-      if (t.isFunction(root)) {
+      if (t.isFunction(root) || t.isClass(root)) {
         if (!projection.every((key): key is string => key !== null))
           return undefined;
         const readPath = [
@@ -339,20 +410,25 @@ export const createSemanticModuleInterop = (
         };
       }
       if (!t.isIdentifier(root)) {
+        const source = options?.intrinsicValueSource?.(root);
+        if (source !== undefined) {
+          if (visitedValues.has(root)) return undefined;
+          visitedValues.add(root);
+          current = source;
+          continue;
+        }
         const selected = options?.sourceFunctionCapture?.(node, []);
         if (
           selected === undefined ||
-          !t.isFunction(selected.node) ||
           selected.projection.some((key) => key === null)
         )
           return undefined;
-        const readPath = [
-          ...semanticCallableValueIdentity(selected.node),
-          ...selected.projection.map(String),
-        ];
         return {
           path,
-          readPath,
+          readPath: [
+            ...semanticCallableValueIdentity(selected.node),
+            ...selected.projection.map(String),
+          ],
           sourceFunction: selected.node,
           capturedAt,
           captures: [
@@ -366,6 +442,26 @@ export const createSemanticModuleInterop = (
           bindingReads,
         };
       }
+      // Class aliases can have later assignments while this earlier read still
+      // captures the original constructor. Reuse the source selection owner's
+      // read snapshot before the nominal stable-alias fallback.
+      const selectedClass = options?.sourceFunctionCapture?.(root, []);
+      if (
+        selectedClass?.projection.length === 0 &&
+        t.isClass(selectedClass.node) &&
+        projection.every((key): key is string => key !== null)
+      )
+        return {
+          path,
+          readPath: [
+            ...semanticCallableValueIdentity(selectedClass.node),
+            ...projection,
+          ],
+          sourceFunction: selectedClass.node,
+          capturedAt,
+          captures: [capturedAt, capturedAt, ...captures],
+          bindingReads,
+        };
       const binding = resolveSemanticBindingState(state, root, root.name);
       if (binding === undefined)
         return {
@@ -440,10 +536,12 @@ export const createSemanticModuleInterop = (
   const retainedReadChanged = (dependency: IntrinsicDependency): boolean => {
     const capture = dependency.capturedAt;
     if (capture === undefined) return true;
-    return readDependencies(
+    const dependencies = readDependencies(
       dependency.readPath ?? dependency.path,
       dependency.sourceFunction,
-    ).some(({ path, ownFrom, offset }) => {
+    );
+    if (dependencies === undefined) return true;
+    return dependencies.some(({ path, ownFrom, offset }) => {
       const selectedAt = dependency.captures?.[offset] ?? capture;
       const scope = opaqueMutationPath(selectedAt).join(".");
       return writes.some(
@@ -469,6 +567,7 @@ export const createSemanticModuleInterop = (
       dependency.readPath ?? dependency.path,
       dependency.sourceFunction,
     );
+    if (dependencies === undefined) return true;
     const captureAt = (offset: number) =>
       dependency.captures?.[offset] ?? capture;
     if (facts !== undefined) {
@@ -559,7 +658,11 @@ export const createSemanticModuleInterop = (
     // Binding copies [[Prototype]], not the target's own helper properties.
     if (
       changed({
-        path: [...(target.readPath ?? target.path), "__proto__"],
+        path: target.path,
+        readPath: [
+          ...(target.readPath ?? target.path),
+          SEMANTIC_PHYSICAL_PROTOTYPE,
+        ],
         ...(target.sourceFunction === undefined
           ? {}
           : { sourceFunction: target.sourceFunction }),
@@ -590,7 +693,12 @@ export const createSemanticModuleInterop = (
         }),
       ) ||
       changed({
-        path: [...(target.readPath ?? target.path), "__proto__", ...projection],
+        path: target.path,
+        readPath: [
+          ...(target.readPath ?? target.path),
+          SEMANTIC_PHYSICAL_PROTOTYPE,
+          ...projection,
+        ],
         ...(target.sourceFunction === undefined
           ? {}
           : { sourceFunction: target.sourceFunction }),
@@ -611,17 +719,21 @@ export const createSemanticModuleInterop = (
     proofFacts?: SemanticGlobalBindingFacts,
     checkEscapes = false,
   ): boolean => {
+    const facts =
+      proofFacts ??
+      options?.intrinsicWriteFacts ??
+      options?.intrinsicInvocationWriteFacts?.(path);
     if (bound !== undefined)
       return boundHelperReadChanged(
         node,
         bound.projection,
         bound.value,
-        proofFacts,
+        facts,
         checkEscapes,
       );
-    const dependency = capturedIntrinsic(node, proofFacts);
+    const dependency = capturedIntrinsic(node, facts);
     return (
-      ((proofFacts ?? options?.intrinsicWriteFacts) !== undefined &&
+      (facts !== undefined &&
         dependency === undefined &&
         intrinsicPath(node) !== undefined) ||
       dependencyReadChanged(
@@ -630,7 +742,7 @@ export const createSemanticModuleInterop = (
           path,
           capturedAt: dependency?.capturedAt ?? node,
         },
-        proofFacts ?? options?.intrinsicWriteFacts,
+        facts,
         checkEscapes,
       )
     );
@@ -644,6 +756,7 @@ export const createSemanticModuleInterop = (
     const visited = new Set<string>();
     const argumentGroups: t.CallExpression["arguments"][] = [];
     const allocations: t.CallExpression[] = [];
+    const allocationTargets: t.Node[] = [];
     const bindReads: {
       readonly node: t.Node;
       readonly allocationIndex: number;
@@ -720,6 +833,7 @@ export const createSemanticModuleInterop = (
       // A possible alias can still invoke an intrinsic through bind. Keep its
       // effects when capture proof is unavailable, without proving arguments or
       // weakening the stricter capture proof used for namespace helpers.
+      allocationTargets.push(bindTarget);
       callableReads.push(current.callee, bindTarget);
       opaqueArguments ||= terminal && captured === undefined;
       receiver = bindingArguments?.[0];
@@ -735,7 +849,11 @@ export const createSemanticModuleInterop = (
         continue;
       }
       const boundPath = [...path, "bind"];
-      const boundFunction = { allocations, prototypeTarget: bindTarget };
+      const boundFunction = {
+        allocations,
+        allocationTargets,
+        prototypeTarget: bindTarget,
+      };
       const helperChanged = bindReads.some(({ node, allocationIndex }) => {
         const source =
           allocationIndex === allocations.length - 1
@@ -753,6 +871,9 @@ export const createSemanticModuleInterop = (
                     value: {
                       ...boundFunction,
                       allocations: allocations.slice(allocationIndex + 1),
+                      allocationTargets: allocationTargets.slice(
+                        allocationIndex + 1,
+                      ),
                     },
                     projection: ["bind"],
                   },
@@ -789,6 +910,53 @@ export const createSemanticModuleInterop = (
     } finally {
       activeBoundValues.delete(node);
     }
+  };
+
+  /** Native bind retains its receiver only when its metadata reads cannot
+   * invoke a custom accessor. Each rebinding reads its immediate input value. */
+  const nonEscapingBoundTarget = (
+    node: t.CallExpression | t.OptionalCallExpression,
+    proofFacts = options?.boundFunctionWriteFacts ??
+      options?.intrinsicWriteFacts,
+  ): t.Node | undefined => {
+    if (proofFacts?.complete !== true) return undefined;
+    const bound = boundIntrinsic(node, proofFacts, true);
+    if (bound?.kind !== "known" || bound.boundFunction?.allocations[0] !== node)
+      return undefined;
+    const target = bound.boundFunction.allocationTargets[0];
+    if (target === undefined) return undefined;
+    const inputAllocation = bound.boundFunction.allocations[1];
+    const source: IntrinsicDependency | undefined =
+      inputAllocation === undefined
+        ? capturedIntrinsic(target, proofFacts)
+        : {
+            path: semanticCallableValueIdentity(inputAllocation),
+            readPath: semanticCallableValueIdentity(inputAllocation),
+            capturedAt: node,
+          };
+    if (
+      source?.readPath?.length !== 2 ||
+      (inputAllocation === undefined && source.sourceFunction === undefined)
+    )
+      return undefined;
+    for (const key of ["name", "length"])
+      if (
+        dependencyReadChanged(
+          {
+            ...source,
+            readPath: [...source.readPath, key],
+            capturedAt: node,
+            captures: [
+              ...(source.captures ?? [source.capturedAt, source.capturedAt]),
+              node,
+            ],
+          },
+          proofFacts,
+          true,
+        )
+      )
+        return undefined;
+    return target;
   };
 
   const isObjectValue = (node: t.Node, mode: "fresh" | "definite"): boolean => {
@@ -1022,7 +1190,11 @@ export const createSemanticModuleInterop = (
       ) {
         const offset = descriptors ? 2 : 1;
         const key = descriptors
-          ? (projection?.[0] ?? (escapedContents ? null : undefined))
+          ? projection !== undefined && projection.length > 0
+            ? projection[0]
+            : escapedContents
+              ? null
+              : undefined
           : (staticString(invocation.arguments?.[1]) ?? null);
         const field =
           projection === undefined || projection.length < offset
@@ -1391,6 +1563,7 @@ export const createSemanticModuleInterop = (
         intrinsicReadChanged,
       ),
     boundIntrinsic,
+    nonEscapingBoundTarget,
     boundValuePath: (node: t.Node) => {
       const allocation = boundIntrinsic(node)?.boundFunction?.allocations[0];
       return allocation === undefined

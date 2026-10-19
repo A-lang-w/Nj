@@ -186,6 +186,50 @@ describe("private class-member receivers", () => {
   });
 });
 
+describe("class member result receivers", () => {
+  it.each([
+    "class C{#state=globalThis;set(){this.#state.Q=other}}new C().set();",
+    "class C{static #state=globalThis;static set(){this.#state.Q=other}}C.set();",
+    "class C{get #state(){return globalThis}set(){this.#state.Q=other}}new C().set();",
+    "class C{static get #state(){return globalThis}static set(){this.#state.Q=other}}C.set();",
+    "class C{static #state=globalThis;static{this.#state.Q=other}}",
+    "class C{static #state=globalThis;static{C.#state.Q=other}}",
+    "class C{#state={root:globalThis};set(){this.#state.root.Q=other}}new C().set();",
+    "class C{#state={};set(){this.#state=globalThis;this.#state.Q=other}}new C().set();",
+    "class B{#state=globalThis;set(){this.#state.Q=other}}class C extends B{#state={}}new C().set();",
+    "class B{constructor(){return globalThis}}class C extends B{get #root(){return this}static run(c){c.#root.Q=other}}C.run(new C());",
+    "class C{#state={};setGlobal(){this.#state=globalThis}set(){this.#state.Q=other}}const a=new C(),b=new C();b.setGlobal();a.set();b.set();",
+    "class C{state={};get #root(){return this.state}set(){this.#root.Q=other}}const c=new C();c.state=globalThis;c.set();",
+    "class C{#state={};set(){this.#state.Q=other}}const c=new C();consume(c);c.set();",
+    "class C{get state(){return globalThis}set(){this.state.Q=other}}new C().set();",
+    "class B{get root(){return globalThis}}class C extends B{}new C().root.Q=other;",
+    "class C{state={};get root(){return this.state}}const c=new C();c.state=globalThis;c.root.Q=other;",
+    "class B{get root(){return this.state}}class C extends B{state={}}const c=new C();c.state=globalThis;c.root.Q=other;",
+    "class C{state=globalThis;get root(){return (()=>this.state)()}}new C().root.Q=other;",
+    "class C{state={};get root(){return this.state}}const a=new C(),b=new C();b.state=globalThis;a.root.Q=other;b.root.Q=other;",
+  ])(
+    "retains possible shared values read through class members: %s",
+    (setup) => {
+      expect(analyze(setup)).toEqual([]);
+    },
+  );
+
+  it.each([
+    "class C{#self=this;set(){this.#self.Q=other}}new C().set();",
+    "class C{#state={};static set(c){c.#state.Q=other}}const a=new C(),b=new C();C.set(a);C.set(b);",
+    "class B{#state=globalThis}class C extends B{#state={};set(){this.#state.Q=other}}new C().set();",
+    "class B{constructor(){return globalThis}}class C extends B{#Q;static run(c){c.#Q=other}}C.run(new C());",
+    "class C{get root(){return {}}}new C().root.Q=other;",
+    "class C{get root(){return this}}new C().root.Q=other;",
+    "class C{state={};get root(){return this.state}}new C().root.Q=other;",
+    "class B{get root(){return globalThis}}class C extends B{root={}}new C().root.Q=other;",
+    "class B{get root(){return globalThis}}class C extends B{root(){}}new C().root.Q=other;",
+    "class B{get root(){return this.state}}class C extends B{state={}}new C().root.Q=other;",
+  ])("preserves local values and lexical private brands: %s", (setup) => {
+    expect(analyze(setup)).toMatchObject([{ channel: "kept" }]);
+  });
+});
+
 describe("auto-accessor AST targets", () => {
   // The production parser does not enable decoratorAutoAccessors. These tests
   // cover the existing Babel AST contract without expanding source support.
@@ -471,6 +515,42 @@ describe("construction helper prototype selection", () => {
       ]);
     },
   );
+});
+
+describe("bound class construction", () => {
+  it.each([
+    "const Bound=C.bind(null);Object.setPrototypeOf(C,G);new Bound();",
+    "const Bound=C.bind(null).bind({});Object.setPrototypeOf(C,G);new Bound();",
+    "const Bound=C.bind(null);Object.setPrototypeOf(C,G);Reflect.construct(Bound,[]);",
+    "const Bound=Function.prototype.bind.call(C,null);Object.setPrototypeOf(C,G);new Bound();",
+    "const Bound=C.bind(null);external(Bound,G);new Bound();",
+    "const Bound=C.bind(null);external({Bound},G);new Bound();",
+    "const Bound=C.bind(null);external(Bound,G);",
+    "const Bound=C.bind(null);external({Bound},G);",
+  ])("reads the constructor parent at allocation: %s", (construction) => {
+    expect(
+      analyze(
+        `class B{}class G{constructor(){return globalThis}}class C extends B{field=(this.Q=other)}${construction}`,
+      ),
+    ).toEqual([]);
+  });
+
+  it.each([
+    "class B{constructor(){return globalThis}}class C extends B{field=(this.Q=other)}new(C.bind(null))();",
+    "class C{get root(){return globalThis}}const Bound=C.bind(null);Bound.prototype={get root(){return {}}};Reflect.construct(Bound,[],Bound).root.Q=other;",
+  ])("preserves bound constructor receiver semantics: %s", (setup) => {
+    expect(analyze(setup)).toEqual([]);
+  });
+
+  it.each([
+    "class B{}class C extends B{field=(this.Q=other)}new(C.bind(globalThis))();",
+    "class B{}class G{constructor(){return globalThis}}class C extends B{field=(this.Q=other)}const Bound=C.bind(null);new Bound();Object.setPrototypeOf(C,G);",
+    "class B{}class G{constructor(){return globalThis}}let C=class extends B{field=(this.Q=other)};const Bound=C.bind(null);C=G;new Bound();",
+    "class C{field=(this.Q=other)}const Bound=C.bind(null),Alias=Bound;Reflect.construct(Bound,[],Alias);",
+    "class B{field=(this.Q=other)}class C extends B{}const Bound=C.bind(null);external(Bound);",
+  ])("keeps proven bound allocations local: %s", (setup) => {
+    expect(analyze(setup)).toMatchObject([{ channel: "kept" }]);
+  });
 });
 
 describe("bound construction helper suppliers", () => {

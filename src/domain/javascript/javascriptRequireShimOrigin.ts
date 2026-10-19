@@ -12,11 +12,9 @@ import {
 import {
   semanticHostRequireIntact,
   semanticHostRequireBindingWritesIntact,
-  semanticHostRequireModuleWritesIntact,
-  semanticMemberChain,
+  semanticRequireOrigin,
   type JavaScriptRequireOrigin,
 } from "./javascriptSemanticRequireOrigin.js";
-import { argumentValue } from "./javascriptStaticAnalysisHelpers.js";
 import {
   semanticBindingAtRead,
   semanticEffectFollowsInitialCapture,
@@ -50,62 +48,36 @@ import {
 export const semanticRequireShimOrigin = (
   node: t.Node | null | undefined,
   state: JavaScriptSemanticAnalysisState,
-): JavaScriptRequireOrigin | undefined => {
-  const chain = semanticMemberChain(node);
-  const current = chain?.root;
-  if (
-    chain === undefined ||
-    (!t.isCallExpression(current) && !t.isOptionalCallExpression(current)) ||
-    !t.isIdentifier(current.callee) ||
-    current.arguments.length !== 1
-  )
-    return undefined;
-  const specifier = argumentValue(current.arguments[0]);
-  if (specifier === undefined) return undefined;
-  const binding = resolveSemanticBindingState(
-    state,
-    current.callee,
-    current.callee.name,
-  );
+): JavaScriptRequireOrigin | undefined =>
+  semanticRequireOrigin(node, state, "shim");
+
+/** The captured callable value is shared by direct and normalized helper calls. */
+export const semanticRequireShimBinding = (
+  reference: t.Identifier,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const binding = resolveSemanticBindingState(state, reference, reference.name);
   if (
     binding === undefined ||
-    semanticResolutionBlocked(state, current.callee, current.callee.name) ||
-    semanticOpaqueBindingReadMayHaveChanged(binding, current.callee, state) ||
+    semanticResolutionBlocked(state, reference, reference.name) ||
+    semanticOpaqueBindingReadMayHaveChanged(binding, reference, state) ||
     semanticBindingMayHaveBlockFunctionWrite(binding, state) ||
     binding.definitions.length !== 1 ||
     binding.definitions[0]?.kind === "assignment"
   )
-    return undefined;
-  const atRead = semanticBindingAtRead(
-    binding,
-    current.callee,
-    state.parentsByNode,
-  );
+    return false;
+  const atRead = semanticBindingAtRead(binding, reference, state.parentsByNode);
   if (
     // Unordered reads retain possible initializers for conservative alias
     // effects. They do not prove that the loader exists at this call site.
     !atRead.hasDefiniteInitializer ||
-    semanticGlobalBindingReadMayHaveChanged(
-      atRead.binding,
-      current.callee,
-      state,
-    ) ||
-    !bindsRequireShim(atRead.binding, state) ||
-    // The shim captured `require` at its own definition, so a later bare
-    // `require = ...` does not change the saved loader and is not a reason to
-    // reject here. A write to the module `require` delegate still redirects the
-    // saved function at load time, so that check runs at the consumer call.
-    !semanticHostRequireModuleWritesIntact(current, state)
+    semanticGlobalBindingReadMayHaveChanged(atRead.binding, reference, state) ||
+    !bindsRequireShim(atRead.binding, state)
   )
-    return undefined;
-  return {
-    origin: {
-      specifier,
-      importedPath: chain.members,
-      resolutionMode: "require",
-    },
-    call: current,
-  };
+    return false;
+  // Delegate integrity belongs to the invocation, after any helper binding or
+  // alias capture. A later bare require assignment cannot replace this value.
+  return true;
 };
 
 /**
@@ -132,20 +104,29 @@ const bindsRequireShim = (
   // Provenance can be queried while effect indexing is still in progress.
   // The proof includes host-loader integrity, so do not retain it beyond the
   // shared provenance owner's dependency-aware query lifetime.
-  return semanticRequireShimInitializer(stable.node, state);
+  return semanticRequireShimValueSource(stable.node, state) !== undefined;
 };
+
+/** Resolve the selected source once for consumers that need capture timing. */
+export const semanticRequireShimValueSource = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): t.Node | undefined =>
+  t.isCallExpression(node)
+    ? semanticRequireShimInitializerSource(node, state)
+    : undefined;
 
 /**
  * A flat IIFE whose arrow callee guards the host `require` with its
  * availability and is applied to a fallback function. esbuild emits exactly
  * this shape, so the argument count and callee form are part of the proof.
  */
-const semanticRequireShimInitializer = (
+const semanticRequireShimInitializerSource = (
   call: t.CallExpression,
   state: JavaScriptSemanticAnalysisState,
   intact: (node: t.Node) => boolean = (node) =>
     isGlobalRequire(node, call, state),
-): boolean => {
+): t.Node | undefined => {
   const callee = call.callee;
   if (
     (!t.isArrowFunctionExpression(callee) && !t.isFunctionExpression(callee)) ||
@@ -159,9 +140,9 @@ const semanticRequireShimInitializer = (
     (!t.isFunctionExpression(call.arguments[0]) &&
       !t.isArrowFunctionExpression(call.arguments[0]))
   )
-    return false;
+    return undefined;
   const body = t.isBlockStatement(callee.body) ? undefined : callee.body;
-  return body !== undefined && selectsGlobalRequire(body, intact);
+  return body === undefined ? undefined : selectsGlobalRequire(body, intact);
 };
 
 /**
@@ -177,12 +158,12 @@ const semanticRequireShimInitializer = (
 const selectsGlobalRequire = (
   expression: t.Expression,
   intact: (node: t.Node) => boolean,
-): boolean => {
+): t.Node | undefined => {
   if (t.isConditionalExpression(expression)) {
-    if (!guardsRequireAvailability(expression.test, intact)) return false;
+    if (!guardsRequireAvailability(expression.test, intact)) return undefined;
     return selectsGlobalRequire(expression.consequent, intact);
   }
-  return intact(expression);
+  return intact(expression) ? expression : undefined;
 };
 
 /**
@@ -249,23 +230,25 @@ export const createSemanticRequireShimInertQuery = (
     if (facts.complete !== true) return false;
     const prior = (effect: t.Node | undefined) =>
       !semanticEffectFollowsInitialCapture(call, effect, state);
-    return semanticRequireShimInitializer(
-      call,
-      state,
-      (reference) =>
-        isUnshadowedGlobal(reference, state, "require") &&
-        semanticHostRequireBindingWritesIntact(call, state) &&
-        !(facts.opaqueGlobalSites ?? state.opaqueEffects.globalSites).some(
-          prior,
-        ) &&
-        ![...state.opaqueEffects.byScope.values()].some((sites) =>
-          sites.some(prior),
-        ) &&
-        !semanticAmbientWriteMayMatch(
-          facts,
-          ["global", "require"],
-          ({ node }) => prior(node),
-        ),
+    return (
+      semanticRequireShimInitializerSource(
+        call,
+        state,
+        (reference) =>
+          isUnshadowedGlobal(reference, state, "require") &&
+          semanticHostRequireBindingWritesIntact(call, state) &&
+          !(facts.opaqueGlobalSites ?? state.opaqueEffects.globalSites).some(
+            prior,
+          ) &&
+          ![...state.opaqueEffects.byScope.values()].some((sites) =>
+            sites.some(prior),
+          ) &&
+          !semanticAmbientWriteMayMatch(
+            facts,
+            ["global", "require"],
+            ({ node }) => prior(node),
+          ),
+      ) !== undefined
     );
   };
   return (node) => {

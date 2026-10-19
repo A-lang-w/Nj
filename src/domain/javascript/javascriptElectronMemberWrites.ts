@@ -30,6 +30,7 @@ export const ELECTRON_IDENTITY_LIMITATION =
 /** Preserve exact property segments instead of flattening literal dotted keys. */
 export const electronMemberPath = (
   node: t.Node,
+  preservePrivateRead = false,
 ): {
   readonly root: t.Node;
   readonly members: readonly (string | null)[];
@@ -37,6 +38,7 @@ export const electronMemberPath = (
   let root = unwrapJavaScriptExpression(node).node;
   const members: (string | null)[] = [];
   while (t.isMemberExpression(root) || t.isOptionalMemberExpression(root)) {
+    if (preservePrivateRead && t.isPrivateName(root.property)) break;
     members.push(semanticStaticPropertyKey(root.property, root.computed));
     root = unwrapJavaScriptExpression(root.object).node;
   }
@@ -57,6 +59,8 @@ export interface JavaScriptIntrinsicInvocation {
   /** Physical bound values, newest first; their logical target remains `path`. */
   readonly boundFunction?: {
     readonly allocations: readonly t.CallExpression[];
+    /** Exact input callable for each allocation, in the same newest-first order. */
+    readonly allocationTargets: readonly t.Node[];
     readonly prototypeTarget: t.Node;
   };
   readonly path: readonly string[];

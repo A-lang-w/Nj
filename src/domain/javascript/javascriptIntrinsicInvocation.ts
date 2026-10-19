@@ -114,7 +114,19 @@ export const resolveJavaScriptIntrinsicInvocation = (
     visited.add(callee);
     let path = intrinsicPath(callee);
     if (path !== undefined && intrinsicReadChanged(callee, path))
-      return { kind: "opaque", path, arguments: undefined };
+      // Callable identity uncertainty does not change the receiver selected by
+      // an ordinary member call or by an already-proven invocation helper.
+      return {
+        kind: "opaque",
+        path,
+        arguments: undefined,
+        ...(callableReads.length === 0 ? {} : { callableReads }),
+        ...(receiver === undefined ? {} : { receiver }),
+        ...(!explicitReceiver &&
+        (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee))
+          ? { memberReceiver: callee.object }
+          : {}),
+      };
     if (path === undefined) {
       let helperTarget: t.Node = callee;
       const helpers: string[] = [];

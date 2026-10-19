@@ -202,7 +202,7 @@ describe("cached Module instance identity", () => {
     "const local={cache:{entry:{constructor:{prototype:{}}}}};local.cache.entry.constructor.prototype.require=other;",
     "let cache=require.cache;cache={entry:{}};cache.entry.require=other;",
     "require.cache[key].parent.require=other;",
-    "require.cache[key].children[0].require=other;",
+    "const cache={entry:{children:[{}]}};cache.entry.children[0].require=other;",
     "require.cache[key].constructor=other;",
     "require.cache[key].unrelated=other;",
     "require.cache[key]=other;",
@@ -644,7 +644,8 @@ describe("related Module instance identity", () => {
     "Object.setPrototypeOf(module.parent,{require:other});",
     'Object.defineProperty(module.parent,"__proto__",{value:{require:other}});',
     "module.parent.parent.require=other;",
-    "module.children[0].require=other;",
+    "const children=[{}];children[0].require=other;",
+    "const module={children:[{}]};module.children[0].require=other;",
     "const otherModule={parent:{constructor:{prototype:{}}}};otherModule.parent.constructor.prototype.require=other;",
     "const module={parent:{constructor:{prototype:{}}}};module.parent.constructor.prototype.require=other;",
   ])("preserves an unrelated instance's own mutation: %s", (setup) => {

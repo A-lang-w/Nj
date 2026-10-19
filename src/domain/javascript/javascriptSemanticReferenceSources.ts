@@ -514,6 +514,30 @@ export const semanticLiteralObjectReferenceSources = (
   return result;
 };
 
+const literalClassStaticMethods = new WeakMap<
+  t.ClassExpression,
+  ReadonlyMap<string, t.ClassMethod>
+>();
+
+/** Called only after syntaxDataSource excludes evaluated class effects. */
+const syntaxClassStaticMethod = (
+  node: t.ClassExpression,
+  key: string,
+): t.ClassMethod | undefined => {
+  let methods = literalClassStaticMethods.get(node);
+  if (methods === undefined) {
+    const selected = new Map<string, t.ClassMethod>();
+    for (const member of node.body.body) {
+      if (!t.isClassMethod(member, { static: true, kind: "method" })) continue;
+      const name = semanticStaticPropertyKey(member.key, member.computed);
+      if (name !== null) selected.set(name, member);
+    }
+    methods = selected;
+    literalClassStaticMethods.set(node, methods);
+  }
+  return methods.get(key);
+};
+
 const syntaxDataProperty = (
   root: t.Node,
   key: string,
@@ -531,11 +555,25 @@ const syntaxDataProperty = (
     const index = semanticArrayIndex(key);
     return index === null ? undefined : (node.elements[index] ?? undefined);
   }
+  if (t.isClassExpression(node)) {
+    const method = syntaxClassStaticMethod(node, key);
+    if (method !== undefined) return method;
+  }
   if (
     (t.isFunction(node) || t.isClassExpression(node)) &&
     semanticSourceFunctionOwnPropertyDefined(node, key)
   )
     return "defined";
+  // Strings are boxed when selected directly, but a primitive __proto__
+  // initializer is ignored instead of becoming a boxed prototype object.
+  if (node === root) {
+    const literal = readExactJavaScriptLiteral(node);
+    if (literal.found && typeof literal.value === "string") {
+      if (key === "length") return "defined";
+      const index = semanticArrayIndex(key);
+      if (index !== null && index < literal.value.length) return "defined";
+    }
+  }
   // Primitive prototype initializers are ignored at runtime, and neither they
   // nor an unmodeled intrinsic prototype establish a selected data value.
   return undefined;

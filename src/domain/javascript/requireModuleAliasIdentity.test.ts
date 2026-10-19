@@ -1,8 +1,13 @@
+import * as t from "@babel/types";
 import { describe, expect, it } from "vitest";
 
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
-import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
+import { semanticCallableValueIdentity } from "./javascriptSemanticFunctionValues.js";
+import {
+  completeSemanticSteps,
+  traverseJavaScriptAst,
+} from "./javascriptSemanticTraversal.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
 const SHIM = 'var Q=(e=>typeof require<"u"?require:e)(function(){});';
@@ -289,6 +294,7 @@ describe("CommonJS constructor path normalization", () => {
   it.each([
     {
       name: "unrelated constructor property",
+      escapedClass: undefined,
       source:
         "module.constructor.unrelated={};module.constructor.unrelated.require=other;",
       paths: [
@@ -298,6 +304,7 @@ describe("CommonJS constructor path normalization", () => {
     },
     {
       name: "constructor beneath an unrelated module property",
+      escapedClass: "Other",
       source:
         "module.unrelated={constructor:class Other{}};module.unrelated.constructor.prototype.require=other;",
       paths: [
@@ -305,16 +312,46 @@ describe("CommonJS constructor path normalization", () => {
         ["commonjs-module", "unrelated", "constructor", "prototype", "require"],
       ],
     },
-  ])("preserves the nominal path for $name", ({ source, paths }) => {
-    // Replaced module properties remain conservative aliases in loader analysis;
-    // the path owner must nevertheless keep unrelated properties out of cycles.
-    const parsed = parseJavaScriptSource(source, "app.cjs");
-    if (parsed === null) throw new Error("Expected parsed source");
-    const state = completeSemanticSteps(
-      indexJavaScriptBindingsSteps(parsed.program),
-    );
-    expect(state.ambientWriteEffects.map(({ path }) => path)).toEqual(paths);
-  });
+  ])(
+    "preserves the nominal path for $name",
+    ({ source, paths, escapedClass }) => {
+      // Replaced module properties remain conservative aliases in loader analysis;
+      // the path owner must nevertheless keep unrelated properties out of cycles.
+      const parsed = parseJavaScriptSource(source, "app.cjs");
+      if (parsed === null) throw new Error("Expected parsed source");
+      const state = completeSemanticSteps(
+        indexJavaScriptBindingsSteps(parsed.program),
+      );
+      const expected = [...paths];
+      if (escapedClass !== undefined) {
+        let escaped: t.Class | undefined;
+        traverseJavaScriptAst(parsed.program, {
+          enter(node) {
+            if (t.isClass(node) && node.id?.name === escapedClass)
+              escaped = node;
+          },
+        });
+        if (escaped === undefined) throw new Error("Expected escaped class");
+        const physicalPath = [...semanticCallableValueIdentity(escaped), null];
+        // Storing the class in the module exposes its physical callable identity;
+        // the original nominal module paths and their segments stay intact.
+        const first = parsed.program.body[0];
+        if (!t.isExpressionStatement(first))
+          throw new Error("Expected class store");
+        expect(state.ambientWriteEffects.at(-1)).toEqual({
+          path: physicalPath,
+          node: first.expression,
+        });
+        expect(state.ambientWriteEffects.map(({ path }) => path)).toEqual([
+          ...expected,
+          physicalPath,
+        ]);
+      } else
+        expect(state.ambientWriteEffects.map(({ path }) => path)).toEqual(
+          expected,
+        );
+    },
+  );
 });
 
 describe("ambient destructuring default selection", () => {
@@ -375,4 +412,76 @@ it("tracks a later store into a getter-returned ambient container", () => {
   expect(
     result.endpoints.filter(({ mechanism }) => mechanism === "call:fetch"),
   ).toEqual([]);
+});
+
+describe("shared module delegate descriptor metadata", () => {
+  it.each([
+    'Object.defineProperty(module.__proto__,"require",{enumerable:false});',
+    'Reflect.defineProperty(module.constructor.prototype,"require",{writable:false});',
+    'Object.defineProperty(module.constructor,"_load",{configurable:false});',
+    "Object.defineProperties(module.__proto__,{require:{enumerable:false}});",
+    'const descriptor={enumerable:false};Object.defineProperty(module.__proto__,"require",descriptor);',
+    'Object.defineProperty(module.__proto__,"require",{__proto__:null,enumerable:false});',
+  ])("preserves an initial shared delegate through %s", (setup) => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${setup}new(require("electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toHaveLength(1);
+  });
+
+  it.each([
+    'Object.defineProperty(module,"require",{enumerable:false});',
+    'Reflect.defineProperty(module,"require",{writable:false});',
+    "Object.defineProperties(module,{require:{enumerable:false}});",
+    'Object.defineProperty(module.__proto__,"require",{value:other});',
+    'Object.defineProperty(module.__proto__,"require",{get(){return other}});',
+    'delete module.__proto__.require;Object.defineProperty(module.__proto__,"require",{enumerable:false});',
+    'module.__proto__.require=other;Object.defineProperty(module.__proto__,"require",{enumerable:false});',
+    'Object.prototype.value=other;Object.defineProperty(module.__proto__,"require",{enumerable:false});',
+    'const descriptor={enumerable:false};descriptor.value=other;Object.defineProperty(module.__proto__,"require",descriptor);',
+    'const descriptor={__proto__:{value:other},enumerable:false};Object.defineProperty(module.__proto__,"require",descriptor);',
+    'Object.defineProperty(module.__proto__,"require",{get enumerable(){module.require=other;return false}});',
+    'const descriptor={enumerable:false};Object.prototype.value=other;Object.defineProperty(module.__proto__,"require",descriptor);',
+    'const descriptor={enumerable:false};Object.defineProperty(Object.prototype,"value",{get(){module.require=other;return other}});Object.defineProperty(module.__proto__,"require",descriptor);',
+  ])("retains uncertainty or a changed delegate through %s", (setup) => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${setup}new(require("electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toHaveLength(0);
+  });
+});
+
+describe("possible current wrapper in module children", () => {
+  // Self-require and cyclic loading can put this wrapper in its own children.
+  // The external container does not establish a distinct Module identity.
+  it.each([
+    "require(__filename);module.children[0].require=other;",
+    "module.children[0].require=other;",
+    "module.children[index].require=other;",
+    "const child=module.children[0];child.require=other;",
+    'const {value:child}=Object.getOwnPropertyDescriptor(module.children,"0");child.require=other;',
+    "Object.getOwnPropertyDescriptors(module.children)[index].value.require=other;",
+    'Reflect.set(module.children[0],"require",other);',
+    "require.cache[key].children[0].require=other;",
+  ])("retains the wrapper alternative through %s", (setup) => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `const load=require;${setup}new(load("electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toHaveLength(0);
+  });
+
+  it.each([
+    "const children=[{}];children[0].require=other;",
+    "const module={children:[{}]};module.children[0].require=other;",
+    "const otherModule={};otherModule.require=other;",
+  ])("preserves a definitely distinct child or module: %s", (setup) => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `const load=require;${setup}new(load("electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toHaveLength(1);
+  });
 });

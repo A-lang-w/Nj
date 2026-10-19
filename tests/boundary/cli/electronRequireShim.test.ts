@@ -57,7 +57,7 @@ cliTest(
     const load =
       'new (require.call.call(require,null,"electron").BrowserWindow)({});';
     const connection = await connectLocalToolsMcp();
-    for (const [setup, windows] of [
+    for (const [setup, windows, loader = load] of [
       ["class C{static{this.call.call=other}}", 0],
       ["class C{static{this.call=other}}", 1],
       ["const obj={__proto__:Function.prototype};obj.call.call=other;", 0],
@@ -69,6 +69,38 @@ cliTest(
       ["class C{constructor(){this.call=other}}new C();", 1],
       ['"use strict";arguments[2].require=other;', 0],
       ['"use strict";arguments[2]={};arguments[2].require=other;', 1],
+      ["arguments=arguments;arguments[2].require=other;", 0],
+      [
+        'Object.defineProperty(module.__proto__,"require",{enumerable:false});',
+        1,
+      ],
+      [
+        'var Q=(e=>typeof require<"u"?require:e)(function(){});',
+        1,
+        'new(Q.call(null,"electron").BrowserWindow)({});',
+      ],
+      [
+        'var Q=(e=>typeof require<"u"?require:e)(function(){});',
+        1,
+        'new(Q.apply(null,["electron"]).BrowserWindow)({});',
+      ],
+      [
+        'var Q=(e=>typeof require<"u"?require:e)(function(){});',
+        1,
+        'const load=Q.bind(null,"electron");new(load().BrowserWindow)({});',
+      ],
+      [
+        'Object.defineProperty(Array.prototype,"0",{set(value){value.call=other},configurable:true});const values=[null];values.length=0;values[0]=Function.prototype.call;',
+        0,
+      ],
+      [
+        "const holder=[()=>({__proto__:null})];holder.length=0;const o={__proto__:holder[0]?.()};o.toString.call.call=other;",
+        0,
+      ],
+      [
+        "function proto(flag){let value;if(flag)value={__proto__:null};return value}const o={__proto__:proto(false)};o.toString.call.call=other;",
+        0,
+      ],
       [
         "function proto(flag){if(flag)return {__proto__:null}}const o={__proto__:proto(false)};o.toString.call.call=other;",
         0,
@@ -86,7 +118,7 @@ cliTest(
           name: "class-fixture",
           main: "main.cjs",
         }),
-        "main.cjs": `${setup}${load}`,
+        "main.cjs": `${setup}${loader}`,
       });
       for (const surface of ["CLI", "stdio MCP"] as const) {
         const result = await analyzeJavaScriptDirectory(

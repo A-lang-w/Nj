@@ -684,6 +684,7 @@ const computeDirectInitializerPosition = (
   node: t.Node,
   parents: WeakMap<t.Node, t.Node>,
 ): StatementPosition | null => {
+  if (t.isClassDeclaration(node)) return statementPosition(node, parents);
   if (
     (t.isAssignmentExpression(node) &&
       t.isIdentifier(unwrapJavaScriptExpression(node.left).node)) ||
@@ -991,8 +992,28 @@ type SemanticBindingRead = {
   readonly status: "ordered" | "unresolved";
   /** A retained initializer executes on paths reaching this particular read. */
   readonly hasDefiniteInitializer: boolean;
+  /** Retained sources cover values on successful reads, including lexical TDZ exclusion. */
+  readonly hasCoveredReadValue: boolean;
   /** Unresolved reads retain all possible origins for conservative alias effects. */
   readonly binding: JavaScriptSemanticBindingState;
+};
+
+/** A successful lexical read cannot observe an uninitialized entry value:
+ * its declaration either initialized it or the read throws in the TDZ. */
+const initializerHasNoUndefinedEntry = (
+  node: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  if (t.isClassDeclaration(node)) return true;
+  const parent = parents.get(node);
+  if (t.isFunctionDeclaration(node))
+    return (
+      t.isProgram(parent) ||
+      (t.isBlockStatement(parent) && t.isFunction(parents.get(parent)))
+    );
+  if (!t.isVariableDeclarator(parent) || parent.init !== node) return false;
+  const declaration = parents.get(parent);
+  return t.isVariableDeclaration(declaration) && declaration.kind !== "var";
 };
 
 export const semanticBindingAtRead = (
@@ -1004,7 +1025,12 @@ export const semanticBindingAtRead = (
     binding.initializers.length === 0 &&
     binding.referenceInitializers.length === 0
   )
-    return { status: "ordered", binding, hasDefiniteInitializer: false };
+    return {
+      status: "ordered",
+      binding,
+      hasDefiniteInitializer: false,
+      hasCoveredReadValue: false,
+    };
   const initializer = binding.initializers[0];
   const reference = binding.referenceInitializers[0];
   const origin = initializer ?? reference;
@@ -1018,29 +1044,58 @@ export const semanticBindingAtRead = (
   const { position, repeating } = readPosition;
   // Coverage and latest-value selection are independent. A preceding write
   // can cover entry even when another write's order remains unknown.
-  const hasDefiniteInitializer = binding.initializers.some((initializer) => {
-    const source = initializerPosition(initializer, parents);
+  const coversRead = (
+    initializer: JavaScriptSemanticBindingState["initializers"][number],
+    reference = false,
+  ): boolean => {
+    let source = initializerPosition(initializer, parents, reference);
     if (
       source === null ||
+      // A parameter default is only a possible reference; incoming arguments
+      // remain unrepresented. Declaration/assignment copies have a real site.
+      (reference && source.index < 0) ||
       initializerMayRetainEntry(initializer, binding, parents)
     )
       return false;
-    // A prior enclosing-block initializer covers nested reads, including
-    // loop iterations. Crossing a function or delayed field still stops
-    // the position chain; coverage does not establish latest-value order.
-    for (
-      let context: BindingReadPosition | undefined = readPosition;
-      context !== undefined;
-      context = context.outer
-    ) {
-      if (
-        context.position !== null &&
-        positionPrecedes(source, context.position)
-      )
-        return true;
+    while (source !== null) {
+      // A prior enclosing-block initializer covers nested reads, including
+      // loop iterations. Coverage does not establish latest-value order.
+      for (
+        let context: BindingReadPosition | undefined = readPosition;
+        context !== undefined;
+        context = context.outer
+      ) {
+        if (
+          context.position !== null &&
+          positionPrecedes(source, context.position)
+        )
+          return true;
+      }
+      // A completed plain block also covers a later outer read. Branches,
+      // loops, handlers and function bodies have no outer statement position,
+      // so a possibly skipped assignment cannot acquire coverage this way.
+      const statement: t.Statement | undefined = source.body[source.index];
+      const block: t.Node | undefined =
+        statement === undefined ? undefined : parents.get(statement);
+      source = t.isBlockStatement(block)
+        ? statementPosition(block, parents)
+        : null;
     }
     return false;
-  });
+  };
+  const hasDefiniteInitializer =
+    binding.initializers.some((initializer) => coversRead(initializer)) ||
+    binding.referenceInitializers.some((initializer) =>
+      coversRead(initializer, true),
+    );
+  const hasCoveredReadValue =
+    hasDefiniteInitializer ||
+    binding.initializers.some((initializer) =>
+      initializerHasNoUndefinedEntry(initializer.node, parents),
+    ) ||
+    binding.referenceInitializers.some((initializer) =>
+      initializerHasNoUndefinedEntry(initializer.node, parents),
+    );
   if (
     !repeating &&
     origin !== undefined &&
@@ -1053,6 +1108,7 @@ export const semanticBindingAtRead = (
       status: "ordered",
       binding,
       hasDefiniteInitializer,
+      hasCoveredReadValue,
     };
   const uncertainOrder =
     repeating ||
@@ -1060,21 +1116,34 @@ export const semanticBindingAtRead = (
     position === null ||
     sourcePosition.body !== position.body;
   if (uncertainOrder)
-    return { status: "unresolved", binding, hasDefiniteInitializer };
+    return {
+      status: "unresolved",
+      binding,
+      hasDefiniteInitializer,
+      hasCoveredReadValue,
+    };
   const selected = selectInitializers(binding, position, read, parents);
   if (selected === undefined)
-    return { status: "unresolved", binding, hasDefiniteInitializer };
+    return {
+      status: "unresolved",
+      binding,
+      hasDefiniteInitializer,
+      hasCoveredReadValue,
+    };
   if (selected.binding === binding)
     return {
       status: "ordered",
       binding,
       hasDefiniteInitializer:
         hasDefiniteInitializer || selected.hasDefiniteInitializer,
+      hasCoveredReadValue:
+        hasCoveredReadValue || selected.hasDefiniteInitializer,
     };
   return {
     status: "ordered",
     hasDefiniteInitializer:
       hasDefiniteInitializer || selected.hasDefiniteInitializer,
+    hasCoveredReadValue: hasCoveredReadValue || selected.hasDefiniteInitializer,
     binding: {
       ...binding,
       ...selected.binding,

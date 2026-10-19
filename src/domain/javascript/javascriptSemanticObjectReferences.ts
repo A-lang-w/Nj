@@ -161,11 +161,16 @@ export const semanticOwnReferenceCandidates = (
         }
         continue;
       }
-      const selected = semanticBindingAtRead(
+      const selection = semanticBindingAtRead(
         binding,
         node,
         state.parentsByNode,
-      ).binding;
+      );
+      if (!selection.hasCoveredReadValue) {
+        unknown = true;
+        complete = false;
+      }
+      const selected = selection.binding;
       let alternatives = 0;
       for (const initializer of selected.initializers) {
         if (

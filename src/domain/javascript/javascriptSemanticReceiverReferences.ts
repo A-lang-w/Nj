@@ -13,6 +13,7 @@ import {
 } from "./javascriptModuleInterop.js";
 import {
   createSemanticCallableTargets,
+  createSemanticAccessorReferences,
   createSemanticClassConstructionStages,
   createSemanticFunctionValueReferences,
   createSemanticFunctionValueCapture,
@@ -20,11 +21,13 @@ import {
   createSemanticReturnedReferences,
   semanticConstructorKeepsReceiver,
   createSemanticUnknownCallableResults,
+  type SemanticReturnedReference,
 } from "./javascriptSemanticReturnedReferences.js";
 import {
   semanticAmbientOwnSlotUnchanged,
   semanticAmbientIdentitySourcesReady,
   semanticAmbientOwnSlotFactsReady,
+  semanticAmbientPrototypeUnchanged,
 } from "./javascriptSemanticAmbientWrites.js";
 import {
   semanticGlobalBindingReadMayHaveChanged,
@@ -72,6 +75,10 @@ export interface SemanticUnknownConstructorReceiver {
 }
 
 type ReceiverQuery = ((node: t.ThisExpression) => readonly t.Node[]) & {
+  nonEscapingBoundTarget(node: t.Node): t.Node | undefined;
+  privateReadSources(
+    node: t.MemberExpression | t.OptionalMemberExpression,
+  ): readonly SemanticReturnedReference[];
   wrapper(node: t.ThisExpression): boolean;
   constructed(node: t.ThisExpression): readonly SemanticConstructedReceiver[];
   unknown(
@@ -138,6 +145,7 @@ export const createSemanticReceiverReferences = (
     isDefinitelyObject !== undefined || intrinsicWriteFacts !== undefined;
   const prior = customContext ? undefined : receiverQueries.get(state);
   if (prior !== undefined) return prior;
+  const privateTargets = createSemanticPrivateMemberTargets(state);
   const owners = new WeakMap<t.Node, t.Node>();
   const lexicalOwner = (node: t.Node): t.Node => {
     const visited: t.Node[] = [];
@@ -206,6 +214,9 @@ export const createSemanticReceiverReferences = (
   >();
   let activationSites = new WeakMap<t.Node, Set<t.Node>>();
   let unknownActivations = new WeakSet<t.Node>();
+  let nonEscapingBoundTarget:
+    | ((node: t.Node) => t.Node | undefined)
+    | undefined;
   let classReceiverUnknown: ((owner: t.Class) => boolean) | undefined;
   let factsReady = semanticFreshObjectFactsReady(state);
   let capturesReady = semanticAmbientIdentitySourcesReady(state);
@@ -302,7 +313,6 @@ export const createSemanticReceiverReferences = (
                 intrinsicWriteFacts,
               ),
           });
-    const privateTargets = createSemanticPrivateMemberTargets(state);
     const includeUnknownResults =
       customContext || semanticFreshObjectFactsReady(state);
     const unknownResult = createSemanticUnknownCallableResults(
@@ -332,6 +342,9 @@ export const createSemanticReceiverReferences = (
           );
     };
     const unknownConstructionRoots = new Set<t.Node>();
+    // Stored values widen activation timing. Only exposed constructors also
+    // permit a caller to change a derived parent before an unknown allocation.
+    const escapedConstructionRoots = new Set<t.Node>();
     const groups = new Map<
       string,
       { node: t.Node; targets: readonly t.Function[] }
@@ -343,7 +356,12 @@ export const createSemanticReceiverReferences = (
       const cached = paths.get(current);
       if (cached !== undefined) return cached;
       const functions = targets(current);
-      if (functions.length > 0) {
+      if (
+        functions.length > 0 ||
+        constructorValues(current).some(
+          ({ node, projection }) => t.isClass(node) && projection.length === 0,
+        )
+      ) {
         const id = String(groups.size);
         groups.set(id, { node: current, targets: functions });
         const path = ["intrinsic", "local-receiver", id];
@@ -373,7 +391,9 @@ export const createSemanticReceiverReferences = (
         return semanticFreshObjectFactsReady(state);
       },
     };
-    const sourceCapture = createSemanticFunctionValueCapture(state, {
+    const sourceCaptureProofs: Parameters<
+      typeof createSemanticFunctionValueCapture
+    >[1] = {
       bindingReadMayHaveChanged: (binding, read) =>
         invocationFacts.complete !== true ||
         semanticOpaqueBindingReadMayHaveChanged(binding, read, state) ||
@@ -385,18 +405,48 @@ export const createSemanticReceiverReferences = (
         ),
       ownSlotUnchanged: (owner, key, read) =>
         semanticAmbientOwnSlotUnchanged(state, owner, key, read),
+    };
+    const sourceCapture = createSemanticFunctionValueCapture(
+      state,
+      sourceCaptureProofs,
+    );
+    const accessorReferences = createSemanticAccessorReferences(state, {
+      ...sourceCaptureProofs,
+      prototypeUnchanged: (owner, read) =>
+        semanticAmbientPrototypeUnchanged(state, owner, read),
     });
+    const reflectiveSetReceivers = new WeakMap<
+      t.Node,
+      { readonly target: t.Node; readonly receiver: t.Node }
+    >();
     const invocations = createSemanticModuleInterop(state, {
       intrinsicPath: localPath,
+      // Canonical helpers need mutation proof before normalizing a source call;
+      // the synthetic source path still selects possible activation targets.
+      intrinsicInvocationWriteFacts: (path) =>
+        path[1] === "local-receiver" ? undefined : invocationFacts,
       boundFunctionWriteFacts: invocationFacts,
       sourceFunctionCapture: sourceCapture,
     });
-    // Only the ambient owner can supply complete canonical mutation facts.
-    // Provisional queries retain uncertainty until that snapshot is available.
-    const constructionInvocations = createSemanticModuleInterop(state, {
-      intrinsicPath: intrinsics.intrinsicPath,
-      intrinsicWriteFacts: invocationFacts,
-    });
+    nonEscapingBoundTarget = (node) =>
+      t.isCallExpression(node)
+        ? invocations.nonEscapingBoundTarget(node, invocationFacts)
+        : undefined;
+    const escapedConstructorValues = createSemanticFunctionValueReferences(
+      state,
+      undefined,
+      (node) => {
+        // This adds escape reachability, never identity of a bound object with
+        // its target. Ordinary constructor/capture queries keep their owner.
+        const bound = invocations.boundIntrinsic(node);
+        const source =
+          bound?.path.length === 3 && bound.path[1] === "local-receiver"
+            ? groups.get(bound.path[2]!)
+            : undefined;
+        return source === undefined ? [] : [source.node];
+      },
+      true,
+    );
     const retain = (target: t.Function, receiver?: t.Node) => {
       const values = indexed.get(target) ?? new Set<t.Node>();
       if (receiver !== undefined) values.add(receiver);
@@ -436,11 +486,51 @@ export const createSemanticReceiverReferences = (
       for (const receiver of values) retain(target, receiver);
       if (name !== undefined) privateParentUses.push({ name, target });
     };
+    const addUnknown = (
+      owner: t.Node,
+      value: SemanticUnknownConstructorReceiver,
+    ) => {
+      const values = unknownReceivers.get(owner) ?? [];
+      values.push(value);
+      unknownReceivers.set(owner, values);
+    };
     const construct = (
       callee: t.Node,
       allocation: t.Node,
       newTarget = callee,
     ) => {
+      // Bound construction ignores the bound this argument and initializes the
+      // original constructor's stages. Its parent is read at this allocation,
+      // not when bind captured the constructor value.
+      const bound = invocations.boundIntrinsic(callee, invocationFacts, true);
+      let boundConstructionComplete = true;
+      if (bound?.path.length === 3 && bound.path[1] === "local-receiver") {
+        const source = groups.get(bound.path[2]!);
+        if (source !== undefined) {
+          // The weak pass selects possible source receivers before it owns
+          // helper-integrity facts. Its unresolved bind proof must not publish
+          // a wildcard write that permanently invalidates that same capture.
+          // Completed/custom queries recheck the captured helper normally.
+          boundConstructionComplete =
+            bound.kind === "known" || !includeUnknownResults;
+          covered.add(callee);
+          for (const read of bound.callableReads ?? []) covered.add(read);
+          const boundNewTarget =
+            newTarget === callee
+              ? bound
+              : invocations.boundIntrinsic(newTarget, invocationFacts, true);
+          if (
+            newTarget === callee ||
+            (bound.kind === "known" &&
+              boundNewTarget?.kind === "known" &&
+              bound.boundFunction?.allocations[0] !== undefined &&
+              bound.boundFunction.allocations[0] ===
+                boundNewTarget.boundFunction?.allocations[0])
+          )
+            newTarget = source.node;
+          callee = source.node;
+        }
+      }
       // An explicit returned object does not replace the fresh receiver used
       // inside a base constructor.
       for (const target of targets(callee)) retain(target);
@@ -449,19 +539,12 @@ export const createSemanticReceiverReferences = (
         values.push(value);
         constructed.set(owner, values);
       };
-      const addUnknown = (
-        owner: t.Node,
-        value: SemanticUnknownConstructorReceiver,
-      ) => {
-        const values = unknownReceivers.get(owner) ?? [];
-        values.push(value);
-        unknownReceivers.set(owner, values);
-      };
       const completion = completions.get(allocation) ?? {
         receivers: [],
         unknown: [],
         sources: [],
-        complete: receiverObjects.isFreshObject(callee),
+        complete:
+          boundConstructionComplete && receiverObjects.isFreshObject(callee),
       };
       completions.set(allocation, completion);
       for (const { node: target, projection } of constructorValues(callee)) {
@@ -472,6 +555,8 @@ export const createSemanticReceiverReferences = (
           allocation,
           source: target,
         };
+        if (!boundConstructionComplete && includeUnknownResults)
+          completion.unknown.push(unknown);
         const identity = semanticAllocatedReceiverIdentity(allocation);
         const stages = t.isClass(target) ? classStages(target, allocation) : [];
         retainClassConstruction(stages);
@@ -490,7 +575,9 @@ export const createSemanticReceiverReferences = (
           identity,
           allocation,
           prototypeSource: newTarget,
-          prototypeSourceLocal: receiverObjects.isFreshObject(newTarget),
+          prototypeSourceLocal:
+            boundConstructionComplete &&
+            receiverObjects.isFreshObject(newTarget),
           target,
           activations,
         };
@@ -596,9 +683,53 @@ export const createSemanticReceiverReferences = (
         !t.isTaggedTemplateExpression(node)
       )
         return;
-      let invocation = invocations.intrinsicInvocation(node);
-      if (invocation?.path.join(".") === "intrinsic.Reflect.construct")
-        invocation = constructionInvocations.intrinsicInvocation(node);
+      const invocation = invocations.intrinsicInvocation(node);
+      const setterInvocation = includeUnknownResults
+        ? invocation
+        : intrinsics.intrinsicInvocation(node);
+      if (
+        setterInvocation?.kind === "known" &&
+        setterInvocation.path.join(".") === "intrinsic.Reflect.set" &&
+        setterInvocation.arguments !== undefined &&
+        !setterInvocation.arguments.some(t.isSpreadElement)
+      ) {
+        const args = setterInvocation.arguments;
+        const target = args[0];
+        const receiver = args.length < 4 ? target : args[3];
+        const key = intrinsics.staticString(args[1]);
+        if (
+          t.isExpression(target) &&
+          t.isExpression(receiver) &&
+          key !== undefined
+        ) {
+          const selected = accessorReferences(target, [key]);
+          // Provisional receiver selection cannot prove its own write snapshot.
+          // Completed queries require the same binding and descriptor capture
+          // proof as other source callable consumers before removing an escape.
+          if (
+            selected.references.length > 0 &&
+            (selected.complete || !includeUnknownResults)
+          ) {
+            reflectiveSetReceivers.set(node, { target, receiver });
+            for (const { node: member } of selected.references) {
+              if (!t.isObjectMethod(member) && !t.isClassMethod(member))
+                continue;
+              retain(member);
+              if (member.kind !== "set") continue;
+              retain(member, receiver);
+              const value = unwrapJavaScriptExpression(receiver).node;
+              const nonNullish =
+                definiteObject(value) ||
+                (t.isLiteral(value) && !t.isNullLiteral(value));
+              if (!nonNullish && !semanticStrictContext(member, state))
+                retain(member, state.program);
+              const activations = activationSites.get(member) ?? new Set();
+              activations.add(node);
+              activationSites.set(member, activations);
+            }
+          }
+        }
+      }
       if (
         invocation?.kind === "known" &&
         invocation.path.join(".") === "intrinsic.Reflect.construct"
@@ -696,8 +827,10 @@ export const createSemanticReceiverReferences = (
         if (
           t.isExportNamedDeclaration(parent) ||
           t.isExportDefaultDeclaration(parent)
-        )
+        ) {
           unknownConstructionRoots.add(node);
+          escapedConstructionRoots.add(node);
+        }
         return;
       }
       if (parent === null || !t.isExpression(node)) return;
@@ -782,25 +915,37 @@ export const createSemanticReceiverReferences = (
       const sourceReturn =
         t.isReturnStatement(parent) ||
         (t.isArrowFunctionExpression(parent) && parent.body === current);
-      const intrinsicConsumer =
+      const consumer =
         t.isCallExpression(parent) || t.isOptionalCallExpression(parent)
-          ? constructionInvocations.intrinsicInvocation(parent)
+          ? invocations.intrinsicInvocation(parent)
           : undefined;
+      const exposesConstructor =
+        !sourceReturn &&
+        (consumer?.kind !== "known" || consumer.path[1] === "local-receiver");
       const prototypeConsumer =
-        intrinsicConsumer?.kind === "known" &&
-        intrinsicConsumer.path.length === 3 &&
-        ["Object", "Reflect"].includes(intrinsicConsumer.path[1] ?? "") &&
-        ["getPrototypeOf", "setPrototypeOf"].includes(
-          intrinsicConsumer.path[2] ?? "",
-        );
+        consumer?.kind === "known" &&
+        consumer.path.length === 3 &&
+        ["Object", "Reflect"].includes(consumer.path[1] ?? "") &&
+        ["getPrototypeOf", "setPrototypeOf"].includes(consumer.path[2] ?? "");
       // Literal invocation arrays can contain a consumed callable selection.
       // Walk their leaves without hiding other arguments or nested contents.
       const values = [current];
       while (values.length > 0) {
         const value = values.pop();
         if (value === undefined || covered.has(value)) continue;
-        if (!prototypeConsumer || value !== intrinsicConsumer?.arguments?.[0])
+        const setter =
+          parent === null ? undefined : reflectiveSetReceivers.get(parent);
+        // The native operation calls the selected source setter with its fixed
+        // receiver; it does not independently invoke every function in either
+        // input. Any source-body escape is still indexed at its own use site.
+        if (
+          setter !== undefined &&
+          (value === setter.target || value === setter.receiver)
+        )
+          continue;
+        if (!prototypeConsumer || value !== consumer?.arguments?.[0])
           unknownConstructionRoots.add(value);
+        if (exposesConstructor) escapedConstructionRoots.add(value);
         const unwrapped = unwrapJavaScriptExpression(value).node;
         if (t.isArrayExpression(unwrapped)) {
           for (const element of unwrapped.elements)
@@ -821,14 +966,38 @@ export const createSemanticReceiverReferences = (
     // Construction escape tracking needs the union, rather than a separate
     // alias walk for each stored value. The callable owner shares completed
     // prefixes without changing any root's selection or cycle context.
+    const escapedConstructors = new Set(
+      escapedConstructorValues
+        .fromRoots([...escapedConstructionRoots])
+        .filter(
+          ({ node, projection }) => t.isClass(node) && projection.length === 0,
+        )
+        .map(({ node }) => node),
+    );
     for (const { node, projection } of constructorValues.fromRoots([
       ...unknownConstructionRoots,
+      ...escapedConstructors,
     ])) {
       if (!t.isClass(node) || projection.length !== 0) continue;
+      const unknown =
+        includeUnknownResults && escapedConstructors.has(node)
+          ? {
+              kind: "unknown-constructor-receiver" as const,
+              allocation: node,
+              source: node,
+            }
+          : undefined;
       for (const stage of classStages(node)) {
-        if (stage.constructor !== undefined)
+        if (stage.constructor !== undefined) {
           unknownActivations.add(stage.constructor);
-        for (const field of stage.fields) unknownActivations.add(field.node);
+          if (unknown !== undefined && stage.derived)
+            addUnknown(stage.constructor, unknown);
+        }
+        for (const field of stage.fields) {
+          unknownActivations.add(field.node);
+          if (unknown !== undefined && stage.derived)
+            addUnknown(field.node, unknown);
+        }
       }
       const receiverStages = classStages(node, state.program);
       retainClassConstruction(receiverStages);
@@ -955,6 +1124,28 @@ export const createSemanticReceiverReferences = (
       : [...known, ...inheritedReceiver(owner)];
   };
   const result: ReceiverQuery = Object.assign(query, {
+    nonEscapingBoundTarget: (node: t.Node) => {
+      if (!t.isCallExpression(node)) return undefined;
+      refresh();
+      if (receivers === undefined) indexReceivers();
+      return nonEscapingBoundTarget?.(node);
+    },
+    privateReadSources: (
+      node: t.MemberExpression | t.OptionalMemberExpression,
+    ): readonly SemanticReturnedReference[] => {
+      if (!t.isPrivateName(node.property)) return [];
+      // Private storage belongs to the lexical brand, never an unknown public
+      // property spelling. These are possible sources; mutations remain owned
+      // by the storage graph and no initializer proves a later slot intact.
+      return (privateTargets(node.property)?.members ?? []).flatMap(
+        (member) => {
+          if (member.value === null || member.kind === "set") return [];
+          return member.kind === "get"
+            ? returned(member.value).references
+            : [{ node: member.value, projection: [] }];
+        },
+      );
+    },
     wrapper: (node: t.ThisExpression) =>
       t.isProgram(lexicalOwner(node)) &&
       javaScriptRuntimeContext(state.program) === "commonjs",

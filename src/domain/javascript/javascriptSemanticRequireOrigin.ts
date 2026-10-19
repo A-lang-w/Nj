@@ -1,13 +1,20 @@
 import * as t from "@babel/types";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
-import { createSemanticRequireShimInertQuery } from "./javascriptRequireShimOrigin.js";
+import {
+  createSemanticRequireShimInertQuery,
+  semanticRequireShimBinding,
+  semanticRequireShimValueSource,
+} from "./javascriptRequireShimOrigin.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { semanticOwnReferenceCandidates } from "./javascriptSemanticObjectReferences.js";
 import {
   createSemanticModuleStorageQuery,
   semanticAmbientBindingPaths,
   semanticAmbientReferencePaths,
   semanticAmbientEscapeEffects,
   semanticAmbientIdentitySourcesReady,
+  semanticAmbientOwnSlotUnchanged,
+  semanticAmbientPrototypeUnchanged,
   type SemanticModuleProjection as ModuleProjection,
 } from "./javascriptSemanticAmbientWrites.js";
 import {
@@ -35,6 +42,8 @@ import {
 import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
+  semanticObjectPrototypeProperty,
+  staticObjectOwnProperty,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -45,6 +54,8 @@ import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 import {
   createSemanticPrecedingEffectIndex,
   semanticBindingAtRead,
+  semanticDefiniteMutationPrecedesRead,
+  semanticEffectTiming,
   semanticEffectFollowsInitialCapture,
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
@@ -61,6 +72,7 @@ import {
 } from "./javascriptSemanticFunctionValues.js";
 import {
   semanticGlobalBindingReadMayHaveChanged,
+  semanticAmbientWriteMayMatch,
   semanticOpaqueBindingReadMayHaveChanged,
   semanticStrictContext,
 } from "./javascriptSemanticOpaqueEffects.js";
@@ -369,6 +381,8 @@ interface ModuleDelegateWrite extends ModuleDelegateOwner {
   readonly deletesInitiallyAbsentOwnSlot?: true;
   /** ||= and ??= cannot write an intact, initially callable delegate. */
   readonly shortCircuitsOnInitialDelegate?: true;
+  /** Metadata preserves an existing shared data value, but cannot prove one exists. */
+  readonly preservesInitialDataValue?: true;
 }
 
 const writesModuleRequire = (
@@ -649,7 +663,8 @@ const writesModuleRequire = (
   let effectiveWrites = writes;
   const requiresPriorChange = (write: ModuleDelegateWrite): boolean =>
     write.deletesInitiallyAbsentOwnSlot === true ||
-    write.shortCircuitsOnInitialDelegate === true;
+    write.shortCircuitsOnInitialDelegate === true ||
+    write.preservesInitialDataValue === true;
   if (escapeEffects !== undefined && writes.some(requiresPriorChange)) {
     const possibleDefinitions = createSemanticPrecedingEffectIndex(
       state.parentsByNode,
@@ -867,6 +882,76 @@ export const semanticInitialModuleDelegateDataProperty = (
     : undefined;
 };
 
+/** A metadata descriptor cannot replace an existing value. Own-slot and
+ * prototype proofs also exclude inherited value/accessor fields and callbacks. */
+const preservesDescriptorValue = (
+  input: t.Node | undefined,
+  projection: readonly string[],
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (input === undefined) return false;
+  const ownSlotUnchanged = (owner: t.Node, key: string, capture: t.Node) =>
+    semanticAmbientOwnSlotUnchanged(state, owner, key, capture);
+  const references = semanticOwnReferenceCandidates(
+    input,
+    projection,
+    state,
+    { ownSlotUnchanged },
+    read,
+  );
+  if (
+    !references.complete ||
+    references.absent ||
+    references.nodes.length === 0
+  )
+    return false;
+  return references.nodes.every((descriptor) => {
+    if (
+      !t.isObjectExpression(descriptor) ||
+      !semanticAmbientPrototypeUnchanged(state, descriptor, read)
+    )
+      return false;
+    const prototype = semanticObjectPrototypeProperty(descriptor);
+    if (prototype !== undefined && !t.isNullLiteral(prototype.value))
+      return false;
+    const fields = [
+      "value",
+      "get",
+      "set",
+      "enumerable",
+      "configurable",
+      "writable",
+    ];
+    for (const key of fields) {
+      const own = staticObjectOwnProperty(descriptor, key);
+      if (
+        !ownSlotUnchanged(descriptor, key, read) ||
+        own.status === "dynamic" ||
+        (own.status === "explicit" && !t.isObjectProperty(own.property)) ||
+        (own.status !== "missing" && ["value", "get", "set"].includes(key))
+      )
+        return false;
+    }
+    return (
+      prototype !== undefined ||
+      (!state.opaqueEffects.globalSites.some(
+        (effect) => !semanticEffectFollowsInitialCapture(read, effect, state),
+      ) &&
+        [...fields, "__proto__"].every(
+          (key) =>
+            !semanticAmbientWriteMayMatch(
+              state,
+              ["global", "Object", "prototype", key],
+              (effect) =>
+                !(effect.path.length === 2 && effect.path[1] === "Object") &&
+                !semanticEffectFollowsInitialCapture(read, effect.node, state),
+            ),
+        ))
+    );
+  });
+};
+
 /** Classify a canonical write; initial absence still needs prior-effect proof. */
 export const semanticModuleDelegateWriteOwner = (
   path: JavaScriptSemanticPropertyPath,
@@ -900,6 +985,16 @@ export const semanticModuleDelegateWriteOwner = (
           )
         ? owner
         : undefined;
+    if (
+      owner.shared &&
+      invocation?.kind === "known" &&
+      ((mutation?.kind === "define-property" &&
+        mutation.receiver !== true &&
+        preservesDescriptorValue(args?.[2], [], node, state)) ||
+        (mutation?.kind === "define-properties" &&
+          preservesDescriptorValue(args?.[1], [delegate], node, state)))
+    )
+      return { ...owner, preservesInitialDataValue: true };
     if (mutation?.kind === "define-properties")
       return objectMayDefineDelegate(args?.[1], state, false, delegate)
         ? owner
@@ -928,6 +1023,27 @@ const wrapperArgumentReferences = new WeakMap<
   JavaScriptSemanticAnalysisState,
   readonly t.Identifier[]
 >();
+
+const ordinaryFunctionOwnsArguments = (
+  node: t.Node,
+  parent: t.Node | undefined,
+): boolean =>
+  t.isFunction(parent) &&
+  !t.isArrowFunctionExpression(parent) &&
+  (parent.body === node || parent.params.some((param) => param === node));
+
+const withinWrapperArgumentsScope = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  let current = node;
+  for (;;) {
+    const parent = state.parentsByNode.get(current);
+    if (parent === undefined) return current === state.program;
+    if (ordinaryFunctionOwnsArguments(current, parent)) return false;
+    current = parent;
+  }
+};
 
 const COMMONJS_WRAPPER_PARAMETERS = [
   "exports",
@@ -979,12 +1095,7 @@ const semanticWrapperArgumentReferences = (
         const parent = state.parentsByNode.get(node);
         // Ordinary functions own arguments in parameters and bodies, while
         // computed method keys and decorators still run in the outer scope.
-        return (
-          t.isFunction(parent) &&
-          !t.isArrowFunctionExpression(parent) &&
-          (parent.body === node ||
-            parent.params.some((param) => param === node))
-        );
+        return ordinaryFunctionOwnsArguments(node, parent);
       },
       enter: (node) => {
         const parent = state.parentsByNode.get(node);
@@ -1008,25 +1119,168 @@ const semanticWrapperArgumentReferences = (
 export const semanticCommonJsWrapperArgumentsReference = (
   reference: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): boolean => {
+):
+  | {
+      readonly original: "exact" | "possible" | false;
+      readonly replacements: readonly t.Node[];
+    }
+  | undefined => {
   if (
     !t.isIdentifier(reference, { name: "arguments" }) ||
     state.program.sourceType !== "script" ||
     javaScriptRuntimeContext(state.program) !== "commonjs" ||
     !semanticWrapperArgumentReferences(state).includes(reference)
   )
-    return false;
+    return undefined;
   const binding = resolveSemanticBindingState(state, reference, "arguments");
-  return (
-    (binding === undefined ||
-      (state.scopesById.get(binding.scopeId)?.kind === "program" &&
-        [...binding.declarationKinds].every((kind) => kind === "var") &&
-        !binding.definitions.some(({ kind }) => kind === "function") &&
-        !commonJsWrapperBindingHasPriorWrite(reference, binding, state))) &&
-    !(state.ambientBindingWrites.get("arguments") ?? []).some(
-      (write) => !semanticEffectFollowsInitialCapture(reference, write, state),
-    )
+  if (
+    binding !== undefined &&
+    (state.scopesById.get(binding.scopeId)?.kind !== "program" ||
+      [...binding.declarationKinds].some((kind) => kind !== "var") ||
+      binding.definitions.some(({ kind }) => kind === "function"))
+  )
+    return undefined;
+  const writes = [
+    ...(binding?.initializers.map(({ node }) => node) ?? []),
+    ...(binding?.referenceInitializers.map(({ node }) => node) ?? []),
+    ...(binding === undefined
+      ? []
+      : (state.bindingWrites.get(binding.bindingId) ?? [])),
+    ...(state.ambientBindingWrites.get("arguments") ?? []),
+  ].filter(
+    (write) =>
+      withinWrapperArgumentsScope(write, state) &&
+      !semanticEffectFollowsInitialCapture(reference, write, state),
   );
+  if (writes.length === 0) return { original: "exact", replacements: [] };
+  const replacements = new Map<
+    t.Node,
+    {
+      readonly source: t.Node | undefined;
+      readonly candidates:
+        | ReturnType<typeof semanticOwnReferenceCandidates>
+        | undefined;
+      distinct: boolean;
+    }
+  >();
+  for (const write of writes) {
+    const parent = state.parentsByNode.get(write);
+    const mutation =
+      (t.isAssignmentExpression(parent) && parent.right === write) ||
+      (t.isVariableDeclarator(parent) && parent.init === write)
+        ? parent
+        : write;
+    if (replacements.has(mutation)) continue;
+    const source =
+      t.isAssignmentExpression(mutation, { operator: "=" }) &&
+      t.isIdentifier(mutation.left, { name: "arguments" })
+        ? mutation.right
+        : t.isVariableDeclarator(mutation) &&
+            t.isIdentifier(mutation.id, { name: "arguments" })
+          ? mutation.init
+          : undefined;
+    const candidates =
+      source == null
+        ? undefined
+        : semanticOwnReferenceCandidates(source, [], state, {
+            // Binding/conditional sources are available before ambient facts.
+            // A member or getter source needs completed slot proof, so it
+            // cannot establish a disjoint replacement here.
+            ownSlotUnchanged: () => false,
+            bindingReadMayHaveChanged: (candidate, read) =>
+              // The implicit wrapper entry is not an ordinary empty var.
+              // Do not let generic logical-initializer coverage erase it
+              // while resolving an alias back to this same binding.
+              (candidate === binding &&
+                ![
+                  ...candidate.initializers,
+                  ...candidate.referenceInitializers,
+                ].some(({ node }) => {
+                  const owner = state.parentsByNode.get(node);
+                  return (
+                    ((t.isVariableDeclarator(owner) && owner.init === node) ||
+                      (t.isAssignmentExpression(owner, { operator: "=" }) &&
+                        owner.right === node)) &&
+                    semanticDefiniteMutationPrecedesRead(
+                      owner,
+                      read,
+                      state.parentsByNode,
+                    )
+                  );
+                })) ||
+              semanticOpaqueBindingReadMayHaveChanged(candidate, read, state),
+          });
+    replacements.set(mutation, {
+      source: source ?? undefined,
+      candidates,
+      distinct: false,
+    });
+  }
+  const replacementBefore = (read: t.Node) =>
+    [...replacements].findLast(
+      ([replacement, { distinct }]) =>
+        distinct &&
+        semanticDefiniteMutationPrecedesRead(
+          replacement,
+          read,
+          state.parentsByNode,
+        ) &&
+        [...replacements].every(
+          ([write, { distinct: otherDistinct }]) =>
+            write === replacement ||
+            otherDistinct ||
+            semanticEffectFollowsInitialCapture(read, write, state) ||
+            semanticEffectTiming(replacement, write, state) === "before",
+        ),
+    );
+  // The shared reference query leaves ambient identifiers as captured leaves.
+  // Resolve only those leaves back through this binding's already-proven
+  // replacements. A monotone worklist avoids recursive alias evaluation.
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const value of replacements.values()) {
+      if (
+        value.distinct ||
+        value.candidates?.complete !== true ||
+        value.candidates.nodes.length === 0
+      )
+        continue;
+      if (
+        value.candidates.nodes.every(
+          (node) =>
+            t.isObjectExpression(node) ||
+            t.isArrayExpression(node) ||
+            t.isFunction(node) ||
+            t.isClass(node) ||
+            readExactJavaScriptLiteral(node).found ||
+            (t.isIdentifier(node, { name: "arguments" }) &&
+              resolveSemanticBindingState(state, node, "arguments") ===
+                undefined &&
+              semanticWrapperArgumentReferences(state).includes(node) &&
+              replacementBefore(node) !== undefined),
+        )
+      ) {
+        value.distinct = true;
+        changed = true;
+      }
+    }
+  }
+  // A definite assignment can still return the original object through self,
+  // conditional or captured aliases. Cut that edge only after the shared
+  // reference owner proves a distinct value, with no later uncertain write.
+  // Logical writes can retain the initially truthy wrapper object.
+  const selected = replacementBefore(reference);
+  return {
+    original: selected === undefined ? "possible" : false,
+    replacements: [...replacements].flatMap(([mutation, { source }]) =>
+      source === undefined ||
+      (selected !== undefined &&
+        mutation !== selected[0] &&
+        semanticEffectTiming(selected[0], mutation, state) === "before")
+        ? []
+        : [source],
+    ),
+  };
 };
 
 /** Sloppy mapped slots can also be replaced by writes to wrapper parameters.
@@ -1093,7 +1347,7 @@ const semanticWrapperArgumentsExposedBefore = (
         return false;
     }
     return (
-      semanticCommonJsWrapperArgumentsReference(reference, state) &&
+      semanticCommonJsWrapperArgumentsReference(reference, state)?.original &&
       !semanticEffectFollowsInitialCapture(capture, reference, state)
     );
   });
@@ -1150,6 +1404,7 @@ const HOST_MODULE = "node-wrapper-module";
 const HOST_LOADER = "node-host-loader";
 const HOST_LOADER_IDENTITIES: Readonly<Record<string, readonly string[]>> = {
   wrapper: ["global", "require"],
+  shim: ["global", "require"],
   delegate: ["commonjs-module", "__proto__", "require"],
   factory: ["commonjs-module", "constructor", "createRequire"],
 };
@@ -1210,7 +1465,7 @@ const hostLoaderPath = (
     return identity !== undefined;
   };
   const callable = (
-    kind: "wrapper" | "delegate" | "created" | "factory",
+    kind: "wrapper" | "shim" | "delegate" | "created" | "factory",
     suffix: ModuleProjection = selected,
   ): readonly string[] | undefined => {
     // Factory results are fresh callables. Their own invocation helpers do not
@@ -1339,6 +1594,7 @@ const hostLoaderPath = (
       )
         return invalid;
 
+      if (semanticRequireShimBinding(root, state)) return callable("shim");
       const atRead = semanticBindingAtRead(binding, root, state.parentsByNode);
       // Direct import origins describe entry values. A preceding assignment or
       // an uncertain replacement must be resolved before using that entry.
@@ -1423,6 +1679,8 @@ const hostLoaderInvocation = (
     if (resolver === undefined) {
       resolver = createSemanticModuleInterop(state, {
         intrinsicPath: (value) => hostLoaderPath(value, state),
+        intrinsicValueSource: (value) =>
+          semanticRequireShimValueSource(value, state),
         intrinsicReadDependencies: (path) => {
           const identity =
             path[0] === "intrinsic" && path[1] === HOST_LOADER
@@ -1461,6 +1719,7 @@ const hostLoaderInvocation = (
 export const semanticRequireOrigin = (
   node: t.Node | null | undefined,
   state: JavaScriptSemanticAnalysisState,
+  loader: "host" | "shim" = "host",
 ): JavaScriptRequireOrigin | undefined => {
   const chain = semanticMemberChain(node);
   const current = chain?.root;
@@ -1469,7 +1728,10 @@ export const semanticRequireOrigin = (
     (!t.isCallExpression(current) && !t.isOptionalCallExpression(current))
   )
     return undefined;
-  if (t.isIdentifier(current.callee, { name: "require" })) {
+  if (
+    loader === "host" &&
+    t.isIdentifier(current.callee, { name: "require" })
+  ) {
     const requireBinding = resolveSemanticBindingState(
       state,
       current.callee,
@@ -1505,7 +1767,9 @@ export const semanticRequireOrigin = (
   const specifier = stringValue(invocation.arguments?.[0]);
   if (
     specifier === undefined ||
-    !["wrapper", "delegate", "created"].includes(kind ?? "")
+    !(
+      loader === "shim" ? ["shim"] : ["wrapper", "delegate", "created"]
+    ).includes(kind ?? "")
   )
     return undefined;
   if (kind === "delegate") {
@@ -1523,7 +1787,7 @@ export const semanticRequireOrigin = (
   } else if (
     writesModuleRequire(state).some(
       ({ node: write, shared }) =>
-        (kind === "wrapper" || shared) &&
+        (kind === "wrapper" || kind === "shim" || shared) &&
         !semanticEffectFollowsInitialCapture(current, write, state),
     )
   )

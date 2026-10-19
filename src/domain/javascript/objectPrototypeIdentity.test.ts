@@ -1,3 +1,4 @@
+import { runInNewContext } from "node:vm";
 import { expect, it } from "vitest";
 
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
@@ -342,5 +343,119 @@ it.each([
         `${setup}const o={__proto__:${call}};o.toString.call.call=other;`,
       ),
     ).toHaveLength(expected);
+  },
+);
+
+it.each([
+  [
+    "partial return parameter",
+    "function proto(arg,flag){if(flag)arg={__proto__:null};return arg;}const o={__proto__:proto(undefined,false)};o.toString.call.call=other;",
+  ],
+  [
+    "partial return local",
+    "function proto(flag){let arg;if(flag)arg={__proto__:null};return arg;}const o={__proto__:proto(false)};o.toString.call.call=other;",
+  ],
+  [
+    "partial return alias",
+    "function proto(arg,flag){if(flag)arg={__proto__:null};const saved=arg;return saved;}const o={__proto__:proto(undefined,false)};o.toString.call.call=other;",
+  ],
+  [
+    "partial return conditional alias",
+    "function proto(arg,flag){if(flag)arg={__proto__:null};const saved=flag?arg:arg;return saved;}const o={__proto__:proto(undefined,false)};o.toString.call.call=other;",
+  ],
+  [
+    "return local optional chain",
+    "function proto(flag){let holder;if(flag)holder={p:{__proto__:null}};return holder?.p;}const o={__proto__:proto(false)};o.toString.call.call=other;",
+  ],
+  [
+    "finally partial parameter",
+    "function proto(arg,flag){try{return {__proto__:null}}finally{if(flag)arg={__proto__:null};return arg;}}const o={__proto__:proto(undefined,false)};o.toString.call.call=other;",
+  ],
+  [
+    "catch partial local",
+    "function proto(flag){let arg;try{throw 1}catch(e){if(flag)arg={__proto__:null};return arg;}}const o={__proto__:proto(false)};o.toString.call.call=other;",
+  ],
+  [
+    "late var result",
+    "function proto(){return arg;}const o={__proto__:proto()};var arg={__proto__:null};o.toString.call.call=other;",
+  ],
+  [
+    "default result parameter",
+    "function proto(arg={__proto__:null}){return arg;}const o={__proto__:proto(42)};o.toString.call.call=other;",
+  ],
+  [
+    "default destructured parameter",
+    "function proto({p}={p:{__proto__:null}}){return p;}const o={__proto__:proto({p:42})};o.toString.call.call=other;",
+  ],
+  [
+    "default parameter rest",
+    "function proto({...rest}={p:{__proto__:null}}){return rest.p;}const o={__proto__:proto({p:42})};o.toString.call.call=other;",
+  ],
+  [
+    "empty local logical and assignment",
+    "function proto(){let arg;arg&&={__proto__:null};return arg;}const o={__proto__:proto()};o.toString.call.call=other;",
+  ],
+  [
+    "skipped conditional block assignment",
+    "function proto(){let arg;{if(false){arg={__proto__:null}}}return arg;}const o={__proto__:proto()};o.toString.call.call=other;",
+  ],
+  [
+    "skipped labeled block assignment",
+    "function proto(){let arg;label:{break label;arg={__proto__:null}}return arg;}const o={__proto__:proto()};o.toString.call.call=other;",
+  ],
+  [
+    "skipped try block assignment",
+    "function proto(){let arg;try{throw 1;arg={__proto__:null}}catch{}return arg;}const o={__proto__:proto()};o.toString.call.call=other;",
+  ],
+] as const)("keeps uncovered result binding values for %s", (_name, setup) => {
+  // The fixture changes the inherited helper in a separate runtime realm.
+  expect(
+    runInNewContext(
+      "const original=Function.prototype.call.call;" +
+        setup +
+        "Function.prototype.call.call!==original;",
+      { other() {} },
+    ),
+  ).toBe(true);
+  expect(windows(setup)).toEqual([]);
+});
+
+it.each([
+  [
+    "definite parameter assignment",
+    "function proto(arg){arg={__proto__:null};return arg;}const o={__proto__:proto(42)};o.toString.call.call=other;",
+  ],
+  [
+    "guarded definite return",
+    "function proto(flag){let arg;if(flag){arg={__proto__:null};return arg}throw 1;}const o={__proto__:proto(true)};o.toString.call.call=other;",
+  ],
+  [
+    "captured const",
+    "const arg={__proto__:null};function proto(){return arg;}const o={__proto__:proto()};o.toString.call.call=other;",
+  ],
+  [
+    "captured nested const",
+    "const arg={__proto__:null};const alias=arg;function proto(){return alias;}const o={__proto__:proto()};o.toString.call.call=other;",
+  ],
+  [
+    "capture before replacement",
+    "let arg={__proto__:null};const saved=arg;arg=42;function proto(){return saved;}const o={__proto__:proto()};o.toString.call.call=other;",
+  ],
+  [
+    "captured rest copy",
+    "const {...copy}={p:{__proto__:null}};function proto(){return copy.p;}const o={__proto__:proto()};o.toString.call.call=other;",
+  ],
+  [
+    "unconditional block callable assignment",
+    "let proto;{const arg={__proto__:null};proto=()=>arg;}const o={__proto__:proto()};o.toString.call.call=other;",
+  ],
+  [
+    "nested unconditional block callable assignment",
+    "let proto;{{const arg={__proto__:null};proto=()=>arg;}}const o={__proto__:proto()};o.toString.call.call=other;",
+  ],
+] as const)(
+  "preserves covered result binding values for %s",
+  (_name, setup) => {
+    expect(windows(setup)).toHaveLength(1);
   },
 );
