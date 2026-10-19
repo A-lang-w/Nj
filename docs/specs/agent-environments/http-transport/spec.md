@@ -29,8 +29,8 @@ client registration keep stdio.
 - Bridge node:http to web Request/Response in `src/server/http/`, streaming
   response chunks as they are produced and turning a client disconnect into a
   request abort and body cancellation.
-- Classify a loopback bind by address class (`127.0.0.0/8`, `::1`, IPv4-mapped
-  loopback, `localhost` names) from the address the listener bound, validate
+- Classify a loopback bind by the actual bound IP (`127.0.0.0/8`, `::1`, or
+  IPv4-mapped loopback), without using the configured DNS name as evidence; validate
   the `Host` and `Origin` headers with the SDK loopback allowlist plus the
   configured name and the bound address on such binds, and relax both for
   other binds and log that relaxation. Refuse scoped IPv6 literals before
