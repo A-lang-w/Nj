@@ -165,7 +165,7 @@ export class ProcessOwnershipEvidenceOwner {
       number,
       Extract<ProcessIdentityObservation, { readonly state: "readable" }>
     >();
-    const scopeTokenMatchedPids = new Set<number>();
+    const scopeOwnedPids = new Set<number>();
     // Keep the original batch together: retries can reparent a child after its
     // verified parent exits. Historical parent proof is scope evidence only;
     // it neither establishes current liveness nor authorizes a signal.
@@ -182,8 +182,16 @@ export class ProcessOwnershipEvidenceOwner {
         fact.identityAfter.identity === fact.identityBefore.identity
       )
         scopeBeforeGenerations.set(fact.process.pid, fact.identityBefore);
-      if (fact.token.state === "readable" && fact.token.runId === options.runId)
-        scopeTokenMatchedPids.add(fact.process.pid);
+      // Capture earlier proof before applying terminal observations below.
+      // Its generation must match this historical native observation exactly.
+      const previous = this.#candidates.get(fact.process.pid);
+      if (
+        (fact.token.state === "readable" &&
+          fact.token.runId === options.runId) ||
+        (previous?.applicability === "token-verified" &&
+          previous.identity === fact.identityAfter.identity)
+      )
+        scopeOwnedPids.add(fact.process.pid);
     }
     const related = (pid: number) => {
       const current =
@@ -199,8 +207,8 @@ export class ProcessOwnershipEvidenceOwner {
       )
         return undefined;
       const initial =
-        findScopeEvidence(pid, scopeGenerations, scopeTokenMatchedPids) ??
-        findScopeEvidence(pid, scopeBeforeGenerations, scopeTokenMatchedPids);
+        findScopeEvidence(pid, scopeGenerations, scopeOwnedPids) ??
+        findScopeEvidence(pid, scopeBeforeGenerations, scopeOwnedPids);
       return initial === undefined
         ? undefined
         : "previously-related-generation";

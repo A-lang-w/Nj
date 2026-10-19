@@ -34,12 +34,32 @@ const identity = (
   },
 });
 
-it.each(["readable", "retried", "reused"] as const)(
+it.each(["readable", "retried", "reused", "retained-parent"] as const)(
   "keeps child scope tied to its native generation after parent exit (%s)",
   async (mode) => {
     const parent = row(200, 1);
     const child = row(300, parent.pid);
     const owner = new ProcessOwnershipEvidenceOwner();
+    if (mode === "retained-parent")
+      owner.reconcile(
+        [
+          {
+            process: parent,
+            state: "same-generation",
+            identityBefore: identity(parent, false),
+            token: { state: "readable", runId: "run" },
+            identityAfter: identity(parent, false),
+          },
+        ],
+        {
+          runId: "run",
+          listedRows: 1,
+          listedPids: new Set([parent.pid]),
+          leaderPid: 100,
+          processGroupIds: new Set([100]),
+        },
+      );
+    const priorSnapshots = owner.coverage.snapshotCount;
     let parentReads = 0;
     let childTokenReads = 0;
     let reparented = false;
@@ -52,7 +72,9 @@ it.each(["readable", "retried", "reused"] as const)(
           selected.map((process) => [
             process.pid,
             process.pid === parent.pid
-              ? { state: "readable", runId: "run" }
+              ? mode === "retained-parent"
+                ? { state: "unavailable", reason: "EACCES" }
+                : { state: "readable", runId: "run" }
               : ++childTokenReads === 1 && mode !== "readable"
                 ? { state: "unavailable", reason: "EACCES" }
                 : { state: "readable", runId: undefined },
@@ -112,7 +134,7 @@ it.each(["readable", "retried", "reused"] as const)(
       );
     }
     expect(host.signalGroup).not.toHaveBeenCalled();
-    expect(owner.coverage.snapshotCount).toBe(1);
+    expect(owner.coverage.snapshotCount).toBe(priorSnapshots + 1);
   },
 );
 
