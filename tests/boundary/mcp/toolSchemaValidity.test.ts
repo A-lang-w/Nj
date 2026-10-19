@@ -289,28 +289,11 @@ function recursiveReferences(tools: readonly ToolSchemas[]): string[] {
   );
 }
 
-const schemaMapKeywords = new Set([
-  "$defs",
-  "definitions",
-  "properties",
-  "patternProperties",
-  "dependentSchemas",
-  "dependencies",
-]);
-const schemaArrayKeywords = new Set(["allOf", "anyOf", "oneOf", "prefixItems"]);
-const schemaChildKeywords = new Set([
-  "items",
-  "additionalItems",
-  "contains",
-  "additionalProperties",
-  "unevaluatedProperties",
-  "unevaluatedItems",
-  "propertyNames",
-  "not",
-  "if",
-  "then",
-  "else",
-]);
+import {
+  schemaArrays as schemaArrayKeywords,
+  schemaChildren as schemaChildKeywords,
+  schemaMaps as schemaMapKeywords,
+} from "../../../src/contracts/jsonSchemaKeywords.js";
 
 function localInputReferences(tools: readonly ToolSchemas[]): string[] {
   return tools.flatMap((tool) => {

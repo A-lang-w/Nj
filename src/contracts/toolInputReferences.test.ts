@@ -799,6 +799,22 @@ describe("advertised empty-string literals", () => {
     expect(advertised.properties.alias).toEqual({ $ref: "#/properties/path" });
   });
 
+  it("keeps target writes out of removed negations", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        guard: { not: { const: "" } },
+        value: { $ref: "#/properties/guard/not" },
+      },
+      required: ["guard"],
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.properties.guard).toEqual({});
+    expect(advertised.properties.value).toEqual({
+      $ref: "#/properties/guard/not",
+    });
+  });
+
   it("widens empty-string literals under contentSchema", () => {
     const canonical = {
       type: "object",

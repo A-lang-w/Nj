@@ -659,6 +659,10 @@ const normalizeReferencedTargets = (
     collectSchemaReferences(resolved.value, nested, resolved.tokens);
     for (const nestedRef of nested)
       if (!processed.has(nestedRef)) queue.push(nestedRef);
+    const presented = resolvePointer(advertised, resolved.tokens);
+    // Skip positions the structural pass removed: writing back through a
+    // deleted negation would resurrect it and reject canonical-valid inputs.
+    if (presented === undefined) continue;
     const result = normalizeAdvertisedSchema(
       resolved.value,
       source,
@@ -667,7 +671,6 @@ const normalizeReferencedTargets = (
     if (!result.changed) continue;
     // Prefer the presented node at the same position so injected property
     // descriptions survive the writeback.
-    const presented = resolvePointer(advertised, resolved.tokens);
     const replacement = isObject(presented)
       ? normalizeAdvertisedSchema(
           presented,
