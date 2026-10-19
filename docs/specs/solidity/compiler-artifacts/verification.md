@@ -23,7 +23,7 @@ and bundled `evmole@0.9.3`.
   was enforced by imported Evidence; five corruptions now fail closed. The real
   advertised MCP catalog accepts the portable canonical-base64 schemas.
 - Process regressions failed before native lifetime and credential facts were
-  reconciled consistently. Explicit absence and same-generation zombies settle
+  reconciled consistently. Explicit absence and positively observed final zombies settle
   cleanup; unknown final native state and related unreadable live tokens still fail.
   Native UID facts use the upstream identity owner. Unrelated other-account
   permission denials remain explicit unverified observations without signaling
