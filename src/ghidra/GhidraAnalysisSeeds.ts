@@ -107,6 +107,7 @@ export const parseGhidraSeeds = (
 ): Result<readonly SeedEntry[], ConfigurationError> => {
   const entries: SeedEntry[] = [];
   const seen = new Set<string>();
+  const computedTransferKinds = new Map<string, "call" | "jump">();
   const lines = text.split("\n");
   for (const [index, raw] of lines.entries()) {
     const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
@@ -233,7 +234,22 @@ export const parseGhidraSeeds = (
         seedLineError(number, "a code seed takes no name; add a label seed"),
       );
     const value = BigInt(address);
-    const key = `${value.toString(16)}:${kind}`;
+    const sourceKey = value.toString(16);
+    if (kind === "computed_target" && transferKind !== undefined) {
+      const previous = computedTransferKinds.get(sourceKey);
+      if (previous !== undefined && previous !== transferKind)
+        return err(
+          seedLineError(
+            number,
+            `computed_target seeds at ${address} mix call and jump kinds`,
+          ),
+        );
+      computedTransferKinds.set(sourceKey, transferKind);
+    }
+    const key =
+      kind === "computed_target"
+        ? `${sourceKey}:${kind}:${target?.toString(16)}:${transferKind}`
+        : `${sourceKey}:${kind}`;
     if (seen.has(key))
       return err(seedLineError(number, `duplicate ${kind} seed at ${address}`));
     seen.add(key);

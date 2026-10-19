@@ -69,6 +69,18 @@ describe("Ghidra seed parsing", () => {
     ]);
   });
 
+  it("accepts distinct computed targets at one source", () => {
+    const parsed = parseGhidraSeeds(
+      "0x401120\tcomputed_target\t0x402000\tcall\n" +
+        "0x401120\tcomputed_target\t0x403000\tcall\n",
+    );
+    if (!parsed.ok) throw parsed.error;
+    expect(parsed.value.map((entry) => entry.target)).toEqual([
+      0x402000n,
+      0x403000n,
+    ]);
+  });
+
   it.each([
     ["401000\tfunction", "line 1: address must be 0x-prefixed hex"],
     [
@@ -111,6 +123,14 @@ describe("Ghidra seed parsing", () => {
     [
       "0x401000\tcomputed_target\t0x401020\tbranch",
       "line 1: a computed_target seed requires call or jump",
+    ],
+    [
+      "0x401000\tcomputed_target\t0x401020\tcall\n0x401000\tcomputed_target\t0x401020\tcall",
+      "line 2: duplicate computed_target seed at 0x401000",
+    ],
+    [
+      "0x401000\tcomputed_target\t0x401020\tcall\n0x401000\tcomputed_target\t0x401024\tjump",
+      "line 2: computed_target seeds at 0x401000 mix call and jump kinds",
     ],
   ])("rejects %j", (text, constraint) => {
     const parsed = parseGhidraSeeds(text);
