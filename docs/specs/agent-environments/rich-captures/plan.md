@@ -9,7 +9,7 @@
    source.
 3. Route the CLI command (with `source.path` resolved against the working
    directory) and the MCP tool through the file-aware entry point.
-4. Add `sibling-pair-variance` to `TEMPLATE_RULES`, with its merge pass after
+4. Add `sibling-pair-variance` to `TEMPLATE_RULES`, with its merge pass before
    `sibling-variance`, its parameter names and its segment-limit limitation.
 5. Document both in the tool contract, `docs/cli.md` and
    `docs/web-network-captures.md`.

@@ -6,7 +6,10 @@ import type { EvidenceLookup } from "../EvidenceInputResolver.js";
 import { resolveEvidenceInput } from "../EvidenceInputResolver.js";
 import type { EvidenceWriter } from "../investigation/InvestigationRecordPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
+} from "../../domain/analysisErrorCore.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import {
@@ -29,7 +32,10 @@ import { err, ok, type Result } from "../../domain/result.js";
 import { WebNetworkApiSurfaceAccumulator } from "../../domain/analysisView/WebNetworkApiSurfaceAccumulator.js";
 import { EnvironmentManifestAccumulator } from "../../domain/analysisView/EnvironmentManifestAccumulator.js";
 import { admitAnalysisViewData } from "../../domain/analysisView/analysisViewDataAdmission.js";
-import { readJsonFile } from "../JsonFiles.js";
+import {
+  readEvidenceFileSource,
+  type EvidenceFileReadOptions,
+} from "./evidenceFileSource.js";
 
 /** Authenticate a selected-view request and project already completed Evidence. */
 export const inspectAnalysisView = (
@@ -53,6 +59,7 @@ export const inspectAnalysisView = (
 export const inspectAnalysisViewWithFiles = async (
   rawInput: unknown,
   lookup?: EvidenceLookup,
+  options: EvidenceFileReadOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
   const parsed = inspectAnalysisViewInputSchema.safeParse(rawInput);
   if (!parsed.success)
@@ -64,7 +71,7 @@ export const inspectAnalysisViewWithFiles = async (
         { cause: parsed.error },
       ),
     );
-  return inspectAnalysisViewValidatedWithFiles(parsed.data, lookup);
+  return inspectAnalysisViewValidatedWithFiles(parsed.data, lookup, options);
 };
 
 /**
@@ -75,20 +82,28 @@ export const inspectAnalysisViewWithFiles = async (
 export const inspectAnalysisViewValidatedWithFiles = async (
   input: InspectAnalysisViewInput,
   lookup?: EvidenceLookup,
+  options: EvidenceFileReadOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
   if (input.source.kind !== "evidence-file")
     return inspectAnalysisViewValidated(input, lookup);
-  const loaded = await readJsonFile(input.source.path);
+  const loaded = await readEvidenceFileSource(input.source.path, options);
   if (!loaded.ok) return loaded;
   const parent = authenticateEvidence(loaded.value, ["source", "path"], {
     source: input.source,
   });
   if (!parent.ok) return parent;
+  const cancelled = (): boolean => options.signal?.aborted === true;
+  if (cancelled())
+    return err(new AnalysisCancelledError(INSPECT_ANALYSIS_VIEW_OPERATION));
   const id = parent.value.evidence_id;
-  return inspectAnalysisViewValidated(
+  const projected = inspectAnalysisViewValidated(
     { ...input, source: { kind: "retained-evidence", evidence_id: id } },
     (evidenceId) => (evidenceId === id ? parent.value : lookup?.(evidenceId)),
   );
+  // A request cancelled during projection delivers and records nothing.
+  return cancelled()
+    ? err(new AnalysisCancelledError(INSPECT_ANALYSIS_VIEW_OPERATION))
+    : projected;
 };
 
 /** Authenticate borrowed inline Evidence after adapter envelope validation. */

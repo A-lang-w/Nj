@@ -618,6 +618,22 @@ it("templates two adjacent literals after a plural literal as a pair when three 
   ]);
 });
 
+it("merges pairs before sibling-variance so the two rules compose", () => {
+  const routes = syntheticCapture([
+    ["GET", "https://g.test/api/repos/alice-1/common/issues"],
+    ["GET", "https://g.test/api/repos/bob-2/common/issues"],
+    ["GET", "https://g.test/api/repos/carol-3/other/issues"],
+    ["GET", "https://g.test/api/repos/dave-4/third/issues"],
+  ]);
+  for (const rules of [
+    ["sibling-pair-variance"],
+    ["sibling-variance", "sibling-pair-variance"],
+  ] as const)
+    expect(
+      manifest([...rules], routes).tools.map((tool) => tool.path_template),
+    ).toEqual(["/api/repos/{repo_namespace}/{repo_name}/issues"]);
+});
+
 it("never folds a literal sibling into a format-rule parameter", () => {
   const projected = manifest(
     ALL_RULES,

@@ -954,6 +954,27 @@ describe("inspectAnalysisViewWithFiles", () => {
     });
   });
 
+  it("returns typed cancellation for a cancelled file request", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const parent = analysisViewCaptureEvidence(
+      environmentManifestCaptureFixture(),
+    );
+    expect(
+      await inspectAnalysisViewWithFiles(
+        {
+          source: {
+            kind: "evidence-file",
+            path: await writeEvidenceFile(parent),
+          },
+          view,
+        },
+        undefined,
+        { signal: controller.signal },
+      ),
+    ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
+  });
+
   it("leaves file sources to the file-aware entry point", () => {
     expect(
       inspectAnalysisView({

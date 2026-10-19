@@ -303,7 +303,9 @@ borrow the Evidence value through CLI/MCP envelope validation; the application
 admits the entire portable envelope before authenticated parsing or hashing. An
 `evidence-file` source is read and authenticated first and then admitted like
 retained Evidence, so its strings are not charged as inline envelope text: a
-capture too large to project inline can be projected from its file.
+capture too large to project inline can be projected from its file. Before
+authentication REA checks that live heap headroom holds its copies of the parsed
+Evidence, and over MCP the read follows the request's cancellation.
 The envelope clone, hash scratch and capture clone stay charged during grouping.
 Temporary URL/path/MIME/query work and retained state must
 fit together within a 96 MiB projection representation budget. A whole group or
@@ -374,8 +376,8 @@ in this order:
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
 | `after-uid-literal`     | The literal segment right after a literal `uid`, unless it is a stop word                                                                                                                                                                                                                       | `uid`                                                   |
 | `opaque-token`          | A lowercase alphanumeric segment of twelve or more characters mixing letters and digits that is not a `v1`-style version                                                                                                                                                                        | `uid`                                                   |
-| `sibling-variance`      | Groups equal in method, origin and segment count that differ in one literal at index 2 or later; the siblings whose literal is identifier-like (a digit or `:`, or three or more hyphenated names under a plural literal) merge, never a stop word, and the other literals stay their own tools | singular previous literal plus `_id`, else `id`         |
 | `sibling-pair-variance` | Groups equal in method, origin and segment count that differ in two adjacent literals right after a plural literal at index 2 or later, with at least three distinct pairs and both positions varying (`/repos/{owner}/{repo}/issues`); stop words and `v1`-style versions never qualify        | singular plural literal plus `_namespace`, then `_name` |
+| `sibling-variance`      | Groups equal in method, origin and segment count that differ in one literal at index 2 or later; the siblings whose literal is identifier-like (a digit or `:`, or three or more hyphenated names under a plural literal) merge, never a stop word, and the other literals stay their own tools | singular previous literal plus `_id`, else `id`         |
 
 With `sibling-variance` selected, literal siblings within its comparison scope
 fold into existing opt-in parameters as observed values unless they are stop words.

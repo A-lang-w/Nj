@@ -1,5 +1,7 @@
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+
 import { inspectAnalysisViewWithFiles } from "../application/analysisView/AnalysisViewService.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
@@ -19,12 +21,19 @@ export const registerAnalysisViewTool = (
   evidenceById?: EvidenceLookup,
   recordEvidence?: EvidenceWriter["recordEvidence"],
   withAdmittedAnalysis?: WithAdmittedAnalysis,
+  artifactResources?: ArtifactResourceScope,
 ): void => {
   const contract = toolContract("inspect_analysis_view");
   const registration = toolRegistrationOptions(contract);
   const handler = createEvidenceToolHandler(
     server,
-    (input) => inspectAnalysisViewWithFiles(input, evidenceById),
+    (input, options) =>
+      inspectAnalysisViewWithFiles(input, evidenceById, {
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+        ...(artifactResources === undefined
+          ? {}
+          : { resources: artifactResources }),
+      }),
     logger,
     recordEvidence,
     withAdmittedAnalysis,

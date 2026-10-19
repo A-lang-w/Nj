@@ -395,8 +395,10 @@ export const applyTemplateRules = (
       withParts(group, templateOpaqueTokens(group.parts)),
     );
   current = rebucket(current);
-  if (rules.has("sibling-variance")) current = mergeSiblingVariance(current);
+  // Pairs merge first: a single-position merge could otherwise template one
+  // half of a pair and leave too few literal pairs to recognize.
   if (rules.has("sibling-pair-variance")) current = mergeSiblingPairs(current);
+  if (rules.has("sibling-variance")) current = mergeSiblingVariance(current);
   return current;
 };
 
