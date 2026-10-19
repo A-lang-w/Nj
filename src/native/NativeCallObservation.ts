@@ -119,6 +119,24 @@ const nativeCallFacts = (
   const unresolved = run.breakpoints
     .filter(({ location_count: count }) => count === 0)
     .map(({ index }) => index);
+  // A resolved breakpoint can still miss the target: LLDB matches an unscoped
+  // name in every loaded image. Claim that only when every location was
+  // retained and each one names a known image other than the target.
+  const targetModulePath = run.target_identity.module_path;
+  const outsideTarget =
+    targetModulePath === null
+      ? []
+      : run.breakpoints
+          .filter(
+            ({ location_count: count, locations }) =>
+              count > 0 &&
+              locations.length === count &&
+              locations.every(
+                ({ module_path: modulePath }) =>
+                  modulePath !== null && modulePath !== targetModulePath,
+              ),
+          )
+          .map(({ index }) => index);
   const eventLimit = run.outcome === "event-limit";
   const resourceLimit = run.outcome === "resource-limit";
   const breakpointLocationLimit = run.breakpoint_locations_truncated === true;
@@ -128,7 +146,8 @@ const nativeCallFacts = (
     breakpointLocationLimit ||
     run.outcome === "duration-elapsed" ||
     run.outcome === "stop-limit" ||
-    unresolved.length > 0;
+    unresolved.length > 0 ||
+    outsideTarget.length > 0;
   return {
     target: {
       path: target.path,
@@ -210,6 +229,11 @@ const nativeCallFacts = (
         ? []
         : [
             `Breakpoints ${unresolved.join(", ")} matched no code in any image loaded while observing; their calls could not be observed.`,
+          ]),
+      ...(outsideTarget.length === 0
+        ? []
+        : [
+            `Breakpoints ${outsideTarget.join(", ")} resolved only to code outside the target image; their calls in the target could not be observed.`,
           ]),
       ...(run.breakpoints.some(
         ({ location_count: count, locations }) => locations.length < count,

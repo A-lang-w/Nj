@@ -351,6 +351,72 @@ describe("observe_native_calls projection: reports partial observation coverage"
   });
 });
 
+describe("observe_native_calls projection: reports breakpoints that missed the target", () => {
+  it("marks breakpoints that resolved only outside the target image", async () => {
+    // LLDB resolves an unscoped name in every loaded image: `_main` can match
+    // only AppKit while the requested executable contributes no location.
+    const outside = {
+      ...LOCATION,
+      module: "AppKit",
+      module_path:
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
+      symbol: "main",
+    };
+    const unknownImage = { ...LOCATION, module_path: null };
+    const observed = await observe(
+      new FixtureTracer(
+        ok({
+          debugger: {
+            path: "/usr/bin/lldb",
+            sha256: "a".repeat(64),
+            version: null,
+          },
+          run: run({
+            breakpoints: [
+              { index: 0, location_count: 1, locations: [LOCATION] },
+              { index: 1, location_count: 1, locations: [outside] },
+              { index: 2, location_count: 2, locations: [outside, LOCATION] },
+              { index: 3, location_count: 1, locations: [unknownImage] },
+              { index: 4, location_count: 2, locations: [outside] },
+            ],
+          }),
+          stdout: { text: "", bytes: 0, truncated: false, complete: true },
+          stderr: { text: "", bytes: 0, truncated: false, complete: true },
+          terminated: true,
+        }),
+      ),
+      {
+        breakpoints: [
+          ...BREAKPOINTS,
+          { kind: "function", name: "_main" },
+          { kind: "function", name: "main" },
+          { kind: "function", name: "start" },
+        ],
+      },
+    );
+    if (!observed.ok) throw observed.error;
+    const result = nativeCallObservationResultSchema.parse(
+      observed.value.result,
+    );
+    // Index 1 is the only provable case: every retained location is in a known
+    // image other than the target. A target location (2), an unknown image (3)
+    // or omitted locations (4) do not establish that the target was missed.
+    expect(result.coverage).toEqual({
+      status: "partial",
+      event_limit_reached: false,
+      resource_limit_reached: false,
+      unresolved_breakpoints: [],
+    });
+    expect(
+      result.limitations.filter((limitation) =>
+        limitation.includes("outside the target image"),
+      ),
+    ).toEqual([
+      "Breakpoints 1 resolved only to code outside the target image; their calls in the target could not be observed.",
+    ]);
+  });
+});
+
 describe("observe_native_calls projection: preserves unknown launch identity", () => {
   it("preserves unknown launch identity without claiming digest binding", async () => {
     const tracer = new FixtureTracer(
