@@ -517,9 +517,10 @@ session; any other sessionless POST goes to the live transport, which refuses
 it without disturbing the session. Requests that carry no valid session id are
 refused with `400` or `404` as the SDK transport defines. A bind is loopback by
 address class, not spelling, and is classified from the address the listener
-actually bound: any `127.0.0.0/8` address, `::1`, an IPv4-mapped loopback and
-`localhost` names, including a host alias that resolves to one of them. On such
-a bind, requests whose `Host` header is outside the SDK loopback allowlist plus
+actually bound: any `127.0.0.0/8` address, `::1`, or an IPv4-mapped loopback.
+Configured names, including `localhost` and its aliases, do not establish that
+the bound address is local; names are added only after classifying the actual IP.
+On such a bind, requests whose `Host` header is outside the SDK loopback allowlist plus
 the configured name and the bound address are refused with `403`, and a browser
 `Origin` outside that allowlist is refused the same way (a missing `Origin`
 passes); a non-loopback bind relaxes both checks and logs the relaxation. A reply sent before a request body was read (a refused `Host` or `Origin`, an unknown route, the startup `503`) closes the connection after the reply, so an unread upload cannot keep a socket open. Request targets are taken verbatim as origin-form paths (`//host/path` is a path, not another origin); an absolute-form target, a target containing a raw fragment delimiter (`#`), or one whose path URL parsing would rewrite (dot segments such as `/public/../mcp`), is refused with `400`, and a method Fetch does not support with `405`. Percent-encoded `%23` remains valid query data. Only a lone `initialize` can replace an open session; a batch that carries one is left to the transport's refusal. Scoped

@@ -17,7 +17,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import { isIPv4, isIPv6 } from "node:net";
+import { isIPv4, isIPv6, type AddressInfo } from "node:net";
 import type { Logger } from "pino";
 
 import {
@@ -81,15 +81,8 @@ const normalizedHostname = (host: string): string | undefined => {
 };
 const isLoopbackIpv4 = (address: string): boolean =>
   isIPv4(address) && address.startsWith("127.");
-/** Loopback by address class and localhost names, so no spelling of a local bind skips validation. */
-const isLoopbackHostname = (hostname: string): boolean => {
-  if (
-    hostname === "localhost" ||
-    hostname === "localhost." ||
-    hostname.endsWith(".localhost") ||
-    hostname.endsWith(".localhost.")
-  )
-    return true;
+/** Classify the native bound IP; configured DNS names are not binding evidence. */
+const isLoopbackAddress = (hostname: string): boolean => {
   if (isLoopbackIpv4(hostname)) return true;
   if (!hostname.startsWith("[") || !hostname.endsWith("]")) return false;
   const inner = hostname.slice(1, -1);
@@ -100,14 +93,15 @@ const isLoopbackHostname = (hostname: string): boolean => {
   const hex = /^([0-9a-f]{1,4}):[0-9a-f]{1,4}$/u.exec(mapped);
   return hex !== null && Number.parseInt(hex[1] ?? "0", 16) >> 8 === 0x7f;
 };
-/** Host and Origin allowlist when the configured host or the address it bound is loopback, including both names; undefined relaxes validation. */
+/** Classify the bound address first, then allow its address and configured name. */
 export const hostHeaderAllowlist = (
   host: string,
-  boundAddress = host,
+  boundAddress: string,
 ): string[] | undefined => {
-  const names = [normalizedHostname(host), normalizedHostname(boundAddress)];
+  const bound = normalizedHostname(boundAddress);
+  if (bound === undefined || !isLoopbackAddress(bound)) return undefined;
+  const names = [normalizedHostname(host), bound];
   const known = names.filter((name): name is string => name !== undefined);
-  if (!known.some((name) => isLoopbackHostname(name))) return undefined;
   return [...new Set([...localhostAllowedHostnames(), ...known])];
 };
 
@@ -436,11 +430,7 @@ export class McpSessionSlot {
   }
 }
 
-const endpointUrl = (
-  address: ReturnType<ReturnType<typeof createHttpServer>["address"]>,
-): string => {
-  if (address === null || typeof address === "string")
-    throw new TypeError("MCP HTTP listener has no TCP address");
+const endpointUrl = (address: AddressInfo): string => {
   const host =
     address.family === "IPv6" ? `[${address.address}]` : address.address;
   return `http://${host}:${String(address.port)}${MCP_HTTP_PATH}`;
@@ -536,16 +526,15 @@ export const serveStreamableHttp = async (
   const bound = httpServer.address();
   let url: string;
   try {
+    if (bound === null || typeof bound === "string")
+      throw new TypeError("MCP HTTP listener has no TCP address");
     url = endpointUrl(bound);
     origin = new URL(url).origin;
+    allowedHosts = hostHeaderAllowlist(host, bound.address);
   } catch (cause: unknown) {
     await prepareTransportShutdown().catch(() => undefined);
     throw new StreamableHttpListenError(cause);
   }
-  allowedHosts = hostHeaderAllowlist(
-    host,
-    bound !== null && typeof bound === "object" ? bound.address : host,
-  );
   httpServer.on("request", (request, response) => {
     void requests.handle(request, response).catch((cause: unknown) => {
       logger?.warn(

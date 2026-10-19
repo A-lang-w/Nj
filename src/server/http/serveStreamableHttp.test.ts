@@ -276,22 +276,28 @@ it("reports a port that cannot be bound as a typed listen error naming the cause
 
 it("keeps the SDK loopback allowlist, plus the bind's own hostname, for every loopback spelling", () => {
   const sdk = ["localhost", "127.0.0.1", "[::1]"];
-  expect(hostHeaderAllowlist("127.0.0.1")).toEqual(sdk);
-  expect(hostHeaderAllowlist("localhost")).toEqual(sdk);
-  expect(hostHeaderAllowlist("LOCALHOST")).toEqual(sdk);
-  expect(hostHeaderAllowlist("::1")).toEqual(sdk);
-  expect(hostHeaderAllowlist("0:0:0:0:0:0:0:1")).toEqual(sdk);
-  expect(hostHeaderAllowlist("127.0.0.2")).toEqual([...sdk, "127.0.0.2"]);
-  expect(hostHeaderAllowlist("localhost.")).toEqual([...sdk, "localhost."]);
-  expect(hostHeaderAllowlist("::ffff:127.0.0.1")).toEqual([
+  expect(hostHeaderAllowlist("127.0.0.1", "127.0.0.1")).toEqual(sdk);
+  expect(hostHeaderAllowlist("localhost", "127.0.0.1")).toEqual(sdk);
+  expect(hostHeaderAllowlist("LOCALHOST", "::1")).toEqual(sdk);
+  expect(hostHeaderAllowlist("::1", "::1")).toEqual(sdk);
+  expect(hostHeaderAllowlist("0:0:0:0:0:0:0:1", "::1")).toEqual(sdk);
+  expect(hostHeaderAllowlist("127.0.0.2", "127.0.0.2")).toEqual([
+    ...sdk,
+    "127.0.0.2",
+  ]);
+  expect(hostHeaderAllowlist("localhost.", "127.0.0.1")).toEqual([
+    ...sdk,
+    "localhost.",
+  ]);
+  expect(hostHeaderAllowlist("::ffff:127.0.0.1", "::ffff:127.0.0.1")).toEqual([
     ...sdk,
     "[::ffff:7f00:1]",
   ]);
-  expect(hostHeaderAllowlist("192.0.2.10")).toBeUndefined();
-  expect(hostHeaderAllowlist("0.0.0.0")).toBeUndefined();
-  expect(hostHeaderAllowlist("::")).toBeUndefined();
-  expect(hostHeaderAllowlist("example.com")).toBeUndefined();
-  expect(hostHeaderAllowlist("not a host")).toBeUndefined();
+  expect(hostHeaderAllowlist("192.0.2.10", "192.0.2.10")).toBeUndefined();
+  expect(hostHeaderAllowlist("0.0.0.0", "0.0.0.0")).toBeUndefined();
+  expect(hostHeaderAllowlist("::", "::")).toBeUndefined();
+  expect(hostHeaderAllowlist("example.com", "192.0.2.10")).toBeUndefined();
+  expect(hostHeaderAllowlist("not a host", "192.0.2.10")).toBeUndefined();
 });
 
 it("refuses requests once the slot is closed and joins an initialize that is still arming", async () => {
@@ -459,6 +465,16 @@ it("classifies loopback from the bound address and lists the configured name bes
   expect(hostHeaderAllowlist("0.0.0.0", "0.0.0.0")).toBeUndefined();
   expect(hostHeaderAllowlist("dev.local", "192.0.2.10")).toBeUndefined();
 });
+
+it.each([
+  ["localhost", "192.0.2.10"],
+  ["service.localhost", "2001:db8::10"],
+])(
+  "does not classify configured %s as loopback when bound to %s",
+  (host, address) => {
+    expect(hostHeaderAllowlist(host, address)).toBeUndefined();
+  },
+);
 
 it("refuses a scoped IPv6 bind before creating anything and keeps bind failures away from onerror", async () => {
   let factoryCalls = 0;
