@@ -10,6 +10,7 @@ import {
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectBinaryLayoutInputSchema,
+  type InspectBinaryLayoutInput,
   binaryLayoutSchema,
 } from "../../domain/native/binaryLayout.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
@@ -24,6 +25,32 @@ export class BinaryLayoutService {
 
   close(): Promise<void> {
     return this.provider.close?.() ?? Promise.resolve();
+  }
+
+  /**
+   * Parse caller input and reject relative paths before any delivery or
+   * provider decision. Handlers validate first so malformed input keeps its
+   * field-specific diagnostic ahead of retention or capability refusals.
+   */
+  validate(rawInput: unknown): Result<InspectBinaryLayoutInput, AnalysisError> {
+    const input = inspectBinaryLayoutInputSchema.safeParse(rawInput);
+    if (!input.success)
+      return err(
+        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
+          cause: input.error,
+        }),
+      );
+    if (!isAbsolute(input.data.path))
+      return err(
+        new AnalysisInputError(OPERATION, undefined, [
+          {
+            path: ["path"],
+            reason: "invalid_format",
+            message: "Expected an absolute filesystem path on this host.",
+          },
+        ]),
+      );
+    return ok(input.data);
   }
 
   /** Bind complete observations to the caller-selected artifact before creating Evidence. */
@@ -55,24 +82,10 @@ export class BinaryLayoutService {
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted)
       return err(new AnalysisCancelledError(OPERATION));
-    const input = inspectBinaryLayoutInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    if (!isAbsolute(input.data.path))
-      return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem path on this host.",
-          },
-        ]),
-      );
-    const inspected = await inspect(input.data);
+    const validated = this.validate(rawInput);
+    if (!validated.ok) return validated;
+    const input = validated.value;
+    const inspected = await inspect(input);
     if (!inspected.ok) return inspected;
     const diagnostics = binaryLayoutSchema.shape.diagnostics.safeParse(
       inspected.value.diagnostics,
@@ -81,7 +94,7 @@ export class BinaryLayoutService {
       ? { capturedOutput: diagnostics.data }
       : undefined;
     const report = binaryLayoutSchema.safeParse(inspected.value);
-    if (!report.success || report.data.artifact.path !== input.data.path)
+    if (!report.success || report.data.artifact.path !== input.path)
       return err(
         new AnalysisOutputError(
           OPERATION,
@@ -101,7 +114,7 @@ export class BinaryLayoutService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.data,
+          parameters: input,
           result: value,
           // The decoded report is the only representation; do not repeat it.
           rawResult: null,

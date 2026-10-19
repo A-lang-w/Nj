@@ -38,6 +38,8 @@ export const registerBinaryDiagnosticsTools = (
             logger,
             contract.name,
             async () => {
+              const validated = service.validate(request);
+              if (!validated.ok) return validated;
               const retention = { recordEvidence, evidenceById };
               if (detail === "summary") {
                 const ready = requireAnalysisViewRetention(
@@ -46,7 +48,7 @@ export const registerBinaryDiagnosticsTools = (
                 );
                 if (!ready.ok) return ready;
               }
-              const inspected = await service.inspect(request, {
+              const inspected = await service.inspect(validated.value, {
                 signal: context.mcpReq.signal,
               });
               return detail === "summary" && inspected.ok

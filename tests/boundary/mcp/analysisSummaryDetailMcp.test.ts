@@ -220,7 +220,7 @@ it("returns the summary of retained binary layout Evidence", async () => {
   });
 });
 
-it("refuses layout summary delivery before provider work when retention is unavailable and keeps fixed-server complete delivery", async () => {
+it("rejects malformed layout paths, refuses layout summary delivery before provider work when retention is unavailable, and keeps fixed-server complete delivery", async () => {
   const layout = analysisViewLayoutFixture();
   const inspect = vi.fn<BinaryLayoutPort["inspect"]>(() =>
     Promise.resolve(ok(layout)),
@@ -246,6 +246,25 @@ it("refuses layout summary delivery before provider work when retention is unava
   expect(refused.error).toMatchObject({
     code: "capability_unavailable",
     message: expect.stringContaining("does not retain Evidence"),
+  });
+  expect(inspect).not.toHaveBeenCalled();
+  const malformed = parseMcpToolError(
+    await client.callTool({
+      name: layoutContract.name,
+      arguments: { path: "relative.elf", detail: "summary" },
+    }),
+  );
+  expect(malformed.error).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["path"],
+          reason: "invalid_format",
+          message: "Expected an absolute filesystem path on this host.",
+        },
+      ],
+    },
   });
   expect(inspect).not.toHaveBeenCalled();
   for (const complete of [
