@@ -63,9 +63,15 @@ export abstract class WebNetworkProjectionAccumulator {
   }
 
   /** Reserve schema output and validation scratch while the borrowed parent stays live. */
-  admitCaptureClone(value: unknown): Result<void, AnalysisError> {
-    return admitAnalysisViewData(value, false, (bytes) =>
-      this.retain(bytes) ? ok(undefined) : this.overBudget(),
+  admitCaptureClone(
+    value: unknown,
+    options?: { readonly copiedStrings: boolean },
+  ): Result<void, AnalysisError> {
+    return admitAnalysisViewData(
+      value,
+      false,
+      (bytes) => (this.retain(bytes) ? ok(undefined) : this.overBudget()),
+      options?.copiedStrings,
     );
   }
 

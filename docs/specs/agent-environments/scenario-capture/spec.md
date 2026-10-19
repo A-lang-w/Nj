@@ -31,6 +31,12 @@ change.
   unrepresented records, as HAR records without a usable request line are.
 - The response media type is the captured body's `media_type`, or the
   `content-type` header value when only headers were captured.
+- The existing projection representation budget accounts for copied and
+  transformed strings before schema body validation or request-body decoding,
+  including retained Evidence parents. Over-budget captures return
+  `resource_constraint` before those allocations. Replay projection omits the
+  request text used only for manifest body-shape inference; retained response
+  bytes and their integrity checks are unchanged.
 - The manifest result names `parent_operation: "capture_browser_scenario"`,
   carries an empty `artifact` (`path: ""`, `sha256: null`) and states, as
   limitations, the ordinal rule, any dropped capture events and how many

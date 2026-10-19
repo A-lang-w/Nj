@@ -231,7 +231,7 @@ const parseCaptureEvidence = (
       .safeParse(evidence.value.parameters);
     if (scenario.success)
       return ok({
-        records: scenarioCaptureRecords(scenario.data).records,
+        records: scenarioCaptureRecords(scenario.data, "replay").records,
         evidenceId,
         captureKind: "browser-scenario",
         captureSha256: definition.success

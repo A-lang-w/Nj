@@ -1,14 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   SCENARIO_EXCHANGES,
   scenarioCaptureFixture,
 } from "../../../tests/fixtures/browserScenarioCapture.js";
-import { scenarioCaptureRecords } from "./scenarioCaptureRecords.js";
+import {
+  admitScenarioCaptureParent,
+  scenarioCaptureRecords,
+} from "./scenarioCaptureRecords.js";
+import { EnvironmentManifestAccumulator } from "./EnvironmentManifestAccumulator.js";
 
 describe("scenarioCaptureRecords", () => {
   it("projects each transaction, in request order, as a HAR-shaped record with its retained bytes", () => {
-    const projected = scenarioCaptureRecords(scenarioCaptureFixture());
+    const projected = scenarioCaptureRecords(
+      scenarioCaptureFixture(),
+      "manifest",
+    );
     expect(projected.totalRecords).toBe(SCENARIO_EXCHANGES.length);
     expect(projected.records.map((record) => record.ordinal)).toEqual([
       0, 1, 2, 3, 4, 5, 6, 7,
@@ -66,6 +73,59 @@ describe("scenarioCaptureRecords", () => {
         items: [...capture.events.items, { ...response, sequence: 99 }],
       },
     };
-    expect(scenarioCaptureRecords(duplicated).records[0]?.reported).toEqual({});
+    expect(
+      scenarioCaptureRecords(duplicated, "manifest").records[0]?.reported,
+    ).toEqual({});
   });
+});
+
+it("reserves retained request-body expansion before schema decoding or projection", () => {
+  const capture = scenarioCaptureFixture([
+    {
+      method: "POST",
+      url: "/api/items",
+      status: 201,
+      mediaType: "application/json",
+      body: "{}",
+      requestMediaType: "application/json",
+      requestBody: JSON.stringify({ value: "x".repeat(16 * 1024) }),
+    },
+  ]);
+  const decoder = vi.spyOn(TextDecoder.prototype, "decode");
+  try {
+    const projected = admitScenarioCaptureParent(
+      {
+        evidenceId: `ev_${"a".repeat(64)}`,
+        operation: "capture_browser_scenario",
+        normalizedResult: capture,
+        limitations: [],
+      },
+      new EnvironmentManifestAccumulator(128 * 1024),
+    );
+    expect(projected).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisResourceConstraintError", resource: "memory" },
+    });
+    expect(decoder).not.toHaveBeenCalled();
+  } finally {
+    decoder.mockRestore();
+  }
+});
+
+it("does not decode request text when projecting replay records", () => {
+  const capture = scenarioCaptureFixture();
+  const decoder = vi.spyOn(TextDecoder.prototype, "decode");
+  try {
+    const projected = scenarioCaptureRecords(capture, "replay");
+    expect(projected.records[4]?.reported).toMatchObject({
+      request: { method: "POST", url: "http://127.0.0.1:3101/api/folders" },
+    });
+    expect(projected.records[4]?.reported).not.toHaveProperty(
+      "request.postData",
+    );
+    expect(decoder).not.toHaveBeenCalled();
+    expect(projected.records[4]?.binary_fields).toHaveLength(1);
+  } finally {
+    decoder.mockRestore();
+  }
 });

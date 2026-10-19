@@ -88,3 +88,55 @@ These were observed during the runs and are outside this increment:
   cancelled. Every scenario above sets `timeout_ms` on its actions.
 - A redirect is its own transaction; Django's trailing-slash 301 produced a second tool
   (`get_pins_by_id` and `get_pins_by_id_2`) for one resource.
+
+## Linux followup verification (2026-10-19)
+
+The original PR was merged with current main `7a0c47bfa`, after #4955, #4975
+and #4999 merged. The export filesystem ownership, mode, tarball, cleanup and
+caller-path fixes from main are retained. Default MCP remains stdio.
+
+The retained-parent projection previously decoded every request body before
+per-record budget checks. It now reserves copied/transformed text through the
+shared admission owner before schema validation or decoding, including retained
+parents. Replay projection omits request text used only for body-shape inference;
+response bytes still undergo the producer schema's integrity validation. The
+intermediate projected-array copy and unused capture wrapper were removed.
+Windows test inventories normalize filesystem separators to the portable bundle
+path representation. CI selects the agentenv lane for the new projection and its
+shared admission dependencies.
+
+Executed on Linux x64, Node 24.18.0 / npm 11.16.0, Chrome for Testing
+156.0.8078.4:
+
+- `turbo run typecheck lint:built format:check docs:check:built knip artifacts:skills artifacts:mcp-catalog --concurrency=1 --summarize`: eleven tasks passed, one cached, 210.023 s elapsed / 209.860 s CPU / 4562.07 MiB peak process-family RSS. This first complete gate preceded the final lint cleanup and CI-selection additions; later checks are reported on the PR.
+- Initial source verification passed 111 tests in 13 files, including HAR/manifest regressions, scenario loading/replay/export and new capacity/replay-mode tests. CI-selection verification passed 235 cases.
+- Real public CLI capture of the source-owned interactive browser network site: ten transactions, fifty events, two tools, no dropped events. Its POST response replayed twice through the official HTTP SDK with exact body/status/Evidence ordinal and untrusted-content provenance. Declared secrets and transport credentials were excluded; the ordinary selected `password` field value remained in retained body bytes.
+- Real public CLI capture of three live GitHub API responses in Chromium, without a HAR: three transactions, fifteen events, three tools, no dropped events. Every response replayed twice through the HTTP SDK with exact body/status/Evidence/provenance. Explicit navigation waits let response-body capture settle. Complete two-scenario capture/projection/serve task: **22.527 s / 16.678 s CPU / 1397.93 MiB** peak process-family RSS, including owned browser processes. Both listeners exited 143 and newly owned browser profiles were gone.
+- The same two actual captures produced identical manifest results through CLI and official SDK **stdio** MCP, with HTTP environment variables present: **2.795 s / 2.778 s CPU / 476.67 MiB**. This verifies adapter parity and default transport independently of explicit environment HTTP.
+
+The first local probe mistakenly searched base64 body content for plaintext; its
+assertion was corrected to inspect decoded retained bytes. A later SDK probe
+initially imported stdio transport from the SDK root instead of its documented
+subpath; the corrected probe passed. An early live navigation also reported one
+`body-read-failed` response, which the projection preserved as unavailable. No
+browser-provider behavior was changed; the successful run used explicit waits.
+These earlier attempts are not counted as passing runs.
+
+A matched retained-scenario projection comparison bundles the original helper
+from `3aae3579e` and the followup helper, supplies the same 72,771-byte capture
+with three JSON writes, and completes one cold plus 100 warm full manifest
+projections. Both outputs have the same SHA-256
+`990ac431670374ff68c77a20d77985f626e4681bb0e2f491e5af18f45ce79991`.
+Before/after process totals: **0.970/0.876 s elapsed, 0.934/0.865 s CPU,
+184.89/184.39 MiB** RSS. First task: **17.378/13.073 ms**; 100 warm tasks:
+**261.419/236.131 ms**. Single samples do not establish a speed or memory
+improvement. Bundle preparation is excluded; process totals include fixture
+startup. CLI, provider and transport costs are excluded from this comparison.
+
+Heavy work is serialized on one CPU with one test worker. RSS sums sampled
+process descendants every 50 ms and can double-count shared pages. Agent token
+usage is unmeasured. These followups do not rerun the author's five application
+reconstruction/model tasks, nor establish Windows or macOS behavior. Historical
+response replay does not reconstruct application state.
+
+A retained-parent counterexample used a 128 KiB projection budget and one 16 KiB JSON request: the original helper admitted it and decoded once; the repaired helper returned `AnalysisResourceConstraintError` with zero UTF-8 decodes. The test intentionally uses a small budget without inducing an OOM. Final targeted verification passed 242 tests (including 235 CI-selection cases): 41.042 s / 40.666 s CPU / 644.37 MiB peak process-family RSS.

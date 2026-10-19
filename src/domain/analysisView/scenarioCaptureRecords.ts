@@ -115,8 +115,9 @@ const mediaType = (content: ContentEvent | undefined): string | undefined =>
 const reportedRequest = (
   request: RequestEvent,
   content: ContentEvent | undefined,
+  purpose: "manifest" | "replay",
 ): { readonly [key: string]: JsonValue } => {
-  const body = captured(content);
+  const body = purpose === "manifest" ? captured(content) : undefined;
   const text = body === undefined ? undefined : utf8Text(body);
   const mimeType = mediaType(content);
   return {
@@ -130,10 +131,11 @@ const reportedRequest = (
 
 const record = (
   ordinal: number,
-  item: number,
-  request: RequestEvent,
+  observed: TransactionIndex["requests"][number],
   index: TransactionIndex,
+  purpose: "manifest" | "replay",
 ): { readonly record: WebNetworkCaptureRecord; readonly body: boolean } => {
+  const { item, event: request } = observed;
   const location = {
     kind: "json-pointer" as const,
     pointer: `/events/items/${String(item)}`,
@@ -168,7 +170,7 @@ const record = (
       ordinal,
       location,
       reported: {
-        request: reportedRequest(request, requestContent),
+        request: reportedRequest(request, requestContent, purpose),
         ...(response === undefined
           ? {}
           : {
@@ -203,15 +205,19 @@ const record = (
 /** Project each network transaction, in request order, as one record; the ordinal is its zero-based position. */
 export const scenarioCaptureRecords = (
   capture: BrowserScenarioCapture,
+  purpose: "manifest" | "replay",
 ): ScenarioCaptureRecords => {
   const index = indexTransactions(capture.events.items);
-  const projected = index.requests.map(({ event, item }, ordinal) =>
-    record(ordinal, item, event, index),
-  );
-  const withoutBody = projected.filter((entry) => !entry.body).length;
+  const records: WebNetworkCaptureRecord[] = [];
+  let withoutBody = 0;
+  for (const [ordinal, observed] of index.requests.entries()) {
+    const projected = record(ordinal, observed, index, purpose);
+    records.push(projected.record);
+    if (!projected.body) withoutBody += 1;
+  }
   return {
-    records: projected.map((entry) => entry.record),
-    totalRecords: projected.length,
+    records,
+    totalRecords: records.length,
     limitations: [
       "Scenario records are the capture's network transactions in request order; each record ordinal is the transaction's zero-based position.",
       ...(capture.events.dropped > 0
@@ -221,24 +227,23 @@ export const scenarioCaptureRecords = (
         : []),
       ...(withoutBody > 0
         ? [
-            `${String(withoutBody)} of ${String(projected.length)} scenario transactions retained no response body; their tools replay status and content type only.`,
+            `${String(withoutBody)} of ${String(records.length)} scenario transactions retained no response body; their tools replay status and content type only.`,
           ]
         : []),
     ],
   };
 };
 
-/** A scenario capture parent in the shape the environment manifest projects from. */
-export interface ScenarioCaptureParent extends ScenarioCaptureRecords {
-  readonly capture: BrowserScenarioCapture;
-}
-
 /** Admit a capture_browser_scenario parent whose network content identifies response media types. */
 export const admitScenarioCaptureParent = (
   parent: AnalysisViewParent,
   accumulator: WebNetworkProjectionAccumulator,
-): Result<ScenarioCaptureParent, AnalysisError> => {
-  const admitted = accumulator.admitCaptureClone(parent.normalizedResult);
+): Result<ScenarioCaptureRecords, AnalysisError> => {
+  // Body validation decodes base64, and projection constructs UTF-8 request text.
+  // Reserve their expanded strings before either allocation, even for retained parents.
+  const admitted = accumulator.admitCaptureClone(parent.normalizedResult, {
+    copiedStrings: true,
+  });
   if (!admitted.ok) return admitted;
   const parsed = browserScenarioCaptureSchema.safeParse(
     parent.normalizedResult,
@@ -264,5 +269,5 @@ export const admitScenarioCaptureParent = (
         "environment-manifest needs a capture_browser_scenario capture with capture.network.response_body or header_values selected.",
       ),
     );
-  return ok({ capture: parsed.data, ...scenarioCaptureRecords(parsed.data) });
+  return ok(scenarioCaptureRecords(parsed.data, "manifest"));
 };
