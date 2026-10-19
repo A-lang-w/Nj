@@ -55,6 +55,13 @@ manifest and graph commitments, JavaScript Application Graph, static
 Electron summary, reconstruction statistics, and explicit limitations. It does
 not require a live Hopper, Ghidra, browser, or Electron process.
 
+Evidence preserves the caller's original path in `parameters.input_path`,
+including symlink aliases and relative paths supplied through the CLI.
+`subject.local_path` and `normalized_result.input_path` identify the canonical
+artifact path. These paths may differ without changing the analyzed artifact.
+Older Evidence without `parameters.input_path` remains readable; reading retained
+or exported Evidence does not resolve the recorded paths again.
+
 The application graph selects the shallowest `package.json` outside
 `node_modules` as its package root, breaking equal-depth ties by Unicode
 code-point order. Dependency manifests remain package observations but do not
