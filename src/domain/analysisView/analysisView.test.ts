@@ -305,8 +305,9 @@ it("flags pseudocode that omits decompiler-removed blocks", () => {
     decompiler_completeness: { removed_blocks: [], unmapped_warnings: [] },
   };
   expect(
-    view("pseudocode", inspected).unknowns.some((entry) =>
-      entry.startsWith("pseudocode omits"),
+    view("pseudocode", inspected).unknowns.some(
+      (entry) =>
+        typeof entry === "string" && entry.startsWith("pseudocode omits"),
     ),
   ).toBe(false);
   expect(view("decompiler_removed_blocks", inspected)).toMatchObject({

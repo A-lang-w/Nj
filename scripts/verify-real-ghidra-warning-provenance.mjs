@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { parseConfig } from "../dist/config/parseConfig.js";
-import { inspectGhidraInstallation } from "../dist/ghidra/GhidraInstallation.js";
+import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraReleasePolicy.js";
 import { cleanupOwnedProcessGroup } from "../dist/process/ProcessOwnership.js";
 import {
@@ -25,7 +25,7 @@ assert.ok(
 );
 const config = parseConfig(process.env);
 if (!config.ok) throw config.error;
-const installation = inspectGhidraInstallation({
+const installation = await inspectVerifierGhidraInstallation({
   environment: process.env,
   installDir: config.value.ghidraInstallDir,
   javaHome: config.value.ghidraJavaHome,
