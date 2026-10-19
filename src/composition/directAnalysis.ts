@@ -7,10 +7,13 @@ type DirectAnalysisStatusRuntime =
   typeof import("../application/DirectAnalysisStatus.js");
 
 type BoundOperation<Operation> = Operation extends (
-  dependencies: infer _Dependencies,
   ...args: infer Arguments
 ) => infer Result
-  ? (...args: Arguments) => Result
+  ? (
+      ...args: Arguments extends [unknown, ...infer BoundArguments]
+        ? BoundArguments
+        : never
+    ) => Result
   : never;
 
 /** Bind one-shot analysis and status commands to one caller-selected environment. */
@@ -55,13 +58,6 @@ export const createDirectAnalysis = (
       await import("../application/DirectAnalysis.js");
     return runProviderAnalysis(dependencies, ...args);
   };
-  const runManagedProviderAnalysis: BoundOperation<
-    DirectAnalysisRuntime["runManagedProviderAnalysis"]
-  > = async (...args) => {
-    const { runManagedProviderAnalysis } =
-      await import("../application/DirectAnalysis.js");
-    return runManagedProviderAnalysis(dependencies, ...args);
-  };
   const runSessionStatus: BoundOperation<
     DirectAnalysisStatusRuntime["runSessionStatus"]
   > = async (...args) => {
@@ -72,7 +68,6 @@ export const createDirectAnalysis = (
   return {
     runDirectAnalysis,
     runProviderAnalysis,
-    runManagedProviderAnalysis,
     runSessionStatus,
   };
 };

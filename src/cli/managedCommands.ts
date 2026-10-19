@@ -18,28 +18,16 @@ import type { CliInstance } from "./types.js";
 import { registerProjectManagedApplicationGraph } from "./managedProjectGraphCommand.js";
 import { managedMembersInputSchema } from "../contracts/managed/managedToolContracts.js";
 import { localPathStringSchema } from "../domain/localPath.js";
-import { runWithAnalysisEvidenceDelivery } from "../application/analysisView/AnalysisEvidenceDelivery.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 
 export const registerManagedCommands = (
   cli: CliInstance,
   logger: Logger,
-  analysis: Pick<
-    DirectAnalysis,
-    "runProviderAnalysis" | "runManagedProviderAnalysis"
-  >,
+  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
-  registerInspectManagedArtifact(cli, logger, analysis.runProviderAnalysis);
-  registerInspectManagedMembers(
-    cli,
-    logger,
-    analysis.runManagedProviderAnalysis,
-  );
-  registerInspectManagedNativeBoundaries(
-    cli,
-    logger,
-    analysis.runProviderAnalysis,
-  );
+  registerInspectManagedArtifact(cli, logger, runProviderAnalysis);
+  registerInspectManagedMembers(cli, logger, runProviderAnalysis);
+  registerInspectManagedNativeBoundaries(cli, logger, runProviderAnalysis);
   registerCompareManagedMembers(cli, logger);
   registerImportManagedReconstruction(cli, logger);
   registerVerifyManagedNativeBoundaries(cli, logger);
@@ -66,7 +54,7 @@ const registerInspectManagedArtifact = (
 const registerInspectManagedMembers = (
   cli: CliInstance,
   logger: Logger,
-  runManagedProviderAnalysis: DirectAnalysis["runManagedProviderAnalysis"],
+  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.inspectManagedMembers, {
     description:
@@ -89,9 +77,13 @@ const registerInspectManagedMembers = (
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
-        logCliCommand(logger, "inspect-managed-members", async () => {
-          const result = await runWithAnalysisEvidenceDelivery(
+        logCliCommand(logger, "inspect-managed-members", () =>
+          runProviderAnalysis(
+            args.path,
             "inspect_managed_members",
+            options.type === undefined ? {} : { type_names: options.type },
+            logger,
+            signal,
             {
               ...(options.detail === undefined
                 ? {}
@@ -100,22 +92,8 @@ const registerInspectManagedMembers = (
                 ? {}
                 : { evidenceBundlePath: options.evidenceBundle }),
             },
-            () =>
-              runManagedProviderAnalysis(
-                args.path,
-                "inspect_managed_members",
-                options.type === undefined ? {} : { type_names: options.type },
-                signal,
-              ),
-            signal,
-          );
-          return result.ok
-            ? result.value
-            : {
-                error: "Analysis failed",
-                ...projectAnalysisError(result.error),
-              };
-        }),
+          ),
+        ),
       ),
   });
 };
