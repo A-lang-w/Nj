@@ -1289,23 +1289,15 @@ const scanWithOwnershipEvidence = async (
     observationRows,
     host,
   );
-  const baselineIdentityFailures: ProcessOwnershipValidationFailure[] = [];
   const candidates = observationRows.filter((process) => {
     if (retainedPids.has(process.pid)) return true;
     if (!baseline.has(process.pid)) return true;
     const before = baseline.get(process.pid);
     const now = firstIdentities.get(process.pid);
-    if (before === null || now?.state !== "readable") {
-      baselineIdentityFailures.push({
-        pid: process.pid,
-        reason: "process-identity-unavailable",
-        diagnostic: "process identity was unavailable during token validation",
-      });
-      // Keep the row in the owning fact pass. The failure is not evidence that
-      // the process is absent, and a related unknown generation must survive
-      // a later process-table omission.
-      return true;
-    }
+    // The baseline only excludes unchanged generations. Resolve uncertainty
+    // through the current before/token/after facts, which can establish absence
+    // or retain an unresolved candidate in the owning evidence ledger.
+    if (before === null || now?.state !== "readable") return true;
     return now.identity !== before;
   });
 
@@ -1356,9 +1348,7 @@ const scanWithOwnershipEvidence = async (
   const retainedByPid = new Map(
     retained.map((candidate) => [candidate.pid, candidate]),
   );
-  const failures: ProcessOwnershipValidationFailure[] = [
-    ...baselineIdentityFailures,
-  ];
+  const failures: ProcessOwnershipValidationFailure[] = [];
   const unverified: OwnershipSweepUnverifiedProcess[] = [];
   const owned: ProcessTableEntry[] = [];
   const identities = new Map<number, string | null>();
