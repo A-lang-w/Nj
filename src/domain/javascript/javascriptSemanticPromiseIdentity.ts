@@ -22,6 +22,60 @@ import {
   syntaxEvaluationCannotThrow,
 } from "./javascriptSymbolicControlFlow.js";
 import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
+import {
+  semanticEffectTiming,
+  semanticTopLevelEffectFollowsCapture,
+} from "./javascriptSemanticMutationInitializers.js";
+
+/** Native await skips Get(then) only while the promise's constructor identity is intact. */
+const nativePromiseAwaitIdentityIntact = (
+  node: t.Node,
+  aliases: NonNullable<
+    ReturnType<typeof semanticExactValueIdentity>
+  >["aliases"],
+  capture: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  onLiteralProjection?: () => void,
+): boolean => {
+  if (
+    !t.isImportExpression(node) &&
+    !(t.isCallExpression(node) && t.isImport(node.callee))
+  )
+    return true;
+  onLiteralProjection?.();
+  const selected = ["global", "Promise", "prototype", "constructor"];
+  if (
+    state.ambientReferenceEffects.some(
+      ({ path, node: effect }) =>
+        path.length <= selected.length &&
+        path.every((key, index) =>
+          semanticPropertyPathKeyMatches(key, selected[index] ?? ""),
+        ) &&
+        !semanticTopLevelEffectFollowsCapture(
+          capture,
+          effect,
+          state.parentsByNode,
+        ),
+    )
+  )
+    return false;
+  return aliases.every(({ read }) => {
+    const binding = resolveSemanticBindingState(state, read, read.name);
+    return (
+      binding !== undefined &&
+      [...binding.memberWrites, ...binding.escapedPaths].every(
+        ({ path, node: effect }) =>
+          !(
+            path.length === 0 ||
+            (path.length === 1 &&
+              semanticPropertyPathKeyMatches(path[0] ?? null, "constructor"))
+          ) ||
+          semanticEffectTiming(capture, effect, state) === "after" ||
+          semanticEffectTiming(read, effect, state) === "after",
+      )
+    );
+  });
+};
 
 /** Inert arguments and simple parameters preserve an exact literal return. */
 const directLiteralReturn = (
@@ -120,6 +174,16 @@ export const semanticPromiseSettlementDependency = (
       onLiteralProjection,
     );
     if (result === undefined || seen.has(result.node)) return undefined;
+    if (
+      !nativePromiseAwaitIdentityIntact(
+        result.node,
+        result.aliases,
+        rawNode,
+        state,
+        onLiteralProjection,
+      )
+    )
+      return undefined;
     seen.add(result.node);
     aliases.push(...result.aliases);
     const returned = directLiteralReturn(result.node, state, true);
@@ -147,10 +211,11 @@ export const semanticPromiseSettlementDependency = (
           return (
             binding === undefined ||
             binding.escapedPaths.some(
-              ({ path }) =>
-                path.length === 0 ||
-                (path.length === 1 &&
-                  semanticPropertyPathKeyMatches(path[0] ?? null, "then")),
+              ({ path, node: effect }) =>
+                semanticEffectTiming(rawNode, effect, state) !== "after" &&
+                (path.length === 0 ||
+                  (path.length === 1 &&
+                    semanticPropertyPathKeyMatches(path[0] ?? null, "then"))),
             ) ||
             binding.memberWrites.some(
               ({ path }) =>

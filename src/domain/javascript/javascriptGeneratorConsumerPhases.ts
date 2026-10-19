@@ -35,6 +35,28 @@ interface PatternWaitCache {
   readonly blockedIndex: number | null;
 }
 
+/** Each preceding owned yield must force the consumer's binding through a wait. */
+export const semanticGeneratorBindingsAlwaysSuspend = (
+  read: t.Node,
+  body: t.Node,
+  pattern: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  ordered: (node: t.Node) => readonly t.Node[],
+  maySuspend: (node: t.Node) => boolean,
+  bindingSuspends: (pattern: t.Node, value: t.Node | undefined) => boolean,
+): boolean => {
+  const facts = generatorPrefixes(body, ordered, maySuspend, state);
+  const count = facts.before.get(read) ?? -1;
+  return (
+    count > 0 &&
+    facts.yielded
+      .slice(0, count)
+      .every((yielded) =>
+        bindingSuspends(pattern, yielded.argument ?? undefined),
+      )
+  );
+};
+
 interface GeneratorPrefixFacts {
   readonly effects: JavaScriptSemanticAnalysisState["literalMemberEffects"];
   readonly phase: JavaScriptSemanticAnalysisState["memberMutationFactsPhase"];
@@ -546,10 +568,17 @@ export const semanticPatternCompletion = (
   state: JavaScriptSemanticAnalysisState,
   suspended: (node: t.Node) => boolean,
   executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
+  ownedResultEscape?: t.Node,
 ): PatternCompletion =>
   patternCompletedSuspension(
     pattern,
-    value === undefined ? { known: false } : { known: true, node: value },
+    value === undefined
+      ? { known: false }
+      : {
+          known: true,
+          node: value,
+          ...(ownedResultEscape === undefined ? {} : { ownedResultEscape }),
+        },
     state,
     suspended,
     0,

@@ -682,6 +682,186 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "r49-disposer-async-generator.js",
+    source:
+      '(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-latest")}})()){await using resource={async *[Symbol.asyncDispose](x=null.value){}};}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r49-disposer-0.js",
+    source:
+      '(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-latest")}})()){await using resource={[Symbol.asyncDispose](x=null.value){}};}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r49-disposer-1.js",
+    source:
+      '(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-latest")}})()){await using resource={*[Symbol.asyncDispose](x=null.value){}};}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r49-disposer-2.js",
+    source:
+      '(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-latest")}})()){await using resource={async [Symbol.asyncDispose](x=null.value){}};}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r49-disposer-3.js",
+    source:
+      '(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-latest")}})()){await using resource={[Symbol.asyncDispose](x=0){return 0}};break;}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r49-0.mjs",
+    source:
+      'export {};const pending=import("ws");pending.constructor={};pending.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await pending;new Socket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "r49-1.mjs",
+    source:
+      'export {};const pending=import("ws");pending.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await pending;new Socket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "r49-2.mjs",
+    source:
+      'export {};const pending=import("ws");const{WebSocket:Socket}=await pending;pending.constructor={};new Socket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "r49-3.mjs",
+    source:
+      'export {};Promise.prototype.constructor={};const pending=import("ws");pending.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await pending;new Socket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "r49-4.js",
+    source:
+      '(async()=>{for(const x of(function*(){try{yield 0;}finally{new Socket("wss://example.test/review-latest")}})()){const{[await 0]:y}=null.value;}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r49-5.js",
+    source:
+      '(async()=>{for(const x of(function*(){try{yield 0;}finally{new Socket("wss://example.test/review-latest")}})()){const{[await 0]:y}={};break;}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r49-6.js",
+    source:
+      '(async()=>{for(const x of(function*(){try{yield 0;}finally{new Socket("wss://example.test/review-latest")}})()){do{null.value;}while(await 0);}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r49-7.js",
+    source:
+      '(async()=>{for(const x of(function*(){try{yield 0;}finally{new Socket("wss://example.test/review-latest")}})()){do{0;}while(await 0);break;}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r49-8.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{throw{__proto__:null}}catch({[await 0]:y}){}}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r49-9.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{throw{__proto__:null}}catch({x}){}}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r49-10.js",
+    source:
+      '(async()=>{for(const x of(function*(){try{yield 0;}finally{new Socket("wss://example.test/review-latest")}})()){try{throw null}catch({[await 0]:y}){}}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r49-11.js",
+    source:
+      '(async()=>{for(const x of(function*(){try{yield 0;}finally{new Socket("wss://example.test/review-latest")}})()){await using resource={[Symbol.asyncDispose](){throw 0}};}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r49-12.js",
+    source:
+      '(async()=>{for(const x of(function*(){try{yield 0;}finally{new Socket("wss://example.test/review-latest")}})()){await using resource={[Symbol.asyncDispose](){return 0}};break;}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r49-13.js",
+    source:
+      '(async()=>{for(const x of(function*(){try{yield 0;}finally{new Socket("wss://example.test/review-latest")}})()){await using resource={[Symbol.asyncDispose]:async()=>{throw 0}};}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r49-14.js",
+    source:
+      '(async()=>{for(const x of(function*(){try{yield 0;}finally{new Socket("wss://example.test/review-latest")}})()){await using resource={[Symbol.dispose](){throw 0}};}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r49-15.js",
+    source:
+      'const ws=require("ws");mutate(ws);new ws.WebSocket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "r49-16.js",
+    source:
+      'const ws=require("ws");const Socket=ws.WebSocket;mutate(ws);new Socket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "r49-17.js",
+    source:
+      'const ws=require("ws");new ws.WebSocket("wss://example.test/review-latest");mutate(ws);',
+    present: true,
+  },
+  {
+    file: "r49-18.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){if(false)await 0;}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r49-19.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){await 0;}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r49-20.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");connect();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r49-21.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");const Socket=globalThis.WebSocket;connect();',
+    present: true,
+  },
+  {
+    file: "r49-22.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");const alias=connect;alias();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r49-23.js",
+    source:
+      'const connect=async()=>{await 0;new Socket("wss://example.test/review-latest")};connect();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r49-24.js",
+    source:
+      '(async()=>{const connect=async()=>{await 0;new Socket("wss://example.test/review-latest")};await connect();const Socket=globalThis.WebSocket;})();',
+    present: false,
+  },
+  {
     file: "r45-0.js",
     source:
       '(async()=>{try{throw{get x(){throw 0}}}catch({x}){await 0}new Socket("wss://example.test/review-latest")})();const Socket=globalThis.WebSocket;',
@@ -949,7 +1129,7 @@ const completedWriteAndConsumerSources = [
     file: "logical-assignment-consumer-wait.js",
     source:
       '(async()=>{let value=0;for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){value||=await 0}})();const Socket=globalThis.WebSocket;',
-    present: true,
+    present: false,
   },
   {
     file: "failed-literal-projection.js",

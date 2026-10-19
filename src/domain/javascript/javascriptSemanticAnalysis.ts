@@ -1010,6 +1010,7 @@ const createState = (
     returnedReferenceWidenings: new Set(),
     parentsByNode: new WeakMap(),
     awaitSites: [],
+    callSites: [],
     scopes: [root],
     scopesById: new Map([[root.scopeId, root]]),
     scopeByNode: new WeakMap([[program, root]]),
@@ -1028,7 +1029,7 @@ const createState = (
     ambientBindingWrites: new Map(),
     ambientWrites: new SemanticPropertyPathCoverage(),
     ambientEscapes: new SemanticPropertyPathCoverage(),
-    ambientWriteEffects: [],
+    ambientReferenceEffects: [],
   };
 };
 
@@ -1067,6 +1068,12 @@ function* collectDefinitionsSteps(
     enter: (node, parent, readAncestors) => {
       if (parent !== null) state.parentsByNode.set(node, parent);
       if (t.isAwaitExpression(node)) state.awaitSites.push(node);
+      if (
+        t.isCallExpression(node) ||
+        t.isOptionalCallExpression(node) ||
+        t.isNewExpression(node)
+      )
+        state.callSites.push(node);
       if (
         t.isWithStatement(node) ||
         t.isForInStatement(node) ||

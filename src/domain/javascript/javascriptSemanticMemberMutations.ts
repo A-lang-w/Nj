@@ -192,7 +192,7 @@ export function* collectSemanticMemberMutationsSteps(
   };
   // Ambient indexing owns aliases of global objects. Consume its canonical
   // writes instead of reparsing qualified or aliased process assignments.
-  for (const { path, node } of state.ambientWriteEffects)
+  for (const { path, node, kind } of state.ambientReferenceEffects)
     if (
       path[0] === "global" &&
       path[1] === "process" &&
@@ -200,7 +200,7 @@ export function* collectSemanticMemberMutationsSteps(
       node !== undefined &&
       semanticOriginalGlobalProcessAt(node, state)
     )
-      recordRequiredEffect("node:process", path.slice(2), "write", node);
+      recordRequiredEffect("node:process", path.slice(2), kind, node);
   const selections = new Map<string, readonly string[]>();
   const coveringPaths = new Map<string, SemanticPropertyPathCoverage>();
   let arrayIterationUnknown = false;
@@ -1237,8 +1237,9 @@ const observableMutationPaths = (
         // Keep class/getter projections distinct so cycle pruning does not
         // discard observable escapes through a shared getter result.
         if (
-          t.isNewExpression(expression) &&
-          semanticClassCandidates(expression.callee, state).length === 0
+          t.isImportExpression(expression) ||
+          (t.isNewExpression(expression) &&
+            semanticClassCandidates(expression.callee, state).length === 0)
         )
           (observer.origins ??= new Set()).add("opaque");
         else if (

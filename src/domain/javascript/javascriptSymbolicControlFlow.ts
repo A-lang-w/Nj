@@ -268,7 +268,10 @@ export const syntaxReachableOperands = (node: t.Node): readonly t.Node[] => {
       ? [node.right]
       : [node.right, node.left];
   if (t.isVariableDeclarator(node))
-    return [node.init, node.id].filter((item) => item != null);
+    return syntaxReachablePrefix(
+      node,
+      [node.init, node.id].filter((item) => item != null),
+    );
   if (t.isFunction(node))
     return (t.isObjectMethod(node) || t.isClassMethod(node)) && node.computed
       ? [node.key]
@@ -315,6 +318,10 @@ export const syntaxReachableOperands = (node: t.Node): readonly t.Node[] => {
         )
       : childNodes(node);
   }
+  if (t.isDoWhileStatement(node))
+    return syntaxMayReachNextIteration(node.body)
+      ? [node.body, node.test]
+      : [node.body];
   if (t.isLoop(node)) return childNodes(node);
   if (t.isSwitchStatement(node)) return syntaxReachableSwitchOperands(node);
   if (t.isTryStatement(node))
@@ -323,7 +330,7 @@ export const syntaxReachableOperands = (node: t.Node): readonly t.Node[] => {
       syntaxCompletion(node.block, 0).abrupt.some(
         (exit) => exit.kind === "throw" || exit.kind === "unknown",
       )
-        ? node.handler?.body
+        ? node.handler
         : undefined,
       node.finalizer,
     ].filter((item) => item != null);
@@ -335,7 +342,7 @@ export const syntaxReachableOperands = (node: t.Node): readonly t.Node[] => {
 };
 
 type SyntaxAbruptCompletion =
-  | { readonly kind: "return" | "throw" | "unknown" }
+  | { readonly kind: "return" | "throw" | "unknown" | "suspension" }
   | { readonly kind: "break" | "continue"; readonly label: string | null };
 
 interface SyntaxCompletion {
@@ -368,7 +375,7 @@ const syntaxTryCompletion = (
     node.handler != null &&
     completion.abrupt.some(({ kind }) => kind === "throw")
   ) {
-    const handler = complete(node.handler.body);
+    const handler = complete(node.handler);
     // Expressions may throw even when their ordinary completion is known.
     // A catch must also exit before a try/catch can prove a definite exit.
     completion = {
@@ -380,11 +387,17 @@ const syntaxTryCompletion = (
     };
   }
   if (node.finalizer == null) return completion;
+  const suspended = completion.abrupt.filter(
+    ({ kind }) => kind === "suspension",
+  );
+  const prior = completion.abrupt.filter(({ kind }) => kind !== "suspension");
+  if (!completion.normal && prior.length === 0) return completion;
   const finalizer = complete(node.finalizer);
   return {
     normal: completion.normal && finalizer.normal,
     abrupt: [
-      ...(finalizer.normal ? completion.abrupt : []),
+      ...suspended,
+      ...(finalizer.normal ? prior : []),
       ...finalizer.abrupt,
     ],
   };
@@ -614,16 +627,31 @@ const syntaxSwitchCompletion = (
 const syntaxCompletion = (
   node: t.Node | null | undefined,
   depth: number,
+  boundary?: (node: t.Node) => "suspension" | "throw" | undefined,
 ): SyntaxCompletion => {
   if (node == null) return normalCompletion;
   if (depth >= 128) return { normal: true, abrupt: [{ kind: "unknown" }] };
+  const stopped = boundary?.(node);
+  if (stopped !== undefined)
+    return { normal: false, abrupt: [{ kind: stopped }] };
   const complete = (child: t.Node | null | undefined) =>
-    syntaxCompletion(child, depth + 1);
-  if (t.isReturnStatement(node) || t.isThrowStatement(node))
+    syntaxCompletion(child, depth + 1, boundary);
+  if (t.isReturnStatement(node) || t.isThrowStatement(node)) {
+    const argument =
+      boundary === undefined ? normalCompletion : complete(node.argument);
     return {
       normal: false,
       abrupt: [
-        { kind: t.isReturnStatement(node) ? "return" : "throw" },
+        ...argument.abrupt,
+        ...(argument.normal
+          ? [
+              {
+                kind: t.isReturnStatement(node)
+                  ? ("return" as const)
+                  : ("throw" as const),
+              },
+            ]
+          : []),
         ...(t.isReturnStatement(node) &&
         node.argument != null &&
         !syntaxEvaluationCannotThrow(node.argument)
@@ -631,6 +659,7 @@ const syntaxCompletion = (
           : []),
       ],
     };
+  }
   if (t.isBreakStatement(node) || t.isContinueStatement(node))
     return {
       normal: false,
@@ -645,6 +674,82 @@ const syntaxCompletion = (
     return syntaxSequenceCompletion(node.body, complete);
   if (t.isSwitchCase(node))
     return syntaxSequenceCompletion(node.consequent, complete);
+  if (t.isCatchClause(node))
+    // Binding coercion, defaults and writes belong to the semantic boundary
+    // callback. A declaration identifier is not an additional value read.
+    return complete(node.body);
+  if (boundary !== undefined) {
+    if (t.isVariableDeclarator(node) && t.isIdentifier(node.id))
+      return complete(node.init);
+    if (t.isIfStatement(node) || t.isConditionalExpression(node)) {
+      const test = complete(node.test);
+      if (!test.normal) return test;
+      const exact = readExactJavaScriptNormalResult(
+        node.test,
+        syntaxEvaluationCannotThrow,
+      );
+      const branches = exact.found
+        ? [complete(exact.value ? node.consequent : node.alternate)]
+        : [complete(node.consequent), complete(node.alternate)];
+      return {
+        normal: branches.some((route) => route.normal),
+        abrupt: [...test.abrupt, ...branches.flatMap((route) => route.abrupt)],
+      };
+    }
+    if (t.isSwitchStatement(node)) {
+      const { entries, tests } = syntaxSwitchEntries(node);
+      const routes = entries.map((entry) =>
+        syntaxSequenceCompletion(
+          [
+            node.discriminant,
+            ...tests.slice(0, entry.testCount),
+            ...node.cases.slice(entry.index).flatMap((item) => item.consequent),
+          ],
+          complete,
+        ),
+      );
+      return {
+        normal: routes.some(
+          (route) =>
+            route.normal ||
+            route.abrupt.some(
+              (exit) => exit.kind === "break" && exit.label === null,
+            ),
+        ),
+        abrupt: routes.flatMap((route) =>
+          route.abrupt.filter(
+            (exit) => exit.kind !== "break" || exit.label !== null,
+          ),
+        ),
+      };
+    }
+    if (t.isDoWhileStatement(node)) {
+      const body = complete(node.body);
+      const continuing =
+        body.normal ||
+        body.abrupt.some(
+          (exit) => exit.kind === "continue" && exit.label === null,
+        );
+      const test = continuing
+        ? complete(node.test)
+        : { normal: false, abrupt: [] };
+      return {
+        normal:
+          test.normal ||
+          body.abrupt.some(
+            (exit) => exit.kind === "break" && exit.label === null,
+          ),
+        abrupt: [
+          ...body.abrupt.filter(
+            (exit) =>
+              (exit.kind !== "break" && exit.kind !== "continue") ||
+              exit.label !== null,
+          ),
+          ...test.abrupt,
+        ],
+      };
+    }
+  }
   if (t.isIfStatement(node)) return syntaxIfCompletion(node, complete);
   if (t.isTryStatement(node)) return syntaxTryCompletion(node, complete);
   if (t.isLoop(node)) return syntaxLoopCompletion(node, complete);
@@ -652,9 +757,43 @@ const syntaxCompletion = (
   if (t.isLabeledStatement(node))
     return syntaxLabeledCompletion(node, complete);
   if (t.isWithStatement(node)) return complete(node.body);
+  if (boundary !== undefined) {
+    const operands =
+      syntaxUnconditionalOperands(node) ?? syntaxEvaluationOperands(node);
+    if (operands !== undefined) {
+      const prefix = syntaxSequenceCompletion(operands, complete);
+      return {
+        normal: prefix.normal && !syntaxEvaluationAlwaysThrows(node),
+        abrupt: [
+          ...prefix.abrupt,
+          ...(prefix.normal && !syntaxEvaluationCannotThrow(node)
+            ? [{ kind: "throw" as const }]
+            : []),
+        ],
+      };
+    }
+  }
   return syntaxEvaluationCannotThrow(node)
     ? normalCompletion
     : { normal: true, abrupt: [{ kind: "throw" }] };
+};
+
+/** Reuse structured completion ownership while cutting routes at a proven wait. */
+export const syntaxMayCompleteWithoutBoundary = (
+  node: t.Node,
+  boundary: (node: t.Node) => "suspension" | "throw" | undefined,
+  exits: "iteration" | "scope",
+): boolean => {
+  const completion = syntaxCompletion(node, 0, boundary);
+  return (
+    completion.normal ||
+    completion.abrupt.some((exit) =>
+      exits === "scope"
+        ? exit.kind !== "suspension"
+        : exit.kind === "unknown" ||
+          (exit.kind === "continue" && exit.label === null),
+    )
+  );
 };
 
 /** A selected case test can be skipped only through a normally completing predecessor. */
@@ -909,6 +1048,13 @@ export const syntaxEvaluationCannotThrow = (node: t.Node): boolean => {
           readExactJavaScriptLiteral(property.key).found) &&
         (t.isObjectMethod(property) ||
           syntaxEvaluationCannotThrow(property.value)),
+    );
+  if (
+    (t.isOptionalCallExpression(node) || t.isOptionalMemberExpression(node)) &&
+    javaScriptOptionalOperandsAlwaysSkipped(node)
+  )
+    result = syntaxEvaluationCannotThrow(
+      t.isOptionalCallExpression(node) ? node.callee : node.object,
     );
   if (
     !result &&

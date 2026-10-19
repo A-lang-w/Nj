@@ -655,21 +655,38 @@ export function* indexJavaScriptAmbientWritesSteps(
           ]);
     for (const resolved of paths) {
       state.ambientWrites.retain(resolved);
-      state.ambientWriteEffects.push({ path: resolved, node });
+      state.ambientReferenceEffects.push({
+        path: resolved,
+        node,
+        kind: "write",
+      });
     }
   }
   for (const { node, target, browserReceiver, projection } of escapes)
     for (const path of ambientWrites(target, node, true, projection))
       // Only proven browser APIs keep their global receiver from user code.
-      if (!(browserReceiver && path.length === 1 && path[0] === "global"))
-        state.ambientEscapes.retain([...path, null]);
+      if (!(browserReceiver && path.length === 1 && path[0] === "global")) {
+        const escaped = [...path, null];
+        state.ambientEscapes.retain(escaped);
+        state.ambientReferenceEffects.push({
+          path: escaped,
+          node,
+          kind: "escape",
+        });
+      }
   // A function may call a browser method replaced later in source order.
   if (
     [...browserReceiverMethods].some((method) =>
       state.ambientWrites.covers(["global", method]),
     )
-  )
+  ) {
     state.ambientEscapes.retain(["global", null]);
+    state.ambientReferenceEffects.push({
+      path: ["global", null],
+      node: undefined,
+      kind: "escape",
+    });
+  }
 }
 
 /**
@@ -714,8 +731,12 @@ export const isUnmodifiedRequiredWebSocketReference = (
   projection: readonly string[],
 ): boolean => {
   const selected = ["commonjs-ws", ...projection];
-  if (!state.ambientWrites.covers(selected)) return true;
-  return !state.ambientWriteEffects.some(
+  if (
+    !state.ambientWrites.covers(selected) &&
+    !state.ambientEscapes.covers(selected)
+  )
+    return true;
+  return !state.ambientReferenceEffects.some(
     ({ path, node }) =>
       path.length <= selected.length &&
       path.every((key, index) =>

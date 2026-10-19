@@ -122,6 +122,12 @@ export interface JavaScriptSemanticAnalysisState {
   readonly parentsByNode: WeakMap<t.Node, t.Node>;
   /** Await sites retained by the definitions pass for lazy promise-result indexing. */
   readonly awaitSites: t.AwaitExpression[];
+  /** Call sites retained once for exact local callback activation ownership. */
+  readonly callSites: (
+    | t.CallExpression
+    | t.OptionalCallExpression
+    | t.NewExpression
+  )[];
   readonly scopes: JavaScriptSemanticScopeState[];
   readonly scopesById: Map<string, JavaScriptSemanticScopeState>;
   /** Scope boundaries and descendant scopes resolved on demand. */
@@ -169,8 +175,10 @@ export interface JavaScriptSemanticAnalysisState {
   readonly ambientWrites: SemanticPropertyPathCoverage;
   /** Ambient object identities passed to calls whose effects are not evaluated. */
   readonly ambientEscapes: SemanticPropertyPathCoverage;
-  /** Source sites distinguish replacement before an ambient identity capture from later writes. */
-  readonly ambientWriteEffects: JavaScriptSemanticMemberEffect[];
+  /** Writes and opaque escapes share source-site ordering at identity captures. */
+  readonly ambientReferenceEffects: (JavaScriptSemanticMemberEffect & {
+    readonly kind: "write" | "escape";
+  })[];
 }
 
 /** Record one producer outcome without traversing or retaining its value graph. */

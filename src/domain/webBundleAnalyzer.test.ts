@@ -3326,7 +3326,7 @@ const freshReadAndIterationCases = [
   [
     "generator consumer conditionally awaits",
     '(async () => { for (const ignored of (function* () { yield 0; new Socket("wss://example.test/fresh-read"); })()) { if (condition) await 0; } })();',
-    true,
+    false,
   ],
   [
     "async generator first step",
@@ -4770,6 +4770,166 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "async generator disposer parameter failure precedes its await",
+    "(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket(URL)}})()){await using resource={async *[Symbol.asyncDispose](x=null.value){}};}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "disposer parameter failure precedes its await",
+    "(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket(URL)}})()){await using resource={[Symbol.asyncDispose](x=null.value){}};}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "generator disposer parameter failure precedes its await",
+    "(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket(URL)}})()){await using resource={*[Symbol.asyncDispose](x=null.value){}};}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "async disposer parameter rejection still waits",
+    "(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket(URL)}})()){await using resource={async [Symbol.asyncDispose](x=null.value){}};}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "inert disposer default permits its wait",
+    "(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket(URL)}})()){await using resource={[Symbol.asyncDispose](x=0){return 0}};break;}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "changed import promise constructor invalidates native await",
+    'export {};const pending=import("ws");pending.constructor={};pending.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await pending;new Socket(URL);',
+    false,
+  ],
+  [
+    "unchanged import promise bypasses replaced own then",
+    'export {};const pending=import("ws");pending.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await pending;new Socket(URL);',
+    true,
+  ],
+  [
+    "constructor write after await preserves captured import",
+    'export {};const pending=import("ws");const{WebSocket:Socket}=await pending;pending.constructor={};new Socket(URL);',
+    true,
+  ],
+  [
+    "prototype constructor replacement invalidates native await",
+    'export {};Promise.prototype.constructor={};const pending=import("ws");pending.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await pending;new Socket(URL);',
+    false,
+  ],
+  [
+    "failed initializer cannot credit pattern wait before cleanup",
+    "(async()=>{for(const x of(function*(){try{yield 0;}finally{new Socket(URL)}})()){const{[await 0]:y}=null.value;}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "completed initializer permits pattern wait before cleanup",
+    "(async()=>{for(const x of(function*(){try{yield 0;}finally{new Socket(URL)}})()){const{[await 0]:y}={};break;}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "failed do body cannot credit later test wait",
+    "(async()=>{for(const x of(function*(){try{yield 0;}finally{new Socket(URL)}})()){do{null.value;}while(await 0);}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "completed do body permits reached test wait",
+    "(async()=>{for(const x of(function*(){try{yield 0;}finally{new Socket(URL)}})()){do{0;}while(await 0);break;}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "reached catch computed key waits before next step",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{throw{__proto__:null}}catch({[await 0]:y}){}}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "catch without wait resumes in same turn",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{throw{__proto__:null}}catch({x}){}}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "failed catch coercion cannot credit computed key",
+    "(async()=>{for(const x of(function*(){try{yield 0;}finally{new Socket(URL)}})()){try{throw null}catch({[await 0]:y}){}}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "synchronous async disposer throw cannot credit cleanup",
+    "(async()=>{for(const x of(function*(){try{yield 0;}finally{new Socket(URL)}})()){await using resource={[Symbol.asyncDispose](){throw 0}};}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "normal async disposer call waits before cleanup",
+    "(async()=>{for(const x of(function*(){try{yield 0;}finally{new Socket(URL)}})()){await using resource={[Symbol.asyncDispose](){return 0}};break;}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "async disposer rejection still crosses wait",
+    "(async()=>{for(const x of(function*(){try{yield 0;}finally{new Socket(URL)}})()){await using resource={[Symbol.asyncDispose]:async()=>{throw 0}};}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "sync disposer fallback throw crosses wrapper wait",
+    "(async()=>{for(const x of(function*(){try{yield 0;}finally{new Socket(URL)}})()){await using resource={[Symbol.dispose](){throw 0}};}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "escaped ws namespace cannot prove selected member",
+    'const ws=require("ws");mutate(ws);new ws.WebSocket(URL);',
+    false,
+  ],
+  [
+    "captured ws member survives later namespace escape",
+    'const ws=require("ws");const Socket=ws.WebSocket;mutate(ws);new Socket(URL);',
+    true,
+  ],
+  [
+    "ws member selection before escape remains exact",
+    'const ws=require("ws");new ws.WebSocket(URL);mutate(ws);',
+    true,
+  ],
+  [
+    "conditional consumer wait leaves consumer phase unresolved",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){if(flag)await 0;}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "all consumer branches wait before next step",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){if(flag)await 0;else await 0;}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "always skipped consumer wait cannot defer next step",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){if(false)await 0;}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "unconditional consumer wait permits next step",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){await 0;}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "stored callback executes before constructor initialization",
+    "const connect=()=>new Socket(URL);connect();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "stored callback executes after constructor initialization",
+    "const connect=()=>new Socket(URL);const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
+    "stored callback alias retains early caller ownership",
+    "const connect=()=>new Socket(URL);const alias=connect;alias();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "stored async callback wait precedes late initialization",
+    "const connect=async()=>{await 0;new Socket(URL)};connect();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "awaited stored callback cannot initialize later local",
+    "(async()=>{const connect=async()=>{await 0;new Socket(URL)};await connect();const Socket=globalThis.WebSocket;})();",
+    false,
+  ],
+  [
     "failed catch getter cannot credit handler wait",
     "(async()=>{try{throw{get x(){throw 0}}}catch({x}){await 0}new Socket(URL)})();const Socket=globalThis.WebSocket;",
     false,
@@ -5205,9 +5365,9 @@ const consumerRouteReviewCases = [
     true,
   ],
   [
-    "logical assignment consumer can wait",
+    "logical assignment leaves consumer phase unresolved",
     "(async()=>{let value=0;for(const x of(function*(){yield 0;new Socket(URL)})()){value||=await 0}})();const Socket=globalThis.WebSocket;",
-    true,
+    false,
   ],
   [
     "failed owning object cannot project socket alias",
