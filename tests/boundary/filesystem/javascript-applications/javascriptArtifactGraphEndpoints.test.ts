@@ -682,6 +682,90 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "r55-0.js",
+    source:
+      'export {};const pending=import("ws");const{WebSocket:Socket}=await(async()=>pending)();pending.then=resolve=>resolve({WebSocket:class{}});new Socket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "r55-1.js",
+    source:
+      'export {};const pending=import("ws");const alias=pending;const{WebSocket:Socket}=await(async()=>alias)();pending.then=resolve=>resolve({WebSocket:class{}});new Socket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "r55-2.js",
+    source:
+      'export {};const pending=import("ws");pending.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await(async()=>pending)();new Socket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "r55-3.js",
+    source:
+      'export {};const pending=import("ws");const{WebSocket:Socket}=await(async()=>pending)();pending.__proto__={then(resolve){resolve({WebSocket:class{}})}};new Socket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "r55-4.js",
+    source:
+      'export {};const pending=import("ws");pending.__proto__={then(resolve){resolve({WebSocket:class{}})}};const{WebSocket:Socket}=await(async()=>pending)();new Socket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "r55-5.ts",
+    source:
+      'function connect(){new ws.WebSocket("wss://example.test/review-latest")}import ws=require("ws");connect();',
+    present: true,
+  },
+  {
+    file: "r55-6.ts",
+    source:
+      'function connect(){new ws.WebSocket("wss://example.test/review-latest")}connect();import ws=require("ws");',
+    present: false,
+  },
+  {
+    file: "r55-7.ts",
+    source:
+      'function connect(){new ws.WebSocket("wss://example.test/review-latest")}function outer(){connect()}import ws=require("ws");outer();',
+    present: true,
+  },
+  {
+    file: "r55-8.ts",
+    source:
+      'function connect(){new ws.WebSocket("wss://example.test/review-latest")}function outer(){connect()}outer();import ws=require("ws");',
+    present: false,
+  },
+  {
+    file: "r55-9.ts",
+    source:
+      'function connect(){new ws.WebSocket("wss://example.test/review-latest")}import ws=require("ws");',
+    present: true,
+  },
+  {
+    file: "r55-10.js",
+    source:
+      'function mayThrow(){throw 0}(async()=>{try{await using r={[void mayThrow()](){},[Symbol.asyncDispose](){}}}finally{new Socket("wss://example.test/review-latest")}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r55-11.js",
+    source:
+      '(async()=>{try{await using r={[void 0](){},[Symbol.asyncDispose](){}}}finally{new Socket("wss://example.test/review-latest")}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r55-12.js",
+    source:
+      'function mayThrow(){throw 0}(async()=>{try{await using r={[void mayThrow()]:0,[Symbol.asyncDispose](){}}}finally{new Socket("wss://example.test/review-latest")}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r55-13.js",
+    source:
+      'function mayThrow(){throw 0}(async()=>{try{await using first=null;await using r={[void mayThrow()](){},[Symbol.asyncDispose](){}}}finally{new Socket("wss://example.test/review-latest")}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
     file: "r54-0.js",
     source:
       'export {};const pending=import("ws");const alias=pending;pending.constructor={};pending.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await alias;new Socket("wss://example.test/review-latest");',

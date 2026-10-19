@@ -4770,6 +4770,76 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "completed async adoption preserves captured constructor",
+    'export {};const pending=import("ws");const{WebSocket:Socket}=await(async()=>pending)();pending.then=resolve=>resolve({WebSocket:class{}});new Socket(URL);',
+    true,
+  ],
+  [
+    "completed async adoption ignores later alias then write",
+    'export {};const pending=import("ws");const alias=pending;const{WebSocket:Socket}=await(async()=>alias)();pending.then=resolve=>resolve({WebSocket:class{}});new Socket(URL);',
+    true,
+  ],
+  [
+    "async adoption rejects earlier then substitution",
+    'export {};const pending=import("ws");pending.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await(async()=>pending)();new Socket(URL);',
+    false,
+  ],
+  [
+    "completed async adoption ignores later prototype replacement",
+    'export {};const pending=import("ws");const{WebSocket:Socket}=await(async()=>pending)();pending.__proto__={then(resolve){resolve({WebSocket:class{}})}};new Socket(URL);',
+    true,
+  ],
+  [
+    "async adoption rejects earlier prototype substitution",
+    'export {};const pending=import("ws");pending.__proto__={then(resolve){resolve({WebSocket:class{}})}};const{WebSocket:Socket}=await(async()=>pending)();new Socket(URL);',
+    false,
+  ],
+  [
+    "import equals initializes before earlier declared caller",
+    'function connect(){new ws.WebSocket(URL)}import ws=require("ws");connect();',
+    true,
+  ],
+  [
+    "import equals rejects caller before initialization",
+    'function connect(){new ws.WebSocket(URL)}connect();import ws=require("ws");',
+    false,
+  ],
+  [
+    "import equals initializes before nested caller",
+    'function connect(){new ws.WebSocket(URL)}function outer(){connect()}import ws=require("ws");outer();',
+    true,
+  ],
+  [
+    "import equals rejects nested caller before initialization",
+    'function connect(){new ws.WebSocket(URL)}function outer(){connect()}outer();import ws=require("ws");',
+    false,
+  ],
+  [
+    "import equals retains dormant declaration metadata",
+    'function connect(){new ws.WebSocket(URL)}import ws=require("ws");',
+    true,
+  ],
+  [
+    "fallible computed method key cannot prove acquisition",
+    "function mayThrow(){throw 0}(async()=>{try{await using r={[void mayThrow()](){},[Symbol.asyncDispose](){}}}finally{new Socket(URL)}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "inert computed method key proves acquisition",
+    "(async()=>{try{await using r={[void 0](){},[Symbol.asyncDispose](){}}}finally{new Socket(URL)}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "fallible computed value key cannot prove acquisition",
+    "function mayThrow(){throw 0}(async()=>{try{await using r={[void mayThrow()]:0,[Symbol.asyncDispose](){}}}finally{new Socket(URL)}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "earlier acquisition survives later fallible computed key",
+    "function mayThrow(){throw 0}(async()=>{try{await using first=null;await using r={[void mayThrow()](){},[Symbol.asyncDispose](){}}}finally{new Socket(URL)}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
     "copied promise observes later constructor and then writes",
     'export {};const pending=import("ws");const alias=pending;pending.constructor={};pending.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await alias;new Socket(URL);',
     false,

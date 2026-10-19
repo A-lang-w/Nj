@@ -59,7 +59,11 @@ const asyncResourceRegistration = (
       isUnshadowedGlobal(key.object, state, "Symbol") &&
       !state.ambientWrites.covers(["global", "Symbol", key.property.name]) &&
       !state.ambientEscapes.covers(["global", "Symbol", key.property.name]);
-    if (!symbol && semanticStaticPropertyKey(key, property.computed) === null)
+    if (
+      !symbol &&
+      (semanticStaticPropertyKey(key, property.computed) === null ||
+        (property.computed && !syntaxEvaluationCannotThrow(key)))
+    )
       return { status: "unknown" };
     if (
       t.isObjectProperty(property) &&

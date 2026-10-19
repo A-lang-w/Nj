@@ -34,10 +34,7 @@ import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { semanticAwaitedImportOrigin } from "./javascriptSemanticImportOrigin.js";
 import { semanticLiteralInitializerProjection } from "./javascriptSemanticLiteralProjection.js";
-import {
-  webSocketExecutionContexts,
-  webSocketInitializerDominatesRead,
-} from "./javascriptWebSocketExecution.js";
+import { webSocketInitializerDominatesRead } from "./javascriptWebSocketExecution.js";
 import {
   compareUnicodeCodePoints,
   compositeKey,
@@ -694,17 +691,19 @@ export const isWebSocketEndpointCandidate = (
     // Import-equals records its exact runtime require as a direct origin.
     // It is evaluated at its declaration, unlike hoisted ECMAScript imports.
     if (origin !== undefined) {
-      const definition = binding.definitions[0];
-      const location = root.loc?.start;
+      const definition = binding.definitionNodes[0];
+      const declaration =
+        definition === undefined
+          ? undefined
+          : state.parentsByNode.get(definition);
       const initialized =
-        !webSocketExecutionContexts(root, state).some(
-          ({ owner }) => owner === state.program,
-        ) ||
-        (definition !== undefined &&
-          location !== undefined &&
-          (definition.location.end.line < location.line ||
-            (definition.location.end.line === location.line &&
-              definition.location.end.column < location.column)));
+        t.isTSImportEqualsDeclaration(declaration) &&
+        webSocketInitializerDominatesRead(
+          declaration.moduleReference,
+          root,
+          state,
+          definition,
+        );
       const rawPath = [...origin.importedPath, ...members, ...selected];
       const path = rawPath.every(
         (key): key is string => typeof key === "string",

@@ -224,13 +224,10 @@ export const semanticPromiseSettlementDependency = (
           const binding = resolveSemanticBindingState(state, read, read.name);
           return (
             binding === undefined ||
-            binding.escapedPaths.some(
+            [...binding.memberWrites, ...binding.escapedPaths].some(
               ({ path, node: effect }) =>
                 semanticEffectTiming(rawNode, effect, state) !== "after" &&
                 promiseLookupMayChange(path, "then"),
-            ) ||
-            binding.memberWrites.some(({ path }) =>
-              promiseLookupMayChange(path, "then"),
             )
           );
         })
