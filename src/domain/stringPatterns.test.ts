@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { canonicalBase64Schema } from "./base64Schema.js";
 
 import {
   CANONICAL_BASE64_PATTERN,
@@ -77,6 +78,11 @@ it("preserves canonical base64 padding and pad-bit validation", () => {
       expect(projected.test(sample), JSON.stringify({ flag, sample })).toBe(
         previous.test(sample),
       );
+    for (const sample of samples)
+      expect(
+        canonicalBase64Schema.safeParse(sample).success,
+        JSON.stringify(sample),
+      ).toBe(previous.test(sample));
   }
 });
 
@@ -85,6 +91,12 @@ it("validates large canonical base64 under JSON Schema Unicode modes", () => {
   // overflows at this size, especially in Unicode-set client validators.
   const body = Buffer.alloc(24 * 1024 * 1024 - 3, 0x81);
   const encoded = body.toString("base64");
+  expect(canonicalBase64Schema.safeParse(encoded).success).toBe(true);
+  expect(
+    canonicalBase64Schema.safeParse(`${encoded.slice(0, -3)}R==`).success,
+  ).toBe(false);
+  expect(canonicalBase64Schema.safeParse(`${encoded}A`).success).toBe(false);
+  expect(canonicalBase64Schema.safeParse(`${encoded}\n`).success).toBe(false);
   for (const flag of ["", "u", "v"]) {
     const pattern = new RegExp(CANONICAL_BASE64_PATTERN.source, flag);
     expect(pattern.test(encoded), flag).toBe(true);
