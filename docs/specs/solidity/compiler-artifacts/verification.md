@@ -10,10 +10,15 @@ and bundled `evmole@0.9.3`.
 - `npm run verify:test-discovery`: all 1,661 test files discovered exactly once.
 - `node scripts/verify-solc-artifacts.mjs`: 80 public CLI/stdio-MCP cases passed,
   with verified process-lineage cleanup and zero descendants.
-- Five process-capture, finalization, Java-admission/archive and mutation-workflow
-  suites: 45 passed. Native ownership/credential and doctor-signal regressions:
-  52 passed, including the four real CLI signal/exit cases. The complete adjacent
-  ownership and recorded-crash trace families passed 187 tests in 14 files.
+- Complete repair regression selection: 329 passed across 26 files, covering
+  native ownership, compiler metadata, advertised schemas, firmware, browser,
+  launcher and report guards. The full JADX integration file passed all 48 cases.
+- Native ownership tests prove that settled absent/zombie lifetimes require no
+  retry timer; unresolved live ownership still retries and fails closed. Idle
+  fixture clocks advance during real I/O without changing their deadlines.
+- Synthetic provider fixtures select exact owned executable identities and wait
+  for program readiness. Browser teardown preserves primary failures, and report
+  guards run independently of ambient Bash startup hooks.
 - Compiler metadata corruption regressions failed before the shared source parser
   was enforced by imported Evidence; five corruptions now fail closed. The real
   advertised MCP catalog accepts the portable canonical-base64 schemas.
