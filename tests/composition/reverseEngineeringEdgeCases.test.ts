@@ -53,6 +53,28 @@ it("preserves guidance when the host cannot enforce requested descendant ownersh
   }
 });
 
+it("preserves a direct process ownership preparation capability failure", async () => {
+  const remediation = new AnalysisCapabilityUnavailableError(
+    "process-ownership",
+    "prepare_owned_process",
+    "Install a procps-compatible ps on REA's PATH.",
+    { userMessage: "Install procps." },
+  );
+  const service = new CoreReverseEngineeringService({
+    commands: createReverseEngineeringCommandPort({}),
+    runOwned: async () => {
+      throw remediation;
+    },
+  });
+  try {
+    expect(
+      await service.inspectWithObjdump({ operation: "architectures" }),
+    ).toEqual({ ok: false, error: remediation });
+  } finally {
+    await service.close();
+  }
+});
+
 it("records pathless objdump architecture support as provider capability evidence", async () => {
   const { directory, path } = await createArtifact();
   expect(objdumpCommand({ operation: "architectures" })).toEqual(["-i"]);
@@ -1300,3 +1322,43 @@ it.each([false, true])(
     }
   },
 );
+
+it("retains a failed digest-stream descriptor close and retries the same file owner", async () => {
+  const { directory, path } = await createArtifact();
+  let closes = 0;
+  let allowClose = false;
+  const handle = await open(path, "r");
+  const tracked = new Proxy(handle, {
+    get(target, property) {
+      if (property === "close")
+        return async () => {
+          closes++;
+          if (!allowClose) throw new Error("descriptor close refused");
+          await target.close();
+        };
+      const value = Reflect.get(target, property) as unknown;
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as FileHandle;
+  const service = new ReverseEngineeringService({
+    open: async () => tracked,
+    run: async () => ({ stdout: "", stderr: "" }),
+  });
+  try {
+    const result = await service.inspectWithObjdump({
+      path,
+      operation: "file_headers",
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { cleanupIncomplete: true },
+    });
+    allowClose = true;
+    await expect(service.close()).resolves.toBeUndefined();
+    expect(closes).toBe(2);
+    if (!result.ok) expect(result.error.cleanupIncomplete).toBe(false);
+  } finally {
+    await handle.close().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
+});

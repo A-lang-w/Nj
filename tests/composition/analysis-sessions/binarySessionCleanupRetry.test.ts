@@ -1,6 +1,6 @@
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 
 import type { AnalysisClient } from "../../../src/application/AnalysisProvider.js";
 import { HopperStartError } from "../../../src/domain/hopperErrors.js";
@@ -156,6 +156,34 @@ it.each(["close", "switch", "open after close"] as const)(
     expect(new Set(fixture.runIds).size).toBe(fixture.created());
   },
 );
+
+it("settles a retained analysis client before admitting an external mutation", async () => {
+  const fixture = await retryFixture();
+  const [target] = fixture.targets;
+  expect((await fixture.session.open(target)).ok).toBe(true);
+  expect(await fixture.session.close()).toEqual(err(fixture.cleanupError));
+  const operation = vi.fn(async () => resultOk("provider finished"));
+  const mutate = () =>
+    fixture.session.withAdmittedExternalMutation(
+      target,
+      undefined,
+      operation,
+      (_value, failure) => failure,
+    );
+  expect(await mutate()).toEqual(err(fixture.cleanupError));
+  expect(operation).not.toHaveBeenCalled();
+  await access(fixture.runtime);
+  fixture.allowCleanup();
+  expect(await mutate()).toEqual(resultOk(resultOk("provider finished")));
+  expect(operation).toHaveBeenCalledOnce();
+  await expect(access(fixture.runtime)).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  expect(await fixture.session.status()).toMatchObject({
+    cleanup_pending: false,
+  });
+  await fixture.session.close();
+});
 
 it("keeps recorded unknowns when a target switch cannot retire the previous provider", async () => {
   const fixture = await retryFixture();

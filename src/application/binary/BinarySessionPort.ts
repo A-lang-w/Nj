@@ -53,7 +53,9 @@ export interface BinarySessionPort
   withAdmittedExternalMutation<Value>(
     _path: string | undefined,
     signal: AbortSignal | undefined,
-    operation: () => Promise<Result<Value, AnalysisError>>,
+    operation: (
+      onDispatch: () => void,
+    ) => Promise<Result<Value, AnalysisError>>,
     retirementFailure: (
       value: Result<Value, AnalysisError>,
       error: AnalysisError,
@@ -62,6 +64,7 @@ export interface BinarySessionPort
     cleanupRecovery?: (
       failure: AnalysisError | undefined,
     ) => Promise<Result<null, AnalysisError>>,
+    mutationStart?: "admission" | "provider-dispatch",
   ): Promise<Result<Result<Value, AnalysisError>, AnalysisError>>;
   open(
     path: string,
@@ -99,7 +102,6 @@ export interface BinarySessionPort
   ): AnalysisProfileCommitment | undefined;
   allowsSnapshotReplay(operation: AnalysisOperation): boolean;
   /** Invalidate cached Evidence before an external command may mutate the target. */
-  invalidateSnapshotForExternalMutation(): void;
   recordWorkflowSnapshot(
     input: WorkflowSnapshotRecordInput,
   ): Result<null, EvidenceIntegrityError>;

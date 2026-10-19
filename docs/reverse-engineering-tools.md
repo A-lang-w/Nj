@@ -98,3 +98,10 @@ On Windows, provider lookup examines the caller-selected `PATH` asynchronously
 under a 120-second startup deadline, observing request cancellation and server
 shutdown. A timed-out lookup reports a failure; select an absolute
 `REA_OBJDUMP_COMMAND` or `REA_RIZIN_COMMAND` to avoid a slow network `PATH` probe.
+
+Fixed analysis sources supplied to an embedded MCP server expose objdump but
+withhold `execute_rizin_command`, because they cannot retire or refresh a binding
+after mutation. Use a session-backed server for unrestricted Rizin commands.
+Session snapshots are invalidated only after provider preparation and artifact
+validation succeed, immediately before attempting dispatch. A missing or
+non-regular artifact preserves the current session and its replay state.

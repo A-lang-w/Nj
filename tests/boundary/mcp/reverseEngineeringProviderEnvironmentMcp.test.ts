@@ -16,8 +16,11 @@ const analysis = {
     ),
 };
 
-const writeRizin = async (directory: string, output: string): Promise<void> => {
-  const executable = join(directory, "rizin");
+const writeObjdump = async (
+  directory: string,
+  output: string,
+): Promise<void> => {
+  const executable = join(directory, "objdump");
   await writeFile(executable, `#!/bin/sh\nprintf '%s\\n' '${output}'\n`);
   await chmod(executable, 0o755);
 };
@@ -31,8 +34,8 @@ it.skipIf(process.platform === "win32")(
     const artifactPath = join(directory, "sample.bin");
     await Promise.all([mkdir(selectedPath), mkdir(overridePath)]);
     await Promise.all([
-      writeRizin(selectedPath, "selected environment"),
-      writeRizin(overridePath, "provider override"),
+      writeObjdump(selectedPath, "selected environment"),
+      writeObjdump(overridePath, "provider override"),
       writeFile(artifactPath, "fixture"),
     ]);
 
@@ -69,8 +72,8 @@ it.skipIf(process.platform === "win32")(
           await server.connect(serverTransport);
           await client.connect(clientTransport);
           const result = await client.callTool({
-            name: "execute_rizin_command",
-            arguments: { path: artifactPath, command: "iI" },
+            name: "inspect_with_objdump",
+            arguments: { path: artifactPath, operation: "file_headers" },
           });
           expect(result.isError).not.toBe(true);
           expect(result.structuredContent).toMatchObject({
@@ -85,3 +88,28 @@ it.skipIf(process.platform === "win32")(
     }
   },
 );
+
+it("withholds mutating Rizin from a fixed analysis source without a mutation lifecycle", async () => {
+  const server = createServer({ kind: "fixed", analysis });
+  const client = new Client({ name: "fixed-mutation-boundary", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const { tools } = await client.listTools();
+    expect(tools.map(({ name }) => name)).toContain("inspect_with_objdump");
+    expect(tools.map(({ name }) => name)).not.toContain(
+      "execute_rizin_command",
+    );
+    await expect(
+      client.callTool({
+        name: "execute_rizin_command",
+        arguments: { path: "package.json", command: "iI" },
+      }),
+    ).rejects.toThrow("Tool execute_rizin_command not found");
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});

@@ -9,7 +9,7 @@ export interface WindowsExecutableLookup {
   readonly cwd?: string;
   /** Test seam for Windows paths when running on a non-Windows host. */
   readonly isFile?: (path: string) => boolean | Promise<boolean>;
-  readonly signal?: AbortSignal;
+  readonly signal?: AbortSignal | undefined;
   /** Total startup lookup budget, including stalled network filesystem probes. */
   readonly timeoutMs?: number;
 }

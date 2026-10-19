@@ -1625,37 +1625,43 @@ describe("selector origin forwarding", () => {
   });
 });
 
-it("blocks analysis rebinding until the external writer cleanup settles", async () => {
-  const [target] = await createBinarySessionTargets();
-  const session = createTestBinarySession(createCacheProvider([]));
-  expect((await session.open(target)).ok).toBe(true);
-  const failure = new ProviderCleanupError("rizin", ["writer"], {
-    reason: "writer remains alive",
-  });
-  const result = await session.withAdmittedExternalMutation(
-    target,
-    undefined,
-    async () => err(failure),
-    (_value, error) => error,
-  );
-  expect(result).toEqual(resultOk(err(failure)));
-  expect(session.activeTarget()).toBeUndefined();
-  expect(await session.open(target)).toEqual(err(failure));
-  const anotherMutation = vi.fn(async () => resultOk("unrelated command"));
-  expect(
-    await session.withAdmittedExternalMutation(
+it.each(["admission", "provider-dispatch"] as const)(
+  "blocks analysis rebinding until the external writer cleanup settles (%s)",
+  async (mutationStart) => {
+    const [target] = await createBinarySessionTargets();
+    const session = createTestBinarySession(createCacheProvider([]));
+    expect((await session.open(target)).ok).toBe(true);
+    const failure = new ProviderCleanupError("rizin", ["writer"], {
+      reason: "writer remains alive",
+    });
+    const result = await session.withAdmittedExternalMutation(
       target,
       undefined,
-      anotherMutation,
+      async () => err(failure),
       (_value, error) => error,
-    ),
-  ).toEqual(err(failure));
-  expect(anotherMutation).not.toHaveBeenCalled();
-  // Only the resource owner may acknowledge completed cleanup.
-  failure.resolveCleanup();
-  expect((await session.open(target)).ok).toBe(true);
-  await session.close();
-});
+      "execute_rizin_command",
+      undefined,
+      mutationStart,
+    );
+    expect(result).toEqual(resultOk(err(failure)));
+    expect(session.activeTarget()).toBeUndefined();
+    expect(await session.open(target)).toEqual(err(failure));
+    const anotherMutation = vi.fn(async () => resultOk("unrelated command"));
+    expect(
+      await session.withAdmittedExternalMutation(
+        target,
+        undefined,
+        anotherMutation,
+        (_value, error) => error,
+      ),
+    ).toEqual(err(failure));
+    expect(anotherMutation).not.toHaveBeenCalled();
+    // Only the resource owner may acknowledge completed cleanup.
+    failure.resolveCleanup();
+    expect((await session.open(target)).ok).toBe(true);
+    await session.close();
+  },
+);
 
 it("requires explicit close before an external mutation of an active Ghidra session", async () => {
   const [target] = await createBinarySessionTargets();

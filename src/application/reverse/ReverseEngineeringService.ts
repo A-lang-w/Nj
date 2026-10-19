@@ -2,7 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { open, stat as statPath } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
-import type { ReadStream, Stats } from "node:fs";
+import type { Stats } from "node:fs";
+import type { Readable } from "node:stream";
 
 import {
   AnalysisAccessDeniedError,
@@ -38,6 +39,7 @@ import {
 } from "../../process/OwnedCommand.js";
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { readFileHandleChunks } from "../../filesystem/readFileHandleChunks.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 
@@ -263,7 +265,10 @@ export class ReverseEngineeringService {
 
   executeRizinCommand(
     rawInput: unknown,
-    options: { readonly signal?: AbortSignal } = {},
+    options: {
+      readonly signal?: AbortSignal;
+      readonly onDispatch?: () => void;
+    } = {},
   ): Promise<Result<Evidence, AnalysisError>> {
     const parsed = rizinInputSchema.safeParse(rawInput);
     if (!parsed.success)
@@ -282,6 +287,7 @@ export class ReverseEngineeringService {
       absolutePath,
       input,
       options.signal,
+      options.onDispatch,
     );
   }
 
@@ -295,6 +301,7 @@ export class ReverseEngineeringService {
     path: string | undefined,
     parameters: Readonly<Record<string, JsonValue>>,
     signal?: AbortSignal,
+    onDispatch?: () => void,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (signal?.aborted)
       return Promise.resolve(err(new AnalysisCancelledError(operation)));
@@ -341,6 +348,7 @@ export class ReverseEngineeringService {
       path,
       parameters,
       operationSignal,
+      onDispatch,
     );
     const tracked = running.finally(() => {
       signal?.removeEventListener("abort", relayAbort);
@@ -360,6 +368,7 @@ export class ReverseEngineeringService {
     path: string | undefined,
     parameters: Readonly<Record<string, JsonValue>>,
     signal?: AbortSignal,
+    onDispatch?: () => void,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (signal?.aborted) return err(new AnalysisCancelledError(operation));
     const cleanup = await this.retryCleanup(operation);
@@ -430,7 +439,9 @@ export class ReverseEngineeringService {
     let failure: AnalysisError | undefined;
     let cleanupOwner: ProviderProcessSupervisor | undefined;
     let earlyFailure: AnalysisError | undefined;
+    if (signal?.aborted) return err(new AnalysisCancelledError(operation));
     try {
+      onDispatch?.();
       const output = await this.#run(
         command,
         args,
@@ -453,6 +464,10 @@ export class ReverseEngineeringService {
       stdoutInvalidUtf8 = output.stdoutInvalidUtf8 === true;
       stderrInvalidUtf8 = output.stderrInvalidUtf8 === true;
     } catch (cause) {
+      // Ownership preparation may reject directly before an owned command exists.
+      // Preserve its semantic owner and remediation instead of calling the provider unavailable.
+      if (cause instanceof AnalysisCapabilityUnavailableError)
+        earlyFailure = cause;
       cleanupOwner =
         cause instanceof OwnedOutputFailure ? cause.cleanupOwner : undefined;
       if (
@@ -1059,7 +1074,7 @@ const digestFile = async (
     throw Object.assign(new Error("Artifact digest requires a regular file"), {
       code: "EINVAL",
     });
-  let stream: ReadStream | undefined;
+  let stream: Readable | undefined;
   let interruption: Error | undefined;
   let rejectInterrupted: (cause: Error) => void = () => undefined;
   // Settles on cancellation or deadline so a stalled open or stat cannot
@@ -1119,19 +1134,36 @@ const digestFile = async (
     throw cause;
   }
   const opened = handle;
-  return new Promise<string>((resolveDigest, rejectDigest) => {
-    const hash = createHash("sha256");
-    stream = opened.createReadStream();
-    stream.on("data", (chunk: Buffer | string) => hash.update(chunk));
-    stream.once("error", (cause: Error) => {
-      cleanup();
-      rejectDigest(cause);
-    });
-    stream.once("end", () => {
-      cleanup();
-      resolveDigest(hash.digest("hex"));
-    });
-  });
+  const outcome = await Promise.race([
+    new Promise<string>((resolveDigest, rejectDigest) => {
+      const hash = createHash("sha256");
+      stream = readFileHandleChunks(opened);
+      stream.on("data", (chunk: Buffer | string) => hash.update(chunk));
+      stream.once("error", (cause: Error) => {
+        cleanup();
+        rejectDigest(cause);
+      });
+      stream.once("end", () => {
+        cleanup();
+        resolveDigest(hash.digest("hex"));
+      });
+    }),
+    interrupted,
+  ]).then(ok, (cause: unknown) => err(cause));
+  cleanup();
+  stream?.destroy();
+  const owner = new DigestFileCleanupOwner(opening);
+  if ((await owner.stop()).status === "incomplete")
+    throw new DigestFileCleanupFailure(
+      outcome.ok
+        ? new Error(
+            "Artifact digest completed but its descriptor close is unconfirmed",
+          )
+        : outcome.error,
+      owner,
+    );
+  if (!outcome.ok) throw outcome.error;
+  return outcome.value;
 };
 
 const statWithDeadline = (
