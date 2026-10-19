@@ -72,6 +72,28 @@ const bodyBytes = z.strictObject({
   bytes: z.string().regex(/^(?:[0-9a-f]{2})*$/u),
 });
 
+export const recognizedComputedTransferSchema = z.strictObject({
+  source: z.string(),
+  target: z.string(),
+  kind: z.enum(["call", "jump"]),
+  mechanism: z.literal("pc-relative-literal-load"),
+  architecture: z.literal("sh4"),
+  register: z.string().min(1),
+  load_instruction: z.string(),
+  literal_address: z.string(),
+  literal_bytes: z.string().regex(/^[0-9a-f]{8}$/u),
+  byte_order: z.enum(["little", "big"]),
+  target_memory: z.strictObject({
+    initialized: z.literal(true),
+    executable: z.literal(true),
+  }),
+  provenance: z.tuple([
+    z.literal("ghidra-listing-register-def-use"),
+    z.literal("ghidra-reference-manager"),
+    z.literal("ghidra-initialized-memory"),
+  ]),
+});
+
 const exportedFunction = z.strictObject({
   procedure: procedureIdentitySchema,
   body_bytes: z.array(bodyBytes),
@@ -110,6 +132,10 @@ const exportedFunction = z.strictObject({
       kind: z.enum(["call", "jump"]),
     }),
   ),
+  recognized_computed_transfers: z
+    .array(recognizedComputedTransferSchema)
+    .optional()
+    .default([]),
 });
 
 /** Provider-neutral machine evidence normalized from one analyzed program. */

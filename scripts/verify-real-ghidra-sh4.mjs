@@ -42,11 +42,19 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 //   0x8c01000a 6254  mov.b @r5+,r2 (must not become the delay slot)
 //   0x8c01000c 000b  rts
 //   0x8c01000e 0009  nop (delay slot)
-const bytes = Buffer.from("2ae00b0009002b43000054620b000900", "hex");
+//   0x8c010010 d201  mov.l 0x8c010018,r2
+//   0x8c010012 422b  jmp @r2
+//   0x8c010014 0009  nop (delay slot)
+//   0x8c010016 0009  alignment
+//   0x8c010018        .long 0x8c010000
+const bytes = Buffer.from(
+  "2ae00b0009002b43000054620b00090001d22b42090009000000018c",
+  "hex",
+);
 const sha256 = createHash("sha256").update(bytes).digest("hex");
 assert.equal(
   sha256,
-  "f376bc0aee8e1b7d031233e4ab5ce6737bb835fb42d42a35450a8035678b933b",
+  "e5e5053a64ab9d49835a441f76e04d2aad7ad05438643afd62fe241ef6efafd9",
 );
 await mkdir(join(root, "build"), { recursive: true });
 const workspace = await mkdtemp(join(root, "build", "rea-sh4-proof-"));
@@ -60,6 +68,7 @@ await writeFile(
   [
     "0x8c010006\tfunction_body\t0x8c010006-0x8c01000f\tinvalid_delay_slot",
     "0x8c01000a\tcode",
+    "0x8c010010\tfunction_body\t0x8c010010-0x8c010015\tliteral_tail_transfer",
     "",
   ].join("\n"),
 );
@@ -162,6 +171,34 @@ try {
     provenance: "ghidra-listing-delay-slot-depth",
   });
   assert.deepEqual(instructionAfterGap?.delay_slot, { state: "none" });
+  const literalTransferFunction = machine.functions.find(
+    ({ procedure }) => procedure.address === "0x8c010010",
+  );
+  assert.ok(
+    literalTransferFunction,
+    "seeded literal-transfer function was exported",
+  );
+  assert.deepEqual(literalTransferFunction.recognized_computed_transfers, [
+    {
+      source: "0x8c010012",
+      target: "0x8c010000",
+      kind: "call",
+      mechanism: "pc-relative-literal-load",
+      architecture: "sh4",
+      register: "r2",
+      load_instruction: "0x8c010010",
+      literal_address: "0x8c010018",
+      literal_bytes: "0000018c",
+      byte_order: "little",
+      target_memory: { initialized: true, executable: true },
+      provenance: [
+        "ghidra-listing-register-def-use",
+        "ghidra-reference-manager",
+        "ghidra-initialized-memory",
+      ],
+    },
+  ]);
+  assert.deepEqual(literalTransferFunction.unresolved_computed_transfers, []);
 
   // Rejected selections must not replace the live session.
   for (const [entryPoint, reason] of [
@@ -235,6 +272,7 @@ try {
     instructions: true,
     decompilation: true,
     invalid_delay_slot_gap: true,
+    literal_loaded_transfer: true,
     misaligned_entry_preserves_session: true,
     invalid_mapping_preserves_session: true,
     source_unchanged: true,

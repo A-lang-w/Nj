@@ -4,6 +4,7 @@ import {
   nativeDelaySlotSchema,
   nativeMachineEvidenceInputSchema,
   nativeMachineEvidenceResultSchema,
+  recognizedComputedTransferSchema,
 } from "./nativeMachineEvidence.js";
 
 describe("native machine evidence", () => {
@@ -20,6 +21,29 @@ describe("native machine evidence", () => {
       unresolved_slots: ["0x8c010008"],
       provenance: "ghidra-listing-delay-slot-depth",
     });
+  });
+
+  it("accepts an evidence-bound SH-4 literal-loaded transfer", () => {
+    expect(
+      recognizedComputedTransferSchema.parse({
+        source: "0x8c010012",
+        target: "0x8c010000",
+        kind: "call",
+        mechanism: "pc-relative-literal-load",
+        architecture: "sh4",
+        register: "r2",
+        load_instruction: "0x8c010010",
+        literal_address: "0x8c010018",
+        literal_bytes: "0000018c",
+        byte_order: "little",
+        target_memory: { initialized: true, executable: true },
+        provenance: [
+          "ghidra-listing-register-def-use",
+          "ghidra-reference-manager",
+          "ghidra-initialized-memory",
+        ],
+      }),
+    ).toMatchObject({ target: "0x8c010000", register: "r2" });
   });
 
   it("applies bounded defaults without selecting retained output", () => {

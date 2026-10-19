@@ -1365,6 +1365,119 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
+    /**
+     * Recognize the narrow SH-4 form {@code mov.l @(disp,pc),Rn; ...; jsr/jmp @Rn}.
+     * Every reported target is bound to the Listing definition, its data reference,
+     * the exact four initialized literal bytes, and an initialized executable target.
+     * This observation never mutates Ghidra's references or functions.
+     */
+    private JsonObject recognizeSh4LiteralLoadedTransfer(
+            Function function,
+            List<Instruction> instructions,
+            int transferIndex,
+            String kind) throws Exception {
+        if (!currentProgram.getLanguageID().getIdAsString().startsWith("SuperH4:")) return null;
+        Instruction transfer = instructions.get(transferIndex);
+        String transferMnemonic = mnemonic(transfer);
+        if (!(kind.equals("call") &&
+                (transferMnemonic.equals("JSR") || transferMnemonic.equals("JMP"))) &&
+            !(kind.equals("jump") && transferMnemonic.equals("JMP"))) return null;
+        Register transferRegister = transfer.getRegister(0);
+        if (transferRegister == null) return null;
+        transferRegister = transferRegister.getBaseRegister();
+
+        Instruction cursor = transfer;
+        Instruction load = null;
+        for (int index = transferIndex - 1, examined = 0;
+                index >= 0 && examined < 16;
+                index--, examined++) {
+            Instruction candidate = instructions.get(index);
+            if (!candidate.getMaxAddress().next().equals(cursor.getAddress())) return null;
+            if (!function.getBody().contains(candidate.getAddress())) return null;
+            boolean writesTransferRegister = false;
+            for (Object result : candidate.getResultObjects()) {
+                if (result instanceof Register written &&
+                    written.getBaseRegister().equals(transferRegister)) {
+                    writesTransferRegister = true;
+                    break;
+                }
+            }
+            if (writesTransferRegister) {
+                load = candidate;
+                break;
+            }
+            if (!candidate.getFlowType().isFallthrough()) return null;
+            cursor = candidate;
+        }
+        if (load == null || !mnemonic(load).equals("MOV.L")) return null;
+
+        Address literalAddress = null;
+        for (Reference reference : load.getReferencesFrom()) {
+            if (!reference.getReferenceType().isRead() ||
+                !reference.getToAddress().isMemoryAddress()) continue;
+            if (literalAddress != null && !literalAddress.equals(reference.getToAddress())) return null;
+            literalAddress = reference.getToAddress();
+        }
+        if (literalAddress == null) return null;
+
+        boolean pcodeAuthenticated = false;
+        for (PcodeOp operation : load.getPcode()) {
+            Varnode output = operation.getOutput();
+            if (operation.getOpcode() == PcodeOp.COPY && output != null &&
+                output.getAddress().equals(transferRegister.getAddress()) &&
+                output.getSize() == 4 && operation.getNumInputs() == 1 &&
+                operation.getInput(0).getAddress().equals(literalAddress) &&
+                operation.getInput(0).getSize() == 4) {
+                pcodeAuthenticated = true;
+                break;
+            }
+        }
+        if (!pcodeAuthenticated) return null;
+
+        MemoryBlock literalBlock = currentProgram.getMemory().getBlock(literalAddress);
+        if (literalBlock == null || !literalBlock.isInitialized()) return null;
+        byte[] literalBytes = new byte[4];
+        if (currentProgram.getMemory().getBytes(literalAddress, literalBytes) != literalBytes.length)
+            return null;
+        long pointer = 0;
+        if (currentProgram.getLanguage().isBigEndian()) {
+            for (byte value : literalBytes) pointer = (pointer << 8) | Byte.toUnsignedLong(value);
+        } else {
+            for (int index = literalBytes.length - 1; index >= 0; index--)
+                pointer = (pointer << 8) | Byte.toUnsignedLong(literalBytes[index]);
+        }
+        Address target;
+        try {
+            target = currentProgram.getAddressFactory().getDefaultAddressSpace().getAddress(pointer);
+        } catch (RuntimeException exception) {
+            return null;
+        }
+        MemoryBlock targetBlock = currentProgram.getMemory().getBlock(target);
+        if (targetBlock == null || !targetBlock.isInitialized() || !targetBlock.isExecute()) return null;
+
+        JsonObject result = new JsonObject();
+        result.addProperty("source", canonicalAddress(transfer.getAddress()));
+        result.addProperty("target", canonicalAddress(target));
+        result.addProperty("kind", kind);
+        result.addProperty("mechanism", "pc-relative-literal-load");
+        result.addProperty("architecture", "sh4");
+        result.addProperty("register", transferRegister.getName().toLowerCase(Locale.ROOT));
+        result.addProperty("load_instruction", canonicalAddress(load.getAddress()));
+        result.addProperty("literal_address", canonicalAddress(literalAddress));
+        result.addProperty("literal_bytes", java.util.HexFormat.of().formatHex(literalBytes));
+        result.addProperty("byte_order", currentProgram.getLanguage().isBigEndian() ? "big" : "little");
+        JsonObject targetMemory = new JsonObject();
+        targetMemory.addProperty("initialized", true);
+        targetMemory.addProperty("executable", true);
+        result.add("target_memory", targetMemory);
+        JsonArray provenance = new JsonArray();
+        provenance.add("ghidra-listing-register-def-use");
+        provenance.add("ghidra-reference-manager");
+        provenance.add("ghidra-initialized-memory");
+        result.add("provenance", provenance);
+        return result;
+    }
+
     /** Export one deterministic snapshot without reopening or reanalyzing the Program. */
     private JsonObject exportNativeMachineEvidence(JsonObject params, SessionDescriptor descriptor)
             throws Exception {
@@ -1458,8 +1571,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
             JsonArray directCalls = new JsonArray();
             JsonArray tailCalls = new JsonArray();
             JsonArray unresolved = new JsonArray();
+            JsonArray recognizedComputedTransfers = new JsonArray();
             Set<String> observedTransfers = new HashSet<>();
-            for (Instruction instructionValue : scan.instructions()) {
+            for (int instructionIndex = 0; instructionIndex < scan.instructions().size(); instructionIndex++) {
+                Instruction instructionValue = scan.instructions().get(instructionIndex);
                 JsonObject request = new JsonObject();
                 request.add("document", JsonNull.INSTANCE);
                 request.addProperty("address", canonicalAddress(instructionValue.getAddress()));
@@ -1495,11 +1610,22 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     if (call) directCalls.add(transfer);
                     else if (jump && !function.getBody().contains(requireAddressValue(target))) tailCalls.add(transfer);
                 }
+                JsonObject recognized = computed && (kind.equals("call") || kind.equals("jump"))
+                    ? recognizeSh4LiteralLoadedTransfer(
+                        function,
+                        scan.instructions(),
+                        instructionIndex,
+                        kind
+                    )
+                    : null;
+                if (recognized != null) recognizedComputedTransfers.add(recognized);
                 if (computed && !hasTarget && (kind.equals("call") || kind.equals("jump"))) {
-                    JsonObject transfer = new JsonObject();
-                    transfer.add("source", instruction.get("address"));
-                    transfer.addProperty("kind", kind);
-                    unresolved.add(transfer);
+                    if (recognized == null) {
+                        JsonObject transfer = new JsonObject();
+                        transfer.add("source", instruction.get("address"));
+                        transfer.addProperty("kind", kind);
+                        unresolved.add(transfer);
+                    }
                 }
             }
             item.add("instructions", instructions);
@@ -1513,6 +1639,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             item.add("direct_calls", directCalls);
             item.add("tail_calls", tailCalls);
             item.add("unresolved_computed_transfers", unresolved);
+            item.add("recognized_computed_transfers", recognizedComputedTransfers);
 
             JsonObject decompilerFacet = new JsonObject();
             try {
