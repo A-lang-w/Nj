@@ -46,7 +46,7 @@ The MCP catalog and environment card use a 1 KiB UTF-8 budget for each
 captured display sample. Observation, body-key and cited-record lists show
 whole values with omission counts; long method, path and query-name displays
 show a marked prefix. Complete values remain in manifest Evidence. Argument
-names longer than 64 characters use collision-safe path or query aliases; replay maps
+names longer than 64 characters use collision-safe `path_<n>` or `query_<n>` aliases; replay maps
 those aliases to the complete captured names.
 
 ## What replay means and does not mean
@@ -145,6 +145,10 @@ Three routes are served:
 | `GET /.well-known/agent-env.json` | The environment card                                                   |
 | `POST /agentenv`                  | JSON-RPC `-32601 method not found: <method>` for every method          |
 
+Numeric JSON-RPC IDs outside JavaScript's safe range or whose precision would
+be lost are refused as invalid requests with a null ID. They are never echoed
+as a different number.
+
 The data plane at `/agentenv` is advertised by the card but carries no
 operations in this release; the error names the requested method so a caller
 can see that the method, not the transport, is unsupported. Its request body is
@@ -221,6 +225,3 @@ only the cited records' request lines and response text in memory. No outbound
 network request is made, no process is launched and nothing is written to
 disk. A listener that fails after binding is logged and ends the command with
 a `resource_constraint` error and exit `1` instead of serving nothing.
-
-Numeric JSON-RPC IDs that cannot be represented and returned exactly are refused
-as invalid requests with a null ID; they are never echoed as a different number.
