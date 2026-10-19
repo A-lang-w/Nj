@@ -1052,6 +1052,24 @@ describe("DOS binary target I/O", () => {
       error: { reason: "truncated PE optional header" },
     });
   });
+  it.each([4, 32])(
+    "opens a complete PE whose e_lfanew %i lies inside the DOS header",
+    async (peOffset) => {
+      const directory = await createTestTempDirectory("rea-overlapped-pe-");
+      const path = join(directory, "overlapped.exe");
+      await writeFile(path, pe(0x8664, peOffset));
+
+      expect(
+        await parseBinaryTarget(path, {
+          cwd: directory,
+          hostArchitecture: "x64",
+        }),
+      ).toMatchObject({
+        ok: true,
+        value: { format: "pe", architecture: "x86_64" },
+      });
+    },
+  );
 });
 
 it.each([
