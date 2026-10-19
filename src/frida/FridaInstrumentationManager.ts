@@ -1358,7 +1358,8 @@ const jsonStringBytes = (value: string): number => {
     else if (
       code >= 0xd800 &&
       code <= 0xdbff &&
-      (value.charCodeAt(index + 1) < 0xdc00 ||
+      (index === value.length - 1 ||
+        value.charCodeAt(index + 1) < 0xdc00 ||
         value.charCodeAt(index + 1) > 0xdfff)
     )
       bytes += 3;

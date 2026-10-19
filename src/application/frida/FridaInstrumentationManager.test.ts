@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 
 import type {
   Device,
@@ -10,6 +10,7 @@ import type {
   Signal,
 } from "frida";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import { jsonObjectSchema } from "../../domain/jsonValue.js";
 import { FridaInstrumentationManager } from "../../frida/FridaInstrumentationManager.js";
 
 const signal = <Handler extends (...args: never[]) => void>() => {
@@ -1246,6 +1247,70 @@ it("bounds oversized Frida message metadata before retaining it", async () => {
   }
   await manager.closeAll();
 });
+
+it.each([
+  {
+    name: "ASCII at the limit",
+    input: "x".repeat(32_768),
+    retained: "x".repeat(32_768),
+    truncated: false,
+  },
+  {
+    name: "a trailing unpaired high surrogate",
+    input: "x".repeat(32_765) + "\ud800",
+    retained: "x".repeat(32_765),
+    truncated: true,
+  },
+  {
+    name: "a trailing unpaired low surrogate",
+    input: "x".repeat(32_765) + "\udc00",
+    retained: "x".repeat(32_765),
+    truncated: true,
+  },
+  {
+    name: "a valid surrogate pair at the limit",
+    input: "x".repeat(32_764) + "\ud800\udc00",
+    retained: "x".repeat(32_764) + "\ud800\udc00",
+    truncated: false,
+  },
+  {
+    name: "repeated unpaired high surrogates",
+    input: "\ud800".repeat(10_922),
+    retained: "\ud800".repeat(5_461),
+    truncated: true,
+  },
+])(
+  "bounds JSON metadata bytes for $name",
+  async ({ input, retained, truncated }) => {
+    const { bindings, manager, started } = await startLocalAttachedSession();
+    onTestFinished(() => manager.closeAll());
+    if (!started.ok) throw started.error;
+    bindings.device.session.nextMessage = {
+      type: "error",
+      description: input,
+      stack: input,
+      fileName: input,
+    };
+    const loaded = await manager.loadScript(started.value.sessionId, {
+      sourceKind: "inline",
+      source: "// inert fixture",
+    });
+    if (!loaded.ok) throw loaded.error;
+    const message = jsonObjectSchema.parse(loaded.value.messages[0]);
+    for (const field of ["description", "stack", "file_name"]) {
+      expect(
+        Buffer.byteLength(JSON.stringify(message[field])) - 2,
+      ).toBeLessThanOrEqual(32_768);
+      expect(message[field]).toBe(retained);
+      expect(message[`${field}_truncated`] ?? false).toBe(truncated);
+    }
+    expect(loaded.value.messagesTruncated).toBe(truncated);
+    expect(manager.status(started.value.sessionId)).toMatchObject({
+      messages: [message],
+      messagesTruncated: truncated,
+    });
+  },
+);
 
 it("serializes script loading against concurrent close and unloads the loaded script", async () => {
   const bindings = new FakeDeviceManager();
