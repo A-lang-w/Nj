@@ -37,6 +37,8 @@ export interface RecordedExchange {
   readonly contentType: string | null;
   /** Producer-decoded response text, or null when the record retained none. */
   readonly bodyText: string | null;
+  /** Set when the retained bytes are not UTF-8, so `bodyText` holds their base64 rather than a lossy decoding. */
+  readonly bodyEncoding?: "base64";
 }
 
 /** A manifest and the parent capture it cites, authenticated and cross-checked. */
@@ -93,20 +95,33 @@ const contentTextSchema = z.object({
   }),
 });
 
-/** The retained response text of one record, decoding HAR base64 content when the decoder kept it. */
-const recordedBodyText = (record: WebNetworkCaptureRecord): string | null => {
+const STRICT_UTF8 = new TextDecoder("utf-8", { fatal: true });
+
+/** The retained response text of one record, decoding HAR base64 content when the decoder kept it as valid UTF-8. */
+const recordedBody = (
+  record: WebNetworkCaptureRecord,
+): Pick<RecordedExchange, "bodyText" | "bodyEncoding"> => {
   const content = contentTextSchema.safeParse(record.reported);
-  if (!content.success) return null;
+  if (!content.success) return { bodyText: null };
   const { text, encoding } = content.data.response.content;
-  if (typeof text !== "string") return null;
-  if (encoding !== "base64") return text;
+  if (typeof text !== "string") return { bodyText: null };
+  if (encoding !== "base64") return { bodyText: text };
   const binary = record.binary_fields.find(
     (field) =>
       field.pointer === "/response/content/text" && field.state === "retained",
   );
-  return binary === undefined || binary.content_base64 === null
-    ? null
-    : Buffer.from(binary.content_base64, "base64").toString("utf8");
+  if (binary === undefined || binary.content_base64 === null)
+    return { bodyText: null };
+  try {
+    return {
+      bodyText: STRICT_UTF8.decode(
+        Buffer.from(binary.content_base64, "base64"),
+      ),
+    };
+  } catch {
+    // Binary or non-UTF-8 bytes: keep them exactly, as base64, instead of inventing replacement characters.
+    return { bodyText: binary.content_base64, bodyEncoding: "base64" };
+  }
 };
 
 const recordedExchange = (
@@ -120,7 +135,7 @@ const recordedExchange = (
     query: line.query === undefined || line.query === "" ? null : line.query,
     status: line.status,
     contentType: line.rawMime === "" ? null : line.rawMime,
-    bodyText: recordedBodyText(record),
+    ...recordedBody(record),
   };
 };
 
