@@ -32,6 +32,8 @@ export const openInitialTarget = async (
   const opened = await session.open(config.hopperTargetPath, {
     targetKind: config.hopperTargetKind,
     signal,
+    // The abort is a process shutdown, which keeps provider documents open.
+    retainProviderDocumentsOnCancel: true,
   });
   if (opened.ok) return { ok: true };
   // The shutdown that aborted the open owns session cleanup and its outcome.

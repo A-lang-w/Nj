@@ -47,7 +47,7 @@ it("closes the session when a signal arrives during the initial open, joining a 
   const healthSignal = createDeferred<AbortSignal | undefined>();
   const closeStarted = createDeferred<void>();
   const releaseClose = createDeferred<void>();
-  let clientCloses = 0;
+  const closeOptions: unknown[] = [];
   const session = createTestBinarySession((): AnalysisClient => ({
     execute: (_operation, _parameters, options?: ExecutionOptions) => {
       healthSignal.resolve(options?.signal);
@@ -57,8 +57,8 @@ it("closes the session when a signal arrives during the initial open, joining a 
         );
       });
     },
-    close: async () => {
-      clientCloses += 1;
+    close: async (options) => {
+      closeOptions.push(options);
       closeStarted.resolve();
       await releaseClose.promise;
       return ok(null);
@@ -91,7 +91,8 @@ it("closes the session when a signal arrives during the initial open, joining a 
   releaseClose.resolve();
 
   await expect(running).resolves.toBe(0);
-  expect(clientCloses).toBe(1);
+  // Process shutdown keeps provider documents, such as a Hopper GUI document.
+  expect(closeOptions).toEqual([{ retainDocument: true }]);
   expect(serveCalls).toBe(0);
   expect(unregistrations).toEqual(["shutdown"]);
   expect(output).toEqual([]);
