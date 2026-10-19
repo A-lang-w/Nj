@@ -39,8 +39,13 @@ change.
   bytes and their integrity checks are unchanged.
 - The manifest result names `parent_operation: "capture_browser_scenario"`,
   carries an empty `artifact` (`path: ""`, `sha256: null`) and states, as
-  limitations, the ordinal rule, any dropped capture events and how many
-  transactions retained no response body.
+  limitations, the ordinal rule, any dropped capture events, how many
+  transactions with a usable request line retained no response body (tools
+  citing them replay only the recorded status and content type, either of
+  which may be absent) and how many retained response bodies carry redaction
+  markers. A body that redaction emptied, because a declared secret could not
+  be cut out, is treated as not retained rather than replayed as an empty
+  reply.
 - `environment-serve` and `environment-export` authenticate either parent
   kind through the same loader, project scenario transactions through the same
   adapter, and keep the cross-check that the manifest's parent is the supplied

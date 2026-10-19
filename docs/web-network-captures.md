@@ -407,7 +407,10 @@ whenever it is nonzero the Evidence is inferred, otherwise derived. The view
 performs no network activity and replays nothing. Native mitmproxy, SAZ and
 qlog captures, and parents inspected with `sensitive_values`, return the same
 typed unsupported errors as the api-surface view, including the canonical
-token `sensitive_values_unretained`.
+token `sensitive_values_unretained`. A `capture_browser_scenario` parent is not
+refused for declaring secrets: the capture redacted them as it recorded, a
+transaction whose URL was redacted is left unrepresented, and a response body
+keeps the capture's redaction markers, which a manifest limitation counts.
 
 The manifest accumulator shares the api-surface admission model: the capture
 clone, the inline envelope, record pointers, groups, every route part, observed

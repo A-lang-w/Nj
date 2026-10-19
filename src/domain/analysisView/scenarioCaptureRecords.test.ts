@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -56,7 +58,7 @@ describe("scenarioCaptureRecords", () => {
       request: { method: "GET", url: "http://127.0.0.1:3101/api/slow" },
     });
     expect(projected.limitations).toContain(
-      "1 of 8 scenario transactions retained no response body; their tools replay status and content type only.",
+      "1 of 8 scenario transactions with a usable request line retained no response body; tools citing them replay only the recorded status and content type, either of which may be absent.",
     );
   });
 
@@ -73,9 +75,65 @@ describe("scenarioCaptureRecords", () => {
         items: [...capture.events.items, { ...response, sequence: 99 }],
       },
     };
+    const projected = scenarioCaptureRecords(duplicated, "manifest");
+    expect(projected.records[0]?.reported).toEqual({});
+    // No manifest tool can cite it, so it is not counted among bodiless tools.
     expect(
-      scenarioCaptureRecords(duplicated, "manifest").records[0]?.reported,
-    ).toEqual({});
+      projected.limitations.some((limitation) =>
+        limitation.includes("retained no response body"),
+      ),
+    ).toBe(false);
+  });
+
+  it("replays a redacted body's markers, counts it, and treats a body redaction emptied as not retained", () => {
+    const capture = scenarioCaptureFixture(SCENARIO_EXCHANGES.slice(1, 3));
+    const redacted =
+      (transaction: string, bytes: Buffer) =>
+      (event: (typeof capture.events.items)[number]) =>
+        event.kind === "network-content" &&
+        event.phase === "response" &&
+        event.transaction_id === transaction &&
+        event.body.state === "captured"
+          ? {
+              ...event,
+              body: {
+                ...event.body,
+                content: bytes.toString("base64"),
+                bytes: bytes.length,
+                sha256: createHash("sha256").update(bytes).digest("hex"),
+                redacted: true,
+              },
+            }
+          : event;
+    const marker = Buffer.from('{"token":"[REDACTED:owner_token]"}');
+    const projected = scenarioCaptureRecords(
+      {
+        ...capture,
+        events: {
+          ...capture.events,
+          items: capture.events.items
+            .map(redacted("request-1", marker))
+            .map(redacted("request-2", Buffer.alloc(0))),
+        },
+      },
+      "manifest",
+    );
+    expect(projected.records[0]?.reported).toMatchObject({
+      response: { content: { text: marker.toString("base64") } },
+    });
+    expect(projected.records[1]?.reported).toMatchObject({
+      response: { status: 200, content: { mimeType: "application/json" } },
+    });
+    expect(projected.records[1]?.reported).not.toHaveProperty(
+      "response.content.text",
+    );
+    expect(projected.records[1]?.binary_fields).toEqual([]);
+    expect(projected.limitations).toEqual(
+      expect.arrayContaining([
+        "1 of 2 scenario transactions with a usable request line retained no response body; tools citing them replay only the recorded status and content type, either of which may be absent.",
+        "1 of 2 scenario transactions retained a response body with declared secret values replaced by redaction markers; tools citing them replay the redacted bytes.",
+      ]),
+    );
   });
 });
 

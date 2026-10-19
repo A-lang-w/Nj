@@ -69,6 +69,23 @@ describe("environment manifests from capture_browser_scenario parents", () => {
     });
   });
 
+  it("names the one view a scenario capture supports when another is requested", () => {
+    const refused = inspectAnalysisView({
+      source: {
+        kind: "inline",
+        evidence: scenarioCaptureEvidence(scenarioCaptureFixture()),
+      },
+      view: { kind: "summary" },
+    });
+    if (refused.ok) throw new Error("Expected the unsupported view refusal");
+    expect(projectAnalysisError(refused.error)).toMatchObject({
+      code: "unsupported_target",
+      message: expect.stringContaining(
+        "supports only the environment-manifest view",
+      ),
+    });
+  });
+
   it("serves and exports a scenario-built manifest from the same capture", () => {
     const source = loadEnvironmentSource(fixture.manifest, fixture.capture);
     if (!source.ok) throw source.error;

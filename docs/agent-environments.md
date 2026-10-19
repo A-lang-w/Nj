@@ -36,8 +36,18 @@ member of `view.json` is the whole of `capture.json`.
 The capture can also come from REA itself: a
 [browser scenario](browser-scenario-contract.md) records a scripted session
 in a browser REA launches, and its Evidence is a manifest parent like a HAR
-inspection. Select the `network` event family and response bodies, and raise
-the body budget to the 256 KiB a replayed reply can carry:
+inspection. Select the `network` event family and response bodies. A replayed
+reply carries up to 256 KiB of a recorded body, but the scenario keeps at most
+`max_network_body_bytes` of each body (64 KiB by default), and only within its
+allocation budgets: base64 is charged about 11 bytes per body byte, and
+redaction more the shorter a declared secret is (about 35 bytes per body byte
+for a 12-character `admin_password`). A body over
+`max_network_body_allocation_bytes` (1 MiB by default) is kept as `unavailable`
+with that reason; one over `max_event_allocation_bytes` (4 MiB) or
+`max_total_event_allocation_bytes` (16 MiB) loses its whole content event,
+headers included, which the capture lists among its omissions. Either way its
+tool replays no body. The example raises all four so that 256 KiB bodies are
+kept when the declared secret has at least 12 characters:
 
 ```json
 {
@@ -79,7 +89,12 @@ the body budget to the 256 KiB a replayed reply can carry:
       "response_body": true,
       "header_values": false
     },
-    "limits": { "max_network_body_bytes": 262144 }
+    "limits": {
+      "max_network_body_bytes": 262144,
+      "max_network_body_allocation_bytes": 12582912,
+      "max_event_allocation_bytes": 12582912,
+      "max_total_event_allocation_bytes": 67108864
+    }
   }
 }
 ```
@@ -98,7 +113,9 @@ unrepresented too. Tools are chosen by response media type, so a scenario that
 selected neither response bodies nor header values is refused. The browser
 scenario redacts credential headers and the secrets it declares; values the
 application returns in response bodies, such as session tokens, are kept, and
-the replayed body is the bytes the browser exposes for each response.
+the replayed body is the bytes the browser exposes for each response, with any
+declared secret replaced by its redaction marker (a body that redaction had to
+empty replays no body).
 
 ## What a manifest is
 

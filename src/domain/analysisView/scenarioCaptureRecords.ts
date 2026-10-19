@@ -96,6 +96,14 @@ const captured = (
 ): CapturedBody | undefined =>
   content?.body.state === "captured" ? content.body : undefined;
 
+/** A captured response body, unless redaction emptied it because a secret could not be cut out. */
+const retainedBody = (
+  content: ContentEvent | undefined,
+): CapturedBody | undefined => {
+  const body = captured(content);
+  return body?.redacted === true && body.bytes === 0 ? undefined : body;
+};
+
 /** Strictly decoded text, keeping a byte-order mark; undefined for bytes that are not UTF-8. */
 const utf8Text = (body: CapturedBody): string | undefined => {
   try {
@@ -134,7 +142,13 @@ const record = (
   observed: TransactionIndex["requests"][number],
   index: TransactionIndex,
   purpose: "manifest" | "replay",
-): { readonly record: WebNetworkCaptureRecord; readonly body: boolean } => {
+): {
+  readonly record: WebNetworkCaptureRecord;
+  /** The record keeps a usable request line, so the manifest may cite it. */
+  readonly represented: boolean;
+  readonly body: boolean;
+  readonly redacted: boolean;
+} => {
   const { item, event: request } = observed;
   const location = {
     kind: "json-pointer" as const,
@@ -159,11 +173,13 @@ const record = (
   )
     return {
       record: { ordinal, location, reported: {}, ...empty },
+      represented: false,
       body: false,
+      redacted: false,
     };
   const requestContent = onlyContent(index, request.sequence);
   const responseContent = onlyContent(index, response?.sequence);
-  const body = captured(responseContent);
+  const body = retainedBody(responseContent);
   const mimeType = mediaType(responseContent) ?? "";
   return {
     record: {
@@ -198,7 +214,9 @@ const record = (
               },
             ],
     },
+    represented: !request.url.redacted,
     body: body !== undefined,
+    redacted: body?.redacted === true,
   };
 };
 
@@ -210,10 +228,13 @@ export const scenarioCaptureRecords = (
   const index = indexTransactions(capture.events.items);
   const records: WebNetworkCaptureRecord[] = [];
   let withoutBody = 0;
+  let redactedBodies = 0;
   for (const [ordinal, observed] of index.requests.entries()) {
     const projected = record(ordinal, observed, index, purpose);
     records.push(projected.record);
+    if (!projected.represented) continue;
     if (!projected.body) withoutBody += 1;
+    if (projected.redacted) redactedBodies += 1;
   }
   return {
     records,
@@ -227,7 +248,12 @@ export const scenarioCaptureRecords = (
         : []),
       ...(withoutBody > 0
         ? [
-            `${String(withoutBody)} of ${String(records.length)} scenario transactions retained no response body; their tools replay status and content type only.`,
+            `${String(withoutBody)} of ${String(records.length)} scenario transactions with a usable request line retained no response body; tools citing them replay only the recorded status and content type, either of which may be absent.`,
+          ]
+        : []),
+      ...(redactedBodies > 0
+        ? [
+            `${String(redactedBodies)} of ${String(records.length)} scenario transactions retained a response body with declared secret values replaced by redaction markers; tools citing them replay the redacted bytes.`,
           ]
         : []),
     ],
