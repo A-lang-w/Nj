@@ -80,6 +80,7 @@ export const recognizedComputedTransferSchema = z.strictObject({
   architecture: z.literal("sh4"),
   register: z.string().min(1),
   load_instruction: z.string(),
+  register_copy_instructions: z.array(z.string()).min(1).optional(),
   literal_address: z.string(),
   literal_bytes: z.string().regex(/^[0-9a-f]{8}$/u),
   byte_order: z.enum(["little", "big"]),

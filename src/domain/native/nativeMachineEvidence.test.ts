@@ -46,6 +46,33 @@ describe("native machine evidence", () => {
     ).toMatchObject({ target: "0x8c010000", register: "r2" });
   });
 
+  it("accepts an authenticated register-copy chain", () => {
+    expect(
+      recognizedComputedTransferSchema.parse({
+        source: "0x8c010014",
+        target: "0x8c010000",
+        kind: "call",
+        mechanism: "pc-relative-literal-load",
+        architecture: "sh4",
+        register: "r3",
+        load_instruction: "0x8c010010",
+        register_copy_instructions: ["0x8c010012"],
+        literal_address: "0x8c010018",
+        literal_bytes: "0000018c",
+        byte_order: "little",
+        target_memory: { initialized: true, executable: true },
+        provenance: [
+          "ghidra-listing-register-def-use",
+          "ghidra-reference-manager",
+          "ghidra-initialized-memory",
+        ],
+      }),
+    ).toMatchObject({
+      register: "r3",
+      register_copy_instructions: ["0x8c010012"],
+    });
+  });
+
   it("applies bounded defaults without selecting retained output", () => {
     expect(nativeMachineEvidenceInputSchema.parse({})).toEqual({
       max_functions: 10_000,

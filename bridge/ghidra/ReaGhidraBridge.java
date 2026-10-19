@@ -1385,6 +1385,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Register transferRegister = transfer.getRegister(0);
         if (transferRegister == null) return null;
         transferRegister = transferRegister.getBaseRegister();
+        Register trackedRegister = transferRegister;
+        List<Address> registerCopies = new ArrayList<>();
+        Set<Address> trackedRegisterAddresses = new HashSet<>();
+        trackedRegisterAddresses.add(trackedRegister.getAddress());
 
         Instruction cursor = transfer;
         Instruction load = null;
@@ -1397,14 +1401,33 @@ public final class ReaGhidraBridge extends HeadlessScript {
             boolean writesTransferRegister = false;
             for (Object result : candidate.getResultObjects()) {
                 if (result instanceof Register written &&
-                    written.getBaseRegister().equals(transferRegister)) {
+                    written.getBaseRegister().equals(trackedRegister)) {
                     writesTransferRegister = true;
                     break;
                 }
             }
             if (writesTransferRegister) {
-                load = candidate;
-                break;
+                if (mnemonic(candidate).equals("MOV.L")) {
+                    load = candidate;
+                    break;
+                }
+                Register copiedFrom = null;
+                if (mnemonic(candidate).equals("MOV")) {
+                    for (PcodeOp operation : candidate.getPcode()) {
+                        Varnode output = operation.getOutput();
+                        if (operation.getOpcode() != PcodeOp.COPY || output == null ||
+                            !output.getAddress().equals(trackedRegister.getAddress()) ||
+                            output.getSize() != 4 || operation.getNumInputs() != 1) continue;
+                        Varnode input = operation.getInput(0);
+                        Register inputRegister = currentProgram.getRegister(input.getAddress(), input.getSize());
+                        if (inputRegister == null) continue;
+                        copiedFrom = inputRegister.getBaseRegister();
+                    }
+                }
+                if (copiedFrom == null ||
+                    !trackedRegisterAddresses.add(copiedFrom.getAddress())) return null;
+                registerCopies.add(candidate.getAddress());
+                trackedRegister = copiedFrom;
             }
             if (!candidate.getFlowType().isFallthrough()) return null;
             cursor = candidate;
@@ -1424,7 +1447,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         for (PcodeOp operation : load.getPcode()) {
             Varnode output = operation.getOutput();
             if (operation.getOpcode() == PcodeOp.COPY && output != null &&
-                output.getAddress().equals(transferRegister.getAddress()) &&
+                output.getAddress().equals(trackedRegister.getAddress()) &&
                 output.getSize() == 4 && operation.getNumInputs() == 1 &&
                 operation.getInput(0).getAddress().equals(literalAddress) &&
                 operation.getInput(0).getSize() == 4) {
@@ -1463,6 +1486,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.addProperty("architecture", "sh4");
         result.addProperty("register", transferRegister.getName().toLowerCase(Locale.ROOT));
         result.addProperty("load_instruction", canonicalAddress(load.getAddress()));
+        if (!registerCopies.isEmpty()) {
+            JsonArray copyInstructions = new JsonArray();
+            for (int index = registerCopies.size() - 1; index >= 0; index--)
+                copyInstructions.add(canonicalAddress(registerCopies.get(index)));
+            result.add("register_copy_instructions", copyInstructions);
+        }
         result.addProperty("literal_address", canonicalAddress(literalAddress));
         result.addProperty("literal_bytes", java.util.HexFormat.of().formatHex(literalBytes));
         result.addProperty("byte_order", currentProgram.getLanguage().isBigEndian() ? "big" : "little");
