@@ -8,6 +8,7 @@ import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
+import { npxRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => {
@@ -17,13 +18,14 @@ afterEach(() => {
 describe("client registration status", () => {
   it("discovers Claude Code from its config file without a marker directory", async () => {
     const home = await createTestTempDirectory("rea-claude-config-only-");
+    const command = npxRegistrationCommand();
     await writeFile(
       join(home, ".claude.json"),
       JSON.stringify({
         mcpServers: {
           rea: {
-            command: "npx",
-            args: ["-y", PRODUCT_IDENTITY.registrationPackageSpecifier, "mcp"],
+            command: command[0],
+            args: command.slice(1),
           },
         },
       }),
@@ -43,6 +45,7 @@ describe("client registration status", () => {
 
   it("distinguishes aligned, stale, missing, and invalid registrations", async () => {
     const home = await createTestTempDirectory("rea-registrations-");
+    const command = npxRegistrationCommand();
     await Promise.all([
       mkdir(join(home, ".codex")),
       mkdir(join(home, ".cursor")),
@@ -51,7 +54,7 @@ describe("client registration status", () => {
     ]);
     await writeFile(
       join(home, ".codex/config.toml"),
-      `[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "${PRODUCT_IDENTITY.registrationPackageSpecifier}", "mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 450\n`,
+      `[mcp_servers.rea]\ncommand = ${JSON.stringify(command[0])}\nargs = ${JSON.stringify(command.slice(1))}\nstartup_timeout_sec = 30\ntool_timeout_sec = 450\n`,
     );
     await writeFile(
       join(home, ".cursor/mcp.json"),
