@@ -388,3 +388,106 @@ it("does not retain table scope after a native relation resolves as unrelated", 
     launcher.pid,
   ]);
 });
+
+it.each(["replaced", "unavailable"] as const)(
+  "retains an omitted descendant when its ancestor's generation is %s",
+  async (ancestorGeneration) => {
+    const evidenceOwner = new ProcessOwnershipEvidenceOwner();
+    const ownership = {
+      runId: "run",
+      leaderPid: launcher.pid,
+      processGroupId: launcher.processGroupId,
+      sweepTokenOwnedProcesses: true as const,
+      evidenceOwner,
+    };
+    const detached = { ...grandchild, processGroupId: grandchild.pid };
+    let phase: "observing" | "omitted" | "exited" = "observing";
+    let identityReads = 0;
+    const signalGroup = vi.fn();
+    const host: ProcessOwnershipHost = {
+      listProcesses: async () =>
+        phase === "observing" ? [launcher, child, detached] : [],
+      environment: async () => ({}),
+      runTokens: async (rows) =>
+        new Map(
+          rows.map(({ pid }) => [
+            pid,
+            pid === detached.pid
+              ? { state: "unavailable" as const, reason: "token denied" }
+              : {
+                  state: "readable" as const,
+                  runId: pid === launcher.pid ? "run" : "foreign",
+                },
+          ]),
+        ),
+      processIdentities: async (rows) => {
+        identityReads += 1;
+        return new Map(
+          rows.map((row): [number, ProcessIdentityObservation] => {
+            if (
+              phase === "exited" ||
+              (phase === "omitted" && row.pid !== detached.pid)
+            )
+              return [row.pid, { state: "absent", reason: "not-in-snapshot" }];
+            if (row.pid !== child.pid) return [row.pid, nativeIdentity(row)];
+            if (identityReads === 1)
+              return [
+                row.pid,
+                ancestorGeneration === "unavailable"
+                  ? { state: "unavailable", reason: "identity denied" }
+                  : nativeIdentity(row),
+              ];
+            // This unrelated relation belongs to a new or unproven generation.
+            // It cannot disprove the old ancestry of the surviving descendant.
+            return [
+              row.pid,
+              {
+                ...nativeIdentity({
+                  ...row,
+                  parentPid: 1,
+                  processGroupId: 200,
+                }),
+                identity: "replacement-101",
+              },
+            ];
+          }),
+        );
+      },
+      signalGroup,
+    };
+
+    const lineage = await observeOwnedProcessLineage(ownership, host);
+    const retained = evidenceOwner.candidates;
+    phase = "omitted";
+    // The ancestor has exited, but its detached descendant is still alive.
+    // Losing that descendant would falsely certify cleanup from an empty table.
+    await expect(
+      cleanupOwnedProcessGroup(ownership, host),
+    ).resolves.toMatchObject({
+      cleaned: false,
+      failures: [
+        expect.objectContaining({
+          pid: detached.pid,
+          reason: "environment-unreadable",
+        }),
+      ],
+    });
+    expect(lineage.status).toBe("unavailable");
+    expect(retained).toContainEqual(
+      expect.objectContaining({
+        pid: detached.pid,
+        identity: "start-102",
+        applicability: "related-ownership-unresolved",
+        scopeEvidence: "unverified-table-relation",
+      }),
+    );
+
+    phase = "exited";
+    await expect(cleanupOwnedProcessGroup(ownership, host)).resolves.toEqual({
+      cleaned: true,
+      signaled: false,
+    });
+    expect(evidenceOwner.candidates).toEqual([]);
+    expect(signalGroup).not.toHaveBeenCalled();
+  },
+);

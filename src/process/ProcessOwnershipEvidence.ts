@@ -137,13 +137,11 @@ export class ProcessOwnershipEvidenceOwner {
         if (identity?.relation?.state === "observed") return identity.relation;
         const fallback = options.unverifiedLineageRelations?.get(candidatePid);
         if (fallback === undefined) return undefined;
-        const current = factsByPid.get(candidatePid)?.identityAfter;
-        // A fresh native relation can disprove the earlier table scope. Never
-        // substitute the table link once that relation is available.
-        if (
-          current?.state === "readable" &&
-          current.relation?.state === "observed"
-        ) {
+        const current = sameGeneration.get(candidatePid);
+        // Only a same-generation native relation can disprove the earlier
+        // scope. A replacement or unproven generation must not sever the
+        // retained ancestry of a surviving descendant.
+        if (current?.relation?.state === "observed") {
           if (identity === undefined) unverifiedRelation = true;
           return current.relation;
         }
