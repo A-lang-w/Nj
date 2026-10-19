@@ -105,21 +105,35 @@ describe("compiled Apple asset catalog projection", () => {
     );
   });
 
-  it.each([0, 1, 5])(
-    "does not mark an empty catalog inventory as truncated at offset %i",
-    (offset) => {
-      const page = projectAppleAssetCatalogPage({
-        targetSha256: "c".repeat(64),
-        catalogs: [],
-        offset,
-        limit: 10,
-      });
+  it.each([
+    { label: "no compiled catalogs", catalogs: [] },
+    {
+      label: "catalogs present but containing no records",
+      catalogs: [
+        {
+          path: "Resources/Empty/Assets.car",
+          sha256: "e".repeat(64),
+          records: parseAppleAssetCatalogRecords([]),
+        },
+      ],
+    },
+  ])(
+    "does not mark an empty inventory as truncated at offset 0, 1, or 5 ($label)",
+    ({ catalogs }) => {
+      for (const offset of [0, 1, 5]) {
+        const page = projectAppleAssetCatalogPage({
+          targetSha256: "c".repeat(64),
+          catalogs,
+          offset,
+          limit: 10,
+        });
 
-      expect(page.offset).toBe(offset);
-      expect(page.total_records).toBe(0);
-      expect(page.records).toEqual([]);
-      expect(page.next_offset).toBeNull();
-      expect(page.truncated).toBe(false);
+        expect(page.offset).toBe(offset);
+        expect(page.total_records).toBe(0);
+        expect(page.records).toEqual([]);
+        expect(page.next_offset).toBeNull();
+        expect(page.truncated).toBe(false);
+      }
     },
   );
 });
