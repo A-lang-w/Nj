@@ -1,5 +1,9 @@
 import * as t from "@babel/types";
 import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
+import {
+  isIntrinsicTypedArrayConstruction,
+  isTypedArrayNumericIndex,
+} from "./javascriptSemanticTypedArrays.js";
 
 import {
   semanticGlobalProcessOrigin,
@@ -1081,6 +1085,7 @@ type MutationObservableOrigin =
   | "ambient"
   | "array"
   | "array-prototype"
+  | "typed-array"
   | "opaque";
 
 interface MutationObserverNode {
@@ -1091,6 +1096,7 @@ interface MutationObserverNode {
   readonly read?: {
     readonly source: MutationObserverNode;
     readonly key: PropertyPath[number];
+    readonly numericIndex: boolean;
   };
 }
 
@@ -1145,15 +1151,16 @@ const observableMutationPaths = (
   const project = (
     source: MutationObserverNode,
     path: PropertyPath,
+    numericIndex = false,
   ): MutationObserverNode => {
     let observer = source;
     for (const key of path) {
-      const identity = JSON.stringify(
+      const identity = `${numericIndex ? "numeric:" : ""}${JSON.stringify(
         key === null || typeof key === "object" ? key : String(key),
-      );
+      )}`;
       let selected = observer.projections?.get(identity);
       if (selected === undefined) {
-        selected = create({ source: observer, key });
+        selected = create({ source: observer, key, numericIndex });
         (observer.projections ??= new Map()).set(identity, selected);
         (observer.dependents ??= new Set()).add(selected);
         schedule(selected);
@@ -1209,6 +1216,11 @@ const observableMutationPaths = (
         // discard observable escapes through a shared getter result.
         if (
           t.isNewExpression(expression) &&
+          isIntrinsicTypedArrayConstruction(expression, state)
+        )
+          (observer.origins ??= new Set()).add("typed-array");
+        else if (
+          t.isNewExpression(expression) &&
           semanticClassCandidates(expression.callee, state).length === 0
         )
           (observer.origins ??= new Set()).add("opaque");
@@ -1239,12 +1251,19 @@ const observableMutationPaths = (
           t.isOptionalMemberExpression(expression)
         )
           link(
-            project(expressionNode(expression.object), [
-              semanticStaticPropertyKey(
+            project(
+              expressionNode(expression.object),
+              [
+                semanticStaticPropertyKey(
+                  expression.property,
+                  expression.computed,
+                ),
+              ],
+              isTypedArrayNumericIndex(
                 expression.property,
                 expression.computed,
               ),
-            ]),
+            ),
             observer,
           );
         else
@@ -1272,16 +1291,25 @@ const observableMutationPaths = (
       for (const source of observer.sources ?? [])
         for (const origin of source.origins ?? []) add(origin);
       if (observer.read !== undefined) {
-        const { source, key } = observer.read;
+        const { source, key, numericIndex } = observer.read;
         if (key === null || typeof key === "object") {
           // Dynamic keys and copied-slot masks retain their original paths.
           // Enumerating their exclusion combinations would recreate the growth
           // that the mutation collector's selection union already prevents.
-          if ((source.origins?.size ?? 0) > 0) add("opaque");
+          if (
+            [...(source.origins ?? [])].some(
+              (origin) => origin !== "typed-array" || !numericIndex,
+            )
+          )
+            add("opaque");
         } else
           for (const origin of source.origins ?? []) {
             if (typeof origin === "string") {
-              if (origin === "array-prototype" || origin === "opaque")
+              if (origin === "typed-array") {
+                // Custom properties can hold references; only canonical numeric
+                // indices have the native Number/BigInt/undefined result contract.
+                if (!numericIndex) add("opaque");
+              } else if (origin === "array-prototype" || origin === "opaque")
                 add(origin);
               else if (
                 origin === "ambient" &&
