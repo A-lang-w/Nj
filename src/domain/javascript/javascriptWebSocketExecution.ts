@@ -190,6 +190,42 @@ const webSocketFreshMethodSelection = (
     : undefined;
 };
 
+/** Normalize actual invocation separately from creating a bound function. */
+const webSocketStoredCallTarget = (
+  raw: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): t.Node | undefined => {
+  let current = unwrapJavaScriptExpression(raw).node;
+  if (t.isMemberExpression(current) || t.isOptionalMemberExpression(current)) {
+    const method = semanticStaticPropertyName(
+      current.property,
+      current.computed,
+    );
+    if (method === "bind") return undefined;
+    if (method === "call" || method === "apply") current = current.object;
+  }
+  const seen = new Set<t.Node>();
+  while (!seen.has(current)) {
+    seen.add(current);
+    const exact = semanticExactValueIdentity(current, state);
+    const value = exact?.node ?? current;
+    // A bind call is followed only when its result is itself the callee.
+    if (t.isCallExpression(value) || t.isOptionalCallExpression(value)) {
+      const callee = unwrapJavaScriptExpression(value.callee).node;
+      if (
+        (t.isMemberExpression(callee) ||
+          t.isOptionalMemberExpression(callee)) &&
+        semanticStaticPropertyName(callee.property, callee.computed) === "bind"
+      ) {
+        current = callee.object;
+        continue;
+      }
+    }
+    return value;
+  }
+  return undefined;
+};
+
 const storedCallbackCalls = new WeakMap<
   JavaScriptSemanticAnalysisState,
   {
@@ -254,16 +290,15 @@ const webSocketStoredCalls = (
       }
     }
     for (const call of state.callSites) {
-      const root = unwrapJavaScriptExpression(call.callee).node;
-      if (!t.isIdentifier(root)) continue;
-      const binding = resolveSemanticBindingState(state, root, root.name);
-      const exact = semanticExactValueIdentity(call.callee, state);
-      const functions =
-        exact !== undefined && t.isFunction(exact.node)
-          ? [exact.node]
-          : binding?.kind === "parameter"
-            ? (parameters.get(binding.bindingId) ?? [])
-            : [];
+      const target = webSocketStoredCallTarget(call.callee, state);
+      const binding = t.isIdentifier(target)
+        ? resolveSemanticBindingState(state, target, target.name)
+        : undefined;
+      const functions = t.isFunction(target)
+        ? [target]
+        : binding?.kind === "parameter"
+          ? (parameters.get(binding.bindingId) ?? [])
+          : [];
       for (const fn of new Set(functions))
         facts.calls.set(fn, [...(facts.calls.get(fn) ?? []), call]);
     }

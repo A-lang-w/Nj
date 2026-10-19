@@ -682,6 +682,90 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "r57-0.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");connect.call(null);const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r57-1.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");connect.apply(null,[]);const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r57-2.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");const Socket=globalThis.WebSocket;connect.call(null);',
+    present: true,
+  },
+  {
+    file: "r57-3.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");const Socket=globalThis.WebSocket;connect.apply(null,[]);',
+    present: true,
+  },
+  {
+    file: "r57-4.js",
+    source:
+      'const connect=(0,()=>new Socket("wss://example.test/review-latest"));const alias=connect;alias["call"](null);const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r57-5.js",
+    source:
+      '((run)=>run.call(null))(()=>new Socket("wss://example.test/review-latest"));const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r57-6.js",
+    source:
+      '((run)=>run.apply(null,[]))(()=>new Socket("wss://example.test/review-latest"));const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r57-7.js",
+    source:
+      '(async(run)=>{await 0;run.call(null)})(()=>new Socket("wss://example.test/review-latest"));const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r57-8.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");connect.bind(null);const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r57-9.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");connect.bind(null)();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r57-10.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");const bound=connect.bind(null);bound();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r57-11.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");const bound=connect.bind(null);const Socket=globalThis.WebSocket;bound();',
+    present: true,
+  },
+  {
+    file: "r57-12.js",
+    source:
+      '((run)=>run.bind(null)())(()=>new Socket("wss://example.test/review-latest"));const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r57-13.js",
+    source:
+      '((run)=>run.bind(null))(()=>new Socket("wss://example.test/review-latest"));const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
     file: "r56-0.js",
     source:
       'const connect=(0,()=>new Socket("wss://example.test/review-latest"));connect();const Socket=globalThis.WebSocket;',

@@ -4770,6 +4770,76 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "stored call runs before constructor binding",
+    "const connect=()=>new Socket(URL);connect.call(null);const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "stored apply runs before constructor binding",
+    "const connect=()=>new Socket(URL);connect.apply(null,[]);const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "stored call runs after constructor binding",
+    "const connect=()=>new Socket(URL);const Socket=globalThis.WebSocket;connect.call(null);",
+    true,
+  ],
+  [
+    "stored apply runs after constructor binding",
+    "const connect=()=>new Socket(URL);const Socket=globalThis.WebSocket;connect.apply(null,[]);",
+    true,
+  ],
+  [
+    "stored sequence alias call runs before binding",
+    'const connect=(0,()=>new Socket(URL));const alias=connect;alias["call"](null);const Socket=globalThis.WebSocket;',
+    false,
+  ],
+  [
+    "parameter call runs before constructor binding",
+    "((run)=>run.call(null))(()=>new Socket(URL));const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "parameter apply runs before constructor binding",
+    "((run)=>run.apply(null,[]))(()=>new Socket(URL));const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "parameter call after mandatory wait observes binding",
+    "(async(run)=>{await 0;run.call(null)})(()=>new Socket(URL));const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "bound callback creation is not invocation",
+    "const connect=()=>new Socket(URL);connect.bind(null);const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "bound result invokes before constructor binding",
+    "const connect=()=>new Socket(URL);connect.bind(null)();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "stored bound result invokes before constructor binding",
+    "const connect=()=>new Socket(URL);const bound=connect.bind(null);bound();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "stored bound result invokes after constructor binding",
+    "const connect=()=>new Socket(URL);const bound=connect.bind(null);const Socket=globalThis.WebSocket;bound();",
+    true,
+  ],
+  [
+    "parameter bound result invokes before constructor binding",
+    "((run)=>run.bind(null)())(()=>new Socket(URL));const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "parameter bound creation is not invocation",
+    "((run)=>run.bind(null))(()=>new Socket(URL));const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
     "sequence stored callback runs before binding",
     "const connect=(0,()=>new Socket(URL));connect();const Socket=globalThis.WebSocket;",
     false,
