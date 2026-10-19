@@ -117,6 +117,16 @@ export interface GhidraProjectPruneResult {
   readonly bytes: number;
 }
 
+/**
+ * A stored entry whose manifest describes the directory that holds it. The key
+ * is the scanned directory, never a key the manifest names, so every removal
+ * targets the entry that was inspected.
+ */
+interface GhidraProjectEntry {
+  readonly key: string;
+  readonly manifest: GhidraProjectManifest;
+}
+
 /** Owns the on-disk store of previously analyzed Ghidra projects. */
 export class GhidraProjectStore {
   readonly #root: string;
@@ -168,27 +178,15 @@ export class GhidraProjectStore {
           rejectedEntry: { error: admitted.error, discarded: true },
         });
       }
-      const manifest = await this.#readManifest(entryPath);
-      if (!manifest.ok) {
+      const entry = await this.#readEntry(key);
+      if (!entry.ok) {
         await this.#discard(entryPath);
         return ok({
           ...this.#miss(key, entryPath, input.mode),
-          rejectedEntry: { error: manifest.error, discarded: true },
+          rejectedEntry: { error: entry.error, discarded: true },
         });
       }
-      const identityError = this.#manifestIdentityError(
-        manifest.value,
-        key,
-        entryPath,
-      );
-      if (identityError !== undefined) {
-        await this.#discard(entryPath);
-        return ok({
-          ...this.#miss(key, entryPath, input.mode),
-          rejectedEntry: { error: identityError, discarded: true },
-        });
-      }
-      if (this.#expired(manifest.value, Date.now())) {
+      if (this.#expired(entry.value.manifest, Date.now())) {
         // An entry older than the configured maximum age is never reused. It
         // is removed so this session can rebuild it, unless another session
         // still holds it for its runtime copy.
@@ -211,8 +209,8 @@ export class GhidraProjectStore {
         key,
         hit: true,
         entryPath,
-        programName: manifest.value.program_name,
-        programSha256: manifest.value.program_sha256,
+        programName: entry.value.manifest.program_name,
+        programSha256: entry.value.manifest.program_sha256,
       });
     } catch (cause: unknown) {
       if (input.signal?.aborted === true) throw cause;
@@ -376,21 +374,13 @@ export class GhidraProjectStore {
     const issues: string[] = [];
     const admitted = await admitGhidraProjectDirectory(entryPath);
     if (!admitted.ok) issues.push(admitted.error.message);
-    const manifest = await this.#readManifest(entryPath);
-    if (!manifest.ok) {
-      issues.push(manifest.error.message);
-    } else {
-      const identityError = this.#manifestIdentityError(
-        manifest.value,
-        key,
-        entryPath,
+    const entry = await this.#readEntry(key);
+    if (!entry.ok) {
+      issues.push(entry.error.message);
+    } else if (admitted.ok)
+      issues.push(
+        ...(await this.#digestIssues(entryPath, entry.value.manifest, signal)),
       );
-      if (identityError !== undefined) issues.push(identityError.message);
-      else if (admitted.ok)
-        issues.push(
-          ...(await this.#digestIssues(entryPath, manifest.value, signal)),
-        );
-    }
     return { key, ok: issues.length === 0, issues };
   }
 
@@ -410,6 +400,28 @@ export class GhidraProjectStore {
     } catch (cause: unknown) {
       return [cause instanceof Error ? cause.message : String(cause)];
     }
+  }
+
+  /**
+   * Read the manifest of one scanned entry and confirm that it describes the
+   * directory it was found in. A manifest that names another key, or whose
+   * identity no longer derives its key, belongs to a different analysis, so
+   * the entry is damaged rather than reusable. This is the one place that
+   * decides whether a stored manifest describes the directory that holds it.
+   */
+  async #readEntry(
+    key: string,
+  ): Promise<Result<GhidraProjectEntry, GhidraProjectCacheError>> {
+    const entryPath = this.#entryPath(key);
+    const manifest = await this.#readManifest(entryPath);
+    if (!manifest.ok) return err(manifest.error);
+    const identityError = this.#manifestIdentityError(
+      manifest.value,
+      key,
+      entryPath,
+    );
+    if (identityError !== undefined) return err(identityError);
+    return ok({ key, manifest: manifest.value });
   }
 
   /**
@@ -460,7 +472,11 @@ export class GhidraProjectStore {
     return Number.isFinite(ageMs) && ageMs > this.#maxAgeDays * 86_400_000;
   }
 
-  /** Every valid stored manifest, for discovery and pruning. */
+  /**
+   * Every stored entry whose manifest describes its own directory. A damaged
+   * entry is reported by `verify()` and reclaimed by `prune()`; it is never
+   * listed under a key that names a different entry.
+   */
   async list(
     signal?: AbortSignal,
   ): Promise<
@@ -470,8 +486,8 @@ export class GhidraProjectStore {
     if (!keys.ok) return keys;
     const manifests: GhidraProjectManifest[] = [];
     for (const key of keys.value) {
-      const manifest = await this.#readManifest(this.#entryPath(key));
-      if (manifest.ok) manifests.push(manifest.value);
+      const entry = await this.#readEntry(key);
+      if (entry.ok) manifests.push(entry.value.manifest);
     }
     return ok(manifests);
   }
@@ -480,8 +496,10 @@ export class GhidraProjectStore {
    * Remove stale entries and abandoned staging copies, then the oldest entries
    * until the store fits its ceiling. Entries a hit recently leased for its
    * runtime copy are protected from removal. An entry whose manifest cannot be
-   * read is damaged, so it contributes no listed size; it is removed here
-   * instead of escaping the ceiling forever.
+   * read, or whose manifest does not describe its own directory, is damaged,
+   * so it contributes no listed size; it is removed here instead of escaping
+   * the ceiling forever. Every removal targets the scanned directory, so a
+   * damaged manifest never redirects a removal to another entry.
    */
   async prune(
     signal?: AbortSignal,
@@ -511,46 +529,50 @@ export class GhidraProjectStore {
       removed.push(key);
       freed += bytes;
     };
-    const manifests: GhidraProjectManifest[] = [];
+    const entries: GhidraProjectEntry[] = [];
     for (const key of keys.value) {
-      const manifest = await this.#readManifest(this.#entryPath(key));
-      if (manifest.ok) {
-        manifests.push(manifest.value);
+      const entry = await this.#readEntry(key);
+      if (entry.ok) {
+        entries.push(entry.value);
         continue;
       }
       // A damaged entry cannot be discovered or counted through `list()`, and
       // its recorded size is untrustworthy. Measure it before removing so the
-      // freed total stays useful without re-reading project contents.
+      // freed total stays useful without re-reading project contents. The
+      // removal targets the scanned directory, never a key the manifest names.
       if (protectedKeys.has(key)) continue;
       await drop(key, await this.#directoryBytes(this.#entryPath(key)));
     }
     const nowMs = Date.now();
-    const fresh: GhidraProjectManifest[] = [];
-    for (const manifest of manifests) {
-      if (protectedKeys.has(manifest.key)) {
-        fresh.push(manifest);
+    const fresh: GhidraProjectEntry[] = [];
+    for (const entry of entries) {
+      if (protectedKeys.has(entry.key)) {
+        fresh.push(entry);
         continue;
       }
-      if (this.#expired(manifest, nowMs))
-        await drop(manifest.key, manifest.size_bytes);
-      else fresh.push(manifest);
+      if (this.#expired(entry.manifest, nowMs))
+        await drop(entry.key, entry.manifest.size_bytes);
+      else fresh.push(entry);
     }
-    let total = fresh.reduce((sum, entry) => sum + entry.size_bytes, 0);
+    let total = fresh.reduce(
+      (sum, entry) => sum + entry.manifest.size_bytes,
+      0,
+    );
     if (total <= this.#maxBytes) return ok({ removed, bytes: freed });
     fresh.sort((left, right) =>
-      left.last_used_at < right.last_used_at
+      left.manifest.last_used_at < right.manifest.last_used_at
         ? -1
-        : left.last_used_at > right.last_used_at
+        : left.manifest.last_used_at > right.manifest.last_used_at
           ? 1
           : left.key < right.key
             ? -1
             : 1,
     );
-    for (const manifest of fresh) {
+    for (const entry of fresh) {
       if (total <= this.#maxBytes) break;
-      if (protectedKeys.has(manifest.key)) continue;
-      await drop(manifest.key, manifest.size_bytes);
-      total -= manifest.size_bytes;
+      if (protectedKeys.has(entry.key)) continue;
+      await drop(entry.key, entry.manifest.size_bytes);
+      total -= entry.manifest.size_bytes;
     }
     return ok({ removed, bytes: freed });
   }

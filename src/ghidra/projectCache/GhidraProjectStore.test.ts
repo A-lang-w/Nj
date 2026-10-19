@@ -3,6 +3,7 @@ import {
   mkdtemp,
   mkdir,
   readFile,
+  readdir,
   rm,
   stat,
   symlink,
@@ -447,6 +448,67 @@ describe("GhidraProjectStore entry age", () => {
 });
 
 describe("GhidraProjectStore damaged entries", () => {
+  /** Publish one stored entry and return its cache key. */
+  const publishEntry = async (
+    store: GhidraProjectStore,
+    id: GhidraProjectCacheIdentity,
+    now?: string,
+  ): Promise<string> => {
+    const reservation = await store.prepare({ identity: id, mode: "on" });
+    if (!reservation.ok || reservation.value === null)
+      throw new Error("expected a reservation");
+    const published = await store.publish({
+      ...publishable(store, reservation),
+      identity: id,
+      target: { ...target, sha256: id.targetSha256 },
+      ...(now === undefined ? {} : { now }),
+    });
+    if (!published.ok)
+      throw new Error(`publish failed: ${published.error.message}`);
+    return ghidraProjectCacheKey(id);
+  };
+
+  /** The bytes a stored directory occupies, measured the way a prune does. */
+  const directoryBytes = async (path: string): Promise<number> => {
+    let total = 0;
+    for (const entry of await readdir(path, { withFileTypes: true })) {
+      const child = join(path, entry.name);
+      total += entry.isDirectory()
+        ? await directoryBytes(child)
+        : (await stat(child)).size;
+    }
+    return total;
+  };
+
+  /** Point a stored manifest at another entry's key. */
+  const damageManifestKey = async (key: string, named: string) => {
+    const manifest = JSON.parse(
+      await readFile(join(root, key, "manifest.json"), "utf8"),
+    ) as GhidraProjectManifest;
+    manifest.key = named;
+    await writeFile(
+      join(root, key, "manifest.json"),
+      serializeGhidraProjectManifest(manifest),
+    );
+  };
+
+  /**
+   * Publish a valid entry and a second entry whose manifest names the first
+   * one's key. The damaged entry describes another analysis, so it is not
+   * reusable and a prune must not act on the key it names.
+   */
+  const publishDamagedPair = async (
+    store: GhidraProjectStore,
+    damaged: GhidraProjectCacheIdentity,
+    named: GhidraProjectCacheIdentity,
+    now?: string,
+  ): Promise<{ readonly damagedKey: string; readonly namedKey: string }> => {
+    const damagedKey = await publishEntry(store, damaged, now);
+    const namedKey = await publishEntry(store, named);
+    await damageManifestKey(damagedKey, namedKey);
+    return { damagedKey, namedKey };
+  };
+
   it("prunes entries that have no readable manifest", async () => {
     const store = newStore();
     const malformed = "a".repeat(64);
@@ -490,6 +552,71 @@ describe("GhidraProjectStore damaged entries", () => {
     if (!pruned.ok) throw new Error("prune failed");
     expect(pruned.value.removed).toEqual([key]);
     await expect(stat(join(root, key))).rejects.toThrow();
+  });
+
+  it("removes a damaged entry by its own key instead of the key it names", async () => {
+    const store = newStore();
+    const { damagedKey, namedKey } = await publishDamagedPair(
+      store,
+      { ...identity(), targetSha256: "1".repeat(64) },
+      { ...identity(), targetSha256: "2".repeat(64) },
+      new Date(Date.now() - 40 * 86_400_000).toISOString(),
+    );
+    const freed = await directoryBytes(join(root, damagedKey));
+    const aged = new GhidraProjectStore({
+      root,
+      maxBytes: 1_000_000,
+      maxAgeDays: 30,
+      platform: "linux",
+    });
+
+    const pruned = await aged.prune();
+    if (!pruned.ok) throw new Error("prune failed");
+    expect(pruned.value.removed).toEqual([damagedKey]);
+    // The reported bytes are the bytes of the entry that was removed.
+    expect(pruned.value.bytes).toBe(freed);
+    await expect(stat(join(root, damagedKey))).rejects.toThrow();
+    // The entry the damaged manifest names is untouched.
+    await expect(stat(join(root, namedKey))).resolves.toBeDefined();
+  });
+
+  it("trims size without removing the entry a damaged manifest names", async () => {
+    const store = newStore();
+    const { damagedKey, namedKey } = await publishDamagedPair(
+      store,
+      { ...identity(), targetSha256: "3".repeat(64) },
+      { ...identity(), targetSha256: "4".repeat(64) },
+    );
+    const namedManifest = JSON.parse(
+      await readFile(join(root, namedKey, "manifest.json"), "utf8"),
+    ) as GhidraProjectManifest;
+    // The ceiling holds the named entry alone, so the damaged entry must go.
+    const smaller = newStore(namedManifest.size_bytes);
+
+    const pruned = await smaller.prune();
+    if (!pruned.ok) throw new Error("prune failed");
+    expect(pruned.value.removed).toEqual([damagedKey]);
+    await expect(stat(join(root, damagedKey))).rejects.toThrow();
+    await expect(stat(join(root, namedKey))).resolves.toBeDefined();
+  });
+
+  it("does not list a damaged entry under the key its manifest names", async () => {
+    const store = newStore();
+    const { damagedKey, namedKey } = await publishDamagedPair(
+      store,
+      { ...identity(), targetSha256: "5".repeat(64) },
+      { ...identity(), targetSha256: "6".repeat(64) },
+    );
+
+    const listed = await store.list();
+    if (!listed.ok) throw new Error("list failed");
+    expect(listed.value.map((entry) => entry.key)).toEqual([namedKey]);
+    // The damaged entry is still reported by the integrity check.
+    const verified = await store.verify();
+    if (!verified.ok) throw new Error("verify failed");
+    const rows = new Map(verified.value.map((entry) => [entry.key, entry.ok]));
+    expect(rows.get(damagedKey)).toBe(false);
+    expect(rows.get(namedKey)).toBe(true);
   });
 });
 
