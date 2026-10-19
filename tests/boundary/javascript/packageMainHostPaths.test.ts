@@ -33,8 +33,8 @@ it.each(["absolute-host", "relative-package"] as const)(
         ]),
       ),
     });
-    const require = createRequire(join(artifact, "app/main.cjs"));
-    expect(require.resolve("fixture")).toBe(
+    const loader = createRequire(join(artifact, "app/main.cjs"));
+    expect(loader.resolve("fixture")).toBe(
       kind === "absolute-host"
         ? host
         : join(artifact, "app/node_modules/fixture/entry.cjs"),

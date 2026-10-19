@@ -2913,6 +2913,8 @@ describe("contextual JavaScript module identity", () => {
     const analysis = analyzeJavaScriptStaticSource(
       `
         import { BrowserWindow } from "electron";
+        import path, { dirname } from "node:path";
+        import { fileURLToPath } from "node:url";
         new BrowserWindow({ webPreferences: {
           preload: path.resolve("ignored", __dirname, "preload.cjs")
         }});

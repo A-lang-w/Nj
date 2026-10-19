@@ -1,6 +1,7 @@
 import {
   semanticProjectedSourcesAtRead as moduleObjectSourcesAtRead,
   semanticProjectedSourceFactsAtRead,
+  semanticProjectedSourceEligibilityAtRead,
   semanticNormalizeCapturedSelections,
   semanticShiftCapturedSelections,
   type SemanticCapturedSelection,
@@ -706,6 +707,7 @@ const moduleReturnedReferences = new WeakMap<
 type ModuleObjectSource = {
   readonly node: t.Node;
   readonly path: SemanticAliasSelectionPath;
+  readonly eligibility?: true;
   readonly readAt?: t.Node | undefined;
   readonly capturedSelections?:
     | readonly SemanticCapturedSelection[]
@@ -715,6 +717,7 @@ type ModuleObjectSource = {
 /** Both loader queries retain the same read and shallow-copy selection owner. */
 const loaderSourceContextKey = (source: ModuleObjectSource): string =>
   JSON.stringify([
+    source.eligibility,
     source.readAt?.start,
     source.readAt?.end,
     source.capturedSelections?.map(({ at, depth, ownEnumerable }) => [
@@ -730,6 +733,7 @@ const inheritLoaderSourceContext = (
   sources: readonly ModuleObjectSource[],
 ): ModuleObjectSource[] =>
   sources.map((source) => ({
+    ...(current.eligibility ? { eligibility: true as const } : {}),
     ...(current.readAt === undefined ? {} : { readAt: current.readAt }),
     ...source,
     capturedSelections: semanticNormalizeCapturedSelections(
@@ -1039,32 +1043,46 @@ const hasCommonJsModuleSource = (
       !read.hasDefiniteInitializer
     )
       return true;
-    let sources = moduleObjectSourcesAtRead(
-      binding,
-      value,
-      path,
-      state,
-      includeUnknown,
-      next.readAt ?? value,
-      next.capturedSelections,
-    );
+    let eligibility = next.eligibility;
+    let sources = eligibility
+      ? semanticProjectedSourceEligibilityAtRead(
+          binding,
+          value,
+          path,
+          state,
+          next.readAt ?? value,
+          next.capturedSelections,
+        )
+      : moduleObjectSourcesAtRead(
+          binding,
+          value,
+          path,
+          state,
+          includeUnknown,
+          next.readAt ?? value,
+          next.capturedSelections,
+        );
     if (sources === undefined) {
       if (target !== "delegate") return true;
       // An opaque member effect can obscure a selected native delegate, but
       // cannot make every escaped callable a possible Node loader. Keep its
-      // known selected sources as the eligibility boundary for that gap.
-      sources = moduleObjectSourcesAtRead(
+      // receiver's retained sources as the eligibility boundary for that gap.
+      sources = semanticProjectedSourceEligibilityAtRead(
         binding,
         value,
         path,
         state,
-        false,
         next.readAt ?? value,
         next.capturedSelections,
       );
       if (sources === undefined) return true;
+      eligibility = true;
     }
-    enqueue(...projectedLoaderSources({ ...next, node: value, path }, sources));
+    enqueue(
+      ...projectedLoaderSources({ ...next, node: value, path }, sources).map(
+        (source) => (eligibility ? { ...source, eligibility } : source),
+      ),
+    );
   }
   return false;
 };

@@ -135,8 +135,33 @@ export const semanticProjectedSourcesAtRead = (
 ): readonly ProjectedSource[] | undefined =>
   semanticProjectedSourceFactsAtRead(...arguments_)?.sources;
 
+/** Retain the selected receiver's possible owners after its current value becomes opaque. */
+export const semanticProjectedSourceEligibilityAtRead = (
+  binding: JavaScriptSemanticBindingState,
+  reference: t.Node,
+  path: SemanticAliasSelectionPath,
+  state: JavaScriptSemanticAnalysisState,
+  memberReadAt: t.Node = reference,
+  capturedSelections: readonly SemanticCapturedSelection[] = [],
+): readonly ProjectedSource[] | undefined =>
+  projectedSourceFactsAtRead(
+    binding,
+    reference,
+    path,
+    state,
+    false,
+    memberReadAt,
+    capturedSelections,
+    true,
+  )?.sources;
+
 /** Keep imported origins subject to the same selected writes as other values. */
 export const semanticProjectedSourceFactsAtRead = (
+  ...arguments_: Parameters<typeof projectedSourceFactsAtRead>
+): ReturnType<typeof projectedSourceFactsAtRead> =>
+  projectedSourceFactsAtRead(...arguments_);
+
+const projectedSourceFactsAtRead = (
   binding: JavaScriptSemanticBindingState,
   reference: t.Node,
   path: SemanticAliasSelectionPath,
@@ -144,6 +169,7 @@ export const semanticProjectedSourceFactsAtRead = (
   includeUnknown: boolean,
   memberReadAt: t.Node = reference,
   capturedSelections: readonly SemanticCapturedSelection[] = [],
+  retainEligibility = false,
 ):
   | {
       readonly sources: readonly ProjectedSource[];
@@ -287,7 +313,7 @@ export const semanticProjectedSourceFactsAtRead = (
     return undefined;
   const sources: ProjectedSource[] = [];
   for (const effect of writes) {
-    if (superseded(effect)) continue;
+    if (!retainEligibility && superseded(effect)) continue;
     if (
       !t.isAssignmentExpression(effect.node) ||
       !["=", "||=", "&&=", "??="].includes(effect.node.operator)
@@ -332,7 +358,8 @@ export const semanticProjectedSourceFactsAtRead = (
       }
     }
   }
-  if (replacement !== undefined) return { sources, retainsOrigin: false };
+  if (!retainEligibility && replacement !== undefined)
+    return { sources, retainsOrigin: false };
   for (const initializer of read.binding.initializers) {
     if (semanticReferenceIterationUnknown(initializer, state)) return undefined;
     if (semanticReferenceSourcesInactive(initializer, state)) continue;
