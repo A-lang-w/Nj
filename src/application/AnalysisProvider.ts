@@ -106,7 +106,7 @@ export const createAnalysisExecutionEvidence = (
   execution: AnalysisExecution,
   confidence: "observed" | "derived" = "observed",
 ): Evidence =>
-  createEvidence(execution.subject ?? undefined, execution.provider, {
+    createEvidence(execution.subject ?? undefined, execution.provider, {
     operation,
     parameters: jsonObjectSchema.parse(input),
     result: execution.result,
@@ -114,7 +114,9 @@ export const createAnalysisExecutionEvidence = (
     limitations: execution.limitations,
     locations: execution.locations,
     confidence,
-    analysisProfile: execution.analysisProfile, // ✅ CORE FIX: Explicitly retain the profile
+    ...(execution.analysisProfile !== undefined
+      ? { analysisProfile: execution.analysisProfile }
+      : {}),
   });
 
 export interface AnalysisOperationPort {
