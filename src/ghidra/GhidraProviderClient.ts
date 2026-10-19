@@ -510,15 +510,9 @@ export const createGhidraProviderClient = (input: {
           "Ghidra analysis was reused from a local project cache; this session did not import or re-analyze the target. The stored program is bound to the target, provider, JVM, and import profile it was built from.",
         ]
       : []),
-    ...(projectPersistence?.discardedEntry === undefined
+    ...(projectPersistence?.rejectedEntry === undefined
       ? []
-      : [
-          `A stored Ghidra project was discarded (${projectPersistence.discardedEntry.reason}${
-            projectPersistence.discardedEntry.path === undefined
-              ? ""
-              : ` at ${projectPersistence.discardedEntry.path}`
-          }); this session rebuilt it with a fresh import.`,
-        ]),
+      : [rejectedProjectLimitation(projectPersistence.rejectedEntry)]),
     ...(psp ? GHIDRA_PSP_LIMITATIONS : []),
     ...softFloatLimitations,
     ...ghidraExtensionLimitations(extensions),
@@ -1155,6 +1149,16 @@ const ghidraStartupTimeoutGuidance = (timeoutMs: number) => ({
   userMessage: `Ghidra did not finish importing and analyzing the target within its ${String(timeoutMs)} ms startup deadline (REA_GHIDRA_STARTUP_TIMEOUT_MS).`,
   remediationAction: `Large binaries can need longer: set REA_GHIDRA_STARTUP_TIMEOUT_MS above ${String(timeoutMs)} in the environment that starts REA, or skip expensive analyzers with REA_GHIDRA_DISABLED_ANALYZERS, then open the target again. An MCP client's own tool-call timeout is separate and may also need raising.`,
 });
+
+/** Explain why a stored project was not reused by this session. */
+const rejectedProjectLimitation = (
+  rejected: NonNullable<GhidraProjectPersistence["rejectedEntry"]>,
+): string => {
+  const where = rejected.path === undefined ? "" : ` at ${rejected.path}`;
+  return rejected.discarded
+    ? `A stored Ghidra project was discarded (${rejected.reason}${where}); this session rebuilt it with a fresh import.`
+    : `A stored Ghidra project was not reused (${rejected.reason}${where}) because another session is still using it; this session rebuilt it with a fresh import.`;
+};
 
 /** A provider already observed as running can be restarted by reopening. */
 const exitedProviderMessage = (

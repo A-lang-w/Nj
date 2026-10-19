@@ -25,10 +25,12 @@ export interface GhidraProjectPersistence {
   readonly publishable: boolean;
   /** True only on a hit, when the launcher opens the stored program. */
   readonly reuse: boolean;
-  /** A corrupt stored entry discarded before this session rebuilt it. */
-  readonly discardedEntry?: {
+  /** A stored entry this session did not reuse and rebuilt with a fresh import. */
+  readonly rejectedEntry?: {
     readonly reason: string;
     readonly path?: string;
+    /** The entry was removed; false while another session still holds it. */
+    readonly discarded: boolean;
   };
 }
 

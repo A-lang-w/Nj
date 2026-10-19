@@ -124,6 +124,61 @@ const projectCacheOf = (
   };
 };
 
+/** The managed identity a resolved profile commits to. */
+const identityOf = (
+  subject: BinaryTarget,
+  commitment: { import_profile_digest: string },
+): GhidraProjectCacheIdentity => ({
+  providerId: "ghidra",
+  providerVersion: "12.1.4",
+  jvmVmName: "OpenJDK 64-Bit Server VM",
+  platform: "linux",
+  targetSha256: subject.sha256,
+  importProfileDigest: commitment.import_profile_digest,
+});
+
+/** Populate the cache with a stored project, as a completed import would. */
+const publishStoredProject = async (
+  root: string,
+  identity: GhidraProjectCacheIdentity,
+  options: { readonly now?: string } = {},
+): Promise<void> => {
+  const store = new GhidraProjectStore({
+    root,
+    maxBytes: 1_000_000,
+    platform: "linux",
+  });
+  const source = await mkdtemp(join(tmpdir(), "rea-project-source-"));
+  onTestFinished(() => rm(source, { recursive: true, force: true }));
+  await mkdir(join(source, "rea-project.rep", "idata"), { recursive: true });
+  await writeFile(join(source, "rea-project.gpr"), "");
+  await writeFile(
+    join(source, "rea-project.rep", "idata", "db.gbf"),
+    "program",
+  );
+  const reservation = await store.prepare({ identity, mode: "on" });
+  if (!reservation.ok || reservation.value === null)
+    throw new Error("expected a reservation");
+  const published = await store.publish({
+    reservation: reservation.value,
+    identity,
+    target: {
+      sha256: identity.targetSha256,
+      kind: "executable",
+      format: "elf",
+      architecture: "x86_64",
+      executable_role: null,
+    },
+    sourceProjectDirectory: source,
+    programName: "fixture",
+    programSha256: identity.targetSha256,
+    producer: { reaVersion: "6.4.0", runId: "run-1" },
+    ...(options.now === undefined ? {} : { now: options.now }),
+  });
+  if (!published.ok || !published.value.published)
+    throw new Error("expected the stored project to be published");
+};
+
 describe("Ghidra project cache integration", () => {
   it("keeps the ephemeral profile and launcher when the cache is off", async () => {
     const launchers: GhidraHeadlessLauncher[] = [];
@@ -162,47 +217,9 @@ describe("Ghidra project cache integration", () => {
     await missClient.close();
 
     // Populate the entry the miss reserved, as a completed import would.
-    const identity: GhidraProjectCacheIdentity = {
-      providerId: "ghidra",
-      providerVersion: "12.1.4",
-      jvmVmName: "OpenJDK 64-Bit Server VM",
-      platform: "linux",
-      targetSha256: subject.sha256,
-      importProfileDigest: missCommitment.import_profile_digest,
-    };
+    const identity = identityOf(subject, missCommitment);
     expect(ghidraProjectCacheKey(identity)).toBe(missCommitment.key);
-    const store = new GhidraProjectStore({
-      root,
-      maxBytes: 1_000_000,
-      platform: "linux",
-    });
-    const source = await mkdtemp(join(tmpdir(), "rea-project-source-"));
-    onTestFinished(() => rm(source, { recursive: true, force: true }));
-    await mkdir(join(source, "rea-project.rep", "idata"), { recursive: true });
-    await writeFile(join(source, "rea-project.gpr"), "");
-    await writeFile(
-      join(source, "rea-project.rep", "idata", "db.gbf"),
-      "program",
-    );
-    const reservation = await store.prepare({ identity, mode: "on" });
-    if (!reservation.ok || reservation.value === null)
-      throw new Error("expected a reservation");
-    const published = await store.publish({
-      reservation: reservation.value,
-      identity,
-      target: {
-        sha256: subject.sha256,
-        kind: "executable",
-        format: "elf",
-        architecture: "x86_64",
-        executable_role: null,
-      },
-      sourceProjectDirectory: source,
-      programName: "fixture",
-      programSha256: subject.sha256,
-      producer: { reaVersion: "6.4.0", runId: "run-1" },
-    });
-    expect(published.ok && published.value.published).toBe(true);
+    await publishStoredProject(root, identity);
 
     // Hit: the same identity, and the launcher opens the stored project.
     const hitLaunchers: GhidraHeadlessLauncher[] = [];
@@ -249,6 +266,41 @@ describe("Ghidra project cache integration", () => {
       "was discarded (manifest",
     );
     await expect(stat(entry)).rejects.toThrow();
+    await client.close();
+  });
+
+  it("does not reuse a stored project older than the configured age", async () => {
+    const root = await temporaryCacheRoot();
+    const environment = {
+      REA_GHIDRA_PROJECT_CACHE: "on",
+      REA_GHIDRA_PROJECT_CACHE_DIR: root,
+      REA_GHIDRA_PROJECT_CACHE_MAX_AGE_DAYS: "30",
+    };
+    const subject = target();
+    const seedProfile = commitProfile(
+      await provider(environment).resolveAnalysisProfile(subject),
+    );
+    const commitment = projectCacheOf(seedProfile);
+    const identity = identityOf(subject, commitment);
+    expect(ghidraProjectCacheKey(identity)).toBe(commitment.key);
+    // Populate the entry as a completed import 40 days old would have.
+    await publishStoredProject(root, identity, {
+      now: new Date(Date.now() - 40 * 86_400_000).toISOString(),
+    });
+
+    const launchers: GhidraHeadlessLauncher[] = [];
+    const ghidra = provider(environment, capturingFactory(launchers));
+    const profile = commitProfile(await ghidra.resolveAnalysisProfile(subject));
+    const client = ghidra.createClient(subject, profile);
+    const health = await client.execute("health", {});
+    if (!health.ok) throw health.error;
+    // The expired project is not reused; the session imports a fresh one.
+    expect(launchers[0]?.options.existingProject).toBeUndefined();
+    expect(launchers[0]?.options.saveImportedProject).toBe(true);
+    expect(health.value.limitations.join("\n")).toContain(
+      "was discarded (expired",
+    );
+    await expect(stat(join(root, commitment.key))).rejects.toThrow();
     await client.close();
   });
 });

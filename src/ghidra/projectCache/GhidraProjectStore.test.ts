@@ -145,7 +145,7 @@ describe("GhidraProjectStore", () => {
     await mkdir(join(root, key), { recursive: true });
     await writeFile(join(root, key, "stray.txt"), "not a project");
     const miss = await store.prepare({ identity: identity(), mode: "on" });
-    expect(miss.ok && miss.value?.invalidEntry?.reason).toBe("layout");
+    expect(miss.ok && miss.value?.rejectedEntry?.error.reason).toBe("layout");
     expect(miss.ok && miss.value?.hit === false).toBe(true);
   });
 
@@ -159,7 +159,7 @@ describe("GhidraProjectStore", () => {
       serializeGhidraProjectManifest(manifestWithKey("9".repeat(64))),
     );
     const miss = await store.prepare({ identity: identity(), mode: "on" });
-    expect(miss.ok && miss.value?.invalidEntry?.reason).toBe("identity");
+    expect(miss.ok && miss.value?.rejectedEntry?.error.reason).toBe("identity");
   });
 
   it("does not overwrite an existing entry when another publisher won", async () => {
@@ -195,7 +195,7 @@ describe("GhidraProjectStore", () => {
       serializeGhidraProjectManifest(manifest),
     );
     const hit = await store.prepare({ identity: identity(), mode: "on" });
-    expect(hit.ok && hit.value?.invalidEntry?.reason).toBe("identity");
+    expect(hit.ok && hit.value?.rejectedEntry?.error.reason).toBe("identity");
     expect(hit.ok && hit.value?.hit === false).toBe(true);
   });
 
@@ -213,7 +213,7 @@ describe("GhidraProjectStore", () => {
         join(root, key, "rea-project.rep", "linked.gpr"),
       );
       const miss = await store.prepare({ identity: identity(), mode: "on" });
-      expect(miss.ok && miss.value?.invalidEntry?.reason).toBe("layout");
+      expect(miss.ok && miss.value?.rejectedEntry?.error.reason).toBe("layout");
       expect(miss.ok && miss.value?.hit === false).toBe(true);
     },
   );
@@ -331,6 +331,113 @@ describe("GhidraProjectStore maintenance", () => {
     const pruned = await aged.prune();
     if (!pruned.ok) throw new Error("prune failed");
     expect(pruned.value.removed).toEqual([ghidraProjectCacheKey(older)]);
+    const remaining = await aged.list();
+    if (!remaining.ok) throw new Error("list failed");
+    expect(remaining.value.map((entry) => entry.key)).toEqual([
+      ghidraProjectCacheKey(newer),
+    ]);
+  });
+});
+
+describe("GhidraProjectStore entry age", () => {
+  const dayMs = 86_400_000;
+  const agedStore = (maxAgeDays?: number): GhidraProjectStore =>
+    new GhidraProjectStore({
+      root,
+      maxBytes: 1_000_000,
+      ...(maxAgeDays === undefined ? {} : { maxAgeDays }),
+      platform: "linux",
+    });
+
+  /** Publish an entry whose manifest records `days` days of age. */
+  const publishAged = async (
+    store: GhidraProjectStore,
+    id: GhidraProjectCacheIdentity,
+    days: number,
+  ): Promise<string> => {
+    const reservation = await store.prepare({ identity: id, mode: "on" });
+    if (!reservation.ok || reservation.value === null)
+      throw new Error("expected a reservation");
+    const published = await store.publish({
+      ...publishable(store, reservation),
+      identity: id,
+      target: { ...target, sha256: id.targetSha256 },
+      now: new Date(Date.now() - days * dayMs).toISOString(),
+    });
+    expect(published.ok && published.value.published).toBe(true);
+    return ghidraProjectCacheKey(id);
+  };
+
+  it("does not reuse an entry older than the configured age", async () => {
+    const store = newStore();
+    const id = { ...identity(), targetSha256: "7".repeat(64) };
+    const key = await publishAged(store, id, 40);
+
+    const aged = agedStore(30);
+    const miss = await aged.prepare({ identity: id, mode: "read" });
+    expect(miss.ok && miss.value?.hit).toBe(false);
+    expect(miss.ok && miss.value?.rejectedEntry?.error.reason).toBe("expired");
+    expect(miss.ok && miss.value?.rejectedEntry?.discarded).toBe(true);
+    // The expired entry is removed, so a later session can publish a fresh one.
+    await expect(stat(join(root, key))).rejects.toThrow();
+  });
+
+  it("keeps an expired entry another session is still reading", async () => {
+    const store = newStore();
+    const id = { ...identity(), targetSha256: "8".repeat(64) };
+    const key = await publishAged(store, id, 40);
+    await mkdir(join(root, "leases"), { recursive: true });
+    await writeFile(
+      join(root, "leases", `${key}.lease`),
+      new Date().toISOString(),
+    );
+
+    const aged = agedStore(30);
+    const miss = await aged.prepare({ identity: id, mode: "read" });
+    expect(miss.ok && miss.value?.hit).toBe(false);
+    expect(miss.ok && miss.value?.rejectedEntry?.error.reason).toBe("expired");
+    expect(miss.ok && miss.value?.rejectedEntry?.discarded).toBe(false);
+    // The entry another session is copying stays in place.
+    await expect(stat(join(root, key))).resolves.toBeDefined();
+  });
+
+  it("reuses an entry that is within the configured age", async () => {
+    const store = newStore();
+    const id = { ...identity(), targetSha256: "9".repeat(64) };
+    await publishAged(store, id, 1);
+
+    const aged = agedStore(30);
+    const hit = await aged.prepare({ identity: id, mode: "read" });
+    expect(hit.ok && hit.value?.hit).toBe(true);
+    expect(hit.ok && hit.value?.rejectedEntry).toBeUndefined();
+  });
+
+  it("reuses an entry of any age when no maximum age is configured", async () => {
+    const store = newStore();
+    const id = { ...identity(), targetSha256: "b".repeat(64) };
+    await publishAged(store, id, 400);
+
+    const hit = await agedStore().prepare({ identity: id, mode: "read" });
+    expect(hit.ok && hit.value?.hit).toBe(true);
+  });
+
+  it("refuses to reuse exactly the entries a prune would remove", async () => {
+    const store = newStore();
+    const older = { ...identity(), targetSha256: "c".repeat(64) };
+    const newer = { ...identity(), targetSha256: "d".repeat(64) };
+    await publishAged(store, older, 40);
+    await publishAged(store, newer, 1);
+
+    const aged = agedStore(30);
+    const refused = await aged.prepare({ identity: older, mode: "read" });
+    expect(refused.ok && refused.value?.hit).toBe(false);
+    expect(refused.ok && refused.value?.rejectedEntry?.error.reason).toBe(
+      "expired",
+    );
+    const reused = await aged.prepare({ identity: newer, mode: "read" });
+    expect(reused.ok && reused.value?.hit).toBe(true);
+    // The expired entry is gone and the fresh one is kept, the same set a
+    // prune of this store would leave behind.
     const remaining = await aged.list();
     if (!remaining.ok) throw new Error("list failed");
     expect(remaining.value.map((entry) => entry.key)).toEqual([
@@ -471,7 +578,7 @@ describe("GhidraProjectStore resilience", () => {
     if (!hit.ok) throw new Error(`prepare failed: ${hit.error.message}`);
     if (hit.value === null || hit.value.hit !== true)
       throw new Error(
-        `expected a hit, reason=${hit.value?.invalidEntry?.reason ?? "none"}`,
+        `expected a hit, reason=${hit.value?.rejectedEntry?.error.reason ?? "none"}`,
       );
 
     const listed = await store.list();

@@ -65,7 +65,7 @@ identity rebinding that makes prior snapshots replay across sessions.
 ## Deferred (follow-ups)
 
 - `rea cache list|remove|prune|verify` CLI and the pre-open discovery surface.
-- LRU/age eviction beyond the size cap; single-flight miss collapsing.
+- LRU eviction beyond the size cap; single-flight miss collapsing.
 - Bridge-reported program-state digest to tighten replay beyond intent.
 - Seed-from-existing-project (`rea cache import`).
 - `open_binary`/server-default enablement (authority sign-off).

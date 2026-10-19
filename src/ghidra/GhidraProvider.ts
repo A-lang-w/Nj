@@ -108,10 +108,12 @@ interface ManagedGhidraProject {
   readonly store: GhidraProjectStore;
   readonly identity: GhidraProjectCacheIdentity;
   readonly reservation: GhidraProjectReservation;
-  /** A corrupt stored entry discarded before this session rebuilt it. */
-  readonly discardedEntry?: {
+  /** A stored entry this session did not reuse and rebuilt with a fresh import. */
+  readonly rejectedEntry?: {
     readonly reason: string;
     readonly path?: string;
+    /** The entry was removed; false while another session still holds it. */
+    readonly discarded: boolean;
   };
 }
 
@@ -756,14 +758,16 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       return undefined;
     }
     if (prepared.value === null) return undefined;
-    const invalidEntry = prepared.value.invalidEntry;
-    if (invalidEntry !== undefined)
+    const rejected = prepared.value.rejectedEntry;
+    if (rejected !== undefined)
       this.logger.warn(
         {
-          reason: invalidEntry.reason,
-          path: invalidEntry.path,
+          reason: rejected.error.reason,
+          path: rejected.error.path,
         },
-        "Discarded a corrupt stored Ghidra project; a fresh import will rebuild it",
+        rejected.discarded
+          ? "Discarded a stored Ghidra project that could not be reused; a fresh import will rebuild it"
+          : "A stored Ghidra project was not reused; a fresh import will rebuild it",
       );
     const parameters: Record<string, JsonValue> = {
       ...intentProfile.parameters,
@@ -785,14 +789,15 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         store,
         identity,
         reservation: prepared.value,
-        ...(invalidEntry === undefined
+        ...(rejected === undefined
           ? {}
           : {
-              discardedEntry: {
-                reason: invalidEntry.reason,
-                ...(invalidEntry.path === undefined
+              rejectedEntry: {
+                reason: rejected.error.reason,
+                ...(rejected.error.path === undefined
                   ? {}
-                  : { path: invalidEntry.path }),
+                  : { path: rejected.error.path }),
+                discarded: rejected.discarded,
               },
             }),
       },
@@ -822,9 +827,9 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       },
       publishable: !reuse && managed.reservation.stagingPath !== undefined,
       reuse,
-      ...(managed.discardedEntry === undefined
+      ...(managed.rejectedEntry === undefined
         ? {}
-        : { discardedEntry: managed.discardedEntry }),
+        : { rejectedEntry: managed.rejectedEntry }),
     };
   }
 }

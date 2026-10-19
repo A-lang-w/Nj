@@ -62,8 +62,21 @@ export interface GhidraProjectReservation {
   /** Present on a hit: the stored program name and its recorded digest. */
   readonly programName?: string;
   readonly programSha256?: string;
-  /** An existing entry was present but rejected; a miss was served instead. */
-  readonly invalidEntry?: GhidraProjectCacheError;
+  /** An existing entry was present but not reused; a miss was served instead. */
+  readonly rejectedEntry?: GhidraProjectRejection;
+}
+
+/**
+ * Why a stored entry was not reused, and what happened to the entry itself.
+ */
+export interface GhidraProjectRejection {
+  /** The typed reason the entry could not be reused. */
+  readonly error: GhidraProjectCacheError;
+  /**
+   * The entry was removed. False when another session still holds the entry
+   * for its runtime copy, so the entry was left in place.
+   */
+  readonly discarded: boolean;
 }
 
 export interface GhidraProjectPublishInput {
@@ -152,7 +165,7 @@ export class GhidraProjectStore {
         await this.#discard(entryPath);
         return ok({
           ...this.#miss(key, entryPath, input.mode),
-          invalidEntry: admitted.error,
+          rejectedEntry: { error: admitted.error, discarded: true },
         });
       }
       const manifest = await this.#readManifest(entryPath);
@@ -160,7 +173,7 @@ export class GhidraProjectStore {
         await this.#discard(entryPath);
         return ok({
           ...this.#miss(key, entryPath, input.mode),
-          invalidEntry: manifest.error,
+          rejectedEntry: { error: manifest.error, discarded: true },
         });
       }
       const identityError = this.#manifestIdentityError(
@@ -172,7 +185,25 @@ export class GhidraProjectStore {
         await this.#discard(entryPath);
         return ok({
           ...this.#miss(key, entryPath, input.mode),
-          invalidEntry: identityError,
+          rejectedEntry: { error: identityError, discarded: true },
+        });
+      }
+      if (this.#expired(manifest.value, Date.now())) {
+        // An entry older than the configured maximum age is never reused. It
+        // is removed so this session can rebuild it, unless another session
+        // still holds it for its runtime copy.
+        const retained = await this.#isLeased(key);
+        if (!retained) await this.#discard(entryPath);
+        return ok({
+          ...this.#miss(key, entryPath, input.mode),
+          rejectedEntry: {
+            error: new GhidraProjectCacheError(
+              "expired",
+              "Stored Ghidra project is older than the configured maximum age",
+              entryPath,
+            ),
+            discarded: !retained,
+          },
         });
       }
       await this.#touchLease(key);
@@ -417,6 +448,18 @@ export class GhidraProjectStore {
     );
   }
 
+  /**
+   * Whether a stored entry is older than the configured maximum age. The
+   * lookup and the prune share this rule, so an entry a lookup refuses to
+   * reuse is the same entry a prune would remove. An unset maximum age applies
+   * no age limit, and an unparsable timestamp keeps the entry.
+   */
+  #expired(manifest: GhidraProjectManifest, nowMs: number): boolean {
+    if (this.#maxAgeDays === undefined) return false;
+    const ageMs = nowMs - Date.parse(manifest.last_used_at);
+    return Number.isFinite(ageMs) && ageMs > this.#maxAgeDays * 86_400_000;
+  }
+
   /** Every valid stored manifest, for discovery and pruning. */
   async list(
     signal?: AbortSignal,
@@ -488,12 +531,7 @@ export class GhidraProjectStore {
         fresh.push(manifest);
         continue;
       }
-      const ageMs = nowMs - Date.parse(manifest.last_used_at);
-      if (
-        this.#maxAgeDays !== undefined &&
-        Number.isFinite(ageMs) &&
-        ageMs > this.#maxAgeDays * 86_400_000
-      )
+      if (this.#expired(manifest, nowMs))
         await drop(manifest.key, manifest.size_bytes);
       else fresh.push(manifest);
     }

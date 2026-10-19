@@ -33,6 +33,7 @@ export type GhidraProjectCacheFailureReason =
   | "layout"
   | "manifest"
   | "identity"
+  | "expired"
   | "io"
   | "busy"
   | "capacity"

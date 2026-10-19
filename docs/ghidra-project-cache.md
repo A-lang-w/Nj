@@ -69,6 +69,11 @@ replays in the later session.
 - On a hit REA verifies the manifest and the cheap identity fields; the full
   per-file digest is recorded at publish for integrity checks rather than
   re-hashed on every open.
+- An entry older than `REA_GHIDRA_PROJECT_CACHE_MAX_AGE_DAYS` is never reused.
+  The lookup refuses it and removes it, so the session rebuilds the project
+  with a fresh import that can replace it in the store. An entry another
+  session is still reading is left in place, and the refusal is reported in
+  the session Evidence. The lookup and `cache-prune` apply the same age rule.
 
 ## Managing the cache
 
