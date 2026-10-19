@@ -1,37 +1,39 @@
 # Compiler artifact verification
 
-## Current integration verification — 18 October 2026
+## Current integration verification — 19 October 2026
 
-Integration base: `8307ea371` (REA 6.7.0), Linux x64, Node 24.18.0,
+Integration base: `3ea0d9489` (REA 6.7.0), Linux x64, Node 24.18.0,
 npm 11.16.0, unchanged `solc 0.8.30+commit.73712a01.Emscripten.clang`
 and bundled `evmole@0.9.3`.
 
-- `npm run check`: passed typecheck, lint, formatting, unused-code, metadata,
-  module-boundary and architecture checks.
-- `npm run docs:check`: passed generated documentation checks and all five
-  README consistency tests.
-- `npm run test:fast`: all 620 source test files passed; 10,256 tests passed,
-  eight platform/capability cases skipped.
-- Focused compiler parser, domain, view, service, provider and MCP suites:
-  119 passed, two opposing-platform cases skipped.
+- `npm run check:ci`: all eight static tasks and architecture checks passed.
+- Pinned `actionlint 1.7.7`: both changed workflows passed syntax/expression checks.
+- `npm run docs:check`: passed, including five README consistency tests.
+- Twelve focused CI-contract, plist, native-UI and compiler-artifact suites:
+  445 passed, 26 host-specific cases skipped on Linux.
 - `node scripts/verify-solc-artifacts.mjs`: all 80 public CLI/stdio-MCP cases
   passed, with verified process-lineage cleanup and zero descendants.
-- Retained-view CLI/MCP and CI-scope suites: all 326 tests passed.
-- Existing raw/hex public EVM verifier: all 59 cases passed, with syscall tracing
-  and zero remaining descendants. All four real compiler metadata variants passed.
-- The eight other previously failing test files passed all 245 tests on this
-  integration, including the session MCP workflow on Linux.
-- The CI workflow contract test reproduced the missing build-cache step in
-  the portability job. With the shared cache action restored, all 17 tests pass.
-- Astra reviewed the resolved lifecycle integration and found no actionable
-  defects. Compiler selection is preserved through main's Evidence finalization
-  and CLI cleanup helpers; service tests cover late cancellation and invalid
-  selection precedence.
+- `npm run test:fast`: 10,706 passed, eight skipped, one failure in
+  `src/doctorRuntime.test.ts`, where cleanup could not read a live process's
+  ownership token (`environment_errno_EACCES`). Its isolated nine-test rerun
+  passed. This does not establish a fix or a clean full-suite result.
+- Astra reviewed the Windows artifact dependencies, standalone fallback and
+  verification order and found no actionable defects.
 
-The earlier hosted [CI run on `0602a06fe`](https://github.com/morluto/rea/actions/runs/38496525678)
-passed the Linux EVM verifier and native macOS/Windows compiler-contract and
-unsupported-host checks. That run also failed broader suites; it does not prove
-this integration revision passes hosted CI. EVM inference remains Linux x64 only.
+The failed [hosted run](https://github.com/morluto/rea/actions/runs/39168287778)
+checked out synthetic merge `740964e1d1e56a746d4c252fade5cdc929fa33ba`
+(head `29e5d9b98`, main `32f0e5120`), rather than the branch's own older base.
+Its plist/native-UI assertion failures are addressed by upstream `d1adc6079`,
+included in this integration. The Windows EVM job failed before tests because
+its source checkout lacked native controls. The workflow now restores and
+verifies the matching artifact before setup; ordinary CI reuses its existing
+producer and standalone dispatch builds the artifact on Linux. A CI-contract
+regression failed before this wiring and passed afterward.
+
+Current-head native Windows/macOS execution remains pending hosted CI. Linux
+inference is verified only for the owned public fixtures above; other hosts
+retain explicit provider refusal. Historical cost and live-agent results below
+are pinned to their identified revisions.
 
 ## Historical verification — 13 October 2026
 
