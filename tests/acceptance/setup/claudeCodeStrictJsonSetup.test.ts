@@ -108,7 +108,7 @@ for (const { client, name, path, syntax, original } of clients.flatMap((c) =>
   );
 
 for (const { client, name, path, prefix } of clients.flatMap((c) =>
-  ["", "﻿"].map((prefix) => ({ ...c, prefix })),
+  ["", "\uFEFF"].map((prefix) => ({ ...c, prefix })),
 ))
   cliTest(
     `${name} setup configures strict JSON with prefix ${JSON.stringify(prefix)}`,
