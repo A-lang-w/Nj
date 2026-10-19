@@ -34,7 +34,7 @@ try {
   await writeFile(
     seeds,
     [
-      "0x0\tfunction\tseed_low",
+      "0x0\tfunction_body\t0x0-0x0\tseed_low",
       "0x100000000\tfunction\tout_of_range",
       "0x1\tfunction\tseed_high",
       "0x1000\tlabel\tseed_global",
@@ -93,7 +93,7 @@ try {
   await rm(workspace, { recursive: true, force: true });
 }
 console.log(
-  "Real Ghidra pre-script regression passed: descending function order, out-of-range seed, BSS label, BSS code rejection, analyzer option readback, unknown-analyzer abort before post-scripts, and owned-process cleanup.",
+  "Real Ghidra pre-script regression passed: exact function body, descending function order, out-of-range seed, BSS label, BSS code rejection, analyzer option readback, unknown-analyzer abort before post-scripts, and owned-process cleanup.",
 );
 
 async function runHeadless(target, project, scriptArguments) {

@@ -16,7 +16,7 @@ import {
 import { err, ok, type Result } from "../domain/result.js";
 
 /** Seed file format admitted by this adapter. */
-export const GHIDRA_SEED_FORMAT = "rea-ghidra-seeds-v1";
+export const GHIDRA_SEED_FORMAT = "rea-ghidra-seeds-v2";
 export const MAX_GHIDRA_SEED_BYTES = 32 * 1024 * 1024;
 export const MAX_GHIDRA_SEED_ENTRIES = 1_000_000;
 const MAX_SEED_NAME_LENGTH = 2000;
@@ -30,7 +30,12 @@ export const ghidraSeedCommitmentSchema = z.strictObject({
   path: z.string().refine(isAbsolute, "Seed path must be absolute"),
   configured_path: z.string().refine(isAbsolute, "Seed path must be absolute"),
   sha256: digest,
-  entries: z.strictObject({ function: count, code: count, label: count }),
+  entries: z.strictObject({
+    function: count,
+    function_body: count,
+    code: count,
+    label: count,
+  }),
 });
 export type GhidraSeedCommitment = z.infer<typeof ghidraSeedCommitmentSchema>;
 
@@ -42,6 +47,10 @@ export const ghidraSeedReportSchema = z.strictObject({
   function_created: count,
   function_existing: count,
   function_failed: count,
+  function_body_created: count,
+  function_body_existing: count,
+  function_body_updated: count,
+  function_body_failed: count,
   code_decoded: count,
   code_failed: count,
   label_applied: count,
@@ -50,11 +59,16 @@ export const ghidraSeedReportSchema = z.strictObject({
 });
 export type GhidraSeedReport = z.infer<typeof ghidraSeedReportSchema>;
 
-type SeedKind = "function" | "code" | "label";
+type SeedKind = "function" | "function_body" | "code" | "label";
+interface SeedRange {
+  readonly start: bigint;
+  readonly end: bigint;
+}
 interface SeedEntry {
   readonly address: bigint;
   readonly kind: SeedKind;
   readonly name?: string;
+  readonly ranges?: readonly SeedRange[];
 }
 
 const seedLineError = (line: number, constraint: string) =>
@@ -68,7 +82,9 @@ const seedLineError = (line: number, constraint: string) =>
   });
 
 /**
- * Parse `address<TAB>kind[<TAB>name]` lines. Blank lines and `#` comments are
+ * Parse ordinary `address<TAB>kind[<TAB>name]` seeds and exact function-body
+ * seeds of the form `entry<TAB>function_body<TAB>start-end[,start-end...]
+ * [<TAB>name]`. Range ends are inclusive. Blank lines and `#` comments are
  * ignored. Addresses are hexadecimal offsets in the default address space.
  */
 export const parseGhidraSeeds = (
@@ -82,13 +98,75 @@ export const parseGhidraSeeds = (
     if (line.trim() === "" || line.startsWith("#")) continue;
     const number = index + 1;
     const fields = line.split("\t");
-    if (fields.length < 2 || fields.length > 3)
-      return err(seedLineError(number, "expected address<TAB>kind[<TAB>name]"));
-    const [address, kind, name] = fields;
+    if (fields.length < 2 || fields.length > 4)
+      return err(
+        seedLineError(
+          number,
+          "expected address<TAB>kind[<TAB>name] or a function_body range seed",
+        ),
+      );
+    const [address, kind] = fields;
     if (address === undefined || !/^0x[0-9a-fA-F]{1,16}$/u.test(address))
       return err(seedLineError(number, "address must be 0x-prefixed hex"));
-    if (kind !== "function" && kind !== "code" && kind !== "label")
-      return err(seedLineError(number, "kind must be function, code or label"));
+    if (
+      kind !== "function" &&
+      kind !== "function_body" &&
+      kind !== "code" &&
+      kind !== "label"
+    )
+      return err(
+        seedLineError(
+          number,
+          "kind must be function, function_body, code or label",
+        ),
+      );
+    if (kind !== "function_body" && fields.length > 3)
+      return err(seedLineError(number, `${kind} seed has too many fields`));
+    const rangeText = kind === "function_body" ? fields[2] : undefined;
+    const name = kind === "function_body" ? fields[3] : fields[2];
+    let ranges: readonly SeedRange[] | undefined;
+    if (kind === "function_body") {
+      if (rangeText === undefined || rangeText === "")
+        return err(
+          seedLineError(number, "a function_body seed requires body ranges"),
+        );
+      const parsedRanges: SeedRange[] = [];
+      for (const rawRange of rangeText.split(",")) {
+        const match = /^(0x[0-9a-fA-F]{1,16})-(0x[0-9a-fA-F]{1,16})$/u.exec(
+          rawRange,
+        );
+        if (match === null)
+          return err(
+            seedLineError(
+              number,
+              "function_body ranges must be inclusive 0xstart-0xend pairs",
+            ),
+          );
+        const start = BigInt(match[1] ?? "0");
+        const end = BigInt(match[2] ?? "0");
+        if (end < start)
+          return err(
+            seedLineError(number, "function_body range ends before it starts"),
+          );
+        const previous = parsedRanges.at(-1);
+        if (previous !== undefined && start <= previous.end)
+          return err(
+            seedLineError(
+              number,
+              "function_body ranges must be sorted and non-overlapping",
+            ),
+          );
+        parsedRanges.push({ start, end });
+      }
+      const entry = BigInt(address);
+      if (
+        !parsedRanges.some(({ start, end }) => start <= entry && entry <= end)
+      )
+        return err(
+          seedLineError(number, "function_body ranges must contain the entry"),
+        );
+      ranges = parsedRanges;
+    }
     if (
       name !== undefined &&
       (name.length === 0 ||
@@ -116,6 +194,7 @@ export const parseGhidraSeeds = (
       address: value,
       kind,
       ...(name === undefined ? {} : { name }),
+      ...(ranges === undefined ? {} : { ranges }),
     });
     if (entries.length > MAX_GHIDRA_SEED_ENTRIES)
       return err(
@@ -131,9 +210,15 @@ export const parseGhidraSeeds = (
 /** Canonical script input: lowercase addresses, fixed field order, LF endings. */
 const normalizedSeeds = (entries: readonly SeedEntry[]): string =>
   entries
-    .map(
-      (entry) =>
-        `0x${entry.address.toString(16)}\t${entry.kind}${entry.name === undefined ? "" : `\t${entry.name}`}\n`,
+    .map((entry) =>
+      entry.kind === "function_body"
+        ? `0x${entry.address.toString(16)}\tfunction_body\t${entry.ranges
+            ?.map(
+              ({ start, end }) =>
+                `0x${start.toString(16)}-0x${end.toString(16)}`,
+            )
+            .join(",")}${entry.name === undefined ? "" : `\t${entry.name}`}\n`
+        : `0x${entry.address.toString(16)}\t${entry.kind}${entry.name === undefined ? "" : `\t${entry.name}`}\n`,
     )
     .join("");
 
@@ -187,7 +272,7 @@ export const resolveGhidraAnalysisSeeds = async (
         );
       }
       const normalized = normalizedSeeds(entries);
-      const tally = { function: 0, code: 0, label: 0 };
+      const tally = { function: 0, function_body: 0, code: 0, label: 0 };
       for (const entry of entries) tally[entry.kind] += 1;
       return ok<GhidraSeedCommitment>({
         format: GHIDRA_SEED_FORMAT,
@@ -240,6 +325,7 @@ export const snapshotGhidraAnalysisSeeds = async (
 
 const totalEntries = (commitment: GhidraSeedCommitment): number =>
   commitment.entries.function +
+  commitment.entries.function_body +
   commitment.entries.code +
   commitment.entries.label;
 
@@ -274,10 +360,10 @@ export const ghidraSeedLimitations = (
   commitment === undefined
     ? []
     : [
-        `Ghidra analysis was seeded before auto-analysis from ${commitment.path} (sha256 ${commitment.sha256}: ${commitment.entries.function} function, ${commitment.entries.code} code, ${commitment.entries.label} label entries). Seeded functions, code and names are caller assertions, not Ghidra discoveries.`,
+        `Ghidra analysis was seeded before auto-analysis from ${commitment.path} (sha256 ${commitment.sha256}: ${commitment.entries.function} function, ${commitment.entries.function_body} exact function-body, ${commitment.entries.code} code, ${commitment.entries.label} label entries). Seeded functions, bodies, code and names are caller assertions, not Ghidra discoveries.`,
         ...(report === undefined
           ? []
           : [
-              `Seed outcome: ${report.function_created} functions created, ${report.function_existing} already present, ${report.function_failed} failed; ${report.code_decoded} code seeds decoded, ${report.code_failed} failed; ${report.label_applied} labels applied, ${report.label_failed} failed; ${report.unmapped} seeds outside initialized memory.`,
+              `Seed outcome: ${report.function_created} functions created, ${report.function_existing} already present, ${report.function_failed} failed; exact bodies: ${report.function_body_created} created, ${report.function_body_existing} already exact, ${report.function_body_updated} updated, ${report.function_body_failed} failed; ${report.code_decoded} code seeds decoded, ${report.code_failed} failed; ${report.label_applied} labels applied, ${report.label_failed} failed; ${report.unmapped} seeds outside initialized memory.`,
             ]),
       ];

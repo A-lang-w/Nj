@@ -2559,6 +2559,13 @@ describe("Ghidra deadline guidance", () => {
   });
 });
 
+const noFunctionBodySeeds = {
+  function_body_created: 0,
+  function_body_existing: 0,
+  function_body_updated: 0,
+  function_body_failed: 0,
+} as const;
+
 describe("Ghidra analysis seeds and configured language", () => {
   const seedSession = async (
     report: (sha256: string) => GhidraSeedReport | undefined,
@@ -2615,19 +2622,19 @@ describe("Ghidra analysis seeds and configured language", () => {
     };
   };
   const applied = (sha256: string): GhidraSeedReport => ({
-    format: "rea-ghidra-seeds-v1",
+    format: "rea-ghidra-seeds-v2",
     sha256,
     entries: 2,
     function_created: 1,
     function_existing: 0,
     function_failed: 0,
+    ...noFunctionBodySeeds,
     code_decoded: 0,
     code_failed: 1,
     label_applied: 0,
     label_failed: 0,
     unmapped: 0,
   });
-
   it("reports the verified seed outcome as a session limitation", async () => {
     const { directory, client } = await seedSession(applied);
     try {
@@ -2637,7 +2644,7 @@ describe("Ghidra analysis seeds and configured language", () => {
         expect.arrayContaining([
           expect.stringContaining("caller assertions, not Ghidra discoveries"),
           expect.stringContaining(
-            "1 functions created, 0 already present, 0 failed; 0 code seeds decoded, 1 failed",
+            "exact bodies: 0 created, 0 already exact, 0 updated, 0 failed; 0 code seeds decoded, 1 failed",
           ),
         ]),
       );
@@ -2645,7 +2652,6 @@ describe("Ghidra analysis seeds and configured language", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
-
   it.each([
     ["no seed report", () => undefined],
     [

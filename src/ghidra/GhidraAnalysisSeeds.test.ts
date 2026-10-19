@@ -46,12 +46,13 @@ const SEEDS = [
   "",
   "0x401000\tfunction\tentry",
   "0x00401046\tfunction",
+  "0x401080\tfunction_body\t0x401080-0x40108f,0x4010a0-0x4010a3\tbody",
   "0x40A1C4\tcode\r",
   "0x402200\tlabel\tExample::render",
   "",
 ].join("\n");
 const CANONICAL =
-  "0x401000\tfunction\tentry\n0x401046\tfunction\n0x40a1c4\tcode\n0x402200\tlabel\tExample::render\n";
+  "0x401000\tfunction\tentry\n0x401046\tfunction\n0x401080\tfunction_body\t0x401080-0x40108f,0x4010a0-0x4010a3\tbody\n0x40a1c4\tcode\n0x402200\tlabel\tExample::render\n";
 
 describe("Ghidra seed parsing", () => {
   it("accepts the documented line forms", () => {
@@ -60,6 +61,7 @@ describe("Ghidra seed parsing", () => {
     expect(parsed.value.map((entry) => entry.kind)).toEqual([
       "function",
       "function",
+      "function_body",
       "code",
       "label",
     ]);
@@ -67,8 +69,14 @@ describe("Ghidra seed parsing", () => {
 
   it.each([
     ["401000\tfunction", "line 1: address must be 0x-prefixed hex"],
-    ["0x401000\tdata", "line 1: kind must be function, code or label"],
-    ["0x401000", "line 1: expected address<TAB>kind[<TAB>name]"],
+    [
+      "0x401000\tdata",
+      "line 1: kind must be function, function_body, code or label",
+    ],
+    [
+      "0x401000",
+      "line 1: expected address<TAB>kind[<TAB>name] or a function_body range seed",
+    ],
     ["0x401000\tlabel", "line 1: a label seed requires a name"],
     [
       "0x401000\tcode\tname",
@@ -81,6 +89,18 @@ describe("Ghidra seed parsing", () => {
     [
       "0x401000\tcode\n0x0401000\tcode",
       "line 2: duplicate code seed at 0x0401000",
+    ],
+    [
+      "0x401000\tfunction_body\t0x401000-0x400fff",
+      "line 1: function_body range ends before it starts",
+    ],
+    [
+      "0x401000\tfunction_body\t0x400000-0x400fff",
+      "line 1: function_body ranges must contain the entry",
+    ],
+    [
+      "0x401000\tfunction_body\t0x401000-0x401010,0x401008-0x401020",
+      "line 1: function_body ranges must be sorted and non-overlapping",
     ],
   ])("rejects %j", (text, constraint) => {
     const parsed = parseGhidraSeeds(text);
@@ -101,10 +121,10 @@ describe("Ghidra seed commitment", () => {
     const commitment = resolved.value;
     if (commitment === undefined) throw new Error("Expected a commitment");
     expect(commitment).toMatchObject({
-      format: "rea-ghidra-seeds-v1",
+      format: "rea-ghidra-seeds-v2",
       configured_path: path,
       sha256: createHash("sha256").update(CANONICAL).digest("hex"),
-      entries: { function: 2, code: 1, label: 1 },
+      entries: { function: 2, function_body: 1, code: 1, label: 1 },
     });
     const runtime = await workspace();
     const snapshot = await snapshotGhidraAnalysisSeeds(
@@ -166,19 +186,23 @@ describe("Ghidra seed commitment", () => {
 
 describe("Ghidra seed session verification", () => {
   const commitment: GhidraSeedCommitment = {
-    format: "rea-ghidra-seeds-v1",
+    format: "rea-ghidra-seeds-v2",
     path: "/seeds.tsv",
     configured_path: "/seeds.tsv",
     sha256: "b".repeat(64),
-    entries: { function: 2, code: 1, label: 1 },
+    entries: { function: 2, function_body: 0, code: 1, label: 1 },
   };
   const report: GhidraSeedReport = {
-    format: "rea-ghidra-seeds-v1",
+    format: "rea-ghidra-seeds-v2",
     sha256: "b".repeat(64),
     entries: 4,
     function_created: 1,
     function_existing: 0,
     function_failed: 1,
+    function_body_created: 0,
+    function_body_existing: 0,
+    function_body_updated: 0,
+    function_body_failed: 0,
     code_decoded: 1,
     code_failed: 0,
     label_applied: 1,
@@ -232,8 +256,8 @@ describe("Ghidra seed profile", () => {
     const resolved = await ghidra.resolveAnalysisProfile(pe);
     if (!resolved.ok) throw resolved.error;
     expect(resolved.value.profile?.parameters.analysis_seeds).toMatchObject({
-      format: "rea-ghidra-seeds-v1",
-      entries: { function: 2, code: 1, label: 1 },
+      format: "rea-ghidra-seeds-v2",
+      entries: { function: 2, function_body: 1, code: 1, label: 1 },
     });
   });
 

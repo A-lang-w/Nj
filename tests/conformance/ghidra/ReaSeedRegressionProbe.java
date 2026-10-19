@@ -18,10 +18,16 @@ public final class ReaSeedRegressionProbe extends GhidraScript {
                 .getString("REA analysis seeds", null)
         ).getAsJsonObject();
         require(report.get("entries").getAsInt() == 5, "all seeds accounted for");
-        require(report.get("function_created").getAsInt() == 2,
+        require(report.get("function_created").getAsInt() == 1,
             "out-of-range seed must not disturb descending function order");
         require(report.get("function_failed").getAsInt() == 0, "no swallowed function entry");
+        require(report.get("function_body_created").getAsInt() == 1,
+            "exact function body created");
+        require(report.get("function_body_failed").getAsInt() == 0,
+            "exact function body accepted");
         require(getFunctionAt(toAddr(0)).getName().equals("seed_low"), "lower function name");
+        require(getFunctionAt(toAddr(0)).getBody().getNumAddresses() == 1,
+            "lower function exact one-byte body");
         require(getFunctionAt(toAddr(1)).getName().equals("seed_high"), "higher function name");
         require(report.get("label_applied").getAsInt() == 1, "mapped BSS label applied");
         require(currentProgram.getSymbolTable().getPrimarySymbol(toAddr(0x1000))
