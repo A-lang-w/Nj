@@ -266,8 +266,8 @@ const referencesChangingTarget = (
   if (Array.isArray(node))
     return node.some((child) => referencesChangingTarget(child, root, active));
   if (!isObject(node)) return false;
-  if (typeof node.$ref === "string" && !active.has(node.$ref)) {
-    const nestedActive = new Set([...active, node.$ref]);
+  if (typeof node.$ref === "string" && !active.has(scopedReference(root, node.$ref))) {
+    const nestedActive = new Set([...active, scopedReference(root, node.$ref)]);
     const target = resolveLocalSchemaReference(
       root as Readonly<Record<string, unknown>>,
       node.$ref,
@@ -606,6 +606,35 @@ const pathValue = (root: unknown, tokens: readonly string[]): unknown => {
   return value;
 };
 
+// Cycle guards must treat the same fragment text in different resources as
+// different references, so active entries are scoped by resolution root.
+let nextResourceId = 0;
+const resourceIds = new WeakMap<object, number>();
+const scopedReference = (root: unknown, reference: string): string => {
+  if (!isObject(root)) return `x\u0000${reference}`;
+  let id = resourceIds.get(root);
+  if (id === undefined) {
+    id = nextResourceId;
+    nextResourceId += 1;
+    resourceIds.set(root, id);
+  }
+  return `${id}\u0000${reference}`;
+};
+
+const containsResource = (
+  node: unknown,
+  seen: ReadonlySet<unknown> = new Set(),
+): boolean => {
+  if (seen.has(node)) return false;
+  const next = new Set(seen);
+  next.add(node);
+  if (Array.isArray(node))
+    return node.some((child) => containsResource(child, next));
+  if (!isObject(node)) return false;
+  if (declaresResource(node)) return true;
+  return Object.values(node).some((child) => containsResource(child, next));
+};
+
 // A schema map entry named `$id` is a definition name, not a resource
 // boundary; only a subschema declaring `$id` as a string URI is one.
 const declaresResource = (node: unknown): boolean =>
@@ -682,23 +711,27 @@ const collectSchemaReferences = (
 
 // A reference whose target position the structural pass removed cannot keep
 // its `$ref` (clients that compile the schema could not load it), so the
-// widened target is inlined at every caller instead — scoped to the resource
-// that owns the reference, and composed with any `$ref` siblings.
-const inlineReferences = (
+// widened target is substituted at every caller instead — scoped to the
+// resource that owns the reference, composed with any `$ref` siblings, and
+// applied recursively so replacements containing further dangling references
+// are substituted too.
+const applyDangling = (
   node: unknown,
   dangling: ReadonlyMap<string, ReadonlyMap<string, unknown>>,
   resourceTokens: readonly string[],
   path: readonly string[],
+  seen: ReadonlySet<string>,
 ): unknown => {
   if (Array.isArray(node)) {
     let changed = false;
     const mapped = node.map((child, index) => {
       const childPath = [...path, String(index)];
-      const next = inlineReferences(
+      const next = applyDangling(
         child,
         dangling,
         declaresResource(child) ? childPath : resourceTokens,
         childPath,
+        seen,
       );
       changed ||= next !== child;
       return next;
@@ -706,17 +739,28 @@ const inlineReferences = (
     return changed ? mapped : node;
   }
   if (!isObject(node)) return node;
-  const refMap = dangling.get(JSON.stringify(resourceTokens));
+  const resourceKey = JSON.stringify(resourceTokens);
+  const refMap = dangling.get(resourceKey);
   if (refMap !== undefined && typeof node.$ref === "string") {
     const replacement = refMap.get(node.$ref);
     if (replacement !== undefined) {
-      const { $ref: _ref, ...siblings } = node;
-      const existingAllOf = Array.isArray(siblings.allOf)
-        ? siblings.allOf
-        : [];
-      return Object.keys(siblings).length === 0
-        ? replacement
-        : { ...siblings, allOf: [replacement, ...existingAllOf] };
+      const seenKey = `${resourceKey} ${node.$ref}`;
+      if (!seen.has(seenKey)) {
+        const applied = applyDangling(
+          replacement,
+          dangling,
+          resourceTokens,
+          path,
+          new Set([...seen, seenKey]),
+        );
+        const { $ref: _ref, ...siblings } = node;
+        const existingAllOf = Array.isArray(siblings.allOf)
+          ? siblings.allOf
+          : [];
+        return Object.keys(siblings).length === 0
+          ? applied
+          : { ...siblings, allOf: [applied, ...existingAllOf] };
+      }
     }
   }
   let changed = false;
@@ -727,11 +771,12 @@ const inlineReferences = (
       const map: Record<string, unknown> = {};
       for (const [name, grandChild] of Object.entries(child)) {
         const childPath = [...path, key, name];
-        const next = inlineReferences(
+        const next = applyDangling(
           grandChild,
           dangling,
           declaresResource(grandChild) ? childPath : resourceTokens,
           childPath,
+          seen,
         );
         map[name] = next;
         mapChanged ||= next !== grandChild;
@@ -739,10 +784,14 @@ const inlineReferences = (
       rebuilt[key] = mapChanged ? map : child;
       changed ||= mapChanged;
     } else if (schemaArrays.has(key) || schemaChildren.has(key)) {
-      const next = inlineReferences(child, dangling, resourceTokens, [
-        ...path,
-        key,
-      ]);
+      const childPath = [...path, key];
+      const next = applyDangling(
+        child,
+        dangling,
+        declaresResource(child) ? childPath : resourceTokens,
+        childPath,
+        seen,
+      );
       rebuilt[key] = next;
       changed ||= next !== child;
     } else {
@@ -782,6 +831,9 @@ const normalizeReferencedTargets = (
     dangling.set(key, refs);
   };
   const processed = new Set<string>();
+  const reachedTargets: Array<
+    [readonly string[], readonly string[]]
+  > = [];
   const queue = [...collected];
   while (queue.length > 0) {
     const entry = queue.shift();
@@ -797,14 +849,15 @@ const normalizeReferencedTargets = (
     const resolved = resolveLocalSchemaReference(resource, entry.reference);
     if (resolved === undefined || !isObject(resolved.value)) continue;
     // Targets reached only through other unwalked targets need the same
-    // treatment as directly referenced ones.
+    // treatment as directly referenced ones. A target that itself declares a
+    // resource starts a new reference scope for everything inside it.
     const outerTokens = [...entry.resourceTokens, ...resolved.tokens];
     const nested: CollectedReference[] = [];
     collectSchemaReferences(
       resolved.value,
       nested,
       outerTokens,
-      entry.resourceTokens,
+      declaresResource(resolved.value) ? outerTokens : entry.resourceTokens,
     );
     for (const nestedEntry of nested) {
       const nestedKey = referenceKey(nestedEntry);
@@ -812,20 +865,22 @@ const normalizeReferencedTargets = (
     }
     const presented = pathValue(advertised, outerTokens);
     if (presented === undefined) {
-      // The position was removed by the structural pass; inline the widened
-      // target at its callers rather than dangling.
+      // The position was removed by the structural pass; substitute the
+      // widened target at its callers rather than dangling.
       const removed = normalizeAdvertisedSchema(
         resolved.value,
         resource,
-        new Set([entry.reference]),
+        new Set([scopedReference(resource, entry.reference)]),
       );
       fileDangling(entry, removed.schema);
       continue;
     }
+    // The reference makes this position executable even when unchanged.
+    reachedTargets.push([outerTokens, entry.resourceTokens]);
     const result = normalizeAdvertisedSchema(
       resolved.value,
       resource,
-      new Set([entry.reference]),
+      new Set([scopedReference(resource, entry.reference)]),
     );
     if (!result.changed) continue;
     // Prefer the presented node at the same position so injected property
@@ -834,7 +889,7 @@ const normalizeReferencedTargets = (
       ? normalizeAdvertisedSchema(
           presented,
           resource,
-          new Set([entry.reference]),
+          new Set([scopedReference(resource, entry.reference)]),
         ).schema
       : result.schema;
     writes.push([outerTokens, replacement, entry]);
@@ -851,12 +906,54 @@ const normalizeReferencedTargets = (
     }
     assignAtPath(advertised, tokens, replacement);
   }
-  return dangling.size > 0
-    ? (inlineReferences(advertised, dangling, [], []) as Record<
-        string,
-        unknown
-      >)
-    : advertised;
+  if (dangling.size === 0) return advertised;
+  // A replacement that declares or contains a nested resource must not be
+  // duplicated at several callers (identifiers would collide); park it under
+  // $defs once and point every caller at the parked schema instead.
+  let relocated = 0;
+  for (const [resourceKey, refMap] of [...dangling]) {
+    for (const [reference, replacement] of [...refMap]) {
+      if (!isObject(replacement) || !containsResource(replacement)) continue;
+      const defs = (
+        isObject(advertised.$defs) ? advertised.$defs : {}
+      ) as Record<string, unknown>;
+      let name: string | undefined = undefined;
+      for (const [existing, value] of Object.entries(defs)) {
+        if (isDeepStrictEqual(value, replacement)) {
+          name = existing;
+          break;
+        }
+      }
+      if (name === undefined) {
+        name = `advertisedRelocated${relocated}`;
+        relocated += 1;
+        while (name in defs) name = `${name}x`;
+        advertised.$defs = { ...defs, [name]: replacement };
+        reachedTargets.push([
+          ["$defs", name],
+          JSON.parse(resourceKey) as readonly string[],
+        ]);
+      }
+      refMap.set(reference, { $ref: `#/$defs/${name}` });
+    }
+  }
+  let presented = applyDangling(advertised, dangling, [], [], new Set());
+  // Executable target subtrees may themselves contain dangling references
+  // (reference chains); substitute those as well.
+  for (const [tokens, entryResourceTokens] of reachedTargets) {
+    const subtree = pathValue(presented, tokens);
+    if (!isObject(subtree)) continue;
+    const next = applyDangling(
+      subtree,
+      dangling,
+      entryResourceTokens,
+      tokens,
+      new Set(),
+    );
+    if (next !== subtree)
+      assignAtPath(presented as Record<string, unknown>, tokens, next);
+  }
+  return presented as Record<string, unknown>;
 };
 
 const assignAtPath = (

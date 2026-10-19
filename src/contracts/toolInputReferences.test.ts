@@ -850,6 +850,132 @@ describe("advertised empty-string literals", () => {
     });
   });
 
+  it("substitutes dangling references inside inlined targets", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        guardA: { not: { allOf: [{ $ref: "#/properties/guardB/not" }] } },
+        guardB: { not: { const: "" } },
+        value: { $ref: "#/properties/guardA/not" },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.properties.guardA).toEqual({});
+    expect(advertised.properties.guardB).toEqual({});
+    expect(advertised.properties.value).toEqual({
+      allOf: [{ type: "string" }],
+    });
+  });
+
+  it("rewrites dangling refs inside executable annotation targets", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        guard: { not: { const: "" } },
+        value: { $ref: "#/default" },
+      },
+      default: { $ref: "#/properties/guard/not" },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.properties.guard).toEqual({});
+    expect(advertised.default).toEqual({ type: "string" });
+  });
+
+  it("switches resource scope for singular schema children", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        values: {
+          type: "array",
+          items: {
+            $id: "https://example.com/items",
+            type: "object",
+            properties: {
+              guard: { not: { const: "" } },
+              value: { $ref: "#/properties/guard/not" },
+            },
+          },
+        },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    const items = advertised.properties.values.items as Record<
+      string,
+      unknown
+    >;
+    expect(items.properties).toEqual({
+      guard: {},
+      value: { type: "string" },
+    });
+  });
+
+  it("scopes cycle guards to their schema resource", () => {
+    const canonical = {
+      type: "object",
+      properties: { value: { $ref: "#/default" } },
+      default: {
+        type: "object",
+        properties: {
+          inner: {
+            $id: "https://example.com/inner",
+            type: "object",
+            properties: { flag: { not: { $ref: "#/default" } } },
+            default: { type: "string", const: "" },
+          },
+        },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    const inner = (
+      (advertised.default as Record<string, unknown>)
+        .properties as Record<string, unknown>
+    ).inner as Record<string, unknown>;
+    expect(inner.properties).toEqual({ flag: {} });
+    expect(inner.default).toEqual({ type: "string" });
+  });
+
+  it("rebases references when a target starts a nested resource", () => {
+    const canonical = {
+      $defs: {
+        nested: {
+          $id: "https://example.com/nested",
+          type: "object",
+          properties: { value: { $ref: "#/default" } },
+          default: { type: "string", const: "" },
+        },
+      },
+      type: "object",
+      properties: { holder: { $ref: "#/$defs/nested" } },
+      default: { const: "" },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.default).toEqual({ const: "" });
+    expect(advertised.$defs.nested.default).toEqual({ type: "string" });
+  });
+
+  it("keeps inlined schema resources unique", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        guard: {
+          not: { allOf: [{ $id: "https://example.com/r", type: "object" }], const: "" },
+        },
+        a: { $ref: "#/properties/guard/not" },
+        b: { $ref: "#/properties/guard/not" },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.properties.a).toEqual({
+      $ref: "#/$defs/advertisedRelocated0",
+    });
+    expect(advertised.properties.b).toEqual({
+      $ref: "#/$defs/advertisedRelocated0",
+    });
+    expect(
+      JSON.stringify(advertised).split("https://example.com/r").length - 1,
+    ).toBe(1);
+  });
+
   it("normalizes nested targets against their owning resource", () => {
     const canonical = {
       type: "object",
