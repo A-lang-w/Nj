@@ -103,6 +103,7 @@ import {
   describeEntitlementDifferences,
   describeSignatureSlices,
   describeSignedSlicesOfUnsignedDefault,
+  entitlementShape,
   sameCdhashes,
   type SliceSignature,
 } from "./signatureSlices.js";
@@ -714,6 +715,7 @@ class NativeMacOSClient implements AnalysisClient {
           entitlementsComparable:
             entitlements.value.exitCode === 0 && entitlementValue.decoded,
           entitlementValue: entitlementValue.value,
+          entitlementShape: entitlementValue.shape,
           entitlements: entitlements.value.exitCode,
         },
         signal,
@@ -769,6 +771,8 @@ class NativeMacOSClient implements AnalysisClient {
       entitlementsComparable: boolean;
       /** The decoded aggregate entitlements, compared against each slice. */
       entitlementValue: JsonValue | null;
+      /** Type-tagged form of the aggregate entitlements, or null. */
+      entitlementShape: string | null;
       entitlements: number | null;
     }>,
     signal?: AbortSignal,
@@ -795,7 +799,10 @@ class NativeMacOSClient implements AnalysisClient {
       if (!slice.ok) return slice;
       provenance.push(invocation(slice.value, binding.snapshotPath));
       if (slice.value.exitCode !== 0) {
-        if (isNonzeroUnsignedObservation(slice.value))
+        // codesign prefixes its diagnostic with the echoed snapshot path, so
+        // a file name that happens to say "not signed at all" must not pass
+        // for the verdict.
+        if (isNonzeroUnsignedObservation(slice.value, executablePaths))
           unsigned.push(architecture);
         else unclassified.push(architecture);
         continue;
@@ -855,6 +862,7 @@ class NativeMacOSClient implements AnalysisClient {
         entitlementDifferences: describeEntitlementDifferences(
           decoded.value,
           aggregate.entitlementValue,
+          { slice: decoded.shape, described: aggregate.entitlementShape },
         ),
       });
     }
@@ -1371,10 +1379,16 @@ const commandOutput = (capture: NativeCommandCapture): string =>
  * A signed artifact exits zero; its diagnostics can still contain this text
  * through the echoed path or identifier.
  */
-const isNonzeroUnsignedObservation = (capture: NativeCommandCapture): boolean =>
-  capture.exitCode !== null &&
-  capture.exitCode !== 0 &&
-  /not signed at all|code object is not signed/iu.test(commandOutput(capture));
+const isNonzeroUnsignedObservation = (
+  capture: NativeCommandCapture,
+  echoedPaths: readonly string[] = [],
+): boolean => {
+  if (capture.exitCode === null || capture.exitCode === 0) return false;
+  let output = commandOutput(capture);
+  for (const path of echoedPaths)
+    if (path.length > 0) output = output.split(path).join("");
+  return /not signed at all|code object is not signed/iu.test(output);
+};
 
 const canonicalPath = async (path: string): Promise<string[]> => {
   try {
@@ -1455,11 +1469,24 @@ const parseEntitlements = (
   readonly limitations: readonly string[];
   /** False when the plist was present but could not be decoded. */
   readonly decoded: boolean;
+  /** Type-tagged form of the decoded plist, for comparison; null if none. */
+  readonly shape: string | null;
 } => {
   const start = output.indexOf("<?xml");
   const end = output.lastIndexOf("</plist>");
-  if (start < 0 || end < start)
-    return { value: null, limitations: [], decoded: true };
+  // codesign prints nothing for no entitlements. A header without its
+  // closing tag is a cut-off plist, which must stay unknown, not "none".
+  if (start < 0)
+    return { value: null, limitations: [], decoded: true, shape: null };
+  if (end < start)
+    return {
+      value: null,
+      decoded: false,
+      shape: null,
+      limitations: [
+        "the entitlements plist is cut off before its closing tag; entitlements are unavailable.",
+      ],
+    };
   let decoded: ReturnType<typeof parseXmlPropertyList>;
   try {
     decoded = parseXmlPropertyList(
@@ -1471,6 +1498,7 @@ const parseEntitlements = (
     return {
       value: null,
       decoded: false,
+      shape: null,
       limitations: [
         `the entitlements plist could not be decoded (${cause instanceof Error ? cause.message : String(cause)}); entitlements are unavailable.`,
       ],
@@ -1484,6 +1512,7 @@ const parseEntitlements = (
   return {
     value,
     decoded: true,
+    shape: entitlementShape(decoded.value),
     limitations: [
       ...numbers.limitations(),
       ...(projected.nonFiniteRealCount === 0

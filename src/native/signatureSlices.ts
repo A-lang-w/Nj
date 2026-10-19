@@ -103,7 +103,7 @@ export const describeSignedSlicesOfUnsignedDefault = (
         `Mach-O slices signed although codesign's default slice is unsigned: ${slices
           .map(
             (slice) =>
-              `${slice.architecture} (identifier ${slice.identifier ?? "unavailable"}; team identifier ${slice.team_identifier ?? "not set"}; authorities ${listOrNone(slice.authorities)}; CDHash ${listOrNone(slice.cdhashes)}; hardened runtime ${runtimeState(slice.hardened_runtime)})`,
+              `${slice.architecture} (identifier ${quoted(slice.identifier, "unavailable")}; team identifier ${quoted(slice.team_identifier, "not set")}; authorities ${quotedList(slice.authorities)}; CDHash ${listOrNone(slice.cdhashes)}; hardened runtime ${runtimeState(slice.hardened_runtime)})`,
           )
           .join(
             ", ",
@@ -155,11 +155,13 @@ const describeDifferences = (
 ): string | null => {
   const differences: string[] = [];
   if (slice.identifier !== aggregate.identifier)
-    differences.push(`identifier ${slice.identifier ?? "unavailable"}`);
+    differences.push(`identifier ${quoted(slice.identifier, "unavailable")}`);
   if (slice.team_identifier !== aggregate.team_identifier)
-    differences.push(`team identifier ${slice.team_identifier ?? "not set"}`);
+    differences.push(
+      `team identifier ${quoted(slice.team_identifier, "not set")}`,
+    );
   if (!sameSequence(slice.authorities, aggregate.authorities))
-    differences.push(`authorities ${listOrNone(slice.authorities)}`);
+    differences.push(`authorities ${quotedList(slice.authorities)}`);
   if (slice.hardened_runtime !== aggregate.hardened_runtime)
     differences.push(
       `hardened runtime ${runtimeState(slice.hardened_runtime)}`,
@@ -204,6 +206,46 @@ const sameSequence = (
 const listOrNone = (values: readonly string[]): string =>
   values.length === 0 ? "none" : values.join(", ");
 
+/**
+ * codesign echoes identifiers and authorities verbatim, so one containing
+ * `;` or a line break must not read as another field of the sentence.
+ */
+const quoted = (value: string | null, missing: string): string =>
+  value === null ? missing : JSON.stringify(value);
+
+const quotedList = (values: readonly string[]): string =>
+  values.length === 0
+    ? "none"
+    : values.map((value) => JSON.stringify(value)).join(", ");
+
+/**
+ * A type-tagged canonical form of a decoded plist value, before the JSON
+ * projection: data, dates, numbers, strings, arrays and dictionaries each
+ * keep their own tag, so two entitlement plists whose projections coincide
+ * still compare by the types that were signed.
+ */
+export const entitlementShape = (value: unknown): string => {
+  if (value === null || value === undefined) return "null";
+  if (value instanceof Uint8Array)
+    return `data:${Buffer.from(value).toString("base64")}`;
+  if (value instanceof Date)
+    return `date:${Number.isNaN(value.getTime()) ? "invalid" : value.toISOString()}`;
+  if (typeof value === "number") return `number:${String(value)}`;
+  if (typeof value === "bigint") return `number:${value.toString()}`;
+  if (typeof value === "string") return `string:${JSON.stringify(value)}`;
+  if (typeof value === "boolean") return `boolean:${String(value)}`;
+  if (Array.isArray(value))
+    return `[${value.map((item: unknown) => entitlementShape(item)).join(",")}]`;
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}=${entitlementShape(record[key])}`)
+      .join(",")}}`;
+  }
+  return `other:${typeof value}`;
+};
+
 const runtimeState = (value: boolean | null): string =>
   value === null ? "unknown" : value ? "on" : "off";
 
@@ -226,12 +268,26 @@ const withoutEmptyDictionary = (value: JsonValue | null): JsonValue | null =>
 export const describeEntitlementDifferences = (
   slice: JsonValue | null,
   described: JsonValue | null,
+  shapes?: {
+    readonly slice: string | null;
+    readonly described: string | null;
+  },
 ): string | null => {
   if (
     canonicalJson(withoutEmptyDictionary(slice)) ===
     canonicalJson(withoutEmptyDictionary(described))
-  )
+  ) {
+    // The JSON projection writes a <data> value and a dictionary shaped
+    // like its wrapper the same way; the decoded plist's own types do not.
+    if (
+      shapes !== undefined &&
+      shapes.slice !== null &&
+      shapes.described !== null &&
+      shapes.slice !== shapes.described
+    )
+      return "same projected values, but the plist value types differ (for example data against a dictionary)";
     return null;
+  }
   const own = asDictionary(slice);
   const other = asDictionary(described);
   if (own === null) return slice === null ? "none" : "not a dictionary";
@@ -247,12 +303,13 @@ export const describeEntitlementDifferences = (
     const value = Object.hasOwn(own, key) ? own[key] : undefined;
     const theirs =
       other !== null && Object.hasOwn(other, key) ? other[key] : undefined;
-    if (value === undefined) return [`${key} absent`];
-    if (theirs === undefined) return [`${key}: ${renderValue(value)}`];
+    const name = JSON.stringify(key);
+    if (value === undefined) return [`${name} absent`];
+    if (theirs === undefined) return [`${name}: ${renderValue(value)}`];
     return canonicalJson(value) === canonicalJson(theirs)
       ? []
       : [
-          `${key}: ${renderValue(value)} (described slice ${renderValue(theirs)})`,
+          `${name}: ${renderValue(value)} (described slice ${renderValue(theirs)})`,
         ];
   });
   return entries.length === 0 ? "differs" : entries.join(", ");

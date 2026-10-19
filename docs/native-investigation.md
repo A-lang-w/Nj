@@ -567,7 +567,7 @@ When the default slice of a universal file is unsigned, `signed` is false for
 that slice, the slice names come from `lipo -archs` (or the target's CPU
 families when lipo is unavailable), and a limitation names the signed slices
 with their identifier, team, authorities, CDHash and hardened-runtime state.
-Differing entitlements are listed with their values. Slice entitlements that cannot be read or decoded stay out of the
+Differing entitlements are listed with their values; identifiers, authorities and entitlement keys are JSON-quoted in these sentences, and two plists that project to the same JSON but differ in plist value types (a `<data>` value against a dictionary shaped like its wrapper) are reported as different. Slice entitlements that cannot be read or decoded stay out of the
 comparison and are named in a limitation. Per-slice queries appear in
 `provenance` as `codesign -d -a <slice>` commands.
 

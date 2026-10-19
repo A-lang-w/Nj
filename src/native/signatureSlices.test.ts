@@ -3,6 +3,7 @@ import {
   describeEntitlementDifferences,
   describeSignatureSlices,
   describeSignedSlicesOfUnsignedDefault,
+  entitlementShape,
   type AggregateSignature,
   type SliceSignature,
 } from "./signatureSlices.js";
@@ -50,7 +51,7 @@ describe("describeSignatureSlices", () => {
   it("names the described slice and every differing field of the others", () => {
     expect(describeSignatureSlices(aggregate, [x86Slice, armSlice])).toEqual([
       `Signature fields describe the arm64 slice that codesign displayed by default; other signed slices: x86_64 (CDHash ${X86}).`,
-      "Mach-O slices signed differently from the arm64 slice: x86_64 (identifier com.example.x86slice; hardened runtime off; entitlements com.apple.security.cs.disable-library-validation absent, com.apple.security.get-task-allow: true).",
+      `Mach-O slices signed differently from the arm64 slice: x86_64 (identifier "com.example.x86slice"; hardened runtime off; entitlements "com.apple.security.cs.disable-library-validation" absent, "com.apple.security.get-task-allow": true).`,
       `designated_requirement covers the whole file and names CDHashes of other slices (x86_64 ${X86}); cdhashes lists only the described slice.`,
     ]);
   });
@@ -79,7 +80,7 @@ describe("describeSignatureSlices", () => {
   it("names signed slices when codesign's default slice is unsigned", () => {
     expect(describeSignedSlicesOfUnsignedDefault([])).toEqual([]);
     expect(describeSignedSlicesOfUnsignedDefault([armSlice])).toEqual([
-      `Mach-O slices signed although codesign's default slice is unsigned: arm64 (identifier com.example.armslice; team identifier not set; authorities none; CDHash ${ARM}; hardened runtime on); signed is false for the default slice and their entitlements were not reported.`,
+      `Mach-O slices signed although codesign's default slice is unsigned: arm64 (identifier "com.example.armslice"; team identifier not set; authorities none; CDHash ${ARM}; hardened runtime on); signed is false for the default slice and their entitlements were not reported.`,
     ]);
   });
 
@@ -139,7 +140,7 @@ describe("describeSignatureSlices entitlement and requirement details", () => {
       armSlice,
     ]);
     expect(limitations[1]).toBe(
-      "Mach-O slices signed differently from the arm64 slice: x86_64 (identifier com.example.x86slice; hardened runtime off).",
+      `Mach-O slices signed differently from the arm64 slice: x86_64 (identifier "com.example.x86slice"; hardened runtime off).`,
     );
   });
 
@@ -175,7 +176,9 @@ describe("describeSignatureSlices entitlement and requirement details", () => {
       "Mach-O slices signed differently from the arm64 slice: x86_64 (entitlements none).",
     );
   });
+});
 
+describe("describeEntitlementDifferences values and quoting", () => {
   it("shows the differing value when both slices carry the same entitlement key", () => {
     const limitations = describeSignatureSlices(
       {
@@ -205,7 +208,7 @@ describe("describeSignatureSlices entitlement and requirement details", () => {
       ],
     );
     expect(limitations[1]).toBe(
-      "Mach-O slices signed differently from the arm64 slice: x86_64 (entitlements com.apple.security.get-task-allow: true (described slice false)).",
+      `Mach-O slices signed differently from the arm64 slice: x86_64 (entitlements "com.apple.security.get-task-allow": true (described slice false)).`,
     );
   });
 
@@ -226,7 +229,7 @@ describe("describeSignatureSlices entitlement and requirement details", () => {
       ],
     );
     expect(limitations[1]).toBe(
-      'Mach-O slices signed differently from the arm64 slice: x86_64 (entitlements constructor: "x", hasOwnProperty: 1, toString absent).',
+      'Mach-O slices signed differently from the arm64 slice: x86_64 (entitlements "constructor": "x", "hasOwnProperty": 1, "toString" absent).',
     );
   });
 
@@ -237,12 +240,65 @@ describe("describeSignatureSlices entitlement and requirement details", () => {
       { "com.example.long": `${base}b` },
     );
     expect(differences).toMatch(
-      /^com\.example\.long: "x{76}\.\.\. \(93 chars, sha256 [0-9a-f]{16}\) \(described slice "x{76}\.\.\. \(93 chars, sha256 [0-9a-f]{16}\)\)$/u,
+      /^"com\.example\.long": "x{76}\.\.\. \(93 chars, sha256 [0-9a-f]{16}\) \(described slice "x{76}\.\.\. \(93 chars, sha256 [0-9a-f]{16}\)\)$/u,
     );
     const [ours, theirs] = [
       ...(differences ?? "").matchAll(/sha256 ([0-9a-f]{16})/gu),
     ].map(([, digest]) => digest);
     expect(ours).not.toBe(theirs);
+  });
+
+  it("tells a data value from a dictionary that projects to the same JSON", () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    const sameProjection = { "0": 1, "1": 2, "2": 3 };
+    expect(entitlementShape(bytes)).not.toBe(entitlementShape(sameProjection));
+    expect(entitlementShape(bytes)).not.toBe(
+      entitlementShape({ $plist_type: "data", base64: "AQID" }),
+    );
+    expect(entitlementShape(bytes)).toBe(
+      entitlementShape(new Uint8Array([1, 2, 3])),
+    );
+    expect(
+      describeEntitlementDifferences(
+        { blob: sameProjection },
+        { blob: sameProjection },
+        {
+          slice: entitlementShape({ blob: bytes }),
+          described: entitlementShape({ blob: sameProjection }),
+        },
+      ),
+    ).toBe(
+      "same projected values, but the plist value types differ (for example data against a dictionary)",
+    );
+    expect(
+      describeEntitlementDifferences(
+        { a: 1 },
+        { a: 1 },
+        {
+          slice: entitlementShape({ a: 1 }),
+          described: entitlementShape({ a: 1 }),
+        },
+      ),
+    ).toBeNull();
+  });
+
+  it("quotes identity values so a delimiter inside them cannot read as a field", () => {
+    const limitations = describeSignatureSlices(aggregate, [
+      {
+        ...armSlice,
+        architecture: "x86_64",
+        cdhashes: [X86],
+        identifier: "foo; hardened runtime off",
+        entitlementDifferences: null,
+      },
+      armSlice,
+    ]);
+    expect(limitations[1]).toBe(
+      'Mach-O slices signed differently from the arm64 slice: x86_64 (identifier "foo; hardened runtime off").',
+    );
+    expect(describeEntitlementDifferences({ "x: true, y": false }, {})).toBe(
+      '"x: true, y": false',
+    );
   });
 
   it("compares CDHashes without regard to letter case", () => {
