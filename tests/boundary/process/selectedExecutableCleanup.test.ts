@@ -96,6 +96,67 @@ afterEach(async () => {
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
+  vi.restoreAllMocks();
+});
+
+it("cancels during executable bytes without transferring descriptor cleanup or blocking the scope", async () => {
+  const bytes = "executable bytes\n".repeat(16_384);
+  const path = await createExecutable(bytes);
+  const controller = new AbortController();
+  const reason = new Error("cancel after the first physical executable read");
+  injected.path = path;
+  const scope = new ProcessCaptureResourceScope();
+  const fileSystem = {
+    open: async (selected: string, flags: number) => {
+      const handle = await open(selected, flags);
+      const read = handle.read.bind(handle);
+      const readAndCancel = async (
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number | bigint | null,
+      ) => {
+        const result = await read(buffer, offset, length, position);
+        controller.abort(reason);
+        return result;
+      };
+      vi.spyOn(handle, "read").mockImplementation(
+        readAndCancel as typeof handle.read,
+      );
+      // Exercise the same physical-read interleaving in the old native-stream
+      // implementation: abort after bytes arrive, while its iterator owns data.
+      const stream = handle.createReadStream.bind(handle);
+      vi.spyOn(handle, "createReadStream").mockImplementation((options) => {
+        const source = stream(options);
+        source.once("data", () => controller.abort(reason));
+        return source;
+      });
+      return handle;
+    },
+    stat: (selected: string) => stat(selected, { bigint: true }),
+  };
+
+  const failure = await caughtFailure(() =>
+    scope.run(() =>
+      observeSelectedExecutable(path, controller.signal, fileSystem, scope),
+    ),
+  );
+  expect(controller.signal.aborted).toBe(true);
+  expect(failure.cause).toBe(reason);
+  expect(failure.userCategory).toBe("cancelled");
+  expect(failure.cleanupIncomplete).toBe(false);
+  expect(failure.cleanupLeases).toEqual([]);
+  expect(injected.closed).toEqual([path]);
+  expect(injected.handles[0]?.isOpen()).toBe(false);
+
+  await expect(
+    scope.run(() =>
+      observeSelectedExecutable(path, undefined, undefined, scope),
+    ),
+  ).resolves.toMatchObject({
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  });
+  await scope.close();
 });
 
 it("retains the completed executable observation and descriptor owner after close failure", async () => {
