@@ -2,38 +2,40 @@
 
 ## Current integration verification — 19 October 2026
 
-Integration base: `3ea0d9489` (REA 6.7.0), Linux x64, Node 24.18.0,
+Integration base: `255d906e1` (REA 6.7.0), Linux x64, Node 24.18.0,
 npm 11.16.0, unchanged `solc 0.8.30+commit.73712a01.Emscripten.clang`
 and bundled `evmole@0.9.3`.
 
 - `npm run check:ci`: all eight static tasks and architecture checks passed.
-- Pinned `actionlint 1.7.7`: both changed workflows passed syntax/expression checks.
-- `npm run docs:check`: passed, including five README consistency tests.
-- Twelve focused CI-contract, plist, native-UI and compiler-artifact suites:
-  445 passed, 26 host-specific cases skipped on Linux.
-- `node scripts/verify-solc-artifacts.mjs`: all 80 public CLI/stdio-MCP cases
-  passed, with verified process-lineage cleanup and zero descendants.
-- `npm run test:fast`: 10,706 passed, eight skipped, one failure in
-  `src/doctorRuntime.test.ts`, where cleanup could not read a live process's
-  ownership token (`environment_errno_EACCES`). Its isolated nine-test rerun
-  passed. This does not establish a fix or a clean full-suite result.
-- Astra reviewed the Windows artifact dependencies, standalone fallback and
-  verification order and found no actionable defects.
+- `npm run verify:test-discovery`: all 1,661 test files discovered exactly once.
+- `node scripts/verify-solc-artifacts.mjs`: 80 public CLI/stdio-MCP cases passed,
+  with verified process-lineage cleanup and zero descendants.
+- Five process-capture, finalization, Java-admission/archive and mutation-workflow
+  suites: 45 passed. Native ownership/credential and doctor-signal regressions:
+  52 passed, including the four real CLI signal/exit cases. The complete adjacent
+  ownership and recorded-crash trace families passed 187 tests in 14 files.
+- Compiler metadata corruption regressions failed before the shared source parser
+  was enforced by imported Evidence; five corruptions now fail closed. The real
+  advertised MCP catalog accepts the portable canonical-base64 schemas.
+- Process regressions failed before native lifetime and credential facts were
+  reconciled consistently. Explicit absence and same-generation zombies settle
+  cleanup; unknown/replaced lifetimes and related unreadable tokens still fail.
+  Linux permission-denied token reads retain native effective UID; cleanup uses
+  it only when surrounding process identities match. Other-account processes remain
+  explicit unverified observations without signaling authority.
+- Real recorded-crash CLI/stdio-MCP verification: 42 cases passed, with empty
+  verified process lineage and all executable/memory/network guards enabled.
+- Recorded-crash verification retains its memory, executable, network and cleanup
+  guards. Read-only native identity scans are attributed to the exact supervisor;
+  pwndbg initialization is followed by restoring offline debuginfod policy before
+  loading the core. Both changes have failing-before/passing-after regressions.
 
-The failed [hosted run](https://github.com/morluto/rea/actions/runs/39168287778)
-checked out synthetic merge `740964e1d1e56a746d4c252fade5cdc929fa33ba`
-(head `29e5d9b98`, main `32f0e5120`), rather than the branch's own older base.
-Its plist/native-UI assertion failures are addressed by upstream `d1adc6079`,
-included in this integration. The Windows EVM job failed before tests because
-its source checkout lacked native controls. The workflow now restores and
-verifies the matching artifact before setup; ordinary CI reuses its existing
-producer and standalone dispatch builds the artifact on Linux. A CI-contract
-regression failed before this wiring and passed afterward.
-
-Current-head native Windows/macOS execution remains pending hosted CI. Linux
-inference is verified only for the owned public fixtures above; other hosts
-retain explicit provider refusal. Historical cost and live-agent results below
-are pinned to their identified revisions.
+Full hosted qualification and platform results are reported in the
+[PR checks](https://github.com/morluto/rea/pull/3024/checks). Local Linux results do
+not establish native macOS/Windows execution. Historical cost and live-agent
+results below remain pinned to their identified revisions. The ownership fixes
+add credential reads only after Linux token permission failures; their completed
+workflow CPU, process-family memory and token costs have not been measured.
 
 ## Historical verification — 13 October 2026
 
