@@ -449,13 +449,11 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
           process: undefined,
         });
         // The wrapper embeds any prior cleanup failure as previous_error;
-        // keep that owner as a separate dependency so the wrapper resolves
-        // only after both the root retry and the prior owner confirm release.
-        const priorOwner =
-          !result.ok && result.error.cleanupIncomplete
-            ? [result.error, lease]
-            : [lease];
-        new AnalysisCleanupLeaseGroup(cleaned.error, priorOwner);
+        // keep that failure as a separate cleanup dependency so the wrapper
+        // resolves only after both the root retry and the prior failure release.
+        new AnalysisCleanupLeaseGroup(cleaned.error, [lease]);
+        if (!result.ok && result.error.cleanupIncomplete)
+          cleaned.error.bindCleanupDependencies([result.error]);
         return cleaned;
       }
     }
@@ -570,3 +568,4 @@ const validateSqliteInput = (input: InspectSqliteDatabaseInput): void => {
       },
     ]);
 };
+
