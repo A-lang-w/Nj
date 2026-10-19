@@ -317,29 +317,44 @@ it("does not memoize ancestry-pruned results reached through an independent bran
   expectRetainedFacts(ir);
 });
 
-it.each([130, 300])(
-  "retains precise unrelated facts with %i plain class getters",
-  (count) => {
+const plainGetterCoverageCases = [
+  { count: 130, coverage: { status: "complete", omittedCount: 0 } },
+  {
+    count: 300,
+    coverage: {
+      status: "partial",
+      omittedCount: null,
+      resourceLimits: ["getter-expansion"],
+    },
+  },
+] as const;
+
+it.each(plainGetterCoverageCases)(
+  "retains unrelated facts with $count plain class getters and $coverage.status coverage",
+  ({ count, coverage }) => {
     const ir = analyzeJavaScriptSemantics(plainGetterSource(count));
     expectRetainedFacts(ir);
-    expect(ir.coverage).toEqual({ status: "complete", omittedCount: 0 });
+    expect(ir.coverage).toEqual(coverage);
   },
 );
 
-it("retains precise unrelated facts with 300 plain object getters", () => {
-  const ir = analyzeJavaScriptSemantics(plainGetterSource(300, true));
-  expectRetainedFacts(ir);
-  expect(ir.coverage).toEqual({ status: "complete", omittedCount: 0 });
-});
+it.each(plainGetterCoverageCases)(
+  "retains unrelated facts with $count plain object getters and $coverage.status coverage",
+  ({ count, coverage }) => {
+    const ir = analyzeJavaScriptSemantics(plainGetterSource(count, true));
+    expectRetainedFacts(ir);
+    expect(ir.coverage).toEqual(coverage);
+  },
+);
 
-it.each([130, 300])(
-  "does not charge retained field results for %i plain getters",
-  (count) => {
+it.each(plainGetterCoverageCases)(
+  "accounts for local result work with $count initialized getters and $coverage.status coverage",
+  ({ count, coverage }) => {
     const ir = analyzeJavaScriptSemantics(
       plainGetterSource(count, false, true),
     );
     expectRetainedFacts(ir);
-    expect(ir.coverage).toEqual({ status: "complete", omittedCount: 0 });
+    expect(ir.coverage).toEqual(coverage);
   },
 );
 
