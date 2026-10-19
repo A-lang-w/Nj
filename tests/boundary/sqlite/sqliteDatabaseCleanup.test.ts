@@ -565,6 +565,83 @@ it("keeps a root-retry wrapper incomplete until its embedded read failure resolv
   expect(wrapper.cleanupIncomplete).toBe(false);
 });
 
+it("keeps a root-retry wrapper incomplete until its retained root releases", async () => {
+  const workspace = await createTestWorkspace("rea-sqlite-wrapper-root-gate-");
+  const database = createSqliteDatabaseFixture(workspace.root);
+  database.close();
+  const roots: PrivateRuntimeRoot[] = [];
+  let removalAllowed = false;
+  let descriptorAllowed = false;
+  const descriptorLease = new AnalysisCleanupLease(async () => {
+    if (!descriptorAllowed) throw new Error("descriptor close denied");
+  }, ["sqlite-artifact-descriptor"]);
+  const readFailure = ArtifactReaderFailure.withCleanup(
+    new ArtifactReaderFailure("io", "snapshot read deliberately failed"),
+    ArtifactReaderFailure.cleanupObservation(
+      new Error("snapshot descriptor close denied"),
+      "sqlite-artifact-descriptor",
+    ),
+    undefined,
+    [descriptorLease],
+  );
+  const snapshotFileSystem: StableArtifactFileSystem = {
+    lstat: (path) => lstat(path, { bigint: true }),
+    open: async () => {
+      throw readFailure;
+    },
+  };
+  const provider = new SqliteDatabaseProvider(
+    {},
+    () => {
+      throw new Error("SQLite worker deliberately unavailable");
+    },
+    async () => {
+      const root = await PrivateRuntimeRoot.create({ parent: workspace.root });
+      roots.push(root);
+      return {
+        path: root.path,
+        close: async () => {
+          if (!removalAllowed) throw new Error("snapshot removal denied");
+          await root.close();
+        },
+      };
+    },
+    new ArtifactResourceScope(),
+    snapshotFileSystem,
+  );
+  onTestFinished(async () => {
+    descriptorAllowed = true;
+    removalAllowed = true;
+    await descriptorLease.release().catch(() => {});
+    await provider.close().catch(() => {});
+    await Promise.all(roots.map((root) => root.close()));
+    await removeTestWorkspace(workspace.root);
+  });
+
+  const inspection = await provider.inspect({ path: database.path });
+  if (inspection.ok)
+    throw new Error("expected the denied snapshot read to fail cleanup");
+  const wrapper = inspection.error;
+  expect(wrapper.cleanupIncomplete).toBe(true);
+  const root = roots[0];
+  if (root === undefined) throw new Error("Missing retained snapshot root");
+  // The retained root stays attributed next to the embedded read failure.
+  expect(wrapper.cleanupResources).toContain(root.path);
+
+  // Releasing the embedded read failure's descriptor first must not resolve
+  // the wrapper or drop the root: its own retained owner is still pending.
+  descriptorAllowed = true;
+  await descriptorLease.release();
+  expect(wrapper.cleanupIncomplete).toBe(true);
+  expect(wrapper.cleanupResources).toContain(root.path);
+
+  // The root retry then resolves it.
+  removalAllowed = true;
+  await provider.close();
+  expect(wrapper.cleanupIncomplete).toBe(false);
+  expect(wrapper.cleanupResources).toEqual([]);
+});
+
 it("resolves a synthesized descriptor failure once its artifact leases release", async () => {
   const workspace = await createTestWorkspace("rea-sqlite-descriptor-close-");
   const database = createSqliteDatabaseFixture(workspace.root);
