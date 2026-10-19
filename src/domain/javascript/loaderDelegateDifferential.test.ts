@@ -110,6 +110,7 @@ const CORPUS = [
   "Reflect.set(...[module,'require',other]);",
   "Reflect.set(...[{},'x',module.require]);",
   "Array.prototype[Symbol.iterator]=function*(){yield module;yield 'require';yield other};Reflect.set(...[{},'x',module.require]);",
+  "Object.prototype.extra=1;Reflect.set(...[{},'x',module.require]);",
   "Reflect.apply(Reflect.set,Reflect,[module,'require',other]);",
   "Reflect.apply(Reflect.set,Reflect,[{},'x',0]);",
   "const args=[module,'require',other];Reflect.set(...args);",
@@ -158,9 +159,10 @@ const KNOWN_PRECISION_LIMITS = new Set<string>([
   "function change(){Q=other}",
   "const alias=Q;Q=alias;",
   "var copy=Q;Q=copy;",
-  "Reflect.set(...[{},'x',module.require]);",
+  // A spread of a binding, unlike a literal array, stays an unknown list, and
+  // a literal spread stays opaque once the source touches any prototype.
   "const args=[{},'x',0];Reflect.set(...args);",
-  "Object.assign(...[{},{require:other}]);",
+  "Object.prototype.extra=1;Reflect.set(...[{},'x',module.require]);",
   "function F(){Object.assign.apply(null,arguments)}F({},{});",
   "function F(...args){Reflect.set(...args)}F({},'x',0);",
   "[[{},'x',0]].forEach(args=>Reflect.set(...args));",

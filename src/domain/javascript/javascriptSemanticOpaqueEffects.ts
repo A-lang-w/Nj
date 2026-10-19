@@ -76,6 +76,55 @@ export const semanticSiteMayExecute = (
   return true;
 };
 
+const iterationIntegrity = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  boolean
+>();
+
+/**
+ * Whether spreading a literal array can be trusted to yield its syntactic
+ * elements anywhere in this source. Spreading runs `Array.prototype
+ * [Symbol.iterator]` and the shared array iterator's `next`, which a source
+ * can replace through a computed write, a prototype mutator, prototype
+ * reflection or opaque code. This is a whole-source syntactic bound: any
+ * mention of `Symbol.iterator`, `__proto__`, `getPrototypeOf`,
+ * `setPrototypeOf`, a `prototype` member, or an opaque effect site keeps every
+ * spread opaque. It never proves a particular spread intact at runtime.
+ */
+export const semanticArrayIterationMayBeReplaced = (
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  let replaced = iterationIntegrity.get(state);
+  if (replaced !== undefined) return replaced;
+  replaced =
+    state.opaqueEffects.byScope.size > 0 ||
+    state.opaqueEffects.globalSites.length > 0 ||
+    state.opaqueEffects.mayReferenceGlobalEval === true;
+  if (!replaced)
+    traverseJavaScriptAst(state.program, {
+      enter(node) {
+        if (replaced === true) return;
+        const name = t.isIdentifier(node)
+          ? node.name
+          : t.isStringLiteral(node)
+            ? node.value
+            : undefined;
+        if (
+          name === "iterator" ||
+          name === "prototype" ||
+          name === "__proto__" ||
+          name === "getPrototypeOf" ||
+          name === "setPrototypeOf" ||
+          name === "__defineGetter__" ||
+          name === "__lookupGetter__"
+        )
+          replaced = true;
+      },
+    });
+  iterationIntegrity.set(state, replaced);
+  return replaced;
+};
+
 export const semanticBindingMayHaveBlockFunctionWrite = (
   binding: JavaScriptSemanticBindingState,
   state: JavaScriptSemanticAnalysisState,

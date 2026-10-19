@@ -1305,19 +1305,105 @@ function* indexPrototypeUncertaintySteps(
     "defineProperties",
     "setPrototypeOf",
   ]);
+  // Object intrinsics that read every argument without retaining it.
+  const readers = new Set([
+    "create",
+    "getPrototypeOf",
+    "keys",
+    "values",
+    "entries",
+    "getOwnPropertyNames",
+    "getOwnPropertySymbols",
+    "getOwnPropertyDescriptor",
+    "getOwnPropertyDescriptors",
+    "isFrozen",
+    "isSealed",
+    "isExtensible",
+    "is",
+    "hasOwn",
+  ]);
+  // A physical, constructor-derived or computed selection can reach a shared
+  // prototype before the alias graph can say otherwise.
+  const prototypeSelection = (key: string | null): boolean =>
+    key === null ||
+    key === "__proto__" ||
+    key === "constructor" ||
+    key === "prototype" ||
+    key === "getPrototypeOf";
+  const reachesPrototypeSelection = (node: t.Node): boolean => {
+    let current = unwrapJavaScriptExpression(node).node;
+    for (;;) {
+      if (
+        t.isMemberExpression(current) ||
+        t.isOptionalMemberExpression(current)
+      ) {
+        if (
+          prototypeSelection(
+            semanticStaticPropertyKey(current.property, current.computed),
+          )
+        )
+          return true;
+        current = unwrapJavaScriptExpression(current.object).node;
+        continue;
+      }
+      // A call result carries its callee's selection: getPrototypeOf(x).next.
+      if (t.isCallExpression(current) || t.isOptionalCallExpression(current)) {
+        current = unwrapJavaScriptExpression(current.callee).node;
+        continue;
+      }
+      return false;
+    }
+  };
+  // Whether a value in this position is kept: stored, returned, spread, or
+  // handed to code that may retain it. A further projection, a comparison, a
+  // discarded statement, a callee, or an argument that an Object intrinsic
+  // only reads cannot alias the value later. Writes through a projection are
+  // retained by the write branch below.
+  const capturesValue = (node: t.Node, parent: t.Node): boolean => {
+    if (
+      (t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) &&
+      parent.object === node
+    )
+      return false;
+    if (t.isCallExpression(parent) || t.isOptionalCallExpression(parent)) {
+      if (parent.callee === node) return false;
+      const index = parent.arguments.indexOf(node as t.Expression);
+      if (index < 0) return true;
+      const method = objectMethod(parent.callee);
+      if (method === undefined) return true;
+      return mutators.has(method) ? index === 0 : !readers.has(method);
+    }
+    if (t.isBinaryExpression(parent)) return false;
+    if (t.isUnaryExpression(parent)) return parent.operator === "delete";
+    return !t.isExpressionStatement(parent);
+  };
   yield* traverseJavaScriptAstSteps(program, {
     enter: (node, parent) => {
       if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
         const key = semanticStaticPropertyKey(node.property, node.computed);
         // Before the alias graph is complete, an unresolved selection cannot
         // certify that intrinsic prototypes stayed private. Retain uncertainty
-        // for physical, constructor-derived and computed prototype captures.
+        // for physical, constructor-derived and computed prototype captures,
+        // including a getPrototypeOf callable kept for a later call. A direct
+        // getPrototypeOf call matters through its result instead.
         if (
-          key === null ||
-          key === "__proto__" ||
-          key === "constructor" ||
-          key === "prototype" ||
-          key === "getPrototypeOf"
+          prototypeSelection(key) &&
+          parent !== null &&
+          capturesValue(node, parent)
+        )
+          taint("Object");
+      }
+      if (
+        (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+        parent !== null
+      ) {
+        const callee = unwrapJavaScriptExpression(node.callee).node;
+        if (
+          (t.isMemberExpression(callee) ||
+            t.isOptionalMemberExpression(callee)) &&
+          semanticStaticPropertyKey(callee.property, callee.computed) ===
+            "getPrototypeOf" &&
+          capturesValue(node, parent)
         )
           taint("Object");
       }
@@ -1342,6 +1428,9 @@ function* indexPrototypeUncertaintySteps(
             const owner =
               prototypeOwner(value.object) ?? globalOwner(value.object);
             if (owner !== undefined) taint(owner);
+            // A write through a physical or computed prototype selection can
+            // reach a shared prototype.
+            if (reachesPrototypeSelection(value.object)) taint("Object");
           } else {
             const owner = globalOwner(value);
             if (owner !== undefined) taint(owner);
@@ -1358,6 +1447,14 @@ function* indexPrototypeUncertaintySteps(
           const owner = prototypeOwner(callee.object);
           if (owner !== undefined) taint(owner);
         }
+        const [mutated] = node.arguments;
+        if (
+          method !== undefined &&
+          mutators.has(method) &&
+          mutated !== undefined &&
+          reachesPrototypeSelection(mutated)
+        )
+          taint("Object");
         for (const [index, argument] of node.arguments.entries()) {
           const owner = prototypeOwner(argument) ?? globalOwner(argument);
           if (owner === undefined) continue;

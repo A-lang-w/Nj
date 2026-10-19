@@ -311,4 +311,7 @@ cliTest(
       }
     }
   },
+  // Every fixture runs through the compiled CLI and the stdio MCP server, so
+  // the whole matrix needs more than the default per-test budget.
+  300_000,
 );
