@@ -77,6 +77,7 @@ export const registerAndroidCommands = (
     }),
     options: z.object({
       overloadIndex: z
+        .number()
         .int()
         .nonnegative()
         .optional()
@@ -104,6 +105,7 @@ export const registerAndroidCommands = (
         .optional()
         .describe("Declared method name; omit for class references"),
       overloadIndex: z
+        .number()
         .int()
         .nonnegative()
         .optional()

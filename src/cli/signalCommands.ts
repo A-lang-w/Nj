@@ -29,6 +29,7 @@ export const registerSignalCommands = (
       .object({
         ...inspectSignalDecodersInputSchema.shape,
         limit: z
+          .number()
           .int()
           .positive()
           .max(Number.MAX_SAFE_INTEGER)
@@ -74,6 +75,7 @@ export const registerSignalCommands = (
       .object({
         ...signalRecordingOptionsSchema.shape,
         line_limit: z
+          .number()
           .int()
           .positive()
           .optional()

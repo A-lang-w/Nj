@@ -28,6 +28,7 @@ const captureInputShape = z.strictObject({
     .default([])
     .describe("Explicit TShark decode-as selections, e.g. tcp.port==8888,http"),
   packet_limit: z
+    .number()
     .int()
     .positive()
     .max(2147483647)
@@ -43,11 +44,13 @@ const captureInputShape = z.strictObject({
       "Use two-pass analysis for fields requiring later packets; false requests a single pass",
     ),
   match_offset: z
+    .number()
     .int()
     .nonnegative()
     .default(0)
     .describe("Skip this many matching packets after filtering; default 0"),
   match_limit: z
+    .number()
     .int()
     .positive()
     .nullable()
@@ -101,18 +104,19 @@ export const packetCaptureSchema = z
     artifact: z.strictObject({
       path: z.string(),
       sha256: z.string().regex(/^[a-f0-9]{64}$/),
-      bytes: z.int().nonnegative(),
+      bytes: z.number().int().nonnegative(),
     }),
     selection: inspectPacketCaptureInputSchema,
     packets: z.array(packetFieldsSchema),
     output_window: z.strictObject({
       matching_packets: z
+        .number()
         .int()
         .nonnegative()
         .describe(
           "Matches in the completed producer output within the indicated input read scope, not total capture packets",
         ),
-      returned_packets: z.int().nonnegative(),
+      returned_packets: z.number().int().nonnegative(),
       has_more: z.boolean(),
     }),
     read_scope: z.enum(["to-eof", "up-to-input-packet-limit"]),
@@ -133,12 +137,12 @@ export const packetCaptureSchema = z
       arguments: z.array(z.string()),
     }),
     limits: z.strictObject({
-      input_bytes: z.int().positive(),
-      output_bytes: z.int().positive(),
-      command_timeout_ms: z.int().positive(),
-      address_space_bytes: z.int().nonnegative(),
-      file_bytes: z.int().nonnegative(),
-      cpu_seconds: z.int().nonnegative(),
+      input_bytes: z.number().int().positive(),
+      output_bytes: z.number().int().positive(),
+      command_timeout_ms: z.number().int().positive(),
+      address_space_bytes: z.number().int().nonnegative(),
+      file_bytes: z.number().int().nonnegative(),
+      cpu_seconds: z.number().int().nonnegative(),
     }),
     hardware_acquisition: z.literal("not-performed"),
   })

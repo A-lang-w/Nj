@@ -19,6 +19,7 @@ export const inspectSignalDecodersInputSchema = z.strictObject({
       "Case-insensitive literal substring in decoder ID/name or help lines; empty selects all",
     ),
   offset: z
+    .number()
     .int()
     .nonnegative()
     .max(Number.MAX_SAFE_INTEGER)
@@ -27,6 +28,7 @@ export const inspectSignalDecodersInputSchema = z.strictObject({
       "Number of matching decoders or help lines to skip; defaults to 0",
     ),
   limit: z
+    .number()
     .int()
     .positive()
     .max(Number.MAX_SAFE_INTEGER)
@@ -45,15 +47,15 @@ export const signalDecodersSchema = z
     decoders: z.array(z.strictObject({ id: z.string(), name: z.string() })),
     help_lines: z.array(
       z.strictObject({
-        line_number: z.int().positive(),
+        line_number: z.number().int().positive(),
         text: z.string(),
       }),
     ),
     output_window: z.strictObject({
       unit: z.enum(["decoders", "help-lines"]),
-      examined: z.int().nonnegative(),
-      matching: z.int().nonnegative(),
-      returned: z.int().nonnegative(),
+      examined: z.number().int().nonnegative(),
+      matching: z.number().int().nonnegative(),
+      returned: z.number().int().nonnegative(),
       has_more: z.boolean(),
     }),
     diagnostics: z.string(),

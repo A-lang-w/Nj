@@ -45,6 +45,7 @@ export const javaScriptAnalysisCoverageLimits = (
 /** Optional operational choices; omission keeps them out of Evidence parameters. */
 export const javaScriptAnalysisResourceControlsSchema = z.strictObject({
   max_semantic_nodes: z
+    .number()
     .int()
     .min(1)
     .max(JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM)
@@ -53,6 +54,7 @@ export const javaScriptAnalysisResourceControlsSchema = z.strictObject({
       "Maximum retained semantic nodes across the application; defaults to 100000. Worker heap and parent result admission remain enforced.",
     ),
   max_semantic_nodes_per_file: z
+    .number()
     .int()
     .min(1)
     .max(JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM)
@@ -79,6 +81,7 @@ export const javaScriptAnalysisResourceControlsSchema = z.strictObject({
       "Maximum retained semantic unknown records per source file; defaults to 20000, additionally bounded by max_semantic_unknowns and memory/transfer limits.",
     ),
   max_heap_mb: z
+    .number()
     .int()
     .min(128)
     .max(16_384)
@@ -87,6 +90,7 @@ export const javaScriptAnalysisResourceControlsSchema = z.strictObject({
       "Maximum V8 old-space heap in MiB for the isolated JavaScript source analyzer; defaults to 1024. This does not change the CLI/MCP process heap. When REA runs on Bun, which ignores V8 heap flags, Windows instead limits the analyzer's committed memory to this budget plus a 512 MiB runtime reserve; other Bun hosts enforce no limit.",
     ),
   analysis_timeout_ms: z
+    .number()
     .int()
     .min(1)
     .max(2_147_483_647)

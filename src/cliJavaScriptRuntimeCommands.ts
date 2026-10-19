@@ -26,6 +26,7 @@ const observeOptionsSchema = z.object({
       "Declared target role; Inspector cannot authenticate the Electron role",
     ),
   observationMs: z
+    .number()
     .int()
     .min(0)
     .default(100)

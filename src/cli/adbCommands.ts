@@ -101,6 +101,7 @@ export const registerAdbCommands = (
     args: z.object({ serial }),
     options: z.object({
       count: z
+        .number()
         .int()
         .min(1)
         .max(10_000)
@@ -110,7 +111,12 @@ export const registerAdbCommands = (
         .enum(["main", "system", "radio", "events", "crash"])
         .default("main")
         .describe("Log buffer to read"),
-      pid: z.int().positive().optional().describe("Restrict to one process id"),
+      pid: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Restrict to one process id"),
     }),
     run: ({ args, options }) =>
       execute(CLI_COMMANDS.readAdbLogcat, "read_adb_logcat", {
