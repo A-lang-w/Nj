@@ -1133,7 +1133,7 @@ const managerWithFakeSpawner = (
     platform: "linux",
     environment: { REA_GDB_COMMAND: "fake-gdb" },
     spawnProcess,
-    verifyInferiorOutputSink: async () => undefined,
+    verifyInferiorOutputSink: async () => "durable",
     ...options,
   });
   managers.push(manager);
@@ -1843,7 +1843,8 @@ it("retains ownership when descriptor readback omits input confirmation", async 
     child.stdout.write(`${token}${response}\n`);
   });
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
-    verifyInferiorOutputSink: async () => undefined,
+    // Exercise malformed output from the injected descriptor boundary.
+    verifyInferiorOutputSink: async () => undefined as never,
   });
   const started = await expectGdbSessionStarted(manager, undefined, {
     inferiorTty: "/dev/pts/42",
@@ -2013,6 +2014,7 @@ it.each([
         if (capturedStartTime === undefined)
           throw new Error("Controlled inferior identity was unreadable");
         rememberIdentity({ pid: observedPid, startTime: capturedStartTime });
+        return "durable";
       },
       readInferiorProcessStartTime: async (observedPid) => {
         if (observedPid !== pid || !inferiorAlive) return null;

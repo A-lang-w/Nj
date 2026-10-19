@@ -509,7 +509,7 @@ export class GdbSessionManager {
     pid: string,
     selectedTty: string,
     rememberIdentity: (identity: OwnedInferiorIdentity) => void,
-  ) => Promise<InferiorInputSink | void>;
+  ) => Promise<InferiorInputSink>;
   readonly #readInferiorProcessStartTime: ProcessStartTimeReader | undefined;
   readonly #maxSessions: number;
   readonly #maxCommandOutputBytes: number;
@@ -530,7 +530,7 @@ export class GdbSessionManager {
         pid: string,
         selectedTty: string,
         rememberIdentity: (identity: OwnedInferiorIdentity) => void,
-      ) => Promise<InferiorInputSink | void>;
+      ) => Promise<InferiorInputSink>;
       /** @internal Read-only process identity observer for lifecycle tests. */
       readonly readInferiorProcessStartTime?: ProcessStartTimeReader;
       readonly maxSessions?: number;
@@ -1817,6 +1817,10 @@ export class GdbSessionManager {
           identity,
         ),
     );
+    if (inputSink !== "durable" && inputSink !== "not-inherited")
+      throw new Error(
+        "GDB inferior descriptor readback did not confirm an independent input sink.",
+      );
     const detached = await this.#request(session, "-target-detach");
     if (
       detached.completion_status !== "complete" ||
@@ -1828,7 +1832,7 @@ export class GdbSessionManager {
     return {
       status: "detached",
       outputSink: "durable",
-      inputSink: inputSink ?? "durable",
+      inputSink,
     };
   }
 
