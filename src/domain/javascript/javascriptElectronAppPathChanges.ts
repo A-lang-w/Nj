@@ -14,7 +14,7 @@ import {
 } from "./javascriptSemanticObjectReferences.js";
 import {
   semanticNormalizeCapturedSelections,
-  semanticProjectedSourcesAtRead,
+  semanticProjectedSourceFactsAtRead,
   semanticShiftCapturedSelections,
   type SemanticCapturedSelection,
 } from "./javascriptSemanticProjectedSources.js";
@@ -120,6 +120,18 @@ export const createSemanticElectronAppPathChangeQuery = (
       const binding = t.isIdentifier(node)
         ? resolveSemanticBindingState(state, node, node.name)
         : undefined;
+      const selected =
+        binding === undefined || path === undefined
+          ? undefined
+          : semanticProjectedSourceFactsAtRead(
+              binding,
+              node,
+              path,
+              state,
+              false,
+              current.readAt ?? node,
+              current.capturedSelections,
+            );
       // Ordinary aliases are followed below with shared source selections.
       // Re-evaluating their whole-binding provenance at every DAG node would
       // repeat that graph merely to obtain a concrete identity we do not need.
@@ -133,6 +145,10 @@ export const createSemanticElectronAppPathChangeQuery = (
           : undefined;
       if (
         exported !== undefined &&
+        // The retained app identity alone cannot prove its selected method
+        // survived an own write. Conditional or unknown writes keep the native
+        // alternative; a definite replacement follows its selected RHS below.
+        selected?.retainsOrigin !== false &&
         (path === undefined
           ? exported.length === 0 ||
             (exported.length === 1 && exported[0] === "app") ||
@@ -159,18 +175,7 @@ export const createSemanticElectronAppPathChangeQuery = (
         });
       } else if (t.isIdentifier(node)) {
         if (binding === undefined) continue;
-        const sources =
-          path === undefined
-            ? undefined
-            : semanticProjectedSourcesAtRead(
-                binding,
-                node,
-                path,
-                state,
-                false,
-                current.readAt ?? node,
-                current.capturedSelections,
-              );
+        const sources = selected?.sources;
         // Unknown iteration cannot prove an Electron origin, but must not drop
         // retained source references that can still carry the shared app.
         if (sources === undefined) {

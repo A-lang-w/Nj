@@ -25,6 +25,32 @@ const cases = [
     changed: false,
   },
   {
+    name: "replaced app setter",
+    setter: "app.setAppPath=()=>{};app.setAppPath('/changed');",
+    owners: 1,
+    changed: false,
+  },
+  {
+    name: "conditional setter replacement",
+    setter: "if(flag)app.setAppPath=()=>{};app.setAppPath('/changed');",
+    owners: 1,
+    changed: true,
+  },
+  {
+    name: "original setter captured before replacement",
+    setter:
+      "const change=app.setAppPath;app.setAppPath=()=>{};change('/changed');",
+    owners: 1,
+    changed: true,
+  },
+  {
+    name: "local setter captured after replacement",
+    setter:
+      "app.setAppPath=()=>{};const change=app.setAppPath;change('/changed');",
+    owners: 1,
+    changed: false,
+  },
+  {
     name: "shared returned app",
     setter: "const getApp=()=>app;getApp().setAppPath('./lib');",
     owners: 3,
