@@ -46,7 +46,7 @@ export interface ServeStreamableHttpOptions {
   readonly createMcpServer: (
     context: McpRequestContext,
   ) => RequestTrackingMcpServer | Promise<RequestTrackingMcpServer>;
-  /** Maximum time a client session handover waits for cancelled tool handlers. */
+  /** Maximum time a client session handover waits for cancelled tool/completion handlers. */
   readonly sessionDrainTimeoutMs?: number;
   readonly routes?: readonly StreamableHttpRoute[];
   readonly logger?: Logger;
@@ -126,7 +126,7 @@ class SessionDrainTimeoutError extends AnalysisResourceConstraintError {
     super(
       "mcp_http_session",
       "transport",
-      "Previous MCP session still has running tool calls; retry after they finish",
+      "Previous MCP session still has running requests; retry after they finish",
       { drain_timeout_ms: timeoutMs },
     );
   }
@@ -349,7 +349,7 @@ export class McpSessionSlot {
     try {
       await shutdown();
       if (
-        !(await this.instance.drainToolCalls(
+        !(await this.instance.drainRequests(
           this.#closed ? undefined : this.drainTimeoutMs,
         ))
       )

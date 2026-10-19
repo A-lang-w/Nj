@@ -25,7 +25,7 @@ it.each([false, true])(
       expect((await client.callTool({ name: "context" })).content).toEqual([
         { type: "text", text: "false" },
       ]);
-      expect(await server.drainToolCalls(0)).toBe(true);
+      expect(await server.drainRequests(0)).toBe(true);
     } finally {
       await client.close();
       await server.close();
@@ -75,11 +75,11 @@ it("never starts a tool whose asynchronous input validation finishes after trans
       .catch(() => undefined);
     await validating;
     await server.close();
-    expect(await server.drainToolCalls(0)).toBe(true);
+    expect(await server.drainRequests(0)).toBe(true);
     release();
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(calls).toBe(0);
-    expect(await server.drainToolCalls(0)).toBe(true);
+    expect(await server.drainRequests(0)).toBe(true);
   } finally {
     release();
     await client.close();

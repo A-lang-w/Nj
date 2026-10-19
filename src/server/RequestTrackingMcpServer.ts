@@ -9,7 +9,7 @@ import {
   type ToolCallback,
 } from "@modelcontextprotocol/server";
 
-/** Owns tool completion independently of transport cancellation and suppressed replies. */
+/** Tracks tools automatically; other resource-using MCP callbacks use runRequest. */
 export class RequestTrackingMcpServer extends McpServer {
   readonly #calls = new Set<Promise<unknown>>();
   #tracking = false;
@@ -42,11 +42,11 @@ export class RequestTrackingMcpServer extends McpServer {
     const tracked =
       config.inputSchema === undefined
         ? (context: ServerContext) =>
-            this.#track(context, () =>
+            this.runRequest(context.mcpReq.signal, () =>
               (callback as ToolCallback<undefined>)(context),
             )
         : (args: unknown, context: ServerContext) =>
-            this.#track(context, () =>
+            this.runRequest(context.mcpReq.signal, () =>
               (callback as ToolCallback<StandardSchemaWithJSON>)(args, context),
             );
     return super.registerTool<OutputArgs, InputArgs>(
@@ -56,15 +56,16 @@ export class RequestTrackingMcpServer extends McpServer {
     );
   }
 
-  #track<T>(
-    context: ServerContext,
+  /** Run a tool or completion callback under the HTTP owner's shared drain. */
+  runRequest<T>(
+    signal: AbortSignal | undefined,
     callback: () => T | Promise<T>,
   ): T | Promise<T> {
     if (!this.#tracking) return callback();
     // SDK validation can finish after its transport closed. Such a callback
     // must never start work against the next session's shared resources.
     const call = Promise.resolve().then(() => {
-      context.mcpReq.signal.throwIfAborted();
+      signal?.throwIfAborted();
       return callback();
     });
     this.#calls.add(call);
@@ -72,7 +73,7 @@ export class RequestTrackingMcpServer extends McpServer {
   }
 
   /** Wait for running handlers, including their finally blocks; a timeout retains ownership. */
-  async drainToolCalls(timeoutMs?: number): Promise<boolean> {
+  async drainRequests(timeoutMs?: number): Promise<boolean> {
     if (this.#calls.size === 0) return true;
     const settled = Promise.allSettled(this.#calls).then(() => true);
     if (timeoutMs === undefined) return settled;

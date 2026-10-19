@@ -947,8 +947,8 @@ it.each(["after timeout", "during drain"])(
         const server = createEchoServer(() => {
           shutdowns += 1;
         });
-        const drain = server.drainToolCalls.bind(server);
-        vi.spyOn(server, "drainToolCalls").mockImplementation((timeoutMs) => {
+        const drain = server.drainRequests.bind(server);
+        vi.spyOn(server, "drainRequests").mockImplementation((timeoutMs) => {
           const result = drain(timeoutMs);
           draining();
           return result;
