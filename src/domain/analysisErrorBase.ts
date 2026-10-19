@@ -128,10 +128,13 @@ export abstract class AnalysisError extends Error {
     );
     const ownerPending = this.#cleanupResourceOwner?.cleanupPending === true;
     if (pending.length === 0 && !ownerPending) return [];
-    const dependencyResources =
-      this.#cleanupResourceProjection !== undefined
-        ? this.#cleanupResourceProjection.cleanupResources
-        : pending.flatMap((dependency) => dependency.cleanupResources);
+    // A projection is the producer's authoritative (possibly redacted) view;
+    // never widen it with the owner's raw resources.
+    if (this.#cleanupResourceProjection !== undefined)
+      return this.#cleanupResourceProjection.cleanupResources;
+    const dependencyResources = pending.flatMap(
+      (dependency) => dependency.cleanupResources,
+    );
     if (!ownerPending) return [...new Set(dependencyResources)];
     // A conjunctive owner keeps its unresolved resources attributed next to
     // the bound dependencies until every exact owner confirms release.
