@@ -55,6 +55,12 @@ it as inline Evidence to `inspect-analysis-view`; the same summary and capture
 page contracts apply. Large complete records can still exceed MCP's response
 budget; export the retained Evidence when a single record cannot fit.
 
+If decoding completes before cancellation or private-root cleanup fails, the
+failure retains the completed capture as Evidence with the requested record
+selection and explicit sensitivity exclusions. Earlier decode failures remain
+primary. Failed cleanup stays linked to its exact owner, including through
+redaction, and its live status clears only after a confirmed retry.
+
 ## Formats and upstream profiles
 
 HAR uses unchanged `har-schema@2.0.0` draft-06 schemas, `ajv@8.20.0`,
@@ -328,6 +334,13 @@ whose content types are JSON-like. Every other group is listed under
 `excluded` with reason `other-origin`, `ui-page-or-asset` or `non-json`, and
 retained records without a usable request line are counted in a limitation.
 
+The parent may instead be `capture_browser_scenario` Evidence whose scenario
+selected response bodies or header values: each network transaction is then
+one record, in request order, and the result names
+`parent_operation: "capture_browser_scenario"` with an empty `artifact`, since
+a scenario records no file. See
+[agent environments](agent-environments.md#from-a-browser-scenario).
+
 ```json
 {
   "name": "inspect_analysis_view",
@@ -394,7 +407,10 @@ whenever it is nonzero the Evidence is inferred, otherwise derived. The view
 performs no network activity and replays nothing. Native mitmproxy, SAZ and
 qlog captures, and parents inspected with `sensitive_values`, return the same
 typed unsupported errors as the api-surface view, including the canonical
-token `sensitive_values_unretained`.
+token `sensitive_values_unretained`. A `capture_browser_scenario` parent is not
+refused for declaring secrets: the capture redacted them as it recorded, a
+transaction whose URL was redacted is left unrepresented, and a response body
+keeps the capture's redaction markers, which a manifest limitation counts.
 
 The manifest accumulator shares the api-surface admission model: the capture
 clone, the inline envelope, record pointers, groups, every route part, observed
