@@ -1275,6 +1275,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         JsonArray operands = new JsonArray();
         JsonArray references = new JsonArray();
+        JsonArray pcode = new JsonArray();
         JsonArray destinations = new JsonArray();
         JsonArray flowEvidence = new JsonArray();
         JsonObject flow = new JsonObject();
@@ -1298,6 +1299,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             flowEvidence.add(listingFlow);
             boolean decodedReturn = false;
             for (PcodeOp operation : instruction.getPcode()) {
+                pcode.add(operation.toString());
                 if (operation.getOpcode() != PcodeOp.RETURN) continue;
                 decodedReturn = true;
                 JsonObject returnEvidence = new JsonObject();
@@ -1345,6 +1347,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add("operands", operands);
         result.add("flow", flow);
         result.add("references", references);
+        result.add("pcode", pcode);
         if (includeIncoming) {
             TreeMap<String, Reference> incoming = new TreeMap<>();
             visitObservedReferencesTo(address, reference -> addReference(incoming, reference));

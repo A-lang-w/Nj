@@ -115,6 +115,12 @@ export const nativeInstructionSchema = z.strictObject({
       ),
   }),
   references: z.array(reference),
+  pcode: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Provider-decoded instruction P-code in provider order. Omission means the provider or an older capture does not expose it; an empty array means the provider decoded no operations.",
+    ),
   incoming_references: z
     .array(reference)
     .nullable()

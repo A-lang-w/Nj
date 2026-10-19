@@ -482,6 +482,13 @@ describe("Ghidra compact reference provenance", () => {
       if (!parsed.ok) throw parsed.error;
       expect(parsed.value).toEqual(expected);
     }
+    const withPcode = { ...instruction, pcode: ["r3 = LOAD ram(0x100c)"] };
+    const parsedPcode = parseFunctionValueFixture(
+      "inspect_native_instruction",
+      withPcode,
+    );
+    if (!parsedPcode.ok) throw parsedPcode.error;
+    expect(parsedPcode.value).toEqual(withPcode);
     expect(
       parseFunctionValueFixture("inspect_native_instruction", {
         ...instruction,
