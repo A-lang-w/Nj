@@ -92,6 +92,30 @@ describe("environmentToolDefinitions", () => {
   });
 });
 
+describe("environmentToolInputSchema argument names", () => {
+  it("keeps every input addressable when query names collide with a path parameter, the body or inherited names", () => {
+    const schema = environmentToolInputSchema({
+      ...tool("post_folders"),
+      params: tool("get_users_by_id").params,
+      query_parameter_names: ["id", "body", "constructor"],
+    });
+    expect(Object.keys(schema.properties)).toEqual([
+      "id",
+      "query_id",
+      "body",
+      "constructor",
+      "request_body",
+    ]);
+    expect(Object.hasOwn(schema.properties, "constructor")).toBe(true);
+    expect(schema.properties.query_id?.description).toBe(
+      "Query parameter id; optional, matched against the recorded query on replay.",
+    );
+    expect(schema.properties.body?.type).toBe("string");
+    expect(schema.properties.request_body?.type).toBe("object");
+    expect(schema.required).toEqual(["id"]);
+  });
+});
+
 describe("environmentCard", () => {
   it("shapes the card with fixed protocol fields, the tools and null extension slots in contract key order", () => {
     const card = environmentCard("grafana-example", definitions);

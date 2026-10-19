@@ -5,6 +5,7 @@ import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { safeParseJson } from "../../domain/safeJson.js";
+import { environmentToolArguments } from "./environmentTools.js";
 import {
   ENVIRONMENT_SERVE_OPERATION,
   type EnvironmentManifestTool,
@@ -29,6 +30,7 @@ export interface ReplayResult {
     readonly exact_match: boolean;
     readonly recorded_path: string;
     readonly recorded_query: string | null;
+    readonly body_recorded: boolean;
     readonly truncated: boolean;
   };
 }
@@ -50,6 +52,7 @@ const decoded = (segment: string): string => {
 /** Count how many supplied path and query values the recorded request line satisfies. */
 const scoreExchange = (
   tool: EnvironmentManifestTool,
+  queryArguments: ReadonlyMap<string, string>,
   exchange: RecordedExchange,
   args: ReplayArguments,
 ): MatchScore => {
@@ -70,8 +73,8 @@ const scoreExchange = (
   const query = new URLSearchParams(exchange.query ?? "");
   let queryProvided = 0;
   let queryMatches = 0;
-  for (const name of tool.query_parameter_names) {
-    const value = args[name];
+  for (const [name, argument] of queryArguments) {
+    const value = args[argument];
     if (typeof value !== "string") continue;
     queryProvided += 1;
     if (query.getAll(name).includes(value)) queryMatches += 1;
@@ -92,10 +95,11 @@ export const selectReplayExchange = (
   | { readonly exchange: RecordedExchange; readonly exact: boolean }
   | undefined => {
   let best: { exchange: RecordedExchange; score: MatchScore } | undefined;
+  const queryArguments = environmentToolArguments(tool).query;
   for (const ordinal of tool.record_ordinals) {
     const exchange = exchanges.get(ordinal);
     if (exchange === undefined) continue;
-    const score = scoreExchange(tool, exchange, args);
+    const score = scoreExchange(tool, queryArguments, exchange, args);
     if (
       best === undefined ||
       score.pathMatches > best.score.pathMatches ||
@@ -109,12 +113,11 @@ export const selectReplayExchange = (
     : { exchange: best.exchange, exact: best.score.exact };
 };
 
-/** Cut text at the last UTF-8 character boundary within the byte limit. */
-const truncateUtf8 = (text: string, maxBytes: number): string => {
-  const bytes = Buffer.from(text, "utf8");
-  let end = maxBytes;
-  while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end -= 1;
-  return bytes.toString("utf8", 0, end);
+/** The longest prefix of text whose UTF-8 encoding fits the byte limit, encoding only that prefix. */
+const utf8Prefix = (text: string, maxBytes: number): string => {
+  // encodeInto stops before the first character that does not fit, so `read` ends on a boundary.
+  const { read } = new TextEncoder().encodeInto(text, new Uint8Array(maxBytes));
+  return text.slice(0, read);
 };
 
 /** Parse a retained body as JSON when its content type is JSON-like; otherwise return the text. */
@@ -123,11 +126,8 @@ const replayBody = (
 ): { readonly body: JsonValue; readonly truncated: boolean } => {
   const text = exchange.bodyText;
   if (text === null) return { body: null, truncated: false };
-  if (Buffer.byteLength(text, "utf8") > REPLAY_BODY_LIMIT_BYTES)
-    return {
-      body: truncateUtf8(text, REPLAY_BODY_LIMIT_BYTES),
-      truncated: true,
-    };
+  const prefix = utf8Prefix(text, REPLAY_BODY_LIMIT_BYTES);
+  if (prefix.length < text.length) return { body: prefix, truncated: true };
   if (
     exchange.contentType !== null &&
     isJsonLike(mediaTypeEssence(exchange.contentType))
@@ -170,6 +170,7 @@ export const replayEnvironmentTool = (
       exact_match: exact,
       recorded_path: exchange.path,
       recorded_query: exchange.query,
+      body_recorded: exchange.bodyText !== null,
       truncated,
     },
   });

@@ -519,6 +519,30 @@ it("requires exact Accept media ranges before a sessionless POST may replace the
   await client.close();
 });
 
+it("keeps the live session when the new client left before its initialize was probed", async () => {
+  const slot = new McpSessionSlot(
+    createEchoServer(() => undefined),
+    undefined,
+  );
+  const close = vi.spyOn(
+    WebStandardStreamableHTTPServerTransport.prototype,
+    "close",
+  );
+  try {
+    expect((await slot.handle(initializeRequest())).status).toBe(200);
+    const left = new AbortController();
+    left.abort();
+    const abandoned = new Request(initializeRequest(), { signal: left.signal });
+    expect((await slot.handle(abandoned)).status).toBe(400);
+    expect(close).not.toHaveBeenCalled();
+    expect((await slot.handle(initializeRequest())).status).toBe(200);
+    expect(close).toHaveBeenCalledTimes(1);
+  } finally {
+    close.mockRestore();
+    await slot.close();
+  }
+});
+
 it("keeps a session whose transport shutdown failed so the next close retries it", async () => {
   let shutdowns = 0;
   const slot = new McpSessionSlot(

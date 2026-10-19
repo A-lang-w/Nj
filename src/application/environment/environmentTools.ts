@@ -40,27 +40,70 @@ const bodyDescription = (tool: EnvironmentManifestTool): string =>
         .map(([key, type]) => `${key} (${type})`)
         .join(", ")}.`;
 
+/** Where each input of one tool lives in the flat argument object the schema advertises. */
+export interface EnvironmentToolArguments {
+  /** Query parameter name to argument name. */
+  readonly query: ReadonlyMap<string, string>;
+  /** Argument name of the write body, for write methods. */
+  readonly body: string | undefined;
+}
+
+const freeName = (
+  taken: ReadonlySet<string>,
+  preferred: string,
+  prefix: string,
+): string => {
+  if (!taken.has(preferred)) return preferred;
+  let candidate = `${prefix}${preferred}`;
+  for (let suffix = 2; taken.has(candidate); suffix += 1)
+    candidate = `${prefix}${preferred}_${String(suffix)}`;
+  return candidate;
+};
+
+/** Path parameters keep their names; a query name or the write body that would collide is renamed, so every input stays addressable. */
+export const environmentToolArguments = (
+  tool: EnvironmentManifestTool,
+): EnvironmentToolArguments => {
+  const taken = new Set(tool.params.map((param) => param.name));
+  const query = new Map<string, string>();
+  for (const name of tool.query_parameter_names) {
+    const argument = freeName(taken, name, "query_");
+    taken.add(argument);
+    query.set(name, argument);
+  }
+  return {
+    query,
+    body: WRITE_METHODS.has(tool.method)
+      ? freeName(taken, "body", "request_")
+      : undefined,
+  };
+};
+
 /** Map one manifest tool to its advertised MCP input schema. */
 export const environmentToolInputSchema = (
   tool: EnvironmentManifestTool,
 ): EnvironmentToolInputSchema => {
-  const properties: Record<string, EnvironmentToolProperty> = {};
+  // A Map, not an object literal, so names such as `constructor` are never mistaken for taken.
+  const properties = new Map<string, EnvironmentToolProperty>();
   for (const param of tool.params)
-    properties[param.name] = {
+    properties.set(param.name, {
       type: "string",
       description: `Path segment ${String(param.index)} (${param.rule}); observed: ${observed(param.observed_values)}`,
-    };
-  for (const name of tool.query_parameter_names)
-    if (!(name in properties))
-      properties[name] = {
-        type: "string",
-        description: `Query parameter ${name}; optional, matched against the recorded query on replay.`,
-      };
-  if (WRITE_METHODS.has(tool.method) && !("body" in properties))
-    properties.body = { type: "object", description: bodyDescription(tool) };
+    });
+  const args = environmentToolArguments(tool);
+  for (const [name, argument] of args.query)
+    properties.set(argument, {
+      type: "string",
+      description: `Query parameter ${name}; optional, matched against the recorded query on replay.`,
+    });
+  if (args.body !== undefined)
+    properties.set(args.body, {
+      type: "object",
+      description: bodyDescription(tool),
+    });
   return {
     type: "object",
-    properties,
+    properties: Object.fromEntries(properties),
     required: tool.params.map((param) => param.name),
     additionalProperties: false,
   };
