@@ -60,8 +60,11 @@ export interface SemanticReturnedReferenceSelection {
   readonly precision: "exact" | "widened";
 }
 
+type Projection = readonly (string | number | null)[];
+
 interface ValueSelection {
-  readonly path: readonly (string | number | null)[];
+  /** `undefined` selects any projection depth after different depths merge. */
+  readonly path: Projection | undefined;
   /** Object spread reads only own properties at these projection offsets. */
   readonly ownOnly?: readonly number[];
   readonly instance?: true;
@@ -71,7 +74,6 @@ interface ValueSelection {
 
 interface Candidate extends ValueSelection {
   readonly node: t.Node;
-  readonly initializers: ReferenceContext;
   readonly captures?: readonly t.Node[];
   /** A projected descriptor invokes its getter instead of exposing the function. */
   readonly accessorRead?: boolean;
@@ -130,33 +132,6 @@ interface CallableCaptureProofs {
   readonly prototypeUnchanged?: (owner: t.Node, read: t.Node) => boolean;
 }
 
-type ReferenceSource =
-  | JavaScriptSemanticInitializer
-  | t.ThisExpression
-  | t.CallExpression
-  | t.OptionalCallExpression;
-type ReferenceContext = ReadonlySet<ReferenceSource>;
-type CompletedExpansions = WeakMap<
-  t.Node,
-  Map<string, readonly ReferenceContext[]>
->;
-
-interface ExpansionFrame {
-  readonly item: Candidate;
-  readonly node: t.Node;
-  readonly pathKey: string;
-  readonly parent: ExpansionFrame | null;
-  readonly blockers: Set<ReferenceSource>;
-}
-
-type ExpansionTask =
-  | {
-      readonly kind: "visit";
-      readonly item: Candidate;
-      readonly parent: ExpansionFrame | null;
-    }
-  | { readonly kind: "complete"; readonly frame: ExpansionFrame };
-
 const shiftedOwnSelections = (
   selections: readonly number[] | undefined,
   offset: number,
@@ -165,46 +140,88 @@ const shiftedOwnSelections = (
     .map((index) => index + offset)
     .filter((index) => index >= 0);
 
-const contextContains = (
-  context: ReferenceContext,
-  required: ReferenceContext,
-): boolean => {
-  for (const initializer of required)
-    if (!context.has(initializer)) return false;
-  return true;
+/** Join two projections of one source read. Differing keys widen to `null`;
+ * differing depths widen to any depth. */
+const joinProjection = (
+  left: Projection | undefined,
+  right: Projection | undefined,
+): Projection | undefined => {
+  if (left === undefined || right === undefined || left.length !== right.length)
+    return undefined;
+  return left.map((key, index) => (key === right[index] ? key : null));
 };
 
-const propagateBlockers = (
-  blockers: ReferenceContext,
-  parent: ExpansionFrame | null,
-): void => {
-  if (parent === null) return;
-  for (const initializer of blockers)
-    if (parent.item.initializers.has(initializer))
-      parent.blockers.add(initializer);
-};
+const sameProjection = (
+  left: Projection | undefined,
+  right: Projection | undefined,
+): boolean =>
+  left === undefined
+    ? right === undefined
+    : right !== undefined &&
+      left.length === right.length &&
+      left.every((key, index) => key === right[index]);
 
-const completeExpansion = (
-  frame: ExpansionFrame,
-  expanded: CompletedExpansions,
-): void => {
-  const paths =
-    expanded.get(frame.node) ?? new Map<string, readonly ReferenceContext[]>();
-  const contexts = paths.get(frame.pathKey) ?? [];
-  const covered = contexts.find((context) =>
-    contextContains(frame.blockers, context),
-  );
-  if (covered === undefined) {
-    paths.set(frame.pathKey, [
-      ...contexts.filter(
-        (context) => !contextContains(context, frame.blockers),
-      ),
-      frame.blockers,
-    ]);
-    expanded.set(frame.node, paths);
-  }
-  propagateBlockers(covered ?? frame.blockers, frame.parent);
-};
+const sameCaptures = (
+  left: readonly t.Node[] | undefined,
+  right: readonly t.Node[] | undefined,
+): boolean =>
+  left === undefined
+    ? right === undefined
+    : right !== undefined &&
+      left.length === right.length &&
+      left.every((node, index) => node === right[index]);
+
+/** Prefix a projection; an any-depth selection stays any depth. */
+const extendProjection = (
+  path: Projection | undefined,
+  prefix: Projection,
+): Projection | undefined =>
+  path === undefined ? undefined : [...prefix, ...path];
+
+/** Pending call-result selections deeper than this collapse to any depth. */
+const INVOCATION_DEPTH_LIMIT = 4;
+
+const invocationDepth = (invocation: ValueSelection | undefined): number =>
+  invocation === undefined ? 0 : 1 + invocationDepth(invocation.invocation);
+
+/** Replace the projection, own-only offsets and capture record of a candidate.
+ * An any-depth selection carries neither offsets nor captures, and empty
+ * offsets are omitted so equal selections compare equal. */
+const reselect = (
+  item: Candidate,
+  selection: {
+    readonly path: Projection | undefined;
+    readonly ownOnly?: readonly number[] | undefined;
+    readonly captures?: readonly t.Node[] | undefined;
+  },
+  overrides: Partial<Candidate> = {},
+): Candidate => ({
+  node: item.node,
+  path: selection.path,
+  ...(item.instance === undefined ? {} : { instance: item.instance }),
+  ...(item.invocation === undefined ? {} : { invocation: item.invocation }),
+  ...(item.accessorRead === undefined
+    ? {}
+    : { accessorRead: item.accessorRead }),
+  ...(item.descriptorReceiver === undefined
+    ? {}
+    : { descriptorReceiver: item.descriptorReceiver }),
+  ...(item.prototypeReceiver === undefined
+    ? {}
+    : { prototypeReceiver: item.prototypeReceiver }),
+  ...(item.receiverContext === undefined
+    ? {}
+    : { receiverContext: item.receiverContext }),
+  ...(selection.path === undefined ||
+  selection.ownOnly === undefined ||
+  selection.ownOnly.length === 0
+    ? {}
+    : { ownOnly: selection.ownOnly }),
+  ...(selection.path === undefined || selection.captures === undefined
+    ? {}
+    : { captures: selection.captures }),
+  ...overrides,
+});
 
 interface ObjectTargetIndex {
   readonly prototype: t.ObjectProperty | undefined;
@@ -473,6 +490,10 @@ const selectPrivateTargets = (
   path: Candidate["path"],
   pending: Candidate[],
 ): void => {
+  const ownOnly =
+    path === undefined || item.path === undefined
+      ? []
+      : shiftedOwnSelections(item.ownOnly, path.length - item.path.length);
   for (const member of members) {
     if (member.value === null || member.kind === "set") continue;
     if (member.kind === "get") {
@@ -480,13 +501,9 @@ const selectPrivateTargets = (
       pending.push({
         node: member.value,
         path: [],
-        initializers: item.initializers,
         invocation: {
           path,
-          ownOnly: shiftedOwnSelections(
-            item.ownOnly,
-            path.length - item.path.length,
-          ),
+          ownOnly,
           ...(item.instance === true ? { instance: true } : {}),
           ...(item.invocation === undefined
             ? {}
@@ -494,15 +511,13 @@ const selectPrivateTargets = (
         },
       });
     } else
-      pending.push({
-        ...item,
-        node: member.value,
-        path,
-        ownOnly: shiftedOwnSelections(
-          item.ownOnly,
-          path.length - item.path.length,
+      pending.push(
+        reselect(
+          item,
+          { path, ownOnly, captures: item.captures },
+          { node: member.value },
         ),
-      });
+      );
   }
 };
 
@@ -998,7 +1013,7 @@ const createSemanticCallableReferences = (
     >();
     const retain = (
       node: t.Function | t.Class,
-      path: Candidate["path"],
+      path: Projection,
       captures?: readonly t.Node[],
     ) => {
       const paths = functions.get(node) ?? new Map();
@@ -1014,137 +1029,39 @@ const createSemanticCallableReferences = (
       );
       functions.set(node, paths);
     };
-    // A consumer needing only the union of several roots shares completed
-    // expansions. Each root keeps its own capture and cycle-blocker context.
-    const rootTasks = (): ExpansionTask[] => {
-      const tasks: ExpansionTask[] = [];
-      for (let index = roots.length - 1; index >= 0; index--) {
-        const node = roots[index];
-        if (node === undefined) continue;
-        if (isTerminalCallableLiteral(node)) {
-          complete = false;
-          continue;
-        }
-        tasks.push({
-          kind: "visit",
-          item: {
-            node,
-            path: projection,
-            initializers: new Set(),
-            ...(captureProofs === undefined
-              ? {}
-              : { captures: projection.map(() => projectionRead ?? node) }),
-          },
-          parent: null,
-        });
-      }
-      return tasks;
-    };
-    const work = rootTasks();
+    // A transition depends on the source read and its current selection, not
+    // on the initializer history used to reach it. Keeping history out of the
+    // state lets shared diamonds and reassignment webs converge to the finite
+    // may-target fixed point instead of enumerating alias permutations. A
+    // source reached again under another projection joins both projections:
+    // differing keys widen to `null` and differing depths widen to any depth.
+    // Widening never drops represented targets, but completion stays unknown
+    // and an exact capture is refused after a join.
+    interface SelectionState {
+      item: Candidate;
+      queued: boolean;
+    }
+    let states = new WeakMap<t.Node, Map<string, SelectionState>>();
+    let work: SelectionState[] = [];
     const getterExpansion =
       thisReferences === undefined
         ? undefined
         : new SemanticGetterExpansion(state);
     let expandsReceiver = false;
-    // Finish descendants before memoizing an expansion. Only actual external
-    // cycle blockers affect reuse; branch history is not a dependency. An
-    // acyclic expression/path is consequently expanded once across a diamond.
-    let expanded: CompletedExpansions = new WeakMap();
-    // Possible callable reachability joins competing selectors at their source.
-    // Enumerating complete alias histories creates exponential path permutations.
-    // Null selectors retain every matching member; exact capture queries never
-    // use this widening and completion remains unknown after a join.
-    const projectionPaths = new WeakMap<
-      t.Node,
-      Map<string, Candidate["path"]>
-    >();
-    while (work.length > 0) {
-      const task = work.pop();
-      if (task === undefined) break;
-      if (task.kind === "complete") {
-        completeExpansion(task.frame, expanded);
-        continue;
-      }
-      const { parent } = task;
-      const widening = getterExpansion?.widening === true;
-      // The fallback is reachability over receiver contents, independent of
-      // suffix permutations and alias ancestry. Calls expose both their
-      // callable and result contents in this conservative pass.
-      let item: Candidate = widening
-        ? {
-            node: task.item.node,
-            path: [],
-            initializers: new Set(),
-            ...(task.item.instance === undefined
-              ? {}
-              : { instance: task.item.instance }),
-            ...(task.item.descriptorReceiver === undefined
-              ? {}
-              : { descriptorReceiver: task.item.descriptorReceiver }),
-            ...(task.item.prototypeReceiver === undefined
-              ? {}
-              : { prototypeReceiver: task.item.prototypeReceiver }),
-            ...(task.item.receiverContext === undefined
-              ? {}
-              : { receiverContext: task.item.receiverContext }),
-          }
-        : task.item;
-      const node = unwrapJavaScriptExpression(item.node).node;
-      if (isTerminalCallableLiteral(node)) {
-        complete = false;
-        continue;
-      }
-      if (item.path.includes(null)) complete = false;
-      if (captureProofs === undefined && !widening) {
-        const joinKey = JSON.stringify([
-          item.instance === true,
-          item.path.length,
-          item.ownOnly ?? [],
-          item.invocation,
-          item.accessorRead === true,
-          captureKey(
-            item.descriptorReceiver === undefined
-              ? undefined
-              : [item.descriptorReceiver.node],
-          ),
-          item.descriptorReceiver?.instance,
-          captureKey(
-            item.prototypeReceiver === undefined
-              ? undefined
-              : [item.prototypeReceiver.node],
-          ),
-          item.prototypeReceiver?.instance,
-          captureKey(
-            item.receiverContext === undefined
-              ? undefined
-              : [
-                  item.receiverContext.owner,
-                  item.receiverContext.receiver.node,
-                ],
-          ),
-          item.receiverContext?.receiver.instance,
-        ]);
-        const paths = projectionPaths.get(node) ?? new Map();
-        const previous = paths.get(joinKey);
-        if (previous !== undefined) {
-          const joined = item.path.map((key, index) =>
-            previous[index] === key ? key : null,
-          );
-          if (joined.some((key, index) => key !== item.path[index])) {
-            complete = false;
-            widened = true;
-          }
-          item = { ...item, path: joined };
-        }
-        paths.set(joinKey, item.path);
-        projectionPaths.set(node, paths);
-      }
-      const pathKey = JSON.stringify([
+    const invocationKey = (invocation: ValueSelection | undefined): unknown =>
+      invocation === undefined
+        ? undefined
+        : [
+            invocation.path === undefined ? "*" : invocation.path,
+            invocation.ownOnly ?? [],
+            invocation.instance === true,
+            invocationKey(invocation.invocation),
+          ];
+    const selectionKey = (item: Candidate): string =>
+      JSON.stringify([
         item.instance === true,
-        item.path,
-        item.ownOnly ?? [],
-        item.invocation,
         item.accessorRead === true,
+        invocationKey(item.invocation),
         item.descriptorReceiver === undefined
           ? undefined
           : [
@@ -1166,36 +1083,127 @@ const createSemanticCallableReferences = (
               ]),
               item.receiverContext.receiver.instance === true,
             ],
-        ...(captureProofs === undefined ? [] : [captureKey(item.captures)]),
       ]);
-      const covered = expanded
-        .get(node)
-        ?.get(pathKey)
-        ?.find((context) => contextContains(item.initializers, context));
-      if (covered !== undefined) {
-        // Cached cycle dependencies must reach the caller's proof too.
-        propagateBlockers(covered, parent);
+    // Nested call results such as `a = a()` would otherwise stack one pending
+    // selection per cycle turn. Beyond the bound, any projection of the result
+    // remains a candidate and the exact selection is lost.
+    const boundInvocation = (candidate: Candidate): Candidate => {
+      if (invocationDepth(candidate.invocation) <= INVOCATION_DEPTH_LIMIT)
+        return candidate;
+      complete = false;
+      widened = true;
+      return { ...candidate, invocation: { path: undefined, ownOnly: [] } };
+    };
+    const joinSelections = (
+      previous: Candidate,
+      incoming: Candidate,
+    ): Candidate | undefined => {
+      const path = joinProjection(previous.path, incoming.path);
+      const ownOnly =
+        path === undefined
+          ? []
+          : (previous.ownOnly ?? []).filter((offset) =>
+              (incoming.ownOnly ?? []).includes(offset),
+            );
+      const captures =
+        sameProjection(previous.path, incoming.path) &&
+        sameCaptures(previous.captures, incoming.captures)
+          ? previous.captures
+          : undefined;
+      if (
+        sameProjection(path, previous.path) &&
+        ownOnly.length === (previous.ownOnly ?? []).length &&
+        captures === previous.captures
+      )
+        return undefined;
+      return reselect(previous, { path, ownOnly, captures });
+    };
+    const enqueue = (candidate: Candidate): void => {
+      const widening = getterExpansion?.widening === true;
+      // The fallback is reachability over receiver contents, independent of
+      // suffix permutations and alias ancestry. Calls expose both their
+      // callable and result contents in this conservative pass.
+      const selection: Candidate = widening
+        ? {
+            node: candidate.node,
+            path: [],
+            ...(candidate.instance === undefined
+              ? {}
+              : { instance: candidate.instance }),
+            ...(candidate.descriptorReceiver === undefined
+              ? {}
+              : { descriptorReceiver: candidate.descriptorReceiver }),
+            ...(candidate.prototypeReceiver === undefined
+              ? {}
+              : { prototypeReceiver: candidate.prototypeReceiver }),
+            ...(candidate.receiverContext === undefined
+              ? {}
+              : { receiverContext: candidate.receiverContext }),
+          }
+        : boundInvocation(candidate);
+      const node = unwrapJavaScriptExpression(selection.node).node;
+      const item = { ...selection, node };
+      const key = selectionKey(item);
+      const byKey = states.get(node) ?? new Map<string, SelectionState>();
+      states.set(node, byKey);
+      const existing = byKey.get(key);
+      if (existing === undefined) {
+        const created = { item, queued: true };
+        byKey.set(key, created);
+        work.push(created);
+        return;
+      }
+      const joined = joinSelections(existing.item, item);
+      if (joined === undefined) return;
+      complete = false;
+      widened = true;
+      existing.item = joined;
+      if (!existing.queued) {
+        existing.queued = true;
+        work.push(existing);
+      }
+    };
+    // A consumer needing only the union of several roots shares completed
+    // expansions. Each root keeps its own capture context.
+    const enqueueRoots = (): void => {
+      for (let index = roots.length - 1; index >= 0; index--) {
+        const node = roots[index];
+        if (node === undefined) continue;
+        if (isTerminalCallableLiteral(node)) {
+          complete = false;
+          continue;
+        }
+        enqueue({
+          node,
+          path: projection,
+          ...(captureProofs === undefined
+            ? {}
+            : { captures: projection.map(() => projectionRead ?? node) }),
+        });
+      }
+    };
+    enqueueRoots();
+    while (work.length > 0) {
+      const current = work.pop();
+      if (current === undefined) break;
+      current.queued = false;
+      const item = current.item;
+      const node = item.node;
+      const widening = getterExpansion?.widening === true;
+      if (isTerminalCallableLiteral(node)) {
+        complete = false;
         continue;
       }
+      if (item.path === undefined || item.path.includes(null)) complete = false;
       if (expandsReceiver && getterExpansion?.reserveResult() === false) {
         if (getterExpansion.widen()) {
           complete = false;
-          work.splice(0, work.length, ...rootTasks());
-          expanded = new WeakMap();
+          states = new WeakMap();
+          work = [];
+          enqueueRoots();
         }
         continue;
       }
-      const frame: ExpansionFrame = {
-        item,
-        node,
-        pathKey,
-        parent,
-        blockers: new Set(),
-      };
-      // Widened reachability has no ancestry-dependent exclusions. Mark it
-      // before descending so mutually recursive descriptors form a finite graph.
-      if (widening) completeExpansion(frame, expanded);
-      else work.push({ kind: "complete", frame });
       const pending: Candidate[] = [];
       const lexicalStatic = t.isThisExpression(node)
         ? staticReceiver(node)
@@ -1204,35 +1212,28 @@ const createSemanticCallableReferences = (
         t.isThisExpression(node) &&
         (thisReferences !== undefined || lexicalStatic !== undefined)
       ) {
-        if (item.initializers.has(node)) {
-          complete = false;
-          frame.blockers.add(node);
-        } else {
-          // Receiver sources are independently selected at their invocation.
-          // Re-enter their bindings without mistaking the enclosing getter's
-          // original property selection for an alias cycle. Retain receiver
-          // edges themselves so recursive getters still terminate.
-          const initializers = new Set<ReferenceSource>([node]);
-          for (const source of item.initializers)
-            if ("type" in source && t.isThisExpression(source))
-              initializers.add(source);
-          const selected = thisReferences?.(node);
-          expandsReceiver ||=
-            selected !== undefined || lexicalStatic !== undefined;
-          const receivers: NonNullable<Candidate["descriptorReceiver"]>[] =
-            lexicalStatic === undefined
-              ? (selected?.receivers.map((node) => ({ node })) ?? [])
-              : [{ node: lexicalStatic }];
-          if (lexicalStatic !== undefined) complete = false;
-          if (
-            selected?.owner === item.receiverContext?.owner &&
-            item.receiverContext !== undefined
-          )
-            receivers.push(item.receiverContext.receiver);
-          for (const receiver of receivers)
-            pending.push({ ...item, ...receiver, initializers });
-        }
-      } else if (t.isSuper(node) && item.path.length > 0) {
+        // Receiver sources are independently selected at their invocation.
+        // Re-entering a receiver's bindings terminates through the shared
+        // selection states, so recursive getters form a finite graph.
+        const selected = thisReferences?.(node);
+        expandsReceiver ||=
+          selected !== undefined || lexicalStatic !== undefined;
+        const receivers: NonNullable<Candidate["descriptorReceiver"]>[] =
+          lexicalStatic === undefined
+            ? (selected?.receivers.map((node) => ({ node })) ?? [])
+            : [{ node: lexicalStatic }];
+        if (lexicalStatic !== undefined) complete = false;
+        if (
+          selected?.owner === item.receiverContext?.owner &&
+          item.receiverContext !== undefined
+        )
+          receivers.push(item.receiverContext.receiver);
+        for (const receiver of receivers)
+          pending.push({ ...item, ...receiver });
+      } else if (
+        t.isSuper(node) &&
+        (item.path === undefined || item.path.length > 0)
+      ) {
         // Possible lexical-home lookup is not proof that a runtime prototype
         // or its selected member still has its source identity.
         complete = false;
@@ -1241,7 +1242,7 @@ const createSemanticCallableReferences = (
           pending.push({
             ...item,
             node: lookup.base,
-            path: [...lookup.projection, ...item.path],
+            path: extendProjection(item.path, lookup.projection),
           });
       } else if (widening && t.isFunction(node)) {
         retain(node, []);
@@ -1256,7 +1257,6 @@ const createSemanticCallableReferences = (
             pending.push({
               node: result.node,
               path: [],
-              initializers: item.initializers,
               ...(receiverContext === undefined ? {} : { receiverContext }),
             });
       } else if (t.isIdentifier(node)) {
@@ -1273,31 +1273,27 @@ const createSemanticCallableReferences = (
                 (value.end ?? Infinity) < (node.start ?? -1),
             );
         }
-        for (const initializer of selected.initializers) {
-          if (item.initializers.has(initializer)) {
-            complete = false;
-            frame.blockers.add(initializer);
-            continue;
-          }
-          pending.push({
-            ...item,
-            node: initializer.node,
-            path: [...initializer.projection, ...item.path],
-            ownOnly: shiftedOwnSelections(
-              item.ownOnly,
-              initializer.projection.length,
+        for (const initializer of selected.initializers)
+          pending.push(
+            reselect(
+              item,
+              {
+                path: extendProjection(item.path, initializer.projection),
+                ownOnly: shiftedOwnSelections(
+                  item.ownOnly,
+                  initializer.projection.length,
+                ),
+                captures:
+                  item.captures === undefined
+                    ? undefined
+                    : [
+                        ...initializer.projection.map(() => initializer.node),
+                        ...item.captures,
+                      ],
+              },
+              { node: initializer.node },
             ),
-            ...(item.captures === undefined
-              ? {}
-              : {
-                  captures: [
-                    ...initializer.projection.map(() => initializer.node),
-                    ...item.captures,
-                  ],
-                }),
-            initializers: new Set([...item.initializers, initializer]),
-          });
-        }
+          );
       } else if (
         t.isMemberExpression(node) ||
         t.isOptionalMemberExpression(node)
@@ -1315,7 +1311,7 @@ const createSemanticCallableReferences = (
             selectPrivateTargets(
               declaration?.members ?? [],
               item,
-              [...path.reverse(), ...item.path],
+              extendProjection(item.path, path.toReversed()),
               pending,
             );
             break;
@@ -1326,15 +1322,20 @@ const createSemanticCallableReferences = (
           receiver = unwrapJavaScriptExpression(receiver.object).node;
         }
         if (!privateRead)
-          pending.push({
-            ...item,
-            node: receiver,
-            path: [...path.reverse(), ...item.path],
-            ownOnly: shiftedOwnSelections(item.ownOnly, path.length),
-            ...(item.captures === undefined
-              ? {}
-              : { captures: [...path.map(() => node), ...item.captures] }),
-          });
+          pending.push(
+            reselect(
+              item,
+              {
+                path: extendProjection(item.path, path.toReversed()),
+                ownOnly: shiftedOwnSelections(item.ownOnly, path.length),
+                captures:
+                  item.captures === undefined
+                    ? undefined
+                    : [...path.map(() => node), ...item.captures],
+              },
+              { node: receiver },
+            ),
+          );
         if (captureProofs !== undefined && (privateRead || path.includes(null)))
           complete = false;
       } else if (
@@ -1359,26 +1360,16 @@ const createSemanticCallableReferences = (
       } else if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
         complete = false;
         // Native returned inputs and opt-in reachability are possible contents,
-        // not exact return identity. Keep the original capture and projection,
-        // and guard call-result cycles in the same graph as alias cycles.
-        if (item.initializers.has(node)) frame.blockers.add(node);
-        else {
-          const identitySources = interop
-            .callReferenceSources(node, undefined)
-            .flatMap((source) =>
-              source.identity === true ? [source.node] : [],
-            );
-          const resultSources = [
-            ...identitySources,
-            ...(callResultSources?.(node) ?? []),
-          ];
-          if (resultSources.length > 0) {
-            const initializers = new Set(item.initializers);
-            initializers.add(node);
-            for (const source of resultSources)
-              pending.push({ ...item, node: source, initializers });
-          }
-        }
+        // not exact return identity. Keep the original capture and projection;
+        // call-result cycles close in the same selection states as alias cycles.
+        const identitySources = interop
+          .callReferenceSources(node, undefined)
+          .flatMap((source) => (source.identity === true ? [source.node] : []));
+        for (const source of [
+          ...identitySources,
+          ...(callResultSources?.(node) ?? []),
+        ])
+          pending.push({ ...item, node: source });
         const invocation = interop.intrinsicInvocation(node);
         const target = invocation?.arguments?.[0];
         if (
@@ -1392,7 +1383,6 @@ const createSemanticCallableReferences = (
           pending.push({
             node: node.callee,
             path: [],
-            initializers: item.initializers,
             invocation: {
               path: item.path,
               ownOnly: item.ownOnly ?? [],
@@ -1412,23 +1402,18 @@ const createSemanticCallableReferences = (
               node: result.node,
               path: item.path,
               ownOnly: item.ownOnly ?? [],
-              initializers: item.initializers,
               ...(item.invocation === undefined
                 ? {}
                 : { invocation: item.invocation }),
             });
       } else if (
         t.isFunction(node) &&
-        item.path.length === 0 &&
+        (item.path === undefined || item.path.length === 0) &&
         item.invocation !== undefined
       ) {
         for (const result of semanticCallableResultExpressions(node))
           if (result.node !== null)
-            pending.push({
-              ...item.invocation,
-              node: result.node,
-              initializers: item.initializers,
-            });
+            pending.push({ ...item.invocation, node: result.node });
       } else if (
         (mode === "function-values" || item.accessorRead === true) &&
         (t.isObjectMethod(node) || t.isClassMethod(node)) &&
@@ -1444,7 +1429,6 @@ const createSemanticCallableReferences = (
                 node: result.node,
                 path: item.path,
                 ownOnly: item.ownOnly ?? [],
-                initializers: item.initializers,
                 ...(item.descriptorReceiver === undefined
                   ? {}
                   : {
@@ -1462,18 +1446,33 @@ const createSemanticCallableReferences = (
         (t.isObjectMethod(node) || t.isClassMethod(node)) &&
         (node.kind === "get" || node.kind === "set")
       ) {
-        if (item.path.length === 0) retain(node, [], item.captures);
-        else if (node.kind === "get")
+        // Any depth can select this descriptor or project through its result.
+        if (item.path === undefined || item.path.length === 0)
+          retain(node, [], item.captures);
+        if (
+          (item.path === undefined || item.path.length > 0) &&
+          node.kind === "get"
+        )
           for (const result of semanticCallableResultExpressions(node))
             if (result.node !== null)
               pending.push({ ...item, node: result.node });
       } else if (
         t.isFunction(node) &&
         item.invocation === undefined &&
-        (item.path.length === 0 || mode === "function-values")
+        (item.path === undefined ||
+          item.path.length === 0 ||
+          mode === "function-values")
       ) {
-        if (item.path.includes(null)) complete = false;
-        if (mode !== "accessors") retain(node, item.path, item.captures);
+        if (item.path === undefined || item.path.includes(null))
+          complete = false;
+        if (mode !== "accessors") {
+          if (item.path !== undefined) retain(node, item.path, item.captures);
+          else {
+            // Any depth selects the callable itself or an unknown member of it.
+            retain(node, [], item.captures);
+            if (mode === "function-values") retain(node, [null], item.captures);
+          }
+        }
         // An escaped lexical closure can expose its enclosing receiver when
         // invoked. Ordinary functions establish their own receiver instead.
         if (
@@ -1486,12 +1485,13 @@ const createSemanticCallableReferences = (
               pending.push({ ...item, node: result.node });
       } else if (
         t.isObjectExpression(node) &&
-        (item.path.length > 0 ||
+        (item.path === undefined ||
+          item.path.length > 0 ||
           mode === "contents" ||
           includeContainerContents)
       ) {
         if (captureProofs !== undefined) {
-          const key = item.path[0];
+          const key = item.path?.[0];
           const index = objectTargetIndex(node, objectTargets);
           const property =
             key == null ? undefined : index.propertyByName.get(String(key));
@@ -1522,13 +1522,17 @@ const createSemanticCallableReferences = (
         );
       } else if (
         t.isArrayExpression(node) &&
-        (item.path.length > 0 ||
+        (item.path === undefined ||
+          item.path.length > 0 ||
           mode === "contents" ||
           includeContainerContents)
       ) {
-        const [key, ...path] = item.path;
+        const [key, ...rest] = item.path ?? [];
+        const path = item.path === undefined ? undefined : rest;
         const index =
-          key === undefined || key === null ? null : semanticArrayIndex(key);
+          path === undefined || key === undefined || key === null
+            ? null
+            : semanticArrayIndex(key);
         let uncertainOffset = false;
         let selectedOwn = false;
         node.elements.forEach((element, offset) => {
@@ -1538,7 +1542,7 @@ const createSemanticCallableReferences = (
             pending.push({
               ...item,
               node: element.argument,
-              path: [null, ...path],
+              path: extendProjection(path, [null]),
             });
           } else if (index === null || uncertainOffset || index === offset) {
             selectedOwn ||= index === offset && !uncertainOffset;
@@ -1546,16 +1550,17 @@ const createSemanticCallableReferences = (
               complete = false;
               return;
             }
-            pending.push({
-              ...item,
-              node: element,
-              path,
-              ownOnly: shiftedOwnSelections(item.ownOnly, -1),
-              prototypeReceiver: undefined,
-              ...(item.captures === undefined
-                ? {}
-                : { captures: item.captures.slice(1) }),
-            });
+            pending.push(
+              reselect(
+                item,
+                {
+                  path,
+                  ownOnly: shiftedOwnSelections(item.ownOnly, -1),
+                  captures: item.captures?.slice(1),
+                },
+                { node: element, prototypeReceiver: undefined },
+              ),
+            );
           }
         });
         if (captureProofs !== undefined)
@@ -1571,150 +1576,191 @@ const createSemanticCallableReferences = (
         complete = false;
         pending.push({ ...item, node: node.callee, instance: true });
       } else if (t.isClass(node)) {
+        const lineage = classLineage(node, state, classLineages);
+        const prototype = item.path?.[0] === "prototype";
+        const [key, ...rest] =
+          item.path === undefined
+            ? []
+            : prototype
+              ? item.path.slice(1)
+              : item.path;
+        const path = item.path === undefined ? undefined : rest;
         if (
           mode !== "function-values" ||
+          item.path === undefined ||
           item.path.length !== 0 ||
           item.instance === true ||
           node.decorators?.length
         )
           complete = false;
-        const prototype = item.path[0] === "prototype";
-        const [key, ...path] = prototype ? item.path.slice(1) : item.path;
-        const lineage = classLineage(node, state, classLineages);
-        const value = (selectedNode: t.Node, path: Candidate["path"]) =>
+        const value = (
+          selectedNode: t.Node,
+          path: Candidate["path"],
+          exposesCallable = false,
+        ) =>
           pending.push({
             node: selectedNode,
             path,
-            ownOnly: shiftedOwnSelections(
-              item.ownOnly,
-              path.length - item.path.length,
-            ),
-            initializers: item.initializers,
+            ownOnly:
+              path === undefined || item.path === undefined
+                ? []
+                : shiftedOwnSelections(
+                    item.ownOnly,
+                    path.length - item.path.length,
+                  ),
             descriptorReceiver: item.prototypeReceiver ?? {
               node,
               ...(item.instance === true ? { instance: true } : {}),
             },
-            accessorRead:
-              key !== undefined && (mode !== "accessors" || path.length > 0),
+            accessorRead: exposesCallable
+              ? false
+              : path === undefined
+                ? mode !== "accessors"
+                : key !== undefined &&
+                  (mode !== "accessors" || path.length > 0),
             ...(item.invocation === undefined
               ? {}
               : { invocation: item.invocation }),
           });
-        const select = (layer: ClassMemberLayer): boolean => {
-          for (const owner of lineage.classes) {
-            const selected = selectClassTargets(
-              classTargetIndex(owner, classTargets)[layer],
-              key,
-            );
-            const values =
-              mode === "accessors" && path.length === 0
-                ? selected.members.flatMap((member) =>
-                    member.value === null ? [] : [member.value],
-                  )
-                : selected.values;
-            for (const selectedValue of values) value(selectedValue, path);
-            if (selected.own) return true;
-          }
-          return false;
-        };
-        if (
-          mode === "function-values" &&
-          item.instance !== true &&
-          !prototype &&
-          key === undefined
-        )
-          retain(node, []);
-        else if (mode === "contents" && key === undefined) {
+        if (item.path === undefined) {
+          // Any depth can select the constructor, every public member and
+          // whatever those members expose, including an accessor's own
+          // callable through its descriptor. Private storage is never reached
+          // through a public projection.
+          if (mode === "function-values" && item.instance !== true)
+            retain(node, []);
           for (const owner of lineage.classes) {
             const index = classTargetIndex(owner, classTargets);
+            if (index.constructorMethod !== undefined)
+              value(index.constructorMethod, undefined);
             for (const member of [
               ...index.static,
               ...index.prototype,
               ...index.fields,
             ]) {
-              if (member.key.kind === "private") continue;
-              const selected = member.value;
-              if (selected != null) value(selected, []);
+              if (member.key.kind === "private" || member.value === null)
+                continue;
+              value(member.value, undefined);
+              if (member.kind === "get" || member.kind === "set")
+                value(member.value, undefined, true);
             }
           }
-        } else if (item.instance === true && !prototype) {
-          const constructor = classTargetIndex(
-            node,
-            classTargets,
-          ).constructorMethod;
-          const results =
-            constructor === undefined
-              ? []
-              : semanticCallableResultExpressions(constructor);
-          for (const result of results)
-            if (result.node !== null) value(result.node, item.path);
-          const replaced = constructorReplacesReceiver(
-            constructor,
-            results,
-            isDefinitelyObject,
-          );
-          if (!replaced && key !== undefined) {
-            // Every inherited field is an own slot on the new object, so base
-            // fields precede even a derived prototype method or accessor.
-            if (!select("fields")) {
-              select("prototype");
-              if (lineage.unknownBase !== undefined)
-                pending.push({ ...item, node: lineage.unknownBase });
-            }
-          }
-        } else if (key === undefined) {
-          if (!prototype) {
-            let followBaseResults = mode === "results";
-            for (const owner of lineage.classes) {
-              const constructor = classTargetIndex(
-                owner,
-                classTargets,
-              ).constructorMethod;
-              if (constructor === undefined) continue;
-              value(constructor, []);
-              // Invocation selects the first constructor, but normal derived
-              // completion preserves the object supplied by super(). Only a
-              // definite replacement can hide a possible inherited result.
-              if (!followBaseResults) break;
-              if (
-                constructorReplacesReceiver(
-                  constructor,
-                  semanticCallableResultExpressions(constructor),
-                  isDefinitelyObject,
-                )
-              ) {
-                followBaseResults = false;
-                break;
-              }
-            }
-            if (followBaseResults && lineage.unknownBase !== undefined)
-              pending.push({ ...item, node: lineage.unknownBase });
-          }
-        } else if (!select(prototype ? "prototype" : "static")) {
-          if (!prototype && key === "__proto__" && node.superClass != null)
-            pending.push({ ...item, node: node.superClass, path });
-          else if (lineage.unknownBase !== undefined)
+          if (lineage.unknownBase !== undefined)
             pending.push({ ...item, node: lineage.unknownBase });
+        } else {
+          const select = (layer: ClassMemberLayer): boolean => {
+            for (const owner of lineage.classes) {
+              const selected = selectClassTargets(
+                classTargetIndex(owner, classTargets)[layer],
+                key,
+              );
+              const values =
+                mode === "accessors" && path !== undefined && path.length === 0
+                  ? selected.members.flatMap((member) =>
+                      member.value === null ? [] : [member.value],
+                    )
+                  : selected.values;
+              for (const selectedValue of values) value(selectedValue, path);
+              if (selected.own) return true;
+            }
+            return false;
+          };
           if (
             mode === "function-values" &&
+            item.instance !== true &&
             !prototype &&
-            !(key === "__proto__" && node.superClass != null)
+            key === undefined
           )
-            retain(node, item.path);
+            retain(node, []);
+          else if (mode === "contents" && key === undefined) {
+            for (const owner of lineage.classes) {
+              const index = classTargetIndex(owner, classTargets);
+              for (const member of [
+                ...index.static,
+                ...index.prototype,
+                ...index.fields,
+              ]) {
+                if (member.key.kind === "private") continue;
+                const selected = member.value;
+                if (selected != null) value(selected, []);
+              }
+            }
+          } else if (item.instance === true && !prototype) {
+            const constructor = classTargetIndex(
+              node,
+              classTargets,
+            ).constructorMethod;
+            const results =
+              constructor === undefined
+                ? []
+                : semanticCallableResultExpressions(constructor);
+            for (const result of results)
+              if (result.node !== null) value(result.node, item.path);
+            const replaced = constructorReplacesReceiver(
+              constructor,
+              results,
+              isDefinitelyObject,
+            );
+            if (!replaced && key !== undefined) {
+              // Every inherited field is an own slot on the new object, so base
+              // fields precede even a derived prototype method or accessor.
+              if (!select("fields")) {
+                select("prototype");
+                if (lineage.unknownBase !== undefined)
+                  pending.push({ ...item, node: lineage.unknownBase });
+              }
+            }
+          } else if (key === undefined) {
+            if (!prototype) {
+              let followBaseResults = mode === "results";
+              for (const owner of lineage.classes) {
+                const constructor = classTargetIndex(
+                  owner,
+                  classTargets,
+                ).constructorMethod;
+                if (constructor === undefined) continue;
+                value(constructor, []);
+                // Invocation selects the first constructor, but normal derived
+                // completion preserves the object supplied by super(). Only a
+                // definite replacement can hide a possible inherited result.
+                if (!followBaseResults) break;
+                if (
+                  constructorReplacesReceiver(
+                    constructor,
+                    semanticCallableResultExpressions(constructor),
+                    isDefinitelyObject,
+                  )
+                ) {
+                  followBaseResults = false;
+                  break;
+                }
+              }
+              if (followBaseResults && lineage.unknownBase !== undefined)
+                pending.push({ ...item, node: lineage.unknownBase });
+            }
+          } else if (!select(prototype ? "prototype" : "static")) {
+            if (!prototype && key === "__proto__" && node.superClass != null)
+              pending.push({ ...item, node: node.superClass, path });
+            else if (lineage.unknownBase !== undefined)
+              pending.push({ ...item, node: lineage.unknownBase });
+            if (
+              mode === "function-values" &&
+              !prototype &&
+              !(key === "__proto__" && node.superClass != null)
+            )
+              retain(node, item.path);
+          }
         }
       } else complete = false;
       for (let index = pending.length - 1; index >= 0; index--) {
         const child = pending[index];
         if (child !== undefined)
-          work.push({
-            kind: "visit",
-            item:
-              item.receiverContext === undefined ||
+          enqueue(
+            item.receiverContext === undefined ||
               child.receiverContext !== undefined
-                ? child
-                : { ...child, receiverContext: item.receiverContext },
-            parent: frame,
-          });
+              ? child
+              : { ...child, receiverContext: item.receiverContext },
+          );
       }
     }
     const references = [...functions.values()].flatMap((paths) => [
@@ -1911,19 +1957,56 @@ const selectObjectTargets = (
   indexes: WeakMap<t.ObjectExpression, ObjectTargetIndex>,
   accessors: boolean,
 ): void => {
-  const [key, ...path] = item.path;
+  const [key, ...rest] = item.path ?? [];
+  const path = item.path === undefined ? undefined : rest;
   const index = objectTargetIndex(node, indexes);
-  const selected = {
+  const selection = {
     path,
     ownOnly: shiftedOwnSelections(item.ownOnly, -1),
+    captures: item.captures?.slice(1),
+  };
+  // Any depth can read an accessor's result; a final descriptor lookup keeps
+  // the accessor callable itself.
+  const selected: Partial<Candidate> = {
     descriptorReceiver: item.prototypeReceiver ?? { node },
     prototypeReceiver: undefined,
     accessorRead:
-      item.ownOnly?.includes(0) === true || (key !== undefined && !accessors),
-    ...(item.captures === undefined
-      ? {}
-      : { captures: item.captures.slice(1) }),
+      item.path === undefined
+        ? !accessors
+        : item.ownOnly?.includes(0) === true ||
+          (key !== undefined && !accessors),
   };
+  const select = (value: t.Node) => {
+    pending.push(reselect(item, selection, { ...selected, node: value }));
+    // Any depth includes the whole object, whose escape exposes an accessor
+    // callable through its descriptor; a known key only reads through it.
+    if (
+      item.path === undefined &&
+      !accessors &&
+      t.isObjectMethod(value) &&
+      value.kind !== "method"
+    )
+      pending.push(
+        reselect(item, selection, {
+          ...selected,
+          node: value,
+          accessorRead: false,
+        }),
+      );
+  };
+  // Spread reads only own properties of its source at the first offset.
+  const spread = (argument: t.Node) =>
+    pending.push(
+      reselect(
+        item,
+        {
+          path: item.path,
+          ownOnly: [...new Set([0, ...(item.ownOnly ?? [])])],
+          captures: item.captures,
+        },
+        { node: argument, prototypeReceiver: undefined },
+      ),
+    );
   if (key !== null && key !== undefined) {
     const property = index.propertyByName.get(String(key));
     if (property !== undefined) {
@@ -1931,6 +2014,7 @@ const selectObjectTargets = (
       // a different selection, even when that value is itself a function.
       if (
         accessors &&
+        path !== undefined &&
         path.length === 0 &&
         !index.trailingUnknownsByProperty.has(property) &&
         (t.isObjectProperty(property) ||
@@ -1945,31 +2029,13 @@ const selectObjectTargets = (
       )
         unknowns.push(unknown);
       for (const { node: unknown } of unknowns.reverse())
-        pending.push({
-          ...item,
-          node: t.isSpreadElement(unknown)
-            ? unknown.argument
-            : t.isObjectProperty(unknown)
-              ? unknown.value
-              : unknown,
-          ...(t.isSpreadElement(unknown) ? {} : selected),
-          ...(t.isSpreadElement(unknown)
-            ? {
-                ownOnly: [...new Set([0, ...(item.ownOnly ?? [])])],
-                prototypeReceiver: undefined,
-              }
-            : {}),
-        });
-      pending.push({
-        ...item,
-        node: t.isObjectProperty(property) ? property.value : property,
-        ...selected,
-      });
+        if (t.isSpreadElement(unknown)) spread(unknown.argument);
+        else select(t.isObjectProperty(unknown) ? unknown.value : unknown);
+      select(t.isObjectProperty(property) ? property.value : property);
       const paired = t.isObjectMethod(property)
         ? index.pairedAccessors.get(property)
         : undefined;
-      if (paired !== undefined)
-        pending.push({ ...item, node: paired, ...selected });
+      if (paired !== undefined) select(paired);
       return;
     }
   }
@@ -1978,12 +2044,7 @@ const selectObjectTargets = (
     if (replaced) break;
     if (property === index.prototype) continue;
     if (t.isSpreadElement(property)) {
-      pending.push({
-        ...item,
-        node: property.argument,
-        ownOnly: [...new Set([0, ...(item.ownOnly ?? [])])],
-        prototypeReceiver: undefined,
-      });
+      spread(property.argument);
       continue;
     }
     const name = semanticStaticPropertyKey(property.key, property.computed);
@@ -1994,9 +2055,7 @@ const selectObjectTargets = (
       name !== String(key)
     )
       continue;
-    if (t.isObjectProperty(property))
-      pending.push({ ...item, node: property.value, ...selected });
-    else pending.push({ ...item, node: property, ...selected });
+    select(t.isObjectProperty(property) ? property.value : property);
     if (key !== null && key !== undefined && name === String(key))
       replaced = true;
   }
@@ -2008,8 +2067,7 @@ const selectObjectTargets = (
     // The inherited __proto__ accessor can expose the prototype object itself.
     // Keep ordinary prototype lookup too: an intervening descriptor may
     // override that accessor and return a different value.
-    if (key === "__proto__")
-      pending.push({ ...item, node: index.prototype.value, ...selected });
+    if (key === "__proto__") select(index.prototype.value);
     pending.push({
       ...item,
       node: index.prototype.value,
