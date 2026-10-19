@@ -232,7 +232,9 @@ export class McpSessionSlot {
     const open = this.#live;
     if (
       open?.transport.sessionId !== undefined &&
-      (await isInitializePost(request))
+      (await isInitializePost(request)) &&
+      // A client that left while its initialize was probed would evict the session for nobody.
+      !request.signal.aborted
     ) {
       if (this.#closed) return SHUTTING_DOWN();
       this.logger?.info("MCP HTTP session replaced by a new client");
