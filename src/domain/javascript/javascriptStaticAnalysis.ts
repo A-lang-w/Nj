@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { RETURNED_REFERENCE_WIDENING_LIMITATION } from "./javascriptSemanticCoverage.js";
 import { collectElectronWrappedCallPaths } from "./electronWrappedCallPaths.js";
 import {
   ELECTRON_IDENTITY_LIMITATION,
@@ -156,6 +157,9 @@ const finalizeStaticAnalysis = (
   const limitations = [
     ...(bindings.valueResourceLimits.has("alias-selections")
       ? [semanticResourceLimitReason("alias-selections")]
+      : []),
+    ...(bindings.returnedReferenceWidenings.size > 0
+      ? [RETURNED_REFERENCE_WIDENING_LIMITATION]
       : []),
     ...(accumulator.electronCallPaths?.length
       ? [

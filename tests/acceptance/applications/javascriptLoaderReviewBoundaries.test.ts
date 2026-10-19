@@ -53,6 +53,20 @@ const loaderCases = [
     unknownLoad: false,
   },
   {
+    name: "generator local result",
+    source:
+      'function* get(){yield module;}const api=get();api.require=()=>{};api.require("../shared/window.cjs");',
+    unknownOwner: false,
+    unknownLoad: false,
+  },
+  {
+    name: "async local result",
+    source:
+      'async function get(){return module;}const api=get();api.require=()=>{};api.require("../shared/window.cjs");',
+    unknownOwner: false,
+    unknownLoad: false,
+  },
+  {
     name: "prototype extra host write",
     source:
       'const [api]=[module];Array.prototype.extra=1;api.require=replacement;require("../shared/window.cjs");',

@@ -3,6 +3,36 @@ import { expect, it } from "vitest";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 it.each([
+  "function* get(){yield module;}",
+  "function* get(){return module;}",
+  "async function get(){return module;}",
+  "async function* get(){yield module;}",
+  "const get=async()=>module;",
+])(
+  "distinguishes direct wrapper objects from their eventual contents: %s",
+  (declaration) => {
+    const analysis = analyzeJavaScriptStaticSource(
+      `${declaration}const api=get();api.require=()=>{};api.require('./unused.cjs');require('./shared.cjs');`,
+    );
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.references).toEqual([
+      expect.objectContaining({ kind: "require", specifier: "./shared.cjs" }),
+    ]);
+  },
+);
+
+it.each([
+  "const table={x(){return{};},y(){return{};},z(){return module;}};const get=flag?table.x:table.y;",
+  "const table={a:{b(){return{};},d(){return module;}},c:{d(){return{};},b(){return module;}}};const get=flag?table.a.b:table.c.d;",
+])("retains precise selected direct-return receivers: %s", (declaration) => {
+  const analysis = analyzeJavaScriptStaticSource(
+    `${declaration}get().require('./unused.cjs');`,
+  );
+  expect(analysis.parse_error_count).toBe(0);
+  expect(analysis.references).toEqual([]);
+});
+
+it.each([
   ["Array.prototype[0]=module;", true],
   ["Array.prototype['0']=module;", true],
   ["Array.prototype.constructor.prototype[0]=module;", true],

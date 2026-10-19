@@ -48,7 +48,7 @@ it("retains selected callable keys without admitting an unrelated return", () =>
     throw new Error("Missing selected call");
   const returns = createSemanticReturnedReferences(context.state)(
     last.expression.callee,
-  );
+  ).references;
   expect(returns).toHaveLength(2);
   expect(returns.every(({ node }) => t.isObjectExpression(node))).toBe(true);
 });
@@ -65,7 +65,7 @@ it("retains correlations between selected callable path segments", () => {
     throw new Error("Missing selected call");
   const returns = createSemanticReturnedReferences(context.state)(
     last.expression.callee,
-  );
+  ).references;
   expect(returns).toHaveLength(2);
   expect(returns.every(({ node }) => t.isObjectExpression(node))).toBe(true);
 });
@@ -94,7 +94,8 @@ it("bounds shared partial callback alias expansion by AST size", () => {
     );
     try {
       expect(
-        createSemanticReturnedReferences(context.state)(last.argument.callee),
+        createSemanticReturnedReferences(context.state)(last.argument.callee)
+          .references,
       ).toHaveLength(1);
       return {
         callReads,
@@ -187,7 +188,8 @@ return a${depth}.make();}`);
       );
       try {
         expect(
-          createSemanticReturnedReferences(context.state)(last.argument.callee),
+          createSemanticReturnedReferences(context.state)(last.argument.callee)
+            .references,
         ).toHaveLength(1);
         return lookups.reduce(
           (total, lookup) => total + lookup.mock.calls.length,
@@ -263,4 +265,38 @@ it("does not memoize alias cycle cuts across entry paths", () => {
       callableIds: [fallback.callableId],
     });
   }
+});
+
+const meshLookups = (writes: number): number => {
+  const source = `function f(){} function g(){} let a=f,b=g;
+function run(){${Array.from({ length: writes }, (_, index) =>
+    index % 2 === 0 ? "a=b;" : "b=a;",
+  ).join("")} a();}`;
+  const context = indexed(source);
+  const run = context.state.program.body[3];
+  if (!t.isFunctionDeclaration(run)) throw new Error("Missing run");
+  const statement = run.body.body.at(-1);
+  if (
+    !t.isExpressionStatement(statement) ||
+    !t.isCallExpression(statement.expression)
+  )
+    throw new Error("Missing mesh call");
+  const lookups = vi.spyOn(context.bindingCache, "get");
+  const result = context.resolve(statement.expression.callee);
+  expect(result).toMatchObject({ complete: false, cycleDependent: true });
+  expect(
+    result.callableIds.map((id) => context.callableById.get(id)?.name).sort(),
+  ).toEqual(["f", "g"]);
+  return lookups.mock.calls.length;
+};
+
+it("closes cycles at full-binding reads with bounded lookup growth", () => {
+  const six = meshLookups(6);
+  const eight = meshLookups(8);
+  const ten = meshLookups(10);
+  const twelve = meshLookups(12);
+  expect(six).toBeGreaterThan(0);
+  expect(eight).toBeLessThan(3 * six);
+  expect(ten).toBeLessThan(3 * eight);
+  expect(twelve).toBeLessThan(3 * ten);
 });

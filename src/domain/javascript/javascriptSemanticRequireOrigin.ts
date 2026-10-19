@@ -585,11 +585,11 @@ const hasCommonJsModuleSource = (
     ) {
       let returned = moduleReturnedReferences.get(state);
       if (returned === undefined) {
-        returned = createSemanticReturnedReferences(state);
+        returned = createSemanticReturnedReferences(state, "direct-call");
         moduleReturnedReferences.set(state, returned);
       }
       enqueue(
-        ...returned(value.callee).map((source) => ({
+        ...returned(value.callee).references.map((source) => ({
           node: source.node,
           path: [...source.projection, ...path],
         })),
