@@ -2058,6 +2058,16 @@ describe("GhidraClient managed project publication", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("does not publish when an acknowledged shutdown did not exit naturally", async () => {
+    const calls: unknown[] = [];
+    const client = clientFor(new FixtureLauncher("ack_without_exit"), {
+      projectPersistence: managedPersistence(calls),
+    });
+    await expect(client.start()).resolves.toMatchObject({ ok: true });
+    await expect(client.close()).resolves.toMatchObject({ ok: true });
+    expect(calls).toHaveLength(0);
+  });
+
   it("does not publish after a mutating operation", async () => {
     const calls: unknown[] = [];
     const client = clientFor(new FixtureLauncher("success"), {
