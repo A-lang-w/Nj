@@ -609,7 +609,7 @@ it("rejects absent or inconsistent WASM source identity before deriving portable
   await harness.client.ping();
 });
 
-it("refuses WASM summary delivery before provider work when retention is unavailable and keeps fixed-server complete delivery", async () => {
+it("rejects malformed paths, refuses WASM summary delivery before provider work when retention is unavailable, and keeps fixed-server complete delivery", async () => {
   const value = wasmArtifactFixture();
   const inspect = vi.fn<WasmArtifactService["provider"]["inspect"]>(() =>
     Promise.resolve(ok(wasmArtifactExecution(value))),
@@ -641,6 +641,26 @@ it("refuses WASM summary delivery before provider work when retention is unavail
         message: expect.stringContaining("does not retain Evidence"),
       },
     });
+    expect(inspect).not.toHaveBeenCalled();
+    const malformed = await client.callTool({
+      name: "inspect_wasm_artifact",
+      arguments: {
+        path: "relative.wasm",
+        glue_paths: ["relative.js"],
+        detail: "summary",
+      },
+    });
+    const rejected = parseMcpToolError(malformed).error;
+    expect(rejected.code).toBe("invalid_request");
+    expect(
+      z.object({ issues: z.array(z.unknown()) }).parse(rejected.details).issues,
+    ).toEqual(
+      [["path"], ["glue_paths", 0]].map((path) => ({
+        path,
+        reason: "invalid_format",
+        message: "Expected an absolute filesystem path on this host.",
+      })),
+    );
     expect(inspect).not.toHaveBeenCalled();
     for (const input of [
       { path: value.artifact.path },
