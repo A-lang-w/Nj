@@ -221,6 +221,12 @@ const collectOwnedCommand = async (
   let exceeded = false;
   let processFailure: string | undefined;
   let processError: Error | undefined;
+  let failure: OwnedCommandFailure | undefined;
+  // Record physical failures when observed, before an awaiting continuation can
+  // be overtaken by interruption. Cleanup still collects the final snapshot.
+  const observeFailure = (observed: OwnedCommandFailure): void => {
+    if (deadline.interruption === undefined) failure ??= observed;
+  };
   const supervisor = new ProviderProcessSupervisor(
     {
       ...launched,
@@ -233,11 +239,34 @@ const collectOwnedCommand = async (
       captureStdout: limits.stdout === undefined,
       maxDiagnosticBytes: limits.diagnosticBytes,
       onDiagnostic: (event) => {
-        if (event.type === "output" && event.truncated === true)
+        if (event.type === "output" && event.truncated === true) {
           exceeded = true;
+          observeFailure(
+            new OwnedCommandFailure(
+              "output-limit",
+              "Command diagnostic output exceeded its complete-output budget.",
+            ),
+          );
+        }
+        if (
+          event.type === "exit" &&
+          commandExitFailed(event.code, event.signal, limits.acceptNonZeroExit)
+        )
+          observeFailure(
+            new OwnedCommandFailure(
+              "process",
+              "Command failed; inspect its exit status and diagnostics.",
+            ),
+          );
         if (event.type === "error") {
           processFailure ??= event.message;
           processError ??= event.cause;
+          observeFailure(
+            new OwnedCommandFailure("process", event.message, null, null, {
+              processError: event.cause,
+              collectionFailure: true,
+            }),
+          );
         }
       },
     },
@@ -251,8 +280,13 @@ const collectOwnedCommand = async (
   );
   void consumed.then((failed) => {
     processFailure ??= failed;
+    if (failed !== undefined)
+      observeFailure(
+        new OwnedCommandFailure("process", failed, null, null, {
+          collectionFailure: true,
+        }),
+      );
   });
-  let failure: OwnedCommandFailure | undefined;
   try {
     while (!(await supervisor.waitForOutputClose(10))) {
       const interruption = deadline.interruption;
@@ -303,16 +337,13 @@ const collectOwnedCommand = async (
         "Command diagnostic output exceeded its complete-output budget.",
         snapshot,
       );
-    const acceptedNonzeroExit =
-      limits.acceptNonZeroExit === true &&
-      snapshot.exitCode !== null &&
-      snapshot.exitCode !== undefined &&
-      snapshot.exitCode !== 0 &&
-      snapshot.signal === null;
     if (
       processFailure !== undefined ||
-      ((snapshot.exitCode !== 0 || snapshot.signal !== null) &&
-        !acceptedNonzeroExit)
+      commandExitFailed(
+        snapshot.exitCode,
+        snapshot.signal,
+        limits.acceptNonZeroExit,
+      )
     )
       throw new OwnedCommandFailure(
         "process",
@@ -324,7 +355,7 @@ const collectOwnedCommand = async (
       );
     limits.observeCompleted?.(snapshot);
   } catch (cause: unknown) {
-    failure =
+    failure ??=
       cause instanceof OwnedCommandFailure
         ? cause
         : new OwnedCommandFailure(
@@ -394,6 +425,15 @@ const collectOwnedCommand = async (
     );
   return snapshot;
 };
+
+const commandExitFailed = (
+  code: number | null | undefined,
+  signal: NodeJS.Signals | null | undefined,
+  acceptNonZeroExit: boolean | undefined,
+): boolean =>
+  signal !== null ||
+  (code !== 0 &&
+    !(acceptNonZeroExit === true && code !== null && code !== undefined));
 
 /**
  * Pipe stdout into its sink until `signal` aborts, which destroys both; settles
