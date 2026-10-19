@@ -7,6 +7,16 @@ import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js
 
 const cases = [
   {
+    name: "captured wrapper require retains loader ownership",
+    load: 'const load=require;load("../shared/window.cjs");',
+    possible: true,
+  },
+  {
+    name: "captured local callable stays inert",
+    load: 'const local=()=>{};const load=local;load("../shared/window.cjs");',
+    possible: false,
+  },
+  {
     name: "require.resolve does not execute its resolved module",
     load: 'require.resolve("../shared/window.cjs");',
     possible: false,

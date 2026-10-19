@@ -136,16 +136,21 @@ export const semanticRequireLoaderAt = (
 /** Classify Node's wrapper and exact factory bindings by their lexical owner. */
 const requireLoaderValueAt = (
   value: t.Node,
-  node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  node: t.Node,
   state: JavaScriptSemanticAnalysisState,
   factoryBindingIds: ReadonlySet<string>,
 ): JavaScriptRequireLoaderFact => {
   const callee = unwrapJavaScriptExpression(value).node;
   // Only the selected require function is callable as the host loader.
   // Its resolve/main members remain association facts in the wrapper above.
-  if (!t.isIdentifier(callee, { name: "require" })) return "local";
+  if (!t.isIdentifier(callee)) return "local";
   const loader = callee;
-  const binding = resolveSemanticBindingState(state, loader, "require");
+  const binding = resolveSemanticBindingState(state, loader, loader.name);
+  if (binding !== undefined && factoryBindingIds.has(binding.bindingId))
+    return semanticBindingHasPriorValueWrite(node, binding, state)
+      ? "unknown"
+      : "factory-loader";
+  if (loader.name !== "require") return "local";
   if (binding === undefined) {
     if (semanticResolutionBlocked(state, loader, "require")) return "unknown";
     return (state.ambientBindingWrites.get("require") ?? []).some(
@@ -154,10 +159,6 @@ const requireLoaderValueAt = (
       ? "unknown"
       : commonJsLoaderAt(node, state);
   }
-  if (factoryBindingIds.has(binding.bindingId))
-    return semanticBindingHasPriorValueWrite(node, binding, state)
-      ? "unknown"
-      : "factory-loader";
   if (
     binding.hostOrigin === "commonjs-wrapper" &&
     [...binding.declarationKinds].every((kind) => kind === "var")
@@ -168,7 +169,12 @@ const requireLoaderValueAt = (
       ? "unknown"
       : commonJsLoaderAt(node, state);
   }
-  if (isWrapperRequireInitializerCall(binding, node, state))
+  if (
+    (t.isCallExpression(node) ||
+      t.isOptionalCallExpression(node) ||
+      t.isNewExpression(node)) &&
+    isWrapperRequireInitializerCall(binding, node, state)
+  )
     return commonJsLoaderAt(node, state);
   const wrapperBinding = commonJsWrapperBindingDeclaration(
     loader,
@@ -288,16 +294,19 @@ const isSemanticCreateRequireCall = (
   );
 };
 
-/** Follow the shared selected-source facts to the factory that created a loader. */
-const createdRequireSourcesAt = (
+/** Follow selected values to Node's captured loader or its creating factory. */
+const selectedRequireSourcesAt = (
   root: t.Node,
+  site: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): { readonly sourceRelative: boolean } | undefined => {
+  factoryBindingIds: ReadonlySet<string>,
+): Pick<JavaScriptRequireCallFact, "loader" | "sourceRelative"> | undefined => {
   const pending: ModuleObjectSource[] = [{ node: root, path: [] }];
   const seen = new WeakMap<t.Node, Set<string>>();
   let count = 0;
   let found = false;
-  let createdBinding = false;
+  let loaderBinding = false;
+  let selectedLoader: JavaScriptRequireLoaderFact | undefined;
   let unknown = false;
   let sourceRelative = true;
   while (pending.length > 0) {
@@ -310,7 +319,7 @@ const createdRequireSourcesAt = (
     seen.set(node, paths);
     if (++count > SEMANTIC_ALIAS_SELECTION_LIMIT) {
       state.valueResourceLimits.add("alias-selections");
-      return { sourceRelative: false };
+      return { loader: "unknown", sourceRelative: false };
     }
     if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
       pending.push(
@@ -319,6 +328,26 @@ const createdRequireSourcesAt = (
         ]),
       );
     } else if (t.isIdentifier(node)) {
+      if (current.path.length === 0) {
+        const captured = requireLoaderValueAt(
+          node,
+          node,
+          state,
+          factoryBindingIds,
+        );
+        if (captured !== "local" && captured !== "create-require") {
+          const invoked =
+            captured === "commonjs-loader"
+              ? commonJsLoaderAt(site, state)
+              : captured;
+          found = true;
+          unknown ||=
+            invoked === "unknown" ||
+            (selectedLoader !== undefined && selectedLoader !== invoked);
+          selectedLoader ??= invoked;
+          continue;
+        }
+      }
       const binding = resolveSemanticBindingState(state, node, node.name);
       if (binding === undefined) {
         unknown ||= current.path.length === 0;
@@ -327,8 +356,16 @@ const createdRequireSourcesAt = (
       // Eligibility is separate from the selected value: replacing a known
       // loader with an opaque value keeps a gap, while a proven local function
       // no longer claims the previous factory's base or identity.
-      createdBinding ||= binding.initializers.some((source) =>
-        isSemanticCreateRequireCall(source.node, state),
+      loaderBinding ||= binding.initializers.some(
+        (source) =>
+          isSemanticCreateRequireCall(source.node, state) ||
+          (t.isIdentifier(source.node) &&
+            requireLoaderValueAt(
+              source.node,
+              source.node,
+              state,
+              factoryBindingIds,
+            ) !== "local"),
       );
       const sources = moduleObjectSourcesAtRead(
         binding,
@@ -396,12 +433,18 @@ const createdRequireSourcesAt = (
       isSemanticCreateRequireCall(node, state)
     ) {
       found = true;
+      unknown ||=
+        selectedLoader !== undefined && selectedLoader !== "create-require";
+      selectedLoader ??= "create-require";
       unknown ||= state.conditionallySkippedExpressions.has(node);
       sourceRelative &&= isUnmodifiedImportMetaUrl(node.arguments[0], state);
     }
   }
-  return found || (createdBinding && unknown)
-    ? { sourceRelative: found && sourceRelative && !unknown }
+  return found || (loaderBinding && unknown)
+    ? {
+        loader: unknown ? "unknown" : (selectedLoader ?? "unknown"),
+        sourceRelative: found && sourceRelative && !unknown,
+      }
     : undefined;
 };
 
@@ -457,12 +500,17 @@ export const semanticRequireCallAt = (
       state,
       factoryBindingIds,
     );
-    const created = createdRequireSourcesAt(node.callee, state);
-    if (created !== undefined || loader !== "local")
+    const selected = selectedRequireSourcesAt(
+      node.callee,
+      node,
+      state,
+      factoryBindingIds,
+    );
+    if (selected !== undefined || loader !== "local")
       return {
-        loader: created === undefined ? loader : "create-require",
+        loader: selected?.loader ?? loader,
         arguments: node.arguments,
-        sourceRelative: created?.sourceRelative ?? loader !== "create-require",
+        sourceRelative: selected?.sourceRelative ?? loader !== "create-require",
       };
   }
   const interop = loaderInvocationInterop(state);
@@ -476,12 +524,17 @@ export const semanticRequireCallAt = (
       );
       if (loader !== "local" && loader !== "create-require")
         return ["require-loader", loader, "relative"];
-      const created = createdRequireSourcesAt(callee, state);
-      if (created !== undefined)
+      const selected = selectedRequireSourcesAt(
+        callee,
+        node,
+        state,
+        factoryBindingIds,
+      );
+      if (selected !== undefined)
         return [
           "require-loader",
-          "create-require",
-          created.sourceRelative ? "relative" : "unknown",
+          selected.loader,
+          selected.sourceRelative ? "relative" : "unknown",
         ];
       return interop.intrinsicPath(callee);
     });

@@ -34,6 +34,68 @@ it.each(["require", "require.resolve", "require.main"])(
 const imported = "import {createRequire as make} from 'node:module';";
 it.each([
   [
+    "captured wrapper",
+    "const load=require;load('node:path')",
+    "node:path",
+    true,
+  ],
+  [
+    "wrapper member",
+    "const box={load:require};box.load('node:path')",
+    "node:path",
+    true,
+  ],
+  [
+    "wrapper array",
+    "const box=[require];box[0]('node:path')",
+    "node:path",
+    true,
+  ],
+  [
+    "projected wrapper",
+    "const {load}={load:require};load('node:path')",
+    "node:path",
+    true,
+  ],
+  [
+    "captured before wrapper replacement",
+    "const load=require;require=()=>({});load('node:path')",
+    "node:path",
+    true,
+  ],
+  [
+    "shadowed wrapper",
+    "const require=()=>({});const load=require;load('node:path')",
+    undefined,
+    false,
+  ],
+  [
+    "delegate replaced after capture",
+    "const load=require;module.require=()=>({});load('node:path')",
+    null,
+    false,
+  ],
+] as const)(
+  "retains the selected native %s value",
+  (_name, source, specifier, host) => {
+    const module = new Module("wrapper-alias.cjs");
+    const result = runInNewContext(source, {
+      module,
+      require: (request: string) => module.require(request),
+    });
+    expect(result.join === path.join).toBe(host);
+    const analysis = analyzeJavaScriptStaticSource(source);
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.references).toEqual(
+      specifier === undefined
+        ? []
+        : [expect.objectContaining({ kind: "require", specifier })],
+    );
+  },
+);
+
+it.each([
+  [
     "renamed loader",
     "const load=make(import.meta.url);load('./shared.cjs')",
     "./shared.cjs",
