@@ -1,3 +1,4 @@
+import { processIdentityHasExited } from "./ProcessLifecycle.js";
 import type {
   ProcessIdentityObservation,
   ProcessNativeRelationObservation,
@@ -233,9 +234,7 @@ export class ProcessOwnershipEvidenceOwner {
           fact.identityAfter.state === "readable" &&
           fact.identityAfter.identity !== previous.identity) ||
         (fact.state === "same-generation" &&
-          fact.identityAfter.state === "readable" &&
-          fact.identityAfter.lifecycle?.state === "observed" &&
-          fact.identityAfter.lifecycle.lifecycle === "zombie")
+          processIdentityHasExited(fact.identityAfter))
       ) {
         this.#candidates.delete(pid);
         retiredPids.add(pid);
@@ -299,9 +298,7 @@ export class ProcessOwnershipEvidenceOwner {
         (retiredPids.has(pid) && fact.state !== "same-generation") ||
         fact.state === "absent" ||
         (fact.state === "same-generation" &&
-          fact.identityAfter.state === "readable" &&
-          fact.identityAfter.lifecycle?.state === "observed" &&
-          fact.identityAfter.lifecycle.lifecycle === "zombie")
+          processIdentityHasExited(fact.identityAfter))
       )
         continue;
       const identity = fact.identityAfter;
