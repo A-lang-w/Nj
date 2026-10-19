@@ -82,6 +82,7 @@ describe("compiled Apple asset catalog projection", () => {
     expect(second.records[0]?.catalog_path).toBe("Resources/B/Assets.car");
     expect(second.next_offset).toBeNull();
     expect(second.total_records).toBe(3);
+    expect(second.truncated).toBe(true);
   });
 
   it("rejects malformed pages and invalid utility data", () => {
@@ -104,7 +105,7 @@ describe("compiled Apple asset catalog projection", () => {
     );
   });
 
-  it.each([0, 5])(
+  it.each([0, 1, 5])(
     "does not mark an empty catalog inventory as truncated at offset %i",
     (offset) => {
       const page = projectAppleAssetCatalogPage({
