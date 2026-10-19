@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -276,7 +276,8 @@ it("marks signal-terminated provider commands as unknown completion", async () =
 describe("Rizin command service", () => {
   it("defaults Rizin to plain presentation and preserves caller-selected colour on nonzero exits", async () => {
     const directory = await mkdtemp(join(tmpdir(), "rea-rizin-"));
-    const path = join(directory, "fixture.bin");
+    const path = join(directory, "fixture with spaces.bin");
+    const callerPath = relative(process.cwd(), path);
     await writeFile(path, "fixture");
     const calls: { command: string; args: readonly string[] }[] = [];
     const service = new ReverseEngineeringService({
@@ -303,13 +304,21 @@ describe("Rizin command service", () => {
 
     try {
       const command = "e scr.color=1;pd 1";
-      const result = await service.executeRizinCommand({ path, command });
+      const result = await service.executeRizinCommand({
+        path: callerPath,
+        command,
+      });
       expect(result.ok).toBe(true);
       if (!result.ok) return;
+      const lookupPath = result.value.subject?.local_path;
+      expect(isAbsolute(lookupPath ?? "")).toBe(true);
+      expect(result.value.subject?.digest.sha256).toBe(
+        createHash("sha256").update("fixture").digest("hex"),
+      );
       expect(calls).toEqual([
         {
           command: "/tools/rizin",
-          args: ["-N", "-q", "-e", "scr.color=0", "-c", command, path],
+          args: ["-N", "-q", "-e", "scr.color=0", "-c", command, lookupPath],
         },
       ]);
       expect(result.value.raw_result).toMatchObject({
@@ -329,6 +338,7 @@ describe("Rizin command service", () => {
       );
       expect(result.value.limitations).toHaveLength(4);
       expect(result.value.parameters).toMatchObject({
+        path: callerPath,
         command,
         provider_executable: "/tools/rizin",
       });
