@@ -345,8 +345,19 @@ const scanDirectory = async (
       max_probe_bytes: input.max_probe_bytes,
     },
   };
+  // Compose identities already owned by admitted root/entry observations and
+  // retained reads. Caller policy, interpretations and cleanup diagnostics stay
+  // in Evidence without renaming the same examined source.
   const snapshot = digestCanonicalValue(
-    { root, files, omissions, coverage },
+    {
+      root_namespace_id: namespaceId,
+      files: files.map(({ file_id, bytes, ranges }) => ({
+        file_id,
+        bytes,
+        ranges,
+      })),
+      omissions: omissions.map(({ omission_id }) => omission_id),
+    },
     "Examined desktop directory facts",
   );
   const report: DesktopApplication = {

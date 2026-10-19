@@ -112,8 +112,14 @@ assembly tokens. Directory and symlink identities unavailable from traversal
 remain null.
 
 The directory's `snapshot_sha256` commits to retained paths, omission kinds,
-available metadata and range digests. Omission records share the entry and
-representation budgets and can be fetched independently through their view.
+available metadata and range digests, composed through the admitted root,
+entry and omission identities. Caller ceilings, coverage counters, diagnostic
+wording and interpretation facts remain in Evidence, outside source identity.
+The same observations under different generous limits share a snapshot digest;
+Evidence IDs still preserve request parameters and reported coverage. Different
+retained entries or read ranges change the source snapshot.
+Omission records share the entry and representation budgets and can be fetched
+independently through their view.
 **It is not a digest of all file contents.** These are sequential stable entry
 observations, not an atomic directory snapshot. Unread bytes remain unknown.
 

@@ -659,6 +659,16 @@ it.each([false, true])(
         parseEvidence(result.error.partialObservation).normalized_result,
       );
       expect(report.coverage.status).toBe("partial");
+      const successfulRead = await inspect(root);
+      expect(report.files[0]?.file_id).toBe(
+        successfulRead.report.files[0]?.file_id,
+      );
+      expect(report.files[0]?.ranges).toEqual(
+        successfulRead.report.files[0]?.ranges,
+      );
+      expect(report.root.snapshot_sha256).toBe(
+        successfulRead.report.root.snapshot_sha256,
+      );
       expect(report.files[0]).toMatchObject({
         read_status: "examined",
         ranges: [{ offset: 0, bytes: 20, sha256: expect.any(String) }],
@@ -1030,4 +1040,74 @@ it("bounds diagnostic previews while preserving complete caller-provided issue f
     expect(selected.value.evidence_links).toEqual([callerEvidence.evidence_id]);
   }
   expect(row.issues[0]).toBe(longReason);
+});
+
+it("keeps snapshot identity stable across limits that preserve source observations", async () => {
+  const root = await createTestTempDirectory("rea-desktop-snapshot-policy-");
+  await put(root, "GameAssembly.dll", buildNativePeFixture());
+  const metadata = Buffer.alloc(8);
+  metadata.writeUInt32LE(0xfab11baf);
+  metadata.writeUInt32LE(31, 4);
+  await put(root, "global-metadata.dat", metadata);
+  await mkdir(join(root, "BepInEx"));
+  const first = await inspect(root, { max_entries: 10, max_probe_bytes: 4096 });
+  const second = await inspect(root, {
+    max_entries: 20,
+    max_probe_bytes: 8192,
+  });
+  expect(first.report.files).toEqual(second.report.files);
+  expect(first.report.omissions).toEqual(second.report.omissions);
+  expect(first.report.coverage.status).toBe("complete-within-scan");
+  expect(second.report.coverage.status).toBe("complete-within-scan");
+  expect(first.report.root.snapshot_sha256).toBe(
+    second.report.root.snapshot_sha256,
+  );
+  expect(first.evidence.subject?.digest.sha256).toBe(
+    second.evidence.subject?.digest.sha256,
+  );
+  expect(first.evidence.evidence_id).not.toBe(second.evidence.evidence_id);
+  expect(first.evidence.parameters).toMatchObject({
+    max_entries: 10,
+    max_probe_bytes: 4096,
+  });
+  expect(second.evidence.parameters).toMatchObject({
+    max_entries: 20,
+    max_probe_bytes: 8192,
+  });
+  expect(first.report.coverage.limits).toEqual({
+    max_entries: 10,
+    max_probe_bytes: 4096,
+  });
+  expect(second.report.coverage.limits).toEqual({
+    max_entries: 20,
+    max_probe_bytes: 8192,
+  });
+  const subset = await inspect(root, { max_entries: 1, max_probe_bytes: 8192 });
+  expect(subset.report.coverage.status).toBe("partial");
+  expect(subset.report.root.snapshot_sha256).not.toBe(
+    first.report.root.snapshot_sha256,
+  );
+});
+
+it("changes snapshot identity when probe limits change retained read ranges", async () => {
+  const root = await createTestTempDirectory("rea-desktop-snapshot-ranges-");
+  for (let index = 0; index < 20; index++)
+    await put(
+      root,
+      `probe${String(index).padStart(2, "0")}.exe`,
+      buildNativePeFixture(),
+    );
+  const partial = await inspect(root, { max_probe_bytes: 4096 });
+  const complete = await inspect(root, { max_probe_bytes: 8192 });
+  expect(partial.report.coverage.status).toBe("partial");
+  expect(complete.report.coverage.status).toBe("complete-within-scan");
+  expect(partial.report.files.map((file) => file.file_id)).toEqual(
+    complete.report.files.map((file) => file.file_id),
+  );
+  expect(partial.report.files.map((file) => file.ranges)).not.toEqual(
+    complete.report.files.map((file) => file.ranges),
+  );
+  expect(partial.report.root.snapshot_sha256).not.toBe(
+    complete.report.root.snapshot_sha256,
+  );
 });
