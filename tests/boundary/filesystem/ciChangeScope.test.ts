@@ -807,6 +807,18 @@ it.each([
     { code: true, agentenv: true, runtime: false, package: false },
   ],
   [
+    "src/application/OwnedJsonInput.ts",
+    { code: true, agentenv: true, runtime: true, package: false },
+  ],
+  [
+    "src/cliJsonInput.ts",
+    { code: true, agentenv: true, runtime: true, package: false },
+  ],
+  [
+    "tests/boundary/process/agentenvVerifierIdentity.test.ts",
+    { code: true, agentenv: false, runtime: false, package: false },
+  ],
+  [
     ".github/workflows/real-agentenv.yml",
     { code: false, agentenv: true, workflows: true, package: false },
   ],

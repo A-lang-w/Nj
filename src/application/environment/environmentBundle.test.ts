@@ -186,6 +186,41 @@ describe("planEnvironmentBundle", () => {
   });
 });
 
+describe("planEnvironmentBundle portable names", () => {
+  it("refuses device names Windows reserves for files and folders, before planning any file", () => {
+    for (const name of [
+      "con",
+      "prn",
+      "aux",
+      "nul",
+      "com1",
+      "com9",
+      "lpt1",
+      "lpt9",
+    ]) {
+      const refused = planEnvironmentBundle(environmentServeSource(), {
+        name,
+        packageSource: registryPackageSource(),
+      });
+      if (refused.ok) throw new Error(`Expected ${name} to be refused`);
+      expect(projectAnalysisError(refused.error)).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "environment-export",
+          issues: [{ path: ["name"], reason: "invalid_value" }],
+        },
+      });
+    }
+    for (const name of ["console", "com10", "nul-check"])
+      expect(
+        planEnvironmentBundle(environmentServeSource(), {
+          name,
+          packageSource: registryPackageSource(),
+        }).ok,
+      ).toBe(true);
+  });
+});
+
 describe("planEnvironmentBundle replay check", () => {
   it("keeps the first record's unknown status instead of borrowing another record's", () => {
     const source = environmentServeSource();
@@ -205,5 +240,35 @@ describe("planEnvironmentBundle replay check", () => {
     expect(
       file(planned.value, "artifacts/check_grafana-example/verify.py"),
     ).toContain("RECORDED_STATUS = None");
+  });
+});
+
+it("refuses a bundle that the replay server cannot admit, using export operation context", () => {
+  const source = environmentServeSource();
+  const tool = source.manifest.tools[0]!;
+  const manifest = {
+    ...source.manifest,
+    tools: [
+      {
+        ...tool,
+        query_parameter_names: Array.from(
+          { length: 10000 },
+          (_, index) => `q_${index}`,
+        ),
+      },
+    ],
+  };
+  const result = planEnvironmentBundle(
+    { ...source, manifest },
+    { packageSource: registryPackageSource() },
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisResourceConstraintError",
+      operation: "environment-export",
+      resource: "capacity",
+      retryable: false,
+    },
   });
 });

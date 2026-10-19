@@ -12,6 +12,8 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { RegularFileChangedError } from "../../filesystem/RegularFile.js";
+import { sealOwnedJsonInput } from "../OwnedJsonInput.js";
 import { nativeJsonParseRequiredBytes } from "../JsonInputFile.js";
 import { readRegularFile } from "../RegularFileRead.js";
 import {
@@ -177,19 +179,19 @@ const NOT_A_FILE_CODES = new Set([
   "ENAMETOOLONG",
 ]);
 
-/** Refuse, as a resource constraint, a file whose whole read and native parse would not fit live heap headroom. */
+/** Refuse a whole read, native parse and owned snapshot traversal that cannot fit live heap headroom. */
 const headroomRefusal = (
   path: string,
   inputBytes: number,
 ): AnalysisResourceConstraintError | undefined => {
   const heap = getHeapStatistics();
-  const requiredBytes = nativeJsonParseRequiredBytes(inputBytes);
+  const requiredBytes = nativeJsonParseRequiredBytes(inputBytes, true);
   return requiredBytes <= heap.total_available_size
     ? undefined
     : new AnalysisResourceConstraintError(
         ENVIRONMENT_EXPORT_OPERATION,
         "memory",
-        "Insufficient heap headroom to read and parse the complete JSON file",
+        "Insufficient heap headroom to read, parse and seal the complete JSON file",
         {
           input_path: path,
           input_file_bytes: inputBytes,
@@ -218,6 +220,18 @@ const readInput = async (
     });
   } catch (cause: unknown) {
     if (cause instanceof AnalysisResourceConstraintError) return err(cause);
+    if (cause instanceof RegularFileChangedError)
+      return err(
+        inputError(
+          {
+            path: [role],
+            reason: "invalid_value",
+            expected: "one stable regular file snapshot",
+            message: `The ${role} file changed while it was read.`,
+          },
+          `${path} changed while being read; retry with stable input files.`,
+        ),
+      );
     if (NOT_A_FILE_CODES.has(systemCode(cause) ?? ""))
       return err(
         inputError(
@@ -250,7 +264,12 @@ const readInput = async (
         `${path} is not valid JSON: ${parsed.error}`,
       ),
     );
-  return ok({ path, bytes, value: parsed.value });
+  const snapshot = await sealOwnedJsonInput(
+    parsed.value,
+    ENVIRONMENT_EXPORT_OPERATION,
+  );
+  if (!snapshot.ok) return snapshot;
+  return ok({ path, bytes, value: snapshot.value });
 };
 
 /** Read both files once; the caller authenticates the parsed values and the export copies the same bytes. */

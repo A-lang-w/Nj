@@ -112,6 +112,22 @@ serve command refuses a manifest whose parent is not the supplied `--evidence`
 file with an `invalid_request` error naming both identifiers, so a manifest can
 never be served from records it did not cite.
 
+The MCP catalog and environment card use a 1 KiB UTF-8 budget for each
+captured display sample. Observation, body-key and cited-record lists show
+whole values with omission counts; long method, path and query-name displays
+show a marked prefix. Complete values remain in manifest Evidence. Argument
+names longer than 64 characters use collision-safe `path_<n>` or `query_<n>` aliases; replay maps
+those aliases to the complete captured names.
+
+Discovery is admitted as a complete catalog under a 1 MiB serialization
+reservation before the listener binds. Reservation charges up to six bytes per
+UTF-16 code unit for JSON escaping/UTF-8 expansion, plus schema overhead;
+a catalog may therefore be refused even when its compact JSON is smaller.
+This was calibrated with 1500 query fields and eight concurrent SDK discovery
+requests (183,798-byte card, 507.27 MiB sampled process-family RSS). Over-capacity
+catalogs return `resource_constraint`, retain complete input Evidence, and require
+a smaller capture or manifest. Fields and tools are never silently omitted.
+
 ## What replay means and does not mean
 
 Each MCP tool call selects one of the records its manifest tool cites and
@@ -132,6 +148,7 @@ where the answer came from:
     "exact_match": true,
     "recorded_path": "/api/users/2",
     "recorded_query": null,
+    "recorded_line_truncated": false,
     "body_recorded": true,
     "body_encoding": "utf-8",
     "truncated": false
@@ -141,14 +158,20 @@ where the answer came from:
 
 `exact_match` is true when every supplied path parameter and query value
 equals the recorded one; it says nothing about parameters the caller omitted.
+Recorded query parsing runs only when supplied query arguments affect selection.
 A path value matches a recorded segment as written or after percent-decoding;
 when both kinds of match are available, the record whose segment equals the
-value as written is chosen.
+value as written is chosen. `recorded_query` keeps the `?` of an explicit empty
+query, and a recorded path or query longer than 1 KiB is cut in the reply with
+`recorded_line_truncated: true`; selection always uses the full recorded line.
+`content_type` also has a 1 KiB display bound with `content_type_truncated`; body
+interpretation uses the full recorded media type.
 When no record matches, the tool still answers from the tool's first cited
 record and reports `exact_match: false`. `body` is parsed JSON when the
 recorded content type is JSON-like (`application/json`, `application/*+json`,
-`text/plain`, `text/markdown`) and the text parses; otherwise it is the
-recorded text. Bodies over 256 KiB are cut at a UTF-8 boundary and returned as
+`text/plain`, `text/markdown`) and the text parses with safe numeric conversion; otherwise
+it is the recorded text. Large integer IDs and other numbers that would lose
+information stay in the original JSON text. Bodies over 256 KiB are cut at a UTF-8 boundary and returned as
 text with `truncated: true`. `body_recorded` is false when the capture kept the
 response's status and content type but no body; `body` is then `null`, which
 is not a recorded JSON `null`. `body_encoding` is `base64` when the capture
@@ -169,6 +192,9 @@ with `source: "analysis_target"`. The server advertises REA's untrusted-content
 instructions plus a warning that its tool names, descriptions, parameter names
 and observed values come from the capture too, and agents must treat all of it
 as data, never as instructions.
+That same warning prefixes every tool description in the standalone card, so
+card discovery carries it before an MCP client initializes. It labels the
+captured text without changing the tool names or schema fields clients use.
 
 ## Serve a manifest
 
@@ -188,6 +214,10 @@ listener serves one MCP client at a time with the same session, `Host` header
 and shutdown contract as [transports](mcp-contracts.md#transports) describes.
 It runs until SIGINT or SIGTERM, then closes the listener, prints one
 `{"status":"stopped", …}` document and exits `130` or `143`.
+Signals during input loading or DNS/bind cancel the owning reader/listener before
+a listening announcement;
+that path returns a structured `cancelled` result instead of a stopped-listener
+document, with the same signal exit status.
 
 Three routes are served:
 
@@ -196,6 +226,10 @@ Three routes are served:
 | `POST /mcp`                       | The MCP server: one tool per manifest tool, replaying retained records |
 | `GET /.well-known/agent-env.json` | The environment card                                                   |
 | `POST /agentenv`                  | JSON-RPC `-32601 method not found: <method>` for every method          |
+
+Numeric JSON-RPC IDs outside JavaScript's safe range or whose precision would
+be lost are refused as invalid requests with a null ID. They are never echoed
+as a different number.
 
 The data plane at `/agentenv` is advertised by the card but carries no
 operations in this release; the error names the requested method so a caller
@@ -248,11 +282,13 @@ connecting to `/mcp`:
 `capabilities.tools` lists the same names, descriptions and input schemas that
 `tools/list` advertises over MCP. Path parameters are required strings whose
 description names the segment index, the templating rule and the observed
-values; query parameter names are optional strings; write methods accept an
+values (sampled within the list budget above; the manifest keeps them all);
+query parameter names are optional strings; write methods accept an
 optional `body` object described by the recorded top-level key types. Each
 input keeps its own argument: a query name equal to a path parameter's name is
-advertised as `query_<name>`, and the write body as `request_body` when a query
-parameter is named `body`. Every
+advertised as `query_<name>`, a query name longer than 64 characters as
+`query_<n>` (its position) with the captured name sampled in its description,
+and the write body as `request_body` when a query parameter is named `body`. Every
 schema closes with `additionalProperties: false`, a key the echo example's
 schema does not carry.
 `extensions`, `operations` and `children_environments` are fixed to `null`,
@@ -281,13 +317,17 @@ grafana-example/
 ```
 
 The command reads each file once, after checking that reading and parsing the
-whole file fits the process's live heap headroom (a file that does not is
+whole file, including sealing traversal, fits the process's live heap headroom (a file that does not is
 refused as a `resource_constraint` before it is read), then authenticates and cross-checks the
 pair as `environment-serve` does, so a manifest projected from another capture
 is refused with the same `invalid_request` before anything is written, and the
 bytes it copies are the bytes it authenticated. The bundle directory must be
 absent or empty; an occupied directory is refused and nothing in it changes.
-`--name` replaces the manifest's kebab-case name as the env folder and env id;
+The complete tool catalog must also fit the server's advertised catalog budget
+before any files are written. Privately parsed JSON is sealed once so authentication
+and replay share immutable response trees rather than copying the capture repeatedly.
+`--name` replaces the manifest's portable kebab-case name as the env folder and env id
+(Windows device names such as `con` and `lpt1` are refused);
 `--package-tarball <path>` copies a packed `rea-agents` tarball into the env
 folder and makes the Dockerfile install it instead of the registry package and
 remove it in the same layer, which is how a checkout rather than a release is

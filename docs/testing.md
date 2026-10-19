@@ -1572,16 +1572,27 @@ the host's Docker CLI named by absolute `REA_DOCKER_COMMAND`, Python 3.12 with
 `agent-env` binary is named by absolute `REA_AGENT_ENV_COMMAND`, and outbound
 network for `pip` on the runner and for `npm` inside the image build. Both
 variables are required; the verifier resolves nothing from `PATH` and installs
-nothing. Its disposable CI runner creates the virtual environment in runner
+nothing. It checks the supplied runner's `--version` against the pin before
+using Docker and retains the observed version in both passing and failing receipts.
+Its disposable CI runner creates the virtual environment in runner
 storage, exports both paths and uses the runner's own Docker; no developer host
 configuration changes. `agent-env run` attempts share one 22-minute budget
 inside the 30-minute job (the first attempt at most 15 minutes), so a hung or
 retried run ends with the verifier's failed receipt rather than the runner's
 kill. The framework builds its gateway and service-db
 images from `public.ecr.aws` on every fresh runner, and hosted runners share
-that registry's anonymous pull quota; when the run fails with that registry's
-`429 Too Many Requests` and at least five minutes of the budget would remain
-after the pause, the verifier waits 90 seconds and runs once more,
+that registry's anonymous pull quota, so the lane first pulls the base images
+the pinned framework's Dockerfiles name from `mirror.gcr.io`, which serves the
+same Docker official images under the same digests, and names them as those
+Dockerfiles do (on Docker's containerd image store, so digest-pinned names
+resolve), as the framework's own CI does. The quota handling below covers
+anything still pulled from that registry. The receipt's `agent_env_run` records the
+last run whether it passed or failed, with `public_ecr_quota` set to
+`data_limit` or `rate` when that registry's `429 Too Many Requests` ended it.
+The data-transfer cap (`toomanyrequests: Data limit exceeded`) is counted per
+source IP, so it fails the lane at once: a pause on the same runner cannot lift
+it. When a rate refusal ends the run and at least five minutes of the budget
+would remain after the pause, the verifier waits 90 seconds and runs once more,
 recording `attempts: 2` and `retried_for` in the receipt. Any other failure
 ends the lane at once.
 

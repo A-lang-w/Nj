@@ -7,6 +7,7 @@ import {
 import {
   environmentServeFixture,
   environmentServeSource,
+  environmentServeSourceWithBody as singleExchangeSource,
 } from "../../../tests/fixtures/environmentServe.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
@@ -36,24 +37,6 @@ const replay = (
   const result = replayEnvironmentTool(from, tool(name), args);
   if (!result.ok) throw result.error;
   return result.value;
-};
-
-/** A source whose only exchange carries the given body and content type. */
-const singleExchangeSource = (
-  bodyText: string | null,
-  contentType: string | null,
-): EnvironmentSource => {
-  const users = tool("get_users_by_id");
-  const ordinal = users.record_ordinals[0] ?? 0;
-  const exchange: RecordedExchange = {
-    ordinal,
-    path: "/api/users/2",
-    query: null,
-    status: 200,
-    contentType,
-    bodyText,
-  };
-  return { ...source, exchanges: new Map([[ordinal, exchange]]) };
 };
 
 /** The fixture source with /api/users/2's response replaced by HAR base64 content the decoder retained. */
@@ -97,6 +80,39 @@ const base64Source = (bytes: Buffer): EnvironmentSource => {
     capture: evidence,
   });
 };
+
+describe("replay argument mapping and query admission", () => {
+  it("does not inspect a recorded query when no query argument can affect selection", () => {
+    const users = tool("get_users_by_id");
+    const original = source.exchanges.get(users.record_ordinals[0]!);
+    if (original === undefined) throw new Error("Missing fixture exchange");
+    const exchange = {
+      ...original,
+      get query(): string {
+        throw new Error("Query must not be inspected");
+      },
+    };
+    expect(
+      selectReplayExchange(users, new Map([[original.ordinal, exchange]]), {
+        id: "2",
+      }),
+    ).toMatchObject({ exact: true });
+  });
+
+  it("matches a bounded path argument alias against the complete retained parameter", () => {
+    const users = tool("get_users_by_id");
+    const long = {
+      ...users,
+      params: users.params.map((param) => ({
+        ...param,
+        name: "long".repeat(1000),
+      })),
+    };
+    expect(
+      selectReplayExchange(long, source.exchanges, { path_1: "3" }),
+    ).toMatchObject({ exchange: { path: "/api/users/3" }, exact: true });
+  });
+});
 
 describe("replayEnvironmentTool selection", () => {
   it("replays the record whose path segments equal the supplied parameters as an exact match", () => {
@@ -178,6 +194,30 @@ describe("replayEnvironmentTool selection", () => {
     expect(selectReplayExchange(users, exchanges, { id: "a/b" })).toMatchObject(
       { exchange: { ordinal: 902 }, exact: true },
     );
+  });
+
+  it("replays an aliased query argument against the captured long name", () => {
+    const longName = "n".repeat(100);
+    const search = {
+      ...tool("get_search"),
+      query_parameter_names: [longName],
+      record_ordinals: [901, 902],
+    };
+    const exchange = (ordinal: number, value: string): RecordedExchange => ({
+      ordinal,
+      path: "/api/search",
+      query: `?${longName}=${value}`,
+      status: 200,
+      contentType: null,
+      bodyText: null,
+    });
+    const exchanges = new Map<number, RecordedExchange>([
+      [901, exchange(901, "a")],
+      [902, exchange(902, "b")],
+    ]);
+    expect(
+      selectReplayExchange(search, exchanges, { query_1: "b" }),
+    ).toMatchObject({ exchange: { ordinal: 902 }, exact: true });
   });
 
   it("prefers path matches over query matches and keeps manifest order on ties", () => {
@@ -381,5 +421,40 @@ describe("replayEnvironmentTool bodies", () => {
       body: small.toString("base64"),
       replay: { truncated: false, body_encoding: "base64" },
     });
+  });
+});
+
+describe("replayEnvironmentTool reply metadata", () => {
+  it("cuts a long recorded path or query in the reply and flags it, while matching on the full line", () => {
+    const users = tool("get_users_by_id");
+    const ordinal = users.record_ordinals[0] ?? 0;
+    const long: EnvironmentSource = {
+      ...source,
+      exchanges: new Map([
+        [
+          ordinal,
+          {
+            ordinal,
+            path: `/api/users/2/${"p".repeat(4000)}`,
+            query: `?${"q".repeat(4000)}`,
+            status: 200,
+            contentType: null,
+            bodyText: null,
+          },
+        ],
+      ]),
+    };
+    const cut = replay("get_users_by_id", { id: "2" }, long).replay;
+    expect(cut).toMatchObject({
+      exact_match: true,
+      recorded_line_truncated: true,
+    });
+    expect(Buffer.byteLength(cut.recorded_path)).toBeLessThanOrEqual(1024);
+    expect(Buffer.byteLength(cut.recorded_query ?? "")).toBeLessThanOrEqual(
+      1024,
+    );
+    expect(
+      replay("get_users_by_id", { id: "2" }).replay.recorded_line_truncated,
+    ).toBe(false);
   });
 });

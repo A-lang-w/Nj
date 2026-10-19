@@ -14,11 +14,15 @@ import {
 } from "../dist/process/OwnedCommand.js";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
-const AGENTENV_PIN = "agentenv-framework 0.9.1334";
+const AGENTENV_VERSION = "0.9.1334";
+const AGENTENV_PIN = `agentenv-framework ${AGENTENV_VERSION}`;
 // The framework builds its infra images from public ECR, whose anonymous pull quota hosted
-// runners share; that one external refusal earns one retry, anything else fails at once.
+// runners share; a rate refusal earns one retry, anything else fails at once.
 const PUBLIC_ECR_QUOTA =
   /public\.ecr\.aws[\s\S]{0,400}?(?:429 Too Many Requests|toomanyrequests)/u;
+// The anonymous data-transfer cap is counted per source IP, so a pause on the same runner
+// cannot lift it; the receipt names it instead of retrying.
+const PUBLIC_ECR_DATA_LIMIT = /toomanyrequests: Data limit exceeded/u;
 const QUOTA_RETRY_PAUSE_MS = 90_000;
 // Both bundle attempts share this budget inside the 30-minute job; a retry needs real time left.
 const RUN_BUDGET_MS = 22 * 60_000;
@@ -58,6 +62,17 @@ let cases = 0;
 const receipt = {};
 let knownContainers;
 try {
+  const version = await execFileAsync(agentEnv, ["--version"], {
+    env: environment,
+    timeout: 10_000,
+    maxBuffer: 64 * 1024,
+  });
+  receipt.agent_env_version = version.stdout.trim();
+  assert.equal(
+    receipt.agent_env_version,
+    `agent-env ${AGENTENV_VERSION}`,
+    "The verifier requires the pinned framework executable; its observed version is retained in the receipt.",
+  );
   const containersBefore = await containers();
   knownContainers = new Set(containersBefore.map((entry) => entry.id));
   receipt.docker_before = {
@@ -155,18 +170,36 @@ try {
   // with this receipt rather than the runner's kill.
   const started = Date.now();
   const deadline = started + RUN_BUDGET_MS;
-  const runBundle = (timeoutMs) =>
-    runOwnedCommand(
-      {
-        command: agentEnv,
-        arguments: ["run", bundle, "--sandbox", "local"],
-        cwd: runtime.path,
-        runId: `rea-agentenv-run-${randomUUID()}`,
-        hostEnvironment: environment,
-      },
-      { timeoutMs, diagnosticBytes: 4 * 1024 * 1024 },
-    );
-  let attempts = 1;
+  let attempts = 0;
+  const runBundle = async (timeoutMs) => {
+    attempts += 1;
+    let outcome;
+    try {
+      outcome = await runOwnedCommand(
+        {
+          command: agentEnv,
+          arguments: ["run", bundle, "--sandbox", "local"],
+          cwd: runtime.path,
+          runId: `rea-agentenv-run-${randomUUID()}`,
+          hostEnvironment: environment,
+        },
+        { timeoutMs, diagnosticBytes: 4 * 1024 * 1024 },
+      );
+      return outcome;
+    } catch (cause) {
+      outcome =
+        cause instanceof OwnedCommandFailure ? cause.snapshot : undefined;
+      throw cause;
+    } finally {
+      // Recorded before the outcome is judged, so a failed receipt still says how the last
+      // run ended, how many runs there were and whether the registry quota refused it.
+      receipt.agent_env_run = runRecord(
+        outcome,
+        Date.now() - started,
+        attempts,
+      );
+    }
+  };
   let snapshot;
   try {
     snapshot = await runBundle(
@@ -174,24 +207,13 @@ try {
     );
   } catch (cause) {
     if (
-      !(cause instanceof OwnedCommandFailure) ||
-      !PUBLIC_ECR_QUOTA.test(cause.snapshot?.stderr.text ?? "") ||
+      receipt.agent_env_run?.public_ecr_quota !== "rate" ||
       deadline - Date.now() - QUOTA_RETRY_PAUSE_MS < MIN_RETRY_MS
     )
       throw cause;
-    attempts = 2;
     await pause(QUOTA_RETRY_PAUSE_MS);
     snapshot = await runBundle(deadline - Date.now());
   }
-  receipt.agent_env_run = {
-    exit_code: snapshot.exitCode,
-    seconds: Math.round((Date.now() - started) / 1000),
-    attempts,
-    ...(attempts > 1
-      ? { retried_for: "public ECR anonymous pull quota (429)" }
-      : {}),
-    stdout_tail: snapshot.stdout.text.trim().split("\n").slice(-6),
-  };
   assert.equal(snapshot.exitCode, 0);
   assert.match(snapshot.stdout.text, /tasks\/smoke\.json v\d+: passed/u);
   assert.match(
@@ -279,6 +301,29 @@ async function cli(...args) {
     { env: environment, cwd: runtime.path, maxBuffer: 64 * 1024 * 1024 },
   );
   return JSON.parse(stdout);
+}
+
+// The receipt's view of one `agent-env run`, passed or failed; `outcome` is absent when the
+// command failed before producing a snapshot.
+function runRecord(outcome, elapsedMs, attempts) {
+  const quota = publicEcrQuota(outcome?.stderr.text ?? "");
+  return {
+    exit_code: outcome?.exitCode ?? null,
+    ...(outcome?.signal ? { signal: outcome.signal } : {}),
+    seconds: Math.round(elapsedMs / 1000),
+    attempts,
+    ...(attempts > 1
+      ? { retried_for: "public ECR anonymous pull rate limit (429)" }
+      : {}),
+    ...(quota === undefined ? {} : { public_ecr_quota: quota }),
+    stdout_tail: (outcome?.stdout.text ?? "").trim().split("\n").slice(-6),
+  };
+}
+
+// Which public ECR refusal ended a run: the per-IP data cap or a request-rate refusal.
+function publicEcrQuota(stderr) {
+  if (!PUBLIC_ECR_QUOTA.test(stderr)) return undefined;
+  return PUBLIC_ECR_DATA_LIMIT.test(stderr) ? "data_limit" : "rate";
 }
 
 // npm 11 prints `npm pack --json` as a one-element array; npm 12 keys the same record by package name.

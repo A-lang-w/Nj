@@ -21,6 +21,9 @@ later increment.
   require `inspect_analysis_view` Evidence of kind `environment-manifest` and
   complete `inspect_web_network_capture` Evidence; refuse any other pair with an
   `invalid_request` whose issue path names the offending file.
+- Forward caller cancellation to file reads and check startup boundaries before
+  authentication/listener work; an already observed abort must not bind or
+  announce a listener.
 - Refuse a manifest whose `parent_evidence_id` differs from the evidence file's
   `evidence_id` before binding any port; Evidence authentication covers the
   capture's records, so no further record-coverage refusal is defined.
@@ -28,21 +31,32 @@ later increment.
   every path parameter as a required string described by its segment index,
   rule and observed values, every observed query name as an optional string,
   and an optional `body` object for `POST`, `PUT` and `PATCH` (a query name
-  that collides with a path parameter becomes `query_<name>`, and the body
+  that collides with a path parameter becomes `query_<name>`, a query name
+  longer than 64 characters becomes `query_<n>`, and the body
   becomes `request_body` when a query parameter is named `body`), closed with
   `additionalProperties: false` so unknown arguments are refused; the
   description reads `METHOD template; replays retained records [ordinals];
   evidence ev_…`. The served catalog stays separate from REA's own tool
   contracts and digests.
+- Prefix tool descriptions with the shared captured-catalog warning so
+  standalone card readers receive the trust notice before MCP initialization.
+- Bound each path-observation, body-key and cited-ordinal description sample to 1 KiB
+  of UTF-8 whole values before joining them, with a separate omitted-count and
+  manifest-Evidence notice. Keep complete arrays and replay semantics unchanged.
+- Bound captured method, path and query-name prose to UTF-8-safe display prefixes
+  under the same budget, with an explicit full-value Evidence notice. Preserve
+  complete lookup values; long path and query names use collision-safe aliases.
+- Parse a recorded query only when supplied query arguments can affect selection.
 - Replay by selecting, among the tool's cited records, the one whose path
   segments at the parameter indexes match the most supplied values, then the
   most of those segments equal to the value as written rather than only after
   percent-decoding, then the most supplied query values, keeping manifest order
   on ties; return `status`,
-  `content_type`, `body` (parsed JSON for JSON-like content types that parse,
+  `content_type`, `body` (parsed JSON for JSON-like content types with safe numeric conversion,
   else text; bodies over 256 KiB cut at a UTF-8 boundary with
   `truncated: true`) and `replay` with `record_ordinal`, `evidence_id`,
-  `exact_match`, `recorded_path`, `recorded_query`, `body_recorded` (false
+  `exact_match`, `recorded_path` and `recorded_query` (each cut to 1 KiB, with
+  `recorded_line_truncated`; an explicit empty query is `?`), `body_recorded` (false
   when the capture kept no response body, so a `null` body is not mistaken for
   a recorded one), `body_encoding` (`base64` when the retained bytes are not
   UTF-8, so they are returned exactly rather than decoded lossily) and
@@ -62,7 +76,8 @@ later increment.
   then `127.0.0.1` and port `0`), announce the bound URL as one pino JSON line
   on stderr, serve through the shared streamable HTTP listener, and run until
   SIGINT or SIGTERM only, then close, print one `stopped` document and exit
-  `130` or `143` through the shared command cancellation handler; a listener
+  `130` or `143` through the shared command cancellation handler; a signal
+  during loading returns `cancelled` before binding; a listener
   failure after binding is logged and ends the command with a
   `resource_constraint` error and exit `1`.
 - Register the flat `environment-serve` command in the CLI inventory with
@@ -92,8 +107,27 @@ transitions. One MCP client is served at a time, as the shared listener
 defines. Non-loopback binds relax the `Host` check and are not exercised; a
 listener `error` after binding is wired but not provoked by a test.
 
+## Resource and cancellation boundaries
+
+- Whole discovery admission reserves at most 1 MiB using six bytes per UTF-16
+  unit plus schema overhead before retaining each schema property. Aggregate
+  tools, arguments and selected environment identity participate; oversized
+  catalogs fail with a non-retryable capacity error before bind. The calibration
+  used 1500 query fields with eight concurrent discovery requests; compact wire
+  size can be smaller than the conservative reservation.
+- Query matching scans selected names one field at a time; path scoring scans
+  once and retains only supplied parameter coordinates. Native form-decoding
+  semantics, malformed escape handling and complete captured facts are preserved.
+- Content-type display is bounded to 1 KiB and reports `content_type_truncated`;
+  complete media-type semantics remain available to body interpretation.
+- Cancellation also owns DNS/listen startup; an observed abort closes the
+  listener before its URL is announced.
+
 ## Deferred issue criteria
 
 Exporting a manifest and its evidence as an agent-environment bundle with a
 verifier, and the hosted verification lane, are later independent increments
 of #4933. This PR must reference rather than close the whole issue.
+
+Numeric data-plane IDs that lose value through JSON number conversion are invalid
+requests with null response IDs, rather than silently changed correlation values.

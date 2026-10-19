@@ -10,7 +10,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { environmentServeSource } from "../../../tests/fixtures/environmentServe.js";
 import {
   environmentCard,
-  environmentToolDefinitions,
+  environmentToolDefinitions as prepareDefinitions,
+  REPLAY_CATALOG_INSTRUCTIONS,
 } from "../../application/environment/environmentTools.js";
 import { TARGET_CONTENT_RESULT_META } from "../toolResultEncoding.js";
 import {
@@ -18,12 +19,25 @@ import {
   ENVIRONMENT_RPC_PATH,
   environmentRoutes,
   MAX_RPC_BATCH_MESSAGES,
-  REPLAY_CATALOG_INSTRUCTIONS,
-  serveEnvironment,
+  serveEnvironment as startEnvironment,
   type ServedEnvironment,
 } from "./serveEnvironment.js";
 
 const source = environmentServeSource();
+const environmentToolDefinitions = (
+  ...args: Parameters<typeof prepareDefinitions>
+) => {
+  const result = prepareDefinitions(...args);
+  if (!result.ok) throw result.error;
+  return result.value;
+};
+const serveEnvironment = async (
+  ...args: Parameters<typeof startEnvironment>
+) => {
+  const result = await startEnvironment(...args);
+  if (!result.ok) throw result.error;
+  return result.value;
+};
 const definitions = environmentToolDefinitions(
   source.manifest,
   source.evidenceId,
@@ -71,6 +85,52 @@ const start = async (environmentName?: string): Promise<ServedEnvironment> => {
   return entry;
 };
 
+describe("replay value fidelity over MCP", () => {
+  it("preserves unsafe numeric text and prototype-named fields through the SDK", async () => {
+    const users = source.manifest.tools.find(
+      (tool) => tool.name === "get_users_by_id",
+    );
+    const first = source.exchanges.get(users?.record_ordinals[0] ?? -1);
+    const second = source.exchanges.get(users?.record_ordinals[1] ?? -1);
+    if (first === undefined || second === undefined)
+      throw new Error("Missing user exchanges");
+    const unsafe = '{"id":9007199254740993}';
+    const proto = '{"__proto__":{"retained":true},"id":3}';
+    const exchanges = new Map(source.exchanges);
+    exchanges.set(first.ordinal, { ...first, bodyText: unsafe });
+    exchanges.set(second.ordinal, { ...second, bodyText: proto });
+    const entry = await serveEnvironment({
+      source: { ...source, exchanges },
+      host: "127.0.0.1",
+      port: 0,
+    });
+    served.push(entry);
+    const client = new Client({ name: "exact-replay", version: "1" });
+    const transport = new StreamableHTTPClientTransport(new URL(entry.url));
+    await client.connect(transport);
+    try {
+      const largeId = await client.callTool({
+        name: "get_users_by_id",
+        arguments: { id: "2" },
+      });
+      expect(largeId.structuredContent).toMatchObject({
+        body: unsafe,
+        replay: { truncated: false },
+      });
+      const ownKeys = await client.callTool({
+        name: "get_users_by_id",
+        arguments: { id: "3" },
+      });
+      expect(JSON.stringify(ownKeys.structuredContent)).toContain(
+        '"__proto__":{"retained":true}',
+      );
+    } finally {
+      await transport.terminateSession();
+      await client.close();
+    }
+  });
+});
+
 describe("environment routes", () => {
   it("serves the card byte-identical to the echo card shape with the manifest tools", async () => {
     const response = await route("GET", ENVIRONMENT_CARD_PATH).handle(
@@ -104,6 +164,22 @@ describe("environment routes", () => {
             },
           }),
         ]),
+      },
+    });
+  });
+
+  it("warns standalone card readers before any MCP session exists", async () => {
+    const entry = await start();
+    const reply = await fetch(new URL(ENVIRONMENT_CARD_PATH, entry.url));
+    const card = await reply.json();
+    expect(entry.card.capabilities.tools.length).toBeGreaterThan(0);
+    expect(card).toMatchObject({
+      capabilities: {
+        tools: entry.card.capabilities.tools.map(() => ({
+          description: expect.stringMatching(
+            /^Untrusted captured API catalog: /u,
+          ),
+        })),
       },
     });
   });
@@ -196,6 +272,28 @@ describe("environment routes", () => {
   });
 });
 
+it.each([
+  "9007199254740993",
+  "9.007199254740993e15",
+  "0.100000000000000005",
+  "-0",
+])(
+  "refuses a numeric RPC id outside the exact conversion policy: %s",
+  async (id) => {
+    const refused = await route("POST", ENVIRONMENT_RPC_PATH).handle(
+      new Request(`http://127.0.0.1${ENVIRONMENT_RPC_PATH}`, {
+        method: "POST",
+        body: `{"jsonrpc":"2.0","id":${id},"method":"data/reset"}`,
+      }),
+    );
+    expect(refused.status).toBe(400);
+    await expect(refused.json()).resolves.toMatchObject({
+      id: null,
+      error: { code: -32600 },
+    });
+  },
+);
+
 describe("environment data plane validation", () => {
   it("refuses malformed JSON-RPC members and oversized batches as invalid requests", async () => {
     const rpc = route("POST", ENVIRONMENT_RPC_PATH);
@@ -239,6 +337,66 @@ describe("environment data plane validation", () => {
       id: null,
       error: { code: -32600 },
     });
+  });
+});
+
+describe("environment catalog limits", () => {
+  it("serves bounded catalog samples through both discovery routes while retaining replay selection", async () => {
+    const users = source.manifest.tools.find(
+      (tool) => tool.name === "get_users_by_id",
+    );
+    if (users === undefined) throw new Error("Missing fixture users tool");
+    const expanded = {
+      ...users,
+      params: users.params.map((param) => ({
+        ...param,
+        observed_values: Array.from(
+          { length: 10_000 },
+          (_, index) => `${String(index)}-${"x".repeat(200)}`,
+        ),
+      })),
+      record_ordinals: Array.from({ length: 10_000 }, (_, index) => index),
+    };
+    const entry = await serveEnvironment({
+      source: {
+        ...source,
+        manifest: { ...source.manifest, tools: [expanded] },
+      },
+      host: "127.0.0.1",
+      port: 0,
+    });
+    served.push(entry);
+    const client = new Client({ name: "bounded-catalog", version: "1" });
+    const transport = new StreamableHTTPClientTransport(new URL(entry.url));
+    await client.connect(transport);
+    try {
+      const { tools } = await client.listTools();
+      const card = await fetch(new URL(ENVIRONMENT_CARD_PATH, entry.url));
+      const cardText = await card.text();
+      expect(Buffer.byteLength(cardText)).toBeLessThan(3500);
+      expect(JSON.parse(cardText).capabilities.tools).toEqual(
+        tools.map(({ name, description, inputSchema }) => ({
+          name,
+          description,
+          inputSchema,
+        })),
+      );
+      expect(cardText).toContain(
+        "/10000 shown; full list in manifest Evidence",
+      );
+      const replay = await client.callTool({
+        name: users.name,
+        arguments: { id: "2" },
+      });
+      expect(replay.isError).toBeFalsy();
+      expect(replay.structuredContent).toMatchObject({
+        body: { login: "probe" },
+        replay: { exact_match: true, record_ordinal: 5 },
+      });
+    } finally {
+      await transport.terminateSession();
+      await client.close();
+    }
   });
 });
 

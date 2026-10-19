@@ -12,8 +12,9 @@ import {
   AnalysisInputError,
   type AnalysisInputIssue,
 } from "../../domain/analysisErrorCore.js";
-import { parseEvidence, type Evidence } from "../../domain/evidence.js";
+import { immutableEvidence, type Evidence } from "../../domain/evidence.js";
 import { projectInputIssues } from "../../domain/inputIssueProjection.js";
+import { immutableJsonSnapshotMember } from "../../domain/immutableJson.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   webNetworkCaptureSchema,
@@ -88,7 +89,9 @@ const parseEvidenceFile = (
   value: unknown,
 ): Result<Evidence, AnalysisError> => {
   try {
-    return ok(parseEvidence(value));
+    for (const key of ["parameters", "raw_result", "normalized_result"])
+      immutableJsonSnapshotMember(value, key);
+    return ok(immutableEvidence(value));
   } catch (cause: unknown) {
     if (!(cause instanceof z.ZodError)) throw cause;
     return err(
@@ -216,9 +219,13 @@ const parseCaptureEvidence = (
 > => {
   const evidence = parseEvidenceFile(operation, "evidence", value);
   if (!evidence.ok) return evidence;
-  const { evidence_id: evidenceId, normalized_result: result } = evidence.value;
+  const { evidence_id: evidenceId } = evidence.value;
+  const normalized = immutableJsonSnapshotMember(
+    evidence.value,
+    "normalized_result",
+  );
   if (evidence.value.operation === "capture_browser_scenario") {
-    const scenario = browserScenarioCaptureSchema.safeParse(result);
+    const scenario = browserScenarioCaptureSchema.safeParse(normalized);
     const definition = z
       .object({ scenario_sha256: z.string() })
       .safeParse(evidence.value.parameters);
@@ -232,14 +239,37 @@ const parseCaptureEvidence = (
           : null,
       });
   } else if (evidence.value.operation === "inspect_web_network_capture") {
-    const capture = webNetworkCaptureSchema.safeParse(result);
-    if (capture.success)
+    const records = immutableJsonSnapshotMember(normalized, "records");
+    if (Array.isArray(records))
+      for (let index = 0; index < records.length; index += 1) {
+        const record = immutableJsonSnapshotMember(records, String(index));
+        immutableJsonSnapshotMember(record, "reported");
+      }
+    const capture = webNetworkCaptureSchema.safeParse(normalized);
+    if (capture.success) {
+      // The manifest view projects HAR captures only, and replay reads HAR's response fields.
+      if (capture.data.format !== "har")
+        return err(
+          inputError(
+            operation,
+            [
+              {
+                path: ["evidence", "normalized_result", "format"],
+                reason: "invalid_value",
+                expected: "har",
+                message: `Agent environments replay HAR captures; this capture's format is ${capture.data.format}.`,
+              },
+            ],
+            "The evidence file is not a HAR capture.",
+          ),
+        );
       return ok({
         records: capture.data.records,
         evidenceId,
         captureKind: "web-network-capture",
         captureSha256: capture.data.artifact.sha256,
       });
+    }
   }
   return err(
     inputError(

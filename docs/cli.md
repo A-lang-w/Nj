@@ -383,7 +383,8 @@ readable by their owner only, since they hold captured content) with
 smoke task `tasks/smoke.json`. `--package-tarball` copies a packed `rea-agents`
 tarball into the env folder and installs it instead of the registry package,
 which is how the hosted lane proves a checkout rather than a release. `--name`
-replaces the manifest's kebab-case name as the env folder and env id. The
+replaces the manifest's kebab-case name as the env folder and env id; a device
+name Windows reserves (`con`, `nul`, `com1` and the like) is refused. The
 command prints one JSON document listing the written files with their sizes
 and the pinned package source. See
 [agent environments](agent-environments.md#export-a-bundle) for the folder
@@ -431,13 +432,15 @@ its providers, and `1` when that cleanup fails.
 SIGTERM, closes the listener, then prints one structured
 `{"status":"stopped", …}` document naming the URL, environment and tool count
 and exits `130` or `143` through the shared cancellation handler below.
-Refusals before binding (unreadable files, non-Evidence JSON, a manifest whose
-parent is not the supplied evidence, an unbindable port) print a structured
+Refusals before binding (unreadable files, non-Evidence JSON, capture Evidence
+in a format other than HAR, a manifest whose parent is not the supplied
+evidence, an unbindable port) print a structured
 error and exit `1`, as does a listener that fails after binding.
 `rea environment-export` is one-shot: it prints the written files and exits
 `0`, or prints a structured `invalid_request` error and exits `1` for the same
 pair refusals, a non-empty or file-occupied directory, a missing package
-tarball or a name that is not a kebab-case label, writing nothing in each case.
+tarball or a name that is not a kebab-case label or is a Windows device name,
+writing nothing in each case.
 A write that fails after the first file (a permission or disk-space failure
 on a later path) propagates as the host's failure and leaves the partial
 folder in place for inspection; remove it before retrying, since the next
