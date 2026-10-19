@@ -18,6 +18,7 @@ import {
 import {
   semanticReferenceSourcesInactive,
   semanticKnownArrayIteration,
+  semanticKnownArrayIterationAt,
   semanticSelectedReferenceSlot,
 } from "./javascriptSemanticReferenceSources.js";
 import { semanticArrayPropertyReferences } from "./javascriptSemanticObjectReferences.js";
@@ -148,10 +149,12 @@ export const createSemanticReturnedReferences = (
     } = { references: [], precision: "exact" };
     // The invocation owner retains the actual callable receiver. A bare alias
     // of fn.call has lost that receiver and cannot execute fn by itself.
+    const nativeArrayIteration = (array: t.ArrayExpression) =>
+      semanticKnownArrayIterationAt(array, state);
     const sourceInvocation =
       invocation === undefined
         ? undefined
-        : javaScriptSourceInvocationContext(invocation);
+        : javaScriptSourceInvocationContext(invocation, nativeArrayIteration);
     const sourceGenericInvocation =
       invocation !== undefined &&
       javaScriptGenericInvocationMethod(invocation.callee) !== undefined;
@@ -487,6 +490,7 @@ export const createSemanticReturnedReferences = (
             const selected = resolveJavaScriptGenericInvocation(
               method,
               current.invocation,
+              nativeArrayIteration,
             );
             if (selected !== undefined)
               pending.push({

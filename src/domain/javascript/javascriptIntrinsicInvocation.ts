@@ -6,9 +6,16 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 
-/** Expand only literal array spreads whose positional arguments are all known. */
+export type JavaScriptArrayIterationProof = (
+  array: t.ArrayExpression,
+) => boolean;
+
+const unknownArrayIteration: JavaScriptArrayIterationProof = () => false;
+
+/** Expand literal array spreads only when their native iterator is proven. */
 export const expandJavaScriptInvocationArguments = (
   arguments_: readonly t.CallExpression["arguments"][number][],
+  nativeArrayIteration: JavaScriptArrayIterationProof = unknownArrayIteration,
 ): t.CallExpression["arguments"] => {
   const expanded: t.CallExpression["arguments"] = [];
   const pending = [...arguments_].reverse();
@@ -20,6 +27,7 @@ export const expandJavaScriptInvocationArguments = (
       : undefined;
     if (
       t.isArrayExpression(array) &&
+      nativeArrayIteration(array) &&
       array.elements.every(
         (element) => t.isExpression(element) || t.isSpreadElement(element),
       )
@@ -33,7 +41,10 @@ export const expandJavaScriptInvocationArguments = (
   return expanded;
 };
 
-const arrayArguments = (node: t.Node | undefined) => {
+const arrayArguments = (
+  node: t.Node | undefined,
+  nativeArrayIteration: JavaScriptArrayIterationProof,
+) => {
   const array =
     node === undefined ? undefined : unwrapJavaScriptExpression(node).node;
   if (
@@ -45,6 +56,7 @@ const arrayArguments = (node: t.Node | undefined) => {
     array.elements.filter(
       (element): element is t.Expression | t.SpreadElement => element !== null,
     ),
+    nativeArrayIteration,
   );
   return expanded.every((element) => t.isExpression(element))
     ? expanded.filter((element): element is t.Expression =>
@@ -56,11 +68,12 @@ const arrayArguments = (node: t.Node | undefined) => {
 const invocationArguments = (
   method: "call" | "apply",
   arguments_: JavaScriptIntrinsicInvocation["arguments"],
+  nativeArrayIteration: JavaScriptArrayIterationProof,
 ) =>
   t.isSpreadElement(arguments_?.[0])
     ? undefined
     : method === "apply"
-      ? arrayArguments(arguments_?.[1])
+      ? arrayArguments(arguments_?.[1], nativeArrayIteration)
       : arguments_?.slice(1);
 
 /** Positional state needed only by generic Function.call/apply invocation. */
@@ -85,6 +98,7 @@ export const javaScriptGenericInvocationMethod = (
 /** A member call supplies its receiver; a captured/comma callable does not. */
 export const javaScriptSourceInvocationContext = (
   node: t.CallExpression | t.OptionalCallExpression,
+  nativeArrayIteration: JavaScriptArrayIterationProof = unknownArrayIteration,
 ): JavaScriptSourceInvocationContext => {
   const callee = unwrapJavaScriptExpression(node.callee).node;
   return {
@@ -92,7 +106,10 @@ export const javaScriptSourceInvocationContext = (
       t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)
         ? callee.object
         : undefined,
-    arguments: expandJavaScriptInvocationArguments(node.arguments),
+    arguments: expandJavaScriptInvocationArguments(
+      node.arguments,
+      nativeArrayIteration,
+    ),
   };
 };
 
@@ -100,6 +117,7 @@ export const javaScriptSourceInvocationContext = (
 export const resolveJavaScriptGenericInvocation = (
   method: "call" | "apply",
   context: JavaScriptSourceInvocationContext,
+  nativeArrayIteration: JavaScriptArrayIterationProof = unknownArrayIteration,
 ):
   | {
       readonly callable: t.Expression;
@@ -116,7 +134,11 @@ export const resolveJavaScriptGenericInvocation = (
           t.isSpreadElement(context.arguments[0])
             ? { receiverUnknown: true }
             : {}),
-          arguments: invocationArguments(method, context.arguments),
+          arguments: invocationArguments(
+            method,
+            context.arguments,
+            nativeArrayIteration,
+          ),
         },
       };
 
@@ -129,11 +151,12 @@ export const resolveJavaScriptIntrinsicInvocation = (
   intrinsicPath: (node: t.Node) => readonly string[] | undefined,
   boundIntrinsic: (node: t.Node) => JavaScriptIntrinsicInvocation | undefined,
   intrinsicReadChanged: (node: t.Node, path: readonly string[]) => boolean,
+  nativeArrayIteration: JavaScriptArrayIterationProof = unknownArrayIteration,
 ): JavaScriptIntrinsicInvocation | undefined => {
   const visited = new Set<t.Node>();
   let callee: t.Node = node.callee;
   let arguments_: JavaScriptIntrinsicInvocation["arguments"] =
-    expandJavaScriptInvocationArguments(node.arguments);
+    expandJavaScriptInvocationArguments(node.arguments, nativeArrayIteration);
   let receiver: t.Node | undefined;
   let explicitReceiver = false;
   for (;;) {
@@ -171,7 +194,11 @@ export const resolveJavaScriptIntrinsicInvocation = (
           receiver = arguments_?.[0];
           explicitReceiver = true;
           callee = callee.object;
-          arguments_ = invocationArguments(method, arguments_);
+          arguments_ = invocationArguments(
+            method,
+            arguments_,
+            nativeArrayIteration,
+          );
           continue;
         }
       }
@@ -195,10 +222,14 @@ export const resolveJavaScriptIntrinsicInvocation = (
         : t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)
           ? callee.object
           : undefined;
-      const selected = resolveJavaScriptGenericInvocation(method, {
-        receiver: callable,
-        arguments: arguments_,
-      });
+      const selected = resolveJavaScriptGenericInvocation(
+        method,
+        {
+          receiver: callable,
+          arguments: arguments_,
+        },
+        nativeArrayIteration,
+      );
       if (selected === undefined)
         return { kind: "opaque", path, arguments: undefined };
       callee = selected.callable;
@@ -213,7 +244,7 @@ export const resolveJavaScriptIntrinsicInvocation = (
       callee = callable;
       receiver = arguments_?.[1];
       explicitReceiver = true;
-      arguments_ = arrayArguments(arguments_?.[2]);
+      arguments_ = arrayArguments(arguments_?.[2], nativeArrayIteration);
       continue;
     }
     return {

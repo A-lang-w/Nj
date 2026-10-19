@@ -131,6 +131,12 @@ const hasFreshProjectedReceiver = (
 
 /** Select retained assignment and copy sources at one projected member read. */
 export const semanticProjectedSourcesAtRead = (
+  ...arguments_: Parameters<typeof semanticProjectedSourceFactsAtRead>
+): readonly ProjectedSource[] | undefined =>
+  semanticProjectedSourceFactsAtRead(...arguments_)?.sources;
+
+/** Keep imported origins subject to the same selected writes as other values. */
+export const semanticProjectedSourceFactsAtRead = (
   binding: JavaScriptSemanticBindingState,
   reference: t.Node,
   path: SemanticAliasSelectionPath,
@@ -138,7 +144,12 @@ export const semanticProjectedSourcesAtRead = (
   includeUnknown: boolean,
   memberReadAt: t.Node = reference,
   capturedSelections: readonly SemanticCapturedSelection[] = [],
-): readonly ProjectedSource[] | undefined => {
+):
+  | {
+      readonly sources: readonly ProjectedSource[];
+      readonly retainsOrigin: boolean;
+    }
+  | undefined => {
   const read = semanticBindingAtRead(binding, reference, state.parentsByNode);
   const captured = [
     ...read.binding.initializers,
@@ -321,7 +332,7 @@ export const semanticProjectedSourcesAtRead = (
       }
     }
   }
-  if (replacement !== undefined) return sources;
+  if (replacement !== undefined) return { sources, retainsOrigin: false };
   for (const initializer of read.binding.initializers) {
     if (semanticReferenceIterationUnknown(initializer, state)) return undefined;
     if (semanticReferenceSourcesInactive(initializer, state)) continue;
@@ -361,5 +372,5 @@ export const semanticProjectedSourcesAtRead = (
         });
     }
   }
-  return sources;
+  return { sources, retainsOrigin: true };
 };

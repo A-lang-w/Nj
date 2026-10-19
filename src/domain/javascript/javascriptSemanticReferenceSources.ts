@@ -52,6 +52,16 @@ export const semanticKnownArrayIteration = (
   value?.status === "array" &&
   value.items.every((item) => semanticArrayIndex(item.name) !== null);
 
+/** Invocation spreads use the same native-iteration proof at their source read. */
+export const semanticKnownArrayIterationAt = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  semanticKnownArrayIteration(
+    evaluateSemanticExpression(node, state, node),
+    state,
+  );
+
 /** Numeric destructuring projections do not select slots of custom iterators. */
 export const semanticReferenceIterationUnknown = (
   source: { readonly iterationSources?: readonly ReferenceSource[] },

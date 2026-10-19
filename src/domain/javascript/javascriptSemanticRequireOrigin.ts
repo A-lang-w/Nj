@@ -1,5 +1,6 @@
 import {
   semanticProjectedSourcesAtRead as moduleObjectSourcesAtRead,
+  semanticProjectedSourceFactsAtRead,
   semanticNormalizeCapturedSelections,
   semanticShiftCapturedSelections,
   type SemanticCapturedSelection,
@@ -261,36 +262,25 @@ const isSemanticCreateRequireCall = (
   state: JavaScriptSemanticAnalysisState,
 ): initializer is t.CallExpression => {
   if (!t.isCallExpression(initializer)) return false;
-  const callee = unwrapJavaScriptExpression(initializer.callee).node;
-  if (t.isIdentifier(callee)) {
-    const origins = resolveSemanticBindingState(
-      state,
-      callee,
-      callee.name,
-    )?.directOrigins;
-    if (origins?.length !== 1) return false;
-    const [origin] = origins;
-    return (
-      origin?.importedPath.at(-1) === "createRequire" &&
-      ["module", "node:module"].includes(origin.specifier)
-    );
-  }
-  const chain = semanticMemberChain(callee);
-  if (chain === undefined || chain.members.at(-1) !== "createRequire")
-    return false;
-  if (!t.isNode(chain.root)) return false;
-  const root = unwrapJavaScriptExpression(chain.root).node;
-  if (!t.isIdentifier(root)) return false;
-  const origins = resolveSemanticBindingState(
+  const factory = selectedRequireSourcesAt(
+    initializer.callee,
+    initializer,
     state,
-    root,
-    root.name,
-  )?.directOrigins;
-  if (origins?.length !== 1) return false;
-  const [origin] = origins;
+    new Set(),
+    "factory",
+  );
+  return factory !== undefined && factory.loader !== "local";
+};
+
+const isCreateRequireOrigin = (
+  origin: JavaScriptModuleOrigin,
+  selected: SemanticAliasSelectionPath,
+): boolean => {
+  if (!["module", "node:module"].includes(origin.specifier)) return false;
+  const path = [...origin.importedPath, ...selected];
   return (
-    origin?.importedPath.length === 0 &&
-    ["module", "node:module"].includes(origin.specifier)
+    (path.length === 1 && path[0] === "createRequire") ||
+    (path.length === 2 && path[0] === "default" && path[1] === "createRequire")
   );
 };
 
@@ -300,6 +290,7 @@ const selectedRequireSourcesAt = (
   site: t.Node,
   state: JavaScriptSemanticAnalysisState,
   factoryBindingIds: ReadonlySet<string>,
+  target: "loader" | "factory" = "loader",
 ): Pick<JavaScriptRequireCallFact, "loader" | "sourceRelative"> | undefined => {
   const pending: ModuleObjectSource[] = [{ node: root, path: [] }];
   const seen = new WeakMap<t.Node, Set<string>>();
@@ -308,6 +299,7 @@ const selectedRequireSourcesAt = (
   let loaderBinding = false;
   let selectedLoader: JavaScriptRequireLoaderFact | undefined;
   let unknown = false;
+  let local = false;
   let sourceRelative = true;
   while (pending.length > 0) {
     const current = pending.pop()!;
@@ -328,7 +320,7 @@ const selectedRequireSourcesAt = (
         ]),
       );
     } else if (t.isIdentifier(node)) {
-      if (current.path.length === 0) {
+      if (target === "loader" && current.path.length === 0) {
         const captured = requireLoaderValueAt(
           node,
           node,
@@ -356,18 +348,20 @@ const selectedRequireSourcesAt = (
       // Eligibility is separate from the selected value: replacing a known
       // loader with an opaque value keeps a gap, while a proven local function
       // no longer claims the previous factory's base or identity.
-      loaderBinding ||= binding.initializers.some(
-        (source) =>
-          isSemanticCreateRequireCall(source.node, state) ||
-          (t.isIdentifier(source.node) &&
-            requireLoaderValueAt(
-              source.node,
-              source.node,
-              state,
-              factoryBindingIds,
-            ) !== "local"),
-      );
-      const sources = moduleObjectSourcesAtRead(
+      loaderBinding ||=
+        target === "loader" &&
+        binding.initializers.some(
+          (source) =>
+            isSemanticCreateRequireCall(source.node, state) ||
+            (t.isIdentifier(source.node) &&
+              requireLoaderValueAt(
+                source.node,
+                source.node,
+                state,
+                factoryBindingIds,
+              ) !== "local"),
+        );
+      const facts = semanticProjectedSourceFactsAtRead(
         binding,
         node,
         current.path,
@@ -376,7 +370,18 @@ const selectedRequireSourcesAt = (
         current.readAt ?? node,
         current.capturedSelections,
       );
-      if (sources === undefined) {
+      if (target === "factory" && binding.directOrigins.length > 0) {
+        const native = binding.directOrigins.some((origin) =>
+          isCreateRequireOrigin(origin, current.path),
+        );
+        loaderBinding ||= native;
+        if (facts?.retainsOrigin) {
+          found ||= native;
+          local ||= !native;
+          if (native) selectedLoader = "create-require";
+        }
+      }
+      if (facts === undefined) {
         unknown = true;
         const retained = semanticBindingAtRead(
           binding,
@@ -403,11 +408,14 @@ const selectedRequireSourcesAt = (
         pending.push(
           ...inheritLoaderSourceContext(
             current,
-            projectedLoaderSources(current, sources),
+            projectedLoaderSources(current, facts.sources),
           ),
         );
     } else if (t.isObjectExpression(node) || t.isArrayExpression(node)) {
-      if (current.path.length === 0) continue;
+      if (current.path.length === 0) {
+        local = true;
+        continue;
+      }
       pending.push(
         ...inheritLoaderSourceContext(
           current,
@@ -428,21 +436,53 @@ const selectedRequireSourcesAt = (
           node: t.isConditionalExpression(node) ? node.alternate : node.right,
         },
       );
+    } else if (t.isCallExpression(node)) {
+      if (target === "factory") {
+        const origin = semanticRequireOrigin(node, state)?.origin;
+        if (
+          origin !== undefined &&
+          isCreateRequireOrigin(origin, current.path)
+        ) {
+          found = true;
+          selectedLoader = "create-require";
+        }
+      } else if (current.path.length === 0) {
+        const factory = selectedRequireSourcesAt(
+          node.callee,
+          node,
+          state,
+          factoryBindingIds,
+          "factory",
+        );
+        if (factory !== undefined && factory.loader !== "local") {
+          found = true;
+          unknown ||=
+            factory.loader === "unknown" ||
+            (selectedLoader !== undefined &&
+              selectedLoader !== "create-require");
+          selectedLoader ??= "create-require";
+          unknown ||= state.conditionallySkippedExpressions.has(node);
+          sourceRelative &&= isUnmodifiedImportMetaUrl(
+            node.arguments[0],
+            state,
+          );
+        } else local ||= factory?.loader === "local";
+      }
     } else if (
       current.path.length === 0 &&
-      isSemanticCreateRequireCall(node, state)
+      (t.isFunction(node) || t.isClassExpression(node) || t.isLiteral(node))
     ) {
-      found = true;
-      unknown ||=
-        selectedLoader !== undefined && selectedLoader !== "create-require";
-      selectedLoader ??= "create-require";
-      unknown ||= state.conditionallySkippedExpressions.has(node);
-      sourceRelative &&= isUnmodifiedImportMetaUrl(node.arguments[0], state);
+      local = true;
     }
   }
-  return found || (loaderBinding && unknown)
+  return found || local || (loaderBinding && unknown)
     ? {
-        loader: unknown ? "unknown" : (selectedLoader ?? "unknown"),
+        loader:
+          (unknown && (found || loaderBinding)) || (found && local)
+            ? "unknown"
+            : found
+              ? (selectedLoader ?? "unknown")
+              : "local",
         sourceRelative: found && sourceRelative && !unknown,
       }
     : undefined;

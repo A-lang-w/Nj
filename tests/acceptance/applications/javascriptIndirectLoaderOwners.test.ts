@@ -39,6 +39,23 @@ const cases = [
     possible: false,
   },
   {
+    name: "replaced createRequire factory stays inert",
+    mainFile: "main.mjs",
+    load: 'import * as mod from "node:module";mod.default.createRequire=()=>()=>({});const load=mod.default.createRequire(import.meta.url);load("../shared/window.cjs");',
+    possible: false,
+  },
+  {
+    name: "replaced created-loader call stays inert",
+    mainFile: "main.mjs",
+    load: 'import {createRequire as make} from "node:module";const load=make(import.meta.url);load.call=()=>{};load.call(null,"../shared/window.cjs");',
+    possible: false,
+  },
+  {
+    name: "custom array iterator preserves loader ownership",
+    load: 'Array.prototype[Symbol.iterator]=function*(){yield "../shared/window.cjs"};require(...["./inert.cjs"]);',
+    possible: true,
+  },
+  {
     name: "Reflect.apply retains module delegate ownership",
     load: 'Reflect.apply(module.require,module,["../shared/window.cjs"]);',
     possible: true,
@@ -138,6 +155,8 @@ cliTest.for(
     await writeFixtureFiles(root, {
       "a/package.json": JSON.stringify({ main: mainFile }),
       [`a/${mainFile}`]: `throw new Error('Static fixture must never execute');${load}`,
+      "a/inert.cjs":
+        "throw new Error('Static inert decoy must never execute');",
       "a/index.html": "possible page",
       "b/package.json": '{"main":"main.cjs"}',
       "b/main.cjs": `throw new Error('Static fixture must never execute');require('../shared/window.cjs');`,
