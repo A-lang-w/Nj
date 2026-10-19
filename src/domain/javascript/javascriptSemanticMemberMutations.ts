@@ -8,6 +8,7 @@ import {
   semanticMutableBuiltinOrigin,
   semanticRequireExportsIdentity,
   semanticRequireOrigin,
+  hasSemanticCreateRequireFactoryOrigin,
 } from "./javascriptSemanticRequireOrigin.js";
 
 import {
@@ -1250,7 +1251,9 @@ const observableMutationPaths = (
     // CommonJS namespace from `require("node:fs")`). Keep those writes at their
     // exact member paths instead of widening the first path to a wildcard.
     const hasParsedRequireOrigin = binding.initializers.some(
-      ({ node }) => semanticRequireOrigin(node, state) !== undefined,
+      ({ node }) =>
+        semanticRequireOrigin(node, state) !== undefined ||
+        hasSemanticCreateRequireFactoryOrigin(node, state),
     );
     if (
       binding.directOrigins.length > 0 ||

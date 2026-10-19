@@ -254,10 +254,11 @@ const isSemanticCreateRequireBinding = (
 ): boolean => {
   if (binding.initializers.length !== 1) return false;
   const initializer = semanticStableInitializer(binding, state)?.node;
-  return isSemanticCreateRequireCall(initializer, state);
+  return hasSemanticCreateRequireFactoryOrigin(initializer, state);
 };
 
-const isSemanticCreateRequireCall = (
+/** Eligibility for observable loader slots; an unknown factory is not invocation proof. */
+export const hasSemanticCreateRequireFactoryOrigin = (
   initializer: t.Node | undefined,
   state: JavaScriptSemanticAnalysisState,
 ): initializer is t.CallExpression => {
@@ -280,7 +281,10 @@ const isCreateRequireOrigin = (
   const path = [...origin.importedPath, ...selected];
   return (
     (path.length === 1 && path[0] === "createRequire") ||
-    (path.length === 2 && path[0] === "default" && path[1] === "createRequire")
+    ((origin.resolutionMode ?? "import") === "import" &&
+      path.length === 2 &&
+      path[0] === "default" &&
+      path[1] === "createRequire")
   );
 };
 
@@ -300,10 +304,16 @@ const selectedRequireSourcesAt = (
   let selectedLoader: JavaScriptRequireLoaderFact | undefined;
   let unknown = false;
   let local = false;
+  let nativeMemberAlternative = false;
   let sourceRelative = true;
   while (pending.length > 0) {
     const current = pending.pop()!;
     const node = unwrapJavaScriptExpression(current.node).node;
+    const genericMember =
+      current.path.length === 1 &&
+      semanticAliasSelectionChoices(current.path[0]!).every(
+        (key) => key === "call" || key === "apply",
+      );
     const key = JSON.stringify([current.path, loaderSourceContextKey(current)]);
     const paths = seen.get(node) ?? new Set<string>();
     if (paths.has(key)) continue;
@@ -320,6 +330,10 @@ const selectedRequireSourcesAt = (
         ]),
       );
     } else if (t.isIdentifier(node)) {
+      if (target === "loader" && genericMember)
+        nativeMemberAlternative ||=
+          requireLoaderValueAt(node, node, state, factoryBindingIds) !==
+          "local";
       if (target === "loader" && current.path.length === 0) {
         const captured = requireLoaderValueAt(
           node,
@@ -352,7 +366,7 @@ const selectedRequireSourcesAt = (
         target === "loader" &&
         binding.initializers.some(
           (source) =>
-            isSemanticCreateRequireCall(source.node, state) ||
+            hasSemanticCreateRequireFactoryOrigin(source.node, state) ||
             (t.isIdentifier(source.node) &&
               requireLoaderValueAt(
                 source.node,
@@ -446,7 +460,7 @@ const selectedRequireSourcesAt = (
           found = true;
           selectedLoader = "create-require";
         }
-      } else if (current.path.length === 0) {
+      } else if (current.path.length === 0 || genericMember) {
         const factory = selectedRequireSourcesAt(
           node.callee,
           node,
@@ -455,17 +469,27 @@ const selectedRequireSourcesAt = (
           "factory",
         );
         if (factory !== undefined && factory.loader !== "local") {
-          found = true;
-          unknown ||=
-            factory.loader === "unknown" ||
-            (selectedLoader !== undefined &&
-              selectedLoader !== "create-require");
-          selectedLoader ??= "create-require";
-          unknown ||= state.conditionallySkippedExpressions.has(node);
-          sourceRelative &&= isUnmodifiedImportMetaUrl(
-            node.arguments[0],
-            state,
-          );
+          if (genericMember) {
+            // A conditional own write retains this inherited native method.
+            // Alone it still belongs to the invocation owner's fallback.
+            nativeMemberAlternative = true;
+            if (factory.loader === "unknown") {
+              loaderBinding = true;
+              unknown = true;
+            }
+          } else {
+            found = true;
+            unknown ||=
+              factory.loader === "unknown" ||
+              (selectedLoader !== undefined &&
+                selectedLoader !== "create-require");
+            selectedLoader ??= "create-require";
+            unknown ||= state.conditionallySkippedExpressions.has(node);
+            sourceRelative &&= isUnmodifiedImportMetaUrl(
+              node.arguments[0],
+              state,
+            );
+          }
         } else local ||= factory?.loader === "local";
       }
     } else if (
@@ -478,7 +502,8 @@ const selectedRequireSourcesAt = (
   return found || local || (loaderBinding && unknown)
     ? {
         loader:
-          (unknown && (found || loaderBinding)) || (found && local)
+          (unknown && (found || loaderBinding)) ||
+          (local && (found || nativeMemberAlternative))
             ? "unknown"
             : found
               ? (selectedLoader ?? "unknown")
@@ -581,9 +606,11 @@ export const semanticRequireCallAt = (
     if (invocation?.path[0] === "require-loader")
       return {
         loader:
-          invocation.kind === "opaque"
-            ? "unknown"
-            : (invocation.path[1] as JavaScriptRequireLoaderFact),
+          invocation.path[1] === "local"
+            ? "local"
+            : invocation.kind === "opaque"
+              ? "unknown"
+              : (invocation.path[1] as JavaScriptRequireLoaderFact),
         arguments: invocation.arguments,
         sourceRelative:
           invocation.kind === "known" && invocation.path[2] === "relative",

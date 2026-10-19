@@ -45,6 +45,23 @@ const cases = [
     possible: false,
   },
   {
+    name: "CommonJS module has no synthetic default factory",
+    load: 'const load=require("node:module").default.createRequire(import.meta.url);load("../shared/window.cjs");',
+    possible: false,
+  },
+  {
+    name: "conditional call replacement retains native loader alternative",
+    mainFile: "main.mjs",
+    load: 'import {createRequire as make} from "node:module";const load=make(import.meta.url);if(flag)load.call=()=>{};load.call(null,"../shared/window.cjs");',
+    possible: true,
+  },
+  {
+    name: "conditional apply replacement retains native loader alternative",
+    mainFile: "main.mjs",
+    load: 'import {createRequire as make} from "node:module";const load=make(import.meta.url);if(flag)load.apply=()=>{};load.apply(null,["../shared/window.cjs"]);',
+    possible: true,
+  },
+  {
     name: "replaced created-loader call stays inert",
     mainFile: "main.mjs",
     load: 'import {createRequire as make} from "node:module";const load=make(import.meta.url);load.call=()=>{};load.call(null,"../shared/window.cjs");',
