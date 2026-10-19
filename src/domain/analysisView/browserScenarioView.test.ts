@@ -24,7 +24,8 @@ import {
 } from "../browserScenarioCaptureValues.js";
 import { UNAVAILABLE_SUBJECT_LIMITATION } from "../evidence.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
-import { jsonObjectSchema } from "../jsonValue.js";
+import { freezeJsonSnapshot } from "../immutableJson.js";
+import { jsonObjectSchema, type JsonValue } from "../jsonValue.js";
 
 const PARENT_ID = `ev_${"c".repeat(64)}`;
 
@@ -1156,5 +1157,54 @@ it("keeps the view's own limitations when parent limitations exceed the budget",
     expect.arrayContaining([
       expect.stringMatching(/additional limitations omitted from this view/u),
     ]),
+  );
+});
+
+it("reuses one sealed parent's checks across pages but never across Evidence", () => {
+  const capture = freezeJsonSnapshot(
+    browserScenarioFixtureCapture() as unknown as JsonValue,
+  ) as unknown as BrowserScenarioCapture;
+  const scenario = browserScenarioFixtureScenario();
+  const sealed = (evidenceId: string, source: AnalysisViewParent) => ({
+    ...source,
+    evidenceId,
+    sealedResult: true,
+  });
+  const valid = sealed(PARENT_ID, parent(capture));
+  const drifted = sealed(
+    `ev_${"e".repeat(64)}`,
+    parent(capture, {
+      ...browserScenarioFixtureParameters(scenario),
+      actions: scenario.actions.slice(1),
+    }),
+  );
+  const relabelled = sealed(`ev_${"f".repeat(64)}`, {
+    ...parent(capture),
+    limitations: ["Limitation recorded only by the relabelled Evidence."],
+  });
+  const steps = (offset: number) => ({
+    kind: "browser-scenario",
+    collection: "steps",
+    offset,
+    limit: 2,
+  });
+  const actionsRejected = {
+    issues: [{ path: ["source", "parameters", "actions"] }],
+  };
+
+  // A failed check is not retained for the next parent of the same result.
+  expect(failure(steps(0), drifted)).toMatchObject(actionsRejected);
+  expect(
+    [0, 2, 4].flatMap((offset) =>
+      stepPage(project(steps(offset), valid)).map(({ action }) => action),
+    ),
+  ).toEqual([null, ...scenario.actions]);
+  // Another Evidence ID over the same sealed result is checked on its own.
+  expect(failure({ kind: "summary" }, drifted)).toMatchObject(actionsRejected);
+  expect(project({ kind: "summary" }, relabelled).limitations).toContain(
+    "Limitation recorded only by the relabelled Evidence.",
+  );
+  expect(project({ kind: "summary" }, valid).limitations).not.toContain(
+    "Limitation recorded only by the relabelled Evidence.",
   );
 });

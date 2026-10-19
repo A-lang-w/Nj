@@ -45,45 +45,6 @@ import {
 
 type StepRow = z.output<typeof browserScenarioStepRowSchema>;
 
-interface ProjectedScenario {
-  readonly capture: BrowserScenarioCapture;
-  readonly projection: BrowserScenarioStepProjection;
-}
-
-// A sealed parent result cannot change, so its validated capture and step
-// projection stay exact for every later page. The weak reference lets memory
-// pressure reclaim the copy; unsealed input is validated on each call.
-const projectedScenarios = new WeakMap<object, WeakRef<ProjectedScenario>>();
-
-const projectScenario = (
-  parent: AnalysisViewParent,
-): Result<ProjectedScenario, AnalysisError> => {
-  const { normalizedResult } = parent;
-  const sealed =
-    parent.sealedResult === true &&
-    typeof normalizedResult === "object" &&
-    normalizedResult !== null;
-  const cached = sealed
-    ? projectedScenarios.get(normalizedResult)?.deref()
-    : undefined;
-  if (cached !== undefined) return ok(cached);
-  const parsed = parseAnalysisViewResult(browserScenarioCaptureSchema, parent);
-  if (!parsed.ok) return parsed;
-  const projection = projectBrowserScenarioSteps(parsed.value);
-  if (!projection.ok)
-    return err(
-      analysisViewInputError([
-        {
-          ...projection.error,
-          path: ["source", "normalized_result", ...projection.error.path],
-        },
-      ]),
-    );
-  const projected = { capture: parsed.value, projection: projection.value };
-  if (sealed) projectedScenarios.set(normalizedResult, new WeakRef(projected));
-  return ok(projected);
-};
-
 const stepRow = (
   facts: BrowserScenarioStepFacts,
   action: RecordedAction | undefined,
@@ -314,7 +275,8 @@ type BrowserScenarioViewRequest = Extract<
 /** Parent identity, limitations and unknowns shared by every page of one capture. */
 const sharedFields = (
   parent: AnalysisViewParent,
-  { capture, projection }: ProjectedScenario,
+  capture: BrowserScenarioCapture,
+  projection: BrowserScenarioStepProjection,
 ) => ({
   parent_evidence_id: parent.evidenceId,
   parent_operation: "capture_browser_scenario" as const,
@@ -334,11 +296,66 @@ const sharedFields = (
   ),
 });
 
+/** Everything a page needs from one parent beyond its own selection. */
+interface ProjectedScenario {
+  readonly evidenceId: string;
+  readonly capture: BrowserScenarioCapture;
+  readonly projection: BrowserScenarioStepProjection;
+  readonly declarations: readonly RecordedAction[];
+  readonly shared: ReturnType<typeof sharedFields>;
+}
+
+// A sealed parent result cannot change, and the content-addressed Evidence ID
+// authenticates the parameters and limitations checked with it. One parse,
+// projection and declaration check therefore stay exact for every later page
+// of that Evidence. The weak reference lets memory pressure reclaim the copy;
+// unsealed input and failed checks are checked again on each call.
+const projectedScenarios = new WeakMap<object, WeakRef<ProjectedScenario>>();
+
+const projectScenario = (
+  parent: AnalysisViewParent,
+): Result<ProjectedScenario, AnalysisError> => {
+  const { normalizedResult } = parent;
+  const sealed =
+    parent.sealedResult === true &&
+    typeof normalizedResult === "object" &&
+    normalizedResult !== null;
+  const cached = sealed
+    ? projectedScenarios.get(normalizedResult)?.deref()
+    : undefined;
+  if (cached?.evidenceId === parent.evidenceId) return ok(cached);
+  const parsed = parseAnalysisViewResult(browserScenarioCaptureSchema, parent);
+  if (!parsed.ok) return parsed;
+  const capture = parsed.value;
+  const projection = projectBrowserScenarioSteps(capture);
+  if (!projection.ok)
+    return err(
+      analysisViewInputError([
+        {
+          ...projection.error,
+          path: ["source", "normalized_result", ...projection.error.path],
+        },
+      ]),
+    );
+  const declarations = recordedActions(parent, capture);
+  if (!declarations.ok) return declarations;
+  const selection = checkRecordedScenario(parent, capture);
+  if (!selection.ok) return selection;
+  const projected = {
+    evidenceId: parent.evidenceId,
+    capture,
+    projection: projection.value,
+    declarations: declarations.value,
+    shared: sharedFields(parent, capture, projection.value),
+  };
+  if (sealed) projectedScenarios.set(normalizedResult, new WeakRef(projected));
+  return ok(projected);
+};
+
 /** Select a step page or one step's text page. */
 const selectedPage = (
   view: BrowserScenarioViewRequest,
-  { projection }: ProjectedScenario,
-  declarations: readonly RecordedAction[],
+  { projection, declarations }: ProjectedScenario,
 ): Result<
   {
     readonly page: z.output<typeof browserScenarioViewPageSchema>;
@@ -409,12 +426,7 @@ export const projectBrowserScenarioView = (
     );
   const projected = projectScenario(parent);
   if (!projected.ok) return projected;
-  const { capture, projection } = projected.value;
-  const declarations = recordedActions(parent, capture);
-  if (!declarations.ok) return declarations;
-  const selection = checkRecordedScenario(parent, capture);
-  if (!selection.ok) return selection;
-  const shared = sharedFields(parent, projected.value);
+  const { capture, projection, shared } = projected.value;
   if (view.kind === "summary")
     return ok({
       kind: "summary",
@@ -426,7 +438,7 @@ export const projectBrowserScenarioView = (
         projection.steps.length,
       ),
     });
-  const selected = selectedPage(view, projected.value, declarations.value);
+  const selected = selectedPage(view, projected.value);
   if (!selected.ok) return selected;
   return ok({
     kind: "browser-scenario",
