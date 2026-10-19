@@ -79,10 +79,14 @@ export const createShutdown = (input: {
     void attempt.then(releaseSlot, releaseSlot);
     return attempt;
   };
+  // A reported failure stays the outcome: a later retry that succeeds must not
+  // turn an observed shutdown failure into a successful exit.
+  let failureReported = false;
   const reportShutdown = (): Promise<0 | 1> =>
     shutdown().then(
-      () => 0 as const,
+      () => (failureReported ? 1 : 0),
       (cause: unknown) => {
+        failureReported = true;
         reportShutdownFailure(cause, dependencies, serverLogger);
         return 1 as const;
       },

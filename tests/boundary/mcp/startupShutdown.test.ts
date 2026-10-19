@@ -14,6 +14,7 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import { err, ok } from "../../../src/domain/result.js";
 import { run } from "../../../src/main.js";
 import { MCP_SHUTDOWN_FAILED } from "../../../src/main/messages.js";
+import { observed } from "../../fixtures/analysisExecution.js";
 import {
   createBinarySessionTargets,
   createDeferred,
@@ -154,6 +155,76 @@ it("starts no transport after a shutdown request during provider loading and kee
   requests[0]?.();
   await new Promise((resolve) => setImmediate(resolve));
   expect(providerCloses).toBe(1);
+});
+
+it("keeps a reported startup shutdown failure as the outcome when the late-owner retry succeeds", async () => {
+  const [target] = await createBinarySessionTargets();
+  const providersLoading = createDeferred<void>();
+  const releaseProviders = createDeferred<void>();
+  let closeFails = true;
+  let clientCloses = 0;
+  let providerCloses = 0;
+  const session = createTestBinarySession((): AnalysisClient => ({
+    execute: async () => observed(null),
+    close: async () => {
+      clientCloses += 1;
+      return closeFails
+        ? err(new AnalysisOutputError("close", "fixture close failed"))
+        : ok(null);
+    },
+  }));
+  const requests: Array<() => void> = [];
+  const unregistrations: string[] = [];
+  const output: string[] = [];
+  const exitCodes: number[] = [];
+  const failureReported = createDeferred<void>();
+  const running = run(
+    runtime({
+      env: { HOPPER_TARGET_PATH: target, HOPPER_TARGET_KIND: "database" },
+      createSession: () => session,
+      setExitCode: (code) => {
+        exitCodes.push(code);
+        failureReported.resolve();
+      },
+      loadOptionalProviders: async () => {
+        providersLoading.resolve();
+        await releaseProviders.promise;
+        return {
+          browserObservation: {
+            close: async () => {
+              providerCloses += 1;
+            },
+          } as unknown as NonNullable<
+            OptionalProviderLoadResult["browserObservation"]
+          >,
+        };
+      },
+      requests,
+      unregistrations,
+      output,
+    }),
+  );
+
+  await providersLoading.promise;
+  requests[0]?.();
+  // The session-only attempt fails and is reported before providers attach.
+  await failureReported.promise;
+  expect(exitCodes).toEqual([1]);
+  closeFails = false;
+  releaseProviders.resolve();
+
+  await expect(running).resolves.toBe(1);
+  expect(clientCloses).toBe(2);
+  expect(providerCloses).toBe(1);
+  expect(
+    output.filter(
+      (line) =>
+        line ===
+        `${MCP_SHUTDOWN_FAILED}
+`,
+    ),
+  ).toHaveLength(1);
+  expect(unregistrations).toEqual(["shutdown"]);
 });
 
 it("closes a transport whose start raced a shutdown request", async () => {
