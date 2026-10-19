@@ -45,7 +45,8 @@ never be served from records it did not cite.
 The MCP catalog and environment card sample path observations, request-body key descriptions and cited-record
 lists within a 1 KiB UTF-8 budget per list. Oversized lists report how many
 whole values are shown and point to the complete list in the manifest Evidence;
-this only limits descriptive context, not arguments, record selection or replay.
+a captured path longer than 1 KiB is cut the same way in its tool description.
+This only limits descriptive context, not arguments, record selection or replay.
 
 ## What replay means and does not mean
 
@@ -82,8 +83,9 @@ value as written is chosen.
 When no record matches, the tool still answers from the tool's first cited
 record and reports `exact_match: false`. `body` is parsed JSON when the
 recorded content type is JSON-like (`application/json`, `application/*+json`,
-`text/plain`, `text/markdown`) and the text parses; otherwise it is the
-recorded text. Bodies over 256 KiB are cut at a UTF-8 boundary and returned as
+`text/plain`, `text/markdown`) and the text parses without changing a number;
+otherwise it is the recorded text, so a body with an integer outside
+JavaScript's safe range (such as an id of `9007199254740993`) keeps its digits. Bodies over 256 KiB are cut at a UTF-8 boundary and returned as
 text with `truncated: true`. `body_recorded` is false when the capture kept the
 response's status and content type but no body; `body` is then `null`, which
 is not a recorded JSON `null`. `body_encoding` is `base64` when the capture
@@ -125,7 +127,9 @@ manifest's `name` is used, and a set but blank value is refused as
 listener serves one MCP client at a time with the same session, `Host` header
 and shutdown contract as [transports](mcp-contracts.md#transports) describes.
 It runs until SIGINT or SIGTERM, then closes the listener, prints one
-`{"status":"stopped", …}` document and exits `130` or `143`.
+`{"status":"stopped", …}` document and exits `130` or `143`. A signal that
+arrives while the files load ends startup with a `cancelled` result, and the same
+exit status, before the listener binds.
 
 Three routes are served:
 

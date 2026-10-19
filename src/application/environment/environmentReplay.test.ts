@@ -278,6 +278,27 @@ describe("replayEnvironmentTool bodies", () => {
     });
   });
 
+  it("keeps a JSON body as its recorded text when parsing would change an integer", () => {
+    const unsafe = '{"id":9007199254740993,"name":"lamp"}';
+    expect(
+      replay(
+        "get_users_by_id",
+        { id: "2" },
+        singleExchangeSource(unsafe, "application/json"),
+      ).body,
+    ).toBe(unsafe);
+    expect(
+      replay(
+        "get_users_by_id",
+        { id: "2" },
+        singleExchangeSource(
+          '{"id":9007199254740992,"n":1.5}',
+          "application/json",
+        ),
+      ).body,
+    ).toEqual({ id: 9007199254740992, n: 1.5 });
+  });
+
   it("returns text for non-JSON content types and for JSON-like content that does not parse", () => {
     expect(
       replay(

@@ -61,6 +61,18 @@ const describeList = <Value>(
     : `${listed}${sample.length === 0 ? "" : ", "}… (${String(sample.length)}/${String(values.length)} shown; full list in manifest Evidence)`;
 };
 
+/** The first DESCRIPTION_LIST_SAMPLE_BYTES of a captured path, cut on a character boundary, with a pointer to the rest. */
+const describePath = (path: string): string => {
+  // encodeInto stops before the first character that does not fit, so `read` ends on a boundary.
+  const { read } = new TextEncoder().encodeInto(
+    path,
+    new Uint8Array(DESCRIPTION_LIST_SAMPLE_BYTES),
+  );
+  return read === path.length
+    ? path
+    : `${path.slice(0, read)}… (full path in manifest Evidence)`;
+};
+
 const bodyDescription = (tool: EnvironmentManifestTool): string =>
   tool.body_shape === null
     ? "Request body; the capture retained no JSON body shape for this tool."
@@ -145,7 +157,7 @@ export const environmentToolDefinitions = (
 ): readonly EnvironmentToolDefinition[] =>
   manifest.tools.map((tool) => ({
     name: tool.name,
-    description: `${REPLAY_CATALOG_INSTRUCTIONS} ${tool.method} ${tool.path_template}; replays retained records [${describeList(tool.record_ordinals)}]; evidence ${evidenceId}`,
+    description: `${REPLAY_CATALOG_INSTRUCTIONS} ${tool.method} ${describePath(tool.path_template)}; replays retained records [${describeList(tool.record_ordinals)}]; evidence ${evidenceId}`,
     inputSchema: environmentToolInputSchema(tool),
     tool,
   }));

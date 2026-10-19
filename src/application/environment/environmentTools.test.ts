@@ -131,6 +131,23 @@ describe("environment catalog description budgets", () => {
     );
   });
 
+  it("cuts a long captured path in the tool description and keeps it whole in the manifest", () => {
+    const users = tool("get_users_by_id");
+    const long = {
+      ...users,
+      path_template: `/api/${"segment/".repeat(200_000)}{id}`,
+    };
+    const [definition] = environmentToolDefinitions(
+      { ...source.manifest, tools: [long] },
+      source.evidenceId,
+    );
+    expect(Buffer.byteLength(definition?.description ?? "")).toBeLessThan(2048);
+    expect(definition?.description).toContain(
+      "… (full path in manifest Evidence)",
+    );
+    expect(definition?.tool.path_template).toBe(long.path_template);
+  });
+
   it("reports an omitted oversized value instead of publishing an unbounded or partial observation", () => {
     const users = tool("get_users_by_id");
     const schema = environmentToolInputSchema({

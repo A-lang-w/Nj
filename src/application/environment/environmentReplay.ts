@@ -4,7 +4,6 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { safeParseJson } from "../../domain/safeJson.js";
 import { environmentToolArguments } from "./environmentTools.js";
 import {
   REPLAY_BODY_LIMIT_BYTES,
@@ -160,13 +159,38 @@ const replayBody = (
     exchange.contentType !== null &&
     isJsonLike(mediaTypeEssence(exchange.contentType))
   ) {
-    const parsed = safeParseJson(text);
-    const value = parsed.ok
-      ? jsonValueSchema.safeParse(parsed.value)
-      : undefined;
+    const parsed = parseExactJson(text);
+    const value =
+      parsed === undefined ? undefined : jsonValueSchema.safeParse(parsed);
     if (value?.success === true) return { body: value.data, truncated: false };
   }
   return { body: text, truncated: false };
+};
+
+/** Parsed JSON only when every integer survives exactly; one outside the safe range keeps the recorded text. */
+const parseExactJson = (text: string): unknown => {
+  let lossy = false;
+  try {
+    const value: unknown = JSON.parse(
+      text,
+      (_key, item: unknown, context?: { readonly source?: string }) => {
+        const source = context?.source;
+        if (
+          typeof item === "number" &&
+          Number.isInteger(item) &&
+          !Number.isSafeInteger(item) &&
+          source !== undefined &&
+          /^-?\d+$/u.test(source) &&
+          BigInt(source) !== BigInt(item)
+        )
+          lossy = true;
+        return item;
+      },
+    );
+    return lossy ? undefined : value;
+  } catch {
+    return undefined;
+  }
 };
 
 /** Replay one tool call from the retained record that best matches its arguments. */

@@ -14,7 +14,10 @@ import {
   type McpHttpEndpoint,
 } from "../config/mcpHttpEndpoint.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisResourceConstraintError,
+} from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { createLogger } from "../logger.js";
@@ -71,8 +74,16 @@ interface ServeArguments {
   readonly port?: number | undefined;
 }
 
+/** A shutdown requested while the files load ends startup before the listener binds. */
+const startupCancelled = (signal: AbortSignal): JsonValue =>
+  cliError(
+    new AnalysisCancelledError(ENVIRONMENT_SERVE_OPERATION, {
+      cause: signal.reason,
+    }),
+  );
+
 /** Load both Evidence files, bind the listener and run until a signal ends it. */
-const serveEnvironmentCommand = async (
+export const serveEnvironmentCommand = async (
   input: ServeArguments,
   environment: Readonly<NodeJS.ProcessEnv>,
   logger: Logger,
@@ -90,11 +101,13 @@ const serveEnvironmentCommand = async (
     ENVIRONMENT_SERVE_OPERATION,
   );
   if (!manifest.ok) return manifest.error;
+  if (signal.aborted) return startupCancelled(signal);
   const evidence = await parseCliJsonInput(
     input.evidence,
     ENVIRONMENT_SERVE_OPERATION,
   );
   if (!evidence.ok) return evidence.error;
+  if (signal.aborted) return startupCancelled(signal);
   const source = loadEnvironmentSource(manifest.value, evidence.value);
   if (!source.ok) return cliError(source.error);
   // Loaded here so registering the command catalog never loads the HTTP listener.
@@ -102,6 +115,7 @@ const serveEnvironmentCommand = async (
     await import("../server/environment/serveEnvironment.js");
   const { StreamableHttpListenError } =
     await import("../server/http/streamableHttpListenError.js");
+  if (signal.aborted) return startupCancelled(signal);
   // A listener that fails after binding ends the command instead of serving nothing.
   let failListener: (error: Error) => void = () => undefined;
   const listenerFailed = new Promise<Error>((resolve) => {
