@@ -721,6 +721,7 @@ const applyDangling = (
   resourceTokens: readonly string[],
   path: readonly string[],
   seen: ReadonlySet<string>,
+  draft07: boolean,
 ): unknown => {
   if (Array.isArray(node)) {
     let changed = false;
@@ -732,6 +733,7 @@ const applyDangling = (
         declaresResource(child) ? childPath : resourceTokens,
         childPath,
         seen,
+        draft07,
       );
       changed ||= next !== child;
       return next;
@@ -752,12 +754,15 @@ const applyDangling = (
           resourceTokens,
           path,
           new Set([...seen, seenKey]),
+          draft07,
         );
         const { $ref: _ref, ...siblings } = node;
         const existingAllOf = Array.isArray(siblings.allOf)
           ? siblings.allOf
           : [];
-        return Object.keys(siblings).length === 0
+        if (Object.keys(siblings).length === 0) return applied;
+        // Draft-07 ignores $ref siblings entirely; 2020-12 applies both.
+        return draft07
           ? applied
           : { ...siblings, allOf: [applied, ...existingAllOf] };
       }
@@ -777,6 +782,7 @@ const applyDangling = (
           declaresResource(grandChild) ? childPath : resourceTokens,
           childPath,
           seen,
+          draft07,
         );
         map[name] = next;
         mapChanged ||= next !== grandChild;
@@ -791,6 +797,7 @@ const applyDangling = (
         declaresResource(child) ? childPath : resourceTokens,
         childPath,
         seen,
+        draft07,
       );
       rebuilt[key] = next;
       changed ||= next !== child;
@@ -907,37 +914,120 @@ const normalizeReferencedTargets = (
     assignAtPath(advertised, tokens, replacement);
   }
   if (dangling.size === 0) return advertised;
-  // A replacement that declares or contains a nested resource must not be
-  // duplicated at several callers (identifiers would collide); park it under
-  // $defs once and point every caller at the parked schema instead.
-  let relocated = 0;
+  // Park replacements that must not be duplicated inline: those declaring or
+  // containing a nested resource (identifiers would collide), and those stuck
+  // in cycles among removed targets (inlining cannot terminate). Each parked
+  // schema lives in its owning resource's `$defs`, and callers receive a
+  // fragment reference that resolves within that same resource.
+  const draft07 =
+    typeof source.$schema === "string" && source.$schema.includes("draft-07");
+  let parked = 0;
+  const parkTarget = (
+    resourceKey: string,
+    replacement: unknown,
+  ): string => {
+    const resourceTokens = JSON.parse(resourceKey) as readonly string[];
+    const defsPath = [...resourceTokens, "$defs"];
+    const defs = (
+      isObject(pathValue(advertised, defsPath))
+        ? pathValue(advertised, defsPath)
+        : {}
+    ) as Record<string, unknown>;
+    let name: string | undefined = undefined;
+    for (const [existing, value] of Object.entries(defs)) {
+      if (isDeepStrictEqual(value, replacement)) {
+        name = existing;
+        break;
+      }
+    }
+    if (name === undefined) {
+      name = `advertisedRelocated${parked}`;
+      parked += 1;
+      while (name in defs) name = `${name}x`;
+      defs[name] = replacement;
+      if (pathValue(advertised, defsPath) === undefined)
+        assignAtPath(advertised, defsPath, defs);
+      reachedTargets.push([defsPath, resourceTokens]);
+      reachedTargets.push([[...defsPath, name], resourceTokens]);
+    }
+    return name;
+  };
   for (const [resourceKey, refMap] of [...dangling]) {
     for (const [reference, replacement] of [...refMap]) {
       if (!isObject(replacement) || !containsResource(replacement)) continue;
-      const defs = (
-        isObject(advertised.$defs) ? advertised.$defs : {}
-      ) as Record<string, unknown>;
-      let name: string | undefined = undefined;
-      for (const [existing, value] of Object.entries(defs)) {
-        if (isDeepStrictEqual(value, replacement)) {
-          name = existing;
-          break;
-        }
-      }
-      if (name === undefined) {
-        name = `advertisedRelocated${relocated}`;
-        relocated += 1;
-        while (name in defs) name = `${name}x`;
-        advertised.$defs = { ...defs, [name]: replacement };
-        reachedTargets.push([
-          ["$defs", name],
-          JSON.parse(resourceKey) as readonly string[],
-        ]);
-      }
+      const name = parkTarget(resourceKey, replacement);
       refMap.set(reference, { $ref: `#/$defs/${name}` });
     }
   }
-  let presented = applyDangling(advertised, dangling, [], [], new Set());
+  // Removed targets that reference each other can never terminate inline
+  // substitution; park the whole cyclic group and let executable processing
+  // retarget their internal references at the parked definitions.
+  for (const [resourceKey, refMap] of [...dangling]) {
+    const danglingRefsIn = (
+      node: unknown,
+      out: Set<string>,
+      seen: ReadonlySet<unknown>,
+    ): void => {
+      if (seen.has(node)) return;
+      const nextSeen = new Set(seen);
+      nextSeen.add(node);
+      if (Array.isArray(node)) {
+        for (const child of node) danglingRefsIn(child, out, nextSeen);
+        return;
+      }
+      if (!isObject(node)) return;
+      if (typeof node.$ref === "string" && refMap.has(node.$ref))
+        out.add(node.$ref);
+      for (const [key, child] of Object.entries(node)) {
+        if (
+          !schemaMaps.has(key) &&
+          !schemaArrays.has(key) &&
+          !schemaChildren.has(key)
+        )
+          continue;
+        danglingRefsIn(child, out, nextSeen);
+      }
+    };
+    const isParked = (value: unknown): boolean =>
+      isObject(value) &&
+      typeof value.$ref === "string" &&
+      value.$ref.startsWith("#/$defs/advertisedRelocated");
+    const edges = new Map<string, Set<string>>();
+    for (const [reference, replacement] of refMap) {
+      const contained = new Set<string>();
+      danglingRefsIn(replacement, contained, new Set());
+      edges.set(reference, contained);
+    }
+    const cyclic = (
+      start: string,
+      node: string,
+      path: ReadonlySet<string>,
+    ): boolean => {
+      if (node === start && path.size > 0) return true;
+      if (path.has(node)) return false;
+      const nextPath = new Set(path);
+      nextPath.add(node);
+      for (const target of edges.get(node) ?? [])
+        if (cyclic(start, target, nextPath)) return true;
+      return false;
+    };
+    for (const reference of [...refMap.keys()]) {
+      const current = refMap.get(reference);
+      if (!isObject(current) || isParked(current)) continue;
+      if (containsResource(current)) continue; // parked above
+      if (!cyclic(reference, reference, new Set())) continue;
+      const name = parkTarget(resourceKey, current);
+      refMap.set(reference, { $ref: `#/$defs/${name}` });
+    }
+  }
+  let presented = applyDangling(
+    advertised,
+    dangling,
+    [],
+    [],
+    new Set(),
+    draft07,
+  );
   // Executable target subtrees may themselves contain dangling references
   // (reference chains); substitute those as well.
   for (const [tokens, entryResourceTokens] of reachedTargets) {
@@ -949,6 +1039,7 @@ const normalizeReferencedTargets = (
       entryResourceTokens,
       tokens,
       new Set(),
+      draft07,
     );
     if (next !== subtree)
       assignAtPath(presented as Record<string, unknown>, tokens, next);

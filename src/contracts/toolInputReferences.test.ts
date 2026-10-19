@@ -850,6 +850,72 @@ describe("advertised empty-string literals", () => {
     });
   });
 
+  it("parks relocated targets in their owning resource", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        inner: {
+          $id: "https://example.com/inner",
+          type: "object",
+          properties: {
+            guard: {
+              not: {
+                allOf: [{ $id: "https://example.com/r2", type: "object" }],
+                const: "",
+              },
+            },
+            value: { $ref: "#/properties/guard/not" },
+          },
+        },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    const inner = advertised.properties.inner as Record<string, unknown>;
+    expect(inner.properties).toEqual({
+      guard: {},
+      value: { $ref: "#/$defs/advertisedRelocated0" },
+    });
+    const defs = inner.$defs as Record<string, unknown>;
+    expect(defs.advertisedRelocated0).toBeDefined();
+    expect(
+      JSON.stringify(advertised).split("https://example.com/r2").length - 1,
+    ).toBe(1);
+  });
+
+  it("ignores reference siblings when the schema declares draft-07", () => {
+    const canonical = {
+      $schema: "http://json-schema.org/draft-07/schema#",
+      type: "object",
+      properties: {
+        guard: { not: { const: "" } },
+        value: { $ref: "#/properties/guard/not", type: "number" },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.properties.value).toEqual({ type: "string" });
+  });
+
+  it("parks cyclic removed reference groups", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        guardA: {
+          not: { allOf: [{ $ref: "#/properties/guardB/not" }, { const: "" }] },
+        },
+        guardB: { not: { $ref: "#/properties/guardA/not" } },
+        value: { $ref: "#/properties/guardA/not" },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    const text = JSON.stringify(advertised);
+    expect(text).not.toContain("#/properties/guardA/not");
+    expect(text).not.toContain("#/properties/guardB/not");
+    const value = advertised.properties.value as Record<string, unknown>;
+    expect(String(value.$ref)).toMatch(/^#\/\$defs\/advertisedRelocated\d+$/);
+    const defs = advertised.$defs as Record<string, unknown>;
+    expect(Object.keys(defs).length).toBeGreaterThanOrEqual(2);
+  });
+
   it("substitutes dangling references inside inlined targets", () => {
     const canonical = {
       type: "object",
