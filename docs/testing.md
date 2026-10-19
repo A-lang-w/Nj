@@ -1572,7 +1572,9 @@ the host's Docker CLI named by absolute `REA_DOCKER_COMMAND`, Python 3.12 with
 `agent-env` binary is named by absolute `REA_AGENT_ENV_COMMAND`, and outbound
 network for `pip` on the runner and for `npm` inside the image build. Both
 variables are required; the verifier resolves nothing from `PATH` and installs
-nothing. Its disposable CI runner creates the virtual environment in runner
+nothing. It checks the supplied runner's `--version` against the pin before
+using Docker and retains the observed version in both passing and failing receipts.
+Its disposable CI runner creates the virtual environment in runner
 storage, exports both paths and uses the runner's own Docker; no developer host
 configuration changes. `agent-env run` attempts share one 22-minute budget
 inside the 30-minute job (the first attempt at most 15 minutes), so a hung or

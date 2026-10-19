@@ -14,7 +14,8 @@ import {
 } from "../dist/process/OwnedCommand.js";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
-const AGENTENV_PIN = "agentenv-framework 0.9.1334";
+const AGENTENV_VERSION = "0.9.1334";
+const AGENTENV_PIN = `agentenv-framework ${AGENTENV_VERSION}`;
 // The framework builds its infra images from public ECR, whose anonymous pull quota hosted
 // runners share; a rate refusal earns one retry, anything else fails at once.
 const PUBLIC_ECR_QUOTA =
@@ -61,6 +62,17 @@ let cases = 0;
 const receipt = {};
 let knownContainers;
 try {
+  const version = await execFileAsync(agentEnv, ["--version"], {
+    env: environment,
+    timeout: 10_000,
+    maxBuffer: 64 * 1024,
+  });
+  receipt.agent_env_version = version.stdout.trim();
+  assert.equal(
+    receipt.agent_env_version,
+    `agent-env ${AGENTENV_VERSION}`,
+    "The verifier requires the pinned framework executable; its observed version is retained in the receipt.",
+  );
   const containersBefore = await containers();
   knownContainers = new Set(containersBefore.map((entry) => entry.id));
   receipt.docker_before = {
