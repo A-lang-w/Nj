@@ -12,8 +12,30 @@ import { digestSchema } from "../digests.js";
  */
 const abiSelectorGrammar = /^[^\x00-\x1f\x7f/\\]+$/u;
 
-/** Selector bound matching a single archive path segment's practical length. */
-const ABI_SELECTOR_MAX_LENGTH = 255;
+/**
+ * Archive-path byte budget for one Flutter library member, owned here so
+ * inventory and selection cannot drift apart: the inventory admits every
+ * `lib/<abi>/<member>` within this budget, and a selector may only name a
+ * label that such a member could carry.
+ */
+export const MAX_FLUTTER_LIBRARY_PATH_BYTES = 1024;
+
+/** The fixed `lib/` prefix and the longer member name the inventory matches. */
+const FLUTTER_LIBRARY_PATH_OVERHEAD_BYTES =
+  "lib/".length + "/libflutter.so".length;
+
+/** Worst-case UTF-8 bytes one UTF-16 code unit can occupy. */
+const MAX_UTF8_BYTES_PER_CODE_UNIT = 3;
+
+/**
+ * Selector bound derived from the archive-path budget rather than from a
+ * filesystem segment limit: extraction writes the fixed member name, so no
+ * extracted file ever carries the label.
+ */
+const ABI_SELECTOR_MAX_LENGTH = Math.floor(
+  (MAX_FLUTTER_LIBRARY_PATH_BYTES - FLUTTER_LIBRARY_PATH_OVERHEAD_BYTES) /
+    MAX_UTF8_BYTES_PER_CODE_UNIT,
+);
 
 /**
  * `identify_flutter_build` reports the labels it read verbatim, so the
