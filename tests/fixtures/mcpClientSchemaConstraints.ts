@@ -70,17 +70,66 @@ export const booleanLiteralSchemaError = (
   return undefined;
 };
 
+/** Resolve a local JSON Pointer the way reference-aware clients do. */
+const resolveLocalReference = (
+  root: unknown,
+  reference: string,
+): unknown => {
+  if (!reference.startsWith("#")) return undefined;
+  let fragment: string;
+  try {
+    fragment = decodeURIComponent(reference.slice(1));
+  } catch {
+    return undefined;
+  }
+  if (fragment === "" || !fragment.startsWith("/")) return undefined;
+  let value: unknown = root;
+  for (const token of fragment.slice(1).split("/")) {
+    const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
+    if (Array.isArray(value)) {
+      if (!/^(?:0|[1-9]\d*)$/u.test(key)) return undefined;
+      const index = Number(key);
+      if (index >= value.length) return undefined;
+      value = value[index];
+      continue;
+    }
+    if (!isRecord(value) || !Object.hasOwn(value, key)) return undefined;
+    value = value[key];
+  }
+  return value;
+};
+
 /** Reject Gemini-incompatible empty-string literals in advertised input positions. */
 export const emptyStringLiteralSchemaError = (
   schema: unknown,
   path: string,
+  root: unknown = schema,
+  active: ReadonlySet<string> = new Set(),
 ): string | undefined => {
   if (!isRecord(schema)) return undefined;
   if (schema.const === "") return `${path}.const is an empty string`;
   if (Array.isArray(schema.enum) && schema.enum.some((value) => value === ""))
     return `${path}.enum contains an empty string`;
+  if (
+    typeof schema.$ref === "string" &&
+    schema.$ref.startsWith("#") &&
+    !active.has(schema.$ref)
+  ) {
+    const error = emptyStringLiteralSchemaError(
+      resolveLocalReference(root, schema.$ref),
+      `${path}.$ref`,
+      root,
+      new Set([...active, schema.$ref]),
+    );
+    if (error !== undefined) return error;
+  }
   for (const [suffix, child] of schemaChildEntries(schema)) {
-    const error = emptyStringLiteralSchemaError(child, `${path}.${suffix}`);
+    const error = emptyStringLiteralSchemaError(
+      child,
+      `${path}.${suffix}`,
+      root,
+      active,
+    );
     if (error !== undefined) return error;
   }
   return undefined;

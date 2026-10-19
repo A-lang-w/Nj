@@ -22,17 +22,20 @@ const resolveReference = (
   root: Readonly<Record<string, unknown>>,
   reference: string,
 ): unknown => {
-  if (reference === "#") return root;
-  if (!reference.startsWith("#/")) return undefined;
+  if (!reference.startsWith("#")) return undefined;
+  // RFC 6901: percent-decode the whole fragment before splitting tokens, so
+  // an encoded separator such as %2F still addresses a nested position.
+  let fragment: string;
+  try {
+    fragment = decodeURIComponent(reference.slice(1));
+  } catch {
+    return undefined;
+  }
+  if (fragment === "") return root;
+  if (!fragment.startsWith("/")) return undefined;
   let value: unknown = root;
-  for (const token of reference.slice(2).split("/")) {
-    let key: string;
-    try {
-      key = decodeURIComponent(token);
-    } catch {
-      return undefined;
-    }
-    key = key.replaceAll("~1", "/").replaceAll("~0", "~");
+  for (const token of fragment.slice(1).split("/")) {
+    const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
     if (Array.isArray(value)) {
       if (!/^(?:0|[1-9]\d*)$/u.test(key)) return undefined;
       const index = Number(key);
@@ -478,18 +481,122 @@ const flattenRootObjectUnion = (
   };
 };
 
+const collectLocalReferences = (
+  value: unknown,
+  seen: ReadonlySet<unknown>,
+  refs: Set<string>,
+): void => {
+  if (seen.has(value)) return;
+  const next = new Set(seen);
+  next.add(value);
+  if (Array.isArray(value)) {
+    for (const child of value) collectLocalReferences(child, next, refs);
+    return;
+  }
+  if (!isObject(value)) return;
+  if (typeof value.$ref === "string" && value.$ref.startsWith("#"))
+    refs.add(value.$ref);
+  for (const child of Object.values(value))
+    collectLocalReferences(child, next, refs);
+};
+
+const pointerTokens = (fragment: string): readonly string[] =>
+  fragment
+    .slice(1)
+    .split("/")
+    .map((token) => token.replaceAll("~1", "/").replaceAll("~0", "~"));
+
+const assignAtPath = (
+  container: Record<string, unknown> | unknown[],
+  tokens: readonly string[],
+  replacement: unknown,
+): void => {
+  if (tokens.length === 0) return;
+  const [head, ...rest] = tokens;
+  if (Array.isArray(container)) {
+    if (head === undefined || !/^(?:0|[1-9]\d*)$/u.test(head)) return;
+    const index = Number(head);
+    if (index >= container.length) return;
+    if (rest.length === 0) {
+      container[index] = replacement;
+      return;
+    }
+    const child = container[index];
+    const copy = Array.isArray(child)
+      ? [...child]
+      : isObject(child)
+        ? { ...child }
+        : undefined;
+    if (copy === undefined) return;
+    container[index] = copy;
+    assignAtPath(copy, rest, replacement);
+    return;
+  }
+  if (head === undefined) return;
+  if (rest.length === 0) {
+    container[head] = replacement;
+    return;
+  }
+  const child = container[head];
+  const copy = Array.isArray(child)
+    ? [...child]
+    : isObject(child)
+      ? { ...child }
+      : undefined;
+  if (copy === undefined) return;
+  container[head] = copy;
+  assignAtPath(copy, rest, replacement);
+};
+
+// Positive local references can address positions the structural walk never
+// visits (for example a root-level annotation), which would leave the target's
+// empty-string literal advertised. Normalize every referenced target too.
+const normalizeReferencedTargets = (
+  advertised: Record<string, unknown>,
+  source: Readonly<Record<string, unknown>>,
+): void => {
+  const refs = new Set<string>();
+  collectLocalReferences(source, new Set(), refs);
+  for (const reference of refs) {
+    let fragment: string;
+    try {
+      fragment = decodeURIComponent(reference.slice(1));
+    } catch {
+      continue;
+    }
+    if (!fragment.startsWith("/")) continue;
+    const target = resolveReference(advertised, reference);
+    if (!isObject(target)) continue;
+    const result = normalizeAdvertisedSchema(
+      target,
+      advertised,
+      new Set([reference]),
+    );
+    if (!result.changed) continue;
+    assignAtPath(advertised, pointerTokens(fragment), result.schema);
+  }
+};
+
+const advertisedSchema = (
+  input: unknown,
+  source: Readonly<Record<string, unknown>>,
+): Record<string, unknown> => {
+  const schema = normalizeAdvertisedSchema(input).schema as Record<
+    string,
+    unknown
+  >;
+  normalizeReferencedTargets(schema, source);
+  return schema;
+};
+
 /** Describe canonical input fields and present the root as one object. */
-export const presentInputJsonSchema = (
-  root: Record<string, unknown>,
+export const presentInputJsonSchema = (  root: Record<string, unknown>,
   describeProperty: (property: string) => string | undefined,
 ): Record<string, unknown> => {
   const flattened = flattenRootObjectUnion(root);
   const described = describeSchema(flattened, flattened, describeProperty);
   if (!isObject(described))
-    return normalizeAdvertisedSchema(flattened).schema as Record<
-      string,
-      unknown
-    >;
+    return advertisedSchema(flattened, root);
   const {
     dependencies: _dependencies,
     dependentRequired: _dependentRequired,
@@ -512,18 +619,18 @@ export const presentInputJsonSchema = (
             : [],
         );
   if (dependencyGuidance.length === 0)
-    return normalizeAdvertisedSchema(presentation).schema as Record<
-      string,
-      unknown
-    >;
+    return advertisedSchema(presentation, root);
   const description = [
     typeof presentation.description === "string"
       ? presentation.description
       : undefined,
     ...dependencyGuidance,
   ].filter((text) => text !== undefined);
-  return normalizeAdvertisedSchema({
-    ...presentation,
-    description: description.join(" "),
-  }).schema as Record<string, unknown>;
+  return advertisedSchema(
+    {
+      ...presentation,
+      description: description.join(" "),
+    },
+    root,
+  );
 };

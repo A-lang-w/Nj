@@ -707,6 +707,29 @@ describe("advertised empty-string literals", () => {
     expect(advertised.properties).toEqual({ values: { type: "array" } });
   });
 
+  it("decodes pointer separators before splitting reference tokens", () => {
+    const canonical = {
+      $defs: { empty: { type: "string", const: "" } },
+      type: "object",
+      properties: { value: { not: { $ref: "#/$defs%2Fempty" } } },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.properties).toEqual({ value: {} });
+    expect(advertised.$defs).toEqual({ empty: { type: "string" } });
+  });
+
+  it("normalizes targets of positive local references", () => {
+    const canonical = {
+      type: "object",
+      properties: { value: { $ref: "#/default" } },
+      default: { type: "string", const: "" },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.properties).toEqual({ value: { $ref: "#/default" } });
+    expect(advertised.default).toEqual({ type: "string" });
+    expect(canonical.default).toEqual({ type: "string", const: "" });
+  });
+
   it("decodes URI fragment tokens in local references", () => {
     const canonical = {
       $defs: { "a b": { type: "string", const: "" } },
