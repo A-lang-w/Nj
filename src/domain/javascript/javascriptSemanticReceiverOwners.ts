@@ -1,7 +1,65 @@
 import * as t from "@babel/types";
 
 import { semanticObjectPrototypeProperty } from "./javascriptAstValues.js";
-import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
+import type {
+  JavaScriptSemanticAnalysisState,
+  JavaScriptSemanticBindingState,
+} from "./javascriptSemanticState.js";
+import { delayedInstanceFieldValue } from "./javascriptSemanticEvaluationOrder.js";
+
+/** The nearest function evaluating a read, including arrows. Method keys and
+ * decorators execute outside that function; instance fields are deferred. */
+export const createSemanticFunctionEvaluationOwner = (
+  state: JavaScriptSemanticAnalysisState,
+) => {
+  const owners = new WeakMap<t.Node, t.Function | null>();
+  return (node: t.Node): t.Function | undefined => {
+    const visited: t.Node[] = [];
+    let current: t.Node | undefined = node;
+    let owner: t.Function | null = null;
+    while (current !== undefined) {
+      const prior = owners.get(current);
+      if (prior !== undefined) {
+        owner = prior;
+        break;
+      }
+      visited.push(current);
+      const parent = state.parentsByNode.get(current);
+      if (delayedInstanceFieldValue(parent, current)) break;
+      if (
+        t.isFunction(parent) &&
+        (parent.body === current ||
+          parent.params.some((parameter) => parameter === current))
+      ) {
+        owner = parent;
+        break;
+      }
+      current = parent;
+    }
+    for (const visitedNode of visited) owners.set(visitedNode, owner);
+    return owner ?? undefined;
+  };
+};
+
+/** An outer binding may retain a value from an earlier activation, even when
+ * its assignment expression belongs to the currently invoked function. */
+export const semanticBindingIsFunctionLocal = (
+  binding: JavaScriptSemanticBindingState,
+  owner: t.Function,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const ownerScope = state.scopeByNode.get(owner);
+  if (ownerScope === undefined) return false;
+  let scope = state.scopesById.get(binding.scopeId);
+  while (scope !== undefined) {
+    if (scope === ownerScope) return true;
+    scope =
+      scope.parentScopeId === null
+        ? undefined
+        : state.scopesById.get(scope.parentScopeId);
+  }
+  return false;
+};
 
 /** Arrows inherit this and super; computed keys and decorators execute outside
  * the method or class whose declaration contains them. */

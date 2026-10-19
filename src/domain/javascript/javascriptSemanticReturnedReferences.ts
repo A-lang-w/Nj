@@ -46,7 +46,7 @@ import {
 /** A reference potentially handed to a caller or generator consumer. */
 export interface SemanticReturnedReference {
   /** The producing callable evaluates this expression during a synchronous call. */
-  readonly synchronous?: true;
+  readonly synchronousOwner?: t.Function;
   readonly node: t.Node;
   readonly projection: JavaScriptSemanticPropertyPath;
 }
@@ -559,8 +559,10 @@ export const createSemanticStaticClassSlotReferences = (
   const lineages = new WeakMap<t.Class, ClassLineage>();
   return (owner: t.Class, key: string, read: t.Node | undefined) => {
     const owners: t.Class[] = [];
-    const values: { readonly node: t.Node; readonly getterResult?: true }[] =
-      [];
+    const values: {
+      readonly node: t.Node;
+      readonly getterResult?: t.Function;
+    }[] = [];
     let own = false;
     let local = true;
     for (const declaring of classLineage(owner, state, lineages).classes) {
@@ -624,7 +626,8 @@ export const createSemanticStaticClassSlotReferences = (
           for (const { node } of semanticCallableResultExpressions(
             member.value,
           ))
-            if (node !== null) values.push({ node, getterResult: true });
+            if (node !== null)
+              values.push({ node, getterResult: member.value });
         } else if (member.kind !== "set" && member.value !== null)
           values.push({ node: member.value });
       local &&=
@@ -1864,7 +1867,7 @@ export const createSemanticReturnedReferences = (
                 ...(t.isFunction(callable) &&
                 !callable.async &&
                 !callable.generator
-                  ? { synchronous: true as const }
+                  ? { synchronousOwner: callable }
                   : {}),
               },
             ],

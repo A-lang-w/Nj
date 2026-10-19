@@ -115,3 +115,94 @@ it.each([
 ])("preserves local selections and earlier captures for %s", (setup) =>
   verify(setup, 1),
 );
+
+it.each([
+  ["Object prototype", "Object.getPrototypeOf(box)"],
+  ["Reflect prototype", "Reflect.getPrototypeOf(box)"],
+  ["prototype through call", "Object.getPrototypeOf.call(Object,box)"],
+  [
+    "prototype through apply",
+    "Reflect.apply(Object.getPrototypeOf,Object,[box])",
+  ],
+])("captures %s during the producing invocation", (_name, read) => {
+  verify(
+    `const box={__proto__:{}};function get(){return ${read}}const target=get();Object.setPrototypeOf(box,globalThis);`,
+    1,
+  );
+  verify(
+    `const box={__proto__:globalThis};function get(){return ${read}}const target=get();Object.setPrototypeOf(box,{});`,
+    0,
+  );
+});
+
+it.each([
+  ["object", "{value:{}}", "const {value}=box", "box.value=globalThis"],
+  ["array", "[{}]", "const [value]=box", "box[0]=globalThis"],
+])(
+  "captures a destructured %s slot inside its helper",
+  (_name, box, read, mutation) =>
+    verify(
+      `const box=${box};function get(){${read};return value}const target=get();${mutation};`,
+      1,
+    ),
+);
+
+it.each([
+  "const old={value:globalThis};const home={__proto__:old,get result(){return super.value}};Object.setPrototypeOf(home,{value:{}});const target=home.result;",
+  "class A{static get value(){return globalThis}}class B extends A{static get result(){return super.value}}Object.setPrototypeOf(B,{value:{}});const target=B.result;",
+  "class A{get value(){return globalThis}}class B extends A{get result(){return super.value}}Object.setPrototypeOf(B.prototype,{value:{}});const target=new B().result;",
+  "Function.prototype.value=globalThis;class B extends null{static get result(){return super.value}}Object.setPrototypeOf(B,{value:{}});const target=B.result;",
+])("selects a prototype replacement made before the invocation: %s", (setup) =>
+  verify(setup, 1),
+);
+
+it.each([
+  "const box={value:globalThis};function make(){const value=box.value;return()=>value}const fn=make();box.value={};const target=fn();",
+  "const box={value:globalThis};function make(){const {value}=box;return()=>value}const fn=make();box.value={};const target=fn();",
+  "const box={value:globalThis};function make(){const value=box.value;return {get result(){return value}}}const obj=make();box.value={};const target=obj.result;",
+])("does not retime a closed-over initializer to its consumer: %s", (setup) =>
+  verify(setup, 0),
+);
+
+it.each([
+  "const box={value:globalThis};let saved;function get(reuse){if(!reuse)saved=box.value;return saved}get(false);box.value={};const target=get(true);",
+  "const box={value:globalThis};let saved;function get(reuse){if(!reuse){const {value}=box;saved=value}return saved}get(false);box.value={};const target=get(true);",
+  "const box={value:globalThis};let saved;function read(){return box.value}function get(reuse){if(!reuse)saved=read();return saved}get(false);box.value={};const target=get(true);",
+  "const box={value:globalThis};let saved;const c={get result(){return box.value}};function get(reuse){if(!reuse)saved=c.result;return saved}get(false);box.value={};const target=get(true);",
+  "const box={value:globalThis};let saved;let first=true;const c={get result(){if(first){saved=box.value;first=false}return saved}};c.result;box.value={};const target=c.result;",
+  "const box={value:globalThis};const cache={};function get(reuse){if(!reuse)cache.saved=box.value;return cache.saved}get(false);box.value={};const target=get(true);",
+])("preserves a capture saved during an earlier activation: %s", (setup) =>
+  verify(setup, 0),
+);
+
+it.each([
+  "class A{get value(){return globalThis}}class B extends A{get result(){return super.value}}Object.preventExtensions(B.prototype);Reflect.setPrototypeOf(B.prototype,{value:{}});const target=new B().result;",
+  "class A{get value(){return globalThis}}class B extends A{get result(){return super.value}}class C{}const flag=false;const selected=flag?B:C;Object.setPrototypeOf(selected.prototype,{value:{}});const target=new B().result;",
+  "class A{get value(){return globalThis}}class B extends A{get result(){return super.value}}class C{}let selected=B;selected=C;Object.setPrototypeOf(selected.prototype,{value:{}});const target=new B().result;",
+  "class A{get value(){return globalThis}}class B extends A{get result(){return super.value}}Object.setPrototypeOf=()=>0;Object.setPrototypeOf(B.prototype,{value:{}});const target=new B().result;",
+  "class A{get value(){return globalThis}}class B extends A{get result(){return super.value}}if(false)Object.setPrototypeOf(B.prototype,{value:{}});const target=new B().result;",
+  "class A{get value(){return globalThis}}class B extends A{get result(){return super.value}}class C extends A{}let selected=C;Object.setPrototypeOf(selected.prototype,(selected=B,{value:{}}));const target=new B().result;",
+  "class A{get value(){return globalThis}}class B extends A{get result(){return super.value}}class C extends A{}let selected=C;Reflect.setPrototypeOf(selected.prototype,{value:{}},selected=B);const target=new B().result;",
+])("requires a completed class prototype replacement proof: %s", (setup) =>
+  verify(setup, 0),
+);
+
+it.each([
+  "const base=null;Function.prototype.value=globalThis;class B extends base{static get result(){return super.value}}const target=B.result;",
+  "Function.prototype.value=globalThis;class B extends (0,null){static get result(){return super.value}}const target=B.result;",
+  "const base=null;Function.prototype.value=globalThis;class B extends base{}const target=Object.getPrototypeOf(B).value;",
+  "const base=null;Function.prototype.value=globalThis;class B extends base{}const target=B.__proto__.value;",
+  "const base=null;Function.prototype.value=globalThis;class B extends base{}const Bound=B.bind(null);const target=Object.getPrototypeOf(Bound).value;",
+])("retains Function.prototype for a resolved null superclass: %s", (setup) =>
+  verify(setup, 0),
+);
+
+it.each([
+  "const home={__proto__:{value:globalThis},get result(){return super.value}};Reflect.setPrototypeOf(home,{__proto__:home,value:{}});const target=home.result;",
+  "const home={__proto__:{value:globalThis},get result(){return super.value}};Object.preventExtensions(home);Reflect.setPrototypeOf(home,{value:{}});const target=home.result;",
+  "class A{get value(){return globalThis}}class B extends A{get result(){return super.value}}Reflect.setPrototypeOf(B.prototype,{__proto__:B.prototype,value:{}});const target=new B().result;",
+  "const home={__proto__:{value:globalThis},get result(){return super.value}};const p={value:{}};Reflect.setPrototypeOf(home,p,Object.setPrototypeOf(p,home));const target=home.result;",
+  "const home={__proto__:{value:globalThis},get result(){return super.value}};const bad={__proto__:home,value:{}};let p=bad;Reflect.setPrototypeOf(home,p,(p={value:{}}));const target=home.result;",
+])("does not certify a failed Reflect prototype change: %s", (setup) =>
+  verify(setup, 0),
+);

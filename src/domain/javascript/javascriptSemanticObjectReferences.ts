@@ -228,6 +228,11 @@ export const semanticOwnReferenceCandidates = (
       }
       continue;
     }
+    if (t.isSequenceExpression(node)) {
+      const value = node.expressions.at(-1);
+      if (value !== undefined) push(value);
+      continue;
+    }
     if (t.isConditionalExpression(node) || t.isLogicalExpression(node)) {
       push(t.isConditionalExpression(node) ? node.consequent : node.left);
       push(t.isConditionalExpression(node) ? node.alternate : node.right);
