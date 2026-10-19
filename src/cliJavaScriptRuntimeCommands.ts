@@ -37,6 +37,7 @@ const observeOptionsSchema = z.object({
 export const registerJavaScriptRuntimeObservationCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
+  createProvider = createJavaScriptRuntimeObservationProvider,
 ): void => {
   cli.command(CLI_COMMANDS.listJavaScriptRuntimeTargets, {
     description: "List Node/Electron V8 Inspector targets",
@@ -49,7 +50,7 @@ export const registerJavaScriptRuntimeObservationCommands = (
           logger,
           CLI_COMMANDS.listJavaScriptRuntimeTargets,
           async () => {
-            const context = runtimeContext();
+            const provider = createProvider();
             const input = {
               inspector_endpoint: args.endpoint,
             };
@@ -65,11 +66,11 @@ export const registerJavaScriptRuntimeObservationCommands = (
               );
             return await finishAnalysisCommand(
               () =>
-                listJavaScriptRuntimeTargets(context.provider, parsed.data, {
+                listJavaScriptRuntimeTargets(provider, parsed.data, {
                   signal,
                 }),
-              { close: () => context.provider.close?.() ?? Promise.resolve() },
-              context.provider.identity().id,
+              { close: () => provider.close?.() ?? Promise.resolve() },
+              provider.identity().id,
               "list_javascript_runtime_targets",
               signal,
               "V8 Inspector resources",
@@ -94,7 +95,7 @@ export const registerJavaScriptRuntimeObservationCommands = (
           logger,
           CLI_COMMANDS.observeJavaScriptRuntime,
           async () => {
-            const context = runtimeContext();
+            const provider = createProvider();
             const input = {
               inspector_endpoint: args.endpoint,
               target_id: args.targetId,
@@ -112,11 +113,11 @@ export const registerJavaScriptRuntimeObservationCommands = (
               );
             return await finishAnalysisCommand(
               () =>
-                observeJavaScriptRuntime(context.provider, parsed.data, {
+                observeJavaScriptRuntime(provider, parsed.data, {
                   signal,
                 }),
-              { close: () => context.provider.close?.() ?? Promise.resolve() },
-              context.provider.identity().id,
+              { close: () => provider.close?.() ?? Promise.resolve() },
+              provider.identity().id,
               "observe_javascript_runtime",
               signal,
               "V8 Inspector resources",
@@ -126,10 +127,6 @@ export const registerJavaScriptRuntimeObservationCommands = (
       ),
   });
 };
-
-const runtimeContext = () => ({
-  provider: createJavaScriptRuntimeObservationProvider(),
-});
 
 const cliError = (
   error: Parameters<typeof projectAnalysisError>[0],
