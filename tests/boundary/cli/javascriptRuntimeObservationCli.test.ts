@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { setImmediate } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { Cli } from "incur";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 
 import { observeJavaScriptRuntime } from "../../../src/application/javascript/JavaScriptRuntimeObservationService.js";
 import type { JavaScriptRuntimeObservationPort } from "../../../src/application/javascript/JavaScriptRuntimeObservationPort.js";
@@ -18,27 +19,22 @@ import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.j
 import { ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
 
-const runtimeFactory = vi.hoisted(() => ({
-  provider: undefined as JavaScriptRuntimeObservationPort | undefined,
-}));
-
-vi.mock("../../../src/composition/javascriptRuntimeObservation.js", () => ({
-  createJavaScriptRuntimeObservationProvider: () => {
-    if (runtimeFactory.provider === undefined)
-      throw new Error("No runtime observation provider was configured");
-    return runtimeFactory.provider;
-  },
-}));
-
 const execute = promisify(execFile);
 const TIMEOUT_MS = 20_000;
+
+const gate = () => {
+  let resolve = () => {};
+  const promise = new Promise<void>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+};
 
 describe("JavaScript runtime observation CLI parity", () => {
   const resources: Array<{ close(): Promise<unknown> }> = [];
   const temporary: string[] = [];
 
   afterEach(async () => {
-    runtimeFactory.provider = undefined;
     await Promise.all(resources.splice(0).map((item) => item.close()));
     await Promise.all(
       temporary
@@ -114,10 +110,14 @@ describe("JavaScript runtime observation CLI parity", () => {
     },
     TIMEOUT_MS,
   );
+});
 
+describe("JavaScript runtime observation CLI cleanup", () => {
   test("waits for provider cleanup and retains completed Evidence on failure", async () => {
     let closeAttempts = 0;
-    runtimeFactory.provider = {
+    const closing = gate();
+    const releaseClose = gate();
+    const provider: JavaScriptRuntimeObservationPort = {
       identity: () => ({
         id: "rea-v8-inspector",
         name: "V8 Inspector",
@@ -139,6 +139,8 @@ describe("JavaScript runtime observation CLI parity", () => {
       },
       close: async () => {
         closeAttempts += 1;
+        closing.resolve();
+        await releaseClose.promise;
         throw new ProviderCleanupError(
           "rea-v8-inspector",
           ["browser_transport"],
@@ -148,12 +150,36 @@ describe("JavaScript runtime observation CLI parity", () => {
       },
     };
     const cli = Cli.create("rea-runtime-cleanup-test", { sync: false });
-    registerJavaScriptRuntimeObservationCommands(cli, silentLogger);
-    let stdout = "";
-    await cli.serve(
-      ["list-javascript-runtime-targets", "http://127.0.0.1:9229", "--json"],
-      { exit: () => {}, stdout: (chunk) => (stdout += chunk) },
+    registerJavaScriptRuntimeObservationCommands(
+      cli,
+      silentLogger,
+      () => provider,
     );
+    let stdout = "";
+    let returned = false;
+    const served = cli
+      .serve(
+        ["list-javascript-runtime-targets", "http://127.0.0.1:9229", "--json"],
+        { exit: () => {}, stdout: (chunk) => (stdout += chunk) },
+      )
+      .then(() => {
+        returned = true;
+      });
+    try {
+      expect(
+        await Promise.race([
+          closing.promise.then(() => "closing"),
+          served.then(() => "returned-before-close"),
+        ]),
+      ).toBe("closing");
+      await setImmediate();
+      expect(closeAttempts).toBe(1);
+      expect(returned).toBe(false);
+      expect(stdout).toBe("");
+    } finally {
+      releaseClose.resolve();
+      await served;
+    }
 
     expect(closeAttempts).toBe(1);
     expect(JSON.parse(stdout)).toMatchObject({
