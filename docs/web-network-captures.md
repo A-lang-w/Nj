@@ -426,7 +426,9 @@ temporary work must fit together within the 96 MiB projection representation
 budget; exceeding it returns `resource_constraint` without a partial manifest.
 Name a large capture with `{"kind": "evidence-file", "path": "/abs/capture.json"}`
 rather than inline: response bodies the manifest never reads are then charged
-once per value in the capture clone, not per character.
+once per value in the capture clone, not per character. A
+`capture_browser_scenario` parent is also charged, before validation, for
+checking its largest body and for the decoded text of its request bodies.
 
 ## Resource and lifecycle boundaries
 

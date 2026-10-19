@@ -7,7 +7,7 @@ import {
   analysisViewObjectDenseCapture,
   environmentManifestCaptureFixture,
 } from "../../../tests/fixtures/analysisView.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import { createEvidence, parseEvidence } from "../../domain/evidence.js";
@@ -32,6 +32,14 @@ import { EvidenceLedger } from "../investigation/EvidenceLedger.js";
 import { WEB_NETWORK_CAPTURE_LIMITS } from "../../domain/webNetworkCapture.js";
 import { isImmutableJsonSnapshot } from "../../domain/immutableJson.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import {
+  SCENARIO_EXCHANGES,
+  scenarioCaptureEvidence,
+  scenarioCaptureFixture,
+} from "../../../tests/fixtures/browserScenarioCapture.js";
+import { readEvidenceFileSource } from "./evidenceFileSource.js";
+
+vi.mock("./evidenceFileSource.js", { spy: true });
 
 it.each(["layout", "javascript"])(
   "carries the retained %s source snapshot into repeatable shared views",
@@ -866,14 +874,16 @@ it("admits raw_result and parameters before authenticating a portable capture", 
     }
 });
 
+const manifestView = { kind: "environment-manifest" } as const;
+const writeEvidenceFile = async (value: unknown): Promise<string> => {
+  const root = await createTestTempDirectory("rea-analysis-view-file-");
+  const path = join(root, "capture.json");
+  await writeFile(path, JSON.stringify(value));
+  return path;
+};
+
 describe("inspectAnalysisViewWithFiles", () => {
-  const view = { kind: "environment-manifest" } as const;
-  const writeEvidenceFile = async (value: unknown): Promise<string> => {
-    const root = await createTestTempDirectory("rea-analysis-view-file-");
-    const path = join(root, "capture.json");
-    await writeFile(path, JSON.stringify(value));
-    return path;
-  };
+  const view = manifestView;
 
   it("projects an Evidence file exactly as the same Evidence inline", async () => {
     const parent = analysisViewCaptureEvidence(
@@ -1004,5 +1014,68 @@ describe("inspectAnalysisViewWithFiles", () => {
       ok: false,
       error: { _tag: "AnalysisCapabilityUnavailableError" },
     });
+  });
+});
+
+describe("inspectAnalysisViewWithFiles scenario parents and cancellation", () => {
+  const view = manifestView;
+
+  it("accepts from a file a scenario capture whose response bodies exceed the inline budget", async () => {
+    const blob = "a".repeat(
+      Math.ceil(WEB_NETWORK_CAPTURE_LIMITS.outputBytes / 14) + 1024,
+    );
+    const parent = scenarioCaptureEvidence(
+      scenarioCaptureFixture(
+        SCENARIO_EXCHANGES.map((exchange, index) =>
+          index === 1 ? { ...exchange, body: `{"blob":"${blob}"}` } : exchange,
+        ),
+      ),
+    );
+    expect(
+      inspectAnalysisView({
+        source: { kind: "inline", evidence: parent },
+        view,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisResourceConstraintError", resource: "memory" },
+    });
+    const fromFile = await inspectAnalysisViewWithFiles({
+      source: { kind: "evidence-file", path: await writeEvidenceFile(parent) },
+      view,
+    });
+    if (!fromFile.ok) throw fromFile.error;
+    expect(fromFile.value.parameters).toMatchObject({
+      parent_evidence_id: parent.evidence_id,
+    });
+  });
+
+  it("reports cancellation rather than the authentication failure of a file aborted while it is authenticated", async () => {
+    const controller = new AbortController();
+    const parent = analysisViewCaptureEvidence(
+      environmentManifestCaptureFixture(),
+    );
+    const path = await writeEvidenceFile({
+      ...parent,
+      evidence_id: `ev_${"0".repeat(64)}`,
+    });
+    const { readEvidenceFileSource: read } = await vi.importActual<
+      typeof import("./evidenceFileSource.js")
+    >("./evidenceFileSource.js");
+    // The abort arrives once the read has finished, while the stale ID is being authenticated.
+    vi.mocked(readEvidenceFileSource).mockImplementationOnce(
+      async (...args) => {
+        const loaded = await read(...args);
+        controller.abort();
+        return loaded;
+      },
+    );
+    expect(
+      await inspectAnalysisViewWithFiles(
+        { source: { kind: "evidence-file", path }, view },
+        undefined,
+        { signal: controller.signal },
+      ),
+    ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
   });
 });

@@ -92,14 +92,15 @@ export const inspectAnalysisViewValidatedWithFiles = async (
   const parent = authenticateEvidence(loaded.value, ["source", "path"], {
     source: input.source,
   });
-  if (!parent.ok) return parent;
   // Authentication and projection are synchronous; yield so a pending abort is dispatched before each check.
   const cancelled = async (): Promise<boolean> => {
     await setImmediate();
     return options.signal?.aborted === true;
   };
+  // A request cancelled during authentication reports cancellation, even when authentication failed.
   if (await cancelled())
     return err(new AnalysisCancelledError(INSPECT_ANALYSIS_VIEW_OPERATION));
+  if (!parent.ok) return parent;
   const id = parent.value.evidence_id;
   const projected = inspectAnalysisViewValidated(
     { ...input, source: { kind: "retained-evidence", evidence_id: id } },

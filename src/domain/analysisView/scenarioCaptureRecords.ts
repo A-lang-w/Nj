@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import { AnalysisUnsupportedTargetError } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import type {
@@ -15,6 +17,7 @@ import type { WebNetworkCaptureRecord } from "../webNetworkCapture.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import type { AnalysisViewParent } from "./analysisView.js";
 import type { WebNetworkProjectionAccumulator } from "./WebNetworkProjectionAccumulator.js";
+import { textBytes } from "./webNetworkRouteTemplates.js";
 
 type RequestEvent = Extract<BrowserScenarioEvent, { kind: "request" }>;
 type ResponseEvent = Extract<BrowserScenarioEvent, { kind: "response" }>;
@@ -262,17 +265,52 @@ export const scenarioCaptureRecords = (
   };
 };
 
+const capturedBodiesSchema = z.object({
+  events: z.object({
+    items: z.array(
+      z.object({
+        kind: z.unknown(),
+        phase: z.unknown().optional(),
+        body: z.object({ content: z.unknown() }).optional(),
+      }),
+    ),
+  }),
+});
+
+/**
+ * Bytes the manifest derives from a borrowed scenario: validation decodes and re-encodes one body at
+ * a time (two bytes per base64 character), and projection keeps the decoded text of every request
+ * body. Response bodies stay borrowed, as HAR response text does.
+ */
+const derivedTextBytes = (value: unknown): number => {
+  const parsed = capturedBodiesSchema.safeParse(value);
+  if (!parsed.success) return 0;
+  let largestBody = 0;
+  let requestText = 0;
+  for (const event of parsed.data.events.items) {
+    const content = event.body?.content;
+    if (event.kind !== "network-content" || typeof content !== "string")
+      continue;
+    largestBody = Math.max(largestBody, content.length);
+    if (event.phase === "request")
+      requestText += textBytes(Math.ceil((content.length * 3) / 4));
+  }
+  return 64 + largestBody * 2 + requestText;
+};
+
 /** Admit a capture_browser_scenario parent whose network content identifies response media types. */
 export const admitScenarioCaptureParent = (
   parent: AnalysisViewParent,
   accumulator: WebNetworkProjectionAccumulator,
 ): Result<ScenarioCaptureRecords, AnalysisError> => {
-  // Body validation decodes base64, and projection constructs UTF-8 request text.
-  // Reserve their expanded strings before either allocation, even for retained parents.
-  const admitted = accumulator.admitCaptureClone(parent.normalizedResult, {
-    copiedStrings: true,
-  });
+  const admitted = accumulator.admitCaptureClone(parent.normalizedResult);
   if (!admitted.ok) return admitted;
+  // Reserve body validation and request text before either allocation, even for a parent read from
+  // a file, without charging the borrowed response bodies a large capture is made of.
+  const derived = accumulator.admitDerivedBytes(
+    derivedTextBytes(parent.normalizedResult),
+  );
+  if (!derived.ok) return derived;
   const parsed = browserScenarioCaptureSchema.safeParse(
     parent.normalizedResult,
   );
