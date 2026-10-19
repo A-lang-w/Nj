@@ -275,5 +275,21 @@ it("cancels filesystem snapshots before traversing declared roots", async () => 
       }),
       controller.signal,
     ),
-  ).rejects.toMatchObject({ name: "AbortError" });
+  ).rejects.toMatchObject({
+    _tag: "ProcessCaptureError",
+    reason: "cancelled",
+    userCategory: "cancelled",
+    cause: expect.objectContaining({ name: "AbortError" }),
+    snapshot: {
+      files: [],
+      completeRoots: [],
+      coverage: {
+        hashed_bytes: 0,
+        enumeration_omissions: [],
+        hash_omissions: [],
+      },
+    },
+    cleanupLeases: [],
+    readFailures: [],
+  });
 });

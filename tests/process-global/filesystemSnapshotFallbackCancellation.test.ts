@@ -57,8 +57,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 import { parseProcessScenario } from "../../src/domain/process/processScenario.js";
 import {
   hashFile,
+  ProcessCaptureSnapshotFailure,
   snapshotRoots,
 } from "../../src/process/capture/FilesystemSnapshot.js";
+import { ProcessCaptureReadFailure } from "../../src/process/capture/ProcessCaptureRead.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 afterEach(() => {
@@ -99,7 +101,19 @@ it.each(["hash", "snapshot"] as const)(
             }),
             controller.signal,
           );
-    await expect(result).rejects.toBe(reason);
+    const failure: unknown = await result.catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(
+      operation === "hash"
+        ? ProcessCaptureReadFailure
+        : ProcessCaptureSnapshotFailure,
+    );
+    expect(failure).toMatchObject({
+      _tag: "ProcessCaptureError",
+      reason: "cancelled",
+      userCategory: "cancelled",
+      cleanupLeases: [],
+    });
+    expect(failure instanceof Error ? failure.cause : undefined).toBe(reason);
     expect(controller.signal.aborted).toBe(true);
     expect(observation.handles).toHaveLength(1);
     await expect(observation.handles[0]?.stat()).rejects.toMatchObject({
