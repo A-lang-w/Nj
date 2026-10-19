@@ -290,8 +290,9 @@ export class BinarySession
       return err(new AnalysisCancelledError("open_binary"));
     const resolved = await resolve();
     if (!resolved.ok) return resolved;
-    const { target, route, sameTarget } = resolved.value;
-    const { profile } = route;
+    const { target, sameTarget } = resolved.value;
+    let route = resolved.value.route;
+    let profile = route.profile;
     if (isAborted(options.signal))
       return err(new AnalysisCancelledError("open_binary"));
     const activeProfile = this.#active?.profile;
@@ -314,6 +315,29 @@ export class BinarySession
         options,
       );
       if (fastPath !== undefined) return fastPath;
+      // The replacement client acquires its own copy of externally owned
+      // analysis state (for example, a saved project copied for every launch).
+      // Recommit the profile before creating it, so results and imported
+      // snapshots bound to the retired copy cannot match the new one.
+      const refreshed = await this.#providerRouter.refreshBoundProfile(
+        target,
+        route,
+        options.signal,
+      );
+      if (!refreshed.ok) return refreshed;
+      if (isAborted(options.signal))
+        return err(new AnalysisCancelledError("open_binary"));
+      route = refreshed.value;
+      profile = route.profile;
+      const revalidated = validateResolvedSessionTarget({
+        current: this.#active,
+        target,
+        route,
+        options,
+        stagedSnapshotMatches: (candidate, candidateProfile) =>
+          this.matchesSnapshot(candidate, candidateProfile),
+      });
+      if (!revalidated.ok) return revalidated;
     }
     const previous = this.#active;
     this.#active = undefined;

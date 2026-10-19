@@ -87,6 +87,51 @@ export class SessionProviderRouter {
       : selected;
   }
 
+  /**
+   * Recommit the selected provider's profile when an owned client must be
+   * replaced. A replacement client acquires its own copy of externally owned
+   * analysis state (for example, a saved project copied for every launch) even
+   * when the target and provider identity are unchanged, so results cached
+   * against the retired profile must stop matching. Selection authority and
+   * auxiliary providers are preserved; a provider that cannot recommit its
+   * original identity fails instead of silently switching analysis.
+   */
+  async refreshBoundProfile(
+    target: BinaryTarget,
+    previous: SessionProviderRoute,
+    signal?: AbortSignal,
+  ): Promise<Result<SessionProviderRoute, AnalysisError>> {
+    const selection = previous.selection;
+    const binding = selection?.binding;
+    if (selection === undefined || binding === null || binding === undefined)
+      return ok(previous);
+    const refreshed = await binding.provider.resolveAnalysisProfile(
+      target,
+      signal === undefined ? undefined : { signal },
+    );
+    if (!refreshed.ok) return refreshed;
+    const profile = refreshed.value.profile;
+    if (
+      profile === null ||
+      profile.provider.id !== binding.identity.id ||
+      profile.provider.name !== binding.identity.name ||
+      profile.provider.version !== binding.identity.version
+    )
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          binding.identity.id,
+          "open_binary",
+          "The selected provider did not recommit its original identity for the replacement client.",
+        ),
+      );
+    return ok(
+      selectableRoute(this.auxiliaryProviders, {
+        ...selection,
+        binding: { ...binding, profile },
+      }),
+    );
+  }
+
   /** Candidate status authoritative for the active or target-free route. */
   candidateStatuses(
     route: SessionProviderRoute,
