@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { Readable } from "node:stream";
+import { finished } from "node:stream";
 
 /** Fetch rejects a body on these methods, so their request streams are not forwarded. */
 const BODYLESS_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD"]);
@@ -32,6 +32,58 @@ const toHeaders = (incoming: IncomingMessage["headers"]): Headers => {
   return headers;
 };
 
+/** Cancelling a body stops reads; the response owner closes an unread upload after replying. */
+const requestBody = (request: IncomingMessage): ReadableStream<Uint8Array> => {
+  let ended = false;
+  let controller: ReadableStreamDefaultController<Uint8Array>;
+  let cleanup = (): void => undefined;
+  const onData = (chunk: unknown): void => {
+    if (ended) return;
+    if (!Buffer.isBuffer(chunk)) {
+      ended = true;
+      request.pause();
+      request.off("data", onData);
+      controller.error(new TypeError("HTTP request body must be bytes"));
+      return;
+    }
+    controller.enqueue(new Uint8Array(chunk));
+    if ((controller.desiredSize ?? 0) <= 0) request.pause();
+  };
+  return new ReadableStream<Uint8Array>(
+    {
+      start(target) {
+        controller = target;
+        request.pause();
+        cleanup = finished(
+          request,
+          { readable: true, writable: false },
+          (cause) => {
+            request.off("data", onData);
+            cleanup();
+            if (ended) return;
+            ended = true;
+            if (cause) controller.error(cause);
+            else controller.close();
+          },
+        );
+        request.on("data", onData);
+      },
+      pull() {
+        if (!ended) request.resume();
+      },
+      cancel() {
+        ended = true;
+        request.pause();
+        request.off("data", onData);
+        // Keep finished's error/close ownership until the raw request settles.
+      },
+    },
+    new ByteLengthQueuingStrategy({
+      highWaterMark: request.readableHighWaterMark,
+    }),
+  );
+};
+
 /** Translate a node:http request into a web Request whose signal aborts when the client leaves. */
 export const toWebRequest = (
   request: IncomingMessage,
@@ -49,7 +101,7 @@ export const toWebRequest = (
     signal: controller.signal,
     ...(BODYLESS_METHODS.has(method)
       ? {}
-      : { body: Readable.toWeb(request), duplex: "half" }),
+      : { body: requestBody(request), duplex: "half" }),
   });
 };
 

@@ -48,6 +48,8 @@ export interface ServeStreamableHttpOptions {
   ) => RequestTrackingMcpServer | Promise<RequestTrackingMcpServer>;
   /** Maximum time a client session handover waits for cancelled tool/completion handlers. */
   readonly sessionDrainTimeoutMs?: number;
+  /** Concurrent HTTP input/route dispatches (default 8); streamed responses hold no permit. */
+  readonly maxConcurrentDispatches?: number;
   readonly routes?: readonly StreamableHttpRoute[];
   readonly logger?: Logger;
   /** Reports listener failures after binding; request failures are logged instead. */
@@ -122,6 +124,7 @@ const SHUTTING_DOWN = (): Response =>
 const SESSION_NOT_FOUND = (): Response =>
   jsonError(404, -32001, "Session not found");
 const DEFAULT_SESSION_DRAIN_TIMEOUT_MS = 10_000;
+const DEFAULT_MAX_CONCURRENT_DISPATCHES = 8;
 
 class SessionDrainTimeoutError extends AnalysisResourceConstraintError {
   constructor(timeoutMs: number) {
@@ -241,22 +244,34 @@ class LiveSession {
     return Promise.resolve(
       this.instance.runRequest(undefined, async () => {
         if (this.#closed) return SESSION_NOT_FOUND();
-        const guarded =
-          request.body === null
-            ? request
-            : new Request(request, {
-                body: request.body.pipeThrough(
-                  new TransformStream<Uint8Array, Uint8Array>(),
-                  { signal: this.#bodyAbort.signal },
-                ),
-                duplex: "half",
-              } as RequestInit);
-        const response = await this.transport.handleRequest(guarded);
-        if (!this.#closed) return response;
-        // The SDK may have crossed an await before close and created its SSE
-        // response afterwards. Cancel that stream before releasing its owner.
-        await response.body?.cancel();
-        return SESSION_NOT_FOUND();
+        const bodyAbort = new AbortController();
+        try {
+          const guarded =
+            request.body === null
+              ? request
+              : new Request(request, {
+                  body: request.body.pipeThrough(
+                    new TransformStream<Uint8Array, Uint8Array>(),
+                    {
+                      signal: AbortSignal.any([
+                        this.#bodyAbort.signal,
+                        bodyAbort.signal,
+                      ]),
+                    },
+                  ),
+                  duplex: "half",
+                } as RequestInit);
+          const response = await this.transport.handleRequest(guarded);
+          if (!this.#closed) return response;
+          // The SDK may have crossed an await before close and created its SSE
+          // response afterwards. Cancel that stream before releasing its owner.
+          await response.body?.cancel();
+          return SESSION_NOT_FOUND();
+        } finally {
+          // Header/size refusals can leave the SDK body unread. Its forwarding
+          // stream belongs to this dispatch, not the remaining session lifetime.
+          bodyAbort.abort();
+        }
       }),
     );
   }
@@ -421,6 +436,67 @@ const endpointUrl = (
   return `http://${host}:${String(address.port)}${MCP_HTTP_PATH}`;
 };
 
+interface NodeRequestTarget {
+  readonly route: (request: Request) => Promise<Response>;
+  readonly origin: () => string;
+  readonly logger: Logger | undefined;
+}
+
+/** Admit input processing before a Web Request, body reader or initialize tee exists. */
+const boundedNodeRequestHandler = (
+  target: NodeRequestTarget,
+  capacity: number,
+) => {
+  if (!Number.isSafeInteger(capacity) || capacity < 1)
+    throw new RangeError(
+      "maxConcurrentDispatches must be a positive safe integer",
+    );
+  let active = 0;
+  return async (
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> => {
+    if (active >= capacity) {
+      try {
+        await writeWebResponse(
+          jsonError(
+            503,
+            -32000,
+            "HTTP request capacity is full; retry after pending dispatches finish",
+          ),
+          response,
+          { closeConnection: true },
+        );
+      } catch {
+        response.destroy();
+      }
+      return;
+    }
+    active += 1;
+    let reserved = true;
+    const release = (): void => {
+      if (!reserved) return;
+      reserved = false;
+      active -= 1;
+    };
+    await serveNodeRequest(
+      {
+        ...target,
+        route: async (webRequest) => {
+          try {
+            return await target.route(webRequest);
+          } finally {
+            // SSE bodies and tool handlers can outlive input/route processing.
+            release();
+          }
+        },
+      },
+      request,
+      response,
+    ).finally(release);
+  };
+};
+
 /** Serve one MCP server, plus plain routes, over streamable HTTP until closed. */
 export const serveStreamableHttp = async (
   options: ServeStreamableHttpOptions,
@@ -460,15 +536,10 @@ export const serveStreamableHttp = async (
       : match.handle(request);
   };
   const httpServer = createHttpServer();
-  const handleRequest = (
-    request: IncomingMessage,
-    response: ServerResponse,
-  ): Promise<void> =>
-    serveNodeRequest(
-      { route, origin: () => origin, logger },
-      request,
-      response,
-    );
+  const handleRequest = boundedNodeRequestHandler(
+    { route, origin: () => origin, logger },
+    options.maxConcurrentDispatches ?? DEFAULT_MAX_CONCURRENT_DISPATCHES,
+  );
   const closeListener = async (): Promise<void> => {
     stopped = true;
     await closeHttpServer(httpServer);
@@ -546,11 +617,7 @@ const closeHttpServer = (
 
 /** Translate one node:http exchange through `route`, logging a failure and answering it when headers are still open. */
 const serveNodeRequest = async (
-  target: {
-    readonly route: (request: Request) => Promise<Response>;
-    readonly origin: () => string;
-    readonly logger: Logger | undefined;
-  },
+  target: NodeRequestTarget,
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> => {

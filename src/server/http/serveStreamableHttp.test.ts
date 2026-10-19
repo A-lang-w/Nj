@@ -925,6 +925,200 @@ it.each(["replacement", "DELETE"])(
   },
 );
 
+it("bounds HTTP input dispatch globally and releases admission when an upload leaves", async () => {
+  const { served } = await start({
+    maxConcurrentDispatches: 2,
+    routes: [
+      { method: "GET", path: "/health", handle: () => new Response("ok") },
+    ],
+  });
+  const first = await connect(served.url);
+  const uploads: ReturnType<typeof httpRequest>[] = [];
+  const pending: Promise<void>[] = [];
+  try {
+    for (let i = 0; i < 2; i += 1) {
+      pending.push(
+        new Promise<void>((resolve) => {
+          const upload = httpRequest(
+            served.url,
+            {
+              method: "POST",
+              headers: {
+                accept: "application/json, text/event-stream",
+                "content-type": "application/json",
+              },
+            },
+            (response) => {
+              response.resume();
+              response.once("end", resolve);
+              response.once("error", () => resolve());
+            },
+          );
+          uploads.push(upload);
+          upload.once("error", () => resolve());
+          upload.write('{"jsonrpc":"2.0",');
+        }),
+      );
+    }
+    // A plain route observes the same budget while both sessionless MCP probes
+    // wait for the rest of their bodies. Idle SSE connections consume no permit.
+    await vi.waitFor(async () => {
+      expect((await fetch(new URL("/health", served.url))).status).toBe(503);
+    });
+    const refused = await rawHttpRequest(new URL(served.url), {
+      method: "POST",
+      headers: {
+        accept: "application/json, text/event-stream",
+        "content-type": "application/json",
+        "content-length": String(4 * 1024 * 1024),
+      },
+    });
+    expect(refused.status).toBe(503);
+    expect(refused.headers.connection).toBe("close");
+    uploads[0]?.destroy();
+    await pending[0];
+    await vi.waitFor(async () => {
+      expect((await fetch(new URL("/health", served.url))).status).toBe(200);
+    });
+    expect(await echo(first.client, "kept during overload")).toEqual([
+      { type: "text", text: "kept during overload" },
+    ]);
+  } finally {
+    for (const upload of uploads) upload.destroy();
+    await Promise.all(pending);
+    await first.client.close();
+  }
+});
+
+it.each([
+  { status: 406, headers: { accept: "application/json" } },
+  { status: 415, headers: { "content-type": "text/plain" } },
+  { status: 413, headers: { "content-length": String(8 * 1024 * 1024) } },
+])(
+  "releases an unread body when the SDK refuses it with $status, keeping the live session",
+  async ({ status, headers }) => {
+    const slot = new McpSessionSlot(
+      createEchoServer(() => undefined),
+      undefined,
+    );
+    const opened = await slot.handle(initializeRequest());
+    const sessionId = opened.headers.get("mcp-session-id") ?? "";
+    const cancelled = vi.fn();
+    const body = new ReadableStream<Uint8Array>(
+      { cancel: cancelled },
+      { highWaterMark: 0 },
+    );
+    const requestHeaders = new Headers({
+      accept: "application/json, text/event-stream",
+      "content-type": "application/json",
+      "mcp-session-id": sessionId,
+    });
+    for (const [name, value] of Object.entries(headers))
+      if (value !== undefined) requestHeaders.set(name, value);
+    try {
+      const refused = await slot.handle(
+        new Request("http://127.0.0.1/mcp", {
+          method: "POST",
+          headers: requestHeaders,
+          body,
+          duplex: "half",
+        } as RequestInit),
+      );
+      expect(refused.status).toBe(status);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(cancelled).toHaveBeenCalledTimes(1);
+      const live = await slot.handle(
+        new Request("http://127.0.0.1/mcp", {
+          method: "POST",
+          headers: {
+            accept: "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-session-id": sessionId,
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 3,
+            method: "tools/call",
+            params: { name: "echo", arguments: { text: "kept" } },
+          }),
+        }),
+      );
+      expect(live.status).toBe(200);
+      expect(live.headers.get("mcp-session-id")).toBe(sessionId);
+      expect(await live.text()).toContain('"text":"kept"');
+    } finally {
+      await slot.close();
+    }
+  },
+);
+
+it.each(["DELETE", "shutdown"])(
+  "ends a real HTTP request with an unfinished upload during %s",
+  async (ending) => {
+    const { served, shutdownHooks } = await start();
+    const first = await connect(served.url);
+    const entered = vi.spyOn(
+      WebStandardStreamableHTTPServerTransport.prototype,
+      "handleRequest",
+    );
+    let next: Awaited<ReturnType<typeof connect>> | undefined;
+    let upload!: ReturnType<typeof httpRequest>;
+    const response = new Promise<number | undefined>((resolve, reject) => {
+      upload = httpRequest(
+        served.url,
+        {
+          method: "POST",
+          headers: {
+            accept: "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-session-id": first.transport.sessionId ?? "",
+          },
+        },
+        (reply) => {
+          reply.resume();
+          reply.once("end", () => resolve(reply.statusCode));
+          reply.once("error", reject);
+        },
+      );
+      upload.once("error", (cause) => {
+        if (ending === "shutdown") resolve(undefined);
+        else reject(cause);
+      });
+      upload.write('{"jsonrpc":"2.0","id":2,"method":"tools/call",');
+    });
+    try {
+      await vi.waitFor(() => {
+        expect(
+          entered.mock.calls.some(
+            ([request]) =>
+              request.method === "POST" &&
+              request.headers.get("mcp-session-id") ===
+                first.transport.sessionId,
+          ),
+        ).toBe(true);
+      });
+      if (ending === "DELETE") {
+        await first.transport.terminateSession();
+        expect(await response).toBe(404);
+        next = await connect(served.url);
+        expect(await echo(next.client, "after upload")).toEqual([
+          { type: "text", text: "after upload" },
+        ]);
+        expect(shutdownHooks()).toBe(0);
+      } else {
+        await served.close();
+        await response;
+        expect(shutdownHooks()).toBe(1);
+      }
+    } finally {
+      upload.destroy();
+      entered.mockRestore();
+      await first.client.close();
+      await next?.client.close();
+    }
+  },
+);
+
 it.each(["replacement", "DELETE", "shutdown"])(
   "refuses an old session's tool body that finishes reading after %s",
   async (ending) => {

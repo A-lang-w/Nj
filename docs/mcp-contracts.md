@@ -476,6 +476,15 @@ retry the drain rather than starting another session against those resources.
 Requests that finish parsing or SDK dispatch after their session closed are
 refused, and their response streams are cancelled. Tool callbacks whose
 validation finishes after cancellation never start.
+Body forwarding stops when SDK request processing ends, including early header
+and size refusals, rather than remaining active until the session closes.
+HTTP input/route dispatch is limited to eight concurrent requests by default,
+shared by MCP and plain routes. Excess requests receive `503` with a closing
+connection before their bodies are converted, read or cloned. An embedder can
+select `maxConcurrentDispatches`; the SDK's per-body size limit still applies.
+Response streams do not hold admission slots, so an idle SSE stream does not
+prevent later MCP calls. This bounds concurrent body processing, not total
+provider or process memory.
 Provider-backed prompt completions use the same request owner and drain, so a
 cancelled completion cannot keep using providers after handover or shutdown.
 HTTP factories enable `RequestTrackingMcpServer` tracking so completion is tracked
