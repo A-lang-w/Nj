@@ -167,10 +167,6 @@ export class BinarySession
     );
   }
 
-  invalidateSnapshotForExternalMutation(): void {
-    this.invalidateSnapshot();
-  }
-
   /** Return the selected immutable profile, optionally scoped to an operation. */
   analysisProfile(
     operation?: AnalysisOperation,
@@ -401,7 +397,9 @@ export class BinarySession
   withAdmittedExternalMutation<Value>(
     _path: string | undefined,
     signal: AbortSignal | undefined,
-    operation: () => Promise<Result<Value, AnalysisError>>,
+    operation: (
+      onDispatch: () => void,
+    ) => Promise<Result<Value, AnalysisError>>,
     retirementFailure: (
       value: Result<Value, AnalysisError>,
       error: AnalysisError,
@@ -410,6 +408,7 @@ export class BinarySession
     cleanupRecovery?: (
       failure: AnalysisError | undefined,
     ) => Promise<Result<null, AnalysisError>>,
+    mutationStart: "admission" | "provider-dispatch" = "admission",
   ): Promise<Result<Result<Value, AnalysisError>, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
       if (isAborted(signal))
@@ -444,12 +443,20 @@ export class BinarySession
       // A protocol reply does not prove that background writers have stopped.
       // Retire the old analysis and require an explicit fresh open rather than
       // silently binding a snapshot while an unrestricted command can still write.
-      const retireTarget = activeAtDispatch !== undefined;
-      this.invalidateSnapshot();
-      const value = await operation();
+      let dispatched = false;
+      const onDispatch = (): void => {
+        if (dispatched) return;
+        dispatched = true;
+        this.invalidateSnapshot();
+      };
+      if (mutationStart === "admission") onDispatch();
+      const value = await operation(onDispatch);
       this.#externalMutationCleanupFailure =
         !value.ok && value.error.cleanupIncomplete ? value.error : undefined;
-      if (!retireTarget) return ok(value);
+      // A newly discovered retained writer can already mutate the artifact,
+      // even when this operation never reached its own dispatch boundary.
+      if (this.#externalMutationCleanupFailure !== undefined) onDispatch();
+      if (!dispatched || activeAtDispatch === undefined) return ok(value);
 
       const retired = await this.#closeActive({}, false);
       if (!retired.ok) return err(retirementFailure(value, retired.error));

@@ -45,7 +45,7 @@ const providerExecutable = (
   signal?: AbortSignal,
 ): string | Promise<string> =>
   platform === "win32"
-    ? resolveWindowsProviderExecutable(executable, environment, (signal === undefined ? {} : { signal }))
+    ? resolveWindowsProviderExecutable(executable, environment, { signal })
     : executable;
 
 /** Compose BYO reverse-engineering commands without acquiring tools at import time. */

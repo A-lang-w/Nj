@@ -52,6 +52,28 @@ it("preserves guidance when the host cannot enforce requested descendant ownersh
   }
 });
 
+it("preserves a direct process ownership preparation capability failure", async () => {
+  const remediation = new AnalysisCapabilityUnavailableError(
+    "process-ownership",
+    "prepare_owned_process",
+    "Install a procps-compatible ps on REA's PATH.",
+    { userMessage: "Install procps." },
+  );
+  const service = new CoreReverseEngineeringService({
+    commands: createReverseEngineeringCommandPort({}),
+    runOwned: async () => {
+      throw remediation;
+    },
+  });
+  try {
+    expect(
+      await service.inspectWithObjdump({ operation: "architectures" }),
+    ).toEqual({ ok: false, error: remediation });
+  } finally {
+    await service.close();
+  }
+});
+
 it("records pathless objdump architecture support as provider capability evidence", async () => {
   const { directory, path } = await createArtifact();
   expect(objdumpCommand({ operation: "architectures" })).toEqual(["-i"]);

@@ -213,7 +213,7 @@ export class ReverseEngineeringService {
     return this.#observe(
       "inspect_with_objdump",
       (signal) =>
-        this.#commands.objdump(bound, (signal === undefined ? {} : { signal })),
+        this.#commands.objdump(bound, signal === undefined ? {} : { signal }),
       bound.operation === "architectures" ? undefined : bound.path,
       input,
       options.signal,
@@ -222,7 +222,10 @@ export class ReverseEngineeringService {
 
   executeRizinCommand(
     rawInput: unknown,
-    options: { readonly signal?: AbortSignal } = {},
+    options: {
+      readonly signal?: AbortSignal;
+      readonly onDispatch?: () => void;
+    } = {},
   ): Promise<Result<Evidence, AnalysisError>> {
     const parsed = rizinInputSchema.safeParse(rawInput);
     if (!parsed.success)
@@ -236,11 +239,12 @@ export class ReverseEngineeringService {
       (signal) =>
         this.#commands.rizin(
           { ...input, path: absolutePath },
-          (signal === undefined ? {} : { signal }),
+          signal === undefined ? {} : { signal },
         ),
       absolutePath,
       input,
       options.signal,
+      options.onDispatch,
     );
   }
 
@@ -254,6 +258,7 @@ export class ReverseEngineeringService {
     path: string | undefined,
     parameters: Readonly<Record<string, JsonValue>>,
     signal?: AbortSignal,
+    onDispatch?: () => void,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (signal?.aborted)
       return Promise.resolve(err(new AnalysisCancelledError(operation)));
@@ -300,6 +305,7 @@ export class ReverseEngineeringService {
       path,
       parameters,
       operationSignal,
+      onDispatch,
     );
     const tracked = running.finally(() => {
       signal?.removeEventListener("abort", relayAbort);
@@ -319,6 +325,7 @@ export class ReverseEngineeringService {
     path: string | undefined,
     parameters: Readonly<Record<string, JsonValue>>,
     signal?: AbortSignal,
+    onDispatch?: () => void,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (signal?.aborted) return err(new AnalysisCancelledError(operation));
     const cleanup = await this.retryCleanup(operation);
@@ -382,7 +389,9 @@ export class ReverseEngineeringService {
     let failure: AnalysisError | undefined;
     let cleanupOwner: ProviderProcessSupervisor | undefined;
     let earlyFailure: AnalysisError | undefined;
+    if (signal?.aborted) return err(new AnalysisCancelledError(operation));
     try {
+      onDispatch?.();
       const output = await this.#run(
         command,
         args,
@@ -405,6 +414,10 @@ export class ReverseEngineeringService {
       stdoutInvalidUtf8 = output.stdoutInvalidUtf8 === true;
       stderrInvalidUtf8 = output.stderrInvalidUtf8 === true;
     } catch (cause) {
+      // Ownership preparation may reject directly before an owned command exists.
+      // Preserve its semantic owner and remediation instead of calling the provider unavailable.
+      if (cause instanceof AnalysisCapabilityUnavailableError)
+        earlyFailure = cause;
       cleanupOwner =
         cause instanceof OwnedOutputFailure ? cause.cleanupOwner : undefined;
       if (
