@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -171,7 +171,11 @@ describe("Ghidra project cache integration", () => {
       importProfileDigest: missCommitment.import_profile_digest,
     };
     expect(ghidraProjectCacheKey(identity)).toBe(missCommitment.key);
-    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const store = new GhidraProjectStore({
+      root,
+      maxBytes: 1_000_000,
+      platform: "linux",
+    });
     const source = await mkdtemp(join(tmpdir(), "rea-project-source-"));
     onTestFinished(() => rm(source, { recursive: true, force: true }));
     await mkdir(join(source, "rea-project.rep", "idata"), { recursive: true });
@@ -216,5 +220,35 @@ describe("Ghidra project cache integration", () => {
     });
     expect(hitLaunchers[0]?.options.saveImportedProject).toBeUndefined();
     await hitClient.close();
+  });
+
+  it("reports a corrupt entry it discarded before rebuilding", async () => {
+    const root = await temporaryCacheRoot();
+    const environment = {
+      REA_GHIDRA_PROJECT_CACHE: "on",
+      REA_GHIDRA_PROJECT_CACHE_DIR: root,
+    };
+    const subject = target();
+    const seedProfile = commitProfile(
+      await provider(environment).resolveAnalysisProfile(subject),
+    );
+    const key = projectCacheOf(seedProfile).key;
+    const entry = join(root, key);
+    await mkdir(join(entry, "rea-project.rep"), { recursive: true });
+    await writeFile(join(entry, "rea-project.gpr"), "");
+    await writeFile(join(entry, "manifest.json"), "{");
+
+    const launchers: GhidraHeadlessLauncher[] = [];
+    const ghidra = provider(environment, capturingFactory(launchers));
+    const profile = commitProfile(await ghidra.resolveAnalysisProfile(subject));
+    expect(projectCacheOf(profile).key).toBe(key);
+    const client = ghidra.createClient(subject, profile);
+    const health = await client.execute("health", {});
+    if (!health.ok) throw health.error;
+    expect(health.value.limitations.join("\n")).toContain(
+      "was discarded (manifest",
+    );
+    await expect(stat(entry)).rejects.toThrow();
+    await client.close();
   });
 });

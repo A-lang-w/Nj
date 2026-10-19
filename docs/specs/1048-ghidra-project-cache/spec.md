@@ -262,9 +262,11 @@ statement; needs CONTRIBUTING.md contribution-scope sign-off).
 
 ## Security and authority
 
-- Store is REA-owned and owner-only under the home (`cache/` is purgeable); a
-  durable owner-only creation path is required on Windows (the per-session
-  `WindowsPrivateRuntime` DACL primitive is not itself a durable store API).
+- Store is REA-owned and owner-only under the home (`cache/` is purgeable).
+  POSIX creates `0700` and tightens an existing widened root. Windows creates
+  the durable root through the native protected-DACL boundary and rejects an
+  existing root that does not pass native verification before any read or
+  write.
 - Admission mirrors existing-project rules; entries are derived data, never
   executed. Corrupt/foreign entry: rebuild as a miss **but always record the
   typed integrity failure** and never present a rebuilt entry as an untouched

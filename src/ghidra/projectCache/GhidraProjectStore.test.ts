@@ -67,6 +67,9 @@ afterEach(async () => {
   ]);
 });
 
+const newStore = (maxBytes = 1_000_000): GhidraProjectStore =>
+  new GhidraProjectStore({ root, maxBytes, platform: "linux" });
+
 const publishable = (
   store: GhidraProjectStore,
   reservation: Awaited<ReturnType<GhidraProjectStore["prepare"]>>,
@@ -90,7 +93,7 @@ const publishable = (
 
 describe("GhidraProjectStore", () => {
   it("is disabled when the mode is off", async () => {
-    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const store = newStore();
     expect(await store.prepare({ identity: identity(), mode: "off" })).toEqual({
       ok: true,
       value: null,
@@ -98,7 +101,7 @@ describe("GhidraProjectStore", () => {
   });
 
   it("publishes a miss and serves a later hit with the stored program identity", async () => {
-    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const store = newStore();
     const miss = await store.prepare({ identity: identity(), mode: "on" });
     expect(miss.ok && miss.value?.hit === false).toBe(true);
     const published = await store.publish(publishable(store, miss));
@@ -127,7 +130,7 @@ describe("GhidraProjectStore", () => {
   });
 
   it("reserves no staging slot in read mode", async () => {
-    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const store = newStore();
     const miss = await store.prepare({ identity: identity(), mode: "read" });
     expect(miss.ok).toBe(true);
     if (!miss.ok || miss.value === null)
@@ -137,7 +140,7 @@ describe("GhidraProjectStore", () => {
   });
 
   it("discards an entry that is not an expanded project and reports it", async () => {
-    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const store = newStore();
     const key = ghidraProjectCacheKey(identity());
     await mkdir(join(root, key), { recursive: true });
     await writeFile(join(root, key, "stray.txt"), "not a project");
@@ -147,7 +150,7 @@ describe("GhidraProjectStore", () => {
   });
 
   it("discards an entry whose manifest key does not match and reports it", async () => {
-    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const store = newStore();
     const key = ghidraProjectCacheKey(identity());
     await mkdir(join(root, key, "rea-project.rep"), { recursive: true });
     await writeFile(join(root, key, "rea-project.gpr"), "");
@@ -160,7 +163,7 @@ describe("GhidraProjectStore", () => {
   });
 
   it("does not overwrite an existing entry when another publisher won", async () => {
-    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const store = newStore();
     const key = ghidraProjectCacheKey(identity());
     await mkdir(join(root, key), { recursive: true });
     const stagingPath = join(root, "staging", randomUUID());
@@ -179,7 +182,7 @@ describe("GhidraProjectStore", () => {
   });
 
   it("rejects a stored manifest whose identity fields do not derive its key", async () => {
-    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const store = newStore();
     const miss = await store.prepare({ identity: identity(), mode: "on" });
     await store.publish(publishable(store, miss));
     const key = ghidraProjectCacheKey(identity());
@@ -199,7 +202,7 @@ describe("GhidraProjectStore", () => {
   it.skipIf(process.platform === "win32")(
     "discards a stored entry containing a symbolic link",
     async () => {
-      const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+      const store = newStore();
       const key = ghidraProjectCacheKey(identity());
       await mkdir(join(root, key, "rea-project.rep", "idata"), {
         recursive: true,
@@ -218,7 +221,7 @@ describe("GhidraProjectStore", () => {
 
 describe("GhidraProjectStore maintenance", () => {
   it("removes a stored entry by key", async () => {
-    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const store = newStore();
     const miss = await store.prepare({ identity: identity(), mode: "on" });
     const published = await store.publish(publishable(store, miss));
     expect(published.ok && published.value.published).toBe(true);
@@ -234,7 +237,7 @@ describe("GhidraProjectStore maintenance", () => {
   });
 
   it("verifies a clean entry and detects a tampered one", async () => {
-    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const store = newStore();
     const miss = await store.prepare({ identity: identity(), mode: "on" });
     await store.publish(publishable(store, miss));
     const key = ghidraProjectCacheKey(identity());
@@ -253,7 +256,7 @@ describe("GhidraProjectStore maintenance", () => {
   });
 
   it("abandons a reserved staging slot", async () => {
-    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const store = newStore();
     const miss = await store.prepare({ identity: identity(), mode: "on" });
     if (!miss.ok || miss.value === null || !miss.value.stagingPath)
       throw new Error("expected a staging slot");
@@ -264,7 +267,7 @@ describe("GhidraProjectStore maintenance", () => {
   });
 
   it("prunes the oldest entries to satisfy a smaller ceiling", async () => {
-    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const store = newStore();
     const older = { ...identity(), targetSha256: "1".repeat(64) };
     const newer = { ...identity(), targetSha256: "2".repeat(64) };
     for (const [id, now] of [
@@ -287,7 +290,7 @@ describe("GhidraProjectStore maintenance", () => {
     expect(listed.value).toHaveLength(2);
 
     const [firstSize] = listed.value.map((entry) => entry.size_bytes);
-    const smaller = new GhidraProjectStore({ root, maxBytes: firstSize ?? 1 });
+    const smaller = newStore(firstSize ?? 1);
     const pruned = await smaller.prune();
     if (!pruned.ok) throw new Error("prune failed");
     expect(pruned.value.removed).toEqual([ghidraProjectCacheKey(older)]);
@@ -299,7 +302,7 @@ describe("GhidraProjectStore maintenance", () => {
   });
 
   it("prunes entries older than the configured age", async () => {
-    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const store = newStore();
     const dayMs = 86_400_000;
     const now = Date.now();
     const older = { ...identity(), targetSha256: "3".repeat(64) };
@@ -323,6 +326,7 @@ describe("GhidraProjectStore maintenance", () => {
       root,
       maxBytes: 1_000_000,
       maxAgeDays: 30,
+      platform: "linux",
     });
     const pruned = await aged.prune();
     if (!pruned.ok) throw new Error("prune failed");
@@ -337,7 +341,7 @@ describe("GhidraProjectStore maintenance", () => {
 
 describe("GhidraProjectStore damaged entries", () => {
   it("prunes entries that have no readable manifest", async () => {
-    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const store = newStore();
     const malformed = "a".repeat(64);
     const missing = "b".repeat(64);
     await mkdir(join(root, malformed), { recursive: true });
@@ -360,7 +364,7 @@ describe("GhidraProjectStore damaged entries", () => {
   });
 
   it("keeps a damaged entry leased by a recent hit until the lease lapses", async () => {
-    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const store = newStore();
     const key = "c".repeat(64);
     await mkdir(join(root, key), { recursive: true });
     await writeFile(join(root, key, "manifest.json"), "{");
@@ -387,7 +391,11 @@ describe("GhidraProjectStore resilience", () => {
     const container = await mkdtemp(join(tmpdir(), "rea-ghidra-cache-file-"));
     const root = join(container, "store");
     await writeFile(root, "not a directory");
-    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const store = new GhidraProjectStore({
+      root,
+      maxBytes: 1_000_000,
+      platform: "linux",
+    });
     const listed = await store.list();
     expect(listed.ok).toBe(false);
     expect(!listed.ok && listed.error.reason).toBe("io");
@@ -396,7 +404,7 @@ describe("GhidraProjectStore resilience", () => {
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     "returns a typed prune failure when a damaged entry cannot be removed",
     async () => {
-      const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+      const store = newStore();
       const key = "d".repeat(64);
       await mkdir(join(root, key), { recursive: true });
       await writeFile(join(root, key, "manifest.json"), "{");
@@ -426,7 +434,7 @@ describe("GhidraProjectStore resilience", () => {
   );
 
   it("reaps an abandoned staging copy but keeps a current one", async () => {
-    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const store = newStore();
     const abandoned = join(root, "staging", randomUUID());
     const current = join(root, "staging", randomUUID());
     await mkdir(abandoned, { recursive: true });
@@ -441,7 +449,7 @@ describe("GhidraProjectStore resilience", () => {
   });
 
   it("protects a recently used entry from size trimming", async () => {
-    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const store = newStore();
     const older = { ...identity(), targetSha256: "5".repeat(64) };
     const newer = { ...identity(), targetSha256: "6".repeat(64) };
     for (const [id, now] of [
@@ -469,7 +477,7 @@ describe("GhidraProjectStore resilience", () => {
     const listed = await store.list();
     if (!listed.ok) throw new Error("list failed");
     const [firstSize] = listed.value.map((entry) => entry.size_bytes);
-    const smaller = new GhidraProjectStore({ root, maxBytes: firstSize ?? 1 });
+    const smaller = newStore(firstSize ?? 1);
     const pruned = await smaller.prune();
     if (!pruned.ok) throw new Error("prune failed");
     expect(pruned.value.removed).toEqual([ghidraProjectCacheKey(newer)]);
@@ -481,7 +489,7 @@ describe("GhidraProjectStore resilience", () => {
   });
 
   it("refuses to remove an entry leased by a recent hit", async () => {
-    const store = new GhidraProjectStore({ root, maxBytes: 1_000_000 });
+    const store = newStore();
     const miss = await store.prepare({ identity: identity(), mode: "on" });
     await store.publish(publishable(store, miss));
     const key = ghidraProjectCacheKey(identity());

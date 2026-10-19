@@ -108,6 +108,11 @@ interface ManagedGhidraProject {
   readonly store: GhidraProjectStore;
   readonly identity: GhidraProjectCacheIdentity;
   readonly reservation: GhidraProjectReservation;
+  /** A corrupt stored entry discarded before this session rebuilt it. */
+  readonly discardedEntry?: {
+    readonly reason: string;
+    readonly path?: string;
+  };
 }
 
 /** Ghidra candidate backed by an isolated ephemeral headless import. */
@@ -689,6 +694,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     this.#store ??= new GhidraProjectStore({
       root: this.config.ghidraProjectCache.directory,
       maxBytes: this.config.ghidraProjectCache.maxBytes,
+      platform: this.installationHost?.platform ?? process.platform,
       ...(this.config.ghidraProjectCache.maxAgeDays === undefined
         ? {}
         : { maxAgeDays: this.config.ghidraProjectCache.maxAgeDays }),
@@ -750,11 +756,12 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       return undefined;
     }
     if (prepared.value === null) return undefined;
-    if (prepared.value.invalidEntry !== undefined)
+    const invalidEntry = prepared.value.invalidEntry;
+    if (invalidEntry !== undefined)
       this.logger.warn(
         {
-          reason: prepared.value.invalidEntry.reason,
-          path: prepared.value.invalidEntry.path,
+          reason: invalidEntry.reason,
+          path: invalidEntry.path,
         },
         "Discarded a corrupt stored Ghidra project; a fresh import will rebuild it",
       );
@@ -774,7 +781,21 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     });
     return {
       profile,
-      persistence: { store, identity, reservation: prepared.value },
+      persistence: {
+        store,
+        identity,
+        reservation: prepared.value,
+        ...(invalidEntry === undefined
+          ? {}
+          : {
+              discardedEntry: {
+                reason: invalidEntry.reason,
+                ...(invalidEntry.path === undefined
+                  ? {}
+                  : { path: invalidEntry.path }),
+              },
+            }),
+      },
     };
   }
 
@@ -801,6 +822,9 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       },
       publishable: !reuse && managed.reservation.stagingPath !== undefined,
       reuse,
+      ...(managed.discardedEntry === undefined
+        ? {}
+        : { discardedEntry: managed.discardedEntry }),
     };
   }
 }

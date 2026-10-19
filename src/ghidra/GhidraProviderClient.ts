@@ -510,6 +510,15 @@ export const createGhidraProviderClient = (input: {
           "Ghidra analysis was reused from a local project cache; this session did not import or re-analyze the target. The stored program is bound to the target, provider, JVM, and import profile it was built from.",
         ]
       : []),
+    ...(projectPersistence?.discardedEntry === undefined
+      ? []
+      : [
+          `A stored Ghidra project was discarded (${projectPersistence.discardedEntry.reason}${
+            projectPersistence.discardedEntry.path === undefined
+              ? ""
+              : ` at ${projectPersistence.discardedEntry.path}`
+          }); this session rebuilt it with a fresh import.`,
+        ]),
     ...(psp ? GHIDRA_PSP_LIMITATIONS : []),
     ...softFloatLimitations,
     ...ghidraExtensionLimitations(extensions),

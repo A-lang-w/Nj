@@ -24,6 +24,10 @@ import {
 } from "./GhidraProjectCacheTypes.js";
 import { ghidraProjectCacheKey } from "./GhidraProjectCacheKey.js";
 import {
+  ensureGhidraProjectCacheRoot,
+  type GhidraProjectCacheRootHost,
+} from "./GhidraProjectCacheRoot.js";
+import {
   admitGhidraProjectDirectory,
   copyGhidraProjectDirectory,
   digestGhidraProjectDirectory,
@@ -81,6 +85,10 @@ export interface GhidraProjectStoreOptions {
   readonly maxBytes: number;
   /** Discard entries older than this many days; unset applies no age limit. */
   readonly maxAgeDays?: number;
+  /** Platform override used by deterministic root-security tests. */
+  readonly platform?: NodeJS.Platform;
+  /** Native root-security host override used by deterministic tests. */
+  readonly rootHost?: GhidraProjectCacheRootHost;
 }
 
 /** One row of a store-wide integrity verification. */
@@ -101,11 +109,15 @@ export class GhidraProjectStore {
   readonly #root: string;
   readonly #maxBytes: number;
   readonly #maxAgeDays: number | undefined;
+  readonly #platform: NodeJS.Platform;
+  readonly #rootHost: GhidraProjectCacheRootHost | undefined;
 
   constructor(options: GhidraProjectStoreOptions) {
     this.#root = options.root;
     this.#maxBytes = options.maxBytes;
     this.#maxAgeDays = options.maxAgeDays;
+    this.#platform = options.platform ?? process.platform;
+    this.#rootHost = options.rootHost;
   }
 
   get root(): string {
@@ -127,7 +139,10 @@ export class GhidraProjectStore {
     const key = ghidraProjectCacheKey(input.identity);
     const entryPath = this.#entryPath(key);
     try {
-      await mkdir(this.#root, { recursive: true, mode: 0o700 });
+      await ensureGhidraProjectCacheRoot(this.#root, {
+        platform: this.#platform,
+        ...(this.#rootHost === undefined ? {} : { host: this.#rootHost }),
+      });
       input.signal?.throwIfAborted();
       const existing = await lstat(entryPath).catch(() => undefined);
       if (existing === undefined)
@@ -170,6 +185,7 @@ export class GhidraProjectStore {
       });
     } catch (cause: unknown) {
       if (input.signal?.aborted === true) throw cause;
+      if (cause instanceof GhidraProjectCacheError) return err(cause);
       return err(
         this.#io("Ghidra project cache lookup failed", entryPath, cause),
       );
@@ -296,6 +312,7 @@ export class GhidraProjectStore {
       await this.#discard(entryPath);
       return ok(true);
     } catch (cause: unknown) {
+      if (cause instanceof GhidraProjectCacheError) return err(cause);
       return err(
         this.#io("Ghidra project cache removal failed", entryPath, cause),
       );
