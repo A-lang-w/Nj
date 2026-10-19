@@ -28,6 +28,7 @@ import {
   type TypeScriptEmittedSourceCandidate,
 } from "../TypeScriptEmittedSourceCandidates.js";
 import { isRelativeJavaScriptModuleSpecifier } from "../../domain/javascript/javascriptModuleSpecifier.js";
+import { selectPackageSubpathPattern } from "../../domain/javascript/javascriptPackageSubpathPatterns.js";
 import type { JavaScriptModuleResolutionMode } from "../../domain/javascript/javascriptModuleResolutionMode.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -654,18 +655,10 @@ const contextualCandidate = (
           return unresolvedCandidate("rejected", [
             "The module URL escapes the selected logical artifact root.",
           ]);
-        // A logical inventory base can already contain a literal POSIX
-        // backslash. Protect only that inherited spelling during request
-        // admission; a newly declared encoded separator remains rejected.
-        let separatorValidationPath = normalized.pathname;
-        if (/%5c/iu.test(base.pathname)) {
-          const validationBase = new URL(base);
-          validationBase.pathname = base.pathname.replace(/%5c/giu, "%255C");
-          separatorValidationPath = new URL(declared, validationBase).pathname;
-        }
+        // Node validates the complete normalized file URL, including encoded
+        // separator bytes inherited from an inventoried source directory.
         const decoded = decodeModuleUrlPath(
           normalized.pathname.slice(PACKAGE_ARTIFACT_ROOT_URL.pathname.length),
-          separatorValidationPath,
         );
         if (typeof decoded !== "string") return decoded;
         if (
@@ -737,9 +730,8 @@ const contextualCandidate = (
 
 const decodeModuleUrlPath = (
   declared: string,
-  separatorValidationPath = declared,
 ): string | CandidateResolution => {
-  if (/%(?:2f|5c)/iu.test(separatorValidationPath))
+  if (/%(?:2f|5c)/iu.test(declared))
     return unresolvedCandidate("rejected", [
       "ES module URL paths cannot contain percent-encoded slash or backslash bytes.",
     ]);
@@ -1152,6 +1144,10 @@ const resolvePackageExports = (
   if (exported.status === "blocked")
     return unresolvedCandidate("external", [
       `Directory package metadata ${packagePath} blocks subpath ${subpath} with ${exported.cause === "null" ? "an explicit null exports target" : "an empty exports target array"}.`,
+    ]);
+  if (exported.status === "pattern-unresolved")
+    return unresolvedCandidate("unavailable", [
+      `Package metadata ${packagePath} selects wildcard exports key ${JSON.stringify(exported.pattern)} for subpath ${subpath}; wildcard target expansion remains unresolved.`,
     ]);
   return resolveExportTarget(input, packagePath, exported);
 };
@@ -1751,9 +1747,10 @@ type PackageExportOutcome =
   | ({ readonly status: "value" } & PackageFileTarget)
   | { readonly status: "rejected"; readonly limitation: string }
   | { readonly status: "blocked"; readonly cause: PackageTargetBlockCause }
+  | { readonly status: "pattern-unresolved"; readonly pattern: string }
   | { readonly status: "unmatched"; readonly declared: readonly string[] };
 
-/** Only exact non-directory keys participate; wildcard expansion is unsupported. */
+/** Exact keys precede the best matching pattern; pattern expansion remains unknown. */
 const selectPackageExport = (
   value: unknown,
   subpath: string,
@@ -1761,6 +1758,7 @@ const selectPackageExport = (
   packagePath: string,
 ): PackageExportOutcome => {
   let target = value;
+  let pattern: string | undefined;
   let declared: string[] = [];
   if (typeof value === "object" && value !== null && !Array.isArray(value)) {
     const keys = Object.keys(value);
@@ -1773,13 +1771,14 @@ const selectPackageExport = (
       };
     declared = keys;
     if (hasSubpaths) {
-      if (
-        subpath.endsWith("/") ||
-        subpath.includes("*") ||
-        !Object.hasOwn(value, subpath)
-      )
-        return { status: "unmatched", declared };
-      target = Reflect.get(value, subpath);
+      if (subpath.endsWith("/")) return { status: "unmatched", declared };
+      if (!subpath.includes("*") && Object.hasOwn(value, subpath))
+        target = Reflect.get(value, subpath);
+      else {
+        pattern = selectPackageSubpathPattern(keys, subpath);
+        if (pattern === undefined) return { status: "unmatched", declared };
+        target = Reflect.get(value, pattern);
+      }
     } else if (subpath !== ".") return { status: "unmatched", declared };
   } else if (subpath !== ".") return { status: "unmatched", declared };
   const selected = selectExportTarget(
@@ -1801,6 +1800,7 @@ const selectPackageExport = (
       status: "rejected",
       limitation: `The package exports target ${JSON.stringify(selected.value)} must start with "./".`,
     };
+  if (pattern !== undefined) return { status: "pattern-unresolved", pattern };
   return {
     status: "value",
     value: selected.value,

@@ -2,6 +2,7 @@ import type * as t from "@babel/types";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import {
   semanticArrayIndex,
+  semanticPropertyPathKeyMatches,
   type JavaScriptSemanticPropertyPath as PropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
@@ -11,6 +12,30 @@ import {
 } from "./javascriptSemanticValues.js";
 import { semanticSlotAtPath } from "./javascriptSemanticSlots.js";
 import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
+import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
+
+/**
+ * Node's wrapper module inherits require. A copy cannot read that delegate
+ * unless an earlier own-slot write or opaque module escape may have exposed it.
+ */
+export const semanticCommonJsRequireOwnEnumerableAt = (
+  capture: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const selected = ["commonjs-module", "require"];
+  const mayAffect = (
+    effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number],
+  ) =>
+    effect.path.length <= selected.length &&
+    effect.path.every((key, index) =>
+      semanticPropertyPathKeyMatches(key, selected[index] ?? ""),
+    ) &&
+    semanticEffectTiming(capture, effect.node, state) !== "after";
+  return (
+    state.ambientWriteEffects.some(mayAffect) ||
+    state.ambientEscapeEffects.some(mayAffect)
+  );
+};
 
 interface ReferenceSource {
   readonly node: t.Node;

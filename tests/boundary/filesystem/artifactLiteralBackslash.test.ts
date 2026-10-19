@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 
 import { createPackage } from "@electron/asar";
 import { expect, it } from "vitest";
@@ -167,8 +170,30 @@ it.skipIf(process.platform === "win32").each(["directory", "asar"] as const)(
   },
 );
 
+it("rejects inherited encoded separators with the real Node ESM loader before file lookup", async () => {
+  const root = await createTestTempDirectory("rea-backslash-esm-url-");
+  const source = pathToFileURL(join(root, "a.mjs"));
+  source.pathname = source.pathname.replace(/a\.mjs$/u, "literal%5Cdir/a.mjs");
+  const target = new URL("./b.mjs", source);
+  expect(target.pathname).toContain("literal%5Cdir/b.mjs");
+  // Use the actual Node loader, outside Vitest's module runner.
+  const observed = execFileSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      "try { await import(process.argv[1]); console.log(JSON.stringify({loaded:true})); } catch(error) { console.log(JSON.stringify({code:error.code})); }",
+      target.href,
+    ],
+    { encoding: "utf8", timeout: 5_000 },
+  );
+  expect(JSON.parse(observed) as unknown).toEqual({
+    code: "ERR_INVALID_MODULE_SPECIFIER",
+  });
+});
+
 it.skipIf(process.platform === "win32").each(["directory", "asar"] as const)(
-  "resolves ordinary relative imports inside a literal POSIX directory from %s",
+  "preserves loader-specific relative paths inside a literal POSIX directory from %s",
   async (format) => {
     const root = await createTestTempDirectory("rea-backslash-import-base-");
     const source = join(root, "source");
@@ -177,7 +202,15 @@ it.skipIf(process.platform === "win32").each(["directory", "asar"] as const)(
     await mkdir(join(source, "literal", "dir"), { recursive: true });
     const body = "export const marker = 'literal';\n";
     await writeFile(
-      join(source, literal, "a.js"),
+      join(source, literal, "a.mjs"),
+      "import { marker } from './b.js'; export { marker }; import('./b.js');\n",
+    );
+    await writeFile(
+      join(source, literal, "a.cjs"),
+      "module.exports = require('./b.js');\n",
+    );
+    await writeFile(
+      join(source, literal, "a.ts"),
       "import { marker } from './b.js'; export { marker };\n",
     );
     await writeFile(join(source, literal, "b.js"), body);
@@ -185,6 +218,10 @@ it.skipIf(process.platform === "win32").each(["directory", "asar"] as const)(
       join(source, "literal", "dir", "b.js"),
       "export const marker = 'decoy';\n",
     );
+    // Node's CommonJS resolver uses the literal filesystem base on POSIX.
+    expect(
+      createRequire(join(source, literal, "a.cjs")).resolve("./b.js"),
+    ).toBe(join(source, literal, "b.js"));
     const input = format === "directory" ? source : join(root, "input.asar");
     if (format === "asar") await createPackage(source, input);
     const result = await analyzeJavaScriptApplication({
@@ -199,9 +236,34 @@ it.skipIf(process.platform === "win32").each(["directory", "asar"] as const)(
       ({ properties }) => properties.specifier === "./b.js",
     );
     expect(imports.length).toBeGreaterThan(0);
-    expect(imports.map(({ properties }) => properties.resolved_path)).toEqual(
-      imports.map(() => `${literal}/b.js`),
-    );
+    expect(
+      new Set(imports.map(({ properties }) => properties.resolution_mode)),
+    ).toEqual(new Set(["require", "import", "compiler-dependent"]));
+    for (const { properties } of imports) {
+      const mode = properties.resolution_mode;
+      expect(properties).toMatchObject({
+        resolved_path: mode === "require" ? `${literal}/b.js` : null,
+        resolution_status:
+          mode === "require"
+            ? "resolved"
+            : mode === "import"
+              ? "rejected"
+              : "unavailable",
+      });
+      if (mode === "compiler-dependent")
+        expect(properties.conditional_resolutions).toEqual([
+          expect.objectContaining({
+            mode: "import",
+            resolution_status: "rejected",
+            resolved_path: null,
+          }),
+          expect.objectContaining({
+            mode: "require",
+            resolution_status: "resolved",
+            resolved_path: `${literal}/b.js`,
+          }),
+        ]);
+    }
     expect(parsed.graph.nodes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

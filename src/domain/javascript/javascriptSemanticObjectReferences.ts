@@ -24,6 +24,7 @@ export interface JavaScriptSemanticObjectReference {
   readonly path: PropertyPath;
   /** A shallow copy selects this prefix now while retaining its child identity. */
   readonly capturedSelectionAt?: t.Node;
+  readonly ownEnumerable?: true;
   readonly iterableFallbackPath?: PropertyPath;
   readonly escapes?: true;
   /** A retry omitted suffixes, so escaping constructed children must cover them. */
@@ -643,6 +644,7 @@ class ObjectReferenceWalk {
       node: property.argument,
       path: [this.#spreadKey(), ...this.#remaining],
       capturedSelectionAt: property.argument,
+      ownEnumerable: true,
     });
     if (
       selected !== null &&

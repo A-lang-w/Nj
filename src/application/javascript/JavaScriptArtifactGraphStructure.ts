@@ -524,13 +524,13 @@ export const addJavaScriptPackageNodes = (
     if (dependencyManifest(file.path)) continue;
     if (
       packageValue.status === "included" &&
-      packageValue.main_status === "default"
+      packageValue.main_entrypoint === ""
     ) {
       registerPackageResolutionOwner(
         context,
         file,
         resolveArtifactPathByContext({
-          declaredPath: "",
+          declaredPath: packageValue.main_entrypoint,
           sourcePath: file.path,
           context: "package-entrypoint",
           runtimePathKind: "node-entrypoint",

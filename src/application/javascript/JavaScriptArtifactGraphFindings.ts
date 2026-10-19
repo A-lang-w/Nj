@@ -124,6 +124,18 @@ const changedApplicationRoots = (
   context: JavaScriptArtifactGraphContext,
 ): ReadonlySet<string> | null => {
   const roots = new Set<string>();
+  // An unchecked load can execute a setter even when the imported source has
+  // no retained AST. Package ownership alone does not prove its runtime path
+  // unchanged. Only launch owners that can reach the gap are affected; an
+  // unrelated unselected source is not evidence of a running setter.
+  for (const sources of context.applicationModuleGapSources.values()) {
+    for (const source of sources) {
+      const owners = context.applicationRootsBySource.get(source);
+      if (owners === undefined) continue;
+      if (owners.size >= 2) return null;
+      for (const root of owners) roots.add(root);
+    }
+  }
   for (const { file, javascript } of context.analysis.files) {
     if (!javascript?.electron.app_path_changes?.length) continue;
     const owners = context.applicationRootsBySource.get(file.path);

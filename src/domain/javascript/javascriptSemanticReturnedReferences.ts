@@ -5,7 +5,12 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
-import { resolveJavaScriptSourceInvocation } from "./javascriptIntrinsicInvocation.js";
+import {
+  javaScriptSourceInvocationContext,
+  javaScriptGenericInvocationMethod,
+  resolveJavaScriptGenericInvocation,
+  type JavaScriptSourceInvocationContext,
+} from "./javascriptIntrinsicInvocation.js";
 import {
   semanticBindingAtRead,
   semanticEffectTiming,
@@ -53,6 +58,7 @@ interface Candidate {
   readonly capturedSelections?:
     | readonly SemanticCapturedSelection[]
     | undefined;
+  readonly invocation?: JavaScriptSourceInvocationContext;
 }
 
 export interface SemanticReturnedReferenceResult {
@@ -133,8 +139,8 @@ export const createSemanticReturnedReferences = (
       Map<string, number | undefined>
     >();
     const expanded = new WeakMap<t.Node, Set<string>>();
-    let additionalCaptureStates = 0;
-    let captureContextsWidened = false;
+    let additionalContexts = 0;
+    let contextsWidened = false;
     const result: {
       references: readonly SemanticReturnedReference[];
       precision: SemanticReturnedReferenceResult["precision"];
@@ -145,26 +151,24 @@ export const createSemanticReturnedReferences = (
     const sourceInvocation =
       invocation === undefined
         ? undefined
-        : resolveJavaScriptSourceInvocation(invocation);
-    const invocationTarget = sourceInvocation?.members.length
-      ? sourceInvocation.invocation?.callable
-      : undefined;
-    let inheritedInvocationChanged = false;
-    if (sourceInvocation?.members.length && invocation !== undefined) {
-      inheritedInvocationChanged = sourceInvocation.members.some((method) => {
-        const inheritedPath = ["global", "Function", "prototype", method];
-        return state.ambientWriteEffects.some(
-          (effect) =>
-            effect.path.length <= inheritedPath.length &&
-            effect.path.every(
-              (key, index) =>
-                key === null ||
-                semanticPropertyPathKeyMatches(key, inheritedPath[index] ?? ""),
-            ) &&
-            semanticEffectTiming(invocation, effect.node, state) !== "after",
-        );
-      });
-    }
+        : javaScriptSourceInvocationContext(invocation);
+    const sourceGenericInvocation =
+      invocation !== undefined &&
+      javaScriptGenericInvocationMethod(invocation.callee) !== undefined;
+    const inheritedInvocationChanged = (method: "call" | "apply"): boolean => {
+      if (invocation === undefined) return false;
+      const inheritedPath = ["global", "Function", "prototype", method];
+      return state.ambientWriteEffects.some(
+        (effect) =>
+          effect.path.length <= inheritedPath.length &&
+          effect.path.every(
+            (key, index) =>
+              key === null ||
+              semanticPropertyPathKeyMatches(key, inheritedPath[index] ?? ""),
+          ) &&
+          semanticEffectTiming(invocation, effect.node, state) !== "after",
+      );
+    };
     // Exact finite alternatives retain unrelated keys and cross-path
     // correlations. Growing/shrinking cycles still converge at any depth;
     // selector-budget widening retains the complete may-target closure.
@@ -177,9 +181,31 @@ export const createSemanticReturnedReferences = (
       path: Candidate["path"],
       readAt?: t.Node,
       capturedSelections?: readonly SemanticCapturedSelection[],
+      invocationContext?: JavaScriptSourceInvocationContext,
     ): void => {
       const source = unwrapJavaScriptExpression(node).node;
-      const readKey = JSON.stringify([readAt?.start ?? -1, readAt?.end ?? -1]);
+      if (contextsWidened) {
+        path = undefined;
+        capturedSelections = undefined;
+        invocationContext = undefined;
+      }
+      const invocationKey = () =>
+        invocationContext === undefined
+          ? null
+          : [
+              invocationContext.receiver?.start,
+              invocationContext.receiver?.end,
+              invocationContext.receiverUnknown,
+              invocationContext.arguments?.map((argument) => [
+                argument.start,
+                argument.end,
+              ]),
+            ];
+      let readKey = JSON.stringify([
+        readAt?.start ?? -1,
+        readAt?.end ?? -1,
+        invocationKey(),
+      ]);
       const depths = projectionDepths.get(source) ?? new Map();
       projectionDepths.set(source, depths);
       if (!depths.has(readKey)) {
@@ -204,26 +230,49 @@ export const createSemanticReturnedReferences = (
         JSON.stringify([
           readKey,
           path ?? null,
-          capturedSelections?.map(({ at, depth }) => [at.start, at.end, depth]),
+          capturedSelections?.map(({ at, depth, ownEnumerable }) => [
+            at.start,
+            at.end,
+            depth,
+            ownEnumerable,
+          ]),
         ]);
       let key = expansionKey();
       const paths = expanded.get(source) ?? new Set<string>();
       if (paths.has(key)) return;
-      // Copy contexts are an additional selector dimension. Bound them by the
+      // Copy/invocation contexts add selector dimensions. Bound them by the
       // same query budget, then visit the complete unknown-projection closure.
       if (
-        !captureContextsWidened &&
-        capturedSelections !== undefined &&
+        !contextsWidened &&
+        (capturedSelections !== undefined || invocationContext !== undefined) &&
         paths.size > 0 &&
-        ++additionalCaptureStates > SEMANTIC_ALIAS_SELECTION_LIMIT
+        ++additionalContexts > SEMANTIC_ALIAS_SELECTION_LIMIT
       ) {
-        captureContextsWidened = true;
+        contextsWidened = true;
         state.valueResourceLimits.add("alias-selections");
         result.precision = "widened";
+        // Generic transitions select only the source receiver and authored
+        // argument values. Keep that complete finite source closure when their
+        // precise positional contexts merge, including later callable receivers.
+        if (sourceInvocation !== undefined) {
+          if (sourceInvocation.receiver !== undefined)
+            enqueue(sourceInvocation.receiver, undefined);
+          for (const argument of sourceInvocation.arguments ?? [])
+            if (t.isExpression(argument)) enqueue(argument, undefined);
+            else if (t.isSpreadElement(argument))
+              enqueue(argument.argument, undefined);
+        }
       }
-      if (captureContextsWidened) {
+      if (contextsWidened) {
         path = undefined;
         capturedSelections = undefined;
+        invocationContext = undefined;
+        readKey = JSON.stringify([
+          readAt?.start ?? -1,
+          readAt?.end ?? -1,
+          null,
+        ]);
+        if (sourceGenericInvocation) result.unresolvedInvocation = true;
         depths.set(readKey, undefined);
         key = expansionKey();
         if (paths.has(key)) return;
@@ -235,9 +284,12 @@ export const createSemanticReturnedReferences = (
         path,
         ...(readAt === undefined ? {} : { readAt }),
         ...(capturedSelections === undefined ? {} : { capturedSelections }),
+        ...(invocationContext === undefined
+          ? {}
+          : { invocation: invocationContext }),
       });
     };
-    enqueue(callee, []);
+    enqueue(callee, [], undefined, undefined, sourceInvocation);
     while (work.length > 0) {
       const current = work.pop();
       if (current === undefined) break;
@@ -246,7 +298,7 @@ export const createSemanticReturnedReferences = (
       if (t.isIdentifier(node)) {
         const binding = resolveSemanticBindingState(state, node, node.name);
         if (binding === undefined) {
-          if (invocationTarget !== undefined && current.path?.length === 0)
+          if (sourceGenericInvocation && current.path?.length === 0)
             result.unresolvedInvocation = true;
           continue;
         }
@@ -256,7 +308,8 @@ export const createSemanticReturnedReferences = (
         });
         if (current.path !== undefined) {
           if (
-            invocationTarget !== undefined &&
+            sourceGenericInvocation &&
+            current.path.length > 0 &&
             semanticProjectedSourcesAtRead(
               binding,
               node,
@@ -310,13 +363,13 @@ export const createSemanticReturnedReferences = (
                   child.path,
                   child.readAt,
                   child.capturedSelections,
+                  child.invocation ?? current.invocation,
                 );
             }
             continue;
           }
           result.precision = "widened";
-          if (invocationTarget !== undefined)
-            result.unresolvedInvocation = true;
+          if (sourceGenericInvocation) result.unresolvedInvocation = true;
         }
         const selected = semanticBindingAtRead(
           binding,
@@ -405,7 +458,7 @@ export const createSemanticReturnedReferences = (
         if (current.path === undefined || current.path.length === 0)
           functions.add(node);
         else if (
-          invocationTarget !== undefined &&
+          current.invocation !== undefined &&
           current.path.every((key) =>
             semanticAliasSelectionChoices(key).every(
               (choice) => choice === "call" || choice === "apply",
@@ -414,21 +467,28 @@ export const createSemanticReturnedReferences = (
         ) {
           // Own member writes have already selected their actual RHS above.
           // Only a remaining inherited invocation member reaches this branch.
-          if (current.path.length === 1) functions.add(node);
-          else if (current.path.length === sourceInvocation?.members.length)
-            pending.push({ node: invocationTarget, path: [] });
-          else if (sourceInvocation?.invocation?.receiver !== undefined)
-            // A captured Function.call/apply is itself a generic callable.
-            // Its explicit receiver selects the function it eventually calls.
-            pending.push({
-              node: sourceInvocation.invocation.receiver,
-              path: [],
-            });
-          else
-            // A captured invocation method adds a receiver layer not present
-            // in the visible syntax. Keep its result unknown rather than drop it.
-            result.unresolvedInvocation = true;
-          if (inheritedInvocationChanged) result.unresolvedInvocation = true;
+          const methods = semanticAliasSelectionChoices(
+            current.path.at(-1)!,
+          ).filter(
+            (method): method is "call" | "apply" =>
+              method === "call" || method === "apply",
+          );
+          for (const method of methods) {
+            const selected = resolveJavaScriptGenericInvocation(
+              method,
+              current.invocation,
+            );
+            if (selected !== undefined)
+              pending.push({
+                node: selected.callable,
+                path: [],
+                invocation: selected.context,
+              });
+            else if (current.invocation.receiverUnknown)
+              result.unresolvedInvocation = true;
+            if (inheritedInvocationChanged(method))
+              result.unresolvedInvocation = true;
+          }
         }
       } else if (t.isObjectExpression(node))
         selectObjectTargets(node, current, pending, objectTargets);
@@ -476,6 +536,7 @@ export const createSemanticReturnedReferences = (
                 child.path,
                 child.readAt,
                 child.capturedSelections,
+                child.invocation ?? current.invocation,
               );
           }
           continue;
@@ -583,6 +644,7 @@ export const createSemanticReturnedReferences = (
             child.path,
             child.readAt,
             child.capturedSelections,
+            child.invocation ?? current.invocation,
           );
       }
     }
@@ -662,7 +724,7 @@ const selectObjectTargets = (
           capturedSelections: t.isSpreadElement(unknown)
             ? [
                 ...(item.capturedSelections ?? []),
-                { at: unknown.argument, depth: 1 },
+                { at: unknown.argument, depth: 1, ownEnumerable: true },
               ]
             : (semanticShiftCapturedSelections(item.capturedSelections, -1) ??
               []),
@@ -686,7 +748,7 @@ const selectObjectTargets = (
         node: property.argument,
         capturedSelections: [
           ...(item.capturedSelections ?? []),
-          { at: property.argument, depth: 1 },
+          { at: property.argument, depth: 1, ownEnumerable: true },
         ],
       });
       continue;

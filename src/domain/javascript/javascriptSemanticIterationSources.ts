@@ -40,6 +40,7 @@ export const semanticStoredSourceSelection = (
 ): {
   readonly projection: JavaScriptSemanticPropertyPath;
   readonly capturedSelectionDepth?: number;
+  readonly ownEnumerable?: true;
 } | null => {
   const copy = source.projection.at(-1);
   if (copy === null || typeof copy !== "object")
@@ -59,7 +60,13 @@ export const semanticStoredSourceSelection = (
   );
   return projection === null
     ? null
-    : { projection, capturedSelectionDepth: source.projection.length };
+    : {
+        projection,
+        capturedSelectionDepth: source.projection.length,
+        ...(copy.startIndex === undefined
+          ? { ownEnumerable: true as const }
+          : {}),
+      };
 };
 
 interface SourceGuards {

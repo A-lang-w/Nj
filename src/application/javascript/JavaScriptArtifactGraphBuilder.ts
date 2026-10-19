@@ -97,10 +97,7 @@ function* buildJavaScriptArtifactGraphInputSteps(
   const root = createJavaScriptArtifactRootNode(accumulator, snapshot);
   const parsedPackages = new Set(
     analysis.packages
-      .filter(
-        (metadata) =>
-          metadata.status === "included" && metadata.main_status !== "invalid",
-      )
+      .filter((metadata) => metadata.status === "included")
       .map(({ path }) => path),
   );
   const applicationOwnershipUnknownContainers = new Set<string>();
@@ -138,13 +135,12 @@ function* buildJavaScriptArtifactGraphInputSteps(
   for (const analyzed of analysis.files) {
     if (
       analyzed.application_projection_failure !== undefined ||
-      analyzed.analysis_failure !== undefined
+      analyzed.analysis_failure !== undefined ||
+      analyzed.javascript?.parse_status === "failed" ||
+      (analyzed.javascript?.parse_error_count ?? 0) > 0
     )
       recordModuleGap(analyzed.file);
-    else if (
-      analyzed.javascript !== null &&
-      analyzed.javascript.parse_status !== "failed"
-    )
+    else if (analyzed.javascript !== null)
       applicationModuleReferencesRetained.add(analyzed.file.path);
   }
   const unavailableFilesByPath = new Map(

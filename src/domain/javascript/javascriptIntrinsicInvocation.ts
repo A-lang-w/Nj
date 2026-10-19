@@ -63,6 +63,63 @@ const invocationArguments = (
       ? arrayArguments(arguments_?.[1])
       : arguments_?.slice(1);
 
+/** Positional state needed only by generic Function.call/apply invocation. */
+export interface JavaScriptSourceInvocationContext {
+  readonly receiver: t.Node | undefined;
+  readonly receiverUnknown?: boolean;
+  readonly arguments: JavaScriptIntrinsicInvocation["arguments"];
+}
+
+/** Only these generic function members consume a callable receiver. */
+export const javaScriptGenericInvocationMethod = (
+  callee: t.Node,
+): "call" | "apply" | undefined => {
+  const expression = unwrapJavaScriptExpression(callee).node;
+  const method =
+    t.isMemberExpression(expression) || t.isOptionalMemberExpression(expression)
+      ? semanticStaticPropertyKey(expression.property, expression.computed)
+      : undefined;
+  return method === "call" || method === "apply" ? method : undefined;
+};
+
+/** A member call supplies its receiver; a captured/comma callable does not. */
+export const javaScriptSourceInvocationContext = (
+  node: t.CallExpression | t.OptionalCallExpression,
+): JavaScriptSourceInvocationContext => {
+  const callee = unwrapJavaScriptExpression(node.callee).node;
+  return {
+    receiver:
+      t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)
+        ? callee.object
+        : undefined,
+    arguments: expandJavaScriptInvocationArguments(node.arguments),
+  };
+};
+
+/** Select one generic function receiver without evaluating function arguments. */
+export const resolveJavaScriptGenericInvocation = (
+  method: "call" | "apply",
+  context: JavaScriptSourceInvocationContext,
+):
+  | {
+      readonly callable: t.Expression;
+      readonly context: JavaScriptSourceInvocationContext;
+    }
+  | undefined =>
+  !t.isExpression(context.receiver)
+    ? undefined
+    : {
+        callable: context.receiver,
+        context: {
+          receiver: context.arguments?.[0],
+          ...(context.arguments === undefined ||
+          t.isSpreadElement(context.arguments[0])
+            ? { receiverUnknown: true }
+            : {}),
+          arguments: invocationArguments(method, context.arguments),
+        },
+      };
+
 /**
  * Normalize known invocation syntax once, retaining bound argument prefixes.
  * Binding a function alone is not a write; only its eventual call is examined.
@@ -138,12 +195,16 @@ export const resolveJavaScriptIntrinsicInvocation = (
         : t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)
           ? callee.object
           : undefined;
-      if (!t.isExpression(callable))
+      const selected = resolveJavaScriptGenericInvocation(method, {
+        receiver: callable,
+        arguments: arguments_,
+      });
+      if (selected === undefined)
         return { kind: "opaque", path, arguments: undefined };
-      callee = callable;
-      receiver = arguments_?.[0];
+      callee = selected.callable;
+      receiver = selected.context.receiver;
       explicitReceiver = true;
-      arguments_ = invocationArguments(method, arguments_);
+      arguments_ = selected.context.arguments;
       continue;
     }
     if (path.join(".") === "intrinsic.Reflect.apply") {
@@ -157,46 +218,9 @@ export const resolveJavaScriptIntrinsicInvocation = (
     }
     return {
       kind: "known",
-      callable: callee,
       path,
       arguments: arguments_,
       ...(receiver === undefined ? {} : { receiver }),
     };
   }
-};
-
-/**
- * Select the nominal source callable through generic call/apply syntax. This
- * does not prove inherited methods intact: source owners must first select
- * visible own-member replacements and preserve prototype uncertainty.
- */
-export const resolveJavaScriptSourceInvocation = (
-  node: t.CallExpression | t.OptionalCallExpression,
-): {
-  readonly invocation: JavaScriptIntrinsicInvocation | undefined;
-  readonly members: readonly string[];
-} => {
-  const nominalPath = (candidate: t.Node): readonly string[] => {
-    let current = unwrapJavaScriptExpression(candidate).node;
-    const members: string[] = [];
-    while (
-      t.isMemberExpression(current) ||
-      t.isOptionalMemberExpression(current)
-    ) {
-      const key = semanticStaticPropertyKey(current.property, current.computed);
-      if (key !== "call" && key !== "apply") break;
-      members.push(key);
-      current = unwrapJavaScriptExpression(current.object).node;
-    }
-    return ["source", "local", "callable", ...members.reverse()];
-  };
-  return {
-    invocation: resolveJavaScriptIntrinsicInvocation(
-      node,
-      nominalPath,
-      () => undefined,
-      () => false,
-    ),
-    members: nominalPath(node.callee).slice(3),
-  };
 };

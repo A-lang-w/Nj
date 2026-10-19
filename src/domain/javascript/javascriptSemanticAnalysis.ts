@@ -1037,6 +1037,7 @@ const createState = (
     ambientBindingWrites: new Map(),
     ambientWrites: new SemanticPropertyPathCoverage(),
     ambientEscapes: new SemanticPropertyPathCoverage(),
+    ambientEscapeEffects: [],
     ambientWriteEffects: [],
   };
 };

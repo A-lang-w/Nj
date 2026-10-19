@@ -332,7 +332,8 @@ export const createAmbientPathResolver = (
         if (t.isObjectExpression(root)) {
           for (const property of root.properties)
             if (t.isSpreadElement(property))
-              continueWith(property.argument, []);
+              // A fresh copy exposes selected children, not its source container.
+              continueWith(property.argument, [null]);
             else if (
               t.isObjectProperty(property) &&
               t.isExpression(property.value)
@@ -628,8 +629,11 @@ export function* indexJavaScriptAmbientWritesSteps(
   for (const { node, target, browserReceiver, projection } of escapes)
     for (const path of ambientWrites(target, node, true, projection))
       // Only proven browser APIs keep their global receiver from user code.
-      if (!(browserReceiver && path.length === 1 && path[0] === "global"))
-        state.ambientEscapes.retain([...path, null]);
+      if (!(browserReceiver && path.length === 1 && path[0] === "global")) {
+        const escaped = [...path, null];
+        state.ambientEscapes.retain(escaped);
+        state.ambientEscapeEffects.push({ path: escaped, node });
+      }
   // A function may call a browser method replaced later in source order.
   if (
     [...browserReceiverMethods].some((method) =>

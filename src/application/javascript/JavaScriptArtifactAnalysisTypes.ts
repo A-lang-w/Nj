@@ -21,6 +21,8 @@ interface JavaScriptPackageValues {
   readonly version: string | null;
   readonly main: string | null;
   readonly main_status: "default" | "declared" | "invalid";
+  /** Node launch declaration; an empty string requests the package index fallback. */
+  readonly main_entrypoint: string;
   readonly renderer: string | null;
 }
 
@@ -37,6 +39,7 @@ export type JavaScriptPackageObservation = JavaScriptStructuredObservation &
         readonly version: null;
         readonly main: null;
         readonly main_status: "unavailable";
+        readonly main_entrypoint: null;
         readonly renderer: null;
         readonly limitation: string;
       }

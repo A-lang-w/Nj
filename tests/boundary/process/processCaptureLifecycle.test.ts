@@ -11,7 +11,7 @@ import {
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { expect, vi } from "vitest";
+import { expect, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { itWithCaptureCapability } from "./processCaptureCapability.js";
 
@@ -183,7 +183,18 @@ itWithCaptureCapability(
       return wallReads === 1 ? wallStart : wallStart - 60_000 + wallReads;
     });
     const controller = new AbortController();
-    const fallback = setTimeout(() => controller.abort(), 1_500);
+    let fallback: ReturnType<typeof setTimeout> | undefined;
+    let runningObserved = false;
+    let fallbackFired = false;
+    const clearFallback = () => {
+      clearTimeout(fallback);
+      fallback = undefined;
+    };
+    onTestFinished(() => {
+      controller.abort();
+      clearFallback();
+      now.mockRestore();
+    });
     try {
       const result = await captureProcessScenario(
         parseProcessScenario({
@@ -194,12 +205,34 @@ itWithCaptureCapability(
           idle_timeout_ms: 5_000,
         }),
         controller.signal,
+        process.platform,
+        process.env,
+        undefined,
+        undefined,
+        {
+          async report(update) {
+            if (update.phase === "running" && !runningObserved) {
+              runningObserved = true;
+              // The deadline starts after native ownership preparation and
+              // executable inspection. Bound only the same running interval.
+              fallback = setTimeout(() => {
+                fallbackFired = true;
+                controller.abort();
+              }, 1_500);
+            } else if (update.phase !== "running") clearFallback();
+          },
+        },
       );
-      expect(result.ok).toBe(true);
       if (!result.ok) throw result.error;
+      expect(runningObserved).toBe(true);
+      expect(
+        fallbackFired,
+        "the monotonic deadline precedes the caller safety abort",
+      ).toBe(false);
       expect(result.value.exit.reason).toBe("timeout");
     } finally {
-      clearTimeout(fallback);
+      controller.abort();
+      clearFallback();
       now.mockRestore();
     }
   },

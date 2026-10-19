@@ -1,3 +1,5 @@
+import { packageSubpathPatternMatches } from "./javascriptPackageSubpathPatterns.js";
+
 /**
  * Exact package-private import-alias lookup. Node resolves `#` specifiers
  * against the importer's enclosing package `imports` map; this module owns the
@@ -53,18 +55,6 @@ export const classifyPackageImportSpecifier = (
 export const isPackageImportPatternKey = (key: string): boolean =>
   key.includes("*") || key.endsWith("/");
 
-/** Node import patterns contain one star matching at least one character. */
-const packageImportPatternMatches = (pattern: string, key: string): boolean => {
-  const wildcard = pattern.indexOf("*");
-  return (
-    wildcard !== -1 &&
-    pattern.lastIndexOf("*") === wildcard &&
-    key.length >= pattern.length &&
-    key.startsWith(pattern.slice(0, wildcard)) &&
-    key.endsWith(pattern.slice(wildcard + 1))
-  );
-};
-
 /**
  * Look up one exact `#` key in a package `imports` value.
  * Only a matching wildcard keeps an exact miss unresolved. Unrelated patterns
@@ -83,7 +73,7 @@ export const lookupExactPackageImport = (
       target: Reflect.get(imports, key),
       declared,
     };
-  return declared.some((pattern) => packageImportPatternMatches(pattern, key))
+  return declared.some((pattern) => packageSubpathPatternMatches(pattern, key))
     ? { kind: "pattern-unresolved", declared }
     : { kind: "missing-key", declared };
 };

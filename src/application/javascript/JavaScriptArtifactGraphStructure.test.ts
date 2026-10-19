@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
@@ -221,5 +222,157 @@ it.each([false, true])(
         }),
       ]),
     );
+  },
+);
+
+it.each([
+  "unselected",
+  "transitive-unselected",
+  "invalid-utf8",
+  "worker-failure",
+  "parse-failed",
+  "opaque",
+  "unknown-loader",
+  "read-inert",
+  "unreferenced",
+  "json",
+  "missing",
+] as const)(
+  "does not prove an unchanged application path across a reachable %s load gap",
+  (gap) => {
+    const makeFile = (
+      path: string,
+      kind: JavaScriptArtifactFile["kind"] = "javascript",
+    ): JavaScriptArtifactFile => ({
+      ...skippedFile(),
+      path,
+      sha256: createHash("sha256").update(path).digest("hex"),
+      kind,
+    });
+    const main = makeFile("a/main.cjs");
+    const other = makeFile("b/main.cjs");
+    const target = makeFile(
+      gap === "json" ? "a/change.json" : "a/change.cjs",
+      gap === "json" ? "json" : "javascript",
+    );
+    const page = makeFile("a/index.html", "html");
+    const otherPage = makeFile("b/index.html", "html");
+    const window =
+      'const {BrowserWindow}=require("electron");new BrowserWindow().loadFile("index.html");';
+    const statement =
+      gap === "unknown-loader"
+        ? "require(process.env.CHANGE);"
+        : gap === "transitive-unselected"
+          ? 'require("./middle.cjs");'
+          : gap === "unreferenced"
+            ? ""
+            : `require("./${gap === "json" ? "change.json" : "change.cjs"}");`;
+    const entry: AnalyzedJavaScriptArtifactFile =
+      gap === "worker-failure"
+        ? skippedEntry(target)
+        : {
+            file:
+              gap === "invalid-utf8"
+                ? {
+                    ...target,
+                    text: { included: false, reason: "invalid-utf8" },
+                  }
+                : target,
+            javascript:
+              gap === "read-inert"
+                ? analyzeJavaScriptStaticSource("module.exports=42;")
+                : gap === "parse-failed"
+                  ? {
+                      ...analyzeJavaScriptStaticSource(""),
+                      parse_status: "failed",
+                      parse_error_count: 1,
+                    }
+                  : null,
+            semantic: null,
+          };
+    const entries: AnalyzedJavaScriptArtifactFile[] = [
+      {
+        file: main,
+        javascript: analyzeJavaScriptStaticSource(statement + window),
+        semantic: null,
+      },
+      {
+        file: other,
+        javascript: analyzeJavaScriptStaticSource(window),
+        semantic: null,
+      },
+      ...(gap === "transitive-unselected"
+        ? [
+            {
+              file: makeFile("a/middle.cjs"),
+              javascript: analyzeJavaScriptStaticSource(
+                'require("./change.cjs");',
+              ),
+              semantic: null,
+            },
+          ]
+        : []),
+      ...(gap === "missing" || gap === "opaque" ? [] : [entry]),
+      { file: page, javascript: null, semantic: null },
+      { file: otherPage, javascript: null, semantic: null },
+    ];
+    const analysis = analysisFor(entries);
+    const base = contextFor(main, analysis);
+    const files = entries.map(({ file }) => file);
+    const context: JavaScriptArtifactGraphContext = {
+      ...base,
+      fileSet: { ...base.fileSet, files },
+      filesByPath: new Map(files.map((file) => [file.path, file])),
+      unanalyzedFiles:
+        gap === "opaque"
+          ? {
+              get: (path) => (path === target.path ? target : undefined),
+              hasDirectory: () => false,
+            }
+          : undefined,
+      applicationModuleReferencesRetained: new Set([
+        main.path,
+        other.path,
+        ...(gap === "transitive-unselected" ? ["a/middle.cjs"] : []),
+        ...(gap === "read-inert" ? [target.path] : []),
+      ]),
+    };
+    context.applicationRootsBySource.set(main.path, new Set(["a"]));
+    context.applicationRootsBySource.set(other.path, new Set(["b"]));
+    addJavaScriptArtifactFiles(context);
+    const steps = addJavaScriptStaticFindingsSteps(context);
+    while (!steps.next().done) {}
+    const roles = context.accumulator
+      .nodes()
+      .filter(({ kind }) => kind === "electron-renderer");
+    expect(roles).toHaveLength(2);
+    const changed = !["read-inert", "unreferenced", "json", "missing"].includes(
+      gap,
+    );
+    for (const [path, expected] of [
+      [main.path, changed ? null : "a/index.html"],
+      // Existing loader ownership also allows an unchecked source to import
+      // the other app's module; no process isolation has been established.
+      [other.path, changed ? null : "b/index.html"],
+    ] as const) {
+      const role = roles.find(({ observations }) =>
+        observations.some(
+          ({ evidence }) =>
+            evidence.location.available &&
+            evidence.location.value.kind === "source-range" &&
+            evidence.location.value.source === path,
+        ),
+      );
+      expect(role?.observations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            properties: expect.objectContaining({
+              resolved_path: expected,
+              resolution_status: expected === null ? "unavailable" : "resolved",
+            }),
+          }),
+        ]),
+      );
+    }
   },
 );

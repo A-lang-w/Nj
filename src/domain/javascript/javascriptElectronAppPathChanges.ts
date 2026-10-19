@@ -94,7 +94,12 @@ export const createSemanticElectronAppPathChangeQuery = (
         candidate.path,
         candidate.readAt?.start,
         candidate.readAt?.end,
-        capturedSelections?.map(({ at, depth }) => [at.start, at.end, depth]),
+        capturedSelections?.map(({ at, depth, ownEnumerable }) => [
+          at.start,
+          at.end,
+          depth,
+          ownEnumerable,
+        ]),
         candidate.awaitDepths,
       ]);
       const contexts = seen.get(node) ?? new Set<string>();
@@ -271,6 +276,9 @@ export const createSemanticElectronAppPathChangeQuery = (
                       {
                         at: source.capturedSelectionAt,
                         depth: source.path.length,
+                        ...(source.ownEnumerable
+                          ? { ownEnumerable: true as const }
+                          : {}),
                       },
                     ]),
               ],

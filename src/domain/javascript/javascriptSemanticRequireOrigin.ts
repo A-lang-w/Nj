@@ -32,6 +32,7 @@ import {
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
+import { semanticCommonJsRequireOwnEnumerableAt } from "./javascriptSemanticReferenceSources.js";
 import {
   semanticArrayPropertyReferences,
   semanticObjectPropertyReferences,
@@ -381,10 +382,11 @@ const hasCommonJsModuleSource = (
       awaitDepths,
       next.readAt?.start,
       next.readAt?.end,
-      next.capturedSelections?.map(({ at, depth }) => [
+      next.capturedSelections?.map(({ at, depth, ownEnumerable }) => [
         at.start,
         at.end,
         depth,
+        ownEnumerable,
       ]),
     ]);
     let context = byMode.get(modeKey);
@@ -491,6 +493,9 @@ const hasCommonJsModuleSource = (
                       {
                         at: source.capturedSelectionAt,
                         depth: source.path.length,
+                        ...(source.ownEnumerable
+                          ? { ownEnumerable: true as const }
+                          : {}),
                       },
                     ]),
               ],
@@ -513,6 +518,11 @@ const hasCommonJsModuleSource = (
           path,
         },
       );
+      continue;
+    }
+    if (t.isSequenceExpression(value)) {
+      const last = value.expressions.at(-1);
+      if (last !== undefined) enqueue({ node: last, path });
       continue;
     }
     if (
@@ -552,8 +562,19 @@ const hasCommonJsModuleSource = (
     }
     if (!t.isIdentifier(value)) continue;
     const binding = resolveSemanticBindingState(state, value, value.name);
+    const copyAdmitsModuleDelegate =
+      value.name !== "module" ||
+      target !== "delegate" ||
+      path.length !== 1 ||
+      !next.capturedSelections?.some(
+        (capture) =>
+          capture.depth === 1 &&
+          capture.ownEnumerable &&
+          !semanticCommonJsRequireOwnEnumerableAt(capture.at, state),
+      );
     if (value.name === "module" && binding === undefined) {
       if (
+        copyAdmitsModuleDelegate &&
         (target === "module"
           ? path.length === 0
           : path.length === 1 &&
@@ -570,6 +591,7 @@ const hasCommonJsModuleSource = (
     const read = semanticBindingAtRead(binding, value, state.parentsByNode);
     if (
       value.name === "module" &&
+      copyAdmitsModuleDelegate &&
       (target === "module"
         ? path.length === 0
         : path.length === 1 &&
@@ -636,8 +658,11 @@ export const semanticModuleRequireCallAt = (
   includeUnknown = true,
 ): boolean => {
   const receiver = semanticModuleRequireReceiver(node);
-  if (receiver !== undefined)
-    return isCommonJsModuleObject(receiver, state, includeUnknown);
+  if (
+    receiver !== undefined &&
+    isCommonJsModuleObject(receiver, state, includeUnknown)
+  )
+    return true;
   let target = unwrapJavaScriptExpression(node.callee).node;
   while (
     (t.isMemberExpression(target) || t.isOptionalMemberExpression(target)) &&

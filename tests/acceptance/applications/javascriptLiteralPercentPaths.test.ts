@@ -812,7 +812,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
 );
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
-  "keeps invalid main declarations distinct from default entries through %s",
+  "retains non-string main evidence while following Node index entries through %s",
   async (surface, { cli }) => {
     const root = await createTestTempDirectory("rea-invalid-main-owner-");
     for (const [index, main] of [123, false, null, {}, []].entries()) {
@@ -824,7 +824,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         [`a${index}/index.js`]: `require("../shared/window${index}.cjs");`,
         [`shared/window${index}.cjs`]:
           'const { BrowserWindow } = require("electron"); const win = new BrowserWindow(); win.loadFile("index.html");',
-        [`a${index}/index.html`]: "invalid launch-owner decoy",
+        [`a${index}/index.html`]: "package index launch page",
         "index.html": "artifact root decoy",
       });
     }
@@ -849,22 +849,32 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     );
     expect(roles).toHaveLength(5);
     for (const role of roles) {
+      const location = role.observations[0]?.evidence.location;
+      const source =
+        location?.available && location.value.kind === "source-range"
+          ? location.value.source
+          : null;
+      const match = /^shared\/window(\d)\.cjs$/u.exec(source ?? "");
+      expect(match).not.toBeNull();
+      const target = `a${match?.[1]}/index.html`;
       expect(role.observations).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             properties: expect.objectContaining({
-              resolved_path: null,
-              resolution_status: "unavailable",
+              resolved_path: target,
+              resolution_status: "resolved",
             }),
           }),
         ]),
       );
       expect(
-        graph.edges.filter(
-          ({ source_node_id, relation }) =>
-            source_node_id === role.node_id && relation === "maps_to",
-        ),
-      ).toEqual([]);
+        graph.edges
+          .filter(
+            ({ source_node_id, relation }) =>
+              source_node_id === role.node_id && relation === "maps_to",
+          )
+          .map(({ properties }) => properties.resolved_path),
+      ).toEqual([target]);
     }
   },
 );

@@ -88,14 +88,25 @@ describe("Windows CommonJS request classification", () => {
 });
 
 describe("literal POSIX inventory base segments", () => {
+  it("validates the final URL after a parent reference removes the encoded base segment", () => {
+    expect(
+      resolve({
+        declaredPath: "../b.js",
+        sourcePath: "literal\\dir/a.mjs",
+        context: "module-specifier",
+        moduleKind: "import",
+        files: fileMap([file("b.js", "container")]),
+      }),
+    ).toMatchObject({ resolution_status: "resolved", resolved_path: "b.js" });
+  });
   it.each(
     ["literal\\dir", "resources/app.asar/literal\\dir"].flatMap((directory) =>
-      ([undefined, "import", "require", "compiler-dependent"] as const).map(
+      (["import", "require", "compiler-dependent"] as const).map(
         (moduleKind) => ({ directory, moduleKind }),
       ),
     ),
   )(
-    "resolves an ordinary relative request from $directory with mode $moduleKind",
+    "preserves loader-specific admission from $directory with mode $moduleKind",
     ({ directory, moduleKind }) => {
       const sourcePath = `${directory}/a.js`;
       const target = `${directory}/b.js`;
@@ -109,12 +120,33 @@ describe("literal POSIX inventory base segments", () => {
           declaredPath: "./b.js",
           sourcePath,
           context: "module-specifier",
-          ...(moduleKind === undefined ? {} : { moduleKind }),
+          moduleKind,
           files,
         }),
       ).toMatchObject({
-        resolution_status: "resolved",
-        resolved_path: target,
+        resolution_status:
+          moduleKind === "require"
+            ? "resolved"
+            : moduleKind === "import"
+              ? "rejected"
+              : "unavailable",
+        resolved_path: moduleKind === "require" ? target : null,
+        ...(moduleKind === "compiler-dependent"
+          ? {
+              conditional_resolutions: [
+                expect.objectContaining({
+                  mode: "import",
+                  resolution_status: "rejected",
+                  resolved_path: null,
+                }),
+                expect.objectContaining({
+                  mode: "require",
+                  resolution_status: "resolved",
+                  resolved_path: target,
+                }),
+              ],
+            }
+          : {}),
       });
     },
   );
@@ -146,7 +178,7 @@ describe("literal POSIX inventory base segments", () => {
     "./discard%00/../b.js",
     "./discard%xx/../b.js",
   ])(
-    "normalizes discarded request segments without rejecting inherited inventory bytes: %s",
+    "still rejects inherited encoded separators after normalizing discarded request segments: %s",
     (declaredPath) => {
       expect(
         resolve({
@@ -157,8 +189,8 @@ describe("literal POSIX inventory base segments", () => {
           files: fileMap([file("literal\\dir/b.js", "container")]),
         }),
       ).toMatchObject({
-        resolution_status: "resolved",
-        resolved_path: "literal\\dir/b.js",
+        resolution_status: "rejected",
+        resolved_path: null,
       });
     },
   );
@@ -1807,7 +1839,118 @@ describe("scoped package directory and specifier resolution", () => {
   });
 });
 
+const packageExportPatternCases = [
+  {
+    name: "matching",
+    exports: { "./*": "./*.cjs" },
+    request: "fixture/window",
+    status: "unavailable",
+  },
+  {
+    name: "nonmatching",
+    exports: { "./other/*": "./*.cjs" },
+    request: "fixture/window",
+    status: "external",
+  },
+  {
+    name: "suffix mismatch",
+    exports: { "./*.js": "./*.cjs" },
+    request: "fixture/window.cjs",
+    status: "external",
+  },
+  {
+    name: "empty match",
+    exports: { "./*end": "./*.cjs" },
+    request: "fixture/end",
+    status: "external",
+  },
+  {
+    name: "multiple stars",
+    exports: { "./*/*": "./*.cjs" },
+    request: "fixture/deep/window",
+    status: "external",
+  },
+  {
+    name: "exact before pattern",
+    exports: { "./*": "./*.cjs", "./window": "./window.cjs" },
+    request: "fixture/window",
+    status: "resolved",
+  },
+  {
+    name: "exact null before pattern",
+    exports: { "./*": "./*.cjs", "./window": null },
+    request: "fixture/window",
+    status: "external",
+  },
+  {
+    name: "matching null",
+    exports: { "./*": null },
+    request: "fixture/window",
+    status: "external",
+  },
+  {
+    name: "overlapping null prefix",
+    exports: { "./*": "./*.cjs", "./private/*": null },
+    request: "fixture/private/window",
+    status: "external",
+  },
+  {
+    name: "overlapping null suffix",
+    exports: { "./*": "./*.cjs", "./*.hidden": null },
+    request: "fixture/window.hidden",
+    status: "external",
+  },
+  {
+    name: "overlapping value prefix",
+    exports: { "./*": null, "./public/*": "./*.cjs" },
+    request: "fixture/public/window",
+    status: "unavailable",
+  },
+  {
+    name: "inactive pattern condition",
+    exports: { "./*": { browser: "./*.cjs" } },
+    request: "fixture/window",
+    status: "external",
+  },
+  {
+    name: "conditional null",
+    exports: { "./*": { node: null, default: "./*.cjs" } },
+    request: "fixture/window",
+    status: "external",
+  },
+];
+
 describe("package exports subpath encapsulation", () => {
+  it.each(packageExportPatternCases)(
+    "keeps $name exports patterns distinct from deterministic encapsulation",
+    ({ exports, request, status }) => {
+      for (const moduleKind of ["import", "require"] as const) {
+        expect(
+          resolve({
+            declaredPath: request,
+            sourcePath: "app/main.cjs",
+            context: "module-specifier",
+            moduleKind,
+            files: fileMap([
+              file("app/main.cjs", "root"),
+              file(
+                "app/node_modules/fixture/package.json",
+                "root",
+                JSON.stringify({ exports }),
+              ),
+              file("app/node_modules/fixture/window.cjs", "root"),
+            ]),
+          }),
+        ).toMatchObject({
+          resolution_status: status,
+          resolved_path:
+            status === "resolved"
+              ? "app/node_modules/fixture/window.cjs"
+              : null,
+        });
+      }
+    },
+  );
   it("keeps subpaths encapsulated when only a root target is exported", () => {
     const files = fileMap([
       file("app/src/consumer.js", "root"),

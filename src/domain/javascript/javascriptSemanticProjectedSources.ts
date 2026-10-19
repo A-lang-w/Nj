@@ -33,6 +33,8 @@ import {
 export interface SemanticCapturedSelection {
   readonly at: t.Node;
   readonly depth: number;
+  /** Object spread/rest reads only an own enumerable slot at this depth. */
+  readonly ownEnumerable?: true;
 }
 
 /** The next origin crossed owns a repeated copy boundary at the same depth. */
@@ -58,8 +60,10 @@ export const semanticShiftCapturedSelections = (
   selections: readonly SemanticCapturedSelection[] | undefined,
   delta: number,
 ): readonly SemanticCapturedSelection[] | undefined => {
-  const shifted = selections?.flatMap(({ at, depth }) =>
-    depth + delta > 0 ? [{ at, depth: depth + delta }] : [],
+  const shifted = selections?.flatMap((selection) =>
+    selection.depth + delta > 0
+      ? [{ ...selection, depth: selection.depth + delta }]
+      : [],
   );
   return semanticNormalizeCapturedSelections(shifted);
 };
@@ -307,6 +311,9 @@ export const semanticProjectedSourcesAtRead = (
                     {
                       at: source.node,
                       depth: selection.capturedSelectionDepth,
+                      ...(selection.ownEnumerable
+                        ? { ownEnumerable: true as const }
+                        : {}),
                     },
                   ],
                 }),
@@ -346,6 +353,9 @@ export const semanticProjectedSourcesAtRead = (
                   {
                     at: initializer.node,
                     depth: projection.length + suffix.length - path.length + 1,
+                    ...(initializer.copyKind === "object-rest"
+                      ? { ownEnumerable: true as const }
+                      : {}),
                   },
                 ],
         });
