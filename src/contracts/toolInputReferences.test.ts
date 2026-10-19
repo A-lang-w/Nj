@@ -799,6 +799,20 @@ describe("advertised empty-string literals", () => {
     expect(advertised.properties.alias).toEqual({ $ref: "#/properties/path" });
   });
 
+  it("widens empty-string literals under contentSchema", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        value: { type: "string", contentSchema: { const: "" } },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.properties.value).toEqual({
+      type: "string",
+      contentSchema: { type: "string" },
+    });
+  });
+
   it("composes overlapping parent and child reference writes", () => {
     const canonical = {
       type: "object",
