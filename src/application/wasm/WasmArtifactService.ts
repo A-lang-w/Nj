@@ -74,11 +74,18 @@ export class WasmArtifactService {
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
     const validated = this.validate(rawInput);
     if (!validated.ok) return validated;
-    const input = validated.value;
+    return this.inspectValidated(validated.value, options);
+  }
+
+  /** Inspect input that validate() already admitted, without reparsing it. */
+  async inspectValidated(
+    input: InspectWasmArtifactInput,
+    options?: ExecutionOptions,
+  ): Promise<Result<Evidence, AnalysisError>> {
+    if (options?.signal?.aborted)
+      return err(new AnalysisCancelledError(OPERATION));
     const inspected = await this.provider.inspect(input, options);
     if (!inspected.ok) return inspected;
     const execution = inspected.value;

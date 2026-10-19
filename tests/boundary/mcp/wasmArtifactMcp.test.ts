@@ -235,7 +235,7 @@ it("records complete WASM Evidence when an MCP request is cancelled during provi
       return ok(wasmArtifactExecution(value));
     },
   });
-  const inspect = vi.spyOn(service, "inspect");
+  const inspect = vi.spyOn(service, "inspectValidated");
   const session = createTestBinarySession(() => {
     throw new Error("deep provider must not start");
   });

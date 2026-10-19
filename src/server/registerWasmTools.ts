@@ -22,7 +22,7 @@ import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 /** Bind the named WASM contract to shared validation and session Evidence recording. */
 export const registerWasmTools = (
   server: EvidenceMcpServer,
-  service: Pick<WasmArtifactService, "inspect" | "validate">,
+  service: Pick<WasmArtifactService, "validate" | "inspectValidated">,
   logger: Logger,
   recordEvidence?: EvidenceWriter["recordEvidence"],
   withAdmittedAnalysis?: WithAdmittedAnalysis,
@@ -82,7 +82,10 @@ export const registerWasmTools = (
         const ready = requireAnalysisViewRetention(contract.name, retention);
         if (!ready.ok) return ready;
       }
-      const inspected = await service.inspect(validated.value, options);
+      const inspected = await service.inspectValidated(
+        validated.value,
+        options,
+      );
       return detail === "summary" && inspected.ok
         ? summarizeRetainedAnalysis(inspected.value, retention)
         : inspected;
