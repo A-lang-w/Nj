@@ -29,11 +29,16 @@ import {
   semanticObjectPropertyReferences,
   type JavaScriptSemanticObjectReference,
 } from "./javascriptSemanticObjectReferences.js";
-import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
+import {
+  semanticIterationSources,
+  type SemanticIterationSource,
+} from "./javascriptSemanticIterationSources.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import { semanticMutationInitializers } from "./javascriptSemanticMutationInitializers.js";
 import {
+  semanticCopiedReferencePath,
+  semanticKnownArrayIteration,
   semanticReferenceSourcesInactive,
   semanticSelectedReferenceSlot,
 } from "./javascriptSemanticReferenceSources.js";
@@ -199,7 +204,7 @@ export function* collectSemanticMemberMutationsSteps(
       recordRequiredEffect("node:process", path.slice(2), "write", node);
   const selections = new Map<string, readonly string[]>();
   const coveringPaths = new Map<string, SemanticPropertyPathCoverage>();
-  let arrayIterationUnknown = false;
+  state.arrayIterationUnknown = false;
   // Definition collection finishes before this phase, so a scope's bindings no
   // longer change and one node resolves to one binding. Repeated visits of the
   // same node otherwise repeat the same scope walk.
@@ -301,6 +306,7 @@ export function* collectSemanticMemberMutationsSteps(
     originAt: t.Node | undefined = mutation,
     ownerInitializer?: t.Node,
     widenedGetterResult = false,
+    assignedSources?: readonly SemanticIterationSource[],
   ): void => {
     const pending: (ReferencedValue & {
       readonly bindings: ReadonlySet<string>;
@@ -360,7 +366,7 @@ export function* collectSemanticMemberMutationsSteps(
               (current.path[0] === "Array" || current.path[0] === null) &&
               (current.path[1] === "prototype" || current.path[1] === null))
           )
-            arrayIterationUnknown = true;
+            state.arrayIterationUnknown = true;
           continue;
         }
         // An alias restored from a saved reference can revisit the same binding
@@ -488,7 +494,7 @@ export function* collectSemanticMemberMutationsSteps(
           current.originAt?.start ?? -1
         }\u0001${current.originAt?.end ?? -1}\u0001${
           current.ownerInitializer?.start ?? -1
-        }\u0001${current.ownerInitializer?.end ?? -1}\u0001${widenedGetterResult}`;
+        }\u0001${current.ownerInitializer?.end ?? -1}\u0001${widenedGetterResult}\u0001${assignedSources?.[0]?.target?.start ?? -1}`;
         let covering = coveringPaths.get(pathState);
         if (covering === undefined) {
           covering = new SemanticPropertyPathCoverage();
@@ -524,7 +530,12 @@ export function* collectSemanticMemberMutationsSteps(
           }
           if (effect === "escape")
             binding.escapedPaths.push({ path, node: mutation });
-          else binding.memberWrites.push({ path, node: mutation });
+          else
+            binding.memberWrites.push({
+              path,
+              node: mutation,
+              ...(assignedSources === undefined ? {} : { assignedSources }),
+            });
           clearSemanticValueCaches(state);
           for (const initializer of origins.initializers)
             pending.push({
@@ -535,7 +546,11 @@ export function* collectSemanticMemberMutationsSteps(
             });
         }
         for (const initializer of origins.referenceInitializers) {
-          const copiedPath = copiedReferencePath(initializer, path, effect);
+          const copiedPath = semanticCopiedReferencePath(
+            initializer,
+            path,
+            effect,
+          );
           if (copiedPath === null) continue;
           pendingReferences.push({
             initializer,
@@ -621,7 +636,7 @@ export function* collectSemanticMemberMutationsSteps(
       ((path[0] === "__proto__" && (effect === "escape" || path.length > 1)) ||
         (path[0] === "constructor" && path[1] === "prototype"))
     )
-      arrayIterationUnknown = true;
+      state.arrayIterationUnknown = true;
     const references = referencedValues(
       expression,
       path,
@@ -733,6 +748,21 @@ export function* collectSemanticMemberMutationsSteps(
       markEscaped(expression.object, mutation);
   };
   const markTarget = (node: t.Node, mutation: t.Node): void => {
+    const sources = semanticIterationSources(
+      mutation,
+      state.parentsByNode.get(mutation) ?? null,
+    );
+    const sourcesByTarget = new Map<
+      t.MemberExpression | t.OptionalMemberExpression,
+      SemanticIterationSource[]
+    >();
+    for (const source of sources) {
+      if (source.kind !== "reference-store" || source.target === undefined)
+        continue;
+      const selected = sourcesByTarget.get(source.target) ?? [];
+      selected.push(source);
+      sourcesByTarget.set(source.target, selected);
+    }
     for (const target of semanticWriteTargets(node))
       if (!t.isIdentifier(target))
         markValue(
@@ -741,6 +771,10 @@ export function* collectSemanticMemberMutationsSteps(
           new Set(),
           "write",
           mutation,
+          mutation,
+          undefined,
+          false,
+          sourcesByTarget.get(target) ?? [],
         );
   };
   yield* traverseJavaScriptAstSteps(program, {
@@ -799,7 +833,7 @@ export function* collectSemanticMemberMutationsSteps(
   ) {
     const effectsBefore = recordedEffectCount;
     const iterablesBefore = iterableReferences.length;
-    const iterationBefore: boolean = arrayIterationUnknown;
+    const iterationBefore: boolean = state.arrayIterationUnknown;
     for (const [index, reference] of pendingReferences.splice(0).entries()) {
       if (index % 64 === 0) yield;
       const { initializer } = reference;
@@ -867,12 +901,7 @@ export function* collectSemanticMemberMutationsSteps(
       const slot = semanticSelectedReferenceSlot(reference, state);
       // Custom iteration can yield the iterable itself as well as any child.
       // Treat its root as escaped, including writes through yielded references.
-      const knownArray =
-        !arrayIterationUnknown &&
-        slot?.value.status === "array" &&
-        slot.value.items.every(
-          (item) => semanticArrayIndex(item.name) !== null,
-        );
+      const knownArray = semanticKnownArrayIteration(slot?.value, state);
       if (knownArray && reference.iterationOnly) continue;
       markValue(
         reference.node,
@@ -902,7 +931,7 @@ export function* collectSemanticMemberMutationsSteps(
     if (
       recordedEffectCount === effectsBefore &&
       iterableReferences.length === iterablesBefore &&
-      arrayIterationUnknown === iterationBefore
+      state.arrayIterationUnknown === iterationBefore
     )
       break;
   }
@@ -1386,46 +1415,4 @@ const observableMutationPaths = (
     return result;
   };
   return { normalize, repeatsUnpruned };
-};
-
-const copiedReferencePath = (
-  initializer: JavaScriptSemanticBindingState["referenceInitializers"][number],
-  path: PropertyPath,
-  effect: ValueEffect,
-): PropertyPath | null => {
-  const offset = initializer.copyProjectionOffset;
-  if (offset === undefined) return [...initializer.projection, ...path];
-  const copiedPath = [...initializer.projection.slice(offset + 1), ...path];
-  if (effect === "write" && copiedPath.length < 2) return null;
-  let [key, ...remaining] = copiedPath;
-  if (initializer.copyKind === "array-rest") {
-    const startIndex = initializer.copyStartIndex ?? 0;
-    if (key === undefined || key === null)
-      key = { excludedKeys: [], startIndex };
-    else if (typeof key === "object")
-      key = {
-        excludedKeys: key.excludedKeys.flatMap((name) => {
-          const index = semanticArrayIndex(name);
-          return index === null ? [] : [String(index + startIndex)];
-        }),
-        startIndex: (key.startIndex ?? 0) + startIndex,
-      };
-    else {
-      const index = semanticArrayIndex(key);
-      if (index === null) return null;
-      key = index + startIndex;
-    }
-  } else {
-    const excludedKeys = initializer.copyExcludedKeys ?? [];
-    if (key === undefined || key === null) key = { excludedKeys };
-    else if (typeof key === "object")
-      key = {
-        ...key,
-        excludedKeys: [...new Set([...key.excludedKeys, ...excludedKeys])].sort(
-          compareUnicodeCodePoints,
-        ),
-      };
-    else if (excludedKeys.includes(String(key))) return null;
-  }
-  return [...initializer.projection.slice(0, offset), key, ...remaining];
 };

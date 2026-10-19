@@ -25,7 +25,15 @@ import {
   semanticDefiniteEffectPrecedesReference,
 } from "./javascriptSemanticMutationInitializers.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
-import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
+import {
+  semanticCopiedReferencePath,
+  semanticReferenceIterationUnknown,
+  semanticReferenceSourcesInactive,
+} from "./javascriptSemanticReferenceSources.js";
+import {
+  semanticIterationSources,
+  semanticStoredSourceProjection,
+} from "./javascriptSemanticIterationSources.js";
 import {
   semanticArrayPropertyReferences,
   semanticObjectPropertyReferences,
@@ -56,12 +64,19 @@ export const observePossibleCommonJsDelegateWrite = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): void => {
+  if (possibleCommonJsDelegateWriteStates.has(state)) return;
   const target = t.isAssignmentExpression(node)
     ? node.left
     : t.isUpdateExpression(node) ||
         t.isUnaryExpression(node, { operator: "delete" })
       ? node.argument
       : undefined;
+  if (
+    semanticIterationSources(node, state.parentsByNode.get(node) ?? null).some(
+      (source) => source.kind === "reference-store",
+    )
+  )
+    possibleCommonJsDelegateWriteStates.add(state);
   if (
     (t.isMemberExpression(target) || t.isOptionalMemberExpression(target)) &&
     ["require", null].includes(
@@ -359,7 +374,9 @@ const moduleObjectSourcesAtRead = (
     }) &&
     semanticEffectTiming(reference, effect.node, state) !== "after";
   const writes = binding.memberWrites.filter(matches);
-  let replacement: t.AssignmentExpression | undefined;
+  let replacement:
+    | JavaScriptSemanticBindingState["memberWrites"][number]
+    | undefined;
   for (const effect of writes) {
     if (
       t.isAssignmentExpression(effect.node, { operator: "=" }) &&
@@ -378,20 +395,26 @@ const moduleObjectSourcesAtRead = (
       ) &&
       (replacement === undefined ||
         semanticDefiniteEffectPrecedesReference(
-          replacement,
+          replacement.node!,
           effect.node,
           state.parentsByNode,
-        ))
+        ) ||
+        (replacement.node === effect.node &&
+          (replacement.assignedSources?.[0]?.target?.start ?? -1) <
+            (effect.assignedSources?.[0]?.target?.start ?? -1)))
     )
-      replacement = effect.node;
+      replacement = effect;
   }
   const superseded = (
     effect: JavaScriptSemanticBindingState["memberWrites"][number],
   ) =>
     replacement !== undefined &&
     effect.node !== undefined &&
-    effect.node !== replacement &&
-    semanticEffectTiming(replacement, effect.node, state) === "before";
+    effect !== replacement &&
+    (semanticEffectTiming(replacement.node!, effect.node, state) === "before" ||
+      (effect.node === replacement.node &&
+        (effect.assignedSources?.[0]?.target?.start ?? -1) <
+          (replacement.assignedSources?.[0]?.target?.start ?? -1)));
   if (
     includeUnknown &&
     binding.escapedPaths.some(
@@ -402,31 +425,71 @@ const moduleObjectSourcesAtRead = (
   const sources: ModuleObjectSource[] = [];
   for (const effect of writes) {
     if (superseded(effect)) continue;
-    if (!t.isAssignmentExpression(effect.node, { operator: "=" })) {
+    if (
+      !t.isAssignmentExpression(effect.node) ||
+      !["=", "||=", "&&=", "??="].includes(effect.node.operator)
+    ) {
+      if (includeUnknown) return undefined;
+      continue;
+    }
+    if (effect.assignedSources === undefined) {
+      if (includeUnknown) return undefined;
+      continue;
+    }
+    const remaining = path.slice(effect.path.length);
+    for (const source of effect.assignedSources) {
+      if (semanticReferenceIterationUnknown(source, state)) {
+        if (includeUnknown) return undefined;
+        continue;
+      }
+      if (semanticReferenceSourcesInactive(source, state)) continue;
+      const [key, ...suffix] = remaining;
+      for (const choice of key === undefined
+        ? [undefined]
+        : semanticAliasSelectionChoices(key)) {
+        const projection = semanticStoredSourceProjection(
+          source,
+          choice === undefined ? [] : [choice],
+        );
+        if (projection !== null)
+          sources.push({ node: source.node, path: [...projection, ...suffix] });
+      }
+    }
+  }
+  if (replacement !== undefined) return sources;
+  const read = semanticBindingAtRead(binding, reference, state.parentsByNode);
+  for (const initializer of read.binding.initializers) {
+    if (semanticReferenceIterationUnknown(initializer, state)) {
       if (includeUnknown) return undefined;
       continue;
     }
     sources.push({
-      node: effect.node.right,
-      path: path.slice(effect.path.length),
-    });
-  }
-  if (replacement !== undefined) return sources;
-  const read = semanticBindingAtRead(binding, reference, state.parentsByNode);
-  for (const initializer of read.binding.initializers)
-    sources.push({
       node: initializer.node,
       path: [...initializer.projection, ...path],
     });
-  for (const initializer of read.binding.referenceInitializers)
-    if (
-      initializer.copyKind === undefined &&
-      !semanticReferenceSourcesInactive(initializer, state)
-    )
-      sources.push({
-        node: initializer.node,
-        path: [...initializer.projection, ...path],
-      });
+  }
+  for (const initializer of read.binding.referenceInitializers) {
+    if (semanticReferenceIterationUnknown(initializer, state)) {
+      if (includeUnknown) return undefined;
+      continue;
+    }
+    if (semanticReferenceSourcesInactive(initializer, state)) continue;
+    const [key, ...suffix] = path;
+    for (const choice of key === undefined
+      ? [undefined]
+      : semanticAliasSelectionChoices(key)) {
+      const projection = semanticCopiedReferencePath(
+        initializer,
+        choice === undefined ? [] : [choice],
+        "identity",
+      );
+      if (projection !== null)
+        sources.push({
+          node: initializer.node,
+          path: [...projection, ...suffix],
+        });
+    }
+  }
   return sources;
 };
 

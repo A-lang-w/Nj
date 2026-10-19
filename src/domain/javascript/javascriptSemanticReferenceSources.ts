@@ -1,17 +1,45 @@
 import type * as t from "@babel/types";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
-import type { JavaScriptSemanticPropertyPath as PropertyPath } from "./javascriptSemanticPropertyPaths.js";
+import {
+  semanticArrayIndex,
+  type JavaScriptSemanticPropertyPath as PropertyPath,
+} from "./javascriptSemanticPropertyPaths.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
 import { semanticSlotAtPath } from "./javascriptSemanticSlots.js";
+import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
 
 interface ReferenceSource {
   readonly node: t.Node;
   readonly projection: PropertyPath;
 }
 
+/** Native array iteration preserves numeric slots only while its iterator is intact. */
+export const semanticKnownArrayIteration = (
+  value: JavaScriptSemanticValue | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  !state.arrayIterationUnknown &&
+  value?.status === "array" &&
+  value.items.every((item) => semanticArrayIndex(item.name) !== null);
+
+/** Numeric destructuring projections do not select slots of custom iterators. */
+export const semanticReferenceIterationUnknown = (
+  source: { readonly iterationSources?: readonly ReferenceSource[] },
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  source.iterationSources?.some(
+    (iterable) =>
+      !semanticKnownArrayIteration(
+        semanticSelectedReferenceSlot(iterable, state, iterable.node)?.value,
+        state,
+      ),
+  ) === true;
+
 /** Exclude references whose source slot or destructuring fallback is absent. */
 export const semanticReferenceSourcesInactive = (
   reference: {
+    readonly iterationSources?: readonly ReferenceSource[];
     readonly requiredSources?: readonly ReferenceSource[];
     readonly fallbackSources?: readonly ReferenceSource[];
   },
@@ -50,4 +78,56 @@ export const semanticSelectedReferenceSlot = (
     evaluateSemanticExpression(source.node, state, capturePoint),
     path,
   );
+};
+
+interface CopiedReferenceSource {
+  readonly projection: PropertyPath;
+  readonly copyKind?: "object-rest" | "array-rest";
+  readonly copyProjectionOffset?: number;
+  readonly copyExcludedKeys?: readonly string[];
+  readonly copyStartIndex?: number;
+}
+
+/** Map copied child selections once; the fresh copy itself keeps its own identity. */
+export const semanticCopiedReferencePath = (
+  initializer: CopiedReferenceSource,
+  path: PropertyPath,
+  effect: "write" | "escape" | "identity",
+): PropertyPath | null => {
+  const offset = initializer.copyProjectionOffset;
+  if (offset === undefined) return [...initializer.projection, ...path];
+  const copiedPath = [...initializer.projection.slice(offset + 1), ...path];
+  if (effect === "identity" && copiedPath.length === 0) return null;
+  if (effect === "write" && copiedPath.length < 2) return null;
+  let [key, ...remaining] = copiedPath;
+  if (initializer.copyKind === "array-rest") {
+    const startIndex = initializer.copyStartIndex ?? 0;
+    if (key === undefined || key === null)
+      key = { excludedKeys: [], startIndex };
+    else if (typeof key === "object")
+      key = {
+        excludedKeys: key.excludedKeys.flatMap((name) => {
+          const index = semanticArrayIndex(name);
+          return index === null ? [] : [String(index + startIndex)];
+        }),
+        startIndex: (key.startIndex ?? 0) + startIndex,
+      };
+    else {
+      const index = semanticArrayIndex(key);
+      if (index === null) return null;
+      key = index + startIndex;
+    }
+  } else {
+    const excludedKeys = initializer.copyExcludedKeys ?? [];
+    if (key === undefined || key === null) key = { excludedKeys };
+    else if (typeof key === "object")
+      key = {
+        ...key,
+        excludedKeys: [...new Set([...key.excludedKeys, ...excludedKeys])].sort(
+          compareUnicodeCodePoints,
+        ),
+      };
+    else if (excludedKeys.includes(String(key))) return null;
+  }
+  return [...initializer.projection.slice(0, offset), key, ...remaining];
 };

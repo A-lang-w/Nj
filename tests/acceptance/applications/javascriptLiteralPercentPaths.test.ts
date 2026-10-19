@@ -97,6 +97,44 @@ cliTest.for(
 );
 
 const unprovenLoaderSources: Readonly<Record<string, string>> = {
+  "custom iterator assignment module loader":
+    'const values = { *[Symbol.iterator]() { yield module; } }; const holder = {}; [holder.loader] = values; holder.loader.require("../shared/window.cjs");',
+  "replaced iterator assignment module loader":
+    'const values = [{}]; values[Symbol.iterator] = function* () { yield module; }; const holder = {}; [holder.loader] = values; holder.loader.require("../shared/window.cjs");',
+  "custom iterator rest declaration module loader":
+    'const values = { *[Symbol.iterator]() { yield module; } }; const [...holder] = values; holder[0].require("../shared/window.cjs");',
+  "native array assignment local loader":
+    'const holder = { loader: module }; [holder.loader] = [{ require() {} }]; holder.loader.require("../shared/window.cjs");',
+  "logical rewrite assignment module loader":
+    'const holder = {}; holder.loader ??= module; holder.loader.require = replacement; require("../shared/window.cjs");',
+  "object rest declaration module loader":
+    'const { ...holder } = { loader: module }; holder.loader.require("../shared/window.cjs");',
+  "array rest declaration module loader":
+    'const [...holder] = [module]; holder[0].require("../shared/window.cjs");',
+  "object assignment module loader":
+    'const holder = {}; ({ loader: holder.loader } = { loader: module }); holder.loader.require("../shared/window.cjs");',
+  "array assignment module loader":
+    'const holder = {}; [holder.loader] = [module]; holder.loader.require("../shared/window.cjs");',
+  "nested assignment module loader":
+    'const holder = {}; ({ inner: { loader: holder.loader } } = { inner: { loader: module } }); holder.loader.require("../shared/window.cjs");',
+  "default assignment module loader":
+    'const holder = {}; ({ loader: holder.loader = module } = {}); holder.loader.require("../shared/window.cjs");',
+  "rest array assignment module loader":
+    'const holder = {}; let ignored; [ignored, ...holder.loaders] = [{}, module]; holder.loaders[0].require("../shared/window.cjs");',
+  "delegate assignment module loader":
+    'const holder = {}; ({ load: holder.load } = { load: module.require }); holder.load.call(module, "../shared/window.cjs");',
+  "rewrite assignment module loader":
+    'const holder = {}; ({ loader: holder.loader } = { loader: module }); holder.loader.require = replacement; require("../shared/window.cjs");',
+  "exports assignment local loader":
+    'const holder = {}; ({ exports: holder.loader } = module); holder.loader.require("../shared/window.cjs");',
+  "rest assignment local loader":
+    'const holder = {}; ({ ...holder.loader } = module); holder.loader.require("../shared/window.cjs");',
+  "excluded assignment local loader":
+    'const holder = {}; let ignored; ({ loader: ignored, ...holder.copy } = { loader: module }); holder.copy.loader.require("../shared/window.cjs");',
+  "inactive default assignment local loader":
+    'const holder = {}; ({ loader: holder.loader = module } = { loader: { require() {} } }); holder.loader.require("../shared/window.cjs");',
+  "overwritten assignment local loader":
+    'const holder = { loader: module }; ({ loader: holder.loader } = { loader: { require() {} } }); holder.loader.require("../shared/window.cjs");',
   "bounded alias selection": aliasSelectionBudgetSource(),
   "captured module delegate":
     'const load = module.require; load.call(module, "../shared/window.cjs");',
@@ -146,6 +184,19 @@ const unprovenLoaderSources: Readonly<Record<string, string>> = {
 };
 
 const uncheckedModuleLoaders = new Set([
+  "custom iterator assignment module loader",
+  "replaced iterator assignment module loader",
+  "custom iterator rest declaration module loader",
+  "logical rewrite assignment module loader",
+  "object rest declaration module loader",
+  "array rest declaration module loader",
+  "object assignment module loader",
+  "array assignment module loader",
+  "nested assignment module loader",
+  "default assignment module loader",
+  "rest array assignment module loader",
+  "delegate assignment module loader",
+  "rewrite assignment module loader",
   "bounded alias selection",
   "captured module delegate",
   "destructured module delegate",
@@ -267,6 +318,12 @@ cliTest.for(
     const root = await createTestTempDirectory("rea-loader-owner-");
     const single = loader === "single percent main";
     const inert = [
+      "native array assignment local loader",
+      "exports assignment local loader",
+      "rest assignment local loader",
+      "excluded assignment local loader",
+      "inactive default assignment local loader",
+      "overwritten assignment local loader",
       "local assigned loader",
       "overwritten local loader",
       "invalid absolute ESM",

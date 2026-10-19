@@ -182,7 +182,7 @@ it.each([
 it.each([
   "const { exports: api } = module;",
   "const { exports: { api } } = module;",
-  "const [api] = module;",
+  "const [api] = [module.exports];",
 ])(
   "keeps projected module members separate from the loader: %s",
   (declaration) => {

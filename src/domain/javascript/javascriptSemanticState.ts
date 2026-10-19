@@ -1,4 +1,5 @@
 import type { JavaScriptOpaqueScopeEffects } from "./javascriptSemanticOpaqueEffects.js";
+import type { SemanticIterationSource } from "./javascriptSemanticIterationSources.js";
 import * as t from "@babel/types";
 import {
   semanticStaticPropertyKey,
@@ -29,6 +30,10 @@ export interface JavaScriptSemanticInitializer {
   readonly node: t.Node;
   readonly projection: readonly (string | number | null)[];
   readonly entryBody?: t.BlockStatement;
+  readonly iterationSources?: readonly {
+    readonly node: t.Node;
+    readonly projection: JavaScriptSemanticPropertyPath;
+  }[];
 }
 
 /** Additional references from destructuring copies and possible defaults. */
@@ -45,6 +50,8 @@ interface JavaScriptSemanticReferenceInitializer extends JavaScriptSemanticIniti
 export interface JavaScriptSemanticMemberEffect {
   readonly path: JavaScriptSemanticPropertyPath;
   readonly node: t.Node | undefined;
+  /** Selected RHS values retained by the shared pattern-store owner. */
+  readonly assignedSources?: readonly SemanticIterationSource[];
 }
 
 export type JavaScriptSemanticEffectTiming = "before" | "after" | "unknown";
@@ -101,6 +108,7 @@ export interface JavaScriptSemanticScopeState {
 
 /** Shared state for semantic collection and evaluation. */
 export interface JavaScriptSemanticAnalysisState {
+  arrayIterationUnknown: boolean;
   readonly program: t.Program;
   readonly opaqueEffects: JavaScriptOpaqueScopeEffects;
   /** Effective loader for static imports in this source artifact. */

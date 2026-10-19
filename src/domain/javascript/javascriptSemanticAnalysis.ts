@@ -108,6 +108,7 @@ import { indexCommonJsExportReceiversSteps } from "./javascriptCommonJsExportRec
 import type { JavaScriptModuleResolutionMode } from "./javascriptModuleResolutionMode.js";
 
 interface BindPatternInput {
+  readonly iterationSources?: JavaScriptSemanticBindingState["initializers"][number]["iterationSources"];
   readonly pattern: t.Node;
   readonly initializer: t.Node | null;
   readonly scope: JavaScriptSemanticScopeState;
@@ -132,6 +133,7 @@ interface BindPatternInput {
 }
 
 interface AddBindingInput {
+  readonly iterationSources?: JavaScriptSemanticBindingState["initializers"][number]["iterationSources"];
   readonly state: JavaScriptSemanticAnalysisState;
   readonly scope: JavaScriptSemanticScopeState;
   readonly name: string;
@@ -979,6 +981,7 @@ const createState = (
     bindings: new Map(),
   };
   return {
+    arrayIterationUnknown: false,
     program,
     opaqueEffects: {
       mayReferenceGlobalEval: false,
@@ -1710,6 +1713,7 @@ const bindPattern = (input: BindPatternInput): void => {
     copyStartIndex,
     fallbackSources,
     requiredSources,
+    iterationSources,
   } = input;
   if (t.isTSParameterProperty(pattern)) {
     bindPattern({ ...input, pattern: pattern.parameter });
@@ -1734,6 +1738,7 @@ const bindPattern = (input: BindPatternInput): void => {
           ...(copyStartIndex === undefined ? {} : { copyStartIndex }),
           ...(fallbackSources === undefined ? {} : { fallbackSources }),
           ...(requiredSources === undefined ? {} : { requiredSources }),
+          ...(iterationSources === undefined ? {} : { iterationSources }),
         });
       return;
     }
@@ -1747,6 +1752,7 @@ const bindPattern = (input: BindPatternInput): void => {
       definitionNode: pattern,
       initializer,
       projection,
+      ...(iterationSources === undefined ? {} : { iterationSources }),
     });
     return;
   }
@@ -1817,17 +1823,28 @@ const bindPattern = (input: BindPatternInput): void => {
         });
       }
     }
-  else if (t.isArrayPattern(pattern))
+  else if (t.isArrayPattern(pattern)) {
+    const arrayInput = {
+      ...input,
+      ...(initializer === null
+        ? {}
+        : {
+            iterationSources: [
+              ...(iterationSources ?? []),
+              { node: initializer, projection },
+            ],
+          }),
+    };
     pattern.elements.forEach((element, index) => {
       if (element !== null) {
         bindPattern({
-          ...input,
+          ...arrayInput,
           pattern: element,
           projection: [...projection, index],
         });
         if (t.isRestElement(element))
           bindPattern({
-            ...input,
+            ...arrayInput,
             pattern: element.argument,
             projection: [...projection, null],
             referenceOnly: true,
@@ -1837,6 +1854,7 @@ const bindPattern = (input: BindPatternInput): void => {
           });
       }
     });
+  }
 };
 
 const addBinding = (input: AddBindingInput): void => {
@@ -1852,6 +1870,7 @@ const addBinding = (input: AddBindingInput): void => {
     directOrigin,
     runtimeImport,
     projection = [],
+    iterationSources,
   } = input;
   let binding = scope.bindings.get(name);
   if (binding === undefined) {
@@ -1865,7 +1884,11 @@ const addBinding = (input: AddBindingInput): void => {
     binding.declarationKinds.add(declarationKind);
   binding.definitions.push({ kind, location: range(definitionNode) });
   if (initializer !== null)
-    binding.initializers.push({ node: initializer, projection });
+    binding.initializers.push({
+      node: initializer,
+      projection,
+      ...(iterationSources === undefined ? {} : { iterationSources }),
+    });
   if (directOrigin !== undefined)
     binding.directOrigins.push(
       directOrigin.resolutionMode === undefined &&
