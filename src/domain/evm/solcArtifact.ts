@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { compilerMetadataFacts } from "./solcCompilerJson.js";
 import { inspectSolcBytecodeObject } from "./solcBytecodeObject.js";
 
 /** Exact compiler identities; source-unit names are not filesystem paths. */
@@ -178,6 +179,19 @@ export const solcArtifactSchema = z
       issue("Placeholder presence differs from compiler object status");
     const metadata = value.metadata;
     const metadataAbsent = metadata.parse_status === "absent";
+    if (metadata.parse_status === "valid") {
+      const parsed = compilerMetadataFacts(metadata.raw);
+      if (
+        parsed.parse_status !== "valid" ||
+        parsed.compiler_version !== metadata.compiler_version ||
+        parsed.settings_json !== metadata.settings_json
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["metadata"],
+          message: "Compiler metadata facts must match the retained source.",
+        });
+    }
     if (
       (metadata.raw === null) !== metadataAbsent ||
       (metadata.source_range === null) !== metadataAbsent ||

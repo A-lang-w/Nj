@@ -295,6 +295,11 @@ it.each([undefined, `__$${"a".repeat(34)}$__`])(
 );
 
 it.each([
+  "valid-wrong-version",
+  "valid-wrong-settings",
+  "valid-malformed-settings",
+  "valid-malformed-source",
+  "valid-duplicate-source",
   "missing-raw",
   "missing-range",
   "valid-without-source",
@@ -309,7 +314,14 @@ it.each([
   const compiler = report.compiler_artifact;
   if (compiler === undefined) throw new Error("Compiler artifact missing");
   const metadata = compiler.metadata;
-  if (problem === "missing-raw") metadata.raw = null;
+  if (problem === "valid-wrong-version") metadata.compiler_version = "0.0.0";
+  else if (problem === "valid-wrong-settings") metadata.settings_json = "{}";
+  else if (problem === "valid-malformed-settings")
+    metadata.settings_json = "not JSON";
+  else if (problem === "valid-malformed-source") metadata.raw = "not JSON";
+  else if (problem === "valid-duplicate-source")
+    metadata.raw = '{"compiler":{},"compiler":{"version":"0.8.30"}}';
+  else if (problem === "missing-raw") metadata.raw = null;
   else if (problem === "missing-range") metadata.source_range = null;
   else if (problem === "valid-without-source") {
     metadata.raw = null;

@@ -1,9 +1,7 @@
+import { SOLC_JSON_LIMITS } from "./solcCompilerJson.js";
 import { describe, expect, it } from "vitest";
 import { solcArtifactSchema, type CompilerSelection } from "./solcArtifact.js";
-import {
-  SOLC_JSON_LIMITS,
-  selectSolcArtifact,
-} from "./solcArtifactSelection.js";
+import { selectSolcArtifact } from "./solcArtifactSelection.js";
 
 const selection: CompilerSelection = {
   source_unit: "src/雪~.sol",

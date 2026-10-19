@@ -1,4 +1,10 @@
-import { parseTree, visit, type Node, type ParseError } from "jsonc-parser";
+import type { Node } from "jsonc-parser";
+import {
+  child,
+  compilerMetadataFacts,
+  SOLC_JSON_LIMITS,
+  strictTree,
+} from "./solcCompilerJson.js";
 import {
   compilerSelectionSchema,
   type CompilerSelection,
@@ -12,22 +18,6 @@ export interface SolcArtifactSelectionError {
   readonly message: string;
   readonly compiler_diagnostics?: NonNullable<SolcArtifact["diagnostics"]>;
 }
-/** Pre-allocation ceilings within the existing 256 MiB EVM worker heap.
- * Node cost is conservatively estimated at 512 bytes: 65,536 nodes reserve
- * about 32 MiB per tree, leaving room for carrier text, metadata and inference.
- * This is an allocation estimate, not a measured process-memory guarantee.
- */
-export const SOLC_JSON_LIMITS = {
-  inputBytes: 4 * 1024 * 1024,
-  depth: 128,
-  nodes: 65_536,
-  estimatedBytesPerNode: 512,
-} as const;
-const strictOptions = {
-  disallowComments: true,
-  allowTrailingComma: false,
-  allowEmptyContent: false,
-};
 const failure = (
   reason: SolcArtifactSelectionError["reason"],
   message: string,
@@ -39,93 +29,9 @@ const range = (node: Node) => ({
 });
 const nullableRange = (node: Node | undefined) =>
   node === undefined ? null : range(node);
-const child = (node: Node | undefined, name: string): Node | undefined =>
-  node?.type === "object"
-    ? node.children?.find((property) => property.children?.[0]?.value === name)
-        ?.children?.[1]
-    : undefined;
 const properties = (node: Node): readonly Node[] => node.children ?? [];
 const pointer = (value: string): string =>
   value.replaceAll("~", "~0").replaceAll("/", "~1");
-
-/** Validate syntax, duplicate identities and depth before allocating the AST. */
-function strictTree(text: string): Result<Node, SolcArtifactSelectionError> {
-  let depth = 0;
-  let invalid = false;
-  let excessive: "depth" | "nodes" | null = null;
-  let nodes = 0;
-  const account = (count: number) => {
-    nodes += count;
-    if (nodes > SOLC_JSON_LIMITS.nodes) {
-      excessive = "nodes";
-      throw new Error("nodes");
-    }
-  };
-  const objects: Set<string>[] = [];
-  try {
-    visit(
-      text,
-      {
-        onObjectBegin: () => {
-          account(1);
-          if (++depth > SOLC_JSON_LIMITS.depth) {
-            excessive = "depth";
-            throw new Error("depth");
-          }
-          objects.push(new Set());
-          return true;
-        },
-        onObjectProperty: (name) => {
-          account(2); // Property node plus its string-key node.
-          const current = objects.at(-1);
-          if (current?.has(name)) invalid = true;
-          current?.add(name);
-        },
-        onObjectEnd: () => {
-          depth--;
-          objects.pop();
-        },
-        onArrayBegin: () => {
-          account(1);
-          if (++depth > SOLC_JSON_LIMITS.depth) {
-            excessive = "depth";
-            throw new Error("depth");
-          }
-          return true;
-        },
-        onArrayEnd: () => {
-          depth--;
-        },
-        onLiteralValue: () => {
-          account(1);
-        },
-        onError: () => {
-          invalid = true;
-        },
-      },
-      strictOptions,
-    );
-  } catch (cause) {
-    if (!excessive) throw cause;
-  }
-  if (excessive)
-    return failure(
-      "resource",
-      excessive === "depth"
-        ? `Compiler JSON nesting exceeds ${SOLC_JSON_LIMITS.depth} levels`
-        : `Compiler JSON exceeds ${SOLC_JSON_LIMITS.nodes} AST nodes`,
-    );
-  if (invalid)
-    return failure(
-      "format",
-      "Compiler JSON contains malformed syntax, comments or duplicate properties",
-    );
-  const errors: ParseError[] = [];
-  const tree = parseTree(text, errors, strictOptions);
-  return tree === undefined || errors.length > 0
-    ? failure("format", "Malformed compiler JSON")
-    : ok(tree);
-}
 
 function references(
   node: Node | undefined,
@@ -362,45 +268,26 @@ function compilerMetadata(
   metadataNode: Node | undefined,
   text: string,
 ): SolcArtifact["metadata"] {
-  let metadata: SolcArtifact["metadata"] = {
-    raw:
-      metadataNode?.type === "string"
-        ? (metadataNode.value as string)
-        : metadataNode === undefined
-          ? null
-          : text.slice(
-              metadataNode.offset,
-              metadataNode.offset + metadataNode.length,
-            ),
+  const raw =
+    metadataNode?.type === "string"
+      ? (metadataNode.value as string)
+      : metadataNode === undefined
+        ? null
+        : text.slice(
+            metadataNode.offset,
+            metadataNode.offset + metadataNode.length,
+          );
+  return {
+    raw,
     source_range: nullableRange(metadataNode),
-    compiler_version: null,
-    settings_json: null,
-    parse_status: metadataNode === undefined ? "absent" : "malformed",
+    ...(metadataNode?.type === "string" || metadataNode === undefined
+      ? compilerMetadataFacts(raw)
+      : {
+          parse_status: "malformed" as const,
+          compiler_version: null,
+          settings_json: null,
+        }),
   };
-  if (metadataNode?.type === "string") {
-    const metadataText = metadataNode.value as string;
-    const metadataTree = strictTree(metadataText);
-    if (!metadataTree.ok && metadataTree.error.reason === "resource")
-      return { ...metadata, parse_status: "resource-limited" };
-    if (metadataTree.ok && metadataTree.value.type === "object") {
-      const version = child(child(metadataTree.value, "compiler"), "version"),
-        settings = child(metadataTree.value, "settings");
-      metadata = {
-        ...metadata,
-        parse_status: "valid",
-        compiler_version:
-          version?.type === "string" ? (version.value as string) : null,
-        settings_json:
-          settings === undefined
-            ? null
-            : metadataText.slice(
-                settings.offset,
-                settings.offset + settings.length,
-              ),
-      };
-    }
-  }
-  return metadata;
 }
 
 function selectedContract(
