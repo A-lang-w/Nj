@@ -344,6 +344,7 @@ export const javaScriptWorkerStaticAnalysisSchema = z
           "cache-storage",
           "sqlite",
         ]),
+        interpretation: z.literal("candidate").exactOptional(),
         name: z.string().nullable(),
         mechanism: z.string(),
       }),
@@ -527,23 +528,29 @@ const coverage = z
       status: z.literal("complete"),
       omittedCount: z.literal(0),
       resourceLimits: z.array(resourceLimit).optional(),
+      widenedReturnedReferences: z.array(range).optional(),
     }),
     z.strictObject({
       status: z.literal("partial"),
       omittedCount: z.union([z.literal(0), z.null()]),
       resourceLimits: z.array(resourceLimit).optional(),
+      widenedReturnedReferences: z.array(range).optional(),
     }),
     z.strictObject({
       status: z.literal("failed"),
       omittedCount: z.null(),
       resourceLimits: z.array(resourceLimit).optional(),
+      widenedReturnedReferences: z.array(range).optional(),
     }),
   ])
   .transform((value) => {
-    const { resourceLimits, ...rest } = value;
+    const { resourceLimits, widenedReturnedReferences, ...rest } = value;
     return {
       ...rest,
       ...(resourceLimits === undefined ? {} : { resourceLimits }),
+      ...(widenedReturnedReferences === undefined
+        ? {}
+        : { widenedReturnedReferences }),
     };
   });
 const moduleLink = z
