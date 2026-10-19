@@ -1579,7 +1579,12 @@ inside the 30-minute job (the first attempt at most 15 minutes), so a hung or
 retried run ends with the verifier's failed receipt rather than the runner's
 kill. The framework builds its gateway and service-db
 images from `public.ecr.aws` on every fresh runner, and hosted runners share
-that registry's anonymous pull quota. The receipt's `agent_env_run` records the
+that registry's anonymous pull quota, so the lane first pulls the base images
+the pinned framework's Dockerfiles name from `mirror.gcr.io`, which serves the
+same Docker official images under the same digests, and names them as those
+Dockerfiles do (on Docker's containerd image store, so digest-pinned names
+resolve), as the framework's own CI does. The quota handling below covers
+anything still pulled from that registry. The receipt's `agent_env_run` records the
 last run whether it passed or failed, with `public_ecr_quota` set to
 `data_limit` or `rate` when that registry's `429 Too Many Requests` ended it.
 The data-transfer cap (`toomanyrequests: Data limit exceeded`) is counted per
