@@ -377,7 +377,8 @@ rea environment-export manifest.json --evidence capture.json ./grafana-example -
 
 The folder holds a `README.md` with the bundle's provenance, an env folder
 `envs/<name>/` with a `Dockerfile` that installs this exact `rea-agents`
-version and serves the copied `manifest.json` and `evidence.json` with
+version and serves the copied `manifest.json` and `evidence.json` (written
+readable by their owner only, since they hold captured content) with
 `environment-serve`, a Python verifier under `artifacts/check_<name>/` and the
 smoke task `tasks/smoke.json`. `--package-tarball` copies a packed `rea-agents`
 tarball into the env folder and installs it instead of the registry package,
