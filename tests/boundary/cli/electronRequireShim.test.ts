@@ -11,6 +11,148 @@ import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplicat
 // source so the regression does not depend on future bundler output changes.
 const bundle = `var t=(e=>typeof require<"u"?require:typeof Proxy<"u"?new Proxy(e,{get:(o,r)=>(typeof require<"u"?require:o)[r]}):e)(function(e){if(typeof require<"u")return require.apply(this,arguments);throw Error('Dynamic require of "'+e+'" is not supported')});var n=t("electron");new n.BrowserWindow({webPreferences:{nodeIntegration:!0,contextIsolation:!1}});n.ipcMain.handle("get-version",()=>"1.0.0");`;
 
+const helperMutationCases = [
+  ["class C{static{this.call.call=other}}", 0],
+  ["class C{static{this.call=other}}", 1],
+  ["const obj={__proto__:Function.prototype};obj.call.call=other;", 0],
+  [
+    "const obj={__proto__:Function.prototype};const copy={...obj};const value=copy.call??{};value.call=other;",
+    1,
+  ],
+  ["class C{constructor(){this.constructor.call.call=other}}new C();", 0],
+  ["class C{constructor(){this.call=other}}new C();", 1],
+  ['"use strict";arguments[2].require=other;', 0],
+  ['"use strict";arguments[2]={};arguments[2].require=other;', 1],
+  ["arguments=arguments;arguments[2].require=other;", 0],
+  ['Object.defineProperty(module.__proto__,"require",{enumerable:false});', 1],
+  ["module.require=module.require;", 1],
+  ["Object.assign(module,{require:module.require});", 1],
+  ["module.require &&= module.require;", 1],
+  ["Object.assign(module,0);", 1],
+  ['Object.assign(module,"abc");', 1],
+  [
+    'Object.defineProperty(module,"0",{set(value){this.require=other}});Object.assign(module,"abc");',
+    0,
+  ],
+  [
+    'var Q=(e=>typeof require<"u"?require:e)(function(){});const {missing,x:target=globalThis}={x:{},pattern:/x/};target.Q=other;',
+    1,
+    'new(Q("electron").BrowserWindow)({});',
+    "main.js",
+  ],
+  [
+    'var Q=(e=>typeof require<"u"?require:e)(function(){});const {prototype:{constructor:target=globalThis}}=function(){};target.Q=other;',
+    1,
+    'new(Q("electron").BrowserWindow)({});',
+    "main.js",
+  ],
+  [
+    'var Q=(e=>typeof require<"u"?require:e)(function(){});const {helper:target=globalThis}=class{static helper={}};target.Q=other;',
+    1,
+    'new(Q("electron").BrowserWindow)({});',
+    "main.js",
+  ],
+  [
+    'var Q=(e=>typeof require<"u"?require:e)(function(){});const {prototype:{mutate:ignored,constructor:target=globalThis}}=class{get mutate(){this.constructor=undefined;return 0}};target.Q=other;',
+    0,
+    'new(Q("electron").BrowserWindow)({});',
+    "main.js",
+  ],
+  [
+    'patch(Object.prototype);Object.defineProperty(module.__proto__,"require",{enumerable:false});',
+    0,
+  ],
+  [
+    "const target=Object.assign({},{helper:Function.prototype.call});target.helper.call=other;",
+    0,
+  ],
+  [
+    'const target={helper:{}};const descriptor=Object.getOwnPropertyDescriptor(target,"helper",target.helper=Function.prototype.call);descriptor.value.call=other;',
+    0,
+  ],
+  [
+    'var Q=(e=>typeof require<"u"?require:e)(function(){});Q ||= other;',
+    1,
+    'new(Q("electron").BrowserWindow)({});',
+  ],
+  [
+    'var Q=(e=>typeof require<"u"?require:e)(function(){});Q ??= other;',
+    1,
+    'new(Q("electron").BrowserWindow)({});',
+  ],
+  [
+    'var Q=(e=>typeof require<"u"?require:e)(function(){});const base={set value(v){this.Q=other}};base.value=0;const box={__proto__:base,set value(v){}};Reflect.set(box,"value",(delete box.value,0),globalThis);',
+    0,
+    'new(Q("electron").BrowserWindow)({});',
+    "main.js",
+  ],
+  [
+    'var Q=(e=>typeof require<"u"?require:e)(function(){});const box={set value(v){this.Q=other}};Object.assign(box,{value:0});',
+    1,
+    'new(Q("electron").BrowserWindow)({});',
+    "main.js",
+  ],
+  [
+    'var Q=(e=>typeof require<"u"?require:e)(function(){});patch(Object);const box={set value(v){this.Q=other}};Object.assign(box,{value:0});',
+    0,
+    'new(Q("electron").BrowserWindow)({});',
+    "main.js",
+  ],
+  [
+    'var Q=(e=>typeof require<"u"?require:e)(function(){});const {lastIndex:target=globalThis}=/x/;target.Q=other;',
+    1,
+    'new(Q("electron").BrowserWindow)({});',
+    "main.js",
+  ],
+  [
+    'var Q=(e=>typeof require<"u"?require:e)(function(){});class A{static root=globalThis;static get value(){return this.root}}class B extends A{static early=B.result;static root={};static get result(){return super.value}}B.early.Q=other;',
+    0,
+    'new(Q("electron").BrowserWindow)({});',
+    "main.js",
+  ],
+  [
+    'var Q=(e=>typeof require<"u"?require:e)(function(){});class A{static root=globalThis;static get value(){return this.root}}class B extends A{static root={};static late=B.result;static get result(){return super.value}}B.late.Q=other;',
+    1,
+    'new(Q("electron").BrowserWindow)({});',
+    "main.js",
+  ],
+  [
+    'var Q=(e=>typeof require<"u"?require:e)(function(){});',
+    1,
+    'new(Q.call(null,"electron").BrowserWindow)({});',
+  ],
+  [
+    'var Q=(e=>typeof require<"u"?require:e)(function(){});',
+    1,
+    'new(Q.apply(null,["electron"]).BrowserWindow)({});',
+  ],
+  [
+    'var Q=(e=>typeof require<"u"?require:e)(function(){});',
+    1,
+    'const load=Q.bind(null,"electron");new(load().BrowserWindow)({});',
+  ],
+  [
+    'Object.defineProperty(Array.prototype,"0",{set(value){value.call=other},configurable:true});const values=[null];values.length=0;values[0]=Function.prototype.call;',
+    0,
+  ],
+  [
+    "const holder=[()=>({__proto__:null})];holder.length=0;const o={__proto__:holder[0]?.()};o.toString.call.call=other;",
+    0,
+  ],
+  [
+    "function proto(flag){let value;if(flag)value={__proto__:null};return value}const o={__proto__:proto(false)};o.toString.call.call=other;",
+    0,
+  ],
+  [
+    "function proto(flag){if(flag)return {__proto__:null}}const o={__proto__:proto(false)};o.toString.call.call=other;",
+    0,
+  ],
+  [
+    "const holder={proto(){return {__proto__:null}}};holder.proto=()=>undefined;const o={__proto__:holder.proto()};o.toString.call.call=other;",
+    0,
+  ],
+] as const;
+
 cliTest(
   "recovers esbuild Electron windows and IPC through CLI and stdio MCP",
   async ({ cli }) => {
@@ -57,119 +199,12 @@ cliTest(
     const load =
       'new (require.call.call(require,null,"electron").BrowserWindow)({});';
     const connection = await connectLocalToolsMcp();
-    for (const [setup, windows, loader = load, filename = "main.cjs"] of [
-      ["class C{static{this.call.call=other}}", 0],
-      ["class C{static{this.call=other}}", 1],
-      ["const obj={__proto__:Function.prototype};obj.call.call=other;", 0],
-      [
-        "const obj={__proto__:Function.prototype};const copy={...obj};const value=copy.call??{};value.call=other;",
-        1,
-      ],
-      ["class C{constructor(){this.constructor.call.call=other}}new C();", 0],
-      ["class C{constructor(){this.call=other}}new C();", 1],
-      ['"use strict";arguments[2].require=other;', 0],
-      ['"use strict";arguments[2]={};arguments[2].require=other;', 1],
-      ["arguments=arguments;arguments[2].require=other;", 0],
-      [
-        'Object.defineProperty(module.__proto__,"require",{enumerable:false});',
-        1,
-      ],
-      ["module.require=module.require;", 1],
-      ["Object.assign(module,{require:module.require});", 1],
-      [
-        'patch(Object.prototype);Object.defineProperty(module.__proto__,"require",{enumerable:false});',
-        0,
-      ],
-      [
-        "const target=Object.assign({},{helper:Function.prototype.call});target.helper.call=other;",
-        0,
-      ],
-      [
-        'const target={helper:{}};const descriptor=Object.getOwnPropertyDescriptor(target,"helper",target.helper=Function.prototype.call);descriptor.value.call=other;',
-        0,
-      ],
-      [
-        'var Q=(e=>typeof require<"u"?require:e)(function(){});Q ||= other;',
-        1,
-        'new(Q("electron").BrowserWindow)({});',
-      ],
-      [
-        'var Q=(e=>typeof require<"u"?require:e)(function(){});Q ??= other;',
-        1,
-        'new(Q("electron").BrowserWindow)({});',
-      ],
-      [
-        'var Q=(e=>typeof require<"u"?require:e)(function(){});const base={set value(v){this.Q=other}};base.value=0;const box={__proto__:base,set value(v){}};Reflect.set(box,"value",(delete box.value,0),globalThis);',
-        0,
-        'new(Q("electron").BrowserWindow)({});',
-        "main.js",
-      ],
-      [
-        'var Q=(e=>typeof require<"u"?require:e)(function(){});const box={set value(v){this.Q=other}};Object.assign(box,{value:0});',
-        1,
-        'new(Q("electron").BrowserWindow)({});',
-        "main.js",
-      ],
-      [
-        'var Q=(e=>typeof require<"u"?require:e)(function(){});patch(Object);const box={set value(v){this.Q=other}};Object.assign(box,{value:0});',
-        0,
-        'new(Q("electron").BrowserWindow)({});',
-        "main.js",
-      ],
-      [
-        'var Q=(e=>typeof require<"u"?require:e)(function(){});const {lastIndex:target=globalThis}=/x/;target.Q=other;',
-        1,
-        'new(Q("electron").BrowserWindow)({});',
-        "main.js",
-      ],
-      [
-        'var Q=(e=>typeof require<"u"?require:e)(function(){});class A{static root=globalThis;static get value(){return this.root}}class B extends A{static early=B.result;static root={};static get result(){return super.value}}B.early.Q=other;',
-        0,
-        'new(Q("electron").BrowserWindow)({});',
-        "main.js",
-      ],
-      [
-        'var Q=(e=>typeof require<"u"?require:e)(function(){});class A{static root=globalThis;static get value(){return this.root}}class B extends A{static root={};static late=B.result;static get result(){return super.value}}B.late.Q=other;',
-        1,
-        'new(Q("electron").BrowserWindow)({});',
-        "main.js",
-      ],
-      [
-        'var Q=(e=>typeof require<"u"?require:e)(function(){});',
-        1,
-        'new(Q.call(null,"electron").BrowserWindow)({});',
-      ],
-      [
-        'var Q=(e=>typeof require<"u"?require:e)(function(){});',
-        1,
-        'new(Q.apply(null,["electron"]).BrowserWindow)({});',
-      ],
-      [
-        'var Q=(e=>typeof require<"u"?require:e)(function(){});',
-        1,
-        'const load=Q.bind(null,"electron");new(load().BrowserWindow)({});',
-      ],
-      [
-        'Object.defineProperty(Array.prototype,"0",{set(value){value.call=other},configurable:true});const values=[null];values.length=0;values[0]=Function.prototype.call;',
-        0,
-      ],
-      [
-        "const holder=[()=>({__proto__:null})];holder.length=0;const o={__proto__:holder[0]?.()};o.toString.call.call=other;",
-        0,
-      ],
-      [
-        "function proto(flag){let value;if(flag)value={__proto__:null};return value}const o={__proto__:proto(false)};o.toString.call.call=other;",
-        0,
-      ],
-      [
-        "function proto(flag){if(flag)return {__proto__:null}}const o={__proto__:proto(false)};o.toString.call.call=other;",
-        0,
-      ],
-      [
-        "const holder={proto(){return {__proto__:null}}};holder.proto=()=>undefined;const o={__proto__:holder.proto()};o.toString.call.call=other;",
-        0,
-      ],
-    ] as const) {
+    for (const [
+      setup,
+      windows,
+      loader = load,
+      filename = "main.cjs",
+    ] of helperMutationCases) {
       const root = await createTestTempDirectory(
         "rea-electron-class-receiver-",
       );

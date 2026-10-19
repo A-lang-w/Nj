@@ -725,10 +725,17 @@ const objectMayDefineDelegate = (
 ): boolean => {
   if (node === undefined) return true;
   node = unwrapJavaScriptExpression(node).node;
-  // Nullish assign sources have no own keys. Only erase an inert void source:
-  // an opaque operand can change the delegate before assign is invoked.
+  const literal = readExactJavaScriptLiteral(node);
+  // Exact non-string primitives have no own keys after boxing. Nonempty
+  // strings do: their indexed characters can invoke target setters.
   if (
-    t.isNullLiteral(node) ||
+    (literal.found &&
+      (typeof literal.value !== "string" || literal.value.length === 0)) ||
+    t.isBigIntLiteral(node) ||
+    (t.isUnaryExpression(node) &&
+      (node.operator === "+" || node.operator === "-") &&
+      (t.isNumericLiteral(node.argument) ||
+        (node.operator === "-" && t.isBigIntLiteral(node.argument)))) ||
     (t.isUnaryExpression(node, { operator: "void" }) &&
       readExactJavaScriptLiteral(node.argument).found) ||
     isUnshadowedGlobal(node, state, "undefined")
@@ -755,18 +762,59 @@ const objectMayDefineDelegate = (
   );
 };
 
+/** Boxed strings can only copy indices, but an installed setter can replace
+ * any delegate. Require the completed owner/escape snapshot before treating
+ * those writes as local data stores on the initial wrapper object. */
+const initialModuleAssignmentSettersAbsent = (
+  capture: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const escapes = semanticAmbientEscapeEffects(state);
+  if (!semanticFreshObjectFactsReady(state) || escapes === undefined)
+    return false;
+  const precedes = (node: t.Node | undefined): boolean =>
+    node !== capture &&
+    (node === undefined ||
+      !semanticEffectFollowsInitialCapture(capture, node, state));
+  const affectsOwner = (path: JavaScriptSemanticPropertyPath): boolean =>
+    [["commonjs-module"], ["global", "Object", "prototype"]].some((owner) =>
+      path
+        .slice(0, owner.length)
+        .every((key, index) =>
+          semanticPropertyPathKeyMatches(key, owner[index]!),
+        ),
+    );
+  return (
+    !state.opaqueEffects.globalSites.some(precedes) &&
+    !state.ambientWriteEffects.some(
+      (effect) => affectsOwner(effect.path) && precedes(effect.node),
+    ) &&
+    !escapes.some(
+      (effect) => affectsOwner(effect.path) && precedes(effect.node),
+    )
+  );
+};
+
 /** Literal assign sources expose data values at their creation captures. Only
  * the final own property is copied; unknown keys, accessors and prototype-setter
  * keys can have other effects and cannot certify an initial-value copy. */
 const assignedDelegateValues = (
   sources: readonly (t.Node | undefined)[],
   state: JavaScriptSemanticAnalysisState,
+  capture: t.Node,
 ): readonly t.Node[] | undefined => {
   const values: t.Node[] = [];
   for (const source of sources) {
     if (source === undefined) return undefined;
     const object = unwrapJavaScriptExpression(source).node;
     if (!t.isObjectExpression(object)) {
+      const literal = readExactJavaScriptLiteral(object);
+      if (
+        literal.found &&
+        typeof literal.value === "string" &&
+        initialModuleAssignmentSettersAbsent(capture, state)
+      )
+        continue;
       if (objectMayDefineDelegate(object, state, true)) return undefined;
       continue;
     }
@@ -1059,7 +1107,7 @@ export const semanticModuleDelegateWriteOwner = (
         return undefined;
       const values =
         wrapper && delegate === "require" && args !== undefined
-          ? assignedDelegateValues(args.slice(1), state)
+          ? assignedDelegateValues(args.slice(1), state, node)
           : undefined;
       // Possible native ownership retains writes. Suppressing one requires
       // completed proof that the selected callable and helpers stayed native.
@@ -1106,7 +1154,11 @@ export const semanticModuleDelegateWriteOwner = (
     // Defining an own __proto__ property does not invoke the legacy setter.
     return key !== "__proto__" || mutation?.kind === "set" ? owner : undefined;
   }
-  if (key === delegate && t.isAssignmentExpression(node, { operator: "=" }))
+  if (
+    key === delegate &&
+    t.isAssignmentExpression(node) &&
+    (node.operator === "=" || node.operator === "&&=")
+  )
     return {
       ...owner,
       delegateCopy: {

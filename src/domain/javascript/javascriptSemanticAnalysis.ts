@@ -1298,6 +1298,30 @@ function* indexPrototypeUncertaintySteps(
   ]);
   yield* traverseJavaScriptAstSteps(program, {
     enter: (node, parent) => {
+      if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+        const key = semanticStaticPropertyKey(node.property, node.computed);
+        // Before the alias graph is complete, an unresolved selection cannot
+        // certify that intrinsic prototypes stayed private. Retain uncertainty
+        // for physical, constructor-derived and computed prototype captures.
+        if (
+          key === null ||
+          key === "__proto__" ||
+          key === "constructor" ||
+          key === "prototype" ||
+          key === "getPrototypeOf"
+        )
+          taint("Object");
+      }
+      if (t.isObjectProperty(node) && t.isObjectPattern(parent)) {
+        const key = semanticStaticPropertyKey(node.key, node.computed);
+        if (
+          key === null ||
+          ["__proto__", "constructor", "prototype", "getPrototypeOf"].includes(
+            key,
+          )
+        )
+          taint("Object");
+      }
       const write = semanticWriteSiteTarget(node);
       if (write !== null) {
         for (const target of semanticWriteTargets(write)) {
