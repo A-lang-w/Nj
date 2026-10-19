@@ -4,7 +4,9 @@ import {
   analysisViewResultSchema,
   type AnalysisViewResult,
 } from "../../domain/analysisView/analysisView.js";
+import { scenarioCaptureRecords } from "../../domain/analysisView/scenarioCaptureRecords.js";
 import { readRecordedRequestLine } from "../../domain/analysisView/webNetworkRouteTemplates.js";
+import { browserScenarioCaptureSchema } from "../../domain/browserScenarioCapture.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,
@@ -49,12 +51,20 @@ export const REPLAY_BODY_LIMIT_BYTES = 256 * 1024;
 /** Base64 characters that decode to just over the replay limit, so a cut prefix still fills it. */
 const BASE64_PREFIX_CHARS = Math.ceil((REPLAY_BODY_LIMIT_BYTES + 4) / 3) * 4;
 
+/** A HAR inspected by inspect_web_network_capture, or a session recorded by capture_browser_scenario. */
+export type EnvironmentCaptureKind = "web-network-capture" | "browser-scenario";
+
 /** A manifest and the parent capture it cites, authenticated and cross-checked. */
 export interface EnvironmentSource {
   readonly manifest: EnvironmentManifest;
   readonly manifestEvidenceId: string;
   readonly evidenceId: string;
-  /** SHA-256 of the captured artifact, or null when the capture excluded it from Evidence. */
+  /** Which REA operation recorded the parent capture. */
+  readonly captureKind: EnvironmentCaptureKind;
+  /**
+   * SHA-256 of the captured artifact for a web network capture, or of the scenario definition for a
+   * browser scenario; null when the capture excluded it from Evidence.
+   */
   readonly captureSha256: string | null;
   /** Parent records cited by at least one tool, keyed by producer ordinal. */
   readonly exchanges: ReadonlyMap<number, RecordedExchange>;
@@ -191,7 +201,7 @@ const parseManifestEvidence = (
   return ok({ manifest: view.data, evidenceId: evidence.value.evidence_id });
 };
 
-/** Authenticate the evidence file and require complete capture Evidence. */
+/** Authenticate the evidence file and require complete capture Evidence of either kind. */
 const parseCaptureEvidence = (
   operation: string,
   value: unknown,
@@ -199,39 +209,53 @@ const parseCaptureEvidence = (
   {
     readonly records: readonly WebNetworkCaptureRecord[];
     readonly evidenceId: string;
+    readonly captureKind: EnvironmentCaptureKind;
     readonly captureSha256: string | null;
   },
   AnalysisError
 > => {
   const evidence = parseEvidenceFile(operation, "evidence", value);
   if (!evidence.ok) return evidence;
-  const capture = webNetworkCaptureSchema.safeParse(
-    evidence.value.normalized_result,
+  const { evidence_id: evidenceId, normalized_result: result } = evidence.value;
+  if (evidence.value.operation === "capture_browser_scenario") {
+    const scenario = browserScenarioCaptureSchema.safeParse(result);
+    const definition = z
+      .object({ scenario_sha256: z.string() })
+      .safeParse(evidence.value.parameters);
+    if (scenario.success)
+      return ok({
+        records: scenarioCaptureRecords(scenario.data).records,
+        evidenceId,
+        captureKind: "browser-scenario",
+        captureSha256: definition.success
+          ? definition.data.scenario_sha256
+          : null,
+      });
+  } else if (evidence.value.operation === "inspect_web_network_capture") {
+    const capture = webNetworkCaptureSchema.safeParse(result);
+    if (capture.success)
+      return ok({
+        records: capture.data.records,
+        evidenceId,
+        captureKind: "web-network-capture",
+        captureSha256: capture.data.artifact.sha256,
+      });
+  }
+  return err(
+    inputError(
+      operation,
+      [
+        {
+          path: ["evidence", "operation"],
+          reason: "invalid_value",
+          expected: "inspect_web_network_capture or capture_browser_scenario",
+          message:
+            "The evidence file must be complete inspect_web_network_capture or capture_browser_scenario Evidence.",
+        },
+      ],
+      "The evidence file is not web network capture or browser scenario Evidence.",
+    ),
   );
-  if (
-    evidence.value.operation !== "inspect_web_network_capture" ||
-    !capture.success
-  )
-    return err(
-      inputError(
-        operation,
-        [
-          {
-            path: ["evidence", "operation"],
-            reason: "invalid_value",
-            expected: "inspect_web_network_capture",
-            message:
-              "The evidence file must be complete inspect_web_network_capture Evidence.",
-          },
-        ],
-        "The evidence file is not web network capture Evidence.",
-      ),
-    );
-  return ok({
-    records: capture.data.records,
-    evidenceId: evidence.value.evidence_id,
-    captureSha256: capture.data.artifact.sha256,
-  });
 };
 
 /**
@@ -290,6 +314,7 @@ export const loadEnvironmentSource = (
     manifest: manifest.value.manifest,
     manifestEvidenceId: manifest.value.evidenceId,
     evidenceId: capture.value.evidenceId,
+    captureKind: capture.value.captureKind,
     captureSha256: capture.value.captureSha256,
     exchanges: indexExchanges(manifest.value.manifest, capture.value.records),
   });

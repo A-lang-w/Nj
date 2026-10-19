@@ -31,6 +31,75 @@ The third command serves that manifest. Both served files are complete REA
 Evidence JSON as the commands write it with `--format json`; the `evidence`
 member of `view.json` is the whole of `capture.json`.
 
+## From a browser scenario
+
+The capture can also come from REA itself: a
+[browser scenario](browser-scenario-contract.md) records a scripted session
+in a browser REA launches, and its Evidence is a manifest parent like a HAR
+inspection. Select the `network` event family and response bodies, and raise
+the body budget to the 256 KiB a replayed reply can carry:
+
+```json
+{
+  "browser": { "mode": "launch", "executable_path": "/usr/bin/chromium" },
+  "start_url": { "url": "http://127.0.0.1:5230/auth", "query": [] },
+  "secrets": [
+    { "secret_id": "admin_password", "environment_variable": "APP_PASSWORD" }
+  ],
+  "actions": [
+    {
+      "step_id": "user",
+      "action": "fill",
+      "locator": { "kind": "css", "selector": "input[name=username]" },
+      "value": { "source": "literal", "value": "admin" }
+    },
+    {
+      "step_id": "password",
+      "action": "fill",
+      "locator": { "kind": "css", "selector": "input[type=password]" },
+      "value": { "source": "secret", "secret_id": "admin_password" }
+    },
+    {
+      "step_id": "sign-in",
+      "action": "press",
+      "locator": { "kind": "css", "selector": "input[type=password]" },
+      "key": "Enter"
+    },
+    {
+      "step_id": "first-memo",
+      "action": "goto",
+      "destination": { "url": "http://127.0.0.1:5230/m/1", "query": [] },
+      "wait_until": "load"
+    }
+  ],
+  "capture": {
+    "events": ["network"],
+    "network": {
+      "request_body": true,
+      "response_body": true,
+      "header_values": false
+    },
+    "limits": { "max_network_body_bytes": 262144 }
+  }
+}
+```
+
+```sh
+APP_PASSWORD=… rea capture-browser-scenario scenario.json --format json > capture.json
+rea inspect-analysis-view view.json --format json > manifest.json   # view.json wraps capture.json as before
+rea environment-serve manifest.json --evidence capture.json --port 8765
+```
+
+Each network transaction becomes one record, in request order, and the
+record's ordinal is its zero-based position; a transaction whose URL carried a
+redacted secret is left unrepresented rather than templated, and one the
+capture cannot attribute to a single request and response is left
+unrepresented too. Tools are chosen by response media type, so a scenario that
+selected neither response bodies nor header values is refused. The browser
+scenario redacts credential headers and the secrets it declares; values the
+application returns in response bodies, such as session tokens, are kept, and
+the replayed body is the bytes the browser exposes for each response.
+
 ## What a manifest is
 
 An environment manifest is a projection of one application's recorded request
