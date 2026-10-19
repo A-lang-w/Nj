@@ -194,11 +194,17 @@ export const resolveWakaruLimiter = async (
       ? (options.defaultLimiter ?? DEFAULT_PRLIMIT)
       : undefined;
   if (candidate === undefined || !isAbsolute(candidate)) return undefined;
-  const usable = await access(candidate, constants.X_OK).then(
-    () => stat(candidate),
-    () => undefined,
-  );
-  return usable?.isFile() === true ? candidate : undefined;
+  // Both lookups are one probe: a default limiter that vanishes between
+  // `access()` and `stat()` (a package replacement, say) is absent, not
+  // unusable. Letting the second rejection escape would turn the documented
+  // unwrapped fallback into `capability_unavailable`.
+  const usable = await access(candidate, constants.X_OK)
+    .then(() => stat(candidate))
+    .then(
+      (stats) => stats.isFile(),
+      () => false,
+    );
+  return usable ? candidate : undefined;
 };
 
 /**
