@@ -82,6 +82,8 @@ export class ProcessOwnershipEvidenceOwner {
       readonly processGroupIds: ReadonlySet<number>;
       /** First identity/token/identity result before bounded token-only retries. */
       readonly scopeFacts?: readonly ProcessOwnershipFact[];
+      /** Native exit settled before candidate selection; these PIDs have no facts. */
+      readonly nativeExitedPids?: ReadonlySet<number>;
       /** Caller-selected lineage links preserve uncertain scope, never ownership proof. */
       readonly unverifiedLineageRelations?: ReadonlyMap<
         number,
@@ -222,6 +224,13 @@ export class ProcessOwnershipEvidenceOwner {
     };
 
     for (const [pid, previous] of this.#candidates) {
+      // A bounded native exit also retires an unresolved prior generation,
+      // even when the caller excludes this PID from subsequent token reads.
+      if (options.nativeExitedPids?.has(pid)) {
+        this.#candidates.delete(pid);
+        retiredPids.add(pid);
+        continue;
+      }
       const fact = factsByPid.get(pid);
       if (fact === undefined) continue;
       // Retire only this generation's current ledger entry. Darwin's

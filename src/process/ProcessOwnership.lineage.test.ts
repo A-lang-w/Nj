@@ -491,3 +491,264 @@ it.each(["replaced", "unavailable"] as const)(
     expect(signalGroup).not.toHaveBeenCalled();
   },
 );
+
+const exitedIdentity = (
+  row: ProcessTableEntry,
+  exit: "absent" | "zombie" | "dead",
+): ProcessIdentityObservation =>
+  exit === "absent"
+    ? { state: "absent", reason: "not-in-snapshot" }
+    : {
+        ...nativeIdentity(row),
+        lifecycle: { state: "observed", lifecycle: exit },
+      };
+
+it("keeps an exiting descendant whose termination cannot be confirmed", async () => {
+  const evidenceOwner = new ProcessOwnershipEvidenceOwner();
+  const ownership = {
+    runId: "run",
+    leaderPid: launcher.pid,
+    processGroupId: launcher.processGroupId,
+    sweepTokenOwnedProcesses: true as const,
+    evidenceOwner,
+  };
+  let omitted = false;
+  let identityReads = 0;
+  const signalGroup = vi.fn();
+  const host: ProcessOwnershipHost = {
+    listProcesses: async () => (omitted ? [] : [launcher, child]),
+    environment: async () => ({ REA_PROCESS_RUN_ID: "run" }),
+    processIdentities: async (rows) => {
+      identityReads += 1;
+      return new Map(
+        rows.map((row): [number, ProcessIdentityObservation] => [
+          row.pid,
+          row.pid === launcher.pid
+            ? omitted
+              ? { state: "absent", reason: "not-in-snapshot" }
+              : nativeIdentity(row)
+            : identityReads === 1
+              ? {
+                  ...nativeIdentity(row),
+                  lifecycle: { state: "observed", lifecycle: "exiting" },
+                }
+              : { state: "unavailable", reason: "identity denied" },
+        ]),
+      );
+    },
+    signalGroup,
+  };
+
+  await expect(
+    observeOwnedProcessLineage(ownership, host),
+  ).resolves.toMatchObject({
+    status: "unavailable",
+  });
+  omitted = true;
+  await expect(
+    cleanupOwnedProcessGroup(ownership, host),
+  ).resolves.toMatchObject({
+    cleaned: false,
+    failures: [
+      expect.objectContaining({
+        pid: child.pid,
+        reason: "process-identity-unavailable",
+      }),
+    ],
+  });
+  expect(evidenceOwner.candidates).toEqual([
+    expect.objectContaining({ pid: child.pid, identity: undefined }),
+  ]);
+  expect(signalGroup).not.toHaveBeenCalled();
+});
+
+it.each(
+  (["absent", "zombie", "dead"] as const).flatMap((exit) =>
+    (
+      [
+        { target: "launcher", retained: false, reparented: false },
+        { target: "launcher", retained: true, reparented: false },
+        { target: "descendant", retained: false, reparented: false },
+        { target: "descendant", retained: true, reparented: false },
+        { target: "descendant", retained: true, reparented: true },
+      ] as const
+    ).map((scenario) => ({ ...scenario, exit })),
+  ),
+)(
+  "does not retain a reused PID after native $exit of a $target (previously retained: $retained, reparented: $reparented)",
+  async ({ target, retained, reparented, exit }) => {
+    const stale = target === "launcher" ? launcher : child;
+    const replacement = { ...stale, parentPid: 1, processGroupId: 200 };
+    const evidenceOwner = new ProcessOwnershipEvidenceOwner();
+    const ownership = {
+      runId: "run",
+      leaderPid: launcher.pid,
+      processGroupId: launcher.processGroupId,
+      sweepTokenOwnedProcesses: true as const,
+      evidenceOwner,
+    };
+    let phase: "unavailable" | "absent" | "reused" = retained
+      ? "unavailable"
+      : "absent";
+    let identityReads = 0;
+    const tokenReads: number[] = [];
+    const signalGroup = vi.fn();
+    const host: ProcessOwnershipHost = {
+      listProcesses: async () =>
+        phase === "reused"
+          ? []
+          : [launcher, phase === "absent" && reparented ? replacement : child],
+      environment: async (pid) => {
+        tokenReads.push(pid);
+        return { REA_PROCESS_RUN_ID: pid === stale.pid ? "foreign" : "run" };
+      },
+      processIdentities: async (rows) => {
+        identityReads += 1;
+        return new Map(
+          rows.map((row): [number, ProcessIdentityObservation] => {
+            if (row.pid !== stale.pid)
+              return [
+                row.pid,
+                phase === "reused"
+                  ? { state: "absent", reason: "not-in-snapshot" }
+                  : nativeIdentity(row),
+              ];
+            if (phase === "unavailable")
+              return [
+                row.pid,
+                { state: "unavailable", reason: "identity denied" },
+              ];
+            if (phase === "absent" && identityReads === 1)
+              return [row.pid, exitedIdentity(row, exit)];
+            return [
+              row.pid,
+              { ...nativeIdentity(replacement), identity: "replacement" },
+            ];
+          }),
+        );
+      },
+      signalGroup,
+    };
+
+    if (retained) {
+      await observeOwnedProcessLineage(ownership, host);
+      expect(evidenceOwner.candidates).toContainEqual(
+        expect.objectContaining({ pid: stale.pid, identity: undefined }),
+      );
+      phase = "absent";
+      identityReads = 0;
+      tokenReads.length = 0;
+    }
+    const lineage = await observeOwnedProcessLineage(ownership, host);
+    const retainedAfterAbsence = evidenceOwner.candidates;
+    const tokenReadsAfterAbsence = [...tokenReads];
+    phase = "reused";
+
+    // The replacement remains alive with a foreign token after table omission.
+    // Cleanup must not wait for its exit or acquire authority from the stale row.
+    await expect(cleanupOwnedProcessGroup(ownership, host)).resolves.toEqual({
+      cleaned: true,
+      signaled: false,
+    });
+    expect(retainedAfterAbsence.map(({ pid }) => pid)).not.toContain(stale.pid);
+    expect(tokenReadsAfterAbsence).not.toContain(stale.pid);
+    expect(lineage.status).toBe(
+      target === "launcher" ? "unavailable" : "verified",
+    );
+    expect(evidenceOwner.candidates).toEqual([]);
+    expect(signalGroup).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["absent", "zombie", "dead"] as const)(
+  "retains an omitted descendant through a native %s ancestor whose PID is reused",
+  async (exit) => {
+    const detached = { ...grandchild, processGroupId: grandchild.pid };
+    const replacement = { ...child, parentPid: 1, processGroupId: 200 };
+    const evidenceOwner = new ProcessOwnershipEvidenceOwner();
+    const ownership = {
+      runId: "run",
+      leaderPid: launcher.pid,
+      processGroupId: launcher.processGroupId,
+      sweepTokenOwnedProcesses: true as const,
+      evidenceOwner,
+    };
+    let phase: "observing" | "omitted" | "exited" = "observing";
+    let identityReads = 0;
+    const signalGroup = vi.fn();
+    const host: ProcessOwnershipHost = {
+      listProcesses: async () =>
+        phase === "observing" ? [launcher, child, detached] : [replacement],
+      environment: async () => ({}),
+      runTokens: async (rows) =>
+        new Map(
+          rows.map(({ pid }) => [
+            pid,
+            pid === detached.pid
+              ? { state: "unavailable" as const, reason: "token denied" }
+              : {
+                  state: "readable" as const,
+                  runId: pid === launcher.pid ? "run" : "foreign",
+                },
+          ]),
+        ),
+      processIdentities: async (rows) => {
+        identityReads += 1;
+        return new Map(
+          rows.map((row): [number, ProcessIdentityObservation] => {
+            if (row.pid === child.pid)
+              return [
+                row.pid,
+                identityReads === 1
+                  ? exitedIdentity(row, exit)
+                  : { ...nativeIdentity(replacement), identity: "replacement" },
+              ];
+            if (
+              phase === "exited" ||
+              (phase === "omitted" && row.pid === launcher.pid)
+            )
+              return [row.pid, { state: "absent", reason: "not-in-snapshot" }];
+            return [row.pid, nativeIdentity(row)];
+          }),
+        );
+      },
+      signalGroup,
+    };
+
+    await expect(
+      observeOwnedProcessLineage(ownership, host),
+    ).resolves.toMatchObject({
+      status: "unavailable",
+    });
+    const retained = evidenceOwner.candidates;
+    phase = "omitted";
+    await expect(
+      cleanupOwnedProcessGroup(ownership, host),
+    ).resolves.toMatchObject({
+      cleaned: false,
+      failures: [
+        expect.objectContaining({
+          pid: detached.pid,
+          reason: "environment-unreadable",
+        }),
+      ],
+    });
+    expect(retained).toContainEqual(
+      expect.objectContaining({
+        pid: detached.pid,
+        identity: "start-102",
+        applicability: "related-ownership-unresolved",
+        scopeEvidence: "unverified-table-relation",
+      }),
+    );
+    expect(retained.map(({ pid }) => pid)).not.toContain(child.pid);
+
+    phase = "exited";
+    await expect(cleanupOwnedProcessGroup(ownership, host)).resolves.toEqual({
+      cleaned: true,
+      signaled: false,
+    });
+    expect(evidenceOwner.candidates).toEqual([]);
+    expect(signalGroup).not.toHaveBeenCalled();
+  },
+);

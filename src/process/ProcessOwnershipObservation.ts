@@ -302,10 +302,21 @@ const observeNativeOwnedProcessLineage = async (
     return nativeProcess ?? process;
   });
   const descendants = descendantsOf([ownership.leaderPid], candidateProcesses);
-  const candidates = [
+  const lineageRows = [
     ...(launcher === undefined ? [] : [launcher]),
     ...descendants,
   ];
+  // A retained candidate may have moved outside the current launcher lineage.
+  const nativeExitedPids = new Set(
+    processes
+      .filter(({ pid }) => processIdentityHasExited(initialIdentities.get(pid)))
+      .map(({ pid }) => pid),
+  );
+  // A native terminal fact settles the old candidate. Keep its ancestry link,
+  // but do not enroll a replacement that appears during later token reads.
+  const candidates = lineageRows.filter(
+    ({ pid }) => !nativeExitedPids.has(pid),
+  );
   const facts = await readProcessOwnershipFacts(candidates, host, undefined, {
     identityBefore: initialIdentities,
   });
@@ -321,8 +332,9 @@ const observeNativeOwnedProcessLineage = async (
       ownership.processGroupId,
       ...(ownership.sampledProcessGroupIds ?? []),
     ]),
+    nativeExitedPids,
     unverifiedLineageRelations: new Map(
-      candidates.map(({ pid, parentPid, processGroupId }) => [
+      lineageRows.map(({ pid, parentPid, processGroupId }) => [
         pid,
         { parentPid, processGroupId },
       ]),
