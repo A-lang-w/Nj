@@ -465,7 +465,12 @@ it("tracks every unresolved owner in a close aggregate until each root releases"
   if (first === undefined || second === undefined)
     throw new Error("Missing owned roots");
 
-  const aggregate = await provider.close().catch((cause: unknown) => cause);
+  const aggregate = (await provider
+    .close()
+    .catch((cause: unknown) => cause)) as {
+    cleanupIncomplete: boolean;
+    cleanupResources: readonly string[];
+  };
   expect(aggregate).toMatchObject({ cleanupIncomplete: true });
   expect(aggregate.cleanupResources).toEqual([first.path, second.path]);
 
