@@ -102,19 +102,15 @@ describe("Hermes anchored-entry consumers", () => {
       const source =
         "mcp_servers:\n  rea: &entry\n    command: old\n    env: &settings {MODE: 'off'}\n" +
         (childFirst ? child + parent : parent + child);
-      expect(
-        parseHermesConfigurationYaml(
-          editHermesConfigurationYaml(
-            source,
-            ["mcp_servers", "rea"],
-            undefined,
-          ),
-        ),
-      ).toEqual({
+      const result = parse(
+        editHermesConfigurationYaml(source, ["mcp_servers", "rea"], undefined),
+      );
+      expect(result).toEqual({
         mcp_servers: {},
         child: { MODE: "off" },
         parent: { command: "old", env: { MODE: "off" } },
       });
+      expect(result.child).toBe(result.parent.env);
     },
   );
 
