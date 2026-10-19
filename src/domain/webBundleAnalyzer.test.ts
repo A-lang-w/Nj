@@ -4770,6 +4770,96 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "prototype replacement invalidates native import promise",
+    'export {};const pending=import("ws");pending.__proto__={constructor:{},then(resolve){resolve({WebSocket:class{}})}};const{WebSocket:Socket}=await pending;new Socket(URL);',
+    false,
+  ],
+  [
+    "aliased prototype replacement invalidates native import promise",
+    'export {};const pending=import("ws");const alias=pending;alias.__proto__={constructor:{},then(resolve){resolve({WebSocket:class{}})}};const{WebSocket:Socket}=await pending;new Socket(URL);',
+    false,
+  ],
+  [
+    "setPrototypeOf invalidates native import promise",
+    'export {};const pending=import("ws");Object.setPrototypeOf(pending,{constructor:{},then(resolve){resolve({WebSocket:class{}})}});const{WebSocket:Socket}=await pending;new Socket(URL);',
+    false,
+  ],
+  [
+    "prototype replacement after completed await preserves capture",
+    'export {};const pending=import("ws");const{WebSocket:Socket}=await pending;pending.__proto__={constructor:{},then(resolve){resolve({WebSocket:class{}})}};new Socket(URL);',
+    true,
+  ],
+  [
+    "unrelated promise prototype replacement preserves capture",
+    'export {};const pending=import("ws");const other=import("ws");other.__proto__={constructor:{},then(resolve){resolve({WebSocket:class{}})}};const{WebSocket:Socket}=await pending;new Socket(URL);',
+    true,
+  ],
+  [
+    "native await skips changed own then with intact constructor",
+    'export {};const pending=import("ws");pending.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await pending;new Socket(URL);',
+    true,
+  ],
+  [
+    "async return cannot adopt prototype-replaced import identity",
+    'export {};const pending=import("ws");pending.__proto__={constructor:{},then(resolve){resolve({WebSocket:class{}})}};const{WebSocket:Socket}=await(async()=>pending)();new Socket(URL);',
+    false,
+  ],
+  [
+    "async await cannot preserve prototype-replaced import identity",
+    'export {};const pending=import("ws");pending.__proto__={constructor:{},then(resolve){resolve({WebSocket:class{}})}};const{WebSocket:Socket}=await(async()=>await pending)();new Socket(URL);',
+    false,
+  ],
+  [
+    "unmodified async return preserves adopted import identity",
+    'export {};const pending=import("ws");const{WebSocket:Socket}=await(async()=>pending)();new Socket(URL);',
+    true,
+  ],
+  [
+    "inert promise member write preserves native import identity",
+    'export {};const pending=import("ws");pending.note={constructor:{},then(resolve){resolve({WebSocket:class{}})}};const{WebSocket:Socket}=await pending;new Socket(URL);',
+    true,
+  ],
+  [
+    "rest copying ordinary method reaches later wait",
+    "(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {run(){}};yield undefined;}finally{new Socket(URL)}})();})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "rest copying async method reaches later wait",
+    "(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {async run(){}};yield undefined;}finally{new Socket(URL)}})();})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "rest copying generator method reaches later wait",
+    "(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {*run(){}};yield undefined;}finally{new Socket(URL)}})();})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "rest copying throwing method does not invoke body",
+    "(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {run(){throw 0}};yield undefined;}finally{new Socket(URL)}})();})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "throwing getter replacing method blocks later rest wait",
+    "(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {run(){},get run(){throw 0}};yield undefined;}finally{new Socket(URL)}})();})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "ordinary method replacing getter is inert rest data",
+    "(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {get run(){throw 0},run(){}};yield undefined;}finally{new Socket(URL)}})();})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "earlier throwing getter blocks method rest copy",
+    "(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {get fail(){throw 0},run(){}};yield undefined;}finally{new Socket(URL)}})();})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "method rest copy without a wait retains eager cleanup",
+    "(async()=>{const[{...rest},next=0]=(function*(){try{yield {run(){}};yield undefined;}finally{new Socket(URL)}})();})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
     "nested repeated activations join shared caller prefixes",
     "const connect=()=>new Socket(URL);const invoke=()=>{connect();connect()};const twice=()=>{invoke();invoke()};const Socket=globalThis.WebSocket;twice();twice();",
     true,

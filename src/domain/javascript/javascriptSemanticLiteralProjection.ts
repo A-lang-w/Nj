@@ -26,6 +26,7 @@ import type {
 type LiteralProjectionSlot =
   | { readonly kind: "value"; readonly node: t.Node }
   | { readonly kind: "accessor"; readonly node: t.ObjectMethod }
+  | { readonly kind: "inert-data" }
   | { readonly kind: "undefined" }
   | { readonly kind: "unknown" | "invalid" };
 
@@ -121,6 +122,10 @@ export const semanticLiteralProjectionSlot = (
   if (value !== undefined) return { kind: "value", node: value };
   if (t.isObjectExpression(container)) {
     const member = semanticFinalObjectMember(container, String(key));
+    // An ordinary method is an own data property: copying it cannot invoke its
+    // body. That read proof does not resolve the copied function's exact value.
+    if (t.isObjectMethod(member) && member.kind === "method")
+      return { kind: "inert-data" };
     if (t.isObjectMethod(member) && member.kind === "get")
       return { kind: "accessor", node: member };
     // Missing own data is undefined only when neither dynamic own keys nor a

@@ -21,11 +21,28 @@ import {
   createUnconditionalEvaluationProof,
   syntaxEvaluationCannotThrow,
 } from "./javascriptSymbolicControlFlow.js";
-import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
+import {
+  semanticPropertyPathKeyMatches,
+  type JavaScriptSemanticPropertyPath,
+} from "./javascriptSemanticPropertyPaths.js";
 import {
   semanticEffectTiming,
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
+
+/** Replacing a prototype link can change an inherited lookup, not just an own slot. */
+const promiseLookupMayChange = (
+  path: JavaScriptSemanticPropertyPath,
+  property: "constructor" | "then",
+): boolean => {
+  for (const [index, key] of path.entries()) {
+    const prototype = semanticPropertyPathKeyMatches(key, "__proto__");
+    if (index === path.length - 1)
+      return prototype || semanticPropertyPathKeyMatches(key, property);
+    if (!prototype) return false;
+  }
+  return true;
+};
 
 /** Native await skips Get(then) only while the promise's constructor identity is intact. */
 const nativePromiseAwaitIdentityIntact = (
@@ -65,11 +82,7 @@ const nativePromiseAwaitIdentityIntact = (
       binding !== undefined &&
       [...binding.memberWrites, ...binding.escapedPaths].every(
         ({ path, node: effect }) =>
-          !(
-            path.length === 0 ||
-            (path.length === 1 &&
-              semanticPropertyPathKeyMatches(path[0] ?? null, "constructor"))
-          ) ||
+          !promiseLookupMayChange(path, "constructor") ||
           semanticEffectTiming(capture, effect, state) === "after" ||
           semanticEffectTiming(read, effect, state) === "after",
       )
@@ -213,15 +226,10 @@ export const semanticPromiseSettlementDependency = (
             binding.escapedPaths.some(
               ({ path, node: effect }) =>
                 semanticEffectTiming(rawNode, effect, state) !== "after" &&
-                (path.length === 0 ||
-                  (path.length === 1 &&
-                    semanticPropertyPathKeyMatches(path[0] ?? null, "then"))),
+                promiseLookupMayChange(path, "then"),
             ) ||
-            binding.memberWrites.some(
-              ({ path }) =>
-                path.length === 0 ||
-                (path.length === 1 &&
-                  semanticPropertyPathKeyMatches(path[0] ?? null, "then")),
+            binding.memberWrites.some(({ path }) =>
+              promiseLookupMayChange(path, "then"),
             )
           );
         })
