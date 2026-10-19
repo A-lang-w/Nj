@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn as spawnPty } from "@lydell/node-pty";
 
-import { expect, it, onTestFinished, vi } from "vitest";
+import { beforeAll, expect, it, onTestFinished, vi } from "vitest";
 
 import {
   closeOwnedDebuggerSessions,
@@ -16,9 +16,20 @@ import {
 } from "../../../src/process/ownedDebuggerSession.js";
 import { ProviderProcessSupervisor } from "../../../src/process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
-import { systemProcessOwnershipHost } from "../../../src/process/ProcessOwnershipObservation.js";
+import {
+  prepareProcessOwnershipInspection,
+  systemProcessOwnershipHost,
+} from "../../../src/process/ProcessOwnershipObservation.js";
+import { resolveSwiftcCompileTimeoutMs } from "../../../src/process/DarwinProcessRunTokenReader.js";
 import { liveProcesses } from "../../../src/process/ProcessOwnershipProcessTree.js";
 import { readProcessRunTokens } from "../../../src/process/ProcessRunTokenObservations.js";
+
+// Teardown scans tokens even after every fixture child exits. Prepare the native
+// reader before launching fixtures, outside the ordinary cleanup hook deadline.
+beforeAll(
+  () => prepareProcessOwnershipInspection(),
+  resolveSwiftcCompileTimeoutMs() + 10_000,
+);
 
 const triggerDescendantOutput = (port: number): void => {
   const socket = connect(port, "127.0.0.1");
