@@ -220,6 +220,18 @@ const normalizeAdvertisedSchema = (value: unknown): SchemaNormalization => {
     }
   }
 
+  // Gemini rejects empty enum members; runtime still uses the canonical parser.
+  if (node.const === "") {
+    delete node.const;
+    if (node.type === undefined) node.type = "string";
+    changed = true;
+  }
+  if (Array.isArray(node.enum) && node.enum.includes("")) {
+    delete node.enum;
+    if (node.type === undefined) node.type = "string";
+    changed = true;
+  }
+
   if (typeof node.const === "boolean") {
     delete node.const;
     if (node.type === undefined) node.type = "boolean";
