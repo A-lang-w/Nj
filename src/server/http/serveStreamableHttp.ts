@@ -48,7 +48,7 @@ export interface ServeStreamableHttpOptions {
   ) => RequestTrackingMcpServer | Promise<RequestTrackingMcpServer>;
   /** Maximum time a client session handover waits for cancelled tool/completion handlers. */
   readonly sessionDrainTimeoutMs?: number;
-  /** Concurrent HTTP input/route dispatches (default 8); streamed responses hold no permit. */
+  /** Concurrent HTTP input/route work (default 8); unread uploads retain their permit. */
   readonly maxConcurrentDispatches?: number;
   readonly routes?: readonly StreamableHttpRoute[];
   readonly logger?: Logger;
@@ -349,8 +349,8 @@ export class McpSessionSlot {
     return session.handle(request);
   }
 
-  /** End the live session as part of server shutdown, so the instance's onclose runs; later requests are refused. */
-  async close(): Promise<void> {
+  /** Cancel and drain MCP work before any shared provider shutdown hook can run. */
+  async prepareShutdown(): Promise<void> {
     this.#closed = true;
     await this.#arming?.catch(() => undefined);
     const open = this.#live;
@@ -364,6 +364,11 @@ export class McpSessionSlot {
       await open?.transport.close();
     }
     if (this.#live === open) this.#live = undefined;
+  }
+
+  /** Finish shutdown once every consumer of the shared providers has settled. */
+  async close(): Promise<void> {
+    await this.prepareShutdown();
     // Without a live transport nothing fires the instance's hook; run it here, once.
     this.#shutdownHook();
   }
@@ -442,8 +447,8 @@ interface NodeRequestTarget {
   readonly logger: Logger | undefined;
 }
 
-/** Admit input processing before a Web Request, body reader or initialize tee exists. */
-const boundedNodeRequestHandler = (
+/** Own admission and route completion before a Web Request, body reader or initialize tee exists. */
+const createNodeRequestOwner = (
   target: NodeRequestTarget,
   capacity: number,
 ) => {
@@ -452,7 +457,16 @@ const boundedNodeRequestHandler = (
       "maxConcurrentDispatches must be a positive safe integer",
     );
   let active = 0;
-  return async (
+  const dispatches = new Set<Promise<Response>>();
+  const ownedTarget: NodeRequestTarget = {
+    ...target,
+    route: (webRequest) => {
+      const dispatch = Promise.resolve().then(() => target.route(webRequest));
+      dispatches.add(dispatch);
+      return dispatch.finally(() => dispatches.delete(dispatch));
+    },
+  };
+  const handle = async (
     request: IncomingMessage,
     response: ServerResponse,
   ): Promise<void> => {
@@ -478,23 +492,26 @@ const boundedNodeRequestHandler = (
       if (!reserved) return;
       reserved = false;
       active -= 1;
+      request.off("end", release);
+      request.off("close", release);
+      response.off("close", release);
     };
-    await serveNodeRequest(
-      {
-        ...target,
-        route: async (webRequest) => {
-          try {
-            return await target.route(webRequest);
-          } finally {
-            // SSE bodies and tool handlers can outlive input/route processing.
-            release();
-          }
-        },
-      },
-      request,
-      response,
-    ).finally(release);
+    await serveNodeRequest(ownedTarget, request, response, (hasUnreadBody) => {
+      if (!hasUnreadBody || request.destroyed || response.destroyed) {
+        release();
+        return;
+      }
+      // Connection: close takes effect only after the response ends. Retain
+      // unread input even when that response is an indefinitely open stream.
+      request.once("end", release);
+      request.once("close", release);
+      response.once("close", release);
+    }).finally(release);
   };
+  const drainDispatches = async (): Promise<void> => {
+    while (dispatches.size > 0) await Promise.allSettled([...dispatches]);
+  };
+  return { handle, drainDispatches };
 };
 
 /** Serve one MCP server, plus plain routes, over streamable HTTP until closed. */
@@ -536,14 +553,18 @@ export const serveStreamableHttp = async (
       : match.handle(request);
   };
   const httpServer = createHttpServer();
-  const handleRequest = boundedNodeRequestHandler(
+  const requests = createNodeRequestOwner(
     { route, origin: () => origin, logger },
     options.maxConcurrentDispatches ?? DEFAULT_MAX_CONCURRENT_DISPATCHES,
   );
-  const closeListener = async (): Promise<void> => {
-    stopped = true;
-    await closeHttpServer(httpServer);
-  };
+  const prepareTransportShutdown = stagedClose([
+    async () => {
+      stopped = true;
+      await closeHttpServer(httpServer);
+    },
+    () => slot?.prepareShutdown() ?? Promise.resolve(),
+    requests.drainDispatches,
+  ]);
   try {
     httpServer.listen(port, host);
     await once(httpServer, "listening");
@@ -556,7 +577,7 @@ export const serveStreamableHttp = async (
     url = endpointUrl(bound);
     origin = new URL(url).origin;
   } catch (cause: unknown) {
-    await closeListener().catch(() => undefined);
+    await prepareTransportShutdown().catch(() => undefined);
     throw new StreamableHttpListenError(cause);
   }
   allowedHosts = hostHeaderAllowlist(
@@ -564,7 +585,7 @@ export const serveStreamableHttp = async (
     bound !== null && typeof bound === "object" ? bound.address : host,
   );
   httpServer.on("request", (request, response) => {
-    void handleRequest(request, response);
+    void requests.handle(request, response);
   });
   // Bind failures already rejected the listening wait above; only later listener errors are reported.
   httpServer.on("error", (error) => options.onerror?.(error));
@@ -572,8 +593,8 @@ export const serveStreamableHttp = async (
   try {
     instance = await options.createMcpServer({ era: "legacy" });
   } catch (cause: unknown) {
-    // No instance exists yet, so the listener is the only resource to release.
-    await closeListener().catch(() => undefined);
+    // A route may have been admitted while the asynchronous factory was pending.
+    await prepareTransportShutdown().catch(() => undefined);
     throw cause;
   }
   protocolOf(instance).onerror = (error) =>
@@ -593,7 +614,10 @@ export const serveStreamableHttp = async (
   logger
     ?.child({}, { level: "info" })
     .info({ transport: "streamable-http", url }, "MCP transport listening");
-  const prepareShutdown = stagedClose([closeListener, () => live.close()]);
+  const prepareShutdown = stagedClose([
+    prepareTransportShutdown,
+    () => live.close(),
+  ]);
   const close = stagedClose([
     prepareShutdown,
     ...(closeInstance ? [() => instance.close()] : []),
@@ -620,6 +644,7 @@ const serveNodeRequest = async (
   target: NodeRequestTarget,
   request: IncomingMessage,
   response: ServerResponse,
+  onDispatchSettled: (hasUnreadBody: boolean) => void,
 ): Promise<void> => {
   const { route, origin, logger } = target;
   // A reply sent before an incoming body was fully consumed leaves the rest on the socket, which
@@ -651,7 +676,12 @@ const serveNodeRequest = async (
       );
       return;
     }
-    const webResponse = await route(webRequest);
+    let webResponse: Response;
+    try {
+      webResponse = await route(webRequest);
+    } finally {
+      onDispatchSettled(unreadBody());
+    }
     await writeWebResponse(webResponse, response, {
       closeConnection: unreadBody(),
     });

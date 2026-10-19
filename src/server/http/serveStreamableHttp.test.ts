@@ -925,6 +925,198 @@ it.each(["replacement", "DELETE"])(
   },
 );
 
+it("joins admitted route cleanup before rejecting a failed server factory", async () => {
+  const reserved = await start();
+  const url = new URL(reserved.served.url);
+  await reserved.served.close();
+  let factoryEntered!: () => void;
+  let failFactory!: () => void;
+  let routeEntered!: () => void;
+  let finalizing!: () => void;
+  let release!: () => void;
+  const factoryStarted = new Promise<void>((resolve) => {
+    factoryEntered = resolve;
+  });
+  const factoryGate = new Promise<void>((resolve) => {
+    failFactory = resolve;
+  });
+  const routeStarted = new Promise<void>((resolve) => {
+    routeEntered = resolve;
+  });
+  const cleanupStarted = new Promise<void>((resolve) => {
+    finalizing = resolve;
+  });
+  const cleanupGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const failure = new Error("provider unavailable");
+  let returned = false;
+  const starting = serveStreamableHttp({
+    host: "127.0.0.1",
+    port: Number(url.port),
+    createMcpServer: async () => {
+      factoryEntered();
+      await factoryGate;
+      throw failure;
+    },
+    routes: [
+      {
+        method: "GET",
+        path: "/pending",
+        handle: async (request) => {
+          routeEntered();
+          try {
+            await new Promise<void>((resolve) => {
+              request.signal.addEventListener("abort", () => resolve(), {
+                once: true,
+              });
+            });
+          } finally {
+            finalizing();
+            await cleanupGate;
+          }
+          return new Response("done");
+        },
+      },
+    ],
+  }).catch((cause: unknown) => {
+    returned = true;
+    return cause;
+  });
+  await factoryStarted;
+  const response = fetch(new URL("/pending", url)).catch(() => undefined);
+  await routeStarted;
+  try {
+    failFactory();
+    await cleanupStarted;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(returned).toBe(false);
+    release();
+    expect(await starting).toBe(failure);
+  } finally {
+    failFactory();
+    release();
+    await starting;
+    await response;
+  }
+});
+
+it.each(["prepareShutdown", "close"] as const)(
+  "waits for plain-route finalizers before provider hooks during %s",
+  async (method) => {
+    let entered!: () => void;
+    let finalizing!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const cleanupStarted = new Promise<void>((resolve) => {
+      finalizing = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { served, shutdownHooks } = await start({
+      routes: [
+        {
+          method: "GET",
+          path: "/pending",
+          handle: async (request) => {
+            entered();
+            try {
+              await new Promise<void>((resolve) => {
+                request.signal.addEventListener("abort", () => resolve(), {
+                  once: true,
+                });
+              });
+            } finally {
+              finalizing();
+              await gate;
+            }
+            return new Response("done");
+          },
+        },
+      ],
+    });
+    const response = fetch(new URL("/pending", served.url)).catch(
+      () => undefined,
+    );
+    await started;
+    let closed = false;
+    const closing = served[method]().then(() => {
+      closed = true;
+    });
+    try {
+      await cleanupStarted;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(closed).toBe(false);
+      expect(shutdownHooks()).toBe(0);
+      release();
+      await closing;
+      expect(shutdownHooks()).toBe(1);
+    } finally {
+      release();
+      await closing;
+      await response;
+    }
+  },
+);
+
+it("retains admission for an unread upload attached to a long response", async () => {
+  const { served } = await start({
+    maxConcurrentDispatches: 1,
+    routes: [
+      { method: "GET", path: "/health", handle: () => new Response("ok") },
+      {
+        method: "POST",
+        path: "/stream",
+        handle: async (request) => {
+          const reader = request.body?.getReader();
+          await reader?.read();
+          reader?.releaseLock();
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("data: ready\n\n"));
+              },
+            }),
+            { headers: { "content-type": "text/event-stream" } },
+          );
+        },
+      },
+    ],
+  });
+  let received = false;
+  const upload = httpRequest(
+    new URL("/stream", served.url),
+    {
+      method: "POST",
+      headers: { "content-length": "1024" },
+    },
+    (response) => {
+      response.once("data", () => {
+        received = true;
+      });
+      response.once("error", () => undefined);
+      response.resume();
+    },
+  );
+  upload.once("error", () => undefined);
+  upload.write("prefix");
+  try {
+    await vi.waitFor(() => {
+      expect(received).toBe(true);
+    });
+    expect((await fetch(new URL("/health", served.url))).status).toBe(503);
+    upload.destroy();
+    await vi.waitFor(async () => {
+      expect((await fetch(new URL("/health", served.url))).status).toBe(200);
+    });
+  } finally {
+    upload.destroy();
+  }
+});
+
 it("bounds HTTP input dispatch globally and releases admission when an upload leaves", async () => {
   const { served } = await start({
     maxConcurrentDispatches: 2,

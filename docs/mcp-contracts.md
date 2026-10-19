@@ -482,16 +482,19 @@ HTTP input/route dispatch is limited to eight concurrent requests by default,
 shared by MCP and plain routes. Excess requests receive `503` with a closing
 connection before their bodies are converted, read or cloned. An embedder can
 select `maxConcurrentDispatches`; the SDK's per-body size limit still applies.
-Response streams do not hold admission slots, so an idle SSE stream does not
-prevent later MCP calls. This bounds concurrent body processing, not total
-provider or process memory.
+Responses with fully read or bodyless requests do not hold admission slots,
+so an idle MCP SSE stream does not prevent later calls. An unread upload retains
+its slot until input finishes or either side closes, even with a long response.
+This bounds concurrent input work, not total provider or process memory.
 Provider-backed prompt completions use the same request owner and drain, so a
 cancelled completion cannot keep using providers after handover or shutdown.
 HTTP factories enable `RequestTrackingMcpServer` tracking so completion is tracked
 even when cancellation suppresses the SDK's reply; stdio retains the SDK's
 original callback behavior. Full server shutdown stops the listener and waits
-for owned handlers to settle before closing providers. It continues cleanup
+for MCP work and plain-route handler finalizers to settle before running provider
+shutdown hooks or closing providers. It continues cleanup
 automatically when they finish, including after a client handover timed out.
+Startup failure also joins any admitted route work before rejecting the factory.
 The newest client replaces an open session: an `initialize` that arrives
 while a session is open ends that session instead of being refused, because a
 client that exits without `DELETE` must not wedge the listener; the replaced
