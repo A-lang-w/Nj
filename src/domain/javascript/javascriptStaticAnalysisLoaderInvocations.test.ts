@@ -34,6 +34,35 @@ it.each(["require", "require.resolve", "require.main"])(
 const imported = "import {createRequire as make} from 'node:module';";
 it.each([
   [
+    "proven factory",
+    `${imported}const require=make(import.meta.url);require('node:path');`,
+    1,
+    "node:path",
+  ],
+  [
+    "opaque replacement factory",
+    "import*as mod from'node:module';mod.default.createRequire=replacement;const require=mod.default.createRequire(import.meta.url);require('node:path');",
+    0,
+    null,
+  ],
+] as const)(
+  "uses invocation proof for external source association after a %s",
+  (_name, source, associated, specifier) => {
+    const parsed = parseJavaScriptSource(source);
+    if (parsed === null) throw new Error("Expected factory proof fixture");
+    expect(
+      unshadowedReferenceSourceRequireCalls(parsed, "entry.mjs").size,
+    ).toBe(associated);
+    const analysis = analyzeJavaScriptStaticSource(source);
+    expect(analysis.parse_error_count).toBe(0);
+    expect(
+      analysis.references.filter(({ kind }) => kind === "require"),
+    ).toEqual([expect.objectContaining({ kind: "require", specifier })]);
+  },
+);
+
+it.each([
+  [
     "captured wrapper",
     "const load=require;load('node:path')",
     "node:path",

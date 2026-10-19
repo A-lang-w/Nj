@@ -254,22 +254,33 @@ const isSemanticCreateRequireBinding = (
 ): boolean => {
   if (binding.initializers.length !== 1) return false;
   const initializer = semanticStableInitializer(binding, state)?.node;
-  return hasSemanticCreateRequireFactoryOrigin(initializer, state);
+  return (
+    createRequireFactoryCallAt(initializer, state)?.loader === "create-require"
+  );
 };
+
+/** Retain the factory's actual certainty for both proof and eligibility consumers. */
+const createRequireFactoryCallAt = (
+  initializer: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+  factoryBindingIds: ReadonlySet<string> = new Set(),
+): Pick<JavaScriptRequireCallFact, "loader" | "sourceRelative"> | undefined =>
+  !t.isCallExpression(initializer)
+    ? undefined
+    : selectedRequireSourcesAt(
+        initializer.callee,
+        initializer,
+        state,
+        factoryBindingIds,
+        "factory",
+      );
 
 /** Eligibility for observable loader slots; an unknown factory is not invocation proof. */
 export const hasSemanticCreateRequireFactoryOrigin = (
   initializer: t.Node | undefined,
   state: JavaScriptSemanticAnalysisState,
 ): initializer is t.CallExpression => {
-  if (!t.isCallExpression(initializer)) return false;
-  const factory = selectedRequireSourcesAt(
-    initializer.callee,
-    initializer,
-    state,
-    new Set(),
-    "factory",
-  );
+  const factory = createRequireFactoryCallAt(initializer, state);
   return factory !== undefined && factory.loader !== "local";
 };
 
@@ -461,12 +472,10 @@ const selectedRequireSourcesAt = (
           selectedLoader = "create-require";
         }
       } else if (current.path.length === 0 || genericMember) {
-        const factory = selectedRequireSourcesAt(
-          node.callee,
+        const factory = createRequireFactoryCallAt(
           node,
           state,
           factoryBindingIds,
-          "factory",
         );
         if (factory !== undefined && factory.loader !== "local") {
           if (genericMember) {
