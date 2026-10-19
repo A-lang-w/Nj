@@ -96,7 +96,7 @@ selected language, entry, file digest, and verified source mapping. Register and
 calling conventions are analysis conventions, not a recovered source ABI.
 
 This lane does not interpret iNES headers, cartridge mappers, bank switching,
-or other console-specific memory layouts. 65C02 and 65816 programs need different
+or other console-specific memory layouts. 65C02 programs need different
 processor semantics and are not admitted as those variants. REA does not infer
 the CPU from the file suffix, guess the reset vector, or emulate the target.
 
