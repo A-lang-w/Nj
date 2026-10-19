@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/process/HopperLease.js";
 import { snapshotHopperRuntime } from "./lib/real-hopper-cleanup.mjs";
 import {
@@ -176,50 +177,52 @@ try {
 } catch (error) {
   failure = error;
 } finally {
-  try {
-    try {
-      if (opened) {
-        await call("close_binary");
-        const session = await call("binary_session");
-        assert.equal(session.open, false);
-      }
-    } finally {
-      try {
-        await client.close();
-      } finally {
-        await transport.close();
-      }
-    }
-    const sessionsAfter = [
-      ...(await snapshotHopperRuntime(
-        runtimeParent,
-        HOPPER_TARGET_LEASE_DIRECTORY,
-        ownedProcessIds,
-      )),
-    ].filter((path) => !sessionsBefore.has(path));
-    assert.deepEqual(sessionsAfter, []);
-    const privateSessionsAfter = [
-      ...(await snapshotHopperRuntime(
-        root,
-        HOPPER_TARGET_LEASE_DIRECTORY,
-        ownedProcessIds,
-      )),
-    ].filter((path) => !sessionsBefore.has(path));
-    assert.deepEqual(privateSessionsAfter, []);
-    const cleanup = await completeVerifierRun(run);
-    assertVerifierCleanupComplete(cleanup.process_lineage);
-    await rm(root, { recursive: true, force: true });
-    console.log(
-      JSON.stringify({
-        cleanup,
-        fixture_removed: root,
-        sessionsAfter,
-        privateSessionsAfter,
-      }),
-    );
-  } catch (error) {
-    if (failure !== undefined) console.error(failure);
-    throw error;
-  }
+  // Independent cleanup owners must all run, even when an earlier close or
+  // observation fails. Collect evidence before removing the owned fixture.
+  await closeVerifierResources(
+    [
+      async () => {
+        if (opened) {
+          await call("close_binary");
+          const session = await call("binary_session");
+          assert.equal(session.open, false);
+        }
+      },
+      () => client.close(),
+      () => transport.close(),
+      async () => {
+        const sessionsAfter = [
+          ...(await snapshotHopperRuntime(
+            runtimeParent,
+            HOPPER_TARGET_LEASE_DIRECTORY,
+            ownedProcessIds,
+          )),
+        ].filter((path) => !sessionsBefore.has(path));
+        console.log(JSON.stringify({ sessionsAfter }));
+        assert.deepEqual(sessionsAfter, []);
+      },
+      async () => {
+        const privateSessionsAfter = [
+          ...(await snapshotHopperRuntime(
+            root,
+            HOPPER_TARGET_LEASE_DIRECTORY,
+            ownedProcessIds,
+          )),
+        ].filter((path) => !sessionsBefore.has(path));
+        console.log(JSON.stringify({ privateSessionsAfter }));
+        assert.deepEqual(privateSessionsAfter, []);
+      },
+      async () => {
+        const cleanup = await completeVerifierRun(run);
+        console.log(JSON.stringify({ cleanup }));
+        assertVerifierCleanupComplete(cleanup.process_lineage);
+      },
+      async () => {
+        await rm(root, { recursive: true, force: true });
+        console.log(JSON.stringify({ fixture_removed: root }));
+      },
+    ],
+    failure,
+  );
 }
 if (failure !== undefined) throw failure;
