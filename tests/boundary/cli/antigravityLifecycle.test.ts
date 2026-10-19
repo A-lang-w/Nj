@@ -192,3 +192,65 @@ cliTest(
   },
   180_000,
 );
+
+for (const client of ["antigravity", "antigravity_cli"] as const)
+  cliTest(
+    `explicit ${client} registration works without installing a skill`,
+    async ({ cli }) => {
+      const home = await createTestTempDirectory("rea-antigravity-no-skill-");
+      const run = (arguments_: readonly string[]) =>
+        cli.run({
+          arguments: arguments_,
+          cwd: home,
+          environment: {
+            HOME: home,
+            USERPROFILE: home,
+            ...(process.env.REA_DARWIN_SWIFTC_PATH === undefined
+              ? {}
+              : { REA_DARWIN_SWIFTC_PATH: process.env.REA_DARWIN_SWIFTC_PATH }),
+            ...(process.env.SDKROOT === undefined
+              ? {}
+              : { SDKROOT: process.env.SDKROOT }),
+          },
+          timeoutMs: 60_000,
+        });
+      const setup = await run([
+        "setup",
+        "--client",
+        client,
+        "--skill=false",
+        "--yes",
+        "--json",
+      ]);
+      expect(setup.exitCode, setup.stdout + setup.stderr).toBe(0);
+      expect(setup.json).toMatchObject({ status: "ready" });
+      const doctor = await run(["doctor", "--client", client, "--json"]);
+      expect(doctor.exitCode, doctor.stdout + doctor.stderr).toBe(0);
+      expect(doctor.json).toMatchObject({
+        identity: {
+          registrations: expect.arrayContaining([
+            expect.objectContaining({ client, state: "aligned" }),
+          ]),
+        },
+      });
+      for (const directory of [
+        join(home, ".gemini", "config", "skills"),
+        join(home, ".gemini", "antigravity-cli"),
+      ])
+        await expect(access(directory)).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      const configuration = join(home, ".gemini", "config", "mcp_config.json");
+      await writeFile(configuration, "{");
+      const invalid = await run(["doctor", "--client", client, "--json"]);
+      expect(invalid.exitCode, invalid.stdout + invalid.stderr).toBe(1);
+      expect(invalid.json).toMatchObject({
+        identity: {
+          registrations: expect.arrayContaining([
+            expect.objectContaining({ client, state: "invalid" }),
+          ]),
+        },
+      });
+    },
+    120_000,
+  );

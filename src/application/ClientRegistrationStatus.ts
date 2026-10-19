@@ -104,6 +104,8 @@ const registrationSchema = z
   .passthrough();
 
 interface ClientRegistrationReadOptions {
+  /** Explicit caller scope may inspect registrations without installation evidence. */
+  readonly clientIds?: readonly string[];
   readonly platform?: NodeJS.Platform;
   readonly environment?: NodeJS.ProcessEnv;
   readonly resources?: ArtifactResourceScope;
@@ -156,18 +158,20 @@ export const readClientRegistrationInspections = async (
       });
       continue;
     }
-    const presence = await clientEvidencePresent(client);
-    if (!presence.ok) {
-      record({
-        client: client.name,
-        config_path: presence.error.path,
-        command: [],
-        state: "invalid",
-        remediation: presence.error.detail,
-      });
-      continue;
+    if (options.clientIds?.includes(client.name) !== true) {
+      const presence = await clientEvidencePresent(client);
+      if (!presence.ok) {
+        record({
+          client: client.name,
+          config_path: presence.error.path,
+          command: [],
+          state: "invalid",
+          remediation: presence.error.detail,
+        });
+        continue;
+      }
+      if (!presence.value) continue;
     }
-    if (!presence.value) continue;
     const manualRemediation = manualRegistrationRemediation(client.name);
     if (client.format === "unsupported") {
       if (manualRemediation !== undefined)
