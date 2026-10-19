@@ -568,4 +568,3 @@ const validateSqliteInput = (input: InspectSqliteDatabaseInput): void => {
       },
     ]);
 };
-
