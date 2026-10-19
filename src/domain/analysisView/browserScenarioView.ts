@@ -420,7 +420,7 @@ export const projectBrowserScenarioView = (
           path: ["view"],
           reason: "invalid_value",
           message:
-            "Browser scenario captures support summary and browser-scenario views.",
+            "Browser scenario captures support summary, browser-scenario and environment-manifest views.",
         },
       ]),
     );
