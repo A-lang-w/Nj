@@ -799,6 +799,35 @@ describe("advertised empty-string literals", () => {
     expect(advertised.properties.alias).toEqual({ $ref: "#/properties/path" });
   });
 
+  it("composes overlapping parent and child reference writes", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        a: { $ref: "#/default/payload" },
+        b: { $ref: "#/default" },
+      },
+      default: { const: "", payload: { const: "" } },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.default).toEqual({
+      type: "string",
+      payload: { type: "string" },
+    });
+  });
+
+  it("resolves plain-name fragments to dynamic anchors", () => {
+    const canonical = {
+      $defs: { empty: { $dynamicAnchor: "empty", type: "string", const: "" } },
+      type: "object",
+      properties: { value: { not: { $ref: "#empty" } } },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.properties).toEqual({ value: {} });
+    expect(advertised.$defs).toEqual({
+      empty: { $dynamicAnchor: "empty", type: "string" },
+    });
+  });
+
   it("does not resolve references across nested resource boundaries", () => {
     const canonical = {
       $defs: { empty: { type: "string", const: "" } },

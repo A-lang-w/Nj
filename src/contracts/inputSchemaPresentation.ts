@@ -56,7 +56,8 @@ const findSchemaAnchor = (
       return undefined;
     }
     if (!isObject(node)) return undefined;
-    if (node.$anchor === name) return path;
+    // Draft 2020-12: a plain-name fragment matches $anchor or $dynamicAnchor.
+    if (node.$anchor === name || node.$dynamicAnchor === name) return path;
     for (const [key, child] of Object.entries(node)) {
       if (
         !schemaMaps.has(key) &&
@@ -676,6 +677,9 @@ const normalizeReferencedTargets = (
       : result.schema;
     writes.push([resolved.tokens, replacement]);
   }
+  // Apply shallow writes first so a parent replacement cannot restore an
+  // un-widened descendant; deeper writes then override their own positions.
+  writes.sort((a, b) => a[0].length - b[0].length);
   for (const [tokens, replacement] of writes)
     assignAtPath(advertised, tokens, replacement);
 };
