@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import {
   analyzeWebBundleScript,
@@ -12,6 +13,7 @@ import {
   webBundleWorkerFileNames,
   webBundleWorkerFrameSchema,
   webBundleWorkerManifestSchema,
+  webBundleWorkerRequestSchema,
   webBundleWorkerScriptSchema,
   type WebBundleWorkerFrame,
 } from "../browser/WebBundleAnalysisWorkerProtocol.js";
@@ -55,31 +57,60 @@ const execute = async (): Promise<void> => {
   const { script_bytes: scriptBytes } = webBundleWorkerManifestSchema.parse(
     await readJson(join(root, WEB_BUNDLE_WORKER_MANIFEST), manifestBytes),
   );
-  for (let index = start; index < scriptBytes.length; index += 1) {
-    await send({ kind: "start", index });
-    const files = webBundleWorkerFileNames(index);
-    const script = webBundleWorkerScriptSchema.parse(
-      await readJson(join(root, files.script), scriptBytes[index] ?? 0),
-    );
-    if (!isIncludedScript(script))
-      throw new TypeError("Web bundle worker requires included script source");
-    const text = JSON.stringify(analyzeWebBundleScript(script));
-    const bytes = Buffer.byteLength(text);
-    if (bytes > resultBytes) {
-      await send({ kind: "oversized", index, bytes });
-      continue;
+  const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  const requests = input[Symbol.asyncIterator]();
+  try {
+    await send({ kind: "ready" });
+    for (let index = start; index < scriptBytes.length; index += 1) {
+      const next = await requests.next();
+      if (next.done || Buffer.byteLength(next.value) > LIMITS.frameBytes)
+        throw new TypeError(
+          "Web bundle worker request is missing or oversized",
+        );
+      const raw: unknown = JSON.parse(next.value);
+      const request = webBundleWorkerRequestSchema.parse(raw);
+      if (request.index !== index)
+        throw new TypeError(
+          "Web bundle worker request names an unexpected script",
+        );
+      await analyzeScript(root, index, scriptBytes[index] ?? 0, resultBytes);
     }
-    await writeFile(join(root, files.facts), text, {
-      flag: "wx",
-      mode: 0o600,
-    });
-    await send({
-      kind: "done",
-      index,
-      bytes,
-      sha256: createHash("sha256").update(text).digest("hex"),
-    });
+  } finally {
+    input.close();
+    process.stdin.pause();
   }
+};
+
+/** Release the current script's source and facts before waiting for admission. */
+const analyzeScript = async (
+  root: string,
+  index: number,
+  scriptBytes: number,
+  resultBytes: number,
+): Promise<void> => {
+  await send({ kind: "start", index });
+  const files = webBundleWorkerFileNames(index);
+  const script = webBundleWorkerScriptSchema.parse(
+    await readJson(join(root, files.script), scriptBytes),
+  );
+  if (!isIncludedScript(script))
+    throw new TypeError("Web bundle worker requires included script source");
+  const text = JSON.stringify(analyzeWebBundleScript(script));
+  const bytes = Buffer.byteLength(text);
+  if (bytes > resultBytes) {
+    await send({ kind: "oversized", index, bytes });
+    return;
+  }
+  await writeFile(join(root, files.facts), text, {
+    flag: "wx",
+    mode: 0o600,
+  });
+  await send({
+    kind: "done",
+    index,
+    bytes,
+    sha256: createHash("sha256").update(text).digest("hex"),
+  });
 };
 
 await execute();

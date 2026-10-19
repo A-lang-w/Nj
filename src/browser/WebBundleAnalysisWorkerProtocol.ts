@@ -8,7 +8,7 @@ import { JAVASCRIPT_ANALYSIS_WORKER_DEFAULTS } from "../javascript/analysis/Java
 export const WEB_BUNDLE_ANALYSIS_WORKER_LIMITS = {
   heapMb: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.heapMb,
   scriptTimeoutMs: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.timeoutMs,
-  /** Worker launch and script-file reads, before a script's analysis starts. */
+  /** Worker initialization before the parent admits any script. */
   startupTimeoutMs: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.timeoutMs,
   resultBytes: JAVASCRIPT_ANALYSIS_WORKER_DEFAULTS.checkpointBytes,
   frameBytes: 4 * 1024,
@@ -25,8 +25,15 @@ export const webBundleWorkerScriptSchema =
 
 const index = z.number().int().min(0);
 
+/** The parent admits exactly one script under an already-running deadline. */
+export const webBundleWorkerRequestSchema = z.strictObject({
+  kind: z.literal("analyze"),
+  index,
+});
+
 /** Control frames carry indexes and digests only; facts travel in private files. */
 export const webBundleWorkerFrameSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("ready") }),
   z.strictObject({ kind: z.literal("start"), index }),
   z.strictObject({
     kind: z.literal("done"),

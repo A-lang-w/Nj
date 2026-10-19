@@ -3,7 +3,6 @@ import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -12,10 +11,8 @@ import {
   AnalysisOutputError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
-import type { JsonValue } from "../domain/jsonValue.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { err, ok, type Result } from "../domain/result.js";
 import type { IncludedScript } from "../domain/webBundleAnalyzerInspection.js";
 import {
   webBundleScriptFactsSchema,
@@ -24,7 +21,6 @@ import {
 import { javaScriptRuntime } from "../domain/runtimeVersion.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../process/JavaScriptWorkerMemoryLimit.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
-import { prepareProcessOwnershipInspection } from "../process/ProcessOwnershipObservation.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { PrivateRuntimeRootUnavailableError } from "../process/PrivateRuntimeRootUnavailableError.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
@@ -39,6 +35,7 @@ import {
   WEB_BUNDLE_WORKER_MANIFEST,
   webBundleWorkerFileNames,
   webBundleWorkerFrameSchema,
+  webBundleWorkerRequestSchema,
   type WebBundleWorkerFrame,
 } from "./WebBundleAnalysisWorkerProtocol.js";
 
@@ -73,86 +70,11 @@ export interface WebBundleScriptAnalysisFailure {
   readonly completed?: readonly WebBundleScriptOutcome[];
 }
 
-/** Analyze included scripts in capture order, one outcome per script. */
-export type WebBundleScriptAnalyzer = (
-  scripts: readonly IncludedScript[],
-  options: ExecutionOptions,
-) => Promise<Result<WebBundleScriptOutcome[], WebBundleScriptAnalysisFailure>>;
-
-/** Owners whose process or private root release failed; retried before reuse. */
-const pendingCleanup = new Set<OwnedWebBundleWorker>();
-
-/**
- * Run static analysis in an owned worker with heap and per-script time bounds.
- * A script that exhausts a bound is reported as resource-limited and analysis
- * resumes with the next script in a replacement worker.
- */
-export const analyzeWebBundleScripts = async (
-  scripts: readonly IncludedScript[],
-  options: ExecutionOptions,
-  dependencies: WebBundleAnalysisWorkerDependencies = {},
-): Promise<
-  Result<WebBundleScriptOutcome[], WebBundleScriptAnalysisFailure>
-> => {
-  const signal = options.signal;
-  if (scripts.length === 0 && pendingCleanup.size === 0) return ok([]);
-  try {
-    await (dependencies.prepareOwnership ?? prepareProcessOwnershipInspection)(
-      signal,
-    );
-  } catch (cause: unknown) {
-    return err({
-      error:
-        signal?.aborted === true
-          ? new AnalysisCancelledError(OPERATION, { cause: signal.reason })
-          : new ProviderAdapterError(PROVIDER, OPERATION, {
-              cause,
-              diagnostics: {
-                error_message: message(cause),
-                phase: "process_ownership_preparation",
-              },
-            }),
-    });
-  }
-  for (const owner of pendingCleanup) {
-    const failure = await owner.close(null);
-    if (failure !== undefined) return err({ error: failure });
-  }
-  if (scripts.length === 0) return ok([]);
-  const worker = new OwnedWebBundleWorker(scripts, signal, dependencies);
-  let result: Result<WebBundleScriptOutcome[], AnalysisError>;
-  try {
-    result = ok(await worker.run());
-  } catch (cause: unknown) {
-    result = err(worker.failure(cause));
-  }
-  const cleanup = await worker.close(result.ok ? null : result.error.message);
-  const completed = result.ok ? { completed: result.value } : {};
-  if (cleanup !== undefined) return err({ error: cleanup, ...completed });
-  if (!result.ok) return err({ error: result.error });
-  return signal?.aborted === true
-    ? err({
-        error: new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
-        ...completed,
-      })
-    : result;
-};
-
-/** Cleanup failure that retains the worker owner for a later retry. */
-export class WebBundleAnalysisCleanupFailure extends ProviderCleanupError {
-  constructor(
-    readonly cleanupOwner: { close(previousError: string | null): unknown },
-    resources: readonly string[],
-    diagnostics: Readonly<Record<string, JsonValue>>,
-  ) {
-    super(PROVIDER, resources, diagnostics, { operation: OPERATION });
-  }
-}
-
 /** A worker stop that could not be verified; ownership stays with the owner. */
 class WorkerReleaseFailure extends Error {}
 
-class OwnedWebBundleWorker {
+/** One analysis run, retained by its provider until process and root release succeed. */
+export class OwnedWebBundleWorker {
   readonly #runId = `rea-web-bundle-${randomUUID()}`;
   readonly #limits: {
     readonly [key in keyof typeof WEB_BUNDLE_ANALYSIS_WORKER_LIMITS]: number;
@@ -167,6 +89,10 @@ class OwnedWebBundleWorker {
   #processError: string | undefined;
   #deadline: ProviderStartupDeadline | undefined;
   #wake: (() => void) | undefined;
+  readonly #onStdinError = (cause: Error): void => {
+    this.#processError ??= cause.message;
+    this.#wake?.();
+  };
   readonly #onStdout = (chunk: Buffer | string): void => {
     try {
       this.#pending +=
@@ -177,7 +103,8 @@ class OwnedWebBundleWorker {
         this.#pending = this.#pending.slice(newline + 1);
         if (
           Buffer.byteLength(line) > this.#limits.frameBytes ||
-          this.#frames.length >= 2 * this.scripts.length
+          // One ready frame, or start + terminal for the single admitted script.
+          this.#frames.length >= 2
         )
           throw new RangeError("Web bundle worker exceeded its frame budget");
         const raw: unknown = JSON.parse(line);
@@ -249,48 +176,81 @@ class OwnedWebBundleWorker {
       const index = outcomes.length;
       const script = this.scripts[index];
       if (script === undefined) throw new TypeError("Script index is invalid");
-      const started = await this.#next(this.#limits.startupTimeoutMs);
-      if (started === "timeout")
-        throw new AnalysisTimeoutError(
-          OPERATION,
-          this.#limits.startupTimeoutMs,
-        );
-      // An exit before a script starts is not attributable to that script.
-      if (started === "exited") throw this.#exitFailure(index);
-      if (started.kind !== "start")
-        throw new AnalysisOutputError(
-          OPERATION,
-          "Web bundle worker reported a script before starting it",
-        );
-      if (started.index !== index)
-        throw new AnalysisOutputError(
-          OPERATION,
-          "Web bundle worker started an unexpected script",
-        );
-      const finished = await this.#next(this.#limits.scriptTimeoutMs);
-      if (finished === "timeout" || finished === "exited") {
-        const limited = this.#limitedOutcome(script, finished);
-        if (limited === undefined) throw this.#exitFailure(index);
-        await this.#release();
-        outcomes.push(limited);
-        return;
-      }
-      if (finished.kind === "start" || finished.index !== index)
-        throw new AnalysisOutputError(
-          OPERATION,
-          "Web bundle worker reported an unexpected script",
-        );
       outcomes.push(
-        finished.kind === "oversized"
-          ? {
-              status: "resource_limited",
-              script_key: script.script_key,
-              resource: "capacity",
-              reason: `Static analysis facts for this script (${String(finished.bytes)} bytes) exceed the ${String(this.#limits.resultBytes)}-byte per-script result budget; its findings were omitted.`,
-            }
-          : await this.#readFacts(script, finished),
+        await this.#withinDeadline(this.#limits.scriptTimeoutMs, (deadline) =>
+          this.#analyzeScript(script, index, deadline),
+        ),
       );
+      if (this.#supervisor === undefined) return;
     }
+  }
+
+  /** Admit a script only after its deadline exists; start/done share that budget. */
+  async #analyzeScript(
+    script: IncludedScript,
+    index: number,
+    deadline: ProviderStartupDeadline,
+  ): Promise<WebBundleScriptOutcome> {
+    this.#check();
+    const stdin = this.#supervisor?.launch.process.stdin;
+    if (stdin === undefined || stdin === null)
+      throw new TypeError("Web bundle worker has no writable request stream");
+    const request = webBundleWorkerRequestSchema.parse({
+      kind: "analyze",
+      index,
+    });
+    await new Promise<void>((resolve, reject) => {
+      stdin.write(`${JSON.stringify(request)}\n`, (error) =>
+        error === null || error === undefined ? resolve() : reject(error),
+      );
+    });
+    const started = await this.#next(deadline);
+    if (started === "timeout")
+      return this.#stopLimitedScript(script, index, started);
+    // An exit before a script starts is not attributable to that script.
+    if (started === "exited") throw this.#exitFailure(index);
+    if (started.kind !== "start")
+      throw new AnalysisOutputError(
+        OPERATION,
+        "Web bundle worker reported a script before starting it",
+      );
+    if (started.index !== index)
+      throw new AnalysisOutputError(
+        OPERATION,
+        "Web bundle worker started an unexpected script",
+      );
+    const finished = await this.#next(deadline);
+    if (finished === "timeout" || finished === "exited") {
+      return this.#stopLimitedScript(script, index, finished);
+    }
+    if (
+      finished.kind === "ready" ||
+      finished.kind === "start" ||
+      finished.index !== index
+    )
+      throw new AnalysisOutputError(
+        OPERATION,
+        "Web bundle worker reported an unexpected script",
+      );
+    return finished.kind === "oversized"
+      ? {
+          status: "resource_limited",
+          script_key: script.script_key,
+          resource: "capacity",
+          reason: `Static analysis facts for this script (${String(finished.bytes)} bytes) exceed the ${String(this.#limits.resultBytes)}-byte per-script result budget; its findings were omitted.`,
+        }
+      : this.#readFacts(script, finished);
+  }
+
+  async #stopLimitedScript(
+    script: IncludedScript,
+    index: number,
+    cause: "timeout" | "exited",
+  ): Promise<WebBundleScriptOutcome> {
+    const limited = this.#limitedOutcome(script, cause);
+    if (limited === undefined) throw this.#exitFailure(index);
+    await this.#release();
+    return limited;
   }
 
   /** Classify a stopped script; undefined means an unexplained worker exit. */
@@ -364,35 +324,42 @@ class OwnedWebBundleWorker {
     return { status: "analyzed", facts };
   }
 
-  /** Wait for the next frame within one phase deadline, or report exit/timeout. */
-  async #next(
+  /** Own one deadline for startup or a whole script request, never for a frame. */
+  async #withinDeadline<T>(
     timeoutMs: number,
-  ): Promise<WebBundleWorkerFrame | "timeout" | "exited"> {
-    this.#deadline?.dispose();
+    run: (deadline: ProviderStartupDeadline) => Promise<T>,
+  ): Promise<T> {
     const deadline = new ProviderStartupDeadline(timeoutMs, this.signal);
     this.#deadline = deadline;
     try {
-      for (;;) {
-        this.#check();
-        const frame = this.#frames.shift();
-        if (frame !== undefined) return frame;
-        if (deadline.interruption === "timeout") return "timeout";
-        const supervisor = this.#supervisor;
-        if (supervisor === undefined) return "exited";
-        const snapshot = supervisor.snapshot();
-        if (snapshot.exitCode !== undefined || snapshot.signal !== undefined) {
-          // Exit is not complete output: drain any final frame first.
-          if (!(await supervisor.waitForOutputClose(50, deadline.signal)))
-            continue;
-          if (this.#frames.length !== 0) continue;
-          this.#check();
-          return "exited";
-        }
-        await this.#activity(deadline.signal);
-      }
+      return await run(deadline);
     } finally {
       deadline.dispose();
       if (this.#deadline === deadline) this.#deadline = undefined;
+    }
+  }
+
+  /** Check the absolute deadline before accepting even an already-queued frame. */
+  async #next(
+    deadline: ProviderStartupDeadline,
+  ): Promise<WebBundleWorkerFrame | "timeout" | "exited"> {
+    for (;;) {
+      this.#check();
+      if (deadline.interruption === "timeout") return "timeout";
+      const frame = this.#frames.shift();
+      if (frame !== undefined) return frame;
+      const supervisor = this.#supervisor;
+      if (supervisor === undefined) return "exited";
+      const snapshot = supervisor.snapshot();
+      if (snapshot.exitCode !== undefined || snapshot.signal !== undefined) {
+        // Exit is not complete output: drain any final frame first.
+        if (!(await supervisor.waitForOutputClose(50, deadline.signal)))
+          continue;
+        if (this.#frames.length !== 0) continue;
+        this.#check();
+        return "exited";
+      }
+      await this.#activity(deadline.signal);
     }
   }
 
@@ -439,6 +406,7 @@ class OwnedWebBundleWorker {
       runId: `${this.#runId}-${String(start)}`,
       cwd: runtime.path,
       hostEnvironment: environment,
+      stdin: "pipe",
       ...(this.#memoryLimitBytes === null
         ? {}
         : { memoryLimitBytes: this.#memoryLimitBytes }),
@@ -462,6 +430,24 @@ class OwnedWebBundleWorker {
       },
     );
     spawned.process.stdout?.on("data", this.#onStdout);
+    spawned.process.stdin?.on("error", this.#onStdinError);
+    await this.#withinDeadline(
+      this.#limits.startupTimeoutMs,
+      async (deadline) => {
+        const ready = await this.#next(deadline);
+        if (ready === "timeout")
+          throw new AnalysisTimeoutError(
+            OPERATION,
+            this.#limits.startupTimeoutMs,
+          );
+        if (ready === "exited") throw this.#exitFailure(start);
+        if (ready.kind !== "ready")
+          throw new AnalysisOutputError(
+            OPERATION,
+            "Web bundle worker did not complete its startup handshake",
+          );
+      },
+    );
   }
 
   /** Stop the current worker; an unverified stop keeps it owned for retry. */
@@ -472,6 +458,7 @@ class OwnedWebBundleWorker {
     const stopped = await supervisor.stop();
     if (stopped.status === "incomplete")
       throw new WorkerReleaseFailure(stopped.reason);
+    supervisor.launch.process.stdin?.off("error", this.#onStdinError);
     this.#supervisor = undefined;
   }
 
@@ -538,23 +525,24 @@ class OwnedWebBundleWorker {
         failures.push(message(cause));
       }
     }
-    if (failures.length === 0) {
-      pendingCleanup.delete(this);
-      return undefined;
-    }
-    pendingCleanup.add(this);
-    return new WebBundleAnalysisCleanupFailure(
-      this,
-      [
-        this.#runId,
-        ...(this.#runtime === undefined ? [] : [this.#runtime.path]),
-      ],
+    if (failures.length === 0) return undefined;
+    return new ProviderCleanupError(
+      PROVIDER,
+      this.cleanupResources,
       {
         cleanup_failures: failures,
         previous_error: previousError,
         worker_pid: this.#supervisor?.launch.process.pid ?? null,
       },
+      { operation: OPERATION },
     );
+  }
+
+  get cleanupResources(): readonly string[] {
+    return [
+      this.#runId,
+      ...(this.#runtime === undefined ? [] : [this.#runtime.path]),
+    ];
   }
 }
 

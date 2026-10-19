@@ -79,9 +79,9 @@ import { comparePngScreenshots } from "./PngVisualDiff.js";
 
 import { CDP_BROWSER_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import {
-  analyzeWebBundleScripts,
+  WebBundleAnalysisOwner,
   type WebBundleScriptAnalyzer,
-} from "./WebBundleAnalysisWorker.js";
+} from "./WebBundleAnalysisOwner.js";
 import type { WebBundleScriptOutcome } from "../domain/webBundleScriptAnalysis.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {
@@ -101,11 +101,38 @@ export class CdpBrowserProvider implements BrowserObservationPort {
   readonly #owner = new CdpTargetSessionOwner();
 
   constructor(
-    readonly analyzeScripts: WebBundleScriptAnalyzer = analyzeWebBundleScripts,
+    readonly scriptAnalyzer: WebBundleScriptAnalyzer = new WebBundleAnalysisOwner(),
   ) {}
 
-  close(): Promise<void> {
-    return this.#owner.close();
+  async close(): Promise<void> {
+    const outcomes = await Promise.allSettled([
+      this.#owner.close(),
+      this.scriptAnalyzer.close(),
+    ]);
+    const failures = outcomes.flatMap((result) =>
+      result.status === "rejected" ? [result.reason as unknown] : [],
+    );
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      const typed = failures.filter(
+        (failure): failure is AnalysisError => failure instanceof AnalysisError,
+      );
+      throw new ProviderCleanupError(
+        this.identity().id,
+        typed.flatMap((failure) => failure.cleanupResources),
+        {
+          reason:
+            "Browser transports and bundle workers could not be confirmed closed.",
+        },
+        {
+          operation: "close_browser_provider",
+          cause: new AggregateError(
+            failures,
+            "Browser provider cleanup failed",
+          ),
+        },
+      ).bindCleanupDependencies(typed);
+    }
   }
 
   identity(): ProviderIdentity {
@@ -194,7 +221,10 @@ export class CdpBrowserProvider implements BrowserObservationPort {
         : undefined;
       const { inspection } = captured;
       const sourceScripts = inspection.scripts.items.filter(isIncludedScript);
-      const outcomes = await this.analyzeScripts(sourceScripts, options);
+      const outcomes = await this.scriptAnalyzer.analyze(
+        sourceScripts,
+        options,
+      );
       const analysis = (completed: readonly WebBundleScriptOutcome[]) =>
         webBundleAnalysisSchema.parse(
           buildWebBundleAnalysis(
