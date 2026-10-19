@@ -130,10 +130,12 @@ describe("CDP DOM string and namespace validity", () => {
     { field: "nodeName", index: -1 },
     { field: "nodeName", index: 20 },
     { field: "nodeName", index: 2, malformedString: true },
+    { field: "nodeValue", index: -2 },
     { field: "nodeValue", index: 20 },
     { field: "nodeValue", index: 5, malformedString: true },
     { field: "attributeName", index: -1 },
     { field: "attributeName", index: 20 },
+    { field: "attributeValue", index: -2 },
     { field: "attributeValue", index: 20 },
   ] as const)(
     // -1 is DOMSnapshot's empty string for values, never for names.
@@ -268,7 +270,9 @@ describe("CDP frame capture", () => {
   it("walks deeply nested frame trees and returns every frame and resource", () => {
     let frameTree: Record<string, unknown> = {
       frame: { id: "frame-0", url: `${origin}/0` },
-      resources: [{ url: `${origin}/0.js`, type: "Script" }],
+      resources: [
+        { url: `${origin}/0.js`, type: "Script", mimeType: "text/javascript" },
+      ],
     };
     for (let index = 1; index < 2_000; index += 1) {
       frameTree = {
@@ -276,7 +280,13 @@ describe("CDP frame capture", () => {
           id: `frame-${String(index)}`,
           url: `${origin}/${String(index)}`,
         },
-        resources: [{ url: `${origin}/${String(index)}.js`, type: "Script" }],
+        resources: [
+          {
+            url: `${origin}/${String(index)}.js`,
+            type: "Script",
+            mimeType: "text/javascript",
+          },
+        ],
         childFrames: [frameTree],
       };
     }
@@ -289,6 +299,90 @@ describe("CDP frame capture", () => {
 });
 
 describe("CDP accessibility capture", () => {
+  it("keeps an explicit empty accessibility inventory complete", () => {
+    const completeness = new CdpCaptureCompleteness();
+    const capture = captureAccessibility([{ nodes: [] }], {
+      includeText: true,
+      completeness,
+    });
+
+    expect(capture).toMatchObject({
+      total: 0,
+      nodes: [],
+      hasUnobservedChildren: false,
+    });
+    expect(completeness.snapshot()).toMatchObject({
+      unavailable_sections: [],
+      excluded: [],
+    });
+  });
+
+  it.each([undefined, { length: 1 }])(
+    "keeps an omitted or non-array node inventory unknown: %s",
+    (nodes) => {
+      const completeness = new CdpCaptureCompleteness();
+      const capture = captureAccessibility([{ nodes }], {
+        includeText: true,
+        completeness,
+      });
+
+      expect(capture).toMatchObject({
+        total: 0,
+        nodes: [],
+        hasUnobservedChildren: false,
+      });
+      expect(completeness.snapshot()).toMatchObject({
+        unavailable_sections: ["accessibility"],
+        excluded: [
+          {
+            section: "accessibility",
+            reason: "invalid_protocol_value",
+            count: null,
+          },
+        ],
+      });
+    },
+  );
+
+  it("retains valid nodes and counts malformed inventory entries", () => {
+    const completeness = new CdpCaptureCompleteness();
+    const capture = captureAccessibility(
+      [
+        {
+          nodes: [
+            null,
+            {},
+            { nodeId: "missing-ignored" },
+            { nodeId: "invalid-ignored", ignored: "false" },
+            { nodeId: "invalid-parent", ignored: false, parentId: 3 },
+            { nodeId: "invalid-children", ignored: false, childIds: "bad" },
+            { nodeId: "node-1", ignored: false, role: { value: "button" } },
+            "malformed",
+          ],
+        },
+      ],
+      { includeText: true, completeness },
+    );
+
+    expect(capture.total).toBe(3);
+    expect(capture.nodes.map((node) => node.node_id)).toEqual([
+      "invalid-parent",
+      "invalid-children",
+      "node-1",
+    ]);
+    expect(capture.nodes[2]).toMatchObject({ role: "button", ignored: false });
+    expect(completeness.snapshot()).toMatchObject({
+      unavailable_sections: ["accessibility"],
+      excluded: [
+        {
+          section: "accessibility",
+          reason: "invalid_protocol_value",
+          count: 7,
+        },
+      ],
+    });
+  });
+
   it("retains full approved accessibility text", () => {
     const capture = captureAccessibility(
       [
@@ -296,6 +390,7 @@ describe("CDP accessibility capture", () => {
           nodes: [
             {
               nodeId: "node-1",
+              ignored: false,
               role: { value: "button" },
               name: { value: "😀a" },
               description: { value: "éé" },
@@ -318,7 +413,7 @@ describe("CDP accessibility capture", () => {
       description: "éé",
       states: [{ name: "disabled", value: true }],
     });
-    expect(capture.treeIncomplete).toBe(true);
+    expect(capture.hasUnobservedChildren).toBe(true);
     expect(capture.textCapture).toEqual({
       status: "included",
       retained_bytes: 9,
@@ -333,6 +428,7 @@ describe("CDP accessibility capture", () => {
           nodes: [
             {
               nodeId: "node-1",
+              ignored: false,
               name: { value: "private name" },
               description: { value: "private description" },
             },

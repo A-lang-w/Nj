@@ -26,6 +26,7 @@ import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.
 import { err, ok } from "../domain/result.js";
 import { HopperApplicationLauncher } from "./BridgeLauncher.js";
 import {
+  hopperDeclinedArchitectureReason,
   hopperLoaderArgsForTarget,
   resolveHopperAnalysisProfile,
 } from "./HopperAnalysisProfile.js";
@@ -129,17 +130,14 @@ export class HopperProvider implements AnalysisProviderCandidate {
         reason: null,
         diagnostics,
       };
-    if (isElfMetadataArchitecture(target.architecture))
+    if (
+      isElfMetadataArchitecture(target.architecture) ||
+      target.architecture === "hexagon"
+    )
       return {
         status: "unsupported",
         code: "architecture_unsupported",
-        reason: `REA's Hopper adapter does not admit ${
-          target.architecture === "mips"
-            ? "MIPS"
-            : target.architecture === "riscv"
-              ? "RISC-V"
-              : "PowerPC"
-        } targets.`,
+        reason: hopperDeclinedArchitectureReason(target.architecture),
         diagnostics,
       };
     if (target.format === "raw-binary")
@@ -288,7 +286,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
           ...(preparedImage === undefined
             ? []
             : [
-                "REA loaded a verified thin Mach-O slice from the original FAT64 source. Identity and file offsets refer to the original file. The owned temporary image and its Hopper document close together, including on MCP shutdown.",
+                "REA loaded a verified thin Mach-O slice from the original FAT source. Identity and file offsets refer to the original file. The owned temporary image and its Hopper document close together, including on MCP shutdown.",
               ]),
           ...(CAPABILITIES.find(
             (descriptor) => descriptor.operation === operation,
