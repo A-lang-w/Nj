@@ -164,10 +164,22 @@ not accepted by `doctor --provider`. See
 When the selected provider exposes request activity, the session reports it
 through `analysis_activity`. This observation is optional: Ghidra does not
 currently expose it, and `status: "not_observed"` means unknown rather than idle
-or failed. Keep the session open and recheck for matching completed Evidence
-after a client timeout; absence of both an activity observation and a completed
-record does not prove that analysis stopped.
-A client timeout can end its wait while the provider continues analyzing.
+or failed. A client timeout can end its wait while the provider continues
+analyzing; keep the persistent session open and recheck retained Evidence for
+discovery, not as proof that the timed request completed.
+
+Before `analyze_function`, record matching IDs from `get_evidence_bundle` with
+`detail: "summary"` as a pre-call baseline. A settled result must be attributable
+to that request using the baseline or explicit request/result correlation.
+Matching filters alone do not establish completion or current comments: summary
+rows have no request/session revision, and metadata edits retain old Evidence.
+A baseline alone cannot disambiguate concurrent requests or edits, and unchanged
+results can reuse content-derived IDs. Without attributable completion, keep
+completion and metadata freshness unknown. See
+[native Evidence recovery](mcp-contracts.md#recovering-large-native-analysis-results)
+for the correlation rules; neither a historical match nor its absence together
+with `not_observed` establishes the timed request's outcome.
+
 `cleanup_incomplete` identifies resources whose shutdown or removal could not
 be verified. See [MCP contracts](mcp-contracts.md) for session lifecycle and
 [Ghidra first-query deadlines](mcp-contracts.md#ghidra-first-query-deadlines-and-recovery)
