@@ -23,6 +23,7 @@ const report: Il2cppMetadata = {
     sha256: "a".repeat(64),
     bytes: 1024,
   },
+  magic: 0xfab11baf,
   metadata_version: 39,
   index_widths: {
     type_definition: 1,

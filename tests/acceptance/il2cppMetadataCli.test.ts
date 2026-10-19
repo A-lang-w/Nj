@@ -37,6 +37,7 @@ cliTest(
       result.json,
     );
     const report = il2cppMetadataSchema.parse(evidence.normalized_result);
+    expect(report.magic).toBe(bytes.readUInt32LE(0));
     expect(report.artifact).toEqual({
       path,
       sha256: createHash("sha256").update(bytes).digest("hex"),
@@ -73,6 +74,7 @@ cliTest(
     const view = il2cppMetadataSummaryViewResultSchema.parse(
       parseEvidence(summarized.structuredContent).normalized_result,
     );
+    expect(view.summary.magic).toBe(report.magic);
     expect(view.summary.counts).toEqual({
       sections: 31,
       images: 2,

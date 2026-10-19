@@ -2,6 +2,9 @@ import { z } from "zod";
 import { digestSchema } from "../digests.js";
 import { localPathStringSchema } from "../localPath.js";
 
+/** Unsigned little-endian signature observed at file offset zero. */
+export const IL2CPP_METADATA_MAGIC = 0xfab11baf;
+
 /** Header section order shared by global-metadata.dat versions 29, 31 and 39. */
 export const IL2CPP_METADATA_SECTION_NAMES = [
   "stringLiterals",
@@ -102,6 +105,7 @@ export const il2cppMetadataObjectSchema = z.strictObject({
     sha256: digestSchema,
     bytes: count,
   }),
+  magic: z.literal(IL2CPP_METADATA_MAGIC),
   metadata_version: z.union(
     IL2CPP_METADATA_VERSIONS.map((version) => z.literal(version)),
   ),

@@ -109,6 +109,7 @@ preserves every decoded row for subsequent queries without the original file.
 The result contains:
 
 - `artifact`: path, SHA-256 and byte length;
+- `magic`: unsigned little-endian header signature (`0xFAB11BAF`, delivered as a JSON number);
 - `metadata_version`: `29`, `31` or `39`;
 - `index_widths`: the serialized widths (1, 2 or 4 bytes) of
   `type_definition`, `generic_container`, `parameter` and `type` indices, and

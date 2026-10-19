@@ -1,11 +1,11 @@
 import {
+  IL2CPP_METADATA_MAGIC,
   IL2CPP_METADATA_SECTION_NAMES,
   IL2CPP_METADATA_VERSIONS,
   type Il2cppMetadata,
   type Il2cppMetadataSection,
 } from "../domain/il2cpp/il2cppMetadata.js";
 
-export const IL2CPP_METADATA_MAGIC = 0xfab11baf;
 const NESTED_TYPE_ENTRY_BYTES = 4;
 
 /** Stable machine-readable reason for each rejected input. */
@@ -155,7 +155,8 @@ const readIndex = (bytes: Buffer, offset: number, width: IndexWidth) => {
 };
 
 const readHeader = (bytes: Buffer) => {
-  if (bytes.length < 8 || bytes.readUInt32LE(0) !== IL2CPP_METADATA_MAGIC)
+  const magic = bytes.length < 4 ? null : bytes.readUInt32LE(0);
+  if (bytes.length < 8 || magic !== IL2CPP_METADATA_MAGIC)
     throw new Il2cppMetadataFormatFailure(
       "unrecognized-magic",
       "the file does not start with the IL2CPP global-metadata magic 0xFAB11BAF; encrypted or non-metadata inputs are not decoded",
@@ -184,7 +185,7 @@ const readHeader = (bytes: Buffer) => {
       };
     },
   );
-  return { version, headerBytes, sections };
+  return { magic, version, headerBytes, sections } as const;
 };
 
 const checkSections = (
@@ -665,7 +666,7 @@ export function* readIl2cppMetadataSteps(
     readonly beforeRows?: (counts: Il2cppMetadataRowCounts) => void;
   } = {},
 ): Generator<void, Il2cppMetadataDecoded> {
-  const { version, headerBytes, sections } = readHeader(bytes);
+  const { magic, version, headerBytes, sections } = readHeader(bytes);
   checkSections(bytes, headerBytes, sections);
   const byName = new Map(sections.map((entry) => [entry.name, entry]));
   const section = (name: SectionName) => byName.get(name)!;
@@ -694,6 +695,7 @@ export function* readIl2cppMetadataSteps(
   const methods = yield* readMethods(tables);
   yield* checkMethodOwners(types, methods);
   return {
+    magic,
     metadata_version: version,
     index_widths: widths,
     sections,

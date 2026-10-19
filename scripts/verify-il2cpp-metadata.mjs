@@ -67,6 +67,7 @@ try {
     const report = cli.normalized_result;
     assert.equal(report.artifact.path, path);
     assert.equal(report.artifact.sha256, identity.sha256);
+    assert.equal(report.magic, 0xfab11baf);
     const complete = await client.callTool(
       { name: operation, arguments: { path, detail: "complete" } },
       { timeout: 120_000 },
@@ -111,6 +112,7 @@ try {
     const summary = contract.outputSchema.parse(
       await call(operation, { path }),
     ).normalized_result;
+    assert.equal(summary.summary.magic, report.magic);
     assert.deepEqual(summary.summary.counts, {
       sections: report.sections.length,
       images: report.images.length,

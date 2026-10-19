@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 import type { DesktopFile, DesktopFact } from "../domain/desktopApplication.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
+import { IL2CPP_METADATA_MAGIC } from "../domain/il2cpp/il2cppMetadata.js";
 import { parsePeRecord, peRvaToFileOffset } from "../domain/binaryTarget.js";
 import { readManagedMetadataLayout } from "../dotnet/ManagedMetadataLayout.js";
 import { readAssemblyReferenceName } from "../dotnet/ManagedMetadataInventoryRows.js";
@@ -97,7 +98,7 @@ export const inspectDesktopFile = async (
     row.facts.push(observation);
   };
   const prefix = await read(0, Math.min(size, 64));
-  if (prefix.length >= 8 && prefix.readUInt32LE(0) === 0xfab11baf)
+  if (prefix.length >= 8 && prefix.readUInt32LE(0) === IL2CPP_METADATA_MAGIC)
     fact({
       kind: "il2cpp-metadata-header",
       offset: 0,

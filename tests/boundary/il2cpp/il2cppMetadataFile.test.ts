@@ -53,6 +53,7 @@ describe("IL2CPP global-metadata version 39", () => {
       const fixture = createIl2cppMetadataFixture({ typeIndexWidth });
       expect(fixture.bytes.length).toBeLessThan(1024);
       const decoded = readIl2cppMetadata(fixture.bytes);
+      expect(decoded.magic).toBe(fixture.bytes.readUInt32LE(0));
       expect(decoded.metadata_version).toBe(39);
       expect(decoded.index_widths).toEqual({
         type_definition: 1,
@@ -364,6 +365,7 @@ describe("IL2CPP global-metadata versions 29 and 31", () => {
       const fixture = createIl2cppMetadataFixture({ version });
       const decoded = readIl2cppMetadata(fixture.bytes);
       expect(decoded.metadata_version).toBe(version);
+      expect(decoded.magic).toBe(fixture.bytes.readUInt32LE(0));
       expect(decoded.index_widths).toEqual({
         type_definition: 4,
         generic_container: 4,
