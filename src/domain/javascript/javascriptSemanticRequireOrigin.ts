@@ -299,6 +299,16 @@ const isCreateRequireOrigin = (
   );
 };
 
+/** Assignment expressions expose their RHS; short-circuit stores may keep the old value. */
+const assignmentValueSources = (
+  node: t.AssignmentExpression,
+): readonly t.Node[] =>
+  node.operator === "="
+    ? [node.right]
+    : ["||=", "&&=", "??="].includes(node.operator)
+      ? [node.left, node.right]
+      : [];
+
 /** Follow selected values to Node's captured loader or its creating factory. */
 const selectedRequireSourcesAt = (
   root: t.Node,
@@ -450,6 +460,9 @@ const selectedRequireSourcesAt = (
     } else if (t.isSequenceExpression(node)) {
       const last = node.expressions.at(-1);
       if (last !== undefined) pending.push({ ...current, node: last });
+    } else if (t.isAssignmentExpression(node)) {
+      for (const source of assignmentValueSources(node))
+        pending.push({ ...current, node: source });
     } else if (t.isConditionalExpression(node) || t.isLogicalExpression(node)) {
       pending.push(
         {
@@ -944,6 +957,10 @@ const hasCommonJsModuleSource = (
       if (last !== undefined) enqueue({ node: last, path });
       continue;
     }
+    if (t.isAssignmentExpression(value)) {
+      enqueue(...assignmentValueSources(value).map((node) => ({ node, path })));
+      continue;
+    }
     if (
       t.isCallExpression(value) ||
       t.isOptionalCallExpression(value) ||
@@ -1022,7 +1039,7 @@ const hasCommonJsModuleSource = (
       !read.hasDefiniteInitializer
     )
       return true;
-    const sources = moduleObjectSourcesAtRead(
+    let sources = moduleObjectSourcesAtRead(
       binding,
       value,
       path,
@@ -1031,7 +1048,22 @@ const hasCommonJsModuleSource = (
       next.readAt ?? value,
       next.capturedSelections,
     );
-    if (sources === undefined) return true;
+    if (sources === undefined) {
+      if (target !== "delegate") return true;
+      // An opaque member effect can obscure a selected native delegate, but
+      // cannot make every escaped callable a possible Node loader. Keep its
+      // known selected sources as the eligibility boundary for that gap.
+      sources = moduleObjectSourcesAtRead(
+        binding,
+        value,
+        path,
+        state,
+        false,
+        next.readAt ?? value,
+        next.capturedSelections,
+      );
+      if (sources === undefined) return true;
+    }
     enqueue(...projectedLoaderSources({ ...next, node: value, path }, sources));
   }
   return false;

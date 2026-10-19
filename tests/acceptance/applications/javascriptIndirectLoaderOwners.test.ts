@@ -7,6 +7,16 @@ import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js
 
 const cases = [
   {
+    name: "assignment result retains module receiver",
+    load: 'let holder;(holder=module).require("../shared/window.cjs");',
+    possible: true,
+  },
+  {
+    name: "assignment result retains local receiver",
+    load: 'let holder;(holder={require(){}}).require("../shared/window.cjs");',
+    possible: false,
+  },
+  {
     name: "captured wrapper require retains loader ownership",
     load: 'const load=require;load("../shared/window.cjs");',
     possible: true,

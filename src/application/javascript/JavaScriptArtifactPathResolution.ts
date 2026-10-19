@@ -273,11 +273,12 @@ const conditionalResolution = (
     : { candidate_path: result.candidatePath }),
 });
 
-const resolvePath = (input: ResolveArtifactPathInput): CandidateResolution => {
+/** Host path admission is shared by top-level and metadata-derived inputs. */
+const resolveRuntimeHostPath = (
+  input: ResolveArtifactPathInput,
+): CandidateResolution | null => {
   if (
-    (input.runtimePathKind !== undefined ||
-      (input.context === "module-specifier" &&
-        input.moduleKind !== undefined)) &&
+    (input.runtimePathKind !== undefined || isNodeFilesystemLookup(input)) &&
     input.runtimePathKind !== "url-resource" &&
     (posix.isAbsolute(input.declaredPath) ||
       win32.isAbsolute(input.declaredPath) ||
@@ -310,6 +311,12 @@ const resolvePath = (input: ResolveArtifactPathInput): CandidateResolution => {
           "An absolute runtime host path has no established mapping to the selected logical artifact root.",
         ]);
   }
+  return null;
+};
+
+const resolvePath = (input: ResolveArtifactPathInput): CandidateResolution => {
+  const hostPath = resolveRuntimeHostPath(input);
+  if (hostPath !== null) return hostPath;
   if (input.runtimePathKind === "node-entrypoint")
     return resolveNodeRuntimeEntrypoint(input);
   if (input.moduleKind === "compiler-dependent") {
@@ -1528,6 +1535,8 @@ const resolveDirectory = (
       : { unanalyzedFiles: input.unanalyzedFiles }),
     ...(input.moduleKind === undefined ? {} : { moduleKind: input.moduleKind }),
   };
+  const hostPath = resolveRuntimeHostPath(entryInput);
+  if (hostPath !== null) return hostPath;
   const candidate = contextualCandidate(entryInput);
   if (typeof candidate !== "string") return candidate;
   const confined = confineCandidate(candidate);

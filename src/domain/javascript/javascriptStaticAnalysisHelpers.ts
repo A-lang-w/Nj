@@ -173,20 +173,24 @@ export const staticArrayValues = (
 /** Classify whether inert path syntax is a module specifier or file expression. */
 export const staticPathResolutionContext = (
   node: t.Node,
+  nodePathResolve?: (callee: t.Node) => boolean,
 ): JavaScriptStaticPathContext =>
-  isFilesystemPathExpression(node)
+  isFilesystemPathExpression(node, nodePathResolve)
     ? "filesystem-expression"
     : "module-specifier";
 
 /** Resolve a path string composed only from inert literal syntax. */
-export const staticPath = (node: t.Node): string | undefined => {
+export const staticPath = (
+  node: t.Node,
+  nodePathResolve?: (callee: t.Node) => boolean,
+): string | undefined => {
   node = unwrapJavaScriptExpression(node).node;
   const value = stringValue(node);
   if (value !== undefined) return value;
   if (t.isBinaryExpression(node, { operator: "+" }))
-    return staticConcatenation(node);
+    return staticConcatenation(node, nodePathResolve);
   if (t.isCallExpression(node) || t.isNewExpression(node))
-    return staticCallPath(node);
+    return staticCallPath(node, nodePathResolve);
   return undefined;
 };
 
@@ -195,7 +199,10 @@ export const staticPath = (node: t.Node): string | undefined => {
  * `__dirname + "/preload.js"` names a file inside it, while text without a
  * leading separator extends the directory's own name and stays unknown.
  */
-const staticConcatenation = (node: t.BinaryExpression): string | undefined => {
+const staticConcatenation = (
+  node: t.BinaryExpression,
+  nodePathResolve?: (callee: t.Node) => boolean,
+): string | undefined => {
   const operands: t.Node[] = [];
   let current: t.Node = node;
   while (t.isBinaryExpression(current, { operator: "+" })) {
@@ -206,7 +213,7 @@ const staticConcatenation = (node: t.BinaryExpression): string | undefined => {
   if (!anchored) operands.push(current);
   let text = "";
   for (const operand of operands.reverse()) {
-    const value = staticPath(operand);
+    const value = staticPath(operand, nodePathResolve);
     if (value === undefined) return undefined;
     text += value;
   }
@@ -216,15 +223,15 @@ const staticConcatenation = (node: t.BinaryExpression): string | undefined => {
 
 const staticCallPath = (
   node: t.CallExpression | t.NewExpression,
+  nodePathResolve?: (callee: t.Node) => boolean,
 ): string | undefined => {
+  if (t.isCallExpression(node) && nodePathResolve?.(node.callee))
+    return staticResolvedPath(node, nodePathResolve);
   const name = calleeName(node.callee);
   if (name === "fileURLToPath" || name.endsWith(".fileURLToPath")) {
-    return staticFileUrlPath(node);
+    return staticFileUrlPath(node, nodePathResolve);
   }
-  if (name.endsWith(".resolve"))
-    return name === "win32.resolve" || name.endsWith(".win32.resolve")
-      ? undefined
-      : staticResolvedPath(node);
+  if (name.endsWith(".resolve")) return undefined;
   if (!name.endsWith(".join") && name !== "join") return undefined;
   const parts: string[] = [];
   for (const argument of node.arguments) {
@@ -234,7 +241,9 @@ const staticCallPath = (
       parts.push(".");
       continue;
     }
-    const value = t.isNode(argument) ? staticPath(argument) : undefined;
+    const value = t.isNode(argument)
+      ? staticPath(argument, nodePathResolve)
+      : undefined;
     if (value === undefined) return undefined;
     parts.push(value);
   }
@@ -243,13 +252,14 @@ const staticCallPath = (
 
 const staticFileUrlPath = (
   node: t.CallExpression | t.NewExpression,
+  nodePathResolve?: (callee: t.Node) => boolean,
 ): string | undefined => {
   if (node.arguments.length !== 1) return undefined;
   const rawArgument = argumentNode(node.arguments[0]);
   if (rawArgument === undefined) return undefined;
   const argument = unwrapJavaScriptExpression(rawArgument).node;
   if (isSourceFileUrl(argument)) return sourceRelativeFileUrlPath(argument);
-  const value = staticPath(argument);
+  const value = staticPath(argument, nodePathResolve);
   const rawPath = value?.split(/[?#]/u, 1)[0] ?? "";
   if (
     value === undefined ||
@@ -320,6 +330,7 @@ const isSourceFileUrl = (
 
 const staticResolvedPath = (
   node: t.CallExpression | t.NewExpression,
+  nodePathResolve?: (callee: t.Node) => boolean,
 ): string | undefined => {
   const parts: string[] = [];
   let anchored = false;
@@ -330,7 +341,9 @@ const staticResolvedPath = (
       anchored = true;
       break;
     }
-    const value = t.isNode(argument) ? staticPath(argument) : undefined;
+    const value = t.isNode(argument)
+      ? staticPath(argument, nodePathResolve)
+      : undefined;
     if (value === undefined) return undefined;
     parts.push(value);
     if (posix.isAbsolute(value)) {
@@ -344,33 +357,45 @@ const staticResolvedPath = (
   return path === "/" ? path : path.replace(/\/$/u, "");
 };
 
-const isFilesystemPathExpression = (node: t.Node): boolean => {
+const isFilesystemPathExpression = (
+  node: t.Node,
+  nodePathResolve?: (callee: t.Node) => boolean,
+): boolean => {
   node = unwrapJavaScriptExpression(node).node;
   const value = stringValue(node);
   if (value !== undefined) return value.startsWith("/");
   if (isFileIdentity(node) || isDirectoryPath(node)) return true;
   if (t.isBinaryExpression(node, { operator: "+" }))
     return (
-      isFilesystemPathExpression(node.left) ||
-      isFilesystemPathExpression(node.right)
+      isFilesystemPathExpression(node.left, nodePathResolve) ||
+      isFilesystemPathExpression(node.right, nodePathResolve)
     );
   if (t.isCallExpression(node) || t.isNewExpression(node)) {
     const name = calleeName(node.callee);
-    if (name.endsWith(".resolve") && staticCallPath(node) !== undefined)
+    if (
+      nodePathResolve?.(node.callee) &&
+      staticCallPath(node, nodePathResolve) !== undefined
+    )
       return true;
     // A URL object is not a path string until fileURLToPath converts it.
     if (name === "URL" || name.endsWith(".URL")) return false;
     if (name === "fileURLToPath" || name.endsWith(".fileURLToPath"))
       return (
-        staticFileUrlPath(node) !== undefined ||
+        staticFileUrlPath(node, nodePathResolve) !== undefined ||
         node.arguments.some((argument) => {
           const value = argumentNode(argument);
-          return value !== undefined && isFilesystemPathExpression(value);
+          return (
+            value !== undefined &&
+            isFilesystemPathExpression(value, nodePathResolve)
+          );
         })
       );
     return node.arguments.some((argument) => {
       const value = argumentNode(argument);
-      return value !== undefined && isFilesystemPathExpression(value);
+      return (
+        value !== undefined &&
+        isFilesystemPathExpression(value, nodePathResolve)
+      );
     });
   }
   return false;

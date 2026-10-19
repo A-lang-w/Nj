@@ -14,6 +14,7 @@ import {
 import { inspectElectronStaticNode } from "./electronStaticAnalysis.js";
 import { hasPossibleCommonJsDelegateWrite } from "./javascriptSemanticRequireOrigin.js";
 import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
+import { createStaticNodePathResolveQuery } from "./javascriptStaticPathIntrinsics.js";
 import { finishElectronBrowserWindowsSteps } from "./electronStaticAnalysisBrowser.js";
 import {
   detectVendors,
@@ -99,6 +100,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     bindings,
   );
   const findings: JavaScriptFindingContext = {
+    nodePathResolve: createStaticNodePathResolveQuery(index),
     source,
     accumulator,
     vitePreloadDependencyTable: indexVitePreloadDependencyTable(file.program),

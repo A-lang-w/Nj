@@ -87,6 +87,8 @@ export interface JavaScriptAnalysisAccumulator {
 
 /** Shared source and accumulator for helper inspections. */
 export interface JavaScriptFindingContext {
+  /** Node path.resolve identity established by shared callee and mutation owners. */
+  readonly nodePathResolve?: (callee: t.Node) => boolean;
   readonly rpcScan: JavaScriptRpcScan;
   readonly source: string;
   readonly accumulator: JavaScriptAnalysisAccumulator;

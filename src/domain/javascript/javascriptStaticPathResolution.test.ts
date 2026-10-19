@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 import { parserPluginsForPath } from "./javascriptSourceParser.js";
 import {
+  calleeName,
   staticPath,
   staticPathResolutionContext,
 } from "./javascriptStaticAnalysisHelpers.js";
@@ -392,7 +393,7 @@ const parsePathExpression = (expression: string) =>
 
 const analyzePathConsumers = (expression: string) => {
   const property = `preload: ${expression}`;
-  const genericPrefix = "const options = { ";
+  const genericPrefix = 'import path from "node:path"; const options = { ';
   const windowPrefix = "new BrowserWindow({ webPreferences: { ";
   const windowExpression = `${windowPrefix}${property} } })`;
   const utilityExpression = `utilityProcess.fork(${expression})`;
@@ -414,8 +415,13 @@ const assertPathProjection = (
   context: JavaScriptStaticPathContext,
 ) => {
   const node = parsePathExpression(expression);
-  expect(staticPath(node)).toBe(path);
-  expect(staticPathResolutionContext(node)).toBe(context);
+  // This syntax matrix supplies identity explicitly; full-source cases prove it.
+  const nodePathResolve = (callee: import("@babel/types").Node) => {
+    const name = calleeName(callee);
+    return name.endsWith(".resolve") && !name.includes("win32");
+  };
+  expect(staticPath(node, nodePathResolve)).toBe(path);
+  expect(staticPathResolutionContext(node, nodePathResolve)).toBe(context);
   const {
     analysis,
     property,

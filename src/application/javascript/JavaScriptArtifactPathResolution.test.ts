@@ -3445,6 +3445,95 @@ describe("url-reference JavaScript artifact path resolution", () => {
   });
 });
 
+describe("module-backed package main host paths", () => {
+  it.each(
+    [
+      "/shared/window.cjs",
+      "C:/shared/window.cjs",
+      "\\\\host\\share\\window.cjs",
+    ].flatMap((main) => [true, false].map((direct) => ({ main, direct }))),
+  )(
+    "retains host main $main before logical lookup (direct=$direct)",
+    ({ main, direct }) => {
+      expect(
+        resolve({
+          declaredPath: direct ? main : "fixture",
+          sourcePath: direct
+            ? "app/node_modules/fixture/package.json"
+            : "app/main.cjs",
+          context: direct ? "package-entrypoint" : "module-specifier",
+          moduleKind: "require",
+          files: fileMap([
+            file("app/main.cjs", "root"),
+            file(
+              "app/node_modules/fixture/package.json",
+              "root",
+              JSON.stringify({ main }),
+            ),
+            file("shared/window.cjs", "root"),
+            file("app/node_modules/fixture/index.js", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        declared_path: direct ? main : "fixture",
+        resolution_status: "unavailable",
+        resolved_path: null,
+      });
+    },
+  );
+
+  it.each(["entry.cjs", "./entry.cjs"])(
+    "preserves relative package main lookup for %s",
+    (main) => {
+      expect(
+        resolve({
+          declaredPath: "fixture",
+          sourcePath: "app/main.cjs",
+          context: "module-specifier",
+          moduleKind: "require",
+          files: fileMap([
+            file("app/main.cjs", "root"),
+            file(
+              "app/node_modules/fixture/package.json",
+              "root",
+              JSON.stringify({ main }),
+            ),
+            file("app/node_modules/fixture/entry.cjs", "root"),
+            file("app/node_modules/fixture/index.js", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        resolution_status: "resolved",
+        resolved_path: "app/node_modules/fixture/entry.cjs",
+      });
+    },
+  );
+
+  it.each([true, false])(
+    "keeps NUL package mains rejected (direct=%s)",
+    (direct) => {
+      const main = "/shared/\0window.cjs";
+      expect(
+        resolve({
+          declaredPath: direct ? main : "fixture",
+          sourcePath: direct ? "app/package.json" : "app/main.cjs",
+          context: direct ? "package-entrypoint" : "module-specifier",
+          moduleKind: "require",
+          files: fileMap([
+            file("app/main.cjs", "root"),
+            file(
+              "app/node_modules/fixture/package.json",
+              "root",
+              JSON.stringify({ main }),
+            ),
+            file("app/node_modules/fixture/index.js", "root"),
+          ]),
+        }),
+      ).toMatchObject({ resolution_status: "rejected", resolved_path: null });
+    },
+  );
+});
+
 const resolve = (input: ResolveArtifactPathInput) =>
   resolveArtifactPathByContext(input);
 
