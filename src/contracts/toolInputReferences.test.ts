@@ -68,34 +68,41 @@ it.each(["draft-2020-12", "draft-07"] as const)(
 );
 
 it.each(["draft-2020-12", "draft-07"] as const)(
-  "preserves lossless objdump symbol validation after SDK conversion in %s",
+  "keeps objdump Unicode validation and portable SDK patterns in %s",
   (target) => {
-    const schema = toolInputSchemaWithMetadata(
+    const canonical = toolInputSchemaWithMetadata(
       toolContract("inspect_with_objdump"),
-    )["~standard"].jsonSchema.input({ target });
-    const ajv =
-      target === "draft-2020-12"
-        ? new Ajv2020({ strict: false, validateFormats: false })
-        : new Ajv({ strict: false, validateFormats: false });
-    expect(ajv.validateSchema(schema)).toBe(true);
-    const validate = ajv.compile(schema);
+    );
+    const schema = canonical["~standard"].jsonSchema.input({ target });
     const input = { path: "sample.elf", operation: "disassemble" };
-    for (const symbol of [
-      "known_function",
-      "selector_\u{1F680}",
-      "selector_\uFFFD",
-    ])
-      expect(
-        validate({ ...input, symbol }),
-        JSON.stringify(validate.errors),
-      ).toBe(true);
+    for (const unicodeRegExp of [false, true]) {
+      const options = { strict: false, validateFormats: false, unicodeRegExp };
+      const ajv =
+        target === "draft-2020-12" ? new Ajv2020(options) : new Ajv(options);
+      expect(ajv.validateSchema(schema)).toBe(true);
+      const validate = ajv.compile(schema);
+      for (const symbol of [
+        "known_function",
+        "selector_\u{1F680}",
+        "selector_\uFFFD",
+      ]) {
+        expect(
+          validate({ ...input, symbol }),
+          JSON.stringify(validate.errors),
+        ).toBe(true);
+        expect(canonical.safeParse({ ...input, symbol }).success).toBe(true);
+      }
+      expect(validate({ ...input, symbol: "a\u0000b" })).toBe(false);
+    }
+    // Scalar Unicode engines cannot express unpaired UTF-16 surrogates. The
+    // registered canonical validator owns that runtime constraint.
     for (const symbol of [
       "\ud800",
       "\udc00",
       "prefix\ud800suffix",
       "\udc00\ud800",
     ])
-      expect(validate({ ...input, symbol })).toBe(false);
+      expect(canonical.safeParse({ ...input, symbol }).success).toBe(false);
   },
 );
 
