@@ -313,3 +313,39 @@ it("invokes a synchronously throwing reverse owner once and preserves independen
   expect(close).toHaveBeenCalledTimes(1);
   expect(client.cleanupIncomplete).toBe(true);
 });
+
+it.each(["throw", "reject"] as const)(
+  "composes typed reverse cleanup %s with the independent client owner",
+  async (mode) => {
+    const client = new ProviderCleanupError("fixture", ["client"], {});
+    const reverse = new AnalysisOutputError("rizin", "writer cleanup failed", {
+      cleanup: { reason: "still live", resources: ["writer"] },
+    });
+    const [target] = await createBinarySessionTargets();
+    const session = createTestBinarySession(() => ({
+      execute: async () => observed(null),
+      close: async () => err(client),
+    }));
+    expect((await session.open(target)).ok).toBe(true);
+    const retry = vi.fn((): Promise<never> => {
+      if (mode === "throw") throw reverse;
+      return Promise.reject(reverse);
+    });
+    const { handler } = register({ session, retry });
+    const result = (await handler()) as {
+      ok: false;
+      error: AnalysisOutputError;
+    };
+    expect(result.ok).toBe(false);
+    expect(result.error.cleanupPrimary).toBe(reverse);
+    expect(new Set(result.error.cleanupResources)).toEqual(
+      new Set(["client", "writer"]),
+    );
+    expect(retry).toHaveBeenCalledTimes(1);
+    reverse.resolveCleanup();
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toEqual(["client"]);
+    client.resolveCleanup();
+    expect(result.error.cleanupIncomplete).toBe(false);
+  },
+);

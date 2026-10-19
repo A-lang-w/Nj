@@ -42,9 +42,11 @@ export const registerCloseLifecycleTool = ({
       | undefined;
     const retryReverse = async (): Promise<void> => {
       reverseRetry ??= Promise.allSettled([
-        Promise.resolve().then(
-          () =>
-            retryReverseEngineeringCleanup?.(closeContract.name) ?? ok(null),
+        Promise.resolve().then(() =>
+          closeResult(
+            async () =>
+              retryReverseEngineeringCleanup?.(closeContract.name) ?? ok(null),
+          ),
         ),
       ]).then(([result]) => result!);
       await reverseRetry;
