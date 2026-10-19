@@ -38,6 +38,7 @@ import {
   runOwnedCommand,
 } from "../../process/OwnedCommand.js";
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
+import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 
 export type ReverseEngineeringOperation =
   | "inspect_with_objdump"
@@ -302,7 +303,8 @@ export class ReverseEngineeringService {
     if (signal?.aborted) return err(new AnalysisCancelledError(operation));
     const cleanup = await this.retryCleanup(operation);
     if (!cleanup.ok) return cleanup;
-    const absolutePath = path === undefined ? undefined : resolve(path);
+    const absolutePath =
+      path === undefined ? undefined : absoluteCallerPath(path);
     let digest: string | undefined;
     try {
       if (absolutePath !== undefined)

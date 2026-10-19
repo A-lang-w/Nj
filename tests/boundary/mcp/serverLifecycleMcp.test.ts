@@ -394,6 +394,7 @@ it("closes the bound Go and web-capture services and retries failed shutdown", a
   let goCalls = 0;
   let goCloseAttempts = 0;
   let captureCloseAttempts = 0;
+  let scenarioCloseAttempts = 0;
   let cleanupAllowed = false;
   const goBinary = new GoBinaryService({
     identity: { id: "go-fixture", name: "Go fixture", version: "1" },
@@ -423,7 +424,24 @@ it("closes the bound Go and web-capture services and retries failed shutdown", a
   });
   const server = createServer(
     { kind: "fixed", analysis: { execute: async () => ok(null) } },
-    { goBinary, webNetworkCapture },
+    {
+      goBinary,
+      webNetworkCapture,
+      browserScenarioCapture: {
+        identity: () => ({
+          id: "scenario-fixture",
+          name: "Scenario fixture",
+          version: "1",
+        }),
+        captureScenario: async () => {
+          throw new Error("No scenario capture requested");
+        },
+        close: async () => {
+          scenarioCloseAttempts += 1;
+          if (!cleanupAllowed) throw new Error("Scenario cleanup refused");
+        },
+      },
+    },
   );
   const client = new Client({ name: "bound-service-lifecycle", version: "1" });
   const [clientTransport, serverTransport] =
@@ -439,14 +457,20 @@ it("closes the bound Go and web-capture services and retries failed shutdown", a
     expect(result.isError).toBe(true);
     expect(goCalls).toBe(1);
 
-    await expect(server.close()).rejects.toBeInstanceOf(AggregateError);
+    await expect(server.close()).rejects.toMatchObject({
+      errors: expect.arrayContaining([
+        expect.objectContaining({ message: "Scenario cleanup refused" }),
+      ]),
+    });
     expect(goCloseAttempts).toBe(1);
     expect(captureCloseAttempts).toBe(1);
+    expect(scenarioCloseAttempts).toBe(1);
 
     cleanupAllowed = true;
     await server.close();
     expect(goCloseAttempts).toBe(2);
     expect(captureCloseAttempts).toBe(2);
+    expect(scenarioCloseAttempts).toBe(2);
   } finally {
     cleanupAllowed = true;
   }
