@@ -1,6 +1,7 @@
 import { getHeapStatistics } from "node:v8";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -12,7 +13,13 @@ import {
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { RegularFileChangedError } from "../../filesystem/RegularFile.js";
-import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
+import {
+  bindArtifactFileCleanup,
+  ArtifactFileCleanupFailure,
+} from "../../artifacts/ArtifactFileOperation.js";
+import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { writeEnvironmentBundle } from "./environmentBundleWrite.js";
 import { sealOwnedJsonInput } from "../OwnedJsonInput.js";
@@ -156,17 +163,46 @@ const readInput = async (
   role: "manifest" | "evidence",
   path: string,
 ): Promise<Result<EnvironmentExportFile, AnalysisError>> => {
+  const resources = new ArtifactResourceScope();
   let bytes: Buffer;
   try {
     // Admit the whole read against the opened file's own size, before materializing the
     // exact bytes the bundle copies.
     bytes = await readRegularFile(path, {
+      resources,
       admit: (state) => {
         const refused = headroomRefusal(path, state.size);
         if (refused !== undefined) throw refused;
       },
     });
   } catch (cause: unknown) {
+    if (cause instanceof RegularFileCleanupFailure) {
+      const failure = new ArtifactFileCleanupFailure(
+        cause,
+        AnalysisCleanupLease.forCloseOwner(cause.owner, path),
+      );
+      const cleanup = new AnalysisOutputError(
+        ENVIRONMENT_EXPORT_OPERATION,
+        `Could not confirm closing the ${role} input file.`,
+        {
+          cause: failure,
+          cleanup: failure.cleanup,
+          diagnostics: { input_path: path, input_role: role },
+        },
+      );
+      bindArtifactFileCleanup(failure, cleanup);
+      const primary =
+        cause.outcome.kind === "failed" ? cause.outcome.cause : undefined;
+      return err(
+        primary instanceof AnalysisError
+          ? analysisErrorWithCleanupFailure(
+              primary,
+              cleanup,
+              ENVIRONMENT_EXPORT_OPERATION,
+            ).bindCleanupDependencies([primary, cleanup])
+          : cleanup,
+      );
+    }
     if (cause instanceof AnalysisResourceConstraintError) return err(cause);
     if (cause instanceof RegularFileChangedError)
       return err(

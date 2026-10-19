@@ -21,6 +21,43 @@ import {
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
+cliTest(
+  "returns a tagged JSON error when a read input descriptor cannot be closed",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-export-input-close-cli-");
+    const files = await writeEnvironmentServeFiles(root);
+    const preload = join(root, "fail-close.mjs");
+    await writeFile(
+      preload,
+      `import fs from 'node:fs';\nimport { syncBuiltinESMExports } from 'node:module';\nconst original = fs.promises.open;\nfs.promises.open = async (...args) => {\n  const handle = await original(...args);\n  if (args[0] === ${JSON.stringify(files.manifestPath)}) handle.close = async () => { throw Object.assign(new Error('controlled persistent close failure'), { code: 'EIO' }); };\n  return handle;\n};\nsyncBuiltinESMExports();\n`,
+    );
+    const directory = join(root, "bundle");
+    const result = await cli.run({
+      arguments: [
+        "environment-export",
+        files.manifestPath,
+        "--evidence",
+        files.capturePath,
+        directory,
+        "--json",
+      ],
+      environment: {
+        NODE_OPTIONS: `--import=${preload} --max-old-space-size=768`,
+        NODE_DISABLE_COMPILE_CACHE: "1",
+      },
+      timeoutMs: 30_000,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      details: { operation: "environment-export" },
+    });
+    expect(JSON.stringify(result.json)).toContain("cleanup");
+    await expect(readFile(join(directory, "README.md"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);
+
 const BUNDLE_FILES = [
   "README.md",
   "artifacts/check_grafana-example/verify.py",

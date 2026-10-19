@@ -293,3 +293,70 @@ time, one CPU and a soft 3 GiB Go limit; Docker builds were serialized and
 limited to one CPU/4 GiB, and the standalone replay container to one CPU/2 GiB.
 Windows execution and the published registry package were not tested in this
 followup; the checkout tarball proves the code before its release.
+
+### Output ownership and final review followups
+
+The output boundary now uses the existing `SafeOutputTree` owner instead of
+separate directory admission and pathname writes. It checks the admitted root,
+parents, file identities and complete entry inventory around publication, keeps
+failed-close authority, and preserves an existing empty caller root on rollback.
+The optional package is held as one regular-file descriptor before output
+writes, streamed with hash/readback verification, and checked for changes before
+release. POSIX file modes are set and verified as `0600` independently of umask;
+newly owned directories are `0700`. Existing root permissions remain caller owned.
+Windows privacy depends on the selected destination ACL; no owner-only Windows
+ACL guarantee or Windows runtime validation is claimed. Portable pathname
+operations still require a trusted destination and parents against concurrent
+replacement.
+
+A compiled CLI counterexample under umask `0400` failed before the mode fix and
+succeeded afterward with every generated file readable at `0600` and exact
+Evidence bytes. Public CLI coverage also verifies that `symlink/..` retains its
+filesystem meaning for the destination and package path. Real-filesystem tests
+exercise destination replacement, foreign entries, parent symlinks, read-only
+permissions and admitted-tarball replacement. Controlled close failures exercise
+post-publication recovery and persistent retained ownership.
+
+The inventory owner accepts canonically equivalent Unicode directory listings
+without collapsing distinct filenames: an NFC multiset comparison is followed
+by the original path identity checks. Tests simulate decomposed `readdir`
+spelling over a real owned file and create an extra distinct Linux decomposed
+foreign file. These establish the boundary behavior, not actual HFS+ execution.
+Manifest, Evidence and tarball descriptors use the shared resource scope's close
+retry. Persistent failures retain the canonical cleanup lease and produce a
+tagged `environment-export` error. The compiled JSON CLI regression injects a
+persistent manifest close failure before any destination write.
+
+The framework verifier reuses `execNpm` and honors selected `npm_execpath`.
+Four process-boundary attribution cases pass, including a conflicting PATH npm.
+Those controlled executables verify attribution only.
+
+After merging main `b4938aed5`, the generated Dockerfile built unchanged with the
+checkout package and replayed all four captured public GitHub API responses
+twice through the official MCP SDK in a fresh non-root container. Input bytes,
+status/body/Evidence/provenance, discovery/card parity and package removal passed.
+Warm base-image build plus pack/export/runtime verification: **40.699 s elapsed,
+8.274 s process CPU, 421.04 MiB peak process-family RSS**. The real pinned
+`agent-env 0.9.1334` verifier then passed all five public cases and the smoke task,
+tore down its sandbox, and reported no new task containers or supervised
+descendants: **156.895 s / 102.871 s CPU / 500.34 MiB**. Framework infrastructure
+was already prepared. The later Unicode, close-failure and npm-selection repairs
+have separate boundary regressions; they do not establish new real-platform
+coverage.
+
+A matched export comparison before the main merge used the same manifest
+(6,416 bytes), capture (98,519 bytes) and checkout tarball (6,221,957 bytes), with
+all copied inputs byte-exact. Before/after the output-owner repair: **1.827/2.604
+s elapsed, 1.807/2.545 s CPU, 316.43/334.11 MiB** peak process-family RSS. These are
+single process samples with uncontrolled host filesystem cache; the additional
+ownership checks increased measured cost. They do not establish a speed or
+memory improvement.
+
+All followup heavy work uses one CPU and one test/build task at a time. Docker
+builds are limited to one CPU/4 GiB, standalone runtime containers one CPU/2 GiB.
+Process-family RSS is sampled every 50 ms and may double-count shared pages.
+Docker daemon/container CPU and peak memory, agent tokens and fresh-framework
+infrastructure cost are unmeasured. The previously documented early catalog
+heap refusal is not represented as a passing run.
+
+Final focused verification on the reviewed source passed **452 tests in 33 files** (including 232 CI-selection cases and the compiled CLI regressions): **161.276 s elapsed / 159.900 s CPU / 1242.43 MiB** peak process-family RSS. The final typecheck/build/lint gate passed: **218.427 s / 218.130 s CPU / 4449.45 MiB**.

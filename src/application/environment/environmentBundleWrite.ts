@@ -140,12 +140,21 @@ export const writeEnvironmentBundle = async (
   if (plan.packageSource.kind !== "tarball")
     return writeBundleFiles(input, plan);
   const path = plan.packageSource.path;
+  const resources = new ArtifactResourceScope();
   let admitted = false;
   try {
-    return await withRegularFile(path, async (handle, state) => {
-      admitted = true;
-      return writeBundleFiles(input, plan, { path, handle, size: state.size });
-    });
+    return await withRegularFile(
+      path,
+      async (handle, state) => {
+        admitted = true;
+        return writeBundleFiles(input, plan, {
+          path,
+          handle,
+          size: state.size,
+        });
+      },
+      { resources },
+    );
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure)
       throw new ArtifactFileCleanupFailure(

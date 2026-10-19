@@ -1571,8 +1571,11 @@ the host's Docker CLI named by absolute `REA_DOCKER_COMMAND`, Python 3.12 with
 `agentenv-framework==0.9.1334` installed in a virtual environment whose
 `agent-env` binary is named by absolute `REA_AGENT_ENV_COMMAND`, and outbound
 network for `pip` on the runner and for `npm` inside the image build. Both
-variables are required; the verifier resolves nothing from `PATH` and installs
-nothing. It checks the supplied runner's `--version` against the pin before
+variables are required; neither upstream executable is resolved from `PATH`,
+and the verifier installs nothing. Packing uses the shared npm helper, honoring
+`npm_execpath` from the caller's selected npm. Direct Node invocations without
+that value use the helper's platform fallback, so configure the pinned toolchain
+on `PATH` for those runs. It checks the supplied runner's `--version` against the pin before
 using Docker and retains the observed version in both passing and failing receipts.
 Its disposable CI runner creates the virtual environment in runner
 storage, exports both paths and uses the runner's own Docker; no developer host

@@ -24,10 +24,21 @@ export const assertExactTreeEntries = async (
     expected.get(dirname(path))?.add(basename(path));
   for (const [directory, names] of expected) {
     const entries = await readdir(directory);
-    if (
-      entries.length !== names.size ||
-      entries.some((name) => !names.has(name))
-    )
+    const remaining = new Map<string, number>();
+    for (const name of names) {
+      const key = name.normalize("NFC");
+      remaining.set(key, (remaining.get(key) ?? 0) + 1);
+    }
+    let unexpected = entries.length !== names.size;
+    for (const entry of entries) {
+      const key = entry.normalize("NFC");
+      const count = remaining.get(key) ?? 0;
+      if (count === 0) unexpected = true;
+      else remaining.set(key, count - 1);
+    }
+    // HFS+ can return an equivalent decomposed spelling. Counts avoid merging
+    // distinct Linux names; the original paths must still resolve to owned IDs.
+    if (unexpected)
       throw new ArtifactReaderFailure(
         "path",
         `Unowned or missing output entries: ${directory}`,
