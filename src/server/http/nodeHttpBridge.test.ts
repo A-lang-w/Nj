@@ -1,5 +1,6 @@
 import { once } from "node:events";
 import { createServer, type Server } from "node:http";
+import { connect } from "node:net";
 import type { AddressInfo } from "node:net";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -89,6 +90,44 @@ it("finishes a HEAD reply without waiting on a teed body whose sibling stays liv
   expect(response.status).toBe(200);
   await vi.waitFor(() => {
     expect(finished).toBe(true);
+  });
+});
+
+it("cancels the body when an asynchronous route resolves after its client left", async () => {
+  let cancelled = false;
+  let settled = false;
+  let received = false;
+  const server = createServer((_request, response) => {
+    received = true;
+    response.once("close", () => {
+      const idle = new Response(
+        new ReadableStream<Uint8Array>({
+          pull: () => new Promise(() => undefined),
+          cancel: () => {
+            cancelled = true;
+          },
+        }),
+      );
+      const settle = (): void => {
+        settled = true;
+      };
+      void writeWebResponse(idle, response).then(settle, settle);
+    });
+  });
+  servers.push(server);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+  const socket = connect(port, "127.0.0.1");
+  await once(socket, "connect");
+  socket.write("GET /late HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+  await vi.waitFor(() => {
+    expect(received).toBe(true);
+  });
+  socket.destroy();
+  await vi.waitFor(() => {
+    expect(settled).toBe(true);
+    expect(cancelled).toBe(true);
   });
 });
 

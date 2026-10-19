@@ -1,4 +1,3 @@
-import { once } from "node:events";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 
@@ -68,26 +67,46 @@ const responseHeaders = (
   return fields;
 };
 
-/** Copy a body into the reply chunk by chunk with backpressure; when the client leaves, cancel the body without waiting, since a teed body's cancellation settles only with its sibling. */
+/** Resolve on the next `drain` or `close`, removing both listeners, so a long stream does not accumulate waiters. */
+const drainOrClose = (target: ServerResponse): Promise<void> =>
+  new Promise((resolve) => {
+    const settle = (): void => {
+      target.off("drain", settle);
+      target.off("close", settle);
+      resolve();
+    };
+    target.once("drain", settle);
+    target.once("close", settle);
+  });
+
+/** Copy a body into the reply chunk by chunk with backpressure. When the client has left, or leaves, the body is cancelled without waiting, since a teed body's cancellation settles only with its sibling; the cancel also ends a pending read. */
 const pumpBody = async (
   body: ReadableStream<Uint8Array>,
   target: ServerResponse,
 ): Promise<void> => {
   const reader = body.getReader();
-  const gone = new Promise<undefined>((resolve) => {
-    target.once("close", () => resolve(undefined));
-  });
-  let next = await Promise.race([reader.read(), gone]);
-  while (next !== undefined && !next.done) {
-    if (!target.write(next.value))
-      await Promise.race([once(target, "drain"), gone]);
-    next = await Promise.race([reader.read(), gone]);
-  }
-  if (next === undefined) {
+  let left = false;
+  const leave = (): void => {
+    left = true;
     void reader.cancel().catch(() => undefined);
+  };
+  // A route that resolved after its client disconnected finds the reply already closed.
+  if (target.destroyed) {
+    leave();
     return;
   }
-  target.end();
+  target.once("close", leave);
+  try {
+    for (
+      let next = await reader.read();
+      !next.done && !left;
+      next = await reader.read()
+    )
+      if (!target.write(next.value)) await drainOrClose(target);
+  } finally {
+    target.off("close", leave);
+  }
+  if (!left) target.end();
 };
 
 /** Stream a web Response into node:http, flushing headers and each chunk as it arrives; `closeConnection` ends the socket after this reply. A HEAD reply ends after the headers and cancels any body the route attached. */
