@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { createPackageWithOptions } from "@electron/asar";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { aliasSelectionBudgetSource } from "../../fixtures/javascriptAliasSelectionBudget.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
@@ -96,6 +97,26 @@ cliTest.for(
 );
 
 const unprovenLoaderSources: Readonly<Record<string, string>> = {
+  "bounded alias selection": aliasSelectionBudgetSource(),
+  "captured module delegate":
+    'const load = module.require; load.call(module, "../shared/window.cjs");',
+  "destructured module delegate":
+    'const { require: load } = module; load.apply(module, ["../shared/window.cjs"]);',
+  "selected local delegate slots":
+    'const table = { x: {}, y: {}, z: module }; const target = flag ? table.x : table.y; target.require = replacement; require("../shared/window.cjs");',
+  "local assigned loader":
+    'const holder = {}; holder.loader = { require() {} }; holder.loader.require("../shared/window.cjs");',
+  "overwritten local loader":
+    'const holder = { loader: module }; holder.loader = { require() {} }; holder.loader.require("../shared/window.cjs");',
+  "normalized absolute ESM": 'import "/discard%2F/../shared/window.cjs";',
+  "normalized absolute dynamic import":
+    'import("/discard%5C/../shared/window.cjs");',
+  "rewritten CommonJS delegate":
+    'module.require = replacement; require("../shared/window.cjs");',
+  "nested rewritten CommonJS delegate":
+    'const holder = { loader: module }; holder.loader.require = replacement; require("../shared/window.cjs");',
+  "assigned rewritten CommonJS delegate":
+    'const holder = {}; holder.loader = module; holder.loader.require = replacement; require("../shared/window.cjs");',
   "assigned module loader":
     'const holder = {}; holder.loader = module; holder.loader.require("../shared/window.cjs");',
   "nested module loader":
@@ -125,6 +146,12 @@ const unprovenLoaderSources: Readonly<Record<string, string>> = {
 };
 
 const uncheckedModuleLoaders = new Set([
+  "bounded alias selection",
+  "captured module delegate",
+  "destructured module delegate",
+  "rewritten CommonJS delegate",
+  "nested rewritten CommonJS delegate",
+  "assigned rewritten CommonJS delegate",
   "assigned module loader",
   "module.require",
   "computed module.require",
@@ -143,6 +170,8 @@ const uncheckedModuleLoaders = new Set([
 const fixtureMainPath = (loader: string): string => {
   switch (loader) {
     case "absolute ESM":
+    case "normalized absolute ESM":
+    case "normalized absolute dynamic import":
     case "invalid absolute ESM":
     case "invalid absolute dynamic import":
     case "absolute dynamic import":
@@ -238,6 +267,8 @@ cliTest.for(
     const root = await createTestTempDirectory("rea-loader-owner-");
     const single = loader === "single percent main";
     const inert = [
+      "local assigned loader",
+      "overwritten local loader",
       "invalid absolute ESM",
       "invalid absolute dynamic import",
       "builtin alias",

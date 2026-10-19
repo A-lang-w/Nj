@@ -7,9 +7,14 @@ import {
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
-  semanticArrayIndex,
+  semanticPropertyPathKeyMatches,
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
+import {
+  SemanticAliasSelections,
+  semanticAliasSelectionChoices,
+  type SemanticAliasSelectionPath,
+} from "./javascriptSemanticAliasSelections.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -24,7 +29,7 @@ export interface SemanticReturnedReference {
 
 interface Candidate {
   readonly node: t.Node;
-  readonly path: readonly (string | number | null)[];
+  readonly path: SemanticAliasSelectionPath;
   readonly initializers: ReadonlySet<JavaScriptSemanticInitializer>;
 }
 
@@ -129,6 +134,11 @@ export const createSemanticReturnedReferences = (
     // cycle blockers affect reuse; branch history is not a dependency. An
     // acyclic expression/path is consequently expanded once across a diamond.
     const expanded: CompletedExpansions = new WeakMap();
+    // Selector histories through branch diamonds are not distinct callable
+    // identities. Join equal-depth alternatives before the blocker-aware memo.
+    const selections = new SemanticAliasSelections(() => {
+      state.valueResourceLimits.add("alias-selections");
+    });
     while (work.length > 0) {
       const task = work.pop();
       if (task === undefined) break;
@@ -136,8 +146,10 @@ export const createSemanticReturnedReferences = (
         completeExpansion(task.frame, expanded);
         continue;
       }
-      const { item, parent } = task;
+      let { item } = task;
+      const { parent } = task;
       const node = unwrapJavaScriptExpression(item.node).node;
+      item = { ...item, path: selections.normalize(node, item.path) };
       const pathKey = JSON.stringify(item.path);
       const covered = expanded
         .get(node)
@@ -222,8 +234,6 @@ export const createSemanticReturnedReferences = (
         selectObjectTargets(node, item, pending, objectTargets);
       else if (t.isArrayExpression(node)) {
         const [key, ...path] = item.path;
-        const index =
-          key === undefined || key === null ? null : semanticArrayIndex(key);
         let uncertainOffset = false;
         node.elements.forEach((element, offset) => {
           if (element === null) return;
@@ -234,7 +244,13 @@ export const createSemanticReturnedReferences = (
               node: element.argument,
               path: [null, ...path],
             });
-          } else if (index === null || uncertainOffset || index === offset)
+          } else if (
+            key === undefined ||
+            uncertainOffset ||
+            semanticAliasSelectionChoices(key).some((choice) =>
+              semanticPropertyPathKeyMatches(choice, String(offset)),
+            )
+          )
             pending.push({ ...item, node: element, path });
         });
       } else if (t.isNewExpression(node))
@@ -246,9 +262,16 @@ export const createSemanticReturnedReferences = (
             if (
               (item.path.length === 0 && member.kind === "constructor") ||
               (key !== undefined &&
-                (key === null ||
-                  semanticStaticPropertyKey(member.key, member.computed) ===
-                    String(key)))
+                semanticAliasSelectionChoices(key).some((choice) => {
+                  const name = semanticStaticPropertyKey(
+                    member.key,
+                    member.computed,
+                  );
+                  return (
+                    name === null ||
+                    semanticPropertyPathKeyMatches(choice, name)
+                  );
+                }))
             )
               pending.push({ ...item, node: member, path });
           } else if (
@@ -256,9 +279,15 @@ export const createSemanticReturnedReferences = (
             member.value !== null &&
             member.value !== undefined &&
             key !== undefined &&
-            (key === null ||
-              semanticStaticPropertyKey(member.key, member.computed) ===
-                String(key))
+            semanticAliasSelectionChoices(key).some((choice) => {
+              const name = semanticStaticPropertyKey(
+                member.key,
+                member.computed,
+              );
+              return (
+                name === null || semanticPropertyPathKeyMatches(choice, name)
+              );
+            })
           )
             pending.push({ ...item, node: member.value, path });
         }
@@ -299,7 +328,17 @@ const selectObjectTargets = (
   indexes: WeakMap<t.ObjectExpression, ObjectTargetIndex>,
 ): void => {
   const [key, ...path] = item.path;
-  if (key !== null && key !== undefined) {
+  if (key !== null && typeof key === "object" && "alternatives" in key) {
+    for (const choice of semanticAliasSelectionChoices(key))
+      selectObjectTargets(
+        node,
+        { ...item, path: [choice, ...path] },
+        pending,
+        indexes,
+      );
+    return;
+  }
+  if (key !== null && key !== undefined && typeof key !== "object") {
     const index = objectTargetIndex(node, indexes);
     const property = index.propertyByName.get(String(key));
     if (property !== undefined) {
@@ -340,13 +379,18 @@ const selectObjectTargets = (
       key !== null &&
       key !== undefined &&
       name !== null &&
-      name !== String(key)
+      !semanticPropertyPathKeyMatches(key, name)
     )
       continue;
     if (t.isObjectProperty(property))
       pending.push({ ...item, node: property.value, path });
     else pending.push({ ...item, node: property, path });
-    if (key !== null && key !== undefined && name === String(key))
+    if (
+      key !== null &&
+      key !== undefined &&
+      typeof key !== "object" &&
+      name === String(key)
+    )
       replaced = true;
   }
 };

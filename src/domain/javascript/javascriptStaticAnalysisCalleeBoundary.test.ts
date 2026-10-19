@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { aliasSelectionBudgetSource } from "../../../tests/fixtures/javascriptAliasSelectionBudget.js";
 
 const expressionWrappers = [
   ["plain", (value: string) => value],
@@ -10,6 +11,60 @@ const expressionWrappers = [
 ] as const;
 
 it.each([
+  ["module.require = replacement;", true],
+  [
+    "const holder = { loader: module }; holder.loader.require = replacement;",
+    true,
+  ],
+  [
+    "const holder = {}; holder.loader = module; holder.loader.require = replacement;",
+    true,
+  ],
+  ["const holder = [module]; holder[0].require = replacement;", true],
+  ["Object.defineProperty(module, 'require', { value: replacement });", true],
+  ["const api = module; Object.assign(api, { require: replacement });", true],
+  ["const module = { require() {} }; module.require = replacement;", false],
+  ["const api = module.exports; api.require = replacement;", false],
+  [
+    "const holder = { a: module }; const target = flag ? holder.a : holder; target.require = replacement;",
+    true,
+  ],
+  [
+    "const table = { x: {}, y: {}, z: module }; const target = flag ? table.x : table.y; target.require = replacement;",
+    false,
+  ],
+])("keeps CommonJS delegate replacement unknown: %s", (write, changed) => {
+  const analysis = analyzeJavaScriptStaticSource(
+    `${write} require("./shared.cjs");`,
+  );
+  expect(analysis.parse_error_count).toBe(0);
+  expect(analysis.references).toEqual([
+    expect.objectContaining({
+      kind: "require",
+      specifier: changed ? null : "./shared.cjs",
+    }),
+  ]);
+});
+
+it("keeps a require capture before a later delegate replacement", () => {
+  const analysis = analyzeJavaScriptStaticSource(
+    'require("./shared.cjs"); const holder = { loader: module }; holder.loader.require = replacement;',
+  );
+  expect(analysis.references).toEqual([
+    expect.objectContaining({ kind: "require", specifier: "./shared.cjs" }),
+  ]);
+});
+
+it.each([
+  ["const holder = {}; holder.loader = { require() {} }; holder.loader", false],
+  [
+    "const holder = { loader: module }; holder.loader = {}; holder.loader",
+    false,
+  ],
+  [
+    "const holder = {}; if (flag) holder.loader = { require() {} }; holder.loader",
+    false,
+  ],
   ["const holder = { loader: module }; holder.loader", true],
   ["const holder = { inner: { loader: module } }; holder.inner.loader", true],
   ["const holder = [module]; holder[0]", true],
@@ -29,6 +84,10 @@ it.each([
   ["const holder = { loader: {} }; holder.loader", false],
   ["const holder = { loader: module.exports }; holder.loader", false],
   ["const holder = { loader: module }; holder.missing", false],
+  [
+    "const table = { a: { b: {}, d: module }, c: { d: {}, b: {} } }; const selected = flag ? table.a.b : table.c.d; selected",
+    false,
+  ],
   ["let holder = {}; while (flag) holder = holder.slot; holder", true],
   ["const holder = {}; holder.loader = module; holder.loader", true],
   ["const holder = {}; if (flag) holder.loader = module; holder.loader", true],
@@ -50,6 +109,18 @@ it.each([
     );
   },
 );
+
+it("bounds branching selector work and reports unknown ownership explicitly", () => {
+  const analysis = analyzeJavaScriptStaticSource(aliasSelectionBudgetSource());
+  expect(analysis.parse_error_count).toBe(0);
+  expect(analysis.parse_status).toBe("partial");
+  expect(analysis.references).toEqual([
+    expect.objectContaining({ kind: "require", specifier: null }),
+  ]);
+  expect(analysis.limitations).toContainEqual(
+    expect.stringMatching(/Alias selection expansion.*512/u),
+  );
+});
 
 it.each([
   ['const load = module.require.bind(module); load("./shared.cjs");', true],

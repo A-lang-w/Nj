@@ -11,6 +11,8 @@ import {
 } from "./javascriptSemanticTraversal.js";
 
 import { inspectElectronStaticNode } from "./electronStaticAnalysis.js";
+import { hasPossibleCommonJsDelegateWrite } from "./javascriptSemanticRequireOrigin.js";
+import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
 import { finishElectronBrowserWindowsSteps } from "./electronStaticAnalysisBrowser.js";
 import {
   detectVendors,
@@ -89,6 +91,8 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
   const index = yield* indexJavaScriptBindingsWithReceiversSteps(file.program);
   const { bindings, receivers } = index;
   yield* index.indexAmbientWritesSteps();
+  if (hasPossibleCommonJsDelegateWrite(bindings))
+    yield* index.indexMemberMutationFactsSteps();
   const electronIdentity = yield* indexJavaScriptElectronIdentitySteps(
     file.program,
     bindings,
@@ -124,7 +128,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     electronIdentity,
   );
   addSourceMapDirectives(source, file.comments ?? [], accumulator);
-  return finalizeStaticAnalysis(source, file, accumulator);
+  return finalizeStaticAnalysis(source, file, accumulator, bindings);
 }
 
 function* traverseStaticSourceSteps(
@@ -146,9 +150,13 @@ const finalizeStaticAnalysis = (
   source: string,
   file: ParsedJavaScriptSource,
   accumulator: AnalysisAccumulator,
+  bindings: JavaScriptSemanticAnalysisState,
 ): JavaScriptStaticAnalysis => {
   const parserErrors = file.errors.length;
   const limitations = [
+    ...(bindings.valueResourceLimits.has("alias-selections")
+      ? [semanticResourceLimitReason("alias-selections")]
+      : []),
     ...(accumulator.electronCallPaths?.length
       ? [
           "Bundled Electron call paths use static argument and closure substitutions. Conditions, ambient helper overrides, runtime reachability and arbitrary side effects remain unproven.",
@@ -184,7 +192,9 @@ const finalizeStaticAnalysis = (
   ];
   return {
     parse_status:
-      parserErrors > 0 || accumulator.unknownFindings > 0
+      parserErrors > 0 ||
+      accumulator.unknownFindings > 0 ||
+      bindings.valueResourceLimits.has("alias-selections")
         ? "partial"
         : "complete",
     parse_error_count: parserErrors,

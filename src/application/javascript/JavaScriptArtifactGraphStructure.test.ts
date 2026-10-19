@@ -14,6 +14,8 @@ import {
   addJavaScriptArtifactFiles,
   createJavaScriptArtifactRootNode,
 } from "./JavaScriptArtifactGraphStructure.js";
+import { addJavaScriptStaticFindingsSteps } from "./JavaScriptArtifactGraphFindings.js";
+import { applicationContainerIdentity } from "./JavaScriptArtifactGraphContext.js";
 
 const SHA256 = "a".repeat(64);
 const REASON =
@@ -151,3 +153,73 @@ describe("skipped JavaScript parse reporting", () => {
     expect(fileObservation(context).parse_status).toBe(javascript.parse_status);
   });
 });
+
+it.each([false, true])(
+  "retains possible setter owners independently of proven imports (possible owner: %s)",
+  (possibleOwner) => {
+    const window: JavaScriptArtifactFile = {
+      ...skippedFile(),
+      path: "b/window.cjs",
+      sha256: "b".repeat(64),
+    };
+    const setter: JavaScriptArtifactFile = {
+      ...skippedFile(),
+      path: "shared/change.cjs",
+      sha256: "c".repeat(64),
+    };
+    const page: JavaScriptArtifactFile = {
+      ...skippedFile(),
+      path: "b/index.html",
+      sha256: "d".repeat(64),
+      kind: "html",
+    };
+    const analysis = analysisFor([
+      {
+        file: setter,
+        javascript: analyzeJavaScriptStaticSource(
+          'const { app } = require("electron"); app.setAppPath("/changed");',
+        ),
+        semantic: null,
+      },
+      {
+        file: window,
+        javascript: analyzeJavaScriptStaticSource(
+          'const { BrowserWindow } = require("electron"); new BrowserWindow().loadFile("index.html");',
+        ),
+        semantic: null,
+      },
+      { file: page, javascript: null, semantic: null },
+    ]);
+    const base = contextFor(window, analysis);
+    const files = [setter, window, page];
+    const context: JavaScriptArtifactGraphContext = {
+      ...base,
+      fileSet: { ...base.fileSet, files },
+      filesByPath: new Map(files.map((file) => [file.path, file])),
+    };
+    context.applicationRootsBySource.set(setter.path, new Set(["a"]));
+    context.applicationRootsBySource.set(window.path, new Set(["b"]));
+    if (possibleOwner)
+      context.applicationPossibleRootsByContainer.set(
+        applicationContainerIdentity(context.fileSet, setter),
+        new Set(["b"]),
+      );
+    addJavaScriptArtifactFiles(context);
+    const steps = addJavaScriptStaticFindingsSteps(context);
+    let step = steps.next();
+    while (!step.done) step = steps.next();
+    const role = context.accumulator
+      .nodes()
+      .find(({ kind }) => kind === "electron-renderer");
+    expect(role?.observations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            resolved_path: possibleOwner ? null : "b/index.html",
+            resolution_status: possibleOwner ? "unavailable" : "resolved",
+          }),
+        }),
+      ]),
+    );
+  },
+);

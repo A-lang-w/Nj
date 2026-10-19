@@ -37,6 +37,39 @@ const indexed = (source: string) => {
   };
 };
 
+it("retains selected callable keys without admitting an unrelated return", () => {
+  const context = indexed(`
+    const table = { x() { return {}; }, y() { return {}; }, z() { return module; } };
+    const make = flag ? table.x : table.y;
+    make();
+  `);
+  const last = context.state.program.body.at(-1);
+  if (!t.isExpressionStatement(last) || !t.isCallExpression(last.expression))
+    throw new Error("Missing selected call");
+  const returns = createSemanticReturnedReferences(context.state)(
+    last.expression.callee,
+  );
+  expect(returns).toHaveLength(2);
+  expect(returns.every(({ node }) => t.isObjectExpression(node))).toBe(true);
+});
+
+it("retains correlations between selected callable path segments", () => {
+  const context = indexed(`
+    const table = { a: { b() { return {}; }, d() { return module; } },
+      c: { d() { return {}; }, b() { return module; } } };
+    const make = flag ? table.a.b : table.c.d;
+    make();
+  `);
+  const last = context.state.program.body.at(-1);
+  if (!t.isExpressionStatement(last) || !t.isCallExpression(last.expression))
+    throw new Error("Missing selected call");
+  const returns = createSemanticReturnedReferences(context.state)(
+    last.expression.callee,
+  );
+  expect(returns).toHaveLength(2);
+  expect(returns.every(({ node }) => t.isObjectExpression(node))).toBe(true);
+});
+
 it("bounds shared partial callback alias expansion by AST size", () => {
   const measure = (depth: number) => {
     const context =

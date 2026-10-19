@@ -58,7 +58,11 @@ import {
   completeSemanticSteps,
   traverseJavaScriptAstSteps,
 } from "./javascriptSemanticTraversal.js";
-import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
+import {
+  semanticRequireOrigin,
+  observePossibleCommonJsDelegateWrite,
+  invalidateSemanticRequireDelegateWrites,
+} from "./javascriptSemanticRequireOrigin.js";
 import { semanticBundledRequireOrigin } from "./javascriptBundledRequireOrigin.js";
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
@@ -174,6 +178,7 @@ function* indexSemanticAmbientWritesSteps(
     state.program,
     state,
     createSemanticOpaqueGlobalObserver(state),
+    (node) => observePossibleCommonJsDelegateWrite(node, state),
   );
   if (state.opaqueEffects.globalSites.length > 0)
     clearSemanticValueCaches(state);
@@ -193,6 +198,7 @@ function* indexSemanticMemberMutationFactsSteps(
       referenceEffectsMayHaveChanged(state, site, reference, path),
   );
   indexedMemberMutationStates.add(state);
+  invalidateSemanticRequireDelegateWrites(state);
 }
 
 /** One owner projects source-site effects for complete reports or early exit. */
@@ -416,6 +422,9 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
       ].sort(),
     ),
     limitations: [
+      ...(state.valueResourceLimits.has("alias-selections")
+        ? [semanticResourceLimitReason("alias-selections")]
+        : []),
       ...[...state.getterResourceLimits]
         .sort()
         .map(semanticResourceLimitReason),

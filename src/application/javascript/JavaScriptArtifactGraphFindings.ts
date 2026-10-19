@@ -134,6 +134,16 @@ const changedApplicationRoots = (
     // They cannot enumerate every application affected by a shared setter.
     if (owners.size >= 2) return null;
     for (const root of owners) roots.add(root);
+    const possibleOwners = context.applicationPossibleRootsByContainer.get(
+      applicationContainerIdentity(context.fileSet, file),
+    );
+    // An unchecked loader can execute this setter in another application's
+    // process even when only one entrypoint has a proven import of this source.
+    // Possible-owner sets have the same two-root saturation as proven owners.
+    if (possibleOwners !== undefined) {
+      if (possibleOwners.size >= 2) return null;
+      for (const root of possibleOwners) roots.add(root);
+    }
   }
   return roots;
 };

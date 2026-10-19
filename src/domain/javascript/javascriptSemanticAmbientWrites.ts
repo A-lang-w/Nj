@@ -433,6 +433,7 @@ export function* indexJavaScriptAmbientWritesSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
   observeOpaqueInvocation?: (node: t.Node) => void,
+  observeWriteSite?: (node: t.Node) => void,
 ): Generator<void> {
   const ambientReads = createAmbientPathResolver(state, false);
   const browserReceiverMethods = new Set<string>();
@@ -482,6 +483,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     program,
     (root, kind, writeSite) => {
       if (kind === "opaque-call") return [];
+      observeWriteSite?.(writeSite);
       // Reassigning a local alias changes the binding, not the referenced object.
       if (kind === "binding")
         return t.isIdentifier(root) &&

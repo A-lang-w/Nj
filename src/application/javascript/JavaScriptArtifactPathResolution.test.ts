@@ -11,6 +11,53 @@ import { analyzeJavaScriptStaticSource } from "../../domain/javascript/javascrip
 
 describe("runtime host path classification", () => {
   it.each([
+    "/discard%2F/../shared/window.cjs",
+    "/discard%5C/../shared/window.cjs",
+    "/discard%00/../shared/window.cjs",
+    "/discard%xx/../shared/window.cjs",
+  ])(
+    "normalizes discarded absolute URL segments before pathname validation: %s",
+    (declaredPath) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/main.mjs",
+          context: "module-specifier",
+          moduleKind: "import",
+          files: new Map(),
+        }),
+      ).toMatchObject({
+        resolution_status: "unavailable",
+        resolved_path: null,
+      });
+    },
+  );
+  it("normalizes discarded relative URL segments before pathname validation", () => {
+    expect(
+      resolve({
+        declaredPath: "./discard%2F/../window.cjs",
+        sourcePath: "app/main.mjs",
+        context: "module-specifier",
+        moduleKind: "import",
+        files: fileMap([file("app/window.cjs", "root")]),
+      }),
+    ).toMatchObject({
+      resolution_status: "resolved",
+      resolved_path: "app/window.cjs",
+    });
+  });
+  it("retains unknown URL identity for an unpaired source directory segment", () => {
+    expect(
+      resolve({
+        declaredPath: "./window.cjs",
+        sourcePath: "app/\ud800/main.mjs",
+        context: "module-specifier",
+        moduleKind: "import",
+        files: new Map(),
+      }),
+    ).toMatchObject({ resolution_status: "unavailable", resolved_path: null });
+  });
+  it.each([
     "/shared%2Fwindow.mjs",
     "/shared%5cwindow.mjs",
     "/shared%00window.mjs",
@@ -93,6 +140,78 @@ describe("runtime host path classification", () => {
 });
 
 describe("artifact URI scheme classification", () => {
+  it.each(["entry:prod.cjs", "entry:prod%2Fname.cjs"])(
+    "retains package main filename bytes for %s without URI classification",
+    (declaredPath) => {
+      const files = fileMap([
+        file("app/package.json", "root"),
+        file(`app/${declaredPath}`, "root"),
+      ]);
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/package.json",
+          context: "package-entrypoint",
+          runtimePathKind: "node-entrypoint",
+          files,
+        }),
+      ).toMatchObject({
+        declared_path: declaredPath,
+        resolution_status: "resolved",
+        resolved_path: `app/${declaredPath}`,
+      });
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/package.json",
+          context: "module-specifier",
+          moduleKind: "require",
+          files,
+        }),
+      ).toMatchObject({ resolution_status: "external", resolved_path: null });
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/package.json",
+          context: "package-entrypoint",
+          runtimePathKind: "node-entrypoint",
+          files: fileMap([file("app/package.json", "root")]),
+        }),
+      ).toMatchObject({
+        resolution_status: "not-found",
+        resolved_path: null,
+        candidate_path: `app/${declaredPath}`,
+      });
+    },
+  );
+
+  it.each(["require", "import"] as const)(
+    "resolves a colon-bearing dependency package main with the %s loader",
+    (moduleKind) => {
+      expect(
+        resolve({
+          declaredPath: "fixture",
+          sourcePath: "app/main.cjs",
+          context: "module-specifier",
+          moduleKind,
+          files: fileMap([
+            file("app/main.cjs", "root"),
+            file(
+              "app/node_modules/fixture/package.json",
+              "root",
+              '{"main":"entry:prod.cjs"}',
+            ),
+            file("app/node_modules/fixture/entry:prod.cjs", "root"),
+            file("app/node_modules/fixture/index.js", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        resolution_status: "resolved",
+        resolved_path: "app/node_modules/fixture/entry:prod.cjs",
+      });
+    },
+  );
+
   it.each(["html-reference", "module-specifier", "url-reference"] as const)(
     "keeps digit-bearing schemes external in %s even when a local file matches",
     (context) => {

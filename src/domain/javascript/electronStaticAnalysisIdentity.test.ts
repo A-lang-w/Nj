@@ -3,6 +3,23 @@ import { expect, it } from "vitest";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 it.each([
+  "module.require = replacement;",
+  "const holder = { loader: module }; holder.loader.require = replacement;",
+  "const holder = {}; holder.loader = module; holder.loader.require = replacement;",
+])(
+  "does not prove Electron exports after a delegate replacement: %s",
+  (write) => {
+    const analysis = analyzeJavaScriptStaticSource(
+      `${write} const { BrowserWindow } = require("electron"); new BrowserWindow();`,
+    );
+    expect(analysis.electron.browser_windows).toEqual([]);
+    expect(analysis.references).toEqual([
+      expect.objectContaining({ kind: "require", specifier: null }),
+    ]);
+  },
+);
+
+it.each([
   ['const { app } = require("electron"); app.setAppPath("./other");', true],
   [
     'import { app as runtime } from "electron/main"; runtime.setAppPath(path);',

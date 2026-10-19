@@ -284,16 +284,24 @@ const resolvePath = (input: ResolveArtifactPathInput): CandidateResolution => {
         input.moduleKind !== "require" &&
         /^file:/iu.test(input.declaredPath)))
   ) {
-    if (input.context === "module-specifier" && input.moduleKind === "import") {
-      const admitted = decodeModuleUrlPath(
-        stripQueryAndFragment(htmlUrlText(input.declaredPath)),
+    const esm =
+      input.context === "module-specifier" && input.moduleKind === "import";
+    if (esm) {
+      const normalized = URL.parse(
+        htmlUrlText(input.declaredPath),
+        PACKAGE_ARTIFACT_ROOT_URL,
       );
+      if (normalized === null)
+        return unresolvedCandidate("rejected", [
+          "The module URL cannot be parsed.",
+        ]);
+      const admitted = decodeModuleUrlPath(normalized.pathname);
       if (typeof admitted !== "string") return admitted;
     }
     // Host syntax is not a canonical logical path. In particular, Windows
     // separators and drive letters must not be reclassified as invalid/URLs.
     return input.declaredPath.includes("\0") ||
-      fileUrlPath(input.declaredPath) === null
+      (!esm && fileUrlPath(input.declaredPath) === null)
       ? unresolvedCandidate("rejected", [
           "NUL or unsafe file URL path syntax is not admitted in a runtime path.",
         ])
@@ -430,7 +438,11 @@ const resolveNodeRuntimeEntrypoint = (
     ]);
   const { runtimePathKind: _runtimePathKind, ...sourceInput } = input;
   const runtimeInput = { ...sourceInput, moduleKind: "require" as const };
-  if (!isRuntimePathDeclaration(runtimeInput)) return resolvePath(runtimeInput);
+  if (
+    runtimeInput.context !== "package-entrypoint" &&
+    !isRuntimePathDeclaration(runtimeInput)
+  )
+    return resolvePath(runtimeInput);
   const candidate = contextualCandidate(runtimeInput);
   if (typeof candidate !== "string") return candidate;
   const confined = confineCandidate(candidate);
@@ -596,11 +608,45 @@ const contextualCandidate = (
     )
       return bareModuleCandidate(input);
     if (input.moduleKind !== "require") {
+      if (hasUrlPathSemantics) {
+        const sourceUrl = packageMetadataUrl(input.sourcePath, declared);
+        const normalized = URL.parse(
+          declared,
+          sourceUrl.ok ? sourceUrl.value : sourceUrl.error.structuralUrl,
+        );
+        if (normalized === null)
+          return unresolvedCandidate("rejected", [
+            "The module URL cannot be parsed.",
+          ]);
+        if (!normalized.pathname.startsWith(PACKAGE_ARTIFACT_ROOT_URL.pathname))
+          return unresolvedCandidate("rejected", [
+            "The module URL escapes the selected logical artifact root.",
+          ]);
+        const decoded = decodeModuleUrlPath(
+          normalized.pathname.slice(PACKAGE_ARTIFACT_ROOT_URL.pathname.length),
+        );
+        if (typeof decoded !== "string") return decoded;
+        if (
+          !sourceUrl.ok &&
+          decoded
+            .split("/")
+            .some((segment) => sourceUrl.error.structuralSegments.has(segment))
+        )
+          return unresolvedCandidate("unavailable", [
+            sourceUrl.error.limitation,
+          ]);
+        const candidate = urlRelativeCandidate("", `/${decoded}`);
+        return typeof candidate === "string"
+          ? exactUrlPathCandidate(decoded, candidate, "module URL")
+          : candidate;
+      }
       const decoded = decodeModuleUrlPath(stripQueryAndFragment(declared));
       if (typeof decoded !== "string") return decoded;
       declared = decoded;
     }
-  } else if (looksExternal(declared))
+  } else if (context !== "package-entrypoint" && looksExternal(declared))
+    // Package main is a filesystem declaration. Scheme-like filename bytes
+    // remain literal; URI classification belongs to module and URL owners.
     return unresolvedCandidate("external", [
       "URL schemes and protocol-relative URLs are outside this local artifact path context.",
     ]);

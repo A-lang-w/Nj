@@ -471,6 +471,25 @@ const directMutationPosition = (
   return computed;
 };
 
+/** Prove that an unconditional member replacement precedes this read. */
+export const semanticDefiniteEffectPrecedesReference = (
+  effect: t.Node,
+  reference: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  const before = directMutationPosition(effect, parents);
+  const after = bindingReadPosition(reference, parents);
+  if (before === null || after.position === null || after.repeating)
+    return false;
+  if (positionPrecedes(before, after.position)) return true;
+  return (
+    before.body === after.position.body &&
+    before.index === after.position.index &&
+    before.declaratorIndex === after.position.declaratorIndex &&
+    expressionEvaluationOrder(effect, reference, parents) === "before"
+  );
+};
+
 const computeReferenceInitializerPosition = (
   node: t.Node,
   parents: WeakMap<t.Node, t.Node>,

@@ -72,7 +72,8 @@ export const inspectCall = (
   const name = calleeName(node.callee);
   const first = stringValue(node.arguments[0]);
   const deferredModuleRequire =
-    semanticModuleRequireReceiver(node) !== undefined;
+    semanticModuleRequireReceiver(node) !== undefined ||
+    semanticModuleRequireCallAt(node, bindings, false);
   if (deferredModuleRequire) accumulator.pendingModuleRequireCalls.push(node);
   const requireCall = deferredModuleRequire
     ? null
