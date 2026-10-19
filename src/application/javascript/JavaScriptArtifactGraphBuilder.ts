@@ -177,6 +177,7 @@ const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
       javascript !== null && javascript.parse_status === "partial",
   );
   const unknownGap =
+    context.snapshot.coverage.status !== "complete" ||
     (context.fileSet.source_selection?.unselected_files ?? 0) > 0 ||
     context.fileSet.unavailable_relevant_files.length > 0 ||
     context.analysis.files.some(
@@ -268,6 +269,10 @@ const graphLimitations = (
   );
   return [
     ...context.analysis.limitations,
+    // Entries the inventory did not traverse were never read as sources.
+    ...(context.snapshot.coverage.status === "complete"
+      ? []
+      : context.snapshot.limitations),
     ...(context.fileSet.source_selection === undefined
       ? []
       : [

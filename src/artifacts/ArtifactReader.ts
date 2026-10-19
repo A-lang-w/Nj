@@ -112,7 +112,8 @@ export interface ArtifactTraversalOmission {
     | "block-device"
     | "character-device"
     | "unsupported"
-    | "directory-descendants";
+    | "directory-descendants"
+    | "unreadable-directory";
 }
 
 /** Facts from an exhausted traversal, separate from entry content certainty. */
@@ -124,6 +125,8 @@ export interface ArtifactReaderTraversal {
 /** Per-iterator observation sink; adapters report intentional omissions without shared state. */
 export interface ArtifactTraversalOptions {
   readonly onOmission?: (omission: ArtifactTraversalOmission) => void;
+  /** Report a child directory the user may not list through onOmission instead of failing. */
+  readonly omitUnreadableDirectories?: boolean;
 }
 
 /** Read-only adapter over one directory, archive, or virtual container. */

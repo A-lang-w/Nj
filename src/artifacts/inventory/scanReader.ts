@@ -13,6 +13,10 @@ import {
   type ArtifactTraversalOmission,
 } from "../ArtifactReader.js";
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
+import {
+  DirectoryArtifactReader,
+  isDirectoryAccessDenied,
+} from "../DirectoryArtifactReader.js";
 import type { ArtifactNode } from "../../domain/artifactGraph.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import {
@@ -41,6 +45,9 @@ export interface PendingIntegrityContradiction {
 
 const UNAVAILABLE_UNPACKED_LIMITATION =
   "ASAR unpacked companion bytes were unavailable; no content hash or child artifact was produced.";
+
+const UNREADABLE_FILE_LIMITATION =
+  "File bytes were not readable (access denied); no content hash or child artifact was produced.";
 
 const emptyScan = (): {
   readonly nodes: Map<string, ArtifactNode>;
@@ -139,6 +146,8 @@ const inventoryEntries = (
 ): AsyncIterator<ArtifactEntry> =>
   reader
     .entries(context.signal, {
+      // An inventory keeps what it could read, as a filesystem snapshot does.
+      omitUnreadableDirectories: true,
       onOmission: (omission) =>
         context.omissions.push({
           ...omission,
@@ -211,9 +220,15 @@ const visitArtifactEntries = async (
           occurrence,
         );
       } catch (cause: unknown) {
-        if (!isUnavailableUnpackedEntry(cause, entry)) throw cause;
+        const unreadable = isUnreadableDirectoryEntry(cause, frame.reader);
+        if (!unreadable && !isUnavailableUnpackedEntry(cause, entry))
+          throw cause;
         occurrence.hash_status = "unavailable";
-        occurrence.limitations.push(UNAVAILABLE_UNPACKED_LIMITATION);
+        occurrence.limitations.push(
+          unreadable
+            ? UNREADABLE_FILE_LIMITATION
+            : UNAVAILABLE_UNPACKED_LIMITATION,
+        );
       }
       if (digested === undefined) noteUnreadContainerSuffix(occurrence);
       else {
@@ -334,6 +349,13 @@ const isExpandableAsar = (entry: ArtifactEntry, logicalPath: string): boolean =>
   entry.kind === "file" &&
   logicalPath.toLowerCase().endsWith(".asar") &&
   isAbsolute(entry.adapterKey);
+
+/** A directory file this user may not read keeps its occurrence without bytes. */
+const isUnreadableDirectoryEntry = (
+  cause: unknown,
+  reader: ArtifactReader,
+): boolean =>
+  reader instanceof DirectoryArtifactReader && isDirectoryAccessDenied(cause);
 
 const isUnavailableUnpackedEntry = (
   cause: unknown,
