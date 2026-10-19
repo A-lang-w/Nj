@@ -566,3 +566,40 @@ it.each([7, null, "without-hash"])(
     ).toEqual({ kind: "invalid_fragment", scopeUrl: `${origin}/page?x=1#old` });
   },
 );
+
+it.each([7, "missing-hash"])(
+  "retains foreign frame scope independently of malformed fragment %s",
+  (urlFragment) => {
+    const completeness = new CdpCaptureCompleteness();
+    const captured = captureFrames(
+      {
+        frameTree: {
+          frame: { id: "root", url: origin },
+          childFrames: [
+            {
+              frame: {
+                id: "foreign",
+                parentId: "root",
+                url: "https://foreign.test/page",
+                urlFragment,
+              },
+            },
+          ],
+        },
+      },
+      new Set([origin]),
+      undefined,
+      completeness,
+    );
+    expect(captured.items.map((frame) => frame.frame_id)).toEqual(["root"]);
+    expect(completeness.snapshot().excluded).toEqual(
+      expect.arrayContaining([
+        { section: "frames", reason: "invalid_protocol_value", count: 1 },
+        { section: "frames", reason: "disallowed_origin", count: 1 },
+      ]),
+    );
+    expect(completeness.snapshot().policy_filtered_sections).toContain(
+      "frames",
+    );
+  },
+);

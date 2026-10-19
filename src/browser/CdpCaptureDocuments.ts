@@ -58,6 +58,8 @@ export const captureFrames = (
     const observation = observeCdpFrameUrl(frame);
     const frameUrl =
       observation.kind === "observed" ? observation.url : undefined;
+    const scopeUrl =
+      observation.kind === "missing" ? undefined : observation.scopeUrl;
     const sanitized = allowedSanitizedUrl(frameUrl, allowedOrigins);
     if (frame === undefined || frameId === undefined) {
       completeness?.exclude("frames", "invalid_protocol_value");
@@ -65,13 +67,12 @@ export const captureFrames = (
     }
     if (observation.kind === "invalid_fragment") {
       completeness?.exclude("frames", "invalid_protocol_value");
+      if (allowedSanitizedUrl(scopeUrl, allowedOrigins) === undefined)
+        completeness?.exclude("frames", exclusionReasonForUrl(scopeUrl));
       continue;
     }
     if (sanitized === undefined || sanitized.origin === null) {
-      completeness?.exclude(
-        "frames",
-        exclusionReasonForUrl(cdpStringValue(frame.url)),
-      );
+      completeness?.exclude("frames", exclusionReasonForUrl(scopeUrl));
       continue;
     }
     if (maximum !== undefined && items.length >= maximum) continue;
