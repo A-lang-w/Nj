@@ -30,6 +30,7 @@ import {
 } from "./ClientRegistrationIdentity.js";
 import {
   clientEvidencePaths,
+  clientRegistrationKey,
   manualRegistrationRemediation,
   supportedClients,
 } from "./SupportedClients.js";
@@ -143,6 +144,24 @@ export const readClientRegistrationInspections = async (
   ): void => {
     inspections.push({ status, activation });
   };
+  // A shared registration group is read and parsed once so both surfaces
+  // observe the identical snapshot even if the file changes between reads.
+  const configurations = new Map<
+    string,
+    ReturnType<typeof readEffectiveClientRegistrationConfiguration>
+  >();
+  const sharedConfiguration = (client: SetupClient) => {
+    const key = clientRegistrationKey(client);
+    let configuration = configurations.get(key);
+    if (configuration === undefined) {
+      configuration = readEffectiveClientRegistrationConfiguration(
+        client,
+        options.resources,
+      );
+      configurations.set(key, configuration);
+    }
+    return configuration;
+  };
   for (const client of supportedClients(
     home,
     options.platform,
@@ -186,10 +205,7 @@ export const readClientRegistrationInspections = async (
     }
     let selectedConfigPath = client.configPath;
     try {
-      const configuration = await readEffectiveClientRegistrationConfiguration(
-        client,
-        options.resources,
-      );
+      const configuration = await sharedConfiguration(client);
       if (!configuration.ok) {
         if (
           options.resources === undefined &&

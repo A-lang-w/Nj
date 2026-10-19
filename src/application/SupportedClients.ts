@@ -752,22 +752,21 @@ export const clientEvidencePaths = (
         ),
       ];
 
+/** Identity of the registration contract a client participates in. */
+export const clientRegistrationKey = (client: SetupClient): string =>
+  JSON.stringify(
+    client.registrationGroup === undefined
+      ? ["client", client.name]
+      : ["shared", client.registrationGroup, client.format, client.configPath],
+  );
+
 /** Group only explicitly shared registrations with the same resolved contract. */
 export const clientRegistrationGroups = (
   clients: readonly SetupClient[],
 ): readonly (readonly SetupClient[])[] => {
   const groups = new Map<string, SetupClient[]>();
   for (const client of clients) {
-    const key = JSON.stringify(
-      client.registrationGroup === undefined
-        ? ["client", client.name]
-        : [
-            "shared",
-            client.registrationGroup,
-            client.format,
-            client.configPath,
-          ],
-    );
+    const key = clientRegistrationKey(client);
     const group = groups.get(key);
     if (group === undefined) groups.set(key, [client]);
     else group.push(client);

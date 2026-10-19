@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
+import * as clientConfigurationFiles from "../../../src/application/ClientConfigurationFiles.js";
 import { npxRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
 import { skillDestinations } from "../../../src/application/SetupSkill.js";
@@ -220,5 +221,50 @@ describe("Antigravity CLI detection", () => {
     await expect(statusFor(home)).resolves.toMatchObject({
       state: "aligned",
     });
+  });
+});
+
+describe("Antigravity doctor shared snapshot", () => {
+  it("reads the shared registration once and reports both surfaces from it", async () => {
+    const home = await createTestTempDirectory(
+      "rea-antigravity-shared-snapshot-",
+    );
+    const client = antigravityCliPath(home, process.platform);
+    if (client?.markerPath === undefined)
+      throw new Error("missing Antigravity CLI client");
+    await mkdir(client.markerPath, { recursive: true });
+    await mkdir(dirname(client.configPath), { recursive: true });
+    await configureClientConfiguration(client, {}, command);
+    // Both evidence roots exist, so one doctor run inspects both surfaces.
+    await mkdir(join(home, ".gemini", "config", "skills"), { recursive: true });
+
+    const reads = vi.spyOn(
+      clientConfigurationFiles,
+      "readEffectiveClientRegistrationConfiguration",
+    );
+    try {
+      const statuses = await readClientRegistrationStatuses(home, undefined, {
+        platform: process.platform,
+        environment: {},
+      });
+      expect(
+        statuses.filter(({ client }) => client.startsWith("antigravity")),
+      ).toEqual([
+        expect.objectContaining({ client: "antigravity", state: "aligned" }),
+        expect.objectContaining({
+          client: "antigravity_cli",
+          state: "aligned",
+        }),
+      ]);
+      // Other clients may legitimately read their own configurations; only
+      // the shared registration must be read once for both surfaces.
+      expect(
+        reads.mock.calls.filter(([client]) =>
+          client.name.startsWith("antigravity"),
+        ),
+      ).toHaveLength(1);
+    } finally {
+      reads.mockRestore();
+    }
   });
 });
