@@ -290,11 +290,15 @@ const referencesChangingTarget = (
   });
 };
 
+// Inside a nested resource, references resolve against that resource's own
+// root rather than the outer schema.
+const nestedResourceRoot = (child: unknown, root: unknown): unknown =>
+  isObject(child) && "$id" in child ? child : root;
+
 const normalizeAdvertisedSchema = (
   value: unknown,
   root: unknown = value,
   active: ReadonlySet<string> = new Set(),
-  suppressReferences = false,
 ): SchemaNormalization => {
   if (!isObject(value)) return { schema: value, changed: false };
 
@@ -305,9 +309,8 @@ const normalizeAdvertisedSchema = (
       Object.entries(map).map(([name, child]) => {
         const result = normalizeAdvertisedSchema(
           child,
-          root,
+          nestedResourceRoot(child, root),
           active,
-          suppressReferences || (isObject(child) && "$id" in child),
         );
         changed ||= result.changed;
         return [name, result.schema];
@@ -317,9 +320,8 @@ const normalizeAdvertisedSchema = (
       list.map((child) => {
         const result = normalizeAdvertisedSchema(
           child,
-          root,
+          nestedResourceRoot(child, root),
           active,
-          suppressReferences || (isObject(child) && "$id" in child),
         );
         changed ||= result.changed;
         return result;
@@ -347,15 +349,13 @@ const normalizeAdvertisedSchema = (
         : [
             normalizeAdvertisedSchema(
               child,
-              root,
+              nestedResourceRoot(child, root),
               active,
-              suppressReferences || (isObject(child) && "$id" in child),
             ),
           ];
       const nestedChanged =
         results.some((result) => result.changed) ||
         (key === "contains" &&
-          !suppressReferences &&
           referencesChangingTarget(child, root, active));
       if (
         key === "contains" &&
@@ -418,14 +418,13 @@ const normalizeAdvertisedSchema = (
   const negated = Object.hasOwn(value, "not")
     ? normalizeAdvertisedSchema(
         value.not,
-        root,
+        nestedResourceRoot(value.not, root),
         active,
-        suppressReferences || (isObject(value.not) && "$id" in value.not),
       )
     : undefined;
   if (
     negated?.changed ||
-    (!suppressReferences && referencesChangingTarget(value.not, root, active))
+    referencesChangingTarget(value.not, root, active)
   ) {
     // Widening a predicate under `not` narrows the containing schema.
     changed = true;
@@ -437,30 +436,27 @@ const normalizeAdvertisedSchema = (
   const conditional = Object.hasOwn(value, "if")
     ? normalizeAdvertisedSchema(
         value.if,
-        root,
+        nestedResourceRoot(value.if, root),
         active,
-        suppressReferences || (isObject(value.if) && "$id" in value.if),
       )
     : undefined;
   const thenBranch = Object.hasOwn(value, "then")
     ? normalizeAdvertisedSchema(
         value.then,
-        root,
+        nestedResourceRoot(value.then, root),
         active,
-        suppressReferences || (isObject(value.then) && "$id" in value.then),
       )
     : undefined;
   const elseBranch = Object.hasOwn(value, "else")
     ? normalizeAdvertisedSchema(
         value.else,
-        root,
+        nestedResourceRoot(value.else, root),
         active,
-        suppressReferences || (isObject(value.else) && "$id" in value.else),
       )
     : undefined;
   if (
     conditional?.changed ||
-    (!suppressReferences && referencesChangingTarget(value.if, root, active))
+    referencesChangingTarget(value.if, root, active)
   ) {
     // Changing the predicate can route canonical-valid inputs into a rejecting branch.
     changed = true;
@@ -490,8 +486,7 @@ const normalizeAdvertisedSchema = (
     const schemas = normalized.map((result) => result.schema);
     const branchesChanged =
       normalized.some((result) => result.changed) ||
-      (!suppressReferences &&
-        branches.some((branch) => referencesChangingTarget(branch, root, active)));
+      branches.some((branch) => referencesChangingTarget(branch, root, active));
     if (combinator === "oneOf" && branchesChanged) {
       const booleanLiteralsOnly = branches.every(isBooleanLiteralSchema);
       if (booleanLiteralsOnly) {
@@ -633,6 +628,53 @@ const collectSchemaReferences = (
   }
 };
 
+// A reference whose target position the structural pass removed cannot keep
+// its `$ref` (clients that compile the schema could not load it), so the
+// widened target is inlined at every caller instead.
+const inlineReferences = (
+  node: unknown,
+  dangling: ReadonlyMap<string, unknown>,
+): unknown => {
+  if (Array.isArray(node)) {
+    let changed = false;
+    const mapped = node.map((child) => {
+      const next = inlineReferences(child, dangling);
+      changed ||= next !== child;
+      return next;
+    });
+    return changed ? mapped : node;
+  }
+  if (!isObject(node)) return node;
+  if (
+    typeof node.$ref === "string" &&
+    dangling.has(node.$ref) &&
+    Object.keys(node).length === 1
+  )
+    return dangling.get(node.$ref);
+  let changed = false;
+  const rebuilt: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(node)) {
+    if (schemaMaps.has(key) && isObject(child)) {
+      let mapChanged = false;
+      const map: Record<string, unknown> = {};
+      for (const [name, grandChild] of Object.entries(child)) {
+        const next = inlineReferences(grandChild, dangling);
+        map[name] = next;
+        mapChanged ||= next !== grandChild;
+      }
+      rebuilt[key] = mapChanged ? map : child;
+      changed ||= mapChanged;
+    } else if (schemaArrays.has(key) || schemaChildren.has(key)) {
+      const next = inlineReferences(child, dangling);
+      rebuilt[key] = next;
+      changed ||= next !== child;
+    } else {
+      rebuilt[key] = child;
+    }
+  }
+  return changed ? rebuilt : node;
+};
+
 // Positive local references can address positions the structural walk never
 // visits (for example a root-level annotation), which would leave the target's
 // empty-string literal advertised. Normalize every referenced target too.
@@ -641,10 +683,11 @@ const collectSchemaReferences = (
 const normalizeReferencedTargets = (
   advertised: Record<string, unknown>,
   source: Readonly<Record<string, unknown>>,
-): void => {
+): Record<string, unknown> => {
   const refs = new Set<string>();
   collectSchemaReferences(source, refs, []);
   const writes: Array<[readonly string[], unknown]> = [];
+  const dangling = new Map<string, unknown>();
   const processed = new Set<string>();
   const queue = [...refs];
   while (queue.length > 0) {
@@ -660,9 +703,17 @@ const normalizeReferencedTargets = (
     for (const nestedRef of nested)
       if (!processed.has(nestedRef)) queue.push(nestedRef);
     const presented = resolvePointer(advertised, resolved.tokens);
-    // Skip positions the structural pass removed: writing back through a
-    // deleted negation would resurrect it and reject canonical-valid inputs.
-    if (presented === undefined) continue;
+    if (presented === undefined) {
+      // The position was removed by the structural pass; inline the widened
+      // target at its callers rather than dangling.
+      const removed = normalizeAdvertisedSchema(
+        resolved.value,
+        source,
+        new Set([reference]),
+      );
+      dangling.set(reference, removed.schema);
+      continue;
+    }
     const result = normalizeAdvertisedSchema(
       resolved.value,
       source,
@@ -685,6 +736,7 @@ const normalizeReferencedTargets = (
   writes.sort((a, b) => a[0].length - b[0].length);
   for (const [tokens, replacement] of writes)
     assignAtPath(advertised, tokens, replacement);
+  return dangling.size > 0 ? (inlineReferences(advertised, dangling) as Record<string, unknown>) : advertised;
 };
 
 const assignAtPath = (
@@ -737,8 +789,7 @@ const advertisedSchema = (
     string,
     unknown
   >;
-  normalizeReferencedTargets(schema, source);
-  return schema;
+  return normalizeReferencedTargets(schema, source);
 };
 
 /** Describe canonical input fields and present the root as one object. */

@@ -799,7 +799,7 @@ describe("advertised empty-string literals", () => {
     expect(advertised.properties.alias).toEqual({ $ref: "#/properties/path" });
   });
 
-  it("keeps target writes out of removed negations", () => {
+  it("inlines removed targets at their callers", () => {
     const canonical = {
       type: "object",
       properties: {
@@ -810,8 +810,26 @@ describe("advertised empty-string literals", () => {
     };
     const advertised = presentInputJsonSchema(canonical, () => undefined);
     expect(advertised.properties.guard).toEqual({});
-    expect(advertised.properties.value).toEqual({
-      $ref: "#/properties/guard/not",
+    expect(advertised.properties.value).toEqual({ type: "string" });
+  });
+
+  it("resolves nested references against their own resource root", () => {
+    const canonical = {
+      $defs: { empty: { type: "string", const: "" } },
+      type: "object",
+      properties: {
+        nested: {
+          $id: "https://example.com/nested",
+          type: "object",
+          $defs: { empty: { type: "string", const: "" } },
+          properties: { value: { not: { $ref: "#/$defs/empty" } } },
+        },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.properties.nested.properties.value).toEqual({});
+    expect(advertised.properties.nested.$defs).toEqual({
+      empty: { type: "string" },
     });
   });
 
