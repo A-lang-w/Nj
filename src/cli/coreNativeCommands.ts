@@ -1,4 +1,6 @@
 import { z } from "incur";
+import { createHash } from "node:crypto";
+import { writeFile } from "node:fs/promises";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -219,6 +221,87 @@ export const registerCoreNativeCommands = (
           },
           directAnalysisOptionsFromCli(logger, options),
         ),
+      ),
+  });
+  cli.command(CLI_COMMANDS.exportNativeMachineEvidence, {
+    description:
+      "Export bounded whole-program machine evidence in one analysis session",
+    args: z.object({
+      path: z.string().describe("Local native executable or raw binary path"),
+    }),
+    options: z.object({
+      maxFunctions: z.number().int().min(1).max(100_000).default(10_000),
+      maxInstructions: z
+        .number()
+        .int()
+        .min(1)
+        .max(10_000_000)
+        .default(2_000_000),
+      maxBodyBytes: z
+        .number()
+        .int()
+        .min(1)
+        .max(1_073_741_824)
+        .default(268_435_456),
+      maxDecompileInstructions: z
+        .number()
+        .int()
+        .min(1)
+        .max(1_000_000)
+        .default(1_000),
+      output: z
+        .string()
+        .optional()
+        .describe(
+          "Write the normalized export as JSON; refuses to replace an existing file",
+        ),
+      ...nativeOpenOptionFields,
+    }),
+    run: ({ args, options }) =>
+      logCliCommand(
+        logger,
+        CLI_COMMANDS.exportNativeMachineEvidence,
+        async () => {
+          const result = await runDirectAnalysis(
+            args.path,
+            "export_native_machine_evidence",
+            {
+              max_functions: options.maxFunctions,
+              max_instructions: options.maxInstructions,
+              max_body_bytes: options.maxBodyBytes,
+              max_decompile_instructions: options.maxDecompileInstructions,
+              ...(options.output === undefined
+                ? {}
+                : { output_path: options.output }),
+            },
+            directAnalysisOptionsFromCli(logger, options),
+          );
+          if (options.output === undefined) return result;
+          if (
+            result === null ||
+            typeof result !== "object" ||
+            Array.isArray(result) ||
+            !("normalized_result" in result)
+          )
+            return result;
+          if (
+            result.normalized_result !== null &&
+            typeof result.normalized_result === "object" &&
+            !Array.isArray(result.normalized_result) &&
+            result.normalized_result.retained_export === true
+          )
+            return result.normalized_result;
+          const serialized = `${JSON.stringify(result.normalized_result)}\n`;
+          await writeFile(options.output, serialized, {
+            encoding: "utf8",
+            flag: "wx",
+          });
+          return {
+            output_path: options.output,
+            bytes: Buffer.byteLength(serialized),
+            sha256: createHash("sha256").update(serialized).digest("hex"),
+          };
+        },
       ),
   });
   for (const [command, operation] of [

@@ -167,6 +167,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         "procedure_pseudo_code",
         "read_function_instructions",
         "inspect_native_instruction",
+        "export_native_machine_evidence",
         "inspect_native_data_type",
         "resolve_native_call_targets",
         "procedure_references",
@@ -450,6 +451,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             case "search_strings" -> search(request.params, false);
             case "inspect_native_data_type" -> inspectNativeDataType(request.params);
             case "inspect_native_instruction" -> inspectNativeInstruction(request.params, true);
+            case "export_native_machine_evidence" -> exportNativeMachineEvidence(request.params, descriptor);
             case "resolve_native_call_targets" -> resolveNativeCallTargets(request.params);
             case "xrefs" -> xrefs(request.params);
             case "analyze_function" -> {
@@ -1361,6 +1363,276 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (flow.get("kind").getAsString().equals("terminal")) limitations.add("No RETURN operation was observed in the provider's instruction p-code; terminal classification remains generic.");
         result.add("limitations", GSON.toJsonTree(limitations));
         return result;
+    }
+
+    /** Export one deterministic snapshot without reopening or reanalyzing the Program. */
+    private JsonObject exportNativeMachineEvidence(JsonObject params, SessionDescriptor descriptor)
+            throws Exception {
+        requireKeys(params, Set.of("max_functions", "max_instructions", "max_body_bytes", "max_decompile_instructions", "output_path"));
+        int maxFunctions = requireBoundedInteger(params, "max_functions", 1, 100_000);
+        int maxInstructions = requireBoundedInteger(params, "max_instructions", 1, 10_000_000);
+        int maxBodyBytes = requireBoundedInteger(params, "max_body_bytes", 1, 1_073_741_824);
+        int maxDecompileInstructions = requireBoundedInteger(
+            params, "max_decompile_instructions", 1, 1_000_000);
+
+        List<Function> available = new ArrayList<>();
+        FunctionIterator iterator = currentProgram.getFunctionManager().getFunctions(true);
+        while (iterator.hasNext()) {
+            monitor.checkCancelled();
+            available.add(iterator.next());
+        }
+        available.sort(Comparator.comparing(Function::getEntryPoint));
+
+        JsonArray functions = new JsonArray();
+        int instructionCount = 0;
+        int bodyByteCount = 0;
+        int failedFunctions = 0;
+        boolean truncated = false;
+        for (Function function : available) {
+            monitor.checkCancelled();
+            if (functions.size() >= maxFunctions) {
+                truncated = true;
+                break;
+            }
+            InstructionScan scan = scanInstructions(function, Integer.MAX_VALUE);
+            long functionBodyBytes = function.getBody().getNumAddresses();
+            if (instructionCount + scan.instructions().size() > maxInstructions ||
+                    functionBodyBytes > Integer.MAX_VALUE ||
+                    bodyByteCount + functionBodyBytes > maxBodyBytes) {
+                truncated = true;
+                break;
+            }
+
+            JsonObject item = new JsonObject();
+            item.add("procedure", procedureIdentity(function));
+            JsonArray bytes = new JsonArray();
+            AddressRangeIterator ranges = function.getBody().getAddressRanges(true);
+            while (ranges.hasNext()) {
+                AddressRange range = ranges.next();
+                int length = Math.toIntExact(range.getLength());
+                byte[] value = new byte[length];
+                int read = currentProgram.getMemory().getBytes(range.getMinAddress(), value);
+                if (read != length)
+                    throw new IOException("Incomplete function body read at " + range.getMinAddress());
+                JsonObject bodyRange = new JsonObject();
+                bodyRange.addProperty("start", canonicalAddress(range.getMinAddress()));
+                bodyRange.addProperty("end", canonicalAddress(range.getMaxAddress()));
+                bodyRange.addProperty("bytes", java.util.HexFormat.of().formatHex(value));
+                bytes.add(bodyRange);
+            }
+            item.add("body_bytes", bytes);
+
+            Map<Address, JsonObject> delaySlots = new HashMap<>();
+            for (Instruction owner : scan.instructions()) {
+                int depth = owner.getDelaySlotDepth();
+                if (depth <= 0) continue;
+                JsonArray slotAddresses = new JsonArray();
+                Instruction slot = owner;
+                for (int ordinal = 1; ordinal <= depth; ordinal++) {
+                    slot = currentProgram.getListing().getInstructionAfter(slot.getAddress());
+                    if (slot == null) break;
+                    slotAddresses.add(canonicalAddress(slot.getAddress()));
+                    JsonObject ownership = new JsonObject();
+                    ownership.addProperty("state", "slot");
+                    ownership.addProperty("owner", canonicalAddress(owner.getAddress()));
+                    ownership.addProperty("ordinal", ordinal);
+                    ownership.addProperty("provenance", "ghidra-listing-delay-slot-depth");
+                    delaySlots.put(slot.getAddress(), ownership);
+                }
+                if (slotAddresses.size() > 0) {
+                    JsonObject ownership = new JsonObject();
+                    ownership.addProperty("state", "owner");
+                    ownership.add("slots", slotAddresses);
+                    ownership.addProperty("provenance", "ghidra-listing-delay-slot-depth");
+                    delaySlots.put(owner.getAddress(), ownership);
+                }
+            }
+
+            JsonArray instructions = new JsonArray();
+            JsonArray directCalls = new JsonArray();
+            JsonArray tailCalls = new JsonArray();
+            JsonArray unresolved = new JsonArray();
+            Set<String> observedTransfers = new HashSet<>();
+            for (Instruction instructionValue : scan.instructions()) {
+                JsonObject request = new JsonObject();
+                request.add("document", JsonNull.INSTANCE);
+                request.addProperty("address", canonicalAddress(instructionValue.getAddress()));
+                JsonObject instruction = inspectNativeInstruction(request, false);
+                for (String key : List.of(
+                        "status", "procedure", "architecture", "mode", "decoder_context",
+                        "incoming_references", "limitations"))
+                    instruction.remove(key);
+                JsonObject delay = delaySlots.get(instructionValue.getAddress());
+                if (delay == null) {
+                    delay = new JsonObject();
+                    delay.addProperty("state", "none");
+                }
+                instruction.add("delay_slot", delay);
+                instructions.add(instruction);
+
+                JsonObject flow = instruction.getAsJsonObject("flow");
+                String kind = flow.get("kind").getAsString();
+                boolean computed = flow.get("computed").getAsBoolean();
+                boolean hasTarget = false;
+                for (JsonElement referenceElement : instruction.getAsJsonArray("references")) {
+                    JsonObject reference = referenceElement.getAsJsonObject();
+                    boolean call = reference.get("call").getAsBoolean();
+                    boolean jump = reference.get("jump").getAsBoolean();
+                    if (!call && !jump) continue;
+                    String target = reference.get("target_address").getAsString();
+                    hasTarget = true;
+                    String key = kind + "\u0000" + instruction.get("address").getAsString() + "\u0000" + target;
+                    if (!observedTransfers.add(key)) continue;
+                    JsonObject transfer = new JsonObject();
+                    transfer.add("source", instruction.get("address"));
+                    transfer.addProperty("target", target);
+                    if (call) directCalls.add(transfer);
+                    else if (jump && !function.getBody().contains(requireAddressValue(target))) tailCalls.add(transfer);
+                }
+                if (computed && !hasTarget && (kind.equals("call") || kind.equals("jump"))) {
+                    JsonObject transfer = new JsonObject();
+                    transfer.add("source", instruction.get("address"));
+                    transfer.addProperty("kind", kind);
+                    unresolved.add(transfer);
+                }
+            }
+            item.add("instructions", instructions);
+            item.add("basic_blocks", basicBlockValues(function));
+            List<Reference> allIncoming = collectReferences(function, "incoming");
+            List<Reference> externalIncoming = allIncoming.stream()
+                .filter(reference -> !function.getBody().contains(reference.getFromAddress()))
+                .toList();
+            item.add("incoming_references", referenceEdges(externalIncoming));
+            item.add("outgoing_references", referenceEdges(collectReferences(function, "outgoing")));
+            item.add("direct_calls", directCalls);
+            item.add("tail_calls", tailCalls);
+            item.add("unresolved_computed_transfers", unresolved);
+
+            JsonObject decompilerFacet = new JsonObject();
+            try {
+                if (function.isExternal() || function.getBody().isEmpty()) {
+                    decompilerFacet.addProperty("status", "unavailable");
+                    decompilerFacet.addProperty("reason", "Ghidra does not decompile external or empty-body functions.");
+                    decompilerFacet.add("warnings", new JsonArray());
+                } else if (scan.instructions().size() > maxDecompileInstructions) {
+                    failedFunctions++;
+                    decompilerFacet.addProperty("status", "unavailable");
+                    decompilerFacet.addProperty(
+                        "reason",
+                        "Decompiler skipped because the function has " + scan.instructions().size() +
+                            " instructions, exceeding max_decompile_instructions=" +
+                            maxDecompileInstructions
+                    );
+                    decompilerFacet.add("warnings", new JsonArray());
+                } else {
+                    DecompileResults decompilation = decompile(function);
+                    String pseudocode = decompiledText(decompilation);
+                    if (pseudocode == null) {
+                        failedFunctions++;
+                        decompilerFacet.addProperty("status", "unavailable");
+                        decompilerFacet.addProperty("reason", "Ghidra returned no decompiled function text.");
+                        decompilerFacet.add("warnings", new JsonArray());
+                    } else {
+                        JsonArray warnings = new JsonArray();
+                        if (decompilation.getErrorMessage() != null &&
+                                !decompilation.getErrorMessage().isBlank())
+                            warnings.add(decompilation.getErrorMessage());
+                        decompilerFacet.addProperty("status", "available");
+                        decompilerFacet.addProperty("pseudocode", pseudocode);
+                        decompilerFacet.add("warnings", warnings);
+                        decompilerFacet.addProperty("provenance", "ghidra-decompiler");
+                    }
+                }
+            } catch (OutOfMemoryError error) {
+                failedFunctions++;
+                decompilerFacet.addProperty("status", "failed");
+                decompilerFacet.addProperty("code", "decompiler_out_of_memory");
+                decompilerFacet.addProperty("reason", "Ghidra exhausted its heap while decoding this function's decompiler model.");
+                decompilerFacet.add("warnings", new JsonArray());
+                decompiler.flushCache();
+                System.gc();
+            } catch (Exception exception) {
+                failedFunctions++;
+                decompilerFacet.addProperty("status", "failed");
+                decompilerFacet.addProperty("code", exception instanceof RequestFailure requestFailure
+                    ? requestFailure.code : "function_export_failed");
+                decompilerFacet.addProperty("reason", diagnosticMessage(exception.getMessage()));
+                decompilerFacet.add("warnings", new JsonArray());
+            }
+            item.add("decompiler", decompilerFacet);
+            functions.add(item);
+            instructionCount += scan.instructions().size();
+            bodyByteCount += (int) functionBodyBytes;
+        }
+
+        JsonObject target = new JsonObject();
+        target.addProperty("sha256", descriptor.targetSha256);
+        target.addProperty("language_id", currentProgram.getLanguageID().getIdAsString());
+        target.addProperty("compiler_spec_id", currentProgram.getCompilerSpec().getCompilerSpecID().getIdAsString());
+        target.addProperty("image_base", canonicalAddress(currentProgram.getImageBase()));
+        JsonObject producer = new JsonObject();
+        producer.addProperty("provider_id", "ghidra");
+        producer.addProperty("provider_version", descriptor.providerVersion);
+        producer.addProperty("analysis_profile_digest", descriptor.profileDigest);
+        JsonObject coverage = new JsonObject();
+        coverage.addProperty("available_functions", available.size());
+        coverage.addProperty("exported_functions", functions.size());
+        coverage.addProperty("omitted_functions", available.size() - functions.size());
+        coverage.addProperty("exported_instructions", instructionCount);
+        coverage.addProperty("exported_body_bytes", bodyByteCount);
+        coverage.addProperty("failed_functions", failedFunctions);
+        coverage.addProperty("truncated", truncated);
+        JsonObject result = new JsonObject();
+        result.addProperty("schema_version", "1");
+        result.add("target", target);
+        result.add("producer", producer);
+        result.add("coverage", coverage);
+        result.add("functions", functions);
+        result.add("limitations", GSON.toJsonTree(List.of(
+            "This snapshot records provider analysis, not original source or runtime behavior.",
+            "Computed transfers without a resolved static reference remain explicit unresolved transfers."
+        )));
+        if (params.has("output_path")) {
+            Path outputPath = Path.of(requireString(params, "output_path")).toAbsolutePath().normalize();
+            try (BufferedWriter writer = Files.newBufferedWriter(
+                    outputPath,
+                    StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE_NEW,
+                    StandardOpenOption.WRITE)) {
+                GSON.toJson(result, writer);
+                writer.newLine();
+            }
+            JsonObject receipt = new JsonObject();
+            receipt.addProperty("retained_export", true);
+            receipt.addProperty("schema_version", "1");
+            receipt.addProperty("output_path", outputPath.toString());
+            receipt.addProperty("bytes", Files.size(outputPath));
+            receipt.addProperty("sha256", hashPath(outputPath));
+            receipt.add("target", target.deepCopy());
+            receipt.add("producer", producer.deepCopy());
+            receipt.add("coverage", coverage.deepCopy());
+            receipt.add("limitations", result.get("limitations").deepCopy());
+            return receipt;
+        }
+        return result;
+    }
+
+    private String hashPath(Path path) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        byte[] chunk = new byte[65536];
+        try (InputStream input = Files.newInputStream(path, StandardOpenOption.READ)) {
+            for (int read; (read = input.read(chunk)) >= 0;) {
+                monitor.checkCancelled();
+                if (read > 0) digest.update(chunk, 0, read);
+            }
+        }
+        return bytesHex(digest.digest());
+    }
+
+    private Address requireAddressValue(String value) {
+        Address address = currentProgram.getAddressFactory().getAddress(value);
+        if (address == null) throw new RequestFailure("invalid_provider_address", "Invalid provider address: " + value);
+        return address;
     }
 
     private JsonObject resolveNativeCallTargets(JsonObject params) throws Exception {

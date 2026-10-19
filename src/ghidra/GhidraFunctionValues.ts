@@ -8,6 +8,10 @@ import {
   nativeInstructionSchema,
   nativeCallTargetsSchema,
 } from "../domain/native/nativeInstruction.js";
+import {
+  nativeMachineEvidenceInputSchema,
+  nativeMachineEvidenceResultSchema,
+} from "../domain/native/nativeMachineEvidence.js";
 
 import {
   type AnalysisInputError,
@@ -47,6 +51,7 @@ export const GHIDRA_FUNCTION_OPERATIONS = [
   "annotate_native_function",
   "inspect_native_data_type",
   "inspect_native_instruction",
+  "export_native_machine_evidence",
   "resolve_native_call_targets",
   "analyze_function",
   "procedure_assembly",
@@ -90,6 +95,7 @@ const inputSchemas = {
   inspect_native_instruction: z
     .object({ document, address: ghidraInputAddressSchema })
     .strict(),
+  export_native_machine_evidence: nativeMachineEvidenceInputSchema,
   resolve_native_call_targets: z
     .object({ document, address: ghidraInputAddressSchema })
     .strict(),
@@ -404,6 +410,7 @@ const resultSchemas = {
   procedure_pseudo_code: z.string().nullable(),
   read_function_instructions: ghidraFunctionInstructionWindow,
   inspect_native_instruction: nativeInstructionSchema,
+  export_native_machine_evidence: nativeMachineEvidenceResultSchema,
   inspect_native_data_type: nativeDataTypeSchema,
   resolve_native_call_targets: nativeCallTargetsSchema,
   procedure_references: procedureReferences,

@@ -44,6 +44,7 @@ export const CLI_COMMANDS = Object.freeze({
   addressToFileOffset: "address-to-file-offset",
   traceNativeValues: "trace-native-values",
   inspectNativeInstruction: "inspect-native-instruction",
+  exportNativeMachineEvidence: "export-native-machine-evidence",
   resolveNativeCallTargets: "resolve-native-call-targets",
   inspectAssetCatalog: "inspect-asset-catalog",
   inspectManagedArtifact: "inspect-managed-artifact",

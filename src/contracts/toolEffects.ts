@@ -508,6 +508,10 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   procedure_info: evidence,
   read_function_instructions: evidence,
   inspect_native_instruction: evidence,
+  export_native_machine_evidence: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+  }),
   inspect_native_data_type: evidence,
   resolve_native_call_targets: evidence,
   read_bytes: evidence,

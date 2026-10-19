@@ -14,6 +14,7 @@ import type { ToolContract } from "./toolContractTypes.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { nativeDataTypeInputSchema } from "../domain/native/nativeDataType.js";
 import { nativeInstructionInputSchema } from "../domain/native/nativeInstruction.js";
+import { nativeMachineEvidenceInputSchema } from "../domain/native/nativeMachineEvidence.js";
 import { functionInstructionInputSchema } from "./functionInstructionContract.js";
 import { HOPPER_MEMORY_TOOL_DEFINITIONS } from "./hopperMemoryContracts.js";
 import { analysisSearchInput } from "./analysisSearchContract.js";
@@ -51,6 +52,11 @@ export const OFFICIAL_TOOL_CONTRACTS = [
     "inspect_native_data_type",
     "Inspect one recovered type by exact database category path or defined typed data address. Returns observed size, alignment, packing, fields, bitfields, enum values, and child type identities; source-level authority and flexible-tail semantics remain unknown unless substantiated.",
     nativeDataTypeInputSchema,
+  ),
+  official(
+    "export_native_machine_evidence",
+    "Export a deterministic, address-ordered whole-program machine-evidence snapshot in one provider session. Includes exact function ranges and bytes, decoded instructions and P-code, explicit delay-slot ownership, function dossiers, CFG and references, and per-function failures. Bounds are mandatory and truncation is explicit; the operation does not modify the target.",
+    nativeMachineEvidenceInputSchema,
   ),
   official(
     "inspect_native_instruction",

@@ -26,6 +26,7 @@ import {
   nativeInstructionSchema,
   nativeCallTargetsSchema,
 } from "../domain/native/nativeInstruction.js";
+import { nativeMachineEvidenceResultSchema } from "../domain/native/nativeMachineEvidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { residualUnknownSchema } from "../domain/residualUnknown.js";
 import { evidenceBundleSchema } from "../domain/evidenceBundle.js";
@@ -115,6 +116,9 @@ const bookmarkFacetSchema = z.discriminatedUnion("state", [
 
 /** Exact structured-content schemas shared by direct analysis providers. */
 export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
+  export_native_machine_evidence: evidenceResultOf(
+    nativeMachineEvidenceResultSchema,
+  ),
   search_bytes: evidenceResultOf(byteSearchResultSchema),
   annotate_native_function: evidenceResultOf(nativeFunctionAnnotationsSchema),
   inspect_native_load_image: evidenceResultOf(nativeLoadImageSchema),
