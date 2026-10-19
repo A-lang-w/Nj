@@ -20,15 +20,31 @@ cliTest.for(
         expression: 'path.resolve(runtimePath,__dirname,"decoy.cjs")',
         preload: "decoy.cjs",
       },
-    ].map((testCase) => ({ surface, ...testCase })),
+      {
+        name: "shadowed directory",
+        declaration: 'const path=require("node:path");',
+        expression: 'path.resolve(runtimePath,__dirname,"decoy.cjs")',
+        preload: null,
+        scopeStart: "function build(__dirname){",
+        scopeEnd: "}build('local-directory');",
+      },
+    ].map((testCase) => ({
+      surface,
+      scopeStart: "",
+      scopeEnd: "",
+      ...testCase,
+    })),
   ),
 )(
   "requires the $name owner for preload resolve semantics through $surface",
-  async ({ surface, declaration, expression, preload }, { cli }) => {
+  async (
+    { surface, declaration, expression, preload, scopeStart, scopeEnd },
+    { cli },
+  ) => {
     const root = await createTestTempDirectory("rea-preload-resolve-owner-");
     await writeFixtureFiles(root, {
       "package.json": '{"main":"main.cjs"}',
-      "main.cjs": `throw new Error('Static fixture must never execute');const {BrowserWindow}=require('electron');${declaration}new BrowserWindow({webPreferences:{preload:${expression}}});`,
+      "main.cjs": `throw new Error('Static fixture must never execute');const {BrowserWindow}=require('electron');${declaration}${scopeStart}new BrowserWindow({webPreferences:{preload:${expression}}});${scopeEnd}`,
       "decoy.cjs": "throw new Error('Static preload must never execute');",
     });
     const { graph, statistics } = await analyzeJavaScriptDirectory(

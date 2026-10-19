@@ -23,6 +23,7 @@ import {
   range,
   staticPath,
   staticPathResolutionContext,
+  type JavaScriptStaticPathIntrinsicQuery,
 } from "./javascriptStaticAnalysisHelpers.js";
 import {
   semanticStaticPropertyKey,
@@ -164,7 +165,7 @@ const collectWindowOptions = (
   source: string,
   lookupStatus: "explicit" | "missing" | "dynamic",
   preferences: t.Node | undefined,
-  nodePathResolve?: (callee: t.Node) => boolean,
+  nodePathResolve?: JavaScriptStaticPathIntrinsicQuery,
 ): {
   readonly status: ElectronBrowserWindowFinding["web_preferences_status"];
   readonly preferences: readonly ElectronWebPreference[];
@@ -184,7 +185,7 @@ const collectWindowOptions = (
 const collectWebPreferences = (
   source: string,
   object: t.ObjectExpression,
-  nodePathResolve?: (callee: t.Node) => boolean,
+  nodePathResolve?: JavaScriptStaticPathIntrinsicQuery,
 ): {
   readonly status: "object-literal";
   readonly preferences: readonly ElectronWebPreference[];

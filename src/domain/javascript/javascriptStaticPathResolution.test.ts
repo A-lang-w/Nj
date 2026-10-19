@@ -416,7 +416,11 @@ const assertPathProjection = (
 ) => {
   const node = parsePathExpression(expression);
   // This syntax matrix supplies identity explicitly; full-source cases prove it.
-  const nodePathResolve = (callee: import("@babel/types").Node) => {
+  const nodePathResolve = (
+    callee: import("@babel/types").Node,
+    fact?: "source-directory",
+  ) => {
+    if (fact === "source-directory") return true;
     const name = calleeName(callee);
     return name.endsWith(".resolve") && !name.includes("win32");
   };

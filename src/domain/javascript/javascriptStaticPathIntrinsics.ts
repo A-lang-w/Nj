@@ -4,13 +4,17 @@ import { builtinDataEffectCallablePath } from "./javascriptSemanticDataEffectHel
 import type { JavaScriptBindingIndex } from "./javascriptSemanticState.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import { evaluateSemanticExpressionProvenance } from "./javascriptSemanticValues.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import type { JavaScriptStaticPathIntrinsicQuery } from "./javascriptStaticAnalysisHelpers.js";
 
 /** Prove Node's path resolver before applying its argument-selection semantics. */
 export const createStaticNodePathResolveQuery = (
   index: JavaScriptBindingIndex,
-): ((callee: t.Node) => boolean) => {
+): JavaScriptStaticPathIntrinsicQuery => {
   const facts = new WeakMap<t.Node, boolean>();
-  return (callee) => {
+  return (callee, fact) => {
+    if (fact === "source-directory")
+      return isUnmodifiedGlobalReference(callee, index.bindings, "__dirname");
     const cached = facts.get(callee);
     if (cached !== undefined) return cached;
     const provenance = evaluateSemanticExpressionProvenance(

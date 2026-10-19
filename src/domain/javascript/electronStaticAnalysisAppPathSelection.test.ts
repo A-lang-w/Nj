@@ -6,6 +6,18 @@ import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 const prefix = "const {app,BrowserWindow}=require('electron');";
 const cases = [
   {
+    name: "assigned native setter callee",
+    body: "let change;(change=app.setAppPath)('/changed');",
+    possible: true,
+    calls: [1],
+  },
+  {
+    name: "assigned local setter callee",
+    body: "let change;(change=()=>{})('/changed');",
+    possible: false,
+    calls: [0],
+  },
+  {
     name: "assigned native app receiver",
     body: "let runtime;(runtime=app).setAppPath('/changed');",
     possible: true,

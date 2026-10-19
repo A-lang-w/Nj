@@ -1,6 +1,7 @@
 import type * as t from "@babel/types";
 import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticAnalysis.js";
 import type { JavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
+import type { JavaScriptStaticPathIntrinsicQuery } from "./javascriptStaticAnalysisHelpers.js";
 
 import type {
   JavaScriptBundlerRegistration,
@@ -88,7 +89,7 @@ export interface JavaScriptAnalysisAccumulator {
 /** Shared source and accumulator for helper inspections. */
 export interface JavaScriptFindingContext {
   /** Node path.resolve identity established by shared callee and mutation owners. */
-  readonly nodePathResolve?: (callee: t.Node) => boolean;
+  readonly nodePathResolve?: JavaScriptStaticPathIntrinsicQuery;
   readonly rpcScan: JavaScriptRpcScan;
   readonly source: string;
   readonly accumulator: JavaScriptAnalysisAccumulator;

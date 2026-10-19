@@ -4,6 +4,30 @@ import { expect, it } from "vitest";
 
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
+it.each(["/other", "relative"])(
+  "keeps a shadowed source-directory parameter dynamic: %s",
+  (directory) => {
+    const actual = posix.resolve("/runtime/base", directory, "decoy.cjs");
+    expect(actual).not.toBe("/source/app/decoy.cjs");
+    const analysis = analyzeJavaScriptStaticSource(`
+      const path = require('node:path');
+      const {BrowserWindow, utilityProcess} = require('electron');
+      function build(__dirname) {
+        new BrowserWindow({webPreferences:{preload:path.resolve(runtimeBase,__dirname,'decoy.cjs')}});
+        utilityProcess.fork(path.resolve(runtimeBase,__dirname,'decoy.cjs'));
+      }
+      build(${JSON.stringify(directory)});
+    `);
+    expect(analysis.role_paths).toEqual([]);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      { preload_path: null, preload_resolution_context: null },
+    ]);
+    expect(analysis.electron.utility_processes).toMatchObject([
+      { module_path: null, module_resolution_context: null },
+    ]);
+  },
+);
+
 const localResolvers = [
   [
     "local object",
