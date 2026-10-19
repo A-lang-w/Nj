@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { lstat, readFile, writeFile } from "node:fs/promises";
+import { basename, join, resolve } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, onTestFinished } from "vitest";
@@ -102,11 +102,18 @@ const runCaptureCli = async (
   options: {
     readonly stopOnRunning?: boolean;
     readonly env?: NodeJS.ProcessEnv;
+    readonly preload?: string;
   } = {},
 ): Promise<CliCapture> => {
   const child = spawn(
     process.execPath,
-    ["scripts/rea.mjs", "capture-process", scenarioPath, "--json"],
+    [
+      ...(options.preload === undefined ? [] : ["--import", options.preload]),
+      "scripts/rea.mjs",
+      "capture-process",
+      scenarioPath,
+      "--json",
+    ],
     {
       stdio: ["ignore", "pipe", "pipe"],
       ...(options.env === undefined
@@ -283,37 +290,62 @@ itWithCaptureCapability(
 );
 
 itWithCaptureCapability(
-  "reports unknown resource cleanup when temporary-root preparation fails",
+  "reports no cleanup required when temporary-root allocation fails before acquisition",
   async () => {
+    const root = await createTestTempDirectory(
+      "rea-process-progress-preparation-",
+    );
+    const failureMarker = join(root, "allocation-failure.jsonl");
+    const spawnMarker = join(root, "target-started");
     const scenario = await writeScenario(
       "rea-process-progress-prepare-failed-",
       {
         executable: process.execPath,
-        arguments: childScript("process.stdout.write('ready\\n')"),
+        arguments: childScript(
+          `require('node:fs').writeFileSync(${JSON.stringify(spawnMarker)}, 'started');`,
+        ),
         timeout_ms: 5_000,
       },
     );
-    const missingTempRoot = join(
-      await createTestTempDirectory("rea-process-progress-missing-tmpdir-"),
-      "missing",
-    );
     const capture = await runCaptureCli(scenario, {
+      preload: resolve("tests/fixtures/processTemporaryRootFailure.mjs"),
       env: {
-        TMPDIR: missingTempRoot,
-        TMP: missingTempRoot,
-        TEMP: missingTempRoot,
+        REA_TEST_PROCESS_TEMP_FAILURE_MARKER: failureMarker,
       },
     });
 
     expect(capture.exitCode).toBe(1);
+    const attempts = (await readFile(failureMarker, "utf8")).trim().split("\n");
+    expect(attempts).toHaveLength(1);
+    const allocation = z
+      .object({ syscall: z.literal("mkdtemp"), prefix: z.string() })
+      .parse(JSON.parse(attempts[0]!));
+    expect(basename(allocation.prefix)).toBe("rea-process-");
+    await expect(lstat(spawnMarker)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(
+      analysisCliErrorEnvelopeSchema.parse(JSON.parse(capture.stdout)),
+    ).toMatchObject({
+      code: "process_capture_failed",
+      category: "execution_failure",
+      details: {
+        execution_failure: "controlled process temporary-root failure",
+      },
+    });
+    expect(capture.lines.map(({ update }) => update.phase)).toEqual([
+      "prepare",
+      "cleanup",
+    ]);
     expect(capture.lines.at(-1)?.update).toMatchObject({
       phase: "cleanup",
       terminal: true,
       details: {
         disposition: "failed",
-        owned_process_group: "unverified",
-        terminal_renderer: "unverified",
-        temporary_root: "unverified",
+        frames: 0,
+        samples: 0,
+        interactions: 0,
+        owned_process_group: "not_required",
+        terminal_renderer: "not_required",
+        temporary_root: "not_required",
       },
     });
   },
