@@ -389,7 +389,94 @@ it("does not retain table scope after a native relation resolves as unrelated", 
   ]);
 });
 
-it.each(["replaced", "unavailable"] as const)(
+it.each(["none", "unresolved", "known"] as const)(
+  "retires a relation-unreadable descendant replaced during observation (prior identity: %s)",
+  async (previous) => {
+    const replacement = { ...child, parentPid: 1, processGroupId: 200 };
+    const evidenceOwner = new ProcessOwnershipEvidenceOwner();
+    const ownership = {
+      runId: "run",
+      leaderPid: launcher.pid,
+      processGroupId: launcher.processGroupId,
+      sweepTokenOwnedProcesses: true as const,
+      evidenceOwner,
+    };
+    let phase: "retaining" | "replacing" | "cleanup" =
+      previous === "none" ? "replacing" : "retaining";
+    let identityReads = 0;
+    const signalGroup = vi.fn();
+    const host: ProcessOwnershipHost = {
+      listProcesses: async () =>
+        phase === "cleanup" ? [replacement] : [launcher, child],
+      environment: async (pid) => ({
+        REA_PROCESS_RUN_ID: pid === launcher.pid ? "run" : "foreign",
+      }),
+      processIdentities: async (rows) => {
+        identityReads += 1;
+        return new Map(
+          rows.map((row): [number, ProcessIdentityObservation] => {
+            if (row.pid === launcher.pid)
+              return [
+                row.pid,
+                phase === "cleanup"
+                  ? { state: "absent", reason: "not-in-snapshot" }
+                  : nativeIdentity(row),
+              ];
+            if (phase === "retaining" && previous === "unresolved")
+              return [
+                row.pid,
+                { state: "unavailable", reason: "identity denied" },
+              ];
+            if (
+              phase === "retaining" ||
+              (phase === "replacing" && identityReads === 1)
+            )
+              return [
+                row.pid,
+                {
+                  ...nativeIdentity(row),
+                  relation: { state: "unavailable", reason: "relation denied" },
+                },
+              ];
+            return [
+              row.pid,
+              { ...nativeIdentity(replacement), identity: "replacement-101" },
+            ];
+          }),
+        );
+      },
+      signalGroup,
+    };
+
+    if (previous !== "none") {
+      await observeOwnedProcessLineage(ownership, host);
+      expect(evidenceOwner.candidates).toContainEqual(
+        expect.objectContaining({
+          pid: child.pid,
+          identity: previous === "known" ? "start-101" : undefined,
+        }),
+      );
+      phase = "replacing";
+      identityReads = 0;
+    }
+    const lineage = await observeOwnedProcessLineage(ownership, host);
+    const retained = evidenceOwner.candidates;
+    phase = "cleanup";
+
+    // The unrelated replacement stays alive and listed. Its foreign token
+    // must not keep the exited generation's cleanup pending or authorize a signal.
+    await expect(cleanupOwnedProcessGroup(ownership, host)).resolves.toEqual({
+      cleaned: true,
+      signaled: false,
+    });
+    expect(lineage.status).toBe("unavailable");
+    expect(retained.map(({ pid }) => pid)).not.toContain(child.pid);
+    expect(evidenceOwner.candidates).toEqual([]);
+    expect(signalGroup).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["replaced", "relation-unavailable-replaced", "unavailable"] as const)(
   "retains an omitted descendant when its ancestor's generation is %s",
   async (ancestorGeneration) => {
     const evidenceOwner = new ProcessOwnershipEvidenceOwner();
@@ -424,9 +511,12 @@ it.each(["replaced", "unavailable"] as const)(
         identityReads += 1;
         return new Map(
           rows.map((row): [number, ProcessIdentityObservation] => {
+            const replacedAncestor =
+              row.pid === child.pid && ancestorGeneration !== "unavailable";
             if (
-              phase === "exited" ||
-              (phase === "omitted" && row.pid !== detached.pid)
+              !replacedAncestor &&
+              (phase === "exited" ||
+                (phase === "omitted" && row.pid !== detached.pid))
             )
               return [row.pid, { state: "absent", reason: "not-in-snapshot" }];
             if (row.pid !== child.pid) return [row.pid, nativeIdentity(row)];
@@ -435,7 +525,15 @@ it.each(["replaced", "unavailable"] as const)(
                 row.pid,
                 ancestorGeneration === "unavailable"
                   ? { state: "unavailable", reason: "identity denied" }
-                  : nativeIdentity(row),
+                  : ancestorGeneration === "relation-unavailable-replaced"
+                    ? {
+                        ...nativeIdentity(row),
+                        relation: {
+                          state: "unavailable",
+                          reason: "relation denied",
+                        },
+                      }
+                    : nativeIdentity(row),
               ];
             // This unrelated relation belongs to a new or unproven generation.
             // It cannot disprove the old ancestry of the surviving descendant.
@@ -459,7 +557,8 @@ it.each(["replaced", "unavailable"] as const)(
     const lineage = await observeOwnedProcessLineage(ownership, host);
     const retained = evidenceOwner.candidates;
     phase = "omitted";
-    // The ancestor has exited, but its detached descendant is still alive.
+    // The original ancestor has exited, but its replacement and detached
+    // descendant stay alive. Only the descendant remains in this run's scope.
     // Losing that descendant would falsely certify cleanup from an empty table.
     await expect(
       cleanupOwnedProcessGroup(ownership, host),
@@ -481,6 +580,8 @@ it.each(["replaced", "unavailable"] as const)(
         scopeEvidence: "unverified-table-relation",
       }),
     );
+    if (ancestorGeneration !== "unavailable")
+      expect(retained.map(({ pid }) => pid)).not.toContain(child.pid);
 
     phase = "exited";
     await expect(cleanupOwnedProcessGroup(ownership, host)).resolves.toEqual({

@@ -236,9 +236,11 @@ export class ProcessOwnershipEvidenceOwner {
       // Retire only this generation's current ledger entry. Darwin's
       // `not-in-snapshot` and Linux's corroborated ENOENT/ESRCH facts are
       // bounded observations, not claims about later PID reuse or global
-      // liveness.
+      // liveness. A bracketed replacement also settles an identity-less
+      // candidate: its earlier lifetime has ended, regardless of relation access.
       if (
         fact.state === "absent" ||
+        fact.state === "replaced" ||
         (previous.identity !== undefined &&
           fact.identityAfter.state === "readable" &&
           fact.identityAfter.identity !== previous.identity) ||
@@ -302,10 +304,14 @@ export class ProcessOwnershipEvidenceOwner {
 
     for (const fact of facts) {
       const pid = fact.process.pid;
+      // A replacement's token cannot be attributed to either generation.
+      // Keep the snapshot's ancestry links for descendants, but require fresh
+      // same-generation evidence before enrolling the new lifetime itself.
       if (
         this.#candidates.has(pid) ||
         (retiredPids.has(pid) && fact.state !== "same-generation") ||
         fact.state === "absent" ||
+        fact.state === "replaced" ||
         (fact.state === "same-generation" &&
           processIdentityHasExited(fact.identityAfter))
       )

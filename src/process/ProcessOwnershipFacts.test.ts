@@ -80,16 +80,35 @@ it("binds owned, missing, and foreign tokens only to the same identity generatio
   }
 });
 
-it("retains a matching token as partial evidence when identity changes", async () => {
+it("preserves a replacement's raw token but enrolls it only after same-generation validation", async () => {
   const host = hostFor([
     new Map([[row.pid, identity("start:old")]]),
     new Map([[row.pid, identity("start:new")]]),
   ]);
-  const [fact] = await readProcessOwnershipFacts([row], host);
-  expect(fact).toMatchObject({
+  const facts = await readProcessOwnershipFacts([row], host);
+  expect(facts[0]).toMatchObject({
     state: "replaced",
     token: { state: "readable", runId: "run" },
   });
+  const owner = new ProcessOwnershipEvidenceOwner();
+  const options = {
+    runId: "run",
+    listedRows: 1,
+    listedPids: new Set([row.pid]),
+    leaderPid: row.pid,
+    processGroupIds: new Set([row.processGroupId]),
+  };
+  expect(owner.reconcile(facts, options)).toEqual([]);
+  const stable = await readProcessOwnershipFacts(
+    [row],
+    hostFor([
+      new Map([[row.pid, identity("start:new")]]),
+      new Map([[row.pid, identity("start:new")]]),
+    ]),
+  );
+  expect(owner.reconcile(stable, options)).toMatchObject([
+    { pid: row.pid, identity: "start:new", applicability: "token-verified" },
+  ]);
 });
 
 it("keeps omitted identities uncertain and native absence distinct", async () => {
