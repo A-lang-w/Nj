@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { digestSchema, prefixedDigestSchema } from "./digests.js";
 import { localPathStringSchema } from "./localPath.js";
+import { artifactTraversalOmissionKindSchema } from "./artifactGraph.js";
 
 export const desktopFamilySchema = z.enum([
   "dotnet",
@@ -121,6 +122,12 @@ export const desktopFileSchema = z.strictObject({
   issues: z.array(z.string()),
 });
 export type DesktopFile = z.infer<typeof desktopFileSchema>;
+export const desktopOmissionSchema = z.strictObject({
+  omission_id: prefixedDigestSchema("dso"),
+  path: z.string(),
+  kind: artifactTraversalOmissionKindSchema,
+});
+export type DesktopOmission = z.infer<typeof desktopOmissionSchema>;
 export const desktopCandidateSchema = z.strictObject({
   candidate_id: prefixedDigestSchema("dsc"),
   family: desktopFamilySchema,
@@ -173,6 +180,7 @@ export const desktopApplicationSchema = z.strictObject({
     identity_scope: z.literal("examined-metadata-and-read-ranges"),
   }),
   files: z.array(desktopFileSchema),
+  omissions: z.array(desktopOmissionSchema),
   candidates: z.array(desktopCandidateSchema),
   components: z.array(desktopComponentSchema),
   next_probes: z.array(desktopProbeSchema),

@@ -39,8 +39,12 @@ Read exact files in one request:
 }
 ```
 
-Collections are `files`, `candidates`, `components` and `next_probes`.
-`candidates` accepts exact `families`; `files` accepts exact recorded `paths`.
+Collections are `files`, `omissions`, `candidates`, `components` and `next_probes`.
+Files and omissions accept exact `paths` and batched `file_ids` / `omission_ids`.
+When both are supplied, all filters apply; an empty selection returns no rows.
+Omission records retain the observed path, kind and stable `omission_id`; their
+payloads are not read, and other special-entry metadata remains unavailable.
+`candidates` accepts exact `families`.
 Omitted selectors match all retained rows; an empty selector matches none.
 Every collection supports `fields`, `offset` and `limit`; its stable row ID is
 always included. Selection changes delivery, not source inspection. Pages keep
@@ -87,7 +91,9 @@ and SHA-256 digests; typed facts expose CLI RVAs, metadata/pack versions and
 assembly tokens. Directory and symlink identities unavailable from traversal
 remain null.
 
-The directory's `snapshot_sha256` commits to examined metadata and range digests.
+The directory's `snapshot_sha256` commits to retained paths, omission kinds,
+available metadata and range digests. Omission records share the entry and
+representation budgets and can be fetched independently through their view.
 **It is not a digest of all file contents.** These are sequential stable entry
 observations, not an atomic directory snapshot. Unread bytes remain unknown.
 

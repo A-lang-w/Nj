@@ -1,6 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 import { expect, it, onTestFinished } from "vitest";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -9,6 +10,7 @@ import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { desktopApplicationSchema } from "../../../src/domain/desktopApplication.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 
 it("advertises exact schemas and retains a compact directory answer with typed selected pages", async () => {
   const root = await createTestTempDirectory("rea-desktop-mcp-");
@@ -55,6 +57,9 @@ it("advertises exact schemas and retains a compact directory answer with typed s
   expect(full.candidates.map((candidate) => candidate.family)).toEqual([
     "electron",
   ]);
+  const archive = full.files.find((file) => file.path === "resources/app.asar");
+  if (archive === undefined)
+    throw new Error("Missing retained ASAR convention");
   const selected = await client.callTool({
     name: "inspect_analysis_view",
     arguments: {
@@ -65,7 +70,7 @@ it("advertises exact schemas and retains a compact directory answer with typed s
       view: {
         kind: "desktop-application",
         collection: "files",
-        paths: ["resources/app.asar"],
+        file_ids: [archive.file_id],
         fields: ["path", "read_status"],
         limit: 1,
       },
@@ -98,3 +103,92 @@ it("advertises exact schemas and retains a compact directory answer with typed s
     view.parent_evidence_id,
   );
 });
+
+it.skipIf(process.platform === "win32")(
+  "retains special-entry facts and advertises batched omission selections through MCP",
+  async () => {
+    const root = await createTestTempDirectory("rea-desktop-omissions-mcp-");
+    execFileSync("mkfifo", [join(root, "b"), join(root, "a")], {
+      timeout: 10_000,
+    });
+    const harness = await createApplicationMcpHarness();
+    onTestFinished(harness.close);
+    const schemas = await advertisedMcpToolSchemas(
+      harness.client,
+      "inspect_analysis_view",
+    );
+    const inspected = await harness.client.callTool({
+      name: "inspect_desktop_application",
+      arguments: { path: root },
+    });
+    expect(inspected.isError).not.toBe(true);
+    const summary = analysisViewResultSchema.parse(
+      parseEvidence(inspected.structuredContent).normalized_result,
+    );
+    expect(summary).toMatchObject({
+      summary: { available_counts: { omissions: 2 } },
+    });
+    const source = {
+      kind: "retained-evidence",
+      evidence_id: summary.parent_evidence_id,
+    };
+    const listed = await harness.client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source,
+        view: {
+          kind: "desktop-application",
+          collection: "omissions",
+          limit: 2,
+        },
+      },
+    });
+    expect(listed.isError).not.toBe(true);
+    expect(
+      schemas.ajv.validate(schemas.outputSchema, listed.structuredContent),
+    ).toBe(true);
+    const page = analysisViewResultSchema.parse(
+      parseEvidence(listed.structuredContent).normalized_result,
+    );
+    if (page.kind !== "desktop-application") throw new Error("Expected rows");
+    const ids = page.items.map((row) => {
+      if (!("omission_id" in row) || typeof row.omission_id !== "string")
+        throw new Error("Missing stable omission identity");
+      return row.omission_id;
+    });
+    expect(page.items).toMatchObject([
+      { path: "a", kind: "fifo" },
+      { path: "b", kind: "fifo" },
+    ]);
+    for (const selection of [ids, []]) {
+      const args = {
+        source,
+        view: {
+          kind: "desktop-application",
+          collection: "omissions",
+          omission_ids: selection,
+          fields: ["kind"],
+          limit: 2,
+        },
+      };
+      expect(schemas.ajv.validate(schemas.inputSchema, args)).toBe(true);
+      const selected = await harness.client.callTool({
+        name: "inspect_analysis_view",
+        arguments: args,
+      });
+      expect(selected.isError).not.toBe(true);
+      expect(
+        schemas.ajv.validate(schemas.outputSchema, selected.structuredContent),
+      ).toBe(true);
+      const evidence = parseEvidence(selected.structuredContent);
+      expect(evidence.evidence_links).toEqual([summary.parent_evidence_id]);
+      expect(evidence.normalized_result).toHaveProperty(
+        "items",
+        selection.map((omission_id) => ({ omission_id, kind: "fifo" })),
+      );
+      expect(evidence.normalized_result).toMatchObject({
+        source_coverage: { status: "partial" },
+      });
+    }
+  },
+);

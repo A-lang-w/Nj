@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   desktopApplicationSchema,
   desktopFileSchema,
+  desktopOmissionSchema,
   desktopCandidateSchema,
   desktopComponentSchema,
   desktopProbeSchema,
@@ -33,6 +34,7 @@ export const desktopViewRequestSchema = z.discriminatedUnion("collection", [
     ...page,
     collection: z.literal("files"),
     paths: z.array(z.string()).optional(),
+    file_ids: z.array(desktopFileSchema.shape.file_id).optional(),
     fields: z.array(desktopFileSchema.keyof()).optional(),
   }),
   z.strictObject({
@@ -40,6 +42,13 @@ export const desktopViewRequestSchema = z.discriminatedUnion("collection", [
     collection: z.literal("candidates"),
     families: z.array(desktopFamilySchema).optional(),
     fields: z.array(desktopCandidateSchema.keyof()).optional(),
+  }),
+  z.strictObject({
+    ...page,
+    collection: z.literal("omissions"),
+    paths: z.array(z.string()).optional(),
+    omission_ids: z.array(desktopOmissionSchema.shape.omission_id).optional(),
+    fields: z.array(desktopOmissionSchema.keyof()).optional(),
   }),
   z.strictObject({
     ...page,
@@ -55,6 +64,7 @@ export const desktopViewRequestSchema = z.discriminatedUnion("collection", [
 export const desktopViewItemsSchema = z.array(
   z.union([
     desktopFileSchema.partial(),
+    desktopOmissionSchema.partial(),
     desktopCandidateSchema.partial(),
     desktopComponentSchema.partial(),
     desktopProbeSchema.partial(),
@@ -65,6 +75,7 @@ export const desktopSummarySchema = z.strictObject({
   source_coverage: desktopCoverageSchema,
   available_counts: z.strictObject({
     files: z.number().int().nonnegative(),
+    omissions: z.number().int().nonnegative(),
     candidates: z.number().int().nonnegative(),
     components: z.number().int().nonnegative(),
     next_probes: z.number().int().nonnegative(),
@@ -89,6 +100,9 @@ export const desktopSummarySchema = z.strictObject({
     }),
   ),
 });
+
+type DesktopCollection = z.infer<typeof desktopViewRequestSchema>["collection"];
+type DesktopViewRow = DesktopApplication[DesktopCollection][number];
 
 // Only immutable authenticated parent objects are reused. They are not live filesystem caches.
 const validatedParents = new WeakSet<object>();
@@ -199,6 +213,7 @@ export const projectDesktopApplicationView = (
         source_coverage: report.coverage,
         available_counts: {
           files: report.files.length,
+          omissions: report.omissions.length,
           candidates: report.candidates.length,
           components: report.components.length,
           next_probes: report.next_probes.length,
@@ -213,10 +228,18 @@ export const projectDesktopApplicationView = (
       ),
     });
   }
-  let rows = report[view.collection];
-  if (view.collection === "files" && view.paths !== undefined) {
-    const selected = new Set(view.paths);
-    rows = report.files.filter((file) => selected.has(file.path));
+  let rows: readonly DesktopViewRow[] = report[view.collection];
+  if (view.collection === "files" || view.collection === "omissions") {
+    const paths = view.paths === undefined ? undefined : new Set(view.paths);
+    const ids = view.collection === "files" ? view.file_ids : view.omission_ids;
+    const selected = ids === undefined ? undefined : new Set(ids);
+    if (paths !== undefined || selected !== undefined)
+      rows = report[view.collection].filter(
+        (row) =>
+          (paths === undefined || paths.has(row.path)) &&
+          (selected === undefined ||
+            selected.has("file_id" in row ? row.file_id : row.omission_id)),
+      );
   }
   if (view.collection === "candidates" && view.families !== undefined) {
     const selected = new Set(view.families);
@@ -224,6 +247,7 @@ export const projectDesktopApplicationView = (
   }
   const idField = {
     files: "file_id",
+    omissions: "omission_id",
     candidates: "candidate_id",
     components: "component_id",
     next_probes: "probe_id",

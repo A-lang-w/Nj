@@ -25,6 +25,7 @@ import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import type {
   DesktopApplication,
   DesktopFile,
+  DesktopOmission,
   InspectDesktopApplicationInput,
 } from "../domain/desktopApplication.js";
 import { projectDesktopApplication } from "../domain/desktopApplicationProjection.js";
@@ -35,6 +36,17 @@ import { ARTIFACT_GRAPH_PROVIDER } from "../application/InvestigationProviders.j
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 
 const RETAINED_METADATA_BYTES = 32 * 1024 * 1024;
+
+/** Stop traversal without discarding the preceding bounded observations. */
+class DesktopRepresentationLimit extends ArtifactReaderFailure {
+  constructor() {
+    super(
+      "limit",
+      "Directory metadata reached the 32 MiB representation budget; remaining entry and omission facts are unavailable.",
+      { boundary: "memory" },
+    );
+  }
+}
 
 /** Existing artifact ownership with bounded metadata, serial probes and no payload cache. */
 export class DesktopApplicationReader implements DesktopApplicationPort {
@@ -173,12 +185,18 @@ const scanDirectory = async (
   };
   const namespaceId = `dsr_${digestCanonicalValue(root, "Admitted desktop directory namespace")}`;
   const files: DesktopFile[] = [];
+  const omissions: DesktopOmission[] = [];
   const unityWitnessRoots = new Set<string>();
   const budget: DesktopReadBudget = {
     bytes: 0,
     maximum: input.max_probe_bytes,
     retainedBytes: 1024 + (input.path.length + root.canonical_path.length) * 24,
     maximumRetainedBytes: RETAINED_METADATA_BYTES,
+  };
+  const reserve = (bytes: number) => {
+    if (bytes > budget.maximumRetainedBytes - budget.retainedBytes)
+      throw new DesktopRepresentationLimit();
+    budget.retainedBytes += bytes;
   };
   let entries = 0;
   let probed = 0;
@@ -188,7 +206,8 @@ const scanDirectory = async (
   let failure: { readonly cause: unknown } | undefined;
   const limitations = [
     "Runtime candidates and component markers do not establish loaded code, execution, or build correspondence.",
-    "The directory SHA-256 commits only to examined paths, filesystem metadata and read-range digests, not to every file's contents. Unread bytes are unknown.",
+    "The directory SHA-256 commits only to retained paths, omission kinds, available filesystem metadata and read-range digests, not to every file's contents. Unread bytes are unknown.",
+    "Special-entry payloads are not read. Their paths and kinds are retained; other special-entry metadata is unavailable in this report.",
     "Child symlinks are not followed. Executable section-embedded PCKs without a trailer and encrypted contents remain unexamined.",
     "This is a sequence of stable entry observations, not an atomic snapshot of the entire directory.",
     "Unity reference decoding stops after a witness in each Data/Managed directory; other assemblies' references are unexamined. Header facts remain per-file.",
@@ -196,10 +215,23 @@ const scanDirectory = async (
   try {
     for await (const entry of reader.entries(signal, {
       maximumEntries: input.max_entries,
-      onOmission: () => {
-        special++;
-        entries++;
+      onOmission: (omission) => {
+        if (omission.kind !== "directory-descendants") {
+          special++;
+          entries++;
+        }
         partial = true;
+        reserve(512 + omission.path.length * 24);
+        const semantic = {
+          root_namespace_id: namespaceId,
+          path: omission.path,
+          kind: omission.kind,
+        };
+        omissions.push({
+          omission_id: `dso_${digestCanonicalValue(semantic, "Desktop traversal omission")}`,
+          path: omission.path,
+          kind: omission.kind,
+        });
       },
     })) {
       entries++;
@@ -207,14 +239,7 @@ const scanDirectory = async (
       // Reserve a conservative representation estimate before retaining path-dependent objects.
       const reservation =
         1024 + (entry.path.length + entry.adapterKey.length) * 24;
-      if (reservation > RETAINED_METADATA_BYTES - budget.retainedBytes) {
-        partial = true;
-        limitations.push(
-          "Directory metadata reached the 32 MiB representation budget; remaining entries are unknown.",
-        );
-        break;
-      }
-      budget.retainedBytes += reservation;
+      reserve(reservation);
       const row = fileRow(entry, namespaceId);
       files.push(row);
       if (entry.kind === "symlink") {
@@ -287,6 +312,8 @@ const scanDirectory = async (
       limitations.push(
         "Directory traversal reached max_entries; unvisited paths and candidate families remain unknown.",
       );
+    } else if (cause instanceof DesktopRepresentationLimit) {
+      limitations.push(cause.message);
     } else {
       failure = { cause };
       limitations.push(
@@ -295,6 +322,17 @@ const scanDirectory = async (
     }
   }
   files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  omissions.sort((a, b) =>
+    a.path < b.path
+      ? -1
+      : a.path > b.path
+        ? 1
+        : a.kind < b.kind
+          ? -1
+          : a.kind > b.kind
+            ? 1
+            : 0,
+  );
   const coverage: DesktopApplication["coverage"] = {
     status: partial ? "partial" : "complete-within-scan",
     entries_examined: entries,
@@ -308,7 +346,7 @@ const scanDirectory = async (
     },
   };
   const snapshot = digestCanonicalValue(
-    { root, files, coverage },
+    { root, files, omissions, coverage },
     "Examined desktop directory facts",
   );
   const report: DesktopApplication = {
@@ -320,6 +358,7 @@ const scanDirectory = async (
       identity_scope: "examined-metadata-and-read-ranges",
     },
     files,
+    omissions,
     ...projectDesktopApplication(files),
     coverage,
     limitations,

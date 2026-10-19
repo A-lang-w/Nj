@@ -4,9 +4,9 @@
 
 When an installation directory is supplied and its runtime is unknown, use
 `inspect_desktop_application` with its absolute path. Default MCP summary
-delivery retains complete Evidence. Read `files`, `candidates`, `components` or
+delivery retains complete Evidence. Read `files`, `omissions`, `candidates`, `components` or
 `next_probes` with `inspect_analysis_view` kind `desktop-application`, selecting
-exact paths or families and only needed fields and pages. Preserve source
+exact paths, batched file/omission IDs or families and only needed fields and pages. Preserve source
 coverage, read-range identity and unknowns; directory snapshot identity is not
 a digest of every file's contents. Component path markers do not establish
 runtime presence. For compact CLI output, use

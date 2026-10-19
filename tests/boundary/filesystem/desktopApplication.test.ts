@@ -8,7 +8,9 @@ import {
   unlink,
 } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import { createServer as createNetServer } from "node:net";
+import { expect, it, onTestFinished } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createDesktopApplicationService } from "../../../src/composition/desktop.js";
 import { desktopApplicationSchema } from "../../../src/domain/desktopApplication.js";
@@ -440,6 +442,116 @@ it("keeps directory-only marker identities separate across installation roots", 
     b.report.components[0]?.component_id,
   );
   expect(a.report.root.snapshot_sha256).not.toBe(b.report.root.snapshot_sha256);
+});
+
+it.skipIf(process.platform === "win32").each(["path", "kind"] as const)(
+  "commits omitted special-entry %s changes and exposes selected omission facts",
+  async (change) => {
+    const root = await createTestTempDirectory("rea-desktop-omissions-");
+    const original = join(root, "special");
+    execFileSync("mkfifo", [original], { timeout: 10_000 });
+    const before = await inspect(root);
+    let selected = "special";
+    if (change === "path") {
+      selected = "renamed";
+      await rename(original, join(root, selected));
+    } else {
+      await unlink(original);
+      const server = createNetServer();
+      onTestFinished(async () => {
+        if (!server.listening) return;
+        await new Promise<void>((resolve, reject) =>
+          server.close((cause) => (cause ? reject(cause) : resolve())),
+        );
+      });
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(original, resolve);
+      });
+    }
+    const after = await inspect(root);
+    expect(after.report.root.snapshot_sha256).not.toBe(
+      before.report.root.snapshot_sha256,
+    );
+    expect(before.report.omissions).toEqual([
+      {
+        omission_id: expect.stringMatching(/^dso_[a-f0-9]{64}$/u),
+        path: "special",
+        kind: "fifo",
+      },
+    ]);
+    expect(after.report.omissions[0]?.omission_id).not.toBe(
+      before.report.omissions[0]?.omission_id,
+    );
+    expect(after.report.coverage).toMatchObject({
+      status: "partial",
+      entries_examined: 1,
+      special_entries_omitted: 1,
+      files_probed: 0,
+      bytes_read: 0,
+    });
+    const page = inspectAnalysisView({
+      source: { kind: "inline", evidence: after.evidence },
+      view: {
+        kind: "desktop-application",
+        collection: "omissions",
+        paths: [selected],
+        fields: ["kind"],
+        offset: 0,
+        limit: 1,
+      },
+    });
+    if (!page.ok) throw page.error;
+    expect(page.value.evidence_links).toEqual([after.evidence.evidence_id]);
+    expect(page.value.normalized_result).toHaveProperty("items", [
+      {
+        omission_id: after.report.omissions[0]?.omission_id,
+        kind: change === "path" ? "fifo" : "socket",
+      },
+    ]);
+    expect(page.value.normalized_result).toMatchObject({
+      coverage: { total: 1, exhausted: true },
+      source_coverage: { status: "partial" },
+    });
+  },
+);
+
+it("bounds omitted-entry retention before allocating rows or serializing identities", async () => {
+  const root = await createTestTempDirectory("rea-desktop-omission-capacity-");
+  let examined = 0;
+  // Simulate bounded parsed paths without creating hundreds of deep FIFO trees.
+  const prefix = Array.from({ length: 15 }, () => "d".repeat(255)).join("/");
+  const service = new DesktopApplicationService(
+    new DesktopApplicationReader((path) => {
+      const reader = new DirectoryArtifactReader(path);
+      reader.entries = async function* (_signal, options) {
+        if (typeof options === "function")
+          throw new Error("Expected traversal options");
+        for (let index = 0; index < 400; index++) {
+          examined++;
+          options?.onOmission?.({
+            path: `${prefix}/${index}/entry`,
+            kind: "fifo",
+          });
+        }
+      };
+      return reader;
+    }),
+  );
+  onTestFinished(() => service.close());
+  const result = await service.inspect({ path: root });
+  if (!result.ok) throw result.error;
+  const report = desktopApplicationSchema.parse(result.value.normalized_result);
+  expect(examined).toBeLessThan(400);
+  expect(report.omissions).toHaveLength(examined - 1);
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    entries_examined: examined,
+    special_entries_omitted: examined,
+  });
+  expect(report.limitations).toContainEqual(
+    expect.stringContaining("representation budget"),
+  );
 });
 
 it("preserves the selected root alias and directs follow-ups to the admitted physical root", async () => {
