@@ -447,7 +447,8 @@ class ReaJadxBridge {
       declarations.add(new ArrayList<>());
     }
     int[] scanned = {0};
-    List<ClassNode> classNodes = root == null ? List.of() : root.getClasses();
+    // getClasses(true) is the full list: inner and anonymous classes (click handlers) included.
+    List<ClassNode> classNodes = root == null ? List.of() : root.getClasses(true);
     // Sites and declarations share the transport budget left after the fixed
     // response; matches past it are still counted so coverage stays partial.
     InvokeBudget budget = new InvokeBudget(MAX_RESOURCE_SCAN_BYTES
