@@ -106,6 +106,7 @@ export const jsonRpcErrorResponse = (
     { jsonrpc: "2.0", error: { code, message }, id: null },
     { status },
   );
+const jsonError = jsonRpcErrorResponse;
 
 const protocolOf = (instance: McpServer | Server): Server =>
   "server" in instance ? instance.server : instance;
@@ -115,7 +116,7 @@ const describe = (cause: unknown): string =>
 
 const NO_SHUTDOWN_HOOK = (): void => undefined;
 const SHUTTING_DOWN = (): Response =>
-  jsonRpcErrorResponse(503, -32000, "Server shutting down");
+  jsonError(503, -32000, "Server shutting down");
 
 /** Split a header field on `separator` outside quoted strings, honouring backslash escapes (RFC 9110). */
 const splitUnquoted = (value: string, separator: string): string[] => {
@@ -330,8 +331,7 @@ export const serveStreamableHttp = async (
   let origin = "";
   let stopped = false;
   const route = async (request: Request): Promise<Response> => {
-    if (stopped)
-      return jsonRpcErrorResponse(503, -32000, "Server shutting down");
+    if (stopped) return jsonError(503, -32000, "Server shutting down");
     // One loopback allowlist gates Host (DNS rebinding) and Origin (browser pages); a missing Origin passes.
     const refused =
       allowedHosts === undefined
@@ -342,18 +342,14 @@ export const serveStreamableHttp = async (
     const { pathname } = new URL(request.url);
     if (pathname === MCP_HTTP_PATH)
       return slot === undefined
-        ? jsonRpcErrorResponse(503, -32000, "Server starting")
+        ? jsonError(503, -32000, "Server starting")
         : slot.handle(request);
     const match = routes.find(
       (candidate) =>
         candidate.path === pathname && candidate.method === request.method,
     );
     return match === undefined
-      ? jsonRpcErrorResponse(
-          404,
-          -32601,
-          `No route for ${request.method} ${pathname}`,
-        )
+      ? jsonError(404, -32601, `No route for ${request.method} ${pathname}`)
       : match.handle(request);
   };
   const httpServer = createHttpServer();
@@ -465,7 +461,7 @@ const serveNodeRequest = async (
       // targets that are not origin-form paths; both are answered instead of thrown.
       const target = cause instanceof UnsupportedRequestTargetError;
       await writeWebResponse(
-        jsonRpcErrorResponse(
+        jsonError(
           target ? 400 : 405,
           -32600,
           target
@@ -490,7 +486,7 @@ const serveNodeRequest = async (
     if (response.headersSent) response.destroy();
     else
       await writeWebResponse(
-        jsonRpcErrorResponse(500, -32603, "Internal server error"),
+        jsonError(500, -32603, "Internal server error"),
         response,
         { closeConnection: unreadBody() },
       ).catch(() => undefined);
