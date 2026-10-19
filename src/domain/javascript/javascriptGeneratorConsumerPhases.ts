@@ -588,38 +588,40 @@ export const semanticPatternCompletion = (
   );
 
 /** Selected defaults and keys before a particular destructuring write share slot semantics. */
-export const semanticPatternSuspendsBeforeTarget = (
+export const semanticPatternCompletionBeforeTarget = (
   pattern: t.Node,
   value: t.Node,
   target: t.Node,
   state: JavaScriptSemanticAnalysisState,
   completedSuspension: (node: t.Node) => boolean,
   executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
-): boolean => {
+): PatternCompletion => {
   const path = new Set<t.Node>();
   let current: t.Node | undefined = target;
   while (current !== undefined) {
     path.add(current);
     if (current === pattern)
-      return (
-        combinePatternCompletion(
-          patternExpressionCompletion(value, completedSuspension),
-          patternCompletedSuspension(
-            pattern,
-            { known: true, node: value },
-            state,
-            completedSuspension,
-            0,
-            target,
-            path,
-            executionFrames,
-          ),
-        ) === "suspended"
+      return combinePatternCompletion(
+        patternExpressionCompletion(value, completedSuspension),
+        patternCompletedSuspension(
+          pattern,
+          { known: true, node: value },
+          state,
+          completedSuspension,
+          0,
+          target,
+          path,
+          executionFrames,
+        ),
       );
     current = state.parentsByNode.get(current);
   }
-  return false;
+  return "unproven";
 };
+
+export const semanticPatternSuspendsBeforeTarget = (
+  ...args: Parameters<typeof semanticPatternCompletionBeforeTarget>
+): boolean => semanticPatternCompletionBeforeTarget(...args) === "suspended";
 
 /** Only completed work in an earlier consumed slot can delay the next iterator step. */
 export const semanticPatternSuspendsBeforeGeneratorRead = ({

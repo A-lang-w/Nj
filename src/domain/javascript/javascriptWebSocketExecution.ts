@@ -55,10 +55,7 @@ import {
   syntaxMayCompleteWithoutBoundary,
 } from "./javascriptSymbolicControlFlow.js";
 import { childNodes } from "./javascriptSemanticTraversal.js";
-import {
-  semanticAsyncDeclarationAcquisition,
-  semanticAsyncDeclarationDisposal,
-} from "./javascriptSemanticResourceAcquisition.js";
+import { semanticAsyncDeclarationFacts } from "./javascriptSemanticResourceAcquisition.js";
 
 /** A direct return preserves the value separately from the completed activation. */
 const webSocketReturnedOwner = (
@@ -363,14 +360,15 @@ const webSocketEveryExitSuspension = (
     // A successfully acquired null async resource still schedules a disposal
     // await on every exit, including throw/return/break. The declaration itself
     // does not suspend, and a possibly throwing initializer cannot prove this.
-    if (
-      t.isVariableDeclaration(node) &&
-      node.kind === "await using" &&
-      semanticAsyncDeclarationAcquisition(node, state) === "acquired" &&
-      semanticAsyncDeclarationDisposal(node, state) === "wait"
-    ) {
-      cache.set(block, block);
-      return block;
+    if (t.isVariableDeclaration(node) && node.kind === "await using") {
+      const resource = semanticAsyncDeclarationFacts(node, state);
+      if (resource.acquisition === "acquired" && resource.disposal === "wait") {
+        cache.set(block, block);
+        return block;
+      }
+      // Registration itself never invokes the disposer. A completed earlier
+      // declaration cannot hide a later resource in the same disposal scope.
+      if (resource.completion === "completed") continue;
     }
     if (syntaxEvaluationAlwaysThrows(node)) {
       pending.length = 0;
@@ -629,8 +627,9 @@ const webSocketCompletedSuspension = (
           // This query is conditional on normal block completion: reaching the
           // next statement proves an unknown acquisition succeeded. A known
           // failure cannot establish that completed exit.
-          semanticAsyncDeclarationAcquisition(statement, state) !== "failed" &&
-          semanticAsyncDeclarationDisposal(statement, state) !== "abrupt",
+          semanticAsyncDeclarationFacts(statement, state).completion !==
+            "failed" &&
+          semanticAsyncDeclarationFacts(statement, state).disposal !== "abrupt",
       )
     ) {
       cached.set(node, current);
@@ -1150,7 +1149,7 @@ const webSocketBodyMaySuspend = (
       maySuspend = true;
     }
     if (t.isVariableDeclaration(node) && node.kind === "await using") {
-      const disposal = semanticAsyncDeclarationDisposal(node, state);
+      const { disposal } = semanticAsyncDeclarationFacts(node, state);
       maySuspend ||= disposal === "wait";
       unknownResource ||= disposal === "unknown";
     }
@@ -1191,43 +1190,6 @@ const webSocketConsumerAlwaysWaits = (
         webSocketEveryExitSuspension(node, state) !== undefined
       )
         return "suspension";
-      if (
-        exits === "iteration" &&
-        ((t.isOptionalCallExpression(node) && node.optional) ||
-          (t.isOptionalMemberExpression(node) &&
-            node.optional &&
-            node.computed))
-      ) {
-        const receiver = t.isOptionalCallExpression(node)
-          ? node.callee
-          : node.object;
-        const exact = semanticExactValueIdentity(receiver, state);
-        if (
-          exact !== undefined &&
-          (t.isFunction(exact.node) ||
-            t.isObjectExpression(exact.node) ||
-            t.isArrayExpression(exact.node) ||
-            t.isClassExpression(exact.node)) &&
-          exact.aliases.every(({ read, initializer }) =>
-            webSocketInitializerDominatesRead(
-              initializer.node,
-              read,
-              state,
-              initializer.bindingNode,
-            ),
-          )
-        ) {
-          const operands = t.isOptionalCallExpression(node)
-            ? node.arguments
-            : [node.property];
-          if (
-            operands.some((operand) =>
-              webSocketConsumerAlwaysWaits(operand, state, exits),
-            )
-          )
-            return "suspension";
-        }
-      }
       if (t.isCatchClause(node)) {
         const binding = webSocketCatchBinding(node, state);
         if (binding?.suspension !== undefined) return "suspension";
@@ -1250,6 +1212,52 @@ const webSocketConsumerAlwaysWaits = (
       return undefined;
     },
     exits,
+    (node) => {
+      if (
+        exits !== "iteration" ||
+        !(
+          (t.isOptionalCallExpression(node) && node.optional) ||
+          (t.isOptionalMemberExpression(node) && node.optional && node.computed)
+        )
+      )
+        return undefined;
+      const receiver = t.isOptionalCallExpression(node)
+        ? node.callee
+        : node.object;
+      // Only a proven initialized bare binding can omit the receiver read.
+      // The remaining operands still complete left-to-right through try/catch.
+      if (!t.isIdentifier(receiver)) return undefined;
+      const exact = semanticExactValueIdentity(receiver, state);
+      if (
+        exact === undefined ||
+        !(
+          t.isFunction(exact.node) ||
+          t.isObjectExpression(exact.node) ||
+          t.isArrayExpression(exact.node) ||
+          t.isClassExpression(exact.node)
+        ) ||
+        !exact.aliases.every(
+          ({ read, initializer }) =>
+            semanticInitializerPrecedesRead({
+              initializer: initializer.node,
+              read,
+              ...(initializer.bindingNode === undefined
+                ? {}
+                : { bindingNode: initializer.bindingNode }),
+              parents: state.parentsByNode,
+              initializerContexts: webSocketExecutionContexts(
+                initializer.node,
+                state,
+              ),
+              readContexts: webSocketExecutionContexts(read, state),
+            }) === true,
+        )
+      )
+        return undefined;
+      return t.isOptionalCallExpression(node)
+        ? node.arguments
+        : [node.property];
+    },
   );
 
 type WebSocketConsumerPhase =
@@ -1407,14 +1415,6 @@ export const webSocketInitializerDominatesRead = (
   state: JavaScriptSemanticAnalysisState,
   bindingNode?: t.Node,
 ): boolean => {
-  // Several visible activations do not establish a single earlier caller.
-  // Retain deferred metadata only when no exact activation is visible.
-  let owner: t.Node | undefined = read;
-  while (owner !== undefined) {
-    if (t.isFunction(owner) && webSocketStoredCalls(owner, state).length > 1)
-      return false;
-    owner = state.parentsByNode.get(owner);
-  }
   return (
     semanticInitializerPrecedesRead({
       initializer,
@@ -1502,6 +1502,31 @@ export const webSocketExecutionContexts = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
   directOnly = false,
+): readonly SemanticExecutionFrame[] =>
+  webSocketExecutionContextsForCalls(
+    node,
+    state,
+    directOnly,
+    new Map(),
+    new Map(),
+  );
+
+interface WebSocketActivationPrefix {
+  readonly current: t.Node;
+  readonly point: t.Node;
+  readonly suspendedOwner: t.Node | undefined;
+}
+
+/** Retain every visible activation rather than treating repetition as a TDZ. */
+const webSocketExecutionContextsForCalls = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  directOnly: boolean,
+  calls: ReadonlyMap<
+    t.Function,
+    JavaScriptSemanticAnalysisState["callSites"][number]
+  >,
+  expanded: Map<t.Function, WebSocketActivationPrefix[]>,
 ): readonly SemanticExecutionFrame[] => {
   const contexts: SemanticExecutionFrame[] = [];
   let point = node;
@@ -1546,6 +1571,32 @@ export const webSocketExecutionContexts = (
       }
       if (activations.has(parent)) return contexts;
       activations.add(parent);
+      const stored = webSocketStoredCalls(parent, state);
+      if (stored.length > 1 && !calls.has(parent)) {
+        // Different inner calls can join the same caller prefix. Its remaining
+        // activation graph is shared; do not expand a Cartesian call history.
+        const prefixes = expanded.get(parent) ?? [];
+        if (
+          prefixes.some(
+            (prefix) =>
+              prefix.current === current &&
+              prefix.point === point &&
+              prefix.suspendedOwner === suspendedOwner,
+          )
+        )
+          return [...contexts, { owner: parent, point }];
+        prefixes.push({ current, point, suspendedOwner });
+        expanded.set(parent, prefixes);
+        return stored.flatMap((call) =>
+          webSocketExecutionContextsForCalls(
+            node,
+            state,
+            directOnly,
+            new Map([...calls, [parent, call]]),
+            expanded,
+          ),
+        );
+      }
       let invocation:
         | ReturnType<typeof webSocketImmediateInvocation>
         | t.ForOfStatement
@@ -1555,7 +1606,7 @@ export const webSocketExecutionContexts = (
         | t.YieldExpression =
         t.isClassMethod(parent) && parent.kind === "constructor"
           ? webSocketClassConstruction(parent, state)
-          : webSocketImmediateInvocation(parent, state);
+          : (calls.get(parent) ?? webSocketImmediateInvocation(parent, state));
       contexts.push({ owner: parent, point });
       const generatorBody =
         current === parent.body &&

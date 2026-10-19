@@ -4770,6 +4770,131 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "nested repeated activations join shared caller prefixes",
+    "const connect=()=>new Socket(URL);const invoke=()=>{connect();connect()};const twice=()=>{invoke();invoke()};const Socket=globalThis.WebSocket;twice();twice();",
+    true,
+  ],
+  [
+    "nested repeated activations preserve eager failure",
+    "const connect=()=>new Socket(URL);const invoke=()=>{connect();connect()};const twice=()=>{invoke();invoke()};twice();const Socket=globalThis.WebSocket;twice();",
+    false,
+  ],
+  [
+    "repeated stored calls after initialization",
+    "const connect=()=>new Socket(URL);const Socket=globalThis.WebSocket;connect();connect();",
+    true,
+  ],
+  [
+    "repeated stored calls before initialization",
+    "const connect=()=>new Socket(URL);connect();connect();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "mixed repeated calls preserve eager first activation",
+    "const connect=()=>new Socket(URL);connect();const Socket=globalThis.WebSocket;connect();",
+    false,
+  ],
+  [
+    "repeated stored calls keep function-local bindings",
+    "const connect=()=>{const Socket=globalThis.WebSocket;new Socket(URL)};connect();connect();",
+    true,
+  ],
+  [
+    "repeated aliases share initialized caller frames",
+    "const connect=()=>new Socket(URL);const alias=connect;const Socket=globalThis.WebSocket;alias();connect();",
+    true,
+  ],
+  [
+    "repeated async callbacks cross their own wait",
+    "const connect=async()=>{await 0;new Socket(URL)};connect();connect();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "repeated awaited callbacks cannot reach late local",
+    "(async()=>{const connect=async()=>{await 0;new Socket(URL)};await connect();await connect();const Socket=globalThis.WebSocket;})();",
+    false,
+  ],
+  [
+    "repeated nested callers retain local initialization",
+    "const connect=()=>{const Socket=globalThis.WebSocket;new Socket(URL)};const invoke=()=>connect();invoke();invoke();",
+    true,
+  ],
+  [
+    "caught throwing optional argument precedes later wait",
+    "const fail=true;const consume=()=>{};(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{consume?.(fail?null.value:0,await 0)}catch{}}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "inert optional prefix reaches required argument wait",
+    "const consume=()=>{};(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{consume?.(0,await 0)}catch{}}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "earlier optional wait survives later argument failure",
+    "const consume=()=>{};(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{consume?.(await 0,null.value)}catch{}}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "caught computed optional prefix precedes wait",
+    "const fail=true;const receiver={};(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{receiver?.[(fail?null.value:0,await 0)]}catch{}}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "later registered resource waits before earlier disposer failure",
+    "(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket(URL)}})()){await using first={[Symbol.asyncDispose](){throw 0}},second={[Symbol.asyncDispose](){return 0}};}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "earlier registered resource waits after later disposer failure",
+    "(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket(URL)}})()){await using first={[Symbol.asyncDispose](){return 0}},second={[Symbol.asyncDispose](){throw 0}};}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "separate registrations share one disposal scope",
+    "(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket(URL)}})()){await using first={[Symbol.asyncDispose](){throw 0}};await using second={[Symbol.asyncDispose](){return 0}};}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "later acquisition failure retains reached disposal wait",
+    "(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket(URL)}})()){await using first={[Symbol.asyncDispose](){throw 0}},second={[Symbol.asyncDispose](){return 0}},third=null.value;}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "failed acquisition cannot register later waiting resource",
+    "(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket(URL)}})()){await using first={[Symbol.asyncDispose](){throw 0}},second=null.value,third={[Symbol.asyncDispose](){return 0}};}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "failed earlier nested object binding blocks constructor",
+    "const{missing:{x},WebSocket:Socket}={missing:null,WebSocket:globalThis.WebSocket};new Socket(URL);",
+    false,
+  ],
+  [
+    "completed earlier nested binding preserves constructor",
+    "const{missing:{x},WebSocket:Socket}={missing:{},WebSocket:globalThis.WebSocket};new Socket(URL);",
+    true,
+  ],
+  [
+    "failed earlier array binding blocks constructor",
+    "const[ [x],Socket]=[null,globalThis.WebSocket];new Socket(URL);",
+    false,
+  ],
+  [
+    "failed earlier default blocks constructor",
+    "const{missing:x=(+1n),WebSocket:Socket}={missing:void 0,WebSocket:globalThis.WebSocket};new Socket(URL);",
+    false,
+  ],
+  [
+    "failed earlier computed key blocks constructor",
+    "const{[(+1n)]:x,WebSocket:Socket}={WebSocket:globalThis.WebSocket};new Socket(URL);",
+    false,
+  ],
+  [
+    "inert earlier default preserves constructor",
+    "const{missing:x=0,WebSocket:Socket}={missing:void 0,WebSocket:globalThis.WebSocket};new Socket(URL);",
+    true,
+  ],
+  [
     "async generator disposer parameter failure precedes its await",
     "(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket(URL)}})()){await using resource={async *[Symbol.asyncDispose](x=null.value){}};}})();const Socket=globalThis.WebSocket;",
     false,

@@ -12,6 +12,7 @@ import {
 import { semanticPatternInitializationPrecedesRead } from "./javascriptSemanticEvaluationOrder.js";
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
 import { syntaxEvaluationAlwaysThrows } from "./javascriptSymbolicControlFlow.js";
+import { semanticPatternCompletionBeforeTarget } from "./javascriptGeneratorConsumerPhases.js";
 import {
   semanticArrayIndex,
   semanticPropertyPathKeyMatches,
@@ -252,6 +253,32 @@ export const semanticLiteralInitializerProjection = (
   // Projection cannot initialize a binding if its owning RHS never completes.
   // Possible failures remain uncertain rather than rejecting useful metadata.
   if (syntaxEvaluationAlwaysThrows(initializer.node)) return undefined;
+  // Selecting a literal slot is useful only after the preceding binding work
+  // completes. Stop at this binding, not at later slots in the declaration.
+  if (
+    initializer.bindingNode !== undefined &&
+    initializer.projection.length > 0
+  ) {
+    let owner: t.Node | undefined = initializer.bindingNode;
+    while (
+      owner !== undefined &&
+      !t.isVariableDeclarator(owner) &&
+      !t.isFunction(owner) &&
+      !t.isProgram(owner)
+    )
+      owner = state.parentsByNode.get(owner);
+    if (t.isVariableDeclarator(owner) && !t.isIdentifier(owner.id)) {
+      const completion = semanticPatternCompletionBeforeTarget(
+        owner.id,
+        initializer.node,
+        initializer.bindingNode,
+        state,
+        () => false,
+      );
+      if (completion === "blocked" || completion === "suspended-blocked")
+        return undefined;
+    }
+  }
   let node = initializer.node;
   let projection = initializer.projection;
   while (projection.length > 0) {

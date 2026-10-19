@@ -682,6 +682,156 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "r50-23.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");const invoke=()=>{connect();connect()};const twice=()=>{invoke();invoke()};const Socket=globalThis.WebSocket;twice();twice();',
+    present: true,
+  },
+  {
+    file: "r50-24.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");const invoke=()=>{connect();connect()};const twice=()=>{invoke();invoke()};twice();const Socket=globalThis.WebSocket;twice();',
+    present: false,
+  },
+  {
+    file: "r50-0.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");const Socket=globalThis.WebSocket;connect();connect();',
+    present: true,
+  },
+  {
+    file: "r50-1.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");connect();connect();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r50-2.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");connect();const Socket=globalThis.WebSocket;connect();',
+    present: false,
+  },
+  {
+    file: "r50-3.js",
+    source:
+      'const connect=()=>{const Socket=globalThis.WebSocket;new Socket("wss://example.test/review-latest")};connect();connect();',
+    present: true,
+  },
+  {
+    file: "r50-4.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");const alias=connect;const Socket=globalThis.WebSocket;alias();connect();',
+    present: true,
+  },
+  {
+    file: "r50-5.js",
+    source:
+      'const connect=async()=>{await 0;new Socket("wss://example.test/review-latest")};connect();connect();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r50-6.js",
+    source:
+      '(async()=>{const connect=async()=>{await 0;new Socket("wss://example.test/review-latest")};await connect();await connect();const Socket=globalThis.WebSocket;})();',
+    present: false,
+  },
+  {
+    file: "r50-7.js",
+    source:
+      'const connect=()=>{const Socket=globalThis.WebSocket;new Socket("wss://example.test/review-latest")};const invoke=()=>connect();invoke();invoke();',
+    present: true,
+  },
+  {
+    file: "r50-8.js",
+    source:
+      'const fail=true;const consume=()=>{};(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{consume?.(fail?null.value:0,await 0)}catch{}}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r50-9.js",
+    source:
+      'const consume=()=>{};(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{consume?.(0,await 0)}catch{}}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r50-10.js",
+    source:
+      'const consume=()=>{};(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{consume?.(await 0,null.value)}catch{}}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r50-11.js",
+    source:
+      'const fail=true;const receiver={};(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{receiver?.[(fail?null.value:0,await 0)]}catch{}}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r50-12.js",
+    source:
+      '(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-latest")}})()){await using first={[Symbol.asyncDispose](){throw 0}},second={[Symbol.asyncDispose](){return 0}};}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r50-13.js",
+    source:
+      '(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-latest")}})()){await using first={[Symbol.asyncDispose](){return 0}},second={[Symbol.asyncDispose](){throw 0}};}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r50-14.js",
+    source:
+      '(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-latest")}})()){await using first={[Symbol.asyncDispose](){throw 0}};await using second={[Symbol.asyncDispose](){return 0}};}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r50-15.js",
+    source:
+      '(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-latest")}})()){await using first={[Symbol.asyncDispose](){throw 0}},second={[Symbol.asyncDispose](){return 0}},third=null.value;}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r50-16.js",
+    source:
+      '(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-latest")}})()){await using first={[Symbol.asyncDispose](){throw 0}},second=null.value,third={[Symbol.asyncDispose](){return 0}};}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r50-17.js",
+    source:
+      'const{missing:{x},WebSocket:Socket}={missing:null,WebSocket:globalThis.WebSocket};new Socket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "r50-18.js",
+    source:
+      'const{missing:{x},WebSocket:Socket}={missing:{},WebSocket:globalThis.WebSocket};new Socket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "r50-19.js",
+    source:
+      'const[ [x],Socket]=[null,globalThis.WebSocket];new Socket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "r50-20.js",
+    source:
+      'const{missing:x=(+1n),WebSocket:Socket}={missing:void 0,WebSocket:globalThis.WebSocket};new Socket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "r50-21.js",
+    source:
+      'const{[(+1n)]:x,WebSocket:Socket}={WebSocket:globalThis.WebSocket};new Socket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "r50-22.js",
+    source:
+      'const{missing:x=0,WebSocket:Socket}={missing:void 0,WebSocket:globalThis.WebSocket};new Socket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
     file: "r49-disposer-async-generator.js",
     source:
       '(async()=>{for(const x of(function*(){try{yield 0}finally{new Socket("wss://example.test/review-latest")}})()){await using resource={async *[Symbol.asyncDispose](x=null.value){}};}})();const Socket=globalThis.WebSocket;',

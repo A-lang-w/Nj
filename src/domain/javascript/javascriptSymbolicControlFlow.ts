@@ -628,6 +628,7 @@ const syntaxCompletion = (
   node: t.Node | null | undefined,
   depth: number,
   boundary?: (node: t.Node) => "suspension" | "throw" | undefined,
+  orderedOperands?: (node: t.Node) => readonly t.Node[] | undefined,
 ): SyntaxCompletion => {
   if (node == null) return normalCompletion;
   if (depth >= 128) return { normal: true, abrupt: [{ kind: "unknown" }] };
@@ -635,7 +636,7 @@ const syntaxCompletion = (
   if (stopped !== undefined)
     return { normal: false, abrupt: [{ kind: stopped }] };
   const complete = (child: t.Node | null | undefined) =>
-    syntaxCompletion(child, depth + 1, boundary);
+    syntaxCompletion(child, depth + 1, boundary, orderedOperands);
   if (t.isReturnStatement(node) || t.isThrowStatement(node)) {
     const argument =
       boundary === undefined ? normalCompletion : complete(node.argument);
@@ -759,7 +760,9 @@ const syntaxCompletion = (
   if (t.isWithStatement(node)) return complete(node.body);
   if (boundary !== undefined) {
     const operands =
-      syntaxUnconditionalOperands(node) ?? syntaxEvaluationOperands(node);
+      orderedOperands?.(node) ??
+      syntaxUnconditionalOperands(node) ??
+      syntaxEvaluationOperands(node);
     if (operands !== undefined) {
       const prefix = syntaxSequenceCompletion(operands, complete);
       return {
@@ -783,8 +786,9 @@ export const syntaxMayCompleteWithoutBoundary = (
   node: t.Node,
   boundary: (node: t.Node) => "suspension" | "throw" | undefined,
   exits: "iteration" | "scope",
+  orderedOperands?: (node: t.Node) => readonly t.Node[] | undefined,
 ): boolean => {
-  const completion = syntaxCompletion(node, 0, boundary);
+  const completion = syntaxCompletion(node, 0, boundary, orderedOperands);
   return (
     completion.normal ||
     completion.abrupt.some((exit) =>

@@ -112,27 +112,10 @@ const asyncResourceRegistration = (
   return { status: "failed" };
 };
 
-/** Earlier acquired resources survive a later initializer or acquisition failure. */
-export const semanticAsyncDeclarationAcquisition = (
-  declaration: t.VariableDeclaration,
-  state: JavaScriptSemanticAnalysisState,
-): JavaScriptResourceAcquisition => {
-  // The first registration either contributes a disposal resource, fails
-  // before all later declarators, or leaves their applicability unknown.
-  const initializer = declaration.declarations[0]?.init;
-  return initializer == null
-    ? "unknown"
-    : asyncResourceRegistration(initializer, state).status;
-};
-
 /** Acquiring a method and reaching its disposal await are separate facts. */
-export const semanticAsyncDeclarationDisposal = (
-  declaration: t.VariableDeclaration,
-  state: JavaScriptSemanticAnalysisState,
+const asyncResourceDisposal = (
+  registration: AsyncResourceRegistration,
 ): "wait" | "abrupt" | "unknown" => {
-  const initializer = declaration.declarations[0]?.init;
-  if (initializer == null) return "unknown";
-  const registration = asyncResourceRegistration(initializer, state);
   if (registration.status !== "acquired")
     return registration.status === "failed" ? "abrupt" : "unknown";
   const method = registration.disposer;
@@ -181,4 +164,52 @@ export const semanticAsyncDeclarationDisposal = (
     (returned !== undefined && syntaxEvaluationCannotThrow(returned))
     ? "wait"
     : "unknown";
+};
+
+interface AsyncDeclarationFacts {
+  readonly acquisition: JavaScriptResourceAcquisition;
+  readonly completion: "completed" | "failed" | "unknown";
+  readonly disposal: "wait" | "abrupt" | "unknown";
+}
+
+/** Registration is ordered; disposal visits all reached resources in reverse. */
+export const semanticAsyncDeclarationFacts = (
+  declaration: t.VariableDeclaration,
+  state: JavaScriptSemanticAnalysisState,
+): AsyncDeclarationFacts => {
+  const reached: AsyncResourceRegistration[] = [];
+  let completion: AsyncDeclarationFacts["completion"] = "completed";
+  for (const declarator of declaration.declarations) {
+    const registration =
+      declarator.init == null
+        ? { status: "unknown" as const }
+        : asyncResourceRegistration(declarator.init, state);
+    if (registration.status !== "acquired") {
+      completion = registration.status;
+      break;
+    }
+    reached.push(registration);
+  }
+  let disposal: AsyncDeclarationFacts["disposal"] =
+    completion === "unknown" ? "unknown" : "abrupt";
+  for (const registration of reached.toReversed()) {
+    const next = asyncResourceDisposal(registration);
+    // DisposeResources continues after an abrupt disposer; an earlier or later
+    // guaranteed wait is not erased by another resource's synchronous failure.
+    if (next === "wait") {
+      disposal = "wait";
+      break;
+    }
+    if (next === "unknown") disposal = "unknown";
+  }
+  return {
+    acquisition:
+      reached.length > 0
+        ? "acquired"
+        : completion === "failed"
+          ? "failed"
+          : "unknown",
+    completion,
+    disposal,
+  };
 };
