@@ -593,3 +593,31 @@ describe("CLI update root alias", () => {
     },
   );
 });
+
+describe("CLI failure token windows", () => {
+  workspaceCliTest(
+    "clamps a start beyond the available tokens to an empty valid range",
+    async ({ cli, workspace }) => {
+      for (const extra of [[], ["--token-limit", "3"]] as const) {
+        const result = await cli.run({
+          arguments: [
+            "evidence-import",
+            workspace.path("missing-bundle.json"),
+            "--format",
+            "toon",
+            "--full-output",
+            "--token-offset",
+            "100000",
+            ...extra,
+          ],
+          cwd: workspace.root,
+          timeoutMs: CLI_INTEGRATION_TIMEOUT_MS,
+        });
+        expect(result.exitCode).toBe(1);
+        expect(result.stdout).toMatch(/showing tokens (\d+)–\1 of \1/u);
+        expect(result.stdout).not.toContain("100000");
+        expect(result.stdout).not.toContain("nextOffset");
+      }
+    },
+  );
+});

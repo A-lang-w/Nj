@@ -361,7 +361,9 @@ const fullFailureEnvelope = (
     return { ok: false, error: failure, meta };
   const formatted = Formatter.format(failure, format);
   const total = estimateTokenCount(formatted);
-  const offset = tokenOffset ?? 0;
+  // Clamp the requested start so a window past the end reports a valid empty
+  // range instead of a reversed start–end pair.
+  const offset = Math.min(tokenOffset ?? 0, total);
   const end = tokenLimit === undefined ? total : offset + tokenLimit;
   if (offset === 0 && end >= total) return { ok: false, error: failure, meta };
   const actualEnd = Math.min(end, total);
