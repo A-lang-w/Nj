@@ -18,6 +18,12 @@ const sweepEnvironment = (home: string): NodeJS.ProcessEnv => ({
   XDG_CONFIG_HOME: join(home, ".config"),
   GEMINI_CLI_SYSTEM_SETTINGS_PATH: join(home, "system.json"),
   GEMINI_CLI_SYSTEM_DEFAULTS_PATH: join(home, "defaults.json"),
+  // The compiled CLI prepares Darwin ownership helpers; hosts that select a
+  // matching SDK explicitly must pass that selection through, as the other
+  // compiled-CLI lifecycle tests do.
+  ...(process.env.SDKROOT === undefined
+    ? {}
+    : { SDKROOT: process.env.SDKROOT }),
 });
 
 // Path resolution must not decide which clients receive lifecycle coverage.
