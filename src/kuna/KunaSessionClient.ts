@@ -1,3 +1,4 @@
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { z } from "zod";
 
 import {
@@ -39,6 +40,7 @@ import {
   kunaFileCleanupError,
   type KunaProcessLauncher,
 } from "./KunaCommand.js";
+import { kunaFunctionDeadline } from "./KunaConfiguration.js";
 import {
   createKunaFileCloseScope,
   inspectKunaInstallation,
@@ -1117,7 +1119,7 @@ export class KunaSessionClient implements AnalysisClient {
       installation,
       arguments: (input) => ["decompile", input, address, "--addr"],
       operation,
-      timeoutMs: installation.configuration.functionTimeoutMs,
+      deadline: kunaFunctionDeadline(installation.configuration),
       outputBytes: KUNA_FUNCTION_TEXT_BYTES,
       signal,
       releaseRun: admitted,
@@ -1381,7 +1383,7 @@ export class KunaSessionClient implements AnalysisClient {
         this.#fileCloseResources.retain({
           kind: "lease",
           resource,
-          lease: { release: () => owner.close() },
+          lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
         }),
       run: <T>(operation: () => Promise<T>) =>
         this.#fileCloseResources.run(operation),
@@ -1607,7 +1609,7 @@ export class KunaSessionClient implements AnalysisClient {
       installation,
       arguments: (input) => ["functions", input, "--json"],
       operation: "list_procedures",
-      timeoutMs: installation.configuration.functionTimeoutMs,
+      deadline: kunaFunctionDeadline(installation.configuration),
       outputBytes: KUNA_INVENTORY_OUTPUT_BYTES,
       signal: this.#session.signal,
     });
