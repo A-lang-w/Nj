@@ -81,7 +81,7 @@ const base64Source = (bytes: Buffer): EnvironmentSource => {
   });
 };
 
-describe("replayEnvironmentTool selection", () => {
+describe("replay argument mapping and query admission", () => {
   it("does not inspect a recorded query when no query argument can affect selection", () => {
     const users = tool("get_users_by_id");
     const original = source.exchanges.get(users.record_ordinals[0]!);
@@ -112,7 +112,9 @@ describe("replayEnvironmentTool selection", () => {
       selectReplayExchange(long, source.exchanges, { path_1: "3" }),
     ).toMatchObject({ exchange: { path: "/api/users/3" }, exact: true });
   });
+});
 
+describe("replayEnvironmentTool selection", () => {
   it("replays the record whose path segments equal the supplied parameters as an exact match", () => {
     const result = replay("get_users_by_id", { id: "2" });
     expect(result).toMatchObject({
