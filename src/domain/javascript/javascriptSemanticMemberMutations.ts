@@ -30,6 +30,7 @@ import {
 } from "./javascriptSemanticObjectReferences.js";
 import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
+import { semanticNativePromiseProducer } from "./javascriptSemanticPromiseIdentity.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import { semanticMutationInitializers } from "./javascriptSemanticMutationInitializers.js";
 import {
@@ -1237,7 +1238,7 @@ const observableMutationPaths = (
         // Keep class/getter projections distinct so cycle pruning does not
         // discard observable escapes through a shared getter result.
         if (
-          t.isImportExpression(expression) ||
+          semanticNativePromiseProducer(expression, state) ||
           (t.isNewExpression(expression) &&
             semanticClassCandidates(expression.callee, state).length === 0)
         )

@@ -223,22 +223,49 @@ const webSocketStoredCalls = (
     };
     // Install before identity queries: projections may reenter execution facts.
     storedCallbackCalls.set(state, facts);
+    const parameters = new Map<string, t.Function[]>();
+    for (const call of state.callSites) {
+      for (const argument of call.arguments.flatMap<t.Node>((argument) =>
+        t.isArrayExpression(argument)
+          ? [argument, ...argument.elements.filter((item) => item !== null)]
+          : [argument],
+      )) {
+        const selected = webSocketArgumentParameter(argument, state);
+        if (selected === undefined || !t.isIdentifier(selected.parameter))
+          continue;
+        const binding = resolveSemanticBindingState(
+          state,
+          selected.parameter,
+          selected.parameter.name,
+        );
+        const exact = semanticExactValueIdentity(argument, state);
+        if (
+          binding?.kind === "parameter" &&
+          binding.definitions.length === 1 &&
+          binding.initializers.length === 0 &&
+          binding.referenceInitializers.length === 0 &&
+          exact !== undefined &&
+          t.isFunction(exact.node)
+        )
+          parameters.set(binding.bindingId, [
+            ...(parameters.get(binding.bindingId) ?? []),
+            exact.node,
+          ]);
+      }
+    }
     for (const call of state.callSites) {
       const root = unwrapJavaScriptExpression(call.callee).node;
       if (!t.isIdentifier(root)) continue;
       const binding = resolveSemanticBindingState(state, root, root.name);
-      const initial = semanticStableInitializer(binding, state);
-      const value =
-        initial === undefined
-          ? undefined
-          : unwrapJavaScriptExpression(initial.node).node;
-      if (!t.isIdentifier(value) && !t.isFunction(value)) continue;
       const exact = semanticExactValueIdentity(call.callee, state);
-      if (exact !== undefined && t.isFunction(exact.node))
-        facts.calls.set(exact.node, [
-          ...(facts.calls.get(exact.node) ?? []),
-          call,
-        ]);
+      const functions =
+        exact !== undefined && t.isFunction(exact.node)
+          ? [exact.node]
+          : binding?.kind === "parameter"
+            ? (parameters.get(binding.bindingId) ?? [])
+            : [];
+      for (const fn of new Set(functions))
+        facts.calls.set(fn, [...(facts.calls.get(fn) ?? []), call]);
     }
   }
   return facts.calls.get(node) ?? [];
@@ -954,10 +981,15 @@ const webSocketImmediateCaller = (
 };
 
 /** Match a known literal invocation's positional argument, never an unknown spread offset. */
-const webSocketParameterResume = (
+const webSocketArgumentParameter = (
   result: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): WebSocketParameterResume | undefined => {
+):
+  | {
+      readonly parameter: t.Node;
+      readonly invocation: WebSocketParameterResume["invocation"];
+    }
+  | undefined => {
   const parent = state.parentsByNode.get(result);
   if (
     t.isAssignmentExpression(parent) &&
@@ -970,7 +1002,7 @@ const webSocketParameterResume = (
     const pattern = t.isAssignmentPattern(parameter)
       ? parameter.left
       : parameter;
-    return t.isArrayPattern(pattern) && pattern.elements.length > 0
+    return pattern !== undefined
       ? { parameter: pattern, invocation: parent }
       : undefined;
   }
@@ -1029,8 +1061,20 @@ const webSocketParameterResume = (
     return undefined;
   const parameter = runtimeFunctionParameters(owner)[index - offset];
   const pattern = t.isAssignmentPattern(parameter) ? parameter.left : parameter;
-  return t.isArrayPattern(pattern) && pattern.elements.length > 0
+  return pattern !== undefined
     ? { parameter: pattern, invocation: call }
+    : undefined;
+};
+
+const webSocketParameterResume = (
+  result: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): WebSocketParameterResume | undefined => {
+  const selected = webSocketArgumentParameter(result, state);
+  return selected !== undefined &&
+    t.isArrayPattern(selected.parameter) &&
+    selected.parameter.elements.length > 0
+    ? { parameter: selected.parameter, invocation: selected.invocation }
     : undefined;
 };
 

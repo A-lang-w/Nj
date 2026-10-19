@@ -4770,6 +4770,96 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "sequence stored callback runs before binding",
+    "const connect=(0,()=>new Socket(URL));connect();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "sequence stored callback runs after binding",
+    "const connect=(0,()=>new Socket(URL));const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
+    "conditional stored callback runs before binding",
+    "const connect=true?()=>new Socket(URL):()=>{};connect();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "changed async wrapper loses native promise identity",
+    'export {};const wrapped=(async()=>import("ws"))();wrapped.constructor={};wrapped.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await wrapped;new Socket(URL);',
+    false,
+  ],
+  [
+    "wrapper copy shares constructor changes",
+    'export {};const wrapped=(async()=>import("ws"))();const alias=wrapped;wrapped.constructor={};wrapped.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await alias;new Socket(URL);',
+    false,
+  ],
+  [
+    "native wrapper bypasses own then",
+    'export {};const wrapped=(async()=>import("ws"))();wrapped.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await wrapped;new Socket(URL);',
+    true,
+  ],
+  [
+    "wrapper captured constructor survives later changes",
+    'export {};const wrapped=(async()=>import("ws"))();const{WebSocket:Socket}=await wrapped;wrapped.constructor={};wrapped.then=resolve=>resolve({WebSocket:class{}});new Socket(URL);',
+    true,
+  ],
+  [
+    "completed adoption precedes ambient then write",
+    'export {};const{WebSocket:Socket}=await(async()=>import("ws"))();Promise.prototype.then=resolve=>resolve({WebSocket:class{}});new Socket(URL);',
+    true,
+  ],
+  [
+    "ambient then write precedes adoption",
+    'export {};Promise.prototype.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await(async()=>import("ws"))();new Socket(URL);',
+    false,
+  ],
+  [
+    "stored wrapper adopts before inner then write",
+    'export {};const pending=import("ws");const wrapped=(async()=>pending)();pending.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await wrapped;new Socket(URL);',
+    true,
+  ],
+  [
+    "inner then write precedes stored wrapper adoption",
+    'export {};const pending=import("ws");pending.then=resolve=>resolve({WebSocket:class{}});const wrapped=(async()=>pending)();const{WebSocket:Socket}=await wrapped;new Socket(URL);',
+    false,
+  ],
+  [
+    "stored wrapper adoption precedes ambient then write",
+    'export {};const pending=import("ws");const wrapped=(async()=>pending)();Promise.prototype.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await wrapped;new Socket(URL);',
+    true,
+  ],
+  [
+    "synchronous callback parameter runs before binding",
+    "((run)=>run())(()=>new Socket(URL));const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "synchronous callback parameter runs after binding",
+    "const Socket=globalThis.WebSocket;((run)=>run())(()=>new Socket(URL));",
+    true,
+  ],
+  [
+    "synchronous callback call parameter runs before binding",
+    "((run)=>run()).call(null,()=>new Socket(URL));const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "synchronous callback apply parameter runs before binding",
+    "((run)=>run()).apply(null,[()=>new Socket(URL)]);const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "callback after mandatory await observes binding",
+    "(async(run)=>{await 0;run()})(()=>new Socket(URL));const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "callback before optional await remains synchronous",
+    "(async(run)=>{if(false)await 0;run()})(()=>new Socket(URL));const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
     "completed async adoption preserves captured constructor",
     'export {};const pending=import("ws");const{WebSocket:Socket}=await(async()=>pending)();pending.then=resolve=>resolve({WebSocket:class{}});new Socket(URL);',
     true,

@@ -682,6 +682,114 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "r56-0.js",
+    source:
+      'const connect=(0,()=>new Socket("wss://example.test/review-latest"));connect();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r56-1.js",
+    source:
+      'const connect=(0,()=>new Socket("wss://example.test/review-latest"));const Socket=globalThis.WebSocket;connect();',
+    present: true,
+  },
+  {
+    file: "r56-2.js",
+    source:
+      'const connect=true?()=>new Socket("wss://example.test/review-latest"):()=>{};connect();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r56-3.js",
+    source:
+      'export {};const wrapped=(async()=>import("ws"))();wrapped.constructor={};wrapped.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await wrapped;new Socket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "r56-4.js",
+    source:
+      'export {};const wrapped=(async()=>import("ws"))();const alias=wrapped;wrapped.constructor={};wrapped.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await alias;new Socket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "r56-5.js",
+    source:
+      'export {};const wrapped=(async()=>import("ws"))();wrapped.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await wrapped;new Socket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "r56-6.js",
+    source:
+      'export {};const wrapped=(async()=>import("ws"))();const{WebSocket:Socket}=await wrapped;wrapped.constructor={};wrapped.then=resolve=>resolve({WebSocket:class{}});new Socket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "r56-7.js",
+    source:
+      'export {};const{WebSocket:Socket}=await(async()=>import("ws"))();Promise.prototype.then=resolve=>resolve({WebSocket:class{}});new Socket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "r56-8.js",
+    source:
+      'export {};Promise.prototype.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await(async()=>import("ws"))();new Socket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "r56-9.js",
+    source:
+      'export {};const pending=import("ws");const wrapped=(async()=>pending)();pending.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await wrapped;new Socket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "r56-10.js",
+    source:
+      'export {};const pending=import("ws");pending.then=resolve=>resolve({WebSocket:class{}});const wrapped=(async()=>pending)();const{WebSocket:Socket}=await wrapped;new Socket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "r56-11.js",
+    source:
+      'export {};const pending=import("ws");const wrapped=(async()=>pending)();Promise.prototype.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await wrapped;new Socket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "r56-12.js",
+    source:
+      '((run)=>run())(()=>new Socket("wss://example.test/review-latest"));const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r56-13.js",
+    source:
+      'const Socket=globalThis.WebSocket;((run)=>run())(()=>new Socket("wss://example.test/review-latest"));',
+    present: true,
+  },
+  {
+    file: "r56-14.js",
+    source:
+      '((run)=>run()).call(null,()=>new Socket("wss://example.test/review-latest"));const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r56-15.js",
+    source:
+      '((run)=>run()).apply(null,[()=>new Socket("wss://example.test/review-latest")]);const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r56-16.js",
+    source:
+      '(async(run)=>{await 0;run()})(()=>new Socket("wss://example.test/review-latest"));const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r56-17.js",
+    source:
+      '(async(run)=>{if(false)await 0;run()})(()=>new Socket("wss://example.test/review-latest"));const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
     file: "r55-0.js",
     source:
       'export {};const pending=import("ws");const{WebSocket:Socket}=await(async()=>pending)();pending.then=resolve=>resolve({WebSocket:class{}});new Socket("wss://example.test/review-latest");',

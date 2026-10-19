@@ -25,10 +25,7 @@ import {
   semanticPropertyPathKeyMatches,
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
-import {
-  semanticEffectTiming,
-  semanticTopLevelEffectFollowsCapture,
-} from "./javascriptSemanticMutationInitializers.js";
+import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
 
 /** Replacing a prototype link can change an inherited lookup, not just an own slot. */
 const promiseLookupMayChange = (
@@ -44,6 +41,23 @@ const promiseLookupMayChange = (
   return true;
 };
 
+const promiseAmbientLookupIntact = (
+  property: "constructor" | "then",
+  capture: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const selected = ["global", "Promise", "prototype", property];
+  return !state.ambientReferenceEffects.some(
+    ({ path, node: effect, kind }) =>
+      (property === "constructor" || kind === "write") &&
+      path.length <= selected.length &&
+      path.every((key, index) =>
+        semanticPropertyPathKeyMatches(key, selected[index] ?? ""),
+      ) &&
+      semanticEffectTiming(capture, effect, state) !== "after",
+  );
+};
+
 /** Native await skips Get(then) only while the promise's constructor identity is intact. */
 const nativePromiseAwaitIdentityIntact = (
   node: t.Node,
@@ -56,26 +70,12 @@ const nativePromiseAwaitIdentityIntact = (
 ): boolean => {
   if (
     !t.isImportExpression(node) &&
-    !(t.isCallExpression(node) && t.isImport(node.callee))
+    !(t.isCallExpression(node) && t.isImport(node.callee)) &&
+    directLiteralReturn(node, state, true) === undefined
   )
     return true;
   onLiteralProjection?.();
-  const selected = ["global", "Promise", "prototype", "constructor"];
-  if (
-    state.ambientReferenceEffects.some(
-      ({ path, node: effect }) =>
-        path.length <= selected.length &&
-        path.every((key, index) =>
-          semanticPropertyPathKeyMatches(key, selected[index] ?? ""),
-        ) &&
-        !semanticTopLevelEffectFollowsCapture(
-          capture,
-          effect,
-          state.parentsByNode,
-        ),
-    )
-  )
-    return false;
+  if (!promiseAmbientLookupIntact("constructor", capture, state)) return false;
   return aliases.every(({ read }) => {
     const binding = resolveSemanticBindingState(state, read, read.name);
     return (
@@ -92,11 +92,10 @@ const nativePromiseAwaitIdentityIntact = (
 };
 
 /** Inert arguments and simple parameters preserve an exact literal return. */
-const directLiteralReturn = (
+const directLiteralFunction = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
-  allowAsync = false,
-): t.Node | undefined => {
+): t.ArrowFunctionExpression | t.FunctionExpression | undefined => {
   if (
     (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) ||
     !node.arguments.every(
@@ -112,8 +111,33 @@ const directLiteralReturn = (
     callee = unwrapJavaScriptExpression(result).node;
   }
   return t.isArrowFunctionExpression(callee) || t.isFunctionExpression(callee)
-    ? semanticDirectFunctionReturn(callee, { allowAsync })
+    ? callee
     : undefined;
+};
+
+/** The allocated promise is distinct from the async function's returned value. */
+export const semanticNativePromiseProducer = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (
+    t.isImportExpression(node) ||
+    (t.isCallExpression(node) && t.isImport(node.callee))
+  )
+    return true;
+  const fn = directLiteralFunction(node, state);
+  return fn !== undefined && fn.async && !fn.generator;
+};
+
+const directLiteralReturn = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  allowAsync = false,
+): t.Node | undefined => {
+  const fn = directLiteralFunction(node, state);
+  return fn === undefined
+    ? undefined
+    : semanticDirectFunctionReturn(fn, { allowAsync });
 };
 
 /** Exact local value identity; aliases do not prove execution order or object validity. */
@@ -181,6 +205,7 @@ export const semanticPromiseSettlementDependency = (
   >["aliases"][number][] = [];
   const seen = new Set<t.Node>();
   let current = rawNode;
+  let capture = rawNode;
   for (;;) {
     const result = semanticExactValueIdentity(
       current,
@@ -192,7 +217,7 @@ export const semanticPromiseSettlementDependency = (
       !nativePromiseAwaitIdentityIntact(
         result.node,
         result.aliases,
-        rawNode,
+        capture,
         state,
         onLiteralProjection,
       )
@@ -202,6 +227,8 @@ export const semanticPromiseSettlementDependency = (
     aliases.push(...result.aliases);
     const returned = directLiteralReturn(result.node, state, true);
     if (returned === undefined) return { node: result.node, aliases };
+    // The wrapper adopts during its own invocation, not a later alias await.
+    capture = result.node;
     const value = unwrapJavaScriptExpression(returned).node;
     if (!t.isAwaitExpression(value)) {
       // Async return adopts via Get(then), unlike awaiting a native promise.
@@ -213,12 +240,7 @@ export const semanticPromiseSettlementDependency = (
         onLiteralProjection,
       );
       if (
-        state.ambientWrites.covers([
-          "global",
-          "Promise",
-          "prototype",
-          "then",
-        ]) ||
+        !promiseAmbientLookupIntact("then", capture, state) ||
         adopted === undefined ||
         adopted.aliases.some(({ read }) => {
           const binding = resolveSemanticBindingState(state, read, read.name);
@@ -226,7 +248,7 @@ export const semanticPromiseSettlementDependency = (
             binding === undefined ||
             [...binding.memberWrites, ...binding.escapedPaths].some(
               ({ path, node: effect }) =>
-                semanticEffectTiming(rawNode, effect, state) !== "after" &&
+                semanticEffectTiming(capture, effect, state) !== "after" &&
                 promiseLookupMayChange(path, "then"),
             )
           );

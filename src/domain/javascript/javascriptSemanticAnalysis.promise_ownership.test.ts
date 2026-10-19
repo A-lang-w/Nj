@@ -224,11 +224,9 @@ it.each([
   "(async () => await pending)()",
 ])("links settlement through a distinct async wrapper: %s", (wrapper) => {
   const ir = analyzeJavaScriptSemantics(
-    `const pending=Promise.resolve(1);const wrapped=${wrapper};await wrapped;`,
+    `const pending=new Promise(resolve=>resolve(1));const wrapped=${wrapper};await wrapped;`,
   );
-  const producer = ir.promiseOperations.find(
-    ({ method }) => method === "resolve",
-  );
+  const producer = ir.promiseOperations.find(({ method }) => method === "new");
   if (producer === undefined) throw new Error("Missing promise producer");
   expect(
     ir.promiseOperations.find(({ method }) => method === "await"),
@@ -237,3 +235,20 @@ it.each([
     sourceResolution: "complete",
   });
 });
+
+it.each(["(async () => pending)()", "(async () => { return pending; })()"])(
+  "keeps constructor identity unknown after an ambient receiver escape: %s",
+  (wrapper) => {
+    // The receiver of an unproven method call can mutate Promise.prototype.
+    // This is distinct from the owned constructor allocation above.
+    const ir = analyzeJavaScriptSemantics(
+      `const pending=Promise.resolve(1);const wrapped=${wrapper};await wrapped;`,
+    );
+    expect(
+      ir.promiseOperations.find(({ method }) => method === "await"),
+    ).toMatchObject({
+      sourcePromiseIds: [],
+      sourceResolution: "unresolved",
+    });
+  },
+);
