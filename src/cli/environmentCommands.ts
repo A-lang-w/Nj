@@ -183,8 +183,6 @@ const exportEnvironmentCommand = async (
 ): Promise<JsonValue> => {
   const { readEnvironmentExportInputs, exportEnvironmentBundle } =
     await import("../application/environment/environmentExport.js");
-  const { loadEnvironmentSource } =
-    await import("../application/environment/environmentSource.js");
   const inputs = await readEnvironmentExportInputs(
     input.manifest,
     input.evidence,
@@ -266,7 +264,7 @@ const registerExportCommand = (cli: CliInstance, logger: Logger): void => {
   });
 };
 
-/** Register the long-running agent environment server command. */
+/** Register the long-running agent environment server command and the bundle export. */
 export const registerEnvironmentCommands = (
   cli: CliInstance,
   logger: Logger,

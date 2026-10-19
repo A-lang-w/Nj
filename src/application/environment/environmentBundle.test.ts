@@ -188,7 +188,16 @@ describe("planEnvironmentBundle", () => {
 
 describe("planEnvironmentBundle portable names", () => {
   it("refuses device names Windows reserves for files and folders, before planning any file", () => {
-    for (const name of ["con", "prn", "aux", "nul", "com1", "lpt9"]) {
+    for (const name of [
+      "con",
+      "prn",
+      "aux",
+      "nul",
+      "com1",
+      "com9",
+      "lpt1",
+      "lpt9",
+    ]) {
       const refused = planEnvironmentBundle(environmentServeSource(), {
         name,
         packageSource: registryPackageSource(),
@@ -234,22 +243,6 @@ describe("planEnvironmentBundle replay check", () => {
   });
 });
 
-it.each(["con", "prn", "aux", "nul", "com1", "com9", "lpt1", "lpt9"])(
-  "refuses a non-portable Windows device name before export: %s",
-  (name) => {
-    const result = planEnvironmentBundle(environmentServeSource(), {
-      name,
-      packageSource: registryPackageSource(),
-    });
-    expect(result).toMatchObject({
-      ok: false,
-      error: { _tag: "AnalysisInputError", operation: "environment-export" },
-    });
-  },
-);
-it("admits ordinary names containing device-name substrings", () => {
-  expect(plan({ name: "con-app" }).name).toBe("con-app");
-});
 it("refuses a bundle that the replay server cannot admit, using export operation context", () => {
   const source = environmentServeSource();
   const tool = source.manifest.tools[0]!;
