@@ -13,6 +13,7 @@ import {
   ArtifactResourceScope,
 } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import type { StableArtifactFileSystem } from "../artifacts/readStableArtifact.js";
 import type {
   AnalysisCapturedOutput,
   AnalysisError,
@@ -82,6 +83,7 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
       Pick<PrivateRuntimeRoot, "path" | "close">
     > = () => PrivateRuntimeRoot.create({ prefix: "rea-sqlite-database-" }),
     artifactResources: ArtifactResourceScope = new ArtifactResourceScope(),
+    private readonly snapshotFileSystem?: StableArtifactFileSystem,
   ) {
     this.#artifactResources = artifactResources;
   }
@@ -340,6 +342,7 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
         root.path,
         this.#artifactResources,
         options?.signal,
+        this.snapshotFileSystem,
       );
       phase = "worker";
       const inspection = await executeSqliteDatabaseWorker({
