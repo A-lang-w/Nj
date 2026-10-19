@@ -18,12 +18,18 @@ import {
 } from "./CdpElectronScriptEvents.js";
 import { captureElectronScripts } from "./CdpElectronScripts.js";
 import { inspectElectronPageInputSchema } from "../domain/javascript/electronObservation.js";
+import type { ProgressReporter } from "../application/ProgressReporter.js";
 
 const temporary: string[] = [];
 
-const inspectRaceConnection = (connection: CdpConnection, mainUrl: string) =>
+const inspectRaceConnection = (
+  connection: CdpConnection,
+  mainUrl: string,
+  progress?: ProgressReporter,
+) =>
   inspectCdpElectronPage({
     connection,
+    ...(progress === undefined ? {} : { progress }),
     sessionId: undefined,
     discovery: {
       webSocket: { scope: "browser", url: "ws://127.0.0.1:9222" },
@@ -208,6 +214,158 @@ afterEach(async () => {
       .map((path) => rm(path, { recursive: true, force: true })),
   );
 });
+
+it.each([
+  "late-main",
+  "late-main-progress",
+  "duplicate-initial",
+  "duplicate-main",
+  "duplicate-child",
+  "replacement-child",
+  "unknown-child",
+])(
+  "preserves document identity through final file validation: %s",
+  async (kind) => {
+    const root = await mkdtemp(
+      join(tmpdir(), "rea-electron-document-identity-"),
+    );
+    temporary.push(root);
+    const main = join(root, "main.html"),
+      child = join(root, "child.html"),
+      script = join(root, "app.js");
+    await Promise.all([
+      writeFile(main, "main"),
+      writeFile(child, "child"),
+      writeFile(script, "void 0;"),
+    ]);
+    const mainUrl = pathToFileURL(main).href,
+      childUrl = pathToFileURL(child).href;
+    let listener: (event: CdpEvent) => void = () => {};
+    let reads = 0,
+      fired = false;
+    const inject = () => {
+      const isMain =
+        kind.startsWith("late-main") ||
+        kind === "duplicate-main" ||
+        kind === "duplicate-initial";
+      listener({
+        method: "Page.frameNavigated",
+        params: {
+          frame: {
+            id: isMain ? "main" : "child",
+            ...(isMain ? {} : { parentId: "main" }),
+            url: isMain ? mainUrl : childUrl,
+            ...(kind === "unknown-child"
+              ? {}
+              : {
+                  loaderId:
+                    kind.startsWith("late-main") || kind === "replacement-child"
+                      ? "replacement-loader"
+                      : isMain
+                        ? "loader-main"
+                        : "loader-child",
+                }),
+          },
+        },
+      });
+      if (!isMain) {
+        listener({
+          method: "Runtime.executionContextCreated",
+          params: { context: { id: 7, auxData: { frameId: "child" } } },
+        });
+        listener({
+          method: "Debugger.scriptParsed",
+          params: {
+            scriptId: "observed",
+            url: pathToFileURL(script).href,
+            executionContextId: 7,
+            hash: "observed",
+          },
+        });
+      }
+    };
+    const connection = {
+      onEvent: (value: typeof listener) => {
+        listener = value;
+        return () => {};
+      },
+      send: async (method: string) => {
+        if (method === "Page.getFrameTree") {
+          reads++;
+          const trigger =
+            kind === "late-main-progress"
+              ? false
+              : kind === "duplicate-initial"
+                ? reads === 1
+                : kind === "late-main"
+                  ? reads === 3
+                  : reads === 2;
+          let frameUrlReads = 0;
+          return {
+            frameTree: {
+              frame: { id: "main", url: mainUrl, loaderId: "loader-main" },
+              childFrames: [
+                {
+                  frame: {
+                    id: "child",
+                    parentId: "main",
+                    loaderId: "loader-child",
+                    get url() {
+                      frameUrlReads++;
+                      // Seeded protocol facts are read first; inject during the later file check.
+                      if (
+                        trigger &&
+                        !fired &&
+                        (kind !== "late-main" || frameUrlReads === 2)
+                      ) {
+                        fired = true;
+                        queueMicrotask(inject);
+                      }
+                      return childUrl;
+                    },
+                  },
+                },
+              ],
+            },
+          };
+        }
+        if (method === "Page.getResourceTree")
+          return {
+            frameTree: { frame: { id: "main", url: mainUrl }, resources: [] },
+          };
+        if (method === "DOMSnapshot.captureSnapshot")
+          return { strings: [], documents: [] };
+        if (method === "Target.getTargets") return { targetInfos: [] };
+        return {};
+      },
+    } as unknown as CdpConnection;
+    const result = inspectRaceConnection(connection, mainUrl, {
+      report: async (update) => {
+        if (kind === "late-main-progress" && update.completed === 3) {
+          fired = true;
+          inject();
+        }
+      },
+    });
+    if (kind.startsWith("late-main"))
+      await expect(result).rejects.toMatchObject({ reason: "target_changed" });
+    else {
+      const captured = await result;
+      expect(fired).toBe(true);
+      if (kind.startsWith("duplicate"))
+        expect(captured.completeness.attach_limited_sections).not.toContain(
+          "frames",
+        );
+      if (kind !== "duplicate-main" && kind !== "duplicate-initial")
+        expect(captured.scripts.items).toContainEqual(
+          expect.objectContaining({
+            cdp_hash: "observed",
+            frame_id: kind === "duplicate-child" ? "child" : null,
+          }),
+        );
+    }
+  },
+);
 
 describe("Electron frame capture", () => {
   it.each([7, undefined])(

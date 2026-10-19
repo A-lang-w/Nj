@@ -1,7 +1,7 @@
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { CdpConnection } from "./CdpConnection.js";
-import { mainFrameUrl } from "./CdpCaptureDocuments.js";
+import { observeMainFrameUrl } from "./CdpCaptureDocuments.js";
 import {
   allowedSanitizedUrl,
   delayWithCancellation,
@@ -31,7 +31,15 @@ export const authorizedMainFrame = async ({
       sessionId,
       signal,
     );
-    const url = mainFrameUrl(result);
+    const observed = observeMainFrameUrl(result);
+    if (observed.kind === "invalid_fragment") {
+      const reason =
+        allowedSanitizedUrl(observed.scopeUrl, allowedOrigins) !== undefined
+          ? "protocol_error"
+          : "target_not_allowed";
+      throw new BrowserObservationError(operation, reason);
+    }
+    const url = observed.kind === "observed" ? observed.url : undefined;
     if (allowedSanitizedUrl(url, allowedOrigins) !== undefined) return result;
     if (isHttpUrl(url))
       throw new BrowserObservationError(operation, "target_not_allowed");

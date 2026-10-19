@@ -55,13 +55,15 @@ export const captureFrames = (
   )) {
     const frame = recordValue(tree.frame);
     const frameId = cdpStringValue(frame?.id);
-    const frameUrl = cdpFrameUrl(frame);
+    const observation = observeCdpFrameUrl(frame);
+    const frameUrl =
+      observation.kind === "observed" ? observation.url : undefined;
     const sanitized = allowedSanitizedUrl(frameUrl, allowedOrigins);
     if (frame === undefined || frameId === undefined) {
       completeness?.exclude("frames", "invalid_protocol_value");
       continue;
     }
-    if (frame.urlFragment !== undefined && frameUrl === undefined) {
+    if (observation.kind === "invalid_fragment") {
       completeness?.exclude("frames", "invalid_protocol_value");
       continue;
     }
@@ -90,22 +92,49 @@ export const captureFrames = (
   return { items };
 };
 
-/** Read the current main-frame URL from an untrusted Page.getFrameTree result. */
-export const mainFrameUrl = (result: unknown): string | undefined =>
-  cdpFrameUrl(
+export type CdpFrameUrlObservation =
+  | {
+      readonly kind: "observed";
+      readonly url: string;
+      readonly scopeUrl: string;
+    }
+  | { readonly kind: "invalid_fragment"; readonly scopeUrl: string }
+  | { readonly kind: "missing" };
+
+/** Parse identity and scope facts once; an invalid fragment cannot erase its base origin. */
+export const observeCdpFrameUrl = (
+  frame: UnknownRecord | undefined,
+): CdpFrameUrlObservation => {
+  const url = cdpStringValue(frame?.url);
+  if (url === undefined) return { kind: "missing" };
+  if (frame?.urlFragment === undefined)
+    return { kind: "observed", url, scopeUrl: url };
+  const fragment = cdpStringValue(frame.urlFragment);
+  if (fragment === undefined || (fragment !== "" && !fragment.startsWith("#")))
+    return { kind: "invalid_fragment", scopeUrl: url };
+  return {
+    kind: "observed",
+    url: `${url.split("#", 1)[0] ?? ""}${fragment}`,
+    scopeUrl: url,
+  };
+};
+
+export const observeMainFrameUrl = (result: unknown): CdpFrameUrlObservation =>
+  observeCdpFrameUrl(
     recordValue(recordValue(requiredRecord(result).frameTree)?.frame),
   );
 
-/** CDP splits the fragment from Frame.url; retain the complete observed URL. */
+/** Read the complete identity only when the protocol established it. */
 export const cdpFrameUrl = (
   frame: UnknownRecord | undefined,
 ): string | undefined => {
-  const url = cdpStringValue(frame?.url);
-  if (url === undefined || frame?.urlFragment === undefined) return url;
-  const fragment = cdpStringValue(frame.urlFragment);
-  if (fragment === undefined || (fragment !== "" && !fragment.startsWith("#")))
-    return undefined;
-  return `${url.split("#", 1)[0] ?? ""}${fragment}`;
+  const observed = observeCdpFrameUrl(frame);
+  return observed.kind === "observed" ? observed.url : undefined;
+};
+
+export const mainFrameUrl = (result: unknown): string | undefined => {
+  const observed = observeMainFrameUrl(result);
+  return observed.kind === "observed" ? observed.url : undefined;
 };
 
 /** Normalize every allowed resource. */

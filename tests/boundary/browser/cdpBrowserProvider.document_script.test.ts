@@ -935,3 +935,37 @@ describe("CdpBrowserProvider: WebMCP registration owners", () => {
     },
   );
 });
+
+it.each(["initial", "final"])(
+  "reports malformed WebMCP %s frame identity as protocol uncertainty",
+  async (phase) => {
+    const browser = await startFakeCdpBrowser({
+      commandResult: ({ method }, origin, reads) =>
+        method === "Page.getFrameTree" && (phase === "initial" || reads > 1)
+          ? {
+              frameTree: {
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-main",
+                  url: `${origin}/app`,
+                  urlFragment: 7,
+                },
+              },
+            }
+          : undefined,
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().discoverWebMcpTools(
+      discoverWebMcpToolsInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { reason: "protocol_error" },
+    });
+  },
+);

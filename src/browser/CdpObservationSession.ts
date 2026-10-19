@@ -18,7 +18,11 @@ import {
   cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
-import { cdpFrameUrl, mainFrameUrl } from "./CdpCaptureDocuments.js";
+import {
+  mainFrameUrl,
+  observeCdpFrameUrl,
+  observeMainFrameUrl,
+} from "./CdpCaptureDocuments.js";
 import { isMainFrameNavigation } from "./CdpCaptureEventHelpers.js";
 import { cdpTargetEventMatches } from "./CdpTargetEvents.js";
 
@@ -244,7 +248,9 @@ class TimelineCapture {
   #navigationCommitted(event: CdpEvent, params: UnknownRecord): void {
     const frame = recordValue(params.frame);
     if (!isMainFrameNavigation(event, this.mainFrameId)) return;
-    const rawUrl = cdpFrameUrl(frame);
+    const observation = observeCdpFrameUrl(frame);
+    const rawUrl =
+      observation.kind === "observed" ? observation.url : undefined;
     const destination = scopedUrl(rawUrl, this.allowedOrigins);
     this.#add({
       type: this.#pendingReload ? "same_origin_reload" : "navigation_committed",
@@ -254,6 +260,15 @@ class TimelineCapture {
       detail: safeDetail(frame?.transitionType),
     });
     this.#pendingReload = false;
+    if (
+      observation.kind === "invalid_fragment" &&
+      allowedSanitizedUrl(observation.scopeUrl, this.allowedOrigins) ===
+        undefined
+    ) {
+      this.excludeTargetScope("out_of_target_scope");
+      this.end("target_left_scope");
+      return;
+    }
     if (!this.#hasObservedUrl(rawUrl)) return;
     if (destination.scope === "approved") this.finalUrl = destination.url;
     else {
@@ -306,11 +321,15 @@ class TimelineCapture {
     }
   }
 
+  invalidateFinalUrl(): void {
+    this.completeness.exclude("timeline", "invalid_protocol_value");
+    this.finalUrl = null;
+  }
+
   /** Missing protocol identity cannot establish that the target left policy. */
   #hasObservedUrl(rawUrl: string | undefined): boolean {
     if (rawUrl !== undefined) return true;
-    this.completeness.exclude("timeline", "invalid_protocol_value");
-    this.finalUrl = null;
+    this.invalidateFinalUrl();
     return false;
   }
 
@@ -384,7 +403,11 @@ const waitForWindow = async (
       timerController.abort();
       signal?.removeEventListener("abort", onAbort);
       removeEnd();
-      reject(new AnalysisCancelledError("observe_web_session"));
+      reject(
+        new AnalysisCancelledError("observe_web_session", {
+          cause: signal?.reason,
+        }),
+      );
     };
     const timerController = new AbortController();
     signal?.addEventListener("abort", onAbort, { once: true });
@@ -420,7 +443,16 @@ const captureFinalUrl = async (
     context.signal,
   );
   if (capture.scopeExcluded) return "target_left_scope";
-  const url = mainFrameUrl(result);
+  const observation = observeMainFrameUrl(result);
+  const url = observation.kind === "observed" ? observation.url : undefined;
+  if (
+    observation.kind === "missing" ||
+    (observation.kind === "invalid_fragment" &&
+      allowedSanitizedUrl(observation.scopeUrl, allowedOrigins) !== undefined)
+  ) {
+    capture.invalidateFinalUrl();
+    return "window_elapsed";
+  }
   if (
     url !== undefined &&
     allowedSanitizedUrl(url, allowedOrigins) !== undefined
@@ -428,9 +460,7 @@ const captureFinalUrl = async (
     capture.setFinalUrl(url);
     return "window_elapsed";
   }
-  capture.excludeTargetScope(
-    url === undefined ? "invalid_protocol_value" : "out_of_target_scope",
-  );
+  capture.excludeTargetScope("out_of_target_scope");
   return "target_left_scope";
 };
 

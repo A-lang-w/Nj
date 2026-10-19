@@ -6,6 +6,7 @@ import {
   captureFrames,
   captureResources,
   cdpFrameUrl,
+  observeCdpFrameUrl,
 } from "./CdpCaptureDocuments.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
@@ -556,3 +557,12 @@ describe("CDP DOM snapshot empty strings", () => {
     expect(completeness.snapshot().excluded).toEqual([]);
   });
 });
+
+it.each([7, null, "without-hash"])(
+  "retains base URL evidence with malformed fragment %s",
+  (urlFragment) => {
+    expect(
+      observeCdpFrameUrl({ url: `${origin}/page?x=1#old`, urlFragment }),
+    ).toEqual({ kind: "invalid_fragment", scopeUrl: `${origin}/page?x=1#old` });
+  },
+);

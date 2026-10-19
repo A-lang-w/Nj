@@ -95,7 +95,13 @@ it.each([
     });
     expect(result.value.completeness.policy_filtered_sections).toEqual([]);
   }
-  if (kind === "malformed-event" || kind.startsWith("missing-"))
+  if (kind === "malformed-final")
+    expect(result.value.target.final_url).toBeNull();
+  if (
+    kind === "malformed-event" ||
+    kind === "malformed-final" ||
+    kind.startsWith("missing-")
+  )
     expect(result.value.window.end_reason).toBe("window_elapsed");
   if (kind === "foreign-event")
     expect(result.value.completeness.excluded).toContainEqual({

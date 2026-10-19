@@ -5,6 +5,7 @@ import type {
   InspectElectronPageInput,
 } from "../domain/javascript/electronObservation.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
@@ -17,6 +18,7 @@ import {
 } from "./CdpCaptureValues.js";
 import {
   frameTreeResources,
+  cdpFrameUrl,
   snapshotDocuments,
   walkFrameTrees,
 } from "./CdpCaptureDocuments.js";
@@ -50,6 +52,7 @@ interface ElectronInspectionState {
   readonly executionContextFrames: Map<string, string>;
   readonly frameGenerations: Map<string, number>;
   readonly frameParents: Map<string, string | null>;
+  readonly frameDocuments: Map<string, ElectronFrameDocument>;
   readonly authorizedFrameGenerations: Set<string>;
   readonly scriptGenerations: WeakMap<ElectronScriptDraft, number>;
   readonly limitations: string[];
@@ -62,6 +65,12 @@ interface ElectronFrameRead {
   readonly generations: ReadonlyMap<string, number>;
 }
 
+interface ElectronFrameDocument {
+  readonly url: string;
+  readonly loaderId: string;
+  readonly parentId: string | null;
+}
+
 /** Passively inspect one Electron file page from the selected CDP endpoint. */
 export const inspectCdpElectronPage = async (
   context: ElectronContext,
@@ -72,6 +81,7 @@ export const inspectCdpElectronPage = async (
     executionContextFrames: new Map(),
     frameGenerations: new Map(),
     frameParents: new Map(),
+    frameDocuments: new Map(),
     authorizedFrameGenerations: new Set(),
     scriptGenerations: new WeakMap(),
     limitations: [
@@ -89,7 +99,7 @@ export const inspectCdpElectronPage = async (
   };
   const removeListener = context.connection.onEvent((event) => {
     if (event.sessionId !== context.sessionId) return;
-    advanceFrameGeneration(event, state);
+    const changedFrame = advanceFrameGeneration(event, state);
     const priorScripts = state.scripts.length;
     ingestElectronScriptEvent({
       event,
@@ -105,7 +115,10 @@ export const inspectCdpElectronPage = async (
       );
     if (
       state.mainFrameId !== undefined &&
-      navigatedFrameId(event) === state.mainFrameId
+      (changedFrame === state.mainFrameId ||
+        (event.method === "Page.navigatedWithinDocument" &&
+          cdpStringValue(recordValue(event.params)?.frameId) ===
+            state.mainFrameId))
     )
       state.navigationDuringCapture = true;
   });
@@ -170,6 +183,8 @@ const runElectronInspection = async (
     );
   }
   await report(context.progress, 3, "Electron inspection complete");
+  if (state.navigationDuringCapture)
+    throw new BrowserObservationError("inspect_web_page", "target_changed");
   return {
     browser: context.discovery.version,
     target: {
@@ -255,7 +270,7 @@ const unprovenFrameIds = (
 const advanceFrameGeneration = (
   event: CdpEvent,
   state: ElectronInspectionState,
-): void => {
+): string | undefined => {
   // Same-document URL changes retain the document and its authorization.
   if (
     ![
@@ -272,6 +287,17 @@ const advanceFrameGeneration = (
       : params;
   const id = cdpStringValue(frame?.id) ?? cdpStringValue(frame?.frameId);
   if (id === undefined) return;
+  const document =
+    event.method === "Page.frameNavigated" ? frameDocument(frame) : undefined;
+  const previous = state.frameDocuments.get(id);
+  if (
+    document !== undefined &&
+    previous !== undefined &&
+    document.url === previous.url &&
+    document.loaderId === previous.loaderId &&
+    document.parentId === previous.parentId
+  )
+    return;
   const pending = [id];
   const changed = new Set<string>();
   while (pending.length > 0) {
@@ -282,6 +308,7 @@ const advanceFrameGeneration = (
       current,
       (state.frameGenerations.get(current) ?? 0) + 1,
     );
+    state.frameDocuments.delete(current);
     for (const [child, parent] of state.frameParents)
       if (parent === current) pending.push(child);
   }
@@ -290,6 +317,50 @@ const advanceFrameGeneration = (
     cdpStringValue(frame?.parentId) ?? cdpStringValue(frame?.parentFrameId);
   if (parent !== undefined && parent !== "") state.frameParents.set(id, parent);
   else state.frameParents.delete(id);
+  if (document !== undefined) state.frameDocuments.set(id, document);
+  return id;
+};
+
+/** Only a known URL and loader together can prove a duplicate document event. */
+const frameDocument = (
+  frame: ReturnType<typeof recordValue>,
+): ElectronFrameDocument | undefined => {
+  const url = cdpFrameUrl(frame);
+  const loaderId = cdpStringValue(frame?.loaderId);
+  if (
+    url === undefined ||
+    url === "" ||
+    loaderId === undefined ||
+    loaderId === ""
+  )
+    return undefined;
+  if (
+    frame?.parentId !== undefined &&
+    (cdpStringValue(frame.parentId) === undefined || frame.parentId === "")
+  )
+    return undefined;
+  return { url, loaderId, parentId: cdpStringValue(frame?.parentId) ?? null };
+};
+
+/** Protocol identities are observations, separate from asynchronous file authorization. */
+const seedFrameDocuments = (
+  result: unknown,
+  generations: ReadonlyMap<string, number>,
+  state: ElectronInspectionState,
+): void => {
+  const tree = recordValue(recordValue(result)?.frameTree);
+  if (tree === undefined) return;
+  for (const entry of walkFrameTrees(tree)) {
+    const frame = recordValue(entry.frame);
+    const id = cdpStringValue(frame?.id);
+    const document = frameDocument(frame);
+    if (
+      id !== undefined &&
+      document !== undefined &&
+      (generations.get(id) ?? 0) === (state.frameGenerations.get(id) ?? 0)
+    )
+      state.frameDocuments.set(id, document);
+  }
 };
 
 const authorizeInitialFrames = async (
@@ -321,7 +392,8 @@ const readCurrentFrames = async (
     context.sessionId,
     context.signal,
   );
-  const frames = await captureFrames(result, completeness);
+  seedFrameDocuments(result, generations, state);
+  const frames = await captureFrames(result, completeness, context.signal);
   if (frames[0] === undefined)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   return { frames, generations };
@@ -413,13 +485,21 @@ const assertStableMainFrame = async (
     context.sessionId,
     context.signal,
   );
-  const afterPath = await mainFilePath(result);
+  seedFrameDocuments(result, generations, state);
+  const afterPath = await mainFilePath(result, context.signal);
   if (afterPath === undefined)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   if (state.navigationDuringCapture || afterPath !== expectedPath)
     throw new BrowserObservationError("inspect_web_page", "target_changed");
   const completeness = new CdpCaptureCompleteness();
-  const frames = await captureFrames(result, completeness);
+  const frames = await captureFrames(result, completeness, context.signal);
+  if (
+    state.navigationDuringCapture ||
+    (state.mainFrameId !== undefined &&
+      (generations.get(state.mainFrameId) ?? 0) !==
+        (state.frameGenerations.get(state.mainFrameId) ?? 0))
+  )
+    throw new BrowserObservationError("inspect_web_page", "target_changed");
   markUnstableFrameRead({ frames, generations }, state);
   if (
     completeness
@@ -435,19 +515,10 @@ const assertStableMainFrame = async (
   return frames;
 };
 
-const navigatedFrameId = (event: CdpEvent): string | undefined => {
-  const params = recordValue(event.params);
-  if (params === undefined) return undefined;
-  if (event.method === "Page.frameNavigated")
-    return cdpStringValue(recordValue(params.frame)?.id);
-  if (event.method === "Page.navigatedWithinDocument")
-    return cdpStringValue(params.frameId);
-  return undefined;
-};
-
 export const captureFrames = async (
   result: unknown,
   completeness: CdpCaptureCompleteness,
+  signal?: AbortSignal,
 ): Promise<ElectronPageInspection["frames"]> => {
   const frameTree = recordValue(requiredRecord(result).frameTree);
   if (frameTree === undefined)
@@ -456,13 +527,18 @@ export const captureFrames = async (
   for (const tree of walkFrameTrees(frameTree, () =>
     completeness.exclude("frames", "invalid_protocol_value"),
   )) {
+    throwIfElectronInspectionCancelled(signal);
     const frame = recordValue(tree.frame);
     const frameId = cdpStringValue(frame?.id);
     if (frame === undefined || frameId === undefined) {
       completeness.exclude("frames", "invalid_protocol_value");
       continue;
     }
-    const path = await authorizedElectronFile(cdpStringValue(frame.url) ?? "");
+    const path = await authorizedElectronFile(
+      cdpStringValue(frame.url) ?? "",
+      signal,
+      "inspect_electron_page",
+    );
     if (path === undefined) {
       completeness.exclude("frames", "out_of_target_scope");
       continue;
@@ -494,8 +570,11 @@ const captureResources = async (
   for (const resource of frameTreeResources(root, (count) =>
     completeness.exclude("resources", "invalid_protocol_value", count),
   )) {
+    throwIfElectronInspectionCancelled(context.signal);
     const path = await authorizedElectronFile(
       cdpStringValue(resource.url) ?? "",
+      context.signal,
+      "inspect_electron_page",
     );
     if (path === undefined) {
       completeness.exclude("resources", "out_of_target_scope");
@@ -545,12 +624,19 @@ const captureDom = async (
   const nodes: ElectronPageInspection["dom"]["nodes"] = [];
   let total = 0;
   for (const document of snapshotDocuments(result.documents, invalid)) {
+    throwIfElectronInspectionCancelled(context.signal);
     const documentUrl = cdpSnapshotString(strings, document.documentURL);
     if (documentUrl === undefined) {
       invalid(1);
       continue;
     }
-    if ((await authorizedElectronFile(documentUrl)) === undefined) {
+    if (
+      (await authorizedElectronFile(
+        documentUrl,
+        context.signal,
+        "inspect_electron_page",
+      )) === undefined
+    ) {
       completeness.exclude("dom", "out_of_target_scope");
       continue;
     }
@@ -585,10 +671,17 @@ const captureDom = async (
   return { total_nodes: total, nodes };
 };
 
-const mainFilePath = async (result: unknown): Promise<string | undefined> => {
+const mainFilePath = async (
+  result: unknown,
+  signal?: AbortSignal,
+): Promise<string | undefined> => {
   const frameTree = recordValue(requiredRecord(result).frameTree);
   const frame = recordValue(frameTree?.frame);
-  return await authorizedElectronFile(cdpStringValue(frame?.url) ?? "");
+  return await authorizedElectronFile(
+    cdpStringValue(frame?.url) ?? "",
+    signal,
+    "inspect_electron_page",
+  );
 };
 
 const report = async (
@@ -603,3 +696,10 @@ const report = async (
     message,
     ...(completed === 3 ? { terminal: true } : {}),
   });
+
+const throwIfElectronInspectionCancelled = (signal?: AbortSignal): void => {
+  if (signal?.aborted === true)
+    throw new AnalysisCancelledError("inspect_electron_page", {
+      cause: signal.reason,
+    });
+};

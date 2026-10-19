@@ -28,6 +28,7 @@ import {
   captureFrames,
   cdpFrameUrl,
   mainFrameUrl,
+  observeMainFrameUrl,
   walkFrameTrees,
 } from "./CdpCaptureDocuments.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
@@ -64,9 +65,7 @@ export const discoverWebMcp = async (
     context.sessionId,
     context.signal,
   );
-  const initialUrl = mainFrameUrl(frameTree);
-  if (allowedSanitizedUrl(initialUrl, origins) === undefined)
-    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
+  const initialUrl = requiredDiscoveryFrameUrl(frameTree, origins);
   const frames = captureFrames(
     frameTree,
     origins,
@@ -348,11 +347,27 @@ const assertStableAuthorizedFrame = async (
     context.sessionId,
     context.signal,
   );
-  const finalUrl = mainFrameUrl(finalTree);
-  if (allowedSanitizedUrl(finalUrl, origins) === undefined)
-    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
+  const finalUrl = requiredDiscoveryFrameUrl(finalTree, origins);
   if (finalUrl !== initialUrl)
     throw new BrowserObservationError("inspect_web_page", "target_changed");
+};
+
+const requiredDiscoveryFrameUrl = (
+  result: unknown,
+  origins: ReadonlySet<string>,
+): string => {
+  const observed = observeMainFrameUrl(result);
+  if (
+    observed.kind === "invalid_fragment" &&
+    allowedSanitizedUrl(observed.scopeUrl, origins) !== undefined
+  )
+    throw new BrowserObservationError("inspect_web_page", "protocol_error");
+  if (
+    observed.kind !== "observed" ||
+    allowedSanitizedUrl(observed.url, origins) === undefined
+  )
+    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
+  return observed.url;
 };
 
 interface WebMcpIngestOptions {
