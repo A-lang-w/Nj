@@ -74,6 +74,8 @@ export class WasmArtifactService {
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
+    if (options?.signal?.aborted)
+      return err(new AnalysisCancelledError(OPERATION));
     const validated = this.validate(rawInput);
     if (!validated.ok) return validated;
     return this.inspectValidated(validated.value, options);
