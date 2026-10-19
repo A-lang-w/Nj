@@ -418,8 +418,10 @@ or a different object does not invalidate the getter. An unused destructuring
 default is excluded when its source is self-contained literal data; defaults
 from mutable container references remain conservative. These checks follow local
 identifier chains and conditional alternatives, not arbitrary returned objects
-or runtime calls. This static check does
-not evaluate arbitrary call side effects or runtime registration. Missing findings
+or runtime calls. Within one bootstrap proof, intermediate read results are reused
+across writes; cyclic alternatives are settled together before negative results
+are cached. Separate read sites retain their own captured binding values. This
+static check does not evaluate arbitrary call side effects or runtime registration. Missing findings
 do not establish that an application has no Electron boundary usage.
 
 IPC pairing is an inference, not an observation. A renderer `invoke` pairs only

@@ -15,8 +15,18 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
   "preserves loader getter identity after alias writes through %s",
   async (surface, { cli }) => {
     const root = await createTestTempDirectory("rea-loader-getter-aliases-");
+    const aliasWrites = Array.from(
+      { length: 64 },
+      (_, index) =>
+        `const a${index} = ${index === 0 ? "load" : `a${index - 1}`}; a${index}.other = 1;`,
+    ).join("\n");
     const cases = [
       ["intact.cjs", ""],
+      ["many-unrelated-writes.cjs", aliasWrites],
+      [
+        "many-writes-then-replacement.cjs",
+        `${aliasWrites} a63.n = ${replacement};`,
+      ],
       ["direct.cjs", `load.n = ${replacement};`],
       ["alias.cjs", `const alias = load; alias.n = ${replacement};`],
       [
@@ -68,11 +78,11 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       parsed_javascript_files: cases.length,
       parse_failures: 0,
     });
-    expect(result.summary.browser_windows).toBe(5);
+    expect(result.summary.browser_windows).toBe(6);
     const windows = result.graph.nodes.filter(
       ({ kind }) => kind === "browser-window",
     );
-    expect(windows).toHaveLength(5);
+    expect(windows).toHaveLength(6);
     expect(
       windows
         .flatMap(({ observations }) =>
@@ -81,6 +91,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         .sort(),
     ).toEqual([
       "intact.cjs",
+      "many-unrelated-writes.cjs",
       "reassigned.cjs",
       "unrelated.cjs",
       "unused-array-default.cjs",

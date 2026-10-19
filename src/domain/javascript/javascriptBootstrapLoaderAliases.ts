@@ -41,29 +41,49 @@ const literalDataSource = (
   return true;
 };
 
-/** Possible loader identities for writes, preserving each lexical alias's capture. */
+/**
+ * Possible loader identities for writes, preserving each lexical alias's capture.
+ * The cache belongs to one bootstrap proof over a fixed binding/ambient-write
+ * snapshot, before member effects are indexed. Never share it across analyses.
+ */
 export const createBootstrapLoaderAliasLookup = (
   loaderBindingIds: ReadonlySet<string>,
   state: JavaScriptSemanticAnalysisState,
 ): ((root: t.Node) => boolean) => {
   const known = new WeakMap<t.Node, boolean>();
   return (root) => {
+    root = unwrapJavaScriptExpression(root).node;
     const cached = known.get(root);
     if (cached !== undefined) return cached;
     const pending: t.Node[] = [root];
     const seen = new Set<t.Node>();
+    const dependents = new Map<t.Node, t.Node[]>();
+    const loaders: t.Node[] = [];
     for (let cursor = 0; cursor < pending.length; cursor++) {
-      const next = pending[cursor];
-      if (next === undefined) continue;
-      const node = unwrapJavaScriptExpression(next).node;
+      const node = pending[cursor];
+      if (node === undefined) continue;
       if (seen.has(node)) continue;
       seen.add(node);
+      const result = known.get(node);
+      if (result !== undefined) {
+        if (result) loaders.push(node);
+        continue;
+      }
+      const follow = (...sources: t.Node[]): void => {
+        for (const source of sources) {
+          const child = unwrapJavaScriptExpression(source).node;
+          const parents = dependents.get(child);
+          if (parents === undefined) dependents.set(child, [node]);
+          else parents.push(node);
+          pending.push(child);
+        }
+      };
       if (t.isIdentifier(node)) {
         const binding = resolveSemanticBindingState(state, node, node.name);
         if (binding === undefined) continue;
         if (loaderBindingIds.has(binding.bindingId)) {
-          known.set(root, true);
-          return true;
+          loaders.push(node);
+          continue;
         }
         const selected = semanticBindingAtRead(
           binding,
@@ -86,25 +106,34 @@ export const createBootstrapLoaderAliasLookup = (
               ),
           ),
         ])
-          if (initializer.projection.length === 0)
-            pending.push(initializer.node);
+          if (initializer.projection.length === 0) follow(initializer.node);
       } else if (t.isConditionalExpression(node)) {
-        pending.push(node.consequent, node.alternate);
+        follow(node.consequent, node.alternate);
       } else if (t.isLogicalExpression(node)) {
-        pending.push(node.left, node.right);
+        follow(node.left, node.right);
       } else if (t.isSequenceExpression(node)) {
         const last = node.expressions.at(-1);
-        if (last !== undefined) pending.push(last);
+        if (last !== undefined) follow(last);
       } else if (t.isAssignmentExpression(node, { operator: "=" })) {
-        pending.push(node.right);
+        follow(node.right);
       } else if (
         t.isAssignmentExpression(node) &&
         ["&&=", "||=", "??="].includes(node.operator)
       ) {
-        pending.push(node.left, node.right);
+        follow(node.left, node.right);
       }
     }
-    known.set(root, false);
-    return false;
+    // Solve the complete reachable graph before caching negatives: a cycle
+    // may reach a loader through a different branch. Propagate positives only
+    // to their dependents, never to unrelated alternatives visited alongside it.
+    const reachesLoader = new Set<t.Node>();
+    for (let cursor = 0; cursor < loaders.length; cursor++) {
+      const node = loaders[cursor];
+      if (node === undefined || reachesLoader.has(node)) continue;
+      reachesLoader.add(node);
+      for (const parent of dependents.get(node) ?? []) loaders.push(parent);
+    }
+    for (const node of seen) known.set(node, reachesLoader.has(node));
+    return known.get(root) === true;
   };
 };
