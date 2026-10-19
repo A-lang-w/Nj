@@ -5,8 +5,13 @@ import type { SignalRecordingService } from "../application/signals/SignalRecord
 import { createSignalRecordingService } from "../composition/signals.js";
 import { registerSignalTools } from "./registerSignalTools.js";
 import type { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
+import type { WasmComponentService } from "../application/wasm/WasmComponentService.js";
 import { wasmArtifactModule } from "../composition/wasm.js";
-import { registerWasmTools } from "./registerWasmTools.js";
+import { createWasmComponentService } from "../composition/wasmComponent.js";
+import {
+  registerWasmComponentTool,
+  registerWasmTools,
+} from "./registerWasmTools.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
 import { createPeResourcesService } from "../composition/binaryDiagnostics.js";
@@ -152,6 +157,7 @@ export interface CreateServerOptions {
   readonly packetCapture?: PacketCaptureService;
   readonly signalRecording?: SignalRecordingService;
   readonly wasmArtifact?: WasmArtifactService;
+  readonly wasmComponent?: WasmComponentService;
   readonly providerEnvironment?: Readonly<NodeJS.ProcessEnv>;
   readonly evmInterface?: EvmInterfaceService;
   readonly sqliteDatabase?: SqliteDatabaseService;
@@ -311,6 +317,7 @@ export const createServer = (
     options.webModuleTrace ?? createWebModuleTraceService(environment);
   const goBinary = options.goBinary ?? createGoBinaryService();
   const rustBinary = options.rustBinary ?? createRustBinaryService();
+  const wasmComponent = options.wasmComponent ?? createWasmComponentService();
   const peResources = createPeResourcesService();
   const electronFuses = options.electronFuses ?? createElectronFuseService();
   const webNetworkCapture =
@@ -394,6 +401,7 @@ export const createServer = (
       webModuleTrace.close(),
       goBinary.close(),
       rustBinary.close(),
+      wasmComponent.close(),
       peResources.close(),
       electronFuses.close(),
       webNetworkCapture.close(),
@@ -456,6 +464,7 @@ export const createServer = (
     artifactResources,
     goBinary,
     rustBinary,
+    wasmComponent,
     peResources,
     electronFuses,
     webNetworkCapture,
@@ -656,6 +665,7 @@ const registerConfiguredAnalysisTools = (
     withAdmittedAnalysis,
     goBinary,
     rustBinary,
+    wasmComponent,
     peResources,
     webNetworkCapture,
   }: ServerToolContext,
@@ -724,6 +734,13 @@ const registerConfiguredAnalysisTools = (
     recordEvidence,
     withAdmittedAnalysis,
     evidenceById,
+  );
+  registerWasmComponentTool(
+    server,
+    wasmComponent,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
   );
   registerEvmTools(
     server,
@@ -824,6 +841,7 @@ const createSessionRecorders = (
 interface ServerToolContext extends ReturnType<typeof createSessionRecorders> {
   readonly goBinary: GoBinaryService;
   readonly rustBinary: RustBinaryService;
+  readonly wasmComponent: WasmComponentService;
   readonly peResources: PeResourcesService;
   readonly electronFuses: ElectronFuseService;
   readonly webNetworkCapture: WebNetworkCaptureService;

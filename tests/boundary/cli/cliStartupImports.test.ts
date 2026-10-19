@@ -114,6 +114,18 @@ const DEFERRED_IMPORTS = [
     name: "reconstruction-obligation-ledger",
     path: "/dist/application/ReconstructionObligationLedgerService.js",
   },
+  {
+    name: "wasm-component-composition",
+    path: "/dist/composition/wasmComponent.js",
+  },
+  {
+    name: "wasm-component-decoder",
+    path: "/dist/wasm/WasmComponentDecoder.js",
+  },
+  {
+    name: "wasm-component-schema",
+    path: "/dist/domain/wasm/wasmComponent.js",
+  },
 ] as const;
 // Report each resolved deferred package on stderr without changing resolution.
 const RESOLUTION_HOOK = `data:text/javascript,${encodeURIComponent(`

@@ -10,6 +10,7 @@ import {
   analysisDetailOutputSchemaOf,
 } from "../analysisDetail.js";
 import { wasmArtifactSummaryViewResultSchema } from "../../domain/analysisView/analysisView.js";
+import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 
 /** Delivery selection does not change the provider input or original Evidence. */
 export const wasmArtifactInspectionInputSchema =

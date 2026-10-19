@@ -55,6 +55,7 @@ import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope
 import { ArtifactReaderFailure } from "../../src/artifacts/ArtifactReader.js";
 import { GoBinaryProvider } from "../../src/go/GoBinaryProvider.js";
 import { PeResourcesProvider } from "../../src/native/pe/PeResourcesProvider.js";
+import { WasmComponentProvider } from "../../src/wasm/WasmComponentProvider.js";
 import { inspectPeResourcesInputSchema } from "../../src/domain/native/peResources.js";
 import { peResourceFixture } from "../../src/native/pe/PeResources.fixture.js";
 import { createServer } from "../../src/server/createServer.js";
@@ -77,6 +78,7 @@ const staticProviders = [
   ["Rust", () => new RustBinaryProvider()],
   ["Go", () => new GoBinaryProvider()],
   ["PE", () => new PeResourcesProvider()],
+  ["WASM component", () => new WasmComponentProvider()],
 ] as const;
 
 it.each(staticProviders)(

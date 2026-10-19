@@ -81,4 +81,34 @@ export const registerWasmCommands = (
         ),
       ),
   });
+  cli.command(CLI_COMMANDS.inspectWasmComponent, {
+    description:
+      "Decode an explicit local WebAssembly component without executing it",
+    args: z.object({
+      path: z.string().describe("Local WebAssembly component"),
+    }),
+    run: ({ args }) =>
+      withCommandCancellation(async (signal) => {
+        // The decoder and its result schema load only when this command runs.
+        const { createWasmComponentService } =
+          await import("../composition/wasmComponent.js");
+        const service = createWasmComponentService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectWasmComponent,
+          async () =>
+            finishAnalysisCommand(
+              () =>
+                service.inspect(
+                  { path: absoluteCallerPath(args.path) },
+                  { signal },
+                ),
+              service,
+              "wasm-component-binary",
+              "inspect_wasm_component",
+              signal,
+            ),
+        );
+      }),
+  });
 };
