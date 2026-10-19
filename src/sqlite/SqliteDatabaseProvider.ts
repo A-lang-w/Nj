@@ -4,6 +4,10 @@ import {
   type ExecutionOptions,
 } from "../application/AnalysisProvider.js";
 import type { SqliteDatabasePort } from "../application/sqlite/SqliteDatabasePort.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+} from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type {
@@ -55,6 +59,7 @@ interface PendingSnapshotCleanup {
   readonly result: SqliteOutcome;
   readonly output: AnalysisCapturedOutput | undefined;
   process: ProviderProcessSupervisor | undefined;
+  readonly lease: AnalysisCleanupLease;
 }
 /** Inspect a provider-owned copy through a cancellable SQLite child, without source writes. */
 export class SqliteDatabaseProvider implements SqliteDatabasePort {
@@ -158,7 +163,7 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
               ],
             },
             { operation },
-          );
+          ).bindCleanupDependencies([descriptorFailure, cleaned.error]);
         if (descriptorFailure !== undefined) throw descriptorFailure;
         if (!cleaned.ok) throw cleaned.error;
       })
@@ -176,44 +181,107 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
     return this.#retryPromise;
   }
 
+  /** Live attribution for one retained root: worker resources, then the root, then nothing. */
+  #resourcesFor(root: SqliteRuntimeRoot): readonly string[] {
+    const pending = this.#pendingCleanup.get(root);
+    if (pending === undefined) return [];
+    if (pending.process !== undefined) {
+      const ownership = pending.process.launch.ownership;
+      return ownership === undefined
+        ? ["owned-sqlite-worker", root.path]
+        : ownedCommandResources(ownership, root.path);
+    }
+    return [root.path];
+  }
+
+  /** Retain a root and its worker under one lease, so returned errors track the exact owner. */
+  #retainPending(
+    root: SqliteRuntimeRoot,
+    pending: {
+      readonly input: InspectSqliteDatabaseInput;
+      readonly result: SqliteOutcome;
+      readonly output: AnalysisCapturedOutput | undefined;
+      process: ProviderProcessSupervisor | undefined;
+    },
+  ): AnalysisCleanupLease {
+    const retained = this.#pendingCleanup.get(root);
+    if (retained !== undefined) {
+      this.#pendingCleanup.set(root, { ...pending, lease: retained.lease });
+      return retained.lease;
+    }
+    const provider = this;
+    const lease = new AnalysisCleanupLease(
+      () => provider.#releaseRetained(root),
+      {
+        get cleanupResources() {
+          return provider.#resourcesFor(root);
+        },
+      },
+    );
+    this.#pendingCleanup.set(root, { ...pending, lease });
+    return lease;
+  }
+
+  /** Release one retained root: confirm its worker has stopped, then remove the snapshot. */
+  async #releaseRetained(root: SqliteRuntimeRoot): Promise<void> {
+    const pending = this.#pendingCleanup.get(root);
+    if (pending === undefined) return;
+    if (pending.process !== undefined) {
+      const stopped = await pending.process.stop();
+      if (stopped.status === "incomplete") {
+        throw new ProviderCleanupError(
+          SQLITE_PROVIDER_IDENTITY.id,
+          [
+            pending.process.launch.ownership?.runId ?? "owned-sqlite-worker",
+            root.path,
+          ],
+          {
+            reason: stopped.reason,
+            previous_error: pending.result.ok
+              ? null
+              : projectAnalysisError(pending.result.error),
+            ...(pending.output === undefined
+              ? {}
+              : { captured_output: { ...pending.output } }),
+          },
+          { operation },
+        );
+      }
+      pending.process = undefined;
+    }
+    const cleaned = await cleanupSqliteRoot(
+      root,
+      pending.result,
+      pending.input,
+      pending.output,
+    );
+    if (!cleaned.ok) throw cleaned.error;
+    this.#pendingCleanup.delete(root);
+  }
+
   async #cleanupPending(): Promise<Result<null, AnalysisError>> {
     const failures: AnalysisError[] = [];
     for (const [root, pending] of [...this.#pendingCleanup]) {
-      if (pending.process !== undefined) {
-        const stopped = await pending.process.stop();
-        if (stopped.status === "incomplete") {
-          failures.push(
-            new ProviderCleanupError(
-              SQLITE_PROVIDER_IDENTITY.id,
-              [
-                pending.process.launch.ownership?.runId ??
-                  "owned-sqlite-worker",
-                root.path,
-              ],
-              {
-                reason: stopped.reason,
-                previous_error: pending.result.ok
-                  ? null
-                  : projectAnalysisError(pending.result.error),
-                ...(pending.output === undefined
-                  ? {}
-                  : { captured_output: { ...pending.output } }),
-              },
-              { operation },
-            ),
-          );
-          continue;
-        }
-        pending.process = undefined;
+      try {
+        await pending.lease.release();
+      } catch (cause: unknown) {
+        const failure =
+          cause instanceof ProviderCleanupError
+            ? cause
+            : new ProviderCleanupError(
+                SQLITE_PROVIDER_IDENTITY.id,
+                this.#resourcesFor(root),
+                {
+                  reason:
+                    cause instanceof Error ? cause.message : String(cause),
+                },
+                { operation, cause },
+              );
+        // The lease stays bound across retries, so this failure resolves and
+        // its resource list empties when the exact owner later confirms release.
+        new AnalysisCleanupLeaseGroup(failure, [pending.lease]);
+        failures.push(failure);
       }
-      const cleaned = await cleanupSqliteRoot(
-        root,
-        pending.result,
-        pending.input,
-        pending.output,
-      );
-      if (cleaned.ok) this.#pendingCleanup.delete(root);
-      else failures.push(cleaned.error);
     }
     if (failures.length === 1 && failures[0] !== undefined)
       return err(failures[0]);
@@ -225,7 +293,7 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
             failures.flatMap((failure) => failure.cleanupResources),
             { failures: failures.map(projectAnalysisError) },
             { operation },
-          ),
+          ).bindCleanupDependencies(failures),
         );
   }
 
@@ -236,8 +304,7 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
     let root: Pick<PrivateRuntimeRoot, "path" | "close"> | undefined;
     let processOwner: ProviderProcessSupervisor | undefined;
     let processCleanup:
-      | Extract<ProviderProcessStopResult, { status: "incomplete" }>
-      | undefined;
+      Extract<ProviderProcessStopResult, { status: "incomplete" }> | undefined;
     let retainedOutput: AnalysisCapturedOutput | undefined;
     let phase = "configuration";
     let result: Result<AnalysisExecution, AnalysisError>;
@@ -306,7 +373,7 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
     }
     if (root !== undefined) {
       if (processOwner !== undefined) {
-        this.#pendingCleanup.set(root, {
+        const lease = this.#retainPending(root, {
           input,
           result,
           output: retainedOutput,
@@ -314,37 +381,40 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
         });
         if (processCleanup !== undefined) {
           const ownership = processOwner.launch.ownership;
-          return err(
-            sqliteCleanupFailure(
-              ownership === undefined
-                ? ["owned-sqlite-worker", root.path]
-                : ownedCommandResources(ownership, root.path),
-              processCleanup.reason,
-              result,
-              input,
-              retainedOutput,
-              processCleanup.cleanupResult === undefined
-                ? undefined
-                : {
-                    ...(processCleanup.cleanupResult.failures === undefined
-                      ? {}
-                      : {
-                          failures: processCleanup.cleanupResult.failures.map(
-                            (failure) => ({ ...failure }),
-                          ),
-                        }),
-                    ...(processCleanup.cleanupResult.unverified === undefined
-                      ? {}
-                      : {
-                          unverified:
-                            processCleanup.cleanupResult.unverified.map(
-                              (process) => ({ ...process }),
-                            ),
-                        }),
-                  },
-            ),
+          const failure = sqliteCleanupFailure(
+            ownership === undefined
+              ? ["owned-sqlite-worker", root.path]
+              : ownedCommandResources(ownership, root.path),
+            processCleanup.reason,
+            result,
+            input,
+            retainedOutput,
+            processCleanup.cleanupResult === undefined
+              ? undefined
+              : {
+                  ...(processCleanup.cleanupResult.failures === undefined
+                    ? {}
+                    : {
+                        failures: processCleanup.cleanupResult.failures.map(
+                          (failure) => ({ ...failure }),
+                        ),
+                      }),
+                  ...(processCleanup.cleanupResult.unverified === undefined
+                    ? {}
+                    : {
+                        unverified: processCleanup.cleanupResult.unverified.map(
+                          (process) => ({ ...process }),
+                        ),
+                      }),
+                },
           );
+          new AnalysisCleanupLeaseGroup(failure, [lease]);
+          return err(failure);
         }
+        // A failure rethrown with a retained owner reports the same worker and
+        // root; bind it too so a later confirmed release clears it.
+        if (!result.ok && result.error.cleanupIncomplete)
+          new AnalysisCleanupLeaseGroup(result.error, [lease]);
         return result;
       }
       const cleaned = await cleanupSqliteRoot(
@@ -354,12 +424,13 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
         retainedOutput,
       );
       if (!cleaned.ok) {
-        this.#pendingCleanup.set(root, {
+        const lease = this.#retainPending(root, {
           input,
           result,
           output: retainedOutput,
           process: undefined,
         });
+        new AnalysisCleanupLeaseGroup(cleaned.error, [lease]);
         return cleaned;
       }
     }
