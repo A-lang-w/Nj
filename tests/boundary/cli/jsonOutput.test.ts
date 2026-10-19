@@ -2,7 +2,7 @@ import { constants } from "node:buffer";
 import { createHash } from "node:crypto";
 import { Writable } from "node:stream";
 
-import { Cli, Formatter } from "incur";
+import { Cli, Formatter, z } from "incur";
 import { estimateTokenCount } from "tokenx";
 import { parse as parseYaml } from "yaml";
 import { describe, expect, it } from "vitest";
@@ -13,9 +13,27 @@ import {
   streamCliCommandResults,
 } from "../../../src/cli/cliResultOutput.js";
 import { logCliCommand } from "../../../src/cliLogging.js";
-import { registerManagedCommands } from "../../../src/cli/managedCommands.js";
+import type { CliInstance } from "../../../src/cli/types.js";
+import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
 import { silentLogger } from "../../../src/logger.js";
+
+// Output-boundary fixtures may exceed real Evidence's admitted representation.
+// Keep their arbitrary command results separate from managed analysis semantics.
+const registerOutputCommands = (
+  cli: CliInstance,
+  run: (path: string, operation: string) => Promise<JsonValue>,
+): void => {
+  for (const [name, operation] of [
+    ["inspect-managed-artifact", "inspect_managed_artifact"],
+    ["inspect-managed-members", "inspect_managed_members"],
+  ] as const)
+    cli.command(name, {
+      args: z.object({ path: z.string() }),
+      run: ({ args }) =>
+        logCliCommand(silentLogger, name, () => run(args.path, operation)),
+    });
+};
 
 const collect = async (
   value: unknown,
@@ -196,7 +214,7 @@ describe("CLI result output surface", () => {
       if (output === undefined)
         throw new Error("Missing structured output surface");
       const cli = Cli.create("rea-output-test", { sync: false });
-      registerManagedCommands(cli, silentLogger, async () => failure);
+      registerOutputCommands(cli, async () => failure);
       streamCliCommandResults(cli, output);
       let fallback = "";
       const previousExitCode = process.exitCode;
@@ -317,7 +335,7 @@ describe("full-output token windows", () => {
     const output = createCliResultOutput(argv, destination);
     if (output === undefined) throw new Error("Missing TOON output surface");
     const cli = Cli.create("rea-output-test", { sync: false });
-    registerManagedCommands(cli, silentLogger, async () => ({
+    registerOutputCommands(cli, async () => ({
       code: "target_unavailable",
       category: "unavailable",
       message: "The selected artifact is missing.",
@@ -416,7 +434,7 @@ describe("full-output token counts", () => {
     const output = createCliResultOutput(argv, destination);
     if (output === undefined) throw new Error("Missing JSON output surface");
     const cli = Cli.create("rea-output-test", { sync: false });
-    registerManagedCommands(cli, silentLogger, async () => failure);
+    registerOutputCommands(cli, async () => failure);
     streamCliCommandResults(cli, output);
     const previousExitCode = process.exitCode;
     try {
@@ -459,7 +477,7 @@ describe("CLI result output surface", () => {
     expect(output.failed).toBe(true);
   });
 
-  it("streams managed command output past the engine string limit and declines oversized token counting", async () => {
+  it("streams generic CLI output past the engine string limit and declines oversized token counting", async () => {
     const leaf = "x".repeat(64 * 1024);
     const count = Math.ceil(constants.MAX_STRING_LENGTH / leaf.length) + 1;
     const value = { methods: Array.from({ length: count }, () => leaf) };
@@ -491,7 +509,7 @@ describe("CLI result output surface", () => {
       },
     });
     const cli = Cli.create("rea-output-test", { sync: false });
-    registerManagedCommands(cli, silentLogger, async (path, operation) => {
+    registerOutputCommands(cli, async (path, operation) => {
       expect(path).toBe("fixture.dll");
       expect(operation).toBe("inspect_managed_members");
       return value;
@@ -531,7 +549,7 @@ describe("CLI result output surface", () => {
     if (tokenOutput === undefined)
       throw new Error("Missing token-count output surface");
     const tokenCli = Cli.create("rea-output-test", { sync: false });
-    registerManagedCommands(tokenCli, silentLogger, async () => value);
+    registerOutputCommands(tokenCli, async () => value);
     streamCliCommandResults(tokenCli, tokenOutput);
     await tokenCli.serve(tokenArgv, {
       stdout: (text) => {

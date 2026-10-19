@@ -1,6 +1,7 @@
 import {
   EvidenceFileError,
   EvidenceIntegrityError,
+  type PublishedEvidenceFile,
 } from "../domain/evidenceErrors.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { EvidenceBundle } from "../domain/evidenceBundle.js";
@@ -37,14 +38,28 @@ export const exportEvidenceBundleCommand = async (
   // The sealed snapshot lets the writer reuse this authentication.
   const loaded = await readImmutableEvidenceBundle(sourcePath);
   if (!loaded.ok) return loaded;
+  return projectWrite(
+    loaded.value,
+    await persistEvidenceBundleCommand(loaded.value, outputPath, overwrite),
+  );
+};
+
+/** Publish a completed bundle and retry its exact staged-output cleanup owner. */
+export const persistEvidenceBundleCommand = async (
+  bundle: EvidenceBundle,
+  outputPath: string,
+  overwrite: boolean,
+  signal?: AbortSignal,
+): Promise<Result<PublishedEvidenceFile, AnalysisError>> => {
   const resources = new ArtifactResourceScope();
   const written = await writeEvidenceBundle(
-    loaded.value,
+    bundle,
     outputPath,
     overwrite,
     resources,
+    signal,
   );
-  if (written.ok) return projectWrite(loaded.value, written);
+  if (written.ok) return written;
 
   let cleanupSucceeded = false;
   try {
@@ -58,10 +73,7 @@ export const exportEvidenceBundleCommand = async (
     written.error instanceof EvidenceFileError &&
     written.error.published
   ) {
-    return projectWrite(loaded.value, {
-      ok: true,
-      value: written.error.published,
-    });
+    return ok(written.error.published);
   }
   return written;
 };
@@ -92,7 +104,7 @@ export const compareEvidenceBundlesCommand = async (input: {
 
 const projectWrite = (
   bundle: EvidenceBundle,
-  written: Awaited<ReturnType<typeof writeEvidenceBundle>>,
+  written: Result<PublishedEvidenceFile, AnalysisError>,
 ): Result<JsonValue, AnalysisError> =>
   written.ok
     ? ok({

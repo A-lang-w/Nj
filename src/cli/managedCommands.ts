@@ -17,15 +17,29 @@ import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { registerProjectManagedApplicationGraph } from "./managedProjectGraphCommand.js";
 import { managedMembersInputSchema } from "../contracts/managed/managedToolContracts.js";
+import { localPathStringSchema } from "../domain/localPath.js";
+import { runWithAnalysisEvidenceDelivery } from "../application/analysisView/AnalysisEvidenceDelivery.js";
+import { withCommandCancellation } from "./commandCancellation.js";
 
 export const registerManagedCommands = (
   cli: CliInstance,
   logger: Logger,
-  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
+  analysis: Pick<
+    DirectAnalysis,
+    "runProviderAnalysis" | "runManagedProviderAnalysis"
+  >,
 ): void => {
-  registerInspectManagedArtifact(cli, logger, runProviderAnalysis);
-  registerInspectManagedMembers(cli, logger, runProviderAnalysis);
-  registerInspectManagedNativeBoundaries(cli, logger, runProviderAnalysis);
+  registerInspectManagedArtifact(cli, logger, analysis.runProviderAnalysis);
+  registerInspectManagedMembers(
+    cli,
+    logger,
+    analysis.runManagedProviderAnalysis,
+  );
+  registerInspectManagedNativeBoundaries(
+    cli,
+    logger,
+    analysis.runProviderAnalysis,
+  );
   registerCompareManagedMembers(cli, logger);
   registerImportManagedReconstruction(cli, logger);
   registerVerifyManagedNativeBoundaries(cli, logger);
@@ -52,7 +66,7 @@ const registerInspectManagedArtifact = (
 const registerInspectManagedMembers = (
   cli: CliInstance,
   logger: Logger,
-  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
+  runManagedProviderAnalysis: DirectAnalysis["runManagedProviderAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.inspectManagedMembers, {
     description:
@@ -64,15 +78,44 @@ const registerInspectManagedMembers = (
       type: managedMembersInputSchema.shape.type_names.describe(
         "Inspect only members declared by this exact type full name, and the string literals they load, such as System.Threading.Monitor; a nested type is named by its bare name, which selects every nested type of that name (repeatable)",
       ),
+      detail: managedMembersInputSchema.shape.detail.describe(
+        "complete returns full Evidence (default); summary returns identity, selection, coverage, limitations and collection counts and requires --evidence-bundle",
+      ),
+      evidenceBundle: localPathStringSchema
+        .optional()
+        .describe(
+          "Write complete parent Evidence to a new local bundle for later inspect-analysis-view calls; never replaces an existing path",
+        ),
     }),
     run: ({ args, options }) =>
-      logCliCommand(logger, "inspect-managed-members", () =>
-        runProviderAnalysis(
-          args.path,
-          "inspect_managed_members",
-          options.type === undefined ? {} : { type_names: options.type },
-          logger,
-        ),
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, "inspect-managed-members", async () => {
+          const result = await runWithAnalysisEvidenceDelivery(
+            "inspect_managed_members",
+            {
+              ...(options.detail === undefined
+                ? {}
+                : { detail: options.detail }),
+              ...(options.evidenceBundle === undefined
+                ? {}
+                : { evidenceBundlePath: options.evidenceBundle }),
+            },
+            () =>
+              runManagedProviderAnalysis(
+                args.path,
+                "inspect_managed_members",
+                options.type === undefined ? {} : { type_names: options.type },
+                signal,
+              ),
+            signal,
+          );
+          return result.ok
+            ? result.value
+            : {
+                error: "Analysis failed",
+                ...projectAnalysisError(result.error),
+              };
+        }),
       ),
   });
 };

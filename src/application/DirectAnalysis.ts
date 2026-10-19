@@ -147,14 +147,16 @@ export const runProviderAnalysis = async (
     signal?: AbortSignal,
   ]
 ): Promise<JsonValue> => {
-  if (isManagedToolName(tool))
-    return runManagedProviderAnalysis(
+  if (isManagedToolName(tool)) {
+    const result = await runManagedProviderAnalysis(
       dependencies,
       path,
       tool,
       arguments_,
       signal,
     );
+    return result.ok ? result.value : cliError(result.error);
+  }
   return withProcessCancellation(signal, (operationSignal) =>
     runAnalysis(dependencies, path, tool, arguments_, {
       logger,
@@ -192,13 +194,14 @@ export const runManagedProviderExecution = async (
     );
   });
 
-const runManagedProviderAnalysis = async (
-  dependencies: DirectAnalysisDependencies,
+/** Preserve typed managed Evidence before selecting its CLI delivery. */
+export const runManagedProviderAnalysis = async (
+  dependencies: Pick<DirectAnalysisDependencies, "createManagedBinarySession">,
   path: string,
   tool: ManagedToolName,
   arguments_: Readonly<Record<string, JsonValue>>,
   signal?: AbortSignal,
-): Promise<JsonValue> => {
+): Promise<Result<Evidence, AnalysisError>> => {
   const execution = await runManagedProviderExecution(
     dependencies,
     path,
@@ -206,19 +209,21 @@ const runManagedProviderAnalysis = async (
     signal,
     arguments_,
   );
-  if (!execution.ok) return cliError(execution.error);
+  if (!execution.ok) return execution;
   const value = execution.value;
-  return createEvidence(value.subject ?? undefined, value.provider, {
-    operation: tool,
-    parameters: arguments_,
-    result: value.result,
-    rawResult: value.rawResult,
-    limitations: value.limitations,
-    ...(value.relationshipCoverage === undefined
-      ? {}
-      : { relationshipCoverage: value.relationshipCoverage }),
-    locations: value.locations,
-  });
+  return ok(
+    createEvidence(value.subject ?? undefined, value.provider, {
+      operation: tool,
+      parameters: arguments_,
+      result: value.result,
+      rawResult: value.rawResult,
+      limitations: value.limitations,
+      ...(value.relationshipCoverage === undefined
+        ? {}
+        : { relationshipCoverage: value.relationshipCoverage }),
+      locations: value.locations,
+    }),
+  );
 };
 
 const runAnalysis = async (

@@ -55,6 +55,7 @@ it.each([
       error: {
         _tag: "AnalysisCancelledError",
         operation: "import_evidence_bundle",
+        cause: controller.signal.reason,
       },
     });
     expect(await readdir(root)).toEqual([]);
@@ -112,6 +113,7 @@ describe("evidence bundle export cancellation", () => {
       error: {
         _tag: "AnalysisCancelledError",
         operation: "export_evidence_bundle",
+        cause: controller.signal.reason,
       },
     });
     expect(advanced).toBe(false);
@@ -123,7 +125,13 @@ describe("evidence bundle export cancellation", () => {
         false,
         controller.signal,
       ),
-    ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        cause: controller.signal.reason,
+      },
+    });
     expect(await readdir(root)).toEqual([]);
   });
 
