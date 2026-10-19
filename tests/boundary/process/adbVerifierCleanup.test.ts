@@ -23,7 +23,8 @@ const runVerifier = async (
   settings: {
     closeFails?: boolean;
     thrown?: "undefined" | "null";
-    removalFails?: boolean;
+    removal?: "fails" | "leaves_probe";
+    pull?: "error" | "throw";
   } = {},
 ) => {
   const root = await mkdtemp(join(tmpdir(), "rea-adb-verifier-test-"));
@@ -51,7 +52,8 @@ const runVerifier = async (
     [
       "#!/bin/sh",
       `printf '%s\\n' "$*" >> "$REA_FAKE_ADB_LOG"`,
-      `[ "$REA_FAKE_ADB_RM_FAIL" = "1" ] && exit 1`,
+      `[ "$REA_FAKE_ADB_REMOVAL" = "fails" ] && exit 1`,
+      `[ "$REA_FAKE_ADB_REMOVAL" = "leaves_probe" ] && exit 0`,
       `[ "$1 $3 $4 $5" = "-s shell rm --" ] || exit 2`,
       `rm -- "$REA_FAKE_DEVICE/$(basename -- "$6")"`,
       "",
@@ -84,6 +86,10 @@ export class AdbDeviceAnalysisService {
     const device = process.env.REA_FAKE_DEVICE;
     if (operation === "push_adb_file")
       await writeFile(join(device, basename(input.device_path)), "probe");
+    if (operation === "pull_adb_file" && process.env.REA_ADB_PULL === "throw")
+      throw new Error("pull transport crashed");
+    if (operation === "pull_adb_file" && process.env.REA_ADB_PULL === "error")
+      return { ok: false, error: { message: "pull refused" } };
     const result = {
       inspect_adb_client: { client: { version: "1", binary_path: process.env.REA_FAKE_ADB } },
       list_adb_devices: { devices: [{ serial: "test", state: "device", kind: "emulator", kind_basis: "stub" }] },
@@ -119,7 +125,8 @@ export class AdbDeviceAnalysisService {
         REA_ADB_CLOSE_FAIL: settings.closeFails ? "1" : "0",
         REA_FAKE_ADB: adb,
         REA_FAKE_ADB_LOG: adbLog,
-        REA_FAKE_ADB_RM_FAIL: settings.removalFails ? "1" : "0",
+        REA_FAKE_ADB_REMOVAL: settings.removal ?? "removes",
+        REA_ADB_PULL: settings.pull ?? "succeeds",
         REA_FAKE_DEVICE: device,
         ...(settings.thrown === undefined
           ? {}
@@ -167,7 +174,7 @@ posix(
 posix(
   "fails visibly and keeps the probe when device removal fails",
   async () => {
-    const result = await runVerifier({ removalFails: true });
+    const result = await runVerifier({ removal: "fails" });
 
     expect(result.status).toBe(1);
     expect(result.stdout).toMatch(
@@ -175,6 +182,41 @@ posix(
     );
     expect(result.stdout).not.toContain("all adb device checks passed");
     expect(result.deviceFiles).toHaveLength(1);
+    expect(result.closed).toBe("closed");
+  },
+);
+
+posix(
+  "fails when removal reports success but the listing still shows the probe",
+  async () => {
+    const result = await runVerifier({ removal: "leaves_probe" });
+
+    expect(result.status).toBe(1);
+    expect(result.adbCalls).toHaveLength(1);
+    expect(result.stdout).toMatch(
+      /\[FAIL\] verifier transfer probe removed — \/data\/local\/tmp\/rea-verify-\d+\.txt\n/u,
+    );
+    expect(result.stdout).not.toContain("all adb device checks passed");
+    expect(result.deviceFiles).toHaveLength(1);
+  },
+);
+
+posix.each([
+  ["returns an error", "error", "[FAIL] pull_adb_file — pull refused"],
+  ["throws", "throw", "verifier aborted — Error: pull transport crashed"],
+] as const)(
+  "still removes the probe when the pull %s",
+  async (_label, pull, failure) => {
+    const result = await runVerifier({ pull });
+
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain(failure);
+    expect(result.adbCalls).toHaveLength(1);
+    expect(result.adbCalls[0]).toMatch(
+      /^-s test shell rm -- \/data\/local\/tmp\/rea-verify-\d+\.txt$/u,
+    );
+    expect(result.stdout).toContain("[ok] verifier transfer probe removed");
+    expect(result.deviceFiles).toEqual([]);
     expect(result.closed).toBe("closed");
   },
 );
