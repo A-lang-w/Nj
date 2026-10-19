@@ -54,6 +54,10 @@ export interface SemanticReturnedReference {
 export interface SemanticReturnedReferenceSelection {
   readonly references: readonly SemanticReturnedReference[];
   readonly complete: boolean;
+  /** Both states close the supported source-local may-target graph. Widened
+   * joined projections without dropping represented targets; it does not
+   * claim runtime completeness and never establishes an exact capture. */
+  readonly precision: "exact" | "widened";
 }
 
 interface ValueSelection {
@@ -100,6 +104,7 @@ interface CallableReference {
 interface CallableReferenceSelection {
   readonly references: readonly CallableReference[];
   readonly complete: boolean;
+  readonly precision: "exact" | "widened";
 }
 
 /** These leaves have no source-callable edges, but keep coverage incomplete. */
@@ -974,7 +979,8 @@ const createSemanticCallableReferences = (
     const roots: readonly t.Node[] = t.isNode(callee) ? [callee] : callee;
     const single = t.isNode(callee) ? callee : undefined;
     const captureSite = roots[0];
-    if (captureSite === undefined) return { references: [], complete: true };
+    if (captureSite === undefined)
+      return { references: [], complete: true, precision: "exact" };
     const projectionKey = JSON.stringify([
       projection,
       projectionRead === undefined ? undefined : captureKey([projectionRead]),
@@ -985,6 +991,7 @@ const createSemanticCallableReferences = (
         : results.get(single)?.get(projectionKey);
     if (existing !== undefined) return existing;
     let complete = !includeContainerContents;
+    let widened = false;
     const functions = new Map<
       t.Function | t.Class,
       Map<string, CallableReference>
@@ -1123,8 +1130,10 @@ const createSemanticCallableReferences = (
           const joined = item.path.map((key, index) =>
             previous[index] === key ? key : null,
           );
-          if (joined.some((key, index) => key !== item.path[index]))
+          if (joined.some((key, index) => key !== item.path[index])) {
             complete = false;
+            widened = true;
+          }
           item = { ...item, path: joined };
         }
         paths.set(joinKey, item.path);
@@ -1711,7 +1720,11 @@ const createSemanticCallableReferences = (
     const references = [...functions.values()].flatMap((paths) => [
       ...paths.values(),
     ]);
-    const output = { references, complete };
+    const output: CallableReferenceSelection = {
+      references,
+      complete,
+      precision: widened ? "widened" : "exact",
+    };
     if (single !== undefined) {
       const byProjection = results.get(single) ?? new Map();
       byProjection.set(projectionKey, output);
@@ -1873,7 +1886,7 @@ export const createSemanticReturnedReferences = (
             ],
       ),
     );
-    const output = {
+    const output: SemanticReturnedReferenceSelection = {
       references,
       complete:
         selected.complete &&
@@ -1882,7 +1895,10 @@ export const createSemanticReturnedReferences = (
           ({ node, projection }) =>
             projection.length === 0 && completion(node).complete,
         ),
+      precision: selected.precision,
     };
+    if (selected.precision === "widened")
+      state.returnedReferenceWidenings.add(callee);
     results.set(callee, output);
     return output;
   };
