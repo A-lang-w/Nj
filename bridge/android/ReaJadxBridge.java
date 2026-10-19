@@ -156,8 +156,8 @@ class ReaJadxBridge {
     return current;
   }
 
-  private ClassSnapshot selected(JsonObject args) {
-    JadxSession current = session();
+  /** Snapshot every class identity once per session, before code generation can rewrite aliases. */
+  private void ensureIndex(JadxSession current) {
     if (indexedSession != current) {
       Map<String, List<ClassSnapshot>> index = new LinkedHashMap<>();
       if (!current.getClasses().isEmpty()) {
@@ -203,6 +203,10 @@ class ReaJadxBridge {
       classes = Collections.unmodifiableMap(index);
       indexedSession = current;
     }
+  }
+
+  private ClassSnapshot selected(JsonObject args) {
+    ensureIndex(session());
     String name = string(args, "class_name");
     List<ClassSnapshot> candidates = classes.get(name);
     if (candidates == null) throw new InputFailure("class_name", "Exact class not found: " + name
@@ -342,20 +346,42 @@ class ReaJadxBridge {
     return result;
   }
 
-  private static Map<String, Object> resourceSite(String kind, ClassNode cls, MethodNode method,
-      int offset, Opcode opcode) {
+  /**
+   * Selectors come from the identity frozen before code generation, so they are the ones
+   * inspect_android_method accepts. A class absent from that index cannot be inspected and
+   * has no frozen identity; its live names are reported.
+   */
+  private static Map<String, Object> resourceSite(String kind, ClassNode cls, ClassSnapshot frozen,
+      MethodNode method, int offset, Opcode opcode) {
+    String className = cls.getFullName();
+    String methodName = method.getAlias();
+    int overloadIndex = 0;
+    if (frozen != null) {
+      className = String.valueOf(frozen.summary().get("full_name"));
+      String shortId = method.getMethodInfo().getShortId();
+      MethodSnapshot match = null;
+      for (MethodSnapshot candidate : frozen.methods())
+        if (candidate.shortId().equals(shortId)) { match = candidate; break; }
+      if (match == null)
+        throw new IllegalStateException("No frozen method identity for " + method.getMethodInfo().getRawFullId());
+      methodName = match.name();
+      for (MethodSnapshot candidate : frozen.methods()) {
+        if (candidate == match) break;
+        if (candidate.name().equals(methodName)) overloadIndex++;
+      }
+    } else {
+      List<MethodNode> sameName = new ArrayList<>();
+      for (MethodNode candidate : cls.getMethods())
+        if (candidate.getAlias().equals(methodName)) sameName.add(candidate);
+      overloadIndex = sameName.indexOf(method);
+    }
     Map<String, Object> site = new LinkedHashMap<>();
     site.put("kind", kind);
-    // class_name is the lookup name inspect_android_method accepts; JADX may alias it.
-    site.put("class_name", cls.getFullName());
+    site.put("class_name", className);
     site.put("raw_class_name", cls.getRawName());
     site.put("top_class", cls.getTopParentClass().getFullName());
-    site.put("method_name", method.getAlias());
-    // Same selector inspect_android_method uses: position among same-alias methods.
-    List<MethodNode> sameName = new ArrayList<>();
-    for (MethodNode candidate : cls.getMethods())
-      if (candidate.getAlias().equals(method.getAlias())) sameName.add(candidate);
-    site.put("overload_index", sameName.indexOf(method));
+    site.put("method_name", methodName);
+    site.put("overload_index", overloadIndex);
     site.put("raw_method_id", method.getMethodInfo().getRawFullId());
     site.put("dex_entry", method.getInputFileName());
     site.put("dex_code_unit_offset", offset);
@@ -374,6 +400,10 @@ class ReaJadxBridge {
     if (listed == null || !listed.isJsonArray() || listed.getAsJsonArray().isEmpty())
       throw new IllegalArgumentException("resources must be a non-empty array of strings");
     int maxSites = integer(args, "max_sites", 100);
+    ensureIndex(current);
+    Map<ClassNode, ClassSnapshot> frozenClasses = new IdentityHashMap<>();
+    for (List<ClassSnapshot> snapshots : classes.values())
+      for (ClassSnapshot snapshot : snapshots) frozenClasses.put(snapshot.node().getClassNode(), snapshot);
     RootNode root = current.getClasses().isEmpty() ? null
         : current.getClasses().get(0).getClassNode().root();
     Map<String, List<Integer>> app = root == null ? Map.of()
@@ -480,7 +510,7 @@ class ReaJadxBridge {
           for (int index : matched) {
             totals[index]++;
             if (sites.get(index).size() >= maxSites) continue;
-            Map<String, Object> site = resourceSite(kind, cls, method, insn.getOffset(), opcode);
+            Map<String, Object> site = resourceSite(kind, cls, frozenClasses.get(cls), method, insn.getOffset(), opcode);
             if (budget.admit(site)) sites.get(index).add(site);
           }
         });
