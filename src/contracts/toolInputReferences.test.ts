@@ -799,6 +799,92 @@ describe("advertised empty-string literals", () => {
     expect(advertised.properties.alias).toEqual({ $ref: "#/properties/path" });
   });
 
+  it("discards descendant writes removed by an ancestor replacement", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        parent: { $ref: "#/default" },
+        child: { $ref: "#/default/not" },
+      },
+      default: { not: { const: "" } },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.default).toEqual({});
+    expect(advertised.properties.child).toEqual({ type: "string" });
+  });
+
+  it("does not treat schema-map entries named $id as resource boundaries", () => {
+    const canonical = {
+      $defs: { $id: { type: "number" }, empty: { const: "" } },
+      type: "object",
+      properties: { value: { not: { $ref: "#/$defs/empty" } } },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.properties).toEqual({ value: {} });
+    expect(advertised.$defs).toEqual({
+      $id: { type: "number" },
+      empty: { type: "string" },
+    });
+  });
+
+  it("keeps inline replacements within their resource", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        guard: { not: { const: "" } },
+        value: { $ref: "#/properties/guard/not" },
+        nested: {
+          $id: "https://example.com/nested",
+          type: "object",
+          properties: {
+            guard: { not: { type: "number" } },
+            value: { $ref: "#/properties/guard/not" },
+          },
+        },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.properties.value).toEqual({ type: "string" });
+    expect(advertised.properties.nested.properties.value).toEqual({
+      $ref: "#/properties/guard/not",
+    });
+  });
+
+  it("resolves annotation references within nested resources", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        nested: {
+          $id: "https://example.com/nested",
+          type: "object",
+          properties: { value: { $ref: "#/default" } },
+          default: { type: "string", const: "" },
+        },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.properties.nested.default).toEqual({ type: "string" });
+  });
+
+  it("composes inlined targets with reference siblings", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        guard: { not: { const: "" } },
+        value: { $ref: "#/properties/guard/not" },
+      },
+      required: ["guard"],
+    };
+    const advertised = presentInputJsonSchema(
+      canonical,
+      (property) => (property === "value" ? "The value." : undefined),
+    );
+    expect(advertised.properties.value).toEqual({
+      description: "The value.",
+      allOf: [{ type: "string" }],
+    });
+  });
+
   it("inlines removed targets at their callers", () => {
     const canonical = {
       type: "object",

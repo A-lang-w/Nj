@@ -26,7 +26,7 @@ const resolvePointer = (
   for (const token of tokens) {
     // A pointer can cross a resource boundary; preserve the original
     // projection rather than guess the reference scope beyond it.
-    if (value !== root && isObject(value) && "$id" in value) return undefined;
+    if (value !== root && declaresResource(value)) return undefined;
     if (Array.isArray(value)) {
       if (!/^(?:0|[1-9]\d*)$/u.test(token)) return undefined;
       const index = Number(token);
@@ -66,7 +66,7 @@ const findSchemaAnchor = (
       )
         continue;
       // Anchors inside a nested resource belong to that resource.
-      if (isObject(child) && "$id" in child) continue;
+      if (declaresResource(child)) continue;
       if (schemaMaps.has(key) && isObject(child)) {
         for (const [childName, grandChild] of Object.entries(child)) {
           const found = scan(grandChild, [...path, key, childName]);
@@ -285,7 +285,7 @@ const referencesChangingTarget = (
   return Object.entries(node).some(([key, child]) => {
     if (key === "const" || key === "enum" || key === "$ref") return false;
     // References inside a nested resource address that resource only.
-    if (isObject(child) && "$id" in child) return false;
+    if (declaresResource(child)) return false;
     return referencesChangingTarget(child, root, active);
   });
 };
@@ -293,7 +293,7 @@ const referencesChangingTarget = (
 // Inside a nested resource, references resolve against that resource's own
 // root rather than the outer schema.
 const nestedResourceRoot = (child: unknown, root: unknown): unknown =>
-  isObject(child) && "$id" in child ? child : root;
+  declaresResource(child) ? child : root;
 
 const normalizeAdvertisedSchema = (
   value: unknown,
@@ -588,23 +588,59 @@ const flattenRootObjectUnion = (
   };
 };
 
-// Collect references and anchors from schema positions only: literal
-// annotation data (examples, defaults) is not a schema, so any `$ref` inside
-// it must not influence advertised normalization.
+// Resolve a trusted internal path (from our own walkers) without resource
+// boundary checks: the path itself names the position, not a user reference.
+const pathValue = (root: unknown, tokens: readonly string[]): unknown => {
+  let value: unknown = root;
+  for (const token of tokens) {
+    if (Array.isArray(value)) {
+      if (!/^(?:0|[1-9]\d*)$/u.test(token)) return undefined;
+      const index = Number(token);
+      if (index >= value.length) return undefined;
+      value = value[index];
+      continue;
+    }
+    if (!isObject(value) || !Object.hasOwn(value, token)) return undefined;
+    value = value[token];
+  }
+  return value;
+};
+
+// A schema map entry named `$id` is a definition name, not a resource
+// boundary; only a subschema declaring `$id` as a string URI is one.
+const declaresResource = (node: unknown): boolean =>
+  isObject(node) && typeof node.$id === "string";
+
+type CollectedReference = {
+  readonly reference: string;
+  readonly resourceTokens: readonly string[];
+};
+
+const referenceKey = (entry: {
+  reference: string;
+  resourceTokens: readonly string[];
+}): string => JSON.stringify(entry.resourceTokens) + " " + entry.reference;
+
+// Collect references from schema positions only: literal annotation data
+// (examples, defaults) is not a schema, so any `$ref` inside it must not
+// influence advertised normalization. Each reference is recorded together
+// with the resource it belongs to (the outer schema, or the nearest
+// enclosing subschema declaring a string `$id`).
 const collectSchemaReferences = (
   node: unknown,
-  refs: Set<string>,
+  collected: CollectedReference[],
   path: readonly string[],
+  resourceTokens: readonly string[],
 ): void => {
   if (Array.isArray(node)) {
     node.forEach((child, index) =>
-      collectSchemaReferences(child, refs, [...path, String(index)]),
+      collectSchemaReferences(child, collected, [...path, String(index)], resourceTokens),
     );
     return;
   }
   if (!isObject(node)) return;
   if (typeof node.$ref === "string" && node.$ref.startsWith("#"))
-    refs.add(node.$ref);
+    collected.push({ reference: node.$ref, resourceTokens });
   for (const [key, child] of Object.entries(node)) {
     if (
       !schemaMaps.has(key) &&
@@ -612,45 +648,77 @@ const collectSchemaReferences = (
       !schemaChildren.has(key)
     )
       continue;
-    // Fragment references inside a nested resource address that resource,
-    // never the outer schema; do not collect them.
-    if (isObject(child) && "$id" in child) continue;
     if (schemaMaps.has(key) && isObject(child)) {
-      for (const [name, grandChild] of Object.entries(child))
-        collectSchemaReferences(grandChild, refs, [...path, key, name]);
+      for (const [name, grandChild] of Object.entries(child)) {
+        const childPath = [...path, key, name];
+        collectSchemaReferences(
+          grandChild,
+          collected,
+          childPath,
+          declaresResource(grandChild) ? childPath : resourceTokens,
+        );
+      }
     } else if (Array.isArray(child)) {
-      child.forEach((grandChild, index) =>
-        collectSchemaReferences(grandChild, refs, [...path, key, String(index)]),
-      );
+      child.forEach((grandChild, index) => {
+        const childPath = [...path, key, String(index)];
+        collectSchemaReferences(
+          grandChild,
+          collected,
+          childPath,
+          declaresResource(grandChild) ? childPath : resourceTokens,
+        );
+      });
     } else {
-      collectSchemaReferences(child, refs, [...path, key]);
+      const childPath = [...path, key];
+      collectSchemaReferences(
+        child,
+        collected,
+        childPath,
+        declaresResource(child) ? childPath : resourceTokens,
+      );
     }
   }
 };
 
 // A reference whose target position the structural pass removed cannot keep
 // its `$ref` (clients that compile the schema could not load it), so the
-// widened target is inlined at every caller instead.
+// widened target is inlined at every caller instead — scoped to the resource
+// that owns the reference, and composed with any `$ref` siblings.
 const inlineReferences = (
   node: unknown,
-  dangling: ReadonlyMap<string, unknown>,
+  dangling: ReadonlyMap<string, ReadonlyMap<string, unknown>>,
+  resourceTokens: readonly string[],
+  path: readonly string[],
 ): unknown => {
   if (Array.isArray(node)) {
     let changed = false;
-    const mapped = node.map((child) => {
-      const next = inlineReferences(child, dangling);
+    const mapped = node.map((child, index) => {
+      const childPath = [...path, String(index)];
+      const next = inlineReferences(
+        child,
+        dangling,
+        declaresResource(child) ? childPath : resourceTokens,
+        childPath,
+      );
       changed ||= next !== child;
       return next;
     });
     return changed ? mapped : node;
   }
   if (!isObject(node)) return node;
-  if (
-    typeof node.$ref === "string" &&
-    dangling.has(node.$ref) &&
-    Object.keys(node).length === 1
-  )
-    return dangling.get(node.$ref);
+  const refMap = dangling.get(JSON.stringify(resourceTokens));
+  if (refMap !== undefined && typeof node.$ref === "string") {
+    const replacement = refMap.get(node.$ref);
+    if (replacement !== undefined) {
+      const { $ref: _ref, ...siblings } = node;
+      const existingAllOf = Array.isArray(siblings.allOf)
+        ? siblings.allOf
+        : [];
+      return Object.keys(siblings).length === 0
+        ? replacement
+        : { ...siblings, allOf: [replacement, ...existingAllOf] };
+    }
+  }
   let changed = false;
   const rebuilt: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(node)) {
@@ -658,14 +726,23 @@ const inlineReferences = (
       let mapChanged = false;
       const map: Record<string, unknown> = {};
       for (const [name, grandChild] of Object.entries(child)) {
-        const next = inlineReferences(grandChild, dangling);
+        const childPath = [...path, key, name];
+        const next = inlineReferences(
+          grandChild,
+          dangling,
+          declaresResource(grandChild) ? childPath : resourceTokens,
+          childPath,
+        );
         map[name] = next;
         mapChanged ||= next !== grandChild;
       }
       rebuilt[key] = mapChanged ? map : child;
       changed ||= mapChanged;
     } else if (schemaArrays.has(key) || schemaChildren.has(key)) {
-      const next = inlineReferences(child, dangling);
+      const next = inlineReferences(child, dangling, resourceTokens, [
+        ...path,
+        key,
+      ]);
       rebuilt[key] = next;
       changed ||= next !== child;
     } else {
@@ -677,47 +754,78 @@ const inlineReferences = (
 
 // Positive local references can address positions the structural walk never
 // visits (for example a root-level annotation), which would leave the target's
-// empty-string literal advertised. Normalize every referenced target too.
-// All change decisions are computed against the immutable source schema before
-// any writeback, so rewriting one target cannot mask another target's change.
+// empty-string literal advertised. Normalize every referenced target too, and
+// resolve each reference within its own resource. All change decisions are
+// computed against the immutable source schema before any writeback, so
+// rewriting one target cannot mask another target's change.
 const normalizeReferencedTargets = (
   advertised: Record<string, unknown>,
   source: Readonly<Record<string, unknown>>,
 ): Record<string, unknown> => {
-  const refs = new Set<string>();
-  collectSchemaReferences(source, refs, []);
-  const writes: Array<[readonly string[], unknown]> = [];
-  const dangling = new Map<string, unknown>();
+  const collected: CollectedReference[] = [];
+  collectSchemaReferences(source, collected, [], []);
+  const writes: Array<
+    [
+      readonly string[],
+      unknown,
+      { reference: string; resourceTokens: readonly string[] },
+    ]
+  > = [];
+  const dangling = new Map<string, Map<string, unknown>>();
+  const fileDangling = (
+    entry: { reference: string; resourceTokens: readonly string[] },
+    replacement: unknown,
+  ): void => {
+    const key = JSON.stringify(entry.resourceTokens);
+    const refs = dangling.get(key) ?? new Map<string, unknown>();
+    refs.set(entry.reference, replacement);
+    dangling.set(key, refs);
+  };
   const processed = new Set<string>();
-  const queue = [...refs];
+  const queue = [...collected];
   while (queue.length > 0) {
-    const reference = queue.shift();
-    if (reference === undefined || processed.has(reference)) continue;
-    processed.add(reference);
-    const resolved = resolveLocalSchemaReference(source, reference);
+    const entry = queue.shift();
+    if (entry === undefined) continue;
+    const key = referenceKey(entry);
+    if (processed.has(key)) continue;
+    processed.add(key);
+    const resource =
+      entry.resourceTokens.length === 0
+        ? source
+        : (pathValue(source, entry.resourceTokens) as unknown);
+    if (!isObject(resource)) continue;
+    const resolved = resolveLocalSchemaReference(resource, entry.reference);
     if (resolved === undefined || !isObject(resolved.value)) continue;
     // Targets reached only through other unwalked targets need the same
     // treatment as directly referenced ones.
-    const nested = new Set<string>();
-    collectSchemaReferences(resolved.value, nested, resolved.tokens);
-    for (const nestedRef of nested)
-      if (!processed.has(nestedRef)) queue.push(nestedRef);
-    const presented = resolvePointer(advertised, resolved.tokens);
+    const outerTokens = [...entry.resourceTokens, ...resolved.tokens];
+    const nested: CollectedReference[] = [];
+    collectSchemaReferences(
+      resolved.value,
+      nested,
+      outerTokens,
+      entry.resourceTokens,
+    );
+    for (const nestedEntry of nested) {
+      const nestedKey = referenceKey(nestedEntry);
+      if (!processed.has(nestedKey)) queue.push(nestedEntry);
+    }
+    const presented = pathValue(advertised, outerTokens);
     if (presented === undefined) {
       // The position was removed by the structural pass; inline the widened
       // target at its callers rather than dangling.
       const removed = normalizeAdvertisedSchema(
         resolved.value,
         source,
-        new Set([reference]),
+        new Set([entry.reference]),
       );
-      dangling.set(reference, removed.schema);
+      fileDangling(entry, removed.schema);
       continue;
     }
     const result = normalizeAdvertisedSchema(
       resolved.value,
       source,
-      new Set([reference]),
+      new Set([entry.reference]),
     );
     if (!result.changed) continue;
     // Prefer the presented node at the same position so injected property
@@ -726,17 +834,29 @@ const normalizeReferencedTargets = (
       ? normalizeAdvertisedSchema(
           presented,
           source,
-          new Set([reference]),
+          new Set([entry.reference]),
         ).schema
       : result.schema;
-    writes.push([resolved.tokens, replacement]);
+    writes.push([outerTokens, replacement, entry]);
   }
   // Apply shallow writes first so a parent replacement cannot restore an
   // un-widened descendant; deeper writes then override their own positions.
+  // A write whose position an earlier ancestor replacement removed joins the
+  // dangling set instead of resurrecting the removed path.
   writes.sort((a, b) => a[0].length - b[0].length);
-  for (const [tokens, replacement] of writes)
+  for (const [tokens, replacement, entry] of writes) {
+    if (pathValue(advertised, tokens) === undefined) {
+      fileDangling(entry, replacement);
+      continue;
+    }
     assignAtPath(advertised, tokens, replacement);
-  return dangling.size > 0 ? (inlineReferences(advertised, dangling) as Record<string, unknown>) : advertised;
+  }
+  return dangling.size > 0
+    ? (inlineReferences(advertised, dangling, [], []) as Record<
+        string,
+        unknown
+      >)
+    : advertised;
 };
 
 const assignAtPath = (
