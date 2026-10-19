@@ -2,7 +2,13 @@ import { isJsonLike } from "../../domain/analysisView/EnvironmentManifestAccumul
 import { mediaTypeEssence } from "../../domain/analysisView/webNetworkRouteTemplates.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import { isExactJsonNumber } from "../../domain/exactJsonNumber.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
+import {
+  iterateUrlQueryParameters,
+  recordedPathSegments,
+} from "../../domain/recordedTransportUrl.js";
+import { safeParseJson } from "../../domain/safeJson.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { environmentToolArguments } from "./environmentTools.js";
 import {
@@ -31,6 +37,7 @@ export interface ReplayResult {
     readonly recorded_query: string | null;
     /** Set when the recorded path or query was cut to REPLAY_METADATA_LIMIT_BYTES; the Evidence record keeps it whole. */
     readonly recorded_line_truncated: boolean;
+    readonly content_type_truncated: boolean;
     readonly body_recorded: boolean;
     readonly body_encoding: "utf-8" | "base64";
     readonly truncated: boolean;
@@ -56,19 +63,29 @@ const decoded = (segment: string): string => {
 /** Count how many supplied path and query values the recorded request line satisfies. */
 const scoreExchange = (
   tool: EnvironmentManifestTool,
+  pathArguments: ReadonlyMap<string, string>,
   queryArguments: ReadonlyMap<string, string>,
   exchange: RecordedExchange,
   args: ReplayArguments,
 ): MatchScore => {
-  const segments = exchange.path.split("/").slice(1);
-  let pathProvided = 0;
+  const providedPaths: { index: number; value: string }[] = [];
+  for (const param of tool.params) {
+    const value = args[pathArguments.get(param.name) ?? param.name];
+    if (typeof value === "string")
+      providedPaths.push({ index: param.index, value });
+  }
+  const segments =
+    providedPaths.length === 0
+      ? new Map<number, string>()
+      : recordedPathSegments(
+          exchange.path,
+          providedPaths.map((param) => param.index),
+        );
+  const pathProvided = providedPaths.length;
   let pathMatches = 0;
   let verbatimMatches = 0;
-  for (const param of tool.params) {
-    const value = args[param.name];
-    if (typeof value !== "string") continue;
-    pathProvided += 1;
-    const segment = segments[param.index];
+  for (const { index, value } of providedPaths) {
+    const segment = segments.get(index);
     if (segment === value) verbatimMatches += 1;
     if (
       segment !== undefined &&
@@ -76,15 +93,21 @@ const scoreExchange = (
     )
       pathMatches += 1;
   }
-  const query = new URLSearchParams(exchange.query ?? "");
-  let queryProvided = 0;
-  let queryMatches = 0;
+  const supplied = new Map<string, string>();
   for (const [name, argument] of queryArguments) {
     const value = args[argument];
-    if (typeof value !== "string") continue;
-    queryProvided += 1;
-    if (query.getAll(name).includes(value)) queryMatches += 1;
+    if (typeof value === "string") supplied.set(name, value);
   }
+  const matched = new Set<string>();
+  if (supplied.size > 0)
+    for (const [name, value] of iterateUrlQueryParameters(
+      exchange.query ?? "",
+    )) {
+      if (supplied.get(name) === value) matched.add(name);
+      if (matched.size === supplied.size) break;
+    }
+  const queryProvided = supplied.size;
+  const queryMatches = matched.size;
   return {
     pathMatches,
     verbatimMatches,
@@ -109,11 +132,17 @@ export const selectReplayExchange = (
   | { readonly exchange: RecordedExchange; readonly exact: boolean }
   | undefined => {
   let best: { exchange: RecordedExchange; score: MatchScore } | undefined;
-  const queryArguments = environmentToolArguments(tool).query;
+  const argumentsMap = environmentToolArguments(tool);
   for (const ordinal of tool.record_ordinals) {
     const exchange = exchanges.get(ordinal);
     if (exchange === undefined) continue;
-    const score = scoreExchange(tool, queryArguments, exchange, args);
+    const score = scoreExchange(
+      tool,
+      argumentsMap.path,
+      argumentsMap.query,
+      exchange,
+      args,
+    );
     if (best === undefined || outranks(score, best.score))
       best = { exchange, score };
   }
@@ -161,38 +190,24 @@ const replayBody = (
     exchange.contentType !== null &&
     isJsonLike(mediaTypeEssence(exchange.contentType))
   ) {
-    const parsed = parseExactJson(text);
-    const value =
-      parsed === undefined ? undefined : jsonValueSchema.safeParse(parsed);
+    const parsed = safeParseJson(text, (_key, value, context) => {
+      // The native parser supplies each primitive's original spelling. Share
+      // HAR's exact-number policy rather than accepting an already-rounded ID.
+      if (
+        typeof value === "number" &&
+        !isExactJsonNumber(value, context?.source)
+      )
+        throw new RangeError(
+          "JSON numeric conversion would lose recorded data",
+        );
+      return value;
+    });
+    const value = parsed.ok
+      ? jsonValueSchema.safeParse(parsed.value)
+      : undefined;
     if (value?.success === true) return { body: value.data, truncated: false };
   }
   return { body: text, truncated: false };
-};
-
-/** Parsed JSON only when every integer survives exactly; one outside the safe range keeps the recorded text. */
-const parseExactJson = (text: string): unknown => {
-  let lossy = false;
-  try {
-    const value: unknown = JSON.parse(
-      text,
-      (_key, item: unknown, context?: { readonly source?: string }) => {
-        const source = context?.source;
-        if (
-          typeof item === "number" &&
-          Number.isInteger(item) &&
-          !Number.isSafeInteger(item) &&
-          source !== undefined &&
-          /^-?\d+$/u.test(source) &&
-          BigInt(source) !== BigInt(item)
-        )
-          lossy = true;
-        return item;
-      },
-    );
-    return lossy ? undefined : value;
-  } catch {
-    return undefined;
-  }
 };
 
 /** Recorded paths and queries are cut to this many UTF-8 bytes in replies. */
@@ -222,9 +237,13 @@ export const replayEnvironmentTool = (
     exchange.query === null
       ? null
       : utf8Prefix(exchange.query, REPLAY_METADATA_LIMIT_BYTES);
+  const contentType =
+    exchange.contentType === null
+      ? null
+      : utf8Prefix(exchange.contentType, REPLAY_METADATA_LIMIT_BYTES);
   return ok({
     status: exchange.status,
-    content_type: exchange.contentType,
+    content_type: contentType,
     body,
     replay: {
       record_ordinal: exchange.ordinal,
@@ -235,6 +254,7 @@ export const replayEnvironmentTool = (
       recorded_line_truncated:
         recordedPath.length < exchange.path.length ||
         (recordedQuery?.length ?? 0) < (exchange.query?.length ?? 0),
+      content_type_truncated: contentType !== exchange.contentType,
       body_recorded: exchange.bodyText !== null,
       body_encoding: exchange.bodyEncoding ?? "utf-8",
       truncated,

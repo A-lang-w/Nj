@@ -68,3 +68,25 @@ export const writeEnvironmentServeFiles = async (
   ]);
   return { manifestPath, capturePath };
 };
+
+/** A source whose only exchange carries the given body and content type. */
+export const environmentServeSourceWithBody = (
+  bodyText: string | null,
+  contentType: string | null,
+): EnvironmentSource => {
+  const source = environmentServeSource();
+  const users = source.manifest.tools.find(
+    (tool) => tool.name === "get_users_by_id",
+  );
+  if (users === undefined) throw new Error("Missing users fixture");
+  const ordinal = users.record_ordinals[0] ?? 0;
+  const exchange = {
+    ordinal,
+    path: "/api/users/2",
+    query: null,
+    status: 200,
+    contentType,
+    bodyText,
+  };
+  return { ...source, exchanges: new Map([[ordinal, exchange]]) };
+};
