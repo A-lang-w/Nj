@@ -12,7 +12,7 @@ import {
   clientConfigurationValuesEqual,
   clientServerListedDisabled,
   clientServerPath,
-  codexServerToolSchema,
+  codexToolApprovalModeSchema,
   legacyClientServerPath,
   OMP_DISABLED_SERVERS_KEY,
   parseClientConfiguration,
@@ -817,6 +817,30 @@ const clientConfigurationDesired = (
   };
 };
 
+const codexToolEntry = (
+  value: unknown,
+): Record<string, unknown> | undefined => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const rawEntries = Object.entries(value);
+  if (rawEntries.length === 0) {
+    return {};
+  }
+  const entry: Record<string, unknown> = {};
+  for (const [key, prop] of rawEntries) {
+    if (key === "approval_mode") {
+      const parsedApproval = codexToolApprovalModeSchema.safeParse(prop);
+      if (parsedApproval.success) {
+        entry[key] = parsedApproval.data;
+      }
+    } else {
+      entry[key] = prop;
+    }
+  }
+  return Object.keys(entry).length > 0 ? entry : undefined;
+};
+
 const codexTools = (
   registration: unknown,
 ): Record<string, Record<string, unknown>> | undefined => {
@@ -833,11 +857,15 @@ const codexTools = (
     Array.isArray(rawTools)
   )
     return undefined;
+  const rawEntries = Object.entries(rawTools);
+  if (rawEntries.length === 0) {
+    return {};
+  }
   const validTools: Record<string, Record<string, unknown>> = {};
-  for (const [toolName, toolConfig] of Object.entries(rawTools)) {
-    const parsed = codexServerToolSchema.safeParse(toolConfig);
-    if (parsed.success) {
-      validTools[toolName] = parsed.data;
+  for (const [toolName, toolConfig] of rawEntries) {
+    const entry = codexToolEntry(toolConfig);
+    if (entry !== undefined) {
+      validTools[toolName] = entry;
     }
   }
   return Object.keys(validTools).length > 0 ? validTools : undefined;

@@ -58,7 +58,11 @@ export interface ClientConfigurationDocument {
   readonly legacyServers: Record<string, unknown>;
 }
 const objectSchema = z.record(z.string(), z.unknown());
-const codexToolApprovalModeSchema = z.enum(["approve", "prompt", "auto"]);
+export const codexToolApprovalModeSchema = z.enum([
+  "approve",
+  "prompt",
+  "auto",
+]);
 
 /** Codex per-tool configuration entry (`[mcp_servers.<server>.tools.<tool>]`). */
 export const codexServerToolSchema = z
