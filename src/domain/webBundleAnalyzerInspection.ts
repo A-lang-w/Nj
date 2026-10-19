@@ -55,6 +55,7 @@ export interface AnalysisAccumulator {
   parsedScripts: number;
   readonly failedScripts: string[];
   readonly recoveredScripts: string[];
+  readonly widenedScripts: string[];
 }
 
 export const analyzeScript = (
@@ -128,6 +129,8 @@ export const analyzeScript = (
         node: endpoint.node,
         accumulator,
       });
+  if (index.bindings.returnedReferenceWidenings.size > 0)
+    accumulator.widenedScripts.push(script.script_key);
 };
 
 const inspectNode = (
@@ -491,6 +494,7 @@ export const emptyAccumulator = (): AnalysisAccumulator => ({
   parsedScripts: 0,
   failedScripts: [],
   recoveredScripts: [],
+  widenedScripts: [],
 });
 
 export const isIncludedScript = (

@@ -117,6 +117,8 @@ export interface JavaScriptSemanticAnalysisState {
   readonly valueResourceLimits: Set<JavaScriptSemanticResourceLimit>;
   /** Getter query bounds encountered while resolving object and class properties. */
   readonly getterResourceLimits: Set<JavaScriptSemanticResourceLimit>;
+  /** Callee sites whose possible local returns needed a broader projection. */
+  readonly returnedReferenceWidenings: Set<t.Node>;
   readonly parentsByNode: WeakMap<t.Node, t.Node>;
   /** Await sites retained by the definitions pass for lazy promise-result indexing. */
   readonly awaitSites: t.AwaitExpression[];

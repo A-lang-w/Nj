@@ -90,7 +90,10 @@ import {
   isWebSocketEndpointCandidate,
   range,
 } from "./javascriptStaticAnalysisHelpers.js";
-import { semanticCoverage } from "./javascriptSemanticCoverage.js";
+import {
+  semanticCoverage,
+  RETURNED_REFERENCE_WIDENING_LIMITATION,
+} from "./javascriptSemanticCoverage.js";
 import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
 import {
   parseJavaScriptSource,
@@ -426,8 +429,12 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
           ...state.getterResourceLimits,
         ]),
       ].sort(),
+      [...state.returnedReferenceWidenings].map(range),
     ),
     limitations: [
+      ...(state.returnedReferenceWidenings.size > 0
+        ? [RETURNED_REFERENCE_WIDENING_LIMITATION]
+        : []),
       ...[...state.getterResourceLimits]
         .sort()
         .map(semanticResourceLimitReason),
@@ -1000,6 +1007,7 @@ const createState = (
     staticImportResolutionMode,
     valueResourceLimits: new Set(),
     getterResourceLimits: new Set(),
+    returnedReferenceWidenings: new Set(),
     parentsByNode: new WeakMap(),
     awaitSites: [],
     scopes: [root],
