@@ -1,6 +1,13 @@
 import { desktopSummarySchema } from "../../src/domain/analysisView/desktopApplicationView.js";
 import { createHash } from "node:crypto";
-import { readFile, realpath, unlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  realpath,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { readEvidenceBundle } from "../../src/application/EvidenceBundleFiles.js";
@@ -373,6 +380,50 @@ cliTest(
       ],
       parent_evidence_id: evidence.evidence_id,
     });
+  },
+  30000,
+);
+
+cliTest.skipIf(process.platform === "win32")(
+  "exports and reads Evidence at the filesystem-selected symlink-parent path",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-il2cpp-export-path-");
+    const path = join(root, "global-metadata.dat");
+    await writeFile(path, createIl2cppMetadataFixture().bytes);
+    const actual = join(root, "actual");
+    await mkdir(join(actual, "nested"), { recursive: true });
+    await symlink(join(actual, "nested"), join(root, "link"));
+    const decoy = join(root, "evidence.json");
+    await writeFile(decoy, "unrelated caller data");
+    const selected = `${root}/link/../evidence.json`;
+    const result = await cli.run({
+      arguments: [
+        "inspect-il2cpp-metadata",
+        path,
+        "--detail",
+        "summary",
+        "--evidence_output",
+        selected,
+        "--json",
+      ],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.json).toMatchObject({ evidence_bundle: { path: selected } });
+    expect(await readFile(decoy, "utf8")).toBe("unrelated caller data");
+    const saved = await readEvidenceBundle(selected);
+    if (!saved.ok) throw saved.error;
+    expect(
+      JSON.parse(await readFile(join(actual, "evidence.json"), "utf8")),
+    ).toEqual(saved.value);
+    const read = await cli.run({
+      arguments: [
+        "inspect-evidence-bundle",
+        JSON.stringify({ path: selected, detail: "summary" }),
+        "--json",
+      ],
+    });
+    expect(read.exitCode, read.stderr).toBe(0);
+    expect(read.stdout).toContain(saved.value.records[0]?.evidence_id);
   },
   30000,
 );

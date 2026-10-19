@@ -1,9 +1,13 @@
 import { setImmediate } from "node:timers/promises";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import {
+  readStableArtifact,
+  type StableArtifactSnapshot,
+} from "../artifacts/readStableArtifact.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
+  ArtifactFileCancelled,
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
   assertArtifactReadActive,
@@ -133,18 +137,12 @@ const failureForPrimary = (cause: unknown, path: string): AnalysisError => {
   );
 };
 
-const failureFor = (
-  cause: unknown,
-  path: string,
-  signal?: AbortSignal,
-): AnalysisError => {
+const failureFor = (cause: unknown, path: string): AnalysisError => {
   const primary =
     cause instanceof ArtifactFileCleanupFailure &&
     cause.fileCleanupFailure.outcome.kind === "failed"
       ? failureForPrimary(cause.fileCleanupFailure.outcome.cause, path)
-      : cause instanceof ArtifactFileCleanupFailure && signal?.aborted
-        ? new AnalysisCancelledError(OPERATION, { cause: signal.reason })
-        : failureForPrimary(cause, path);
+      : failureForPrimary(cause, path);
   if (
     cause instanceof ArtifactReaderFailure &&
     cause.partialObservation !== undefined &&
@@ -177,6 +175,12 @@ const countLowerBound = ({ images, types, methods }: Il2cppMetadataRowCounts) =>
   images * (IMAGE_ROW + EMPTY_NAME) +
   types * (TYPE_ROW + 2 * EMPTY_NAME) +
   methods * (METHOD_ROW + EMPTY_NAME);
+
+const sourceArtifact = (path: string, snapshot: StableArtifactSnapshot) => ({
+  path,
+  sha256: snapshot.sha256,
+  bytes: snapshot.bytes.length,
+});
 
 /** Source identity survives a failed inventory without claiming decoded coverage. */
 const metadataSourceEvidence = (
@@ -279,12 +283,22 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
           options?.signal,
           undefined,
           this.#resources,
-        );
-        observed.artifact = {
-          path: input.path,
-          sha256: snapshot.sha256,
-          bytes: snapshot.bytes.length,
-        };
+        ).catch((cause: unknown) => {
+          // Only this awaited stable read owns these typed physical outcomes.
+          const outcome =
+            cause instanceof ArtifactFileCleanupFailure
+              ? (cause as ArtifactFileCleanupFailure<StableArtifactSnapshot>)
+                  .fileCleanupFailure.outcome
+              : cause instanceof ArtifactFileCancelled
+                ? (cause as ArtifactFileCancelled<StableArtifactSnapshot>)
+                    .fileCancellation.outcome
+                : undefined;
+          if (outcome?.kind === "completed")
+            observed.artifact = sourceArtifact(input.path, outcome.value);
+          throw cause;
+        });
+        const artifact = sourceArtifact(input.path, snapshot);
+        observed.artifact = artifact;
         assertArtifactReadActive(options?.signal);
         const limit = this.outputBytes;
         const steps = readIl2cppMetadataSteps(snapshot.bytes, {
@@ -303,11 +317,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
         const decoded = step.value;
         const report = {
           ...decoded,
-          artifact: {
-            path: input.path,
-            sha256: snapshot.sha256,
-            bytes: snapshot.bytes.length,
-          },
+          artifact,
           limitations: [
             "Only unencrypted global-metadata.dat versions 29, 31 and 39 are decoded; image, type and method names and counts are observed file content, not runtime behavior.",
             "Native code addresses, IL2CPP binary registration, fields, properties, signatures and generic instances are not recovered.",
@@ -327,7 +337,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
         return ok(parsed.data);
       });
     } catch (cause: unknown) {
-      const failure = failureFor(cause, input.path, options?.signal);
+      const failure = failureFor(cause, input.path);
       if (
         observed.artifact !== undefined &&
         failure.partialObservation === undefined
