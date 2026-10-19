@@ -21,23 +21,39 @@ const classAndState = (source: string) => {
   };
 };
 
-it("memoizes convergent getter states before spending another visit", () => {
-  const getters = Array.from(
-    { length: 510 },
-    (_, index) => `get g${index}() { return this.leaf; }`,
-  ).join("\n");
-  const { klass, state } = classAndState(`
+it.each([
+  // 170 branches plus their shared leaf consume exactly 512 scheduled states.
+  { count: 170, limited: false },
+  { count: 171, limited: true },
+  { count: 510, limited: true },
+])(
+  "deduplicates $count convergent getters with limited=$limited",
+  ({ count, limited }) => {
+    const getters = Array.from(
+      { length: count },
+      (_, index) => `get g${index}() { return this.leaf; }`,
+    ).join("\n");
+    const { klass, state } = classAndState(`
     const shared = {};
     class C { ${getters} get leaf() { return shared; } }
   `);
-  const references = semanticClassPropertyReferences(
-    { owner: klass, kind: "instance" },
-    [null],
-    state,
-  );
-  expect(references).toHaveLength(1);
-  expect(state.getterResourceLimits.size).toBe(0);
-});
+    const references = semanticClassPropertyReferences(
+      { owner: klass, kind: "instance" },
+      [null],
+      state,
+    );
+    expect(references).toHaveLength(1);
+    expect(references[0]).toMatchObject({
+      node: { type: "Identifier", name: "shared" },
+      path: [],
+    });
+    expect(references[0]?.escapes === true).toBe(limited);
+    expect(state.getterResourceLimits.size).toBe(limited ? 1 : 0);
+    expect([...state.getterResourceLimits]).toEqual(
+      limited ? ["getter-expansion"] : [],
+    );
+  },
+);
 
 it("keeps distinct remaining paths when getter expansions converge", () => {
   const { klass, state } = classAndState(`
