@@ -1,15 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
 
-/** Exact decimal or signed hexadecimal XML integer text. */
-export const parsePlistIntegerLiteral = (text: string): bigint | undefined => {
-  const match = /^([+-]?)(?:0[xX]([\da-fA-F]+)|(\d+))$/u.exec(text.trim());
-  if (match === null) return undefined;
-  const magnitude = BigInt(
-    match[2] === undefined ? match[3]! : `0x${match[2]}`,
-  );
-  return match[1] === "-" ? -magnitude : magnitude;
-};
-
 /** Source element types needed to distinguish large integers from integral reals. */
 export interface PlistNumberLiterals {
   readonly integers: ReadonlyMap<number, ReadonlySet<string>>;
@@ -28,7 +18,6 @@ export const createPlistNumberCollector = () => {
   const integers = new Map<number, Set<string>>();
   const reals = new Set<number>();
   let unsafeIntegerLiterals = 0;
-  let incompleteMetadata = false;
   return {
     integer: (exact: bigint) => {
       if (
@@ -46,14 +35,11 @@ export const createPlistNumberCollector = () => {
     real: (value: number) => {
       reals.add(value);
     },
-    markIncomplete: () => {
-      incompleteMetadata = true;
-    },
     result: (incomplete = false): PlistNumberLiterals => ({
       integers,
       reals,
       unsafeIntegerLiterals,
-      incomplete: incomplete || incompleteMetadata,
+      incomplete,
     }),
   };
 };

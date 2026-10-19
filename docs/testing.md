@@ -92,7 +92,7 @@ without serial scheduling. Pure domain/service, composition, conformance,
 evaluation, CLI boundary, and MCP boundary projects share module graphs. Their
 tests avoid process-global state and keep resource cleanup test-scoped. Each
 MCP session still owns its resources, and CLI cases retain fresh command
-instances or subprocesses. CLI module mocks belong in `tests/process-global/`
+instances or subprocesses. CLI and MCP module mocks belong in `tests/process-global/`
 so they keep per-file isolation. Product catalog verification stays with the
 isolated filesystem boundary tests because it loads both source and compiled
 module graphs. Adapter, other boundary, acceptance, and process-global projects
@@ -110,9 +110,14 @@ rendered declarations. Keep canonical rejection checks separate from the
 intentionally reduced compact advertisement, and probe actual client renderers
 when changing schema representations.
 
-The reused CLI boundary workers cap V8 old space at 384 MiB, based on their
-profiled allocation and cleanup behavior. This encourages collection between
-files; spawned REA processes retain their own heap settings.
+The reused CLI boundary workers cap V8 old space at 384 MiB for ordinary runs
+and 512 MiB with coverage enabled. Covered ADB fixtures exhaust the ordinary
+384 MiB budget; those fixtures also complete with the shared CLI graph preloaded
+at 512 MiB. This is a measured capacity control, not a suite-wide speedup claim.
+Both profiles keep the
+same bounded worker count, and spawned REA processes retain their own heap
+settings. Explicitly disabling coverage retains the ordinary profile; coverage
+provider options alone do not enable instrumentation.
 
 Vitest worker limits do not bound subprocesses launched within a test. Bound
 those batches separately so repeated CLI validation cannot oversubscribe the
@@ -216,6 +221,12 @@ controlled production seam for interleavings that cannot be reproduced reliably.
 | Cleanup fails after success or primary failure                                          | Public output retains the completed observation or primary diagnostic, remaining resources, and owner recovery action. Restore the denied resource and verify the owning cleanup retry.                                        |
 | Target exits without an acknowledgement, or transport disappears while it stays alive   | Positive owned exit proof resolves target lifetime; other resources still need cleanup. Lost transport alone does not prove exit. Verify unrelated/attached targets survive and same-connection recovery works when supported. |
 
+Shared process-supervision controls separate leader exit from output closure.
+Cover output during held or failed cleanup, bounded retention and drain timeout,
+retry, and borrowed stream authority. The POSIX inherited-stderr control uses a
+separate pipe as a release barrier after leader exit; it does not establish
+native Windows Job Object behavior.
+
 Synchronize cancellation with the finalization boundary being tested; a fixed
 delay after dispatch does not establish that phase. Use markers, barriers, or
 owned cleanup seams while preserving real cleanup where feasible. Check server
@@ -239,6 +250,15 @@ opaque rejection reasons, cancellation during failed finalization, and missing
 lineage followed by a confirmed passive family census. Windows controls require
 a fresh lineage observation and do not signal cached descendant PIDs after root
 termination. Simulated Windows controls do not establish native Windows behavior.
+
+Native process-ownership controls distinguish start identity, zombie lifecycle,
+current parent/group relation, and token-read evidence. Retain generation-bound
+candidates through smaller lineage observations, table omissions, reparenting,
+group changes, and failed cleanup retries. A readable token with unavailable
+identity stays unresolved. Native UID facts, rather than an earlier process-table
+row, determine whether a token denial concerns another user. Darwin tests compile
+the helper and exercise snapshot growth, absence, lifecycle, and UID observations;
+controlled Linux procfs tests do not establish real Linux exit or PID-reuse behavior.
 
 For atomic writes, exercise cancellation on both sides of the documented commit
 point and preserve any publication receipt. A late interruption does not prove
@@ -343,6 +363,11 @@ remain under `tests/fixtures/**`.
 The process-global Vitest configuration contract rejects new direct temporary-root
 creation outside the workspace seam and its narrowly documented boundary/package
 exceptions.
+
+The shared temporary-directory and workspace helpers preserve caller labels
+under an owned `rea-` prefix when needed. `npm run verify:test-temp-hygiene`
+uses the same ownership rule to find retained fixtures under a private temporary
+root. Third-party caches remain outside that ownership rule.
 
 Real Hopper, Ghidra, IDA, browser, package, and managed-code claims belong to their
 explicit `npm run verify:*` lanes. The reconstruction-readiness lane also
@@ -528,9 +553,14 @@ that generator's entry. Native outputs are not stored in this cache.
 
 Native package jobs, the Windows curated lane, and the Apple artifact lane reuse
 the same workflow's Turbo cache for portable compiled JavaScript, skills, and
-catalogs. The producer stages only the completed `test:prepare` task hashes into
-`.cache/ci-build-cache/`, preserving their archives, metadata, and available manifests.
-Missing required entries fail publication; older cross-run entries stay in the
+catalogs. The key parser retains the validated `test:prepare` task identities in
+`.cache/ci-build-plan.json`; staging reads this plan without starting another
+Turbo run that could evict cache entries. The producer stages matching archives,
+metadata, and available manifests into `.cache/ci-build-cache/`.
+`portable-build-cache.json` records availability per task. Evicted or partially
+missing entries are omitted as whole entries, and consumers rebuild cache misses,
+including when every entry is unavailable. Malformed plans, non-file entries,
+and I/O errors other than disappearance still fail publication. Older cross-run entries stay in the
 original cache. The Windows lane relies on the Linux static job for typechecking. They retain the normal build and prepack
 commands, which restore matching outputs or rebuild on a cache miss. Native
 artifacts, dependency installs, package archives, and runtime verification remain
@@ -730,11 +760,12 @@ See [Android analysis](android-analysis.md) for boundaries and resource budgets.
 
 `verify:jeb` requires a caller-started JEB client serving MCP at
 `REA_JEB_MCP_URL` (default `http://127.0.0.1:8425/mcp`) with a project
-already open, and verifies real CLI client inspection, unit listing coverage,
+already open, and exercises shared application/provider client inspection, unit listing coverage,
 and method decompilation. The script records the engine's exact response to
-`open_jeb_project`; JEB 5.48.0 headless instances do not advertise that tool.
+`open_jeb_project`; the earlier licensed 5.48.0 headless verification did not
+advertise that tool.
 REA does not install or launch JEB; see [JEB analysis](jeb-analysis.md) for
-the bring-your-own boundary. Verified against JEB 5.48.0 serving
+the bring-your-own boundary. The earlier licensed build was verified against JEB 5.48.0 serving
 `jeb-mcp-server` 1.3.0 at four scales: a compiled Java class fixture, a
 locally built signed probe APK with a launcher activity (manifest, v1/v2/v3
 certificates, dex bytecode, filtered and paginated listing), the published
@@ -745,7 +776,12 @@ decompilation through both CLI and MCP, and the official Flutter Gallery
 analyzed as native code (75k methods on arm64) and decompiled through both
 CLI and MCP with explicit unit selection, plus the thin Java wrapper and
 decoded manifest. The dedicated Dart snapshot processor and `run_script`
-remain GUI-only surfaces in JEB 5.48.0 headless.
+remained GUI-only surfaces in that headless build.
+The separate [Linux CE native audit](../experiments/analysis-efficiency/jeb-linux-native.md)
+uses the official CE `5.48.0.202610071539` direct CLI launcher and real
+CLI/stdio MCP ELF workflows. That audit does not qualify CE Java/Android
+decompilation or GUI project opening, and it does not replace the licensed
+verification above.
 Authenticated IPA and macOS application inventory projection is documented in
 [Apple application analysis](apple-application-analysis.md).
 
