@@ -456,6 +456,7 @@ const parseRegistration = (
       .pick({ command: true, args: true, serverName: true, transport: true })
       .strip()
       .parse(value);
+  let target = value;
   if (client.format === "opencode") {
     const entry = z
       .object({
@@ -466,13 +467,13 @@ const parseRegistration = (
       .passthrough()
       .parse(value);
     const [command = "", ...args] = entry.command;
-    return registrationSchema.parse({
+    target = {
       ...entry,
       command,
       args,
-    });
+    };
   }
-  const registration = registrationSchema.parse(value);
+  const registration = registrationSchema.parse(target);
   if (client.name === "codex" && Array.isArray(registration.tools))
     throw new TypeError(
       "Expected Codex tools to be a table of per-tool settings",

@@ -524,6 +524,36 @@ function registerClientToolPolicyTests(): void {
       }),
     ]);
   });
+
+  it("reports a non-array OpenCode tools setting as invalid", async () => {
+    const home = await createTestTempDirectory("rea-opencode-invalid-tools-");
+    await mkdir(join(home, ".config/opencode"), { recursive: true });
+    const entry = resolve("scripts/rea.mjs");
+    await writeFile(
+      join(home, ".config/opencode/opencode.json"),
+      JSON.stringify({
+        mcp: {
+          rea: {
+            type: "local",
+            command: [process.execPath, entry, "mcp"],
+            tools: { binary_session: { approval_mode: "approve" } },
+          },
+        },
+      }),
+    );
+
+    const statuses = await readClientRegistrationStatuses(home, entry, {
+      environment: {},
+    });
+
+    expect(statuses).toEqual([
+      expect.objectContaining({
+        client: "opencode",
+        state: "invalid",
+        command: [],
+      }),
+    ]);
+  });
 }
 
 it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
