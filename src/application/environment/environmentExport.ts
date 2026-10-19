@@ -13,6 +13,7 @@ import {
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { RegularFileChangedError } from "../../filesystem/RegularFile.js";
+import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { writeEnvironmentBundle } from "./environmentBundleWrite.js";
 import { sealOwnedJsonInput } from "../OwnedJsonInput.js";
@@ -92,8 +93,8 @@ const accessDeniedError = (
   while (current instanceof Error && !seen.has(current)) {
     seen.add(current);
     const code = systemCode(current);
-    if (code === "EACCES" || code === "EPERM")
-      return new AnalysisAccessDeniedError(
+    if (code === "EACCES" || code === "EPERM") {
+      const error = new AnalysisAccessDeniedError(
         ENVIRONMENT_EXPORT_OPERATION,
         path,
         code,
@@ -105,6 +106,9 @@ const accessDeniedError = (
             : {}),
         },
       );
+      bindArtifactFileCleanup(cause, error);
+      return error;
+    }
     current = current.cause;
   }
   return undefined;
@@ -310,12 +314,16 @@ export const exportEnvironmentBundle = async (
             cause.message,
           ),
         );
-      return err(
-        new AnalysisOutputError(ENVIRONMENT_EXPORT_OPERATION, cause.message, {
+      const error = new AnalysisOutputError(
+        ENVIRONMENT_EXPORT_OPERATION,
+        cause.message,
+        {
           cause,
           ...(cause.cleanup === undefined ? {} : { cleanup: cause.cleanup }),
-        }),
+        },
       );
+      bindArtifactFileCleanup(cause, error);
+      return err(error);
     }
     if (cause instanceof Error && systemCode(cause) !== undefined)
       return err(

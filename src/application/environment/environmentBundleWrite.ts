@@ -61,6 +61,7 @@ export const writeEnvironmentBundle = async (
 ): Promise<readonly WrittenBundleFile[]> => {
   const resources = new ArtifactResourceScope();
   let tree: SafeOutputTree | undefined;
+  let written: WrittenBundleFile[] | undefined;
   let outcome:
     | {
         readonly kind: "completed";
@@ -77,7 +78,7 @@ export const writeEnvironmentBundle = async (
       if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;
       throw cause;
     }
-    const written: WrittenBundleFile[] = [];
+    written = [];
     for (const file of plan.files)
       written.push(
         await writeBytes(tree, file.path, Buffer.from(file.content)),
@@ -107,6 +108,9 @@ export const writeEnvironmentBundle = async (
     if (closed.kind === "failed")
       throw resources.cleanupFailure(outcome, [closed]);
   }
-  if (outcome.kind === "failed") throw outcome.cause;
+  if (outcome.kind === "failed") {
+    if (owner?.published === true && written !== undefined) return written;
+    throw outcome.cause;
+  }
   return outcome.files;
 };

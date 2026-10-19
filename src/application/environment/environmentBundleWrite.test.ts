@@ -17,10 +17,51 @@ import {
   writeEnvironmentServeFiles,
 } from "../../../tests/fixtures/environmentServe.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   exportEnvironmentBundle,
   readEnvironmentExportInputs,
 } from "./environmentExport.js";
+
+it("uses confirmed publication after the output owner's descriptor cleanup completes", async () => {
+  const root = await createTestTempDirectory("rea-bundle-published-");
+  const files = await writeEnvironmentServeFiles(root);
+  const inputs = await readEnvironmentExportInputs(
+    files.manifestPath,
+    files.capturePath,
+  );
+  if (!inputs.ok) throw inputs.error;
+  const directory = join(root, "bundle");
+  const original = SafeOutputTree.prototype.commit;
+  const commit = vi
+    .spyOn(SafeOutputTree.prototype, "commit")
+    .mockImplementation(async function (this: SafeOutputTree, ...args) {
+      await original.apply(this, args);
+      throw new ArtifactReaderFailure(
+        "unavailable",
+        "controlled post-publication close failure",
+        {
+          cleanup: {
+            reason: "controlled directory close failure",
+            resources: [directory],
+          },
+        },
+      );
+    });
+  try {
+    const result = await exportEnvironmentBundle({
+      ...inputs.value,
+      source: environmentServeSource(),
+      directory,
+    });
+    expect(result).toMatchObject({ ok: true, value: { status: "exported" } });
+    expect(
+      await readFile(join(directory, "envs/grafana-example/evidence.json")),
+    ).toEqual(inputs.value.evidence.bytes);
+  } finally {
+    commit.mockRestore();
+  }
+});
 
 it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
   "returns a tagged permission refusal for an existing read-only empty directory",
