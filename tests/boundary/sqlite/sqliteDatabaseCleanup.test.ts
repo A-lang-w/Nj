@@ -472,7 +472,10 @@ it("tracks every unresolved owner in a close aggregate until each root releases"
     cleanupResources: readonly string[];
   };
   expect(aggregate).toMatchObject({ cleanupIncomplete: true });
-  expect(aggregate.cleanupResources).toEqual([first.path, second.path]);
+  // Retention order follows which failure lands first; compare as a set.
+  expect([...aggregate.cleanupResources].sort()).toEqual(
+    [first.path, second.path].sort(),
+  );
 
   allowed.add(first);
   await expect(provider.close()).rejects.toMatchObject({
