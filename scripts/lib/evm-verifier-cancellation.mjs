@@ -157,7 +157,7 @@ export async function waitForEvmVerifierWorker(parentPid, settled) {
           .split("\0")
           .filter(Boolean);
       } catch (cause) {
-        if (cause.code === "ENOENT") continue;
+        if (cause.code === "ENOENT" || cause.code === "ESRCH") continue;
         throw cause;
       }
       if (
