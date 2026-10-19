@@ -762,6 +762,26 @@ describe("advertised empty-string literals", () => {
     });
   });
 
+  it("does not resolve references across nested resource boundaries", () => {
+    const canonical = {
+      $defs: { empty: { type: "string", const: "" } },
+      type: "object",
+      properties: {
+        nested: {
+          $id: "https://example.com/nested",
+          type: "object",
+          properties: { value: { not: { $ref: "#/$defs/empty" } } },
+        },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.$defs).toEqual({ empty: { type: "string" } });
+    expect(advertised.properties.nested.$id).toBe("https://example.com/nested");
+    expect(advertised.properties.nested.properties.value).toEqual({
+      not: { $ref: "#/$defs/empty" },
+    });
+  });
+
   it("decodes pointer separators before splitting reference tokens", () => {
     const canonical = {
       $defs: { empty: { type: "string", const: "" } },

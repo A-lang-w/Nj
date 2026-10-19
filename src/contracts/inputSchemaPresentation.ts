@@ -24,6 +24,9 @@ const resolvePointer = (
 ): unknown => {
   let value: unknown = root;
   for (const token of tokens) {
+    // A pointer can cross a resource boundary; preserve the original
+    // projection rather than guess the reference scope beyond it.
+    if (value !== root && isObject(value) && "$id" in value) return undefined;
     if (Array.isArray(value)) {
       if (!/^(?:0|[1-9]\d*)$/u.test(token)) return undefined;
       const index = Number(token);
@@ -61,6 +64,8 @@ const findSchemaAnchor = (
         !schemaChildren.has(key)
       )
         continue;
+      // Anchors inside a nested resource belong to that resource.
+      if (isObject(child) && "$id" in child) continue;
       if (schemaMaps.has(key) && isObject(child)) {
         for (const [childName, grandChild] of Object.entries(child)) {
           const found = scan(grandChild, [...path, key, childName]);
@@ -278,6 +283,8 @@ const referencesChangingTarget = (
   }
   return Object.entries(node).some(([key, child]) => {
     if (key === "const" || key === "enum" || key === "$ref") return false;
+    // References inside a nested resource address that resource only.
+    if (isObject(child) && "$id" in child) return false;
     return referencesChangingTarget(child, root, active);
   });
 };
@@ -286,6 +293,7 @@ const normalizeAdvertisedSchema = (
   value: unknown,
   root: unknown = value,
   active: ReadonlySet<string> = new Set(),
+  suppressReferences = false,
 ): SchemaNormalization => {
   if (!isObject(value)) return { schema: value, changed: false };
 
@@ -294,14 +302,24 @@ const normalizeAdvertisedSchema = (
   const normalizeMap = (map: Readonly<Record<string, unknown>>) =>
     Object.fromEntries(
       Object.entries(map).map(([name, child]) => {
-        const result = normalizeAdvertisedSchema(child, root, active);
+        const result = normalizeAdvertisedSchema(
+          child,
+          root,
+          active,
+          suppressReferences || (isObject(child) && "$id" in child),
+        );
         changed ||= result.changed;
         return [name, result.schema];
       }),
     );
   const normalizeList = (list: readonly unknown[]) =>
       list.map((child) => {
-        const result = normalizeAdvertisedSchema(child, root, active);
+        const result = normalizeAdvertisedSchema(
+          child,
+          root,
+          active,
+          suppressReferences || (isObject(child) && "$id" in child),
+        );
         changed ||= result.changed;
         return result;
       });
@@ -325,10 +343,18 @@ const normalizeAdvertisedSchema = (
     ) {
       const results = Array.isArray(child)
         ? normalizeList(child)
-        : [normalizeAdvertisedSchema(child, root, active)];
+        : [
+            normalizeAdvertisedSchema(
+              child,
+              root,
+              active,
+              suppressReferences || (isObject(child) && "$id" in child),
+            ),
+          ];
       const nestedChanged =
         results.some((result) => result.changed) ||
         (key === "contains" &&
+          !suppressReferences &&
           referencesChangingTarget(child, root, active));
       if (
         key === "contains" &&
@@ -389,11 +415,16 @@ const normalizeAdvertisedSchema = (
   }
 
   const negated = Object.hasOwn(value, "not")
-    ? normalizeAdvertisedSchema(value.not, root, active)
+    ? normalizeAdvertisedSchema(
+        value.not,
+        root,
+        active,
+        suppressReferences || (isObject(value.not) && "$id" in value.not),
+      )
     : undefined;
   if (
     negated?.changed ||
-    referencesChangingTarget(value.not, root, active)
+    (!suppressReferences && referencesChangingTarget(value.not, root, active))
   ) {
     // Widening a predicate under `not` narrows the containing schema.
     changed = true;
@@ -403,17 +434,32 @@ const normalizeAdvertisedSchema = (
   }
 
   const conditional = Object.hasOwn(value, "if")
-    ? normalizeAdvertisedSchema(value.if, root, active)
+    ? normalizeAdvertisedSchema(
+        value.if,
+        root,
+        active,
+        suppressReferences || (isObject(value.if) && "$id" in value.if),
+      )
     : undefined;
   const thenBranch = Object.hasOwn(value, "then")
-    ? normalizeAdvertisedSchema(value.then, root, active)
+    ? normalizeAdvertisedSchema(
+        value.then,
+        root,
+        active,
+        suppressReferences || (isObject(value.then) && "$id" in value.then),
+      )
     : undefined;
   const elseBranch = Object.hasOwn(value, "else")
-    ? normalizeAdvertisedSchema(value.else, root, active)
+    ? normalizeAdvertisedSchema(
+        value.else,
+        root,
+        active,
+        suppressReferences || (isObject(value.else) && "$id" in value.else),
+      )
     : undefined;
   if (
     conditional?.changed ||
-    referencesChangingTarget(value.if, root, active)
+    (!suppressReferences && referencesChangingTarget(value.if, root, active))
   ) {
     // Changing the predicate can route canonical-valid inputs into a rejecting branch.
     changed = true;
@@ -439,7 +485,8 @@ const normalizeAdvertisedSchema = (
     const schemas = normalized.map((result) => result.schema);
     const branchesChanged =
       normalized.some((result) => result.changed) ||
-      branches.some((branch) => referencesChangingTarget(branch, root, active));
+      (!suppressReferences &&
+        branches.some((branch) => referencesChangingTarget(branch, root, active)));
     if (combinator === "oneOf" && branchesChanged) {
       const booleanLiteralsOnly = branches.every(isBooleanLiteralSchema);
       if (booleanLiteralsOnly) {
@@ -565,6 +612,9 @@ const collectSchemaReferences = (
       !schemaChildren.has(key)
     )
       continue;
+    // Fragment references inside a nested resource address that resource,
+    // never the outer schema; do not collect them.
+    if (isObject(child) && "$id" in child) continue;
     if (schemaMaps.has(key) && isObject(child)) {
       for (const [name, grandChild] of Object.entries(child))
         collectSchemaReferences(grandChild, refs, [...path, key, name]);
