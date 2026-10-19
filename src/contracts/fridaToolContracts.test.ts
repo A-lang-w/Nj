@@ -168,3 +168,16 @@ describe("Frida tool contracts", () => {
     expect(isValidFridaRemoteAddress("user@frida-target")).toBe(false);
   });
 });
+
+describe("Frida close ordering contract", () => {
+  it("requires instrumentation release before resuming a paused spawn", () => {
+    const close = TOOL_CONTRACTS.find(
+      (candidate) => candidate.name === "close_frida_session",
+    );
+
+    expect(close?.description).toContain(
+      "resume it only after script cleanup or session detach confirms the instrumentation is released",
+    );
+    expect(close?.description).not.toContain("resume it before detaching");
+  });
+});
