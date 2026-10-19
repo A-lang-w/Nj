@@ -248,7 +248,8 @@ grafana-example/
 ```
 
 The command reads each file once, after checking that reading and parsing the
-whole file fits the process's live heap headroom (a file that does not is
+whole file, and the two copies made while the pair is authenticated, fits the
+process's live heap headroom (a file that does not is
 refused as a `resource_constraint` before it is read), then authenticates and cross-checks the
 pair as `environment-serve` does, so a manifest projected from another capture
 is refused with the same `invalid_request` before anything is written, and the

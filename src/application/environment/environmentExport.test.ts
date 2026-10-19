@@ -12,8 +12,10 @@ import {
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { PACKAGE_METADATA } from "../../generatedPackageMetadata.js";
+import { nativeJsonParseRequiredBytes } from "../JsonInputFile.js";
 import {
   exportEnvironmentBundle,
+  LIVE_PARSE_COPIES,
   readEnvironmentExportInputs,
 } from "./environmentExport.js";
 
@@ -269,4 +271,36 @@ describe("exportEnvironmentBundle file modes", () => {
       }
     },
   );
+});
+
+describe("readEnvironmentExportInputs heap admission", () => {
+  it("reserves headroom for every copy that is live while the pair loads, not only the native parse", async () => {
+    const root = await createTestTempDirectory(
+      "rea-environment-export-copies-",
+    );
+    const files = await writeEnvironmentServeFiles(
+      root,
+      environmentServeFixture(),
+    );
+    const { size } = await stat(files.manifestPath);
+    // Room for one native parse, but not for the authenticated and schema copies that follow it.
+    vi.mocked(v8.getHeapStatistics).mockReturnValueOnce({
+      ...v8.getHeapStatistics(),
+      total_available_size: nativeJsonParseRequiredBytes(size) * 2,
+    });
+    const refused = await readEnvironmentExportInputs(
+      files.manifestPath,
+      files.capturePath,
+    );
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      reportedLimits: {
+        input_path: files.manifestPath,
+        required_heap_bytes:
+          nativeJsonParseRequiredBytes(size) * LIVE_PARSE_COPIES,
+      },
+    });
+  });
 });

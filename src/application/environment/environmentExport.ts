@@ -177,13 +177,17 @@ const NOT_A_FILE_CODES = new Set([
   "ENAMETOOLONG",
 ]);
 
-/** Refuse, as a resource constraint, a file whose whole read and native parse would not fit live heap headroom. */
+/** The raw parse, its authenticated Evidence copy and the schema copy of its result are live together while the pair loads. */
+export const LIVE_PARSE_COPIES = 3;
+
+/** Refuse, as a resource constraint, a file whose whole read, native parse and loading copies would not fit live heap headroom. */
 const headroomRefusal = (
   path: string,
   inputBytes: number,
 ): AnalysisResourceConstraintError | undefined => {
   const heap = getHeapStatistics();
-  const requiredBytes = nativeJsonParseRequiredBytes(inputBytes);
+  const requiredBytes =
+    nativeJsonParseRequiredBytes(inputBytes) * LIVE_PARSE_COPIES;
   return requiredBytes <= heap.total_available_size
     ? undefined
     : new AnalysisResourceConstraintError(

@@ -186,6 +186,32 @@ describe("planEnvironmentBundle", () => {
   });
 });
 
+describe("planEnvironmentBundle portable names", () => {
+  it("refuses device names Windows reserves for files and folders, before planning any file", () => {
+    for (const name of ["con", "prn", "aux", "nul", "com1", "lpt9"]) {
+      const refused = planEnvironmentBundle(environmentServeSource(), {
+        name,
+        packageSource: registryPackageSource(),
+      });
+      if (refused.ok) throw new Error(`Expected ${name} to be refused`);
+      expect(projectAnalysisError(refused.error)).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "environment-export",
+          issues: [{ path: ["name"], reason: "invalid_value" }],
+        },
+      });
+    }
+    for (const name of ["console", "com10", "nul-check"])
+      expect(
+        planEnvironmentBundle(environmentServeSource(), {
+          name,
+          packageSource: registryPackageSource(),
+        }).ok,
+      ).toBe(true);
+  });
+});
+
 describe("planEnvironmentBundle replay check", () => {
   it("keeps the first record's unknown status instead of borrowing another record's", () => {
     const source = environmentServeSource();
