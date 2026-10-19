@@ -9,6 +9,19 @@ import {
 import { analyzeJavaScriptSemantics } from "../../domain/javascript/javascriptSemanticAnalysis.js";
 import { getterExpansionSource } from "../../../tests/fixtures/javascriptGetterExpansion.js";
 
+it("retains application path change identity and provenance across the worker boundary", () => {
+  const facts = analyzeJavaScriptStaticSource(`
+    const { app } = require("electron");
+    app.setAppPath("./other");
+  `);
+  expect(facts.electron.app_path_changes).toHaveLength(1);
+  expect(
+    javaScriptWorkerStaticAnalysisSchema.parse(
+      JSON.parse(JSON.stringify(facts)) as unknown,
+    ),
+  ).toEqual(facts);
+});
+
 it("transfers getter expansion limits and unknown bindings across the worker boundary", () => {
   const ir = analyzeJavaScriptSemantics(getterExpansionSource());
   const header = { coverage: ir.coverage, limitations: ir.limitations };

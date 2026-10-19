@@ -80,24 +80,37 @@ export function* addJavaScriptStaticFindingsSteps(
       addSourceMapEdge(context, { file, asset, value, coverage });
   }
   yield* propagateApplicationOwners(context, omissions.imports);
-  for (const [container, gaps] of context.applicationModuleGapSources) {
-    const possible =
-      context.applicationPossibleRootsByContainer.get(container) ??
-      new Set<string>();
+  const possible = new Set<string>();
+  for (const roots of context.applicationPossibleRootsByContainer.values())
+    for (const root of roots) addApplicationRootCandidate(possible, root);
+  for (const gaps of context.applicationModuleGapSources.values()) {
     for (const gap of gaps) {
       yield;
       for (const root of context.applicationRootsBySource.get(gap) ?? [])
         addApplicationRootCandidate(possible, root);
     }
-    context.applicationPossibleRootsByContainer.set(container, possible);
   }
+  // An unknown loader may cross an inventoried archive boundary in either
+  // direction. Retain possible owners in every container it could reach.
+  for (const file of context.fileSet.files) {
+    yield;
+    context.applicationPossibleRootsByContainer.set(
+      applicationContainerIdentity(context.fileSet, file),
+      possible,
+    );
+  }
+  const changedRoots = changedApplicationRoots(context);
   for (const { file, javascript } of context.analysis.files) {
     yield;
     const asset = context.assetNodes.get(file.path);
     if (javascript === null || asset === undefined) continue;
     const coverage = javascriptAnalysisCoverage(javascript);
     for (const value of javascript.role_paths)
-      addDiscoveredRole(context, { file, asset, value, coverage });
+      addDiscoveredRole(
+        context,
+        { file, asset, value, coverage },
+        changedRoots,
+      );
   }
   return selfReferenceOmissions(
     omissions.selfReferences,
@@ -105,6 +118,22 @@ export function* addJavaScriptStaticFindingsSteps(
     "the referencing module",
   );
 }
+
+/** A setter changes process-wide runtime state, not package ownership. */
+const changedApplicationRoots = (
+  context: JavaScriptArtifactGraphContext,
+): ReadonlySet<string> | null => {
+  const roots = new Set<string>();
+  for (const { file, javascript } of context.analysis.files) {
+    if (!javascript?.electron.app_path_changes?.length) continue;
+    const owners = context.applicationRootsBySource.get(file.path);
+    // A setter whose launching application is unknown cannot establish an
+    // unchanged root for any package-based fallback.
+    if (owners === undefined) return null;
+    for (const root of owners) roots.add(root);
+  }
+  return roots;
+};
 
 /** Carry every entrypoint owner through already-resolved imports before roles.
  * Sets and change-driven traversal retain competition and terminate on cycles.
@@ -424,7 +453,9 @@ const addStorage = (
 const addDiscoveredRole = (
   context: JavaScriptArtifactGraphContext,
   input: FindingInput<StaticRolePath>,
+  changedRoots: ReadonlySet<string> | null,
 ): void => {
+  const root = applicationRootPath(context, input.file);
   const resolution = resolveArtifactPathByContext({
     declaredPath: input.value.path,
     sourcePath: input.file.path,
@@ -439,7 +470,10 @@ const addDiscoveredRole = (
         ? {
             // Raw loadFile literals belong to the application, not its caller.
             runtimePathKind: "application-file" as const,
-            applicationRootPath: applicationRootPath(context, input.file),
+            applicationRootPath:
+              changedRoots === null || (root !== null && changedRoots.has(root))
+                ? null
+                : root,
             applicationRootIsProven: context.applicationRootsBySource.has(
               input.file.path,
             ),

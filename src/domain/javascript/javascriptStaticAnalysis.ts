@@ -206,6 +206,14 @@ const finalizeStaticAnalysis = (
     source_map_urls: accumulator.sourceMaps,
     vendors: detectVendors(source),
     electron: {
+      ...(accumulator.appPathChanges.length > 0
+        ? {
+            app_path_changes: finalizeLocatedFindings(
+              accumulator.appPathChanges,
+              accumulator.moduleRangeIndex,
+            ),
+          }
+        : {}),
       ...(accumulator.electronCallPaths?.length
         ? { call_paths: accumulator.electronCallPaths }
         : {}),

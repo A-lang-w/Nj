@@ -2,6 +2,51 @@ import { expect, it } from "vitest";
 
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
+it.each([
+  ['const { app } = require("electron"); app.setAppPath("./other");', true],
+  [
+    'import { app as runtime } from "electron/main"; runtime.setAppPath(path);',
+    true,
+  ],
+  [
+    'import * as electron from "electron"; electron.app.setAppPath("./other");',
+    true,
+  ],
+  [
+    'const { app } = require("electron"); const runtime = app; runtime.setAppPath("./other");',
+    true,
+  ],
+  [
+    'const { app } = require("electron"); const change = app.setAppPath; change("./other");',
+    true,
+  ],
+  ['const app = { setAppPath() {} }; app.setAppPath("./other");', false],
+  [
+    'import { app } from "electron"; function local(app) { app.setAppPath("./other"); }',
+    false,
+  ],
+  [
+    'const electron = { app: { setAppPath() {} } }; electron.app.setAppPath("./other");',
+    false,
+  ],
+])(
+  "retains Electron application path changes by binding identity: %s",
+  (source, expected) => {
+    const analysis = analyzeJavaScriptStaticSource(source);
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.electron.app_path_changes ?? []).toEqual(
+      expected
+        ? [
+            expect.objectContaining({
+              module_key: null,
+              location: expect.any(Object),
+            }),
+          ]
+        : [],
+    );
+  },
+);
+
 it("recovers APIs through an ES module default import of Electron", () => {
   const analysis = analyzeJavaScriptStaticSource(`
     import electron from "electron";

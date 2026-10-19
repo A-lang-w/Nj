@@ -27,6 +27,52 @@ const fixtureImports = (loader: string) => {
   }
 };
 
+cliTest.for(
+  (["CLI", "stdio MCP"] as const).flatMap((surface) =>
+    ["direct", "alias", "local"].map((setter) => ({ surface, setter })),
+  ),
+)(
+  "keeps loadFile roots unknown after an Electron application path setter through $surface ($setter)",
+  async ({ surface, setter }, { cli }) => {
+    const root = await createTestTempDirectory("rea-app-path-setter-");
+    const change =
+      setter === "direct"
+        ? 'const { app } = require("electron"); app.setAppPath("/runtime/changed");'
+        : setter === "alias"
+          ? 'const { app: runtime } = require("electron/main"); const current = runtime; current["setAppPath"]("/runtime/changed");'
+          : 'const app = { setAppPath() {} }; app.setAppPath("/runtime/changed");';
+    await writeFixtureFiles(root, {
+      "a/package.json": JSON.stringify({ main: "main.cjs" }),
+      "a/main.cjs": `${change} require("./window.cjs");`,
+      "a/window.cjs":
+        'const { BrowserWindow } = require("electron"); new BrowserWindow().loadFile("index.html");',
+      "a/index.html": "package-root page",
+      "index.html": "artifact-root decoy",
+    });
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    const role = graph.nodes.find(({ kind }) => kind === "electron-renderer");
+    const target = setter === "local" ? "a/index.html" : null;
+    expect(role?.observations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            resolution_status: target === null ? "unavailable" : "resolved",
+            resolved_path: target,
+          }),
+        }),
+      ]),
+    );
+    expect(
+      graph.edges
+        .filter(
+          ({ source_node_id, relation }) =>
+            source_node_id === role?.node_id && relation === "maps_to",
+        )
+        .map(({ properties }) => properties.resolved_path),
+    ).toEqual(target === null ? [] : [target]);
+  },
+);
+
 const unprovenLoaderSources: Readonly<Record<string, string>> = {
   "bound module loader":
     'const load = module.require.bind(module); load("../shared/window.cjs");',
@@ -347,15 +393,21 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
   },
 );
 
-cliTest.for(["CLI", "stdio MCP"] as const)(
-  "retains possible owners for a module across a nested ASAR boundary through %s",
-  async (surface, { cli }) => {
+cliTest.for(
+  (["CLI", "stdio MCP"] as const).flatMap((surface) =>
+    [false, true].map((dynamic) => ({ surface, dynamic })),
+  ),
+)(
+  "retains possible owners for a module across a nested ASAR boundary through $surface (dynamic=$dynamic)",
+  async ({ surface, dynamic }, { cli }) => {
     const root = await createTestTempDirectory("rea-asar-module-gap-");
     const source = join(root, "source");
     const application = join(root, "application");
     await writeFixtureFiles(source, {
       "package.json": JSON.stringify({ main: "main.cjs" }),
-      "main.cjs": 'require("../window.cjs");',
+      "main.cjs": dynamic
+        ? "require(process.env.WINDOW_MODULE);"
+        : 'require("../window.cjs");',
     });
     await writeFixtureFiles(application, {
       "other/package.json": JSON.stringify({ main: "main.cjs" }),
@@ -390,9 +442,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         expect.objectContaining({
           relation: "imports",
           properties: expect.objectContaining({
-            specifier: "../window.cjs",
-            resolution_status: "resolved",
-            resolved_path: "resources/window.cjs",
+            specifier: dynamic ? null : "../window.cjs",
+            ...(dynamic ? {} : { resolution_status: "resolved" }),
+            resolved_path: dynamic ? null : "resources/window.cjs",
           }),
         }),
       ]),
