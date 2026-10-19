@@ -3,8 +3,10 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { resolveAdbBinary } from "../dist/adb/AdbConfiguration.js";
 import { AdbDeviceAnalysisService } from "../dist/application/adb/AdbDeviceAnalysisService.js";
 import { createAdbDeviceAnalysisProvider } from "../dist/composition/adb.js";
+import { removeVerifierProbeFile } from "./lib/adb-verifier-cleanup.mjs";
 import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 
 const options = parseArguments(process.argv.slice(2));
@@ -252,23 +254,36 @@ try {
         overwrite: false,
       });
       if (pushed !== null) {
-        check(
-          "push reports matching device-side digest",
-          pushed.device_digest_source === "device_sha256sum" &&
-            pushed.device_sha256 === pushed.sha256,
-          `${pushed.bytes} bytes`,
-        );
-        const pulled = await run("pull_adb_file", {
-          serial,
-          device_path: deviceTarget,
-          output_directory: transferRoot,
-        });
-        if (pulled !== null)
+        try {
           check(
-            "pulled file digest matches the pushed digest",
-            pulled.sha256 === pushed.sha256,
-            `${pulled.bytes} bytes`,
+            "push reports matching device-side digest",
+            pushed.device_digest_source === "device_sha256sum" &&
+              pushed.device_sha256 === pushed.sha256,
+            `${pushed.bytes} bytes`,
           );
+          const pulled = await run("pull_adb_file", {
+            serial,
+            device_path: deviceTarget,
+            output_directory: transferRoot,
+          });
+          if (pulled !== null)
+            check(
+              "pulled file digest matches the pushed digest",
+              pulled.sha256 === pushed.sha256,
+              `${pulled.bytes} bytes`,
+            );
+        } finally {
+          try {
+            await removeVerifierProbeFile(
+              resolveAdbBinary(process.env).binary,
+              serial,
+              deviceTarget,
+            );
+            check("device transfer probe removed", true);
+          } catch (cause) {
+            check("device transfer probe removed", false, formatFailure(cause));
+          }
+        }
       }
       const screenRoot = await mkdtemp(join(tmpdir(), "rea-adb-screen-"));
       try {
