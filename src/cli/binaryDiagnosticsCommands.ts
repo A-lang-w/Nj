@@ -15,6 +15,7 @@ import { withCommandCancellation } from "./commandCancellation.js";
 import { inspectPeResourcesInputSchema } from "../domain/native/peResources.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
 /** Inspect operator-selected files through the same shared workflow as MCP. */
 export const registerBinaryDiagnosticsCommands = (
@@ -43,7 +44,7 @@ export const registerBinaryDiagnosticsCommands = (
         logCliCommand(logger, CLI_COMMANDS.inspectByteEntropy, async () => {
           const result = await entropy.inspect(
             {
-              path: resolve(args.path),
+              path: absoluteCallerPath(args.path),
               block_size: options.blockSize,
               offset: options.offset,
               length: options.length,
