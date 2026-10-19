@@ -53,6 +53,34 @@ const loaderCases = [
     unknownLoad: false,
   },
   {
+    name: "inactive callable default",
+    source:
+      'function host(){return module;}const {make=host}={make(){return {};}};make().require=()=>{};require("./local.cjs");',
+    unknownOwner: false,
+    unknownLoad: false,
+  },
+  {
+    name: "active callable default",
+    source:
+      'function host(){return module;}const {make=host}={};make().require=()=>{};require("./local.cjs");',
+    unknownOwner: true,
+    unknownLoad: true,
+  },
+  {
+    name: "inactive array callable default",
+    source:
+      'function host(){return module;}const [make=host]=[()=>({})];make().require=()=>{};require("./local.cjs");',
+    unknownOwner: false,
+    unknownLoad: false,
+  },
+  {
+    name: "iterator callable default",
+    source:
+      'function host(){return module;}const values=[()=>({})];values[Symbol.iterator]=function*(){yield undefined;};const [make=host]=values;make().require=()=>{};require("./local.cjs");',
+    unknownOwner: true,
+    unknownLoad: true,
+  },
+  {
     name: "generator local result",
     source:
       'function* get(){yield module;}const api=get();api.require=()=>{};api.require("../shared/window.cjs");',
@@ -63,6 +91,34 @@ const loaderCases = [
     name: "async local result",
     source:
       'async function get(){return module;}const api=get();api.require=()=>{};api.require("../shared/window.cjs");',
+    unknownOwner: false,
+    unknownLoad: false,
+  },
+  {
+    name: "awaited module result",
+    source:
+      '(async()=>{const get=async()=>module;(await get()).require("../shared/window.cjs");})();',
+    unknownOwner: true,
+    unknownLoad: true,
+  },
+  {
+    name: "awaited pending alias",
+    source:
+      '(async()=>{const get=async()=>module;const pending=get();const api=await pending;api.require("../shared/window.cjs");})();',
+    unknownOwner: true,
+    unknownLoad: true,
+  },
+  {
+    name: "awaited generator local",
+    source:
+      '(async()=>{function* get(){yield module;}const api=await get();api.require=()=>{};api.require("../shared/window.cjs");})();',
+    unknownOwner: false,
+    unknownLoad: false,
+  },
+  {
+    name: "awaited async local",
+    source:
+      '(async()=>{const get=async()=>({require(){}});const api=await get();api.require("../shared/window.cjs");})();',
     unknownOwner: false,
     unknownLoad: false,
   },
@@ -100,6 +156,34 @@ const loaderCases = [
       'Array.prototype[0]=module;const [api]=[,];api.require("../shared/window.cjs");',
     unknownOwner: true,
     unknownLoad: true,
+  },
+  {
+    name: "Object prototype array hole",
+    source:
+      'Object.prototype[0]=module;const [api]=[,];api.require("../shared/window.cjs");',
+    unknownOwner: true,
+    unknownLoad: true,
+  },
+  {
+    name: "Object prototype extra local",
+    source:
+      'Object.prototype.extra=module;const [api]=[{require(){}}];api.require("../shared/window.cjs");',
+    unknownOwner: false,
+    unknownLoad: false,
+  },
+  {
+    name: "replaced host method",
+    source:
+      'const box={make(){return {};}};box.make=()=>module;box.make().require("../shared/window.cjs");',
+    unknownOwner: true,
+    unknownLoad: true,
+  },
+  {
+    name: "replaced local method",
+    source:
+      'const box={make(){return module;}};box.make=()=>({require(){}});box.make().require("../shared/window.cjs");',
+    unknownOwner: false,
+    unknownLoad: false,
   },
   {
     name: "Windows relative require",
@@ -153,6 +237,7 @@ cliTest.for(
         ...("imports" in testCase ? { imports: testCase.imports } : {}),
       }),
       "b/main.cjs": testCase.source,
+      "b/local.cjs": "module.exports = {};",
       "b/proxy/window.cjs": 'require("../../shared/window.cjs");',
       "b/index.html": "second application page",
       "shared/window.cjs": windowSource,

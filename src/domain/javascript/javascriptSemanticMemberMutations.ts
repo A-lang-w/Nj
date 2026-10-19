@@ -62,8 +62,8 @@ type ValueEffect = "write" | "escape";
 
 /** Only replacing or possibly selecting an iterator-bearing prototype slot changes iteration. */
 const arrayPrototypeIterationMayChange = (path: PropertyPath): boolean => {
-  // The default constructor points back to Array, so each constructor.prototype
-  // pair may return to this same iterator-bearing prototype.
+  // Array.prototype and Object.prototype are on native arrays' prototype
+  // chain. Their default constructor.prototype pairs return to the same owner.
   let offset = 0;
   while (path[offset] === "constructor" && path[offset + 1] === "prototype")
     offset += 2;
@@ -301,11 +301,21 @@ export function* collectSemanticMemberMutationsSteps(
         source.node.start,
         source.node.end,
         source.projection,
+        source.iterationSources?.map((iterable) => [
+          iterable.node.start,
+          iterable.node.end,
+          iterable.projection,
+        ]),
       ]),
       reference.fallbackSources?.map((source) => [
         source.node.start,
         source.node.end,
         source.projection,
+        source.iterationSources?.map((iterable) => [
+          iterable.node.start,
+          iterable.node.end,
+          iterable.projection,
+        ]),
       ]),
       [...reference.bindings].sort(compareUnicodeCodePoints),
     ]);
@@ -375,13 +385,14 @@ export function* collectSemanticMemberMutationsSteps(
               mutation,
             );
           if (
-            (expression.name === "Array" &&
+            (["Array", "Object"].includes(expression.name) &&
               (current.path[0] === "prototype" || current.path[0] === null) &&
               arrayPrototypeIterationMayChange(current.path.slice(1))) ||
             (["globalThis", "global", "window", "self"].includes(
               expression.name,
             ) &&
-              (current.path[0] === "Array" || current.path[0] === null) &&
+              (["Array", "Object"].includes(String(current.path[0])) ||
+                current.path[0] === null) &&
               (current.path[1] === "prototype" || current.path[1] === null) &&
               arrayPrototypeIterationMayChange(current.path.slice(2)))
           )
@@ -975,14 +986,12 @@ interface IterableReference extends ReferencedValue {
   readonly mutation?: t.Node;
   readonly originAt: t.Node | undefined;
   readonly iterationOnly?: boolean;
-  readonly requiredSources?: readonly {
-    readonly node: t.Node;
-    readonly projection: PropertyPath;
-  }[];
-  readonly fallbackSources?: readonly {
-    readonly node: t.Node;
-    readonly projection: PropertyPath;
-  }[];
+  readonly requiredSources?: NonNullable<
+    SemanticIterationSource["requiredSources"]
+  >;
+  readonly fallbackSources?: NonNullable<
+    SemanticIterationSource["fallbackSources"]
+  >;
 }
 
 const expandedIterationReferences = (

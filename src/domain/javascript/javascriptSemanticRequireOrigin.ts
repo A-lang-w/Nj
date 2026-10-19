@@ -1,3 +1,4 @@
+import { semanticProjectedSourcesAtRead as moduleObjectSourcesAtRead } from "./javascriptSemanticProjectedSources.js";
 import * as t from "@babel/types";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 
@@ -10,7 +11,6 @@ import {
   semanticResolutionBlocked,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
-  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import {
   semanticStaticPropertyKey,
@@ -22,19 +22,10 @@ import {
   semanticEffectTiming,
   semanticBindingAtRead,
   semanticTopLevelEffectFollowsCapture,
-  semanticDefiniteEffectPrecedesReference,
 } from "./javascriptSemanticMutationInitializers.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
-import {
-  semanticCopiedReferencePath,
-  semanticReferenceIterationUnknown,
-  semanticReferenceSourcesInactive,
-} from "./javascriptSemanticReferenceSources.js";
-import {
-  semanticIterationSources,
-  semanticStoredSourceProjection,
-} from "./javascriptSemanticIterationSources.js";
+import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
 import {
   semanticArrayPropertyReferences,
   semanticObjectPropertyReferences,
@@ -44,6 +35,7 @@ import {
   semanticAliasSelectionChoices,
   type SemanticAliasSelectionPath,
 } from "./javascriptSemanticAliasSelections.js";
+import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 
 export interface JavaScriptRequireOrigin {
   readonly origin: JavaScriptModuleOrigin;
@@ -345,149 +337,15 @@ const moduleRequireWrites = new WeakMap<
 >();
 const moduleReturnedReferences = new WeakMap<
   JavaScriptSemanticAnalysisState,
-  ReturnType<typeof createSemanticReturnedReferences>
+  Map<
+    "direct-call" | "awaited-call",
+    ReturnType<typeof createSemanticReturnedReferences>
+  >
 >();
 
 type ModuleObjectSource = {
   readonly node: t.Node;
   readonly path: SemanticAliasSelectionPath;
-};
-
-/** Retain assignment values, rather than equating any member write with module. */
-const moduleObjectSourcesAtRead = (
-  binding: JavaScriptSemanticBindingState,
-  reference: t.Node,
-  path: SemanticAliasSelectionPath,
-  state: JavaScriptSemanticAnalysisState,
-  includeUnknown: boolean,
-): readonly ModuleObjectSource[] | undefined => {
-  const matches = (
-    effect: JavaScriptSemanticBindingState["memberWrites"][number],
-  ) =>
-    path.length > 0 &&
-    effect.path.length <= path.length &&
-    effect.path.every((key, index) => {
-      const selected = path[index];
-      return (
-        selected !== undefined &&
-        semanticAliasSelectionChoices(selected).some(
-          (choice) =>
-            choice === null ||
-            typeof choice === "object" ||
-            semanticPropertyPathKeyMatches(key, String(choice)),
-        )
-      );
-    }) &&
-    semanticEffectTiming(reference, effect.node, state) !== "after";
-  const writes = binding.memberWrites.filter(matches);
-  let replacement:
-    | JavaScriptSemanticBindingState["memberWrites"][number]
-    | undefined;
-  for (const effect of writes) {
-    if (
-      t.isAssignmentExpression(effect.node, { operator: "=" }) &&
-      effect.path.every(
-        (key, index) =>
-          key !== null &&
-          typeof key !== "object" &&
-          path[index] !== null &&
-          typeof path[index] !== "object" &&
-          String(key) === String(path[index]),
-      ) &&
-      semanticDefiniteEffectPrecedesReference(
-        effect.node,
-        reference,
-        state.parentsByNode,
-      ) &&
-      (replacement === undefined ||
-        semanticDefiniteEffectPrecedesReference(
-          replacement.node!,
-          effect.node,
-          state.parentsByNode,
-        ) ||
-        (replacement.node === effect.node &&
-          (replacement.assignedSources?.[0]?.target?.start ?? -1) <
-            (effect.assignedSources?.[0]?.target?.start ?? -1)))
-    )
-      replacement = effect;
-  }
-  const superseded = (
-    effect: JavaScriptSemanticBindingState["memberWrites"][number],
-  ) =>
-    replacement !== undefined &&
-    effect.node !== undefined &&
-    effect !== replacement &&
-    (semanticEffectTiming(replacement.node!, effect.node, state) === "before" ||
-      (effect.node === replacement.node &&
-        (effect.assignedSources?.[0]?.target?.start ?? -1) <
-          (replacement.assignedSources?.[0]?.target?.start ?? -1)));
-  if (
-    includeUnknown &&
-    binding.escapedPaths.some(
-      (effect) => matches(effect) && !superseded(effect),
-    )
-  )
-    return undefined;
-  const sources: ModuleObjectSource[] = [];
-  for (const effect of writes) {
-    if (superseded(effect)) continue;
-    if (
-      !t.isAssignmentExpression(effect.node) ||
-      !["=", "||=", "&&=", "??="].includes(effect.node.operator)
-    ) {
-      if (includeUnknown) return undefined;
-      continue;
-    }
-    if (effect.assignedSources === undefined) {
-      if (includeUnknown) return undefined;
-      continue;
-    }
-    const remaining = path.slice(effect.path.length);
-    for (const source of effect.assignedSources) {
-      if (semanticReferenceIterationUnknown(source, state)) return undefined;
-      if (semanticReferenceSourcesInactive(source, state)) continue;
-      const [key, ...suffix] = remaining;
-      for (const choice of key === undefined
-        ? [undefined]
-        : semanticAliasSelectionChoices(key)) {
-        const projection = semanticStoredSourceProjection(
-          source,
-          choice === undefined ? [] : [choice],
-        );
-        if (projection !== null)
-          sources.push({ node: source.node, path: [...projection, ...suffix] });
-      }
-    }
-  }
-  if (replacement !== undefined) return sources;
-  const read = semanticBindingAtRead(binding, reference, state.parentsByNode);
-  for (const initializer of read.binding.initializers) {
-    if (semanticReferenceIterationUnknown(initializer, state)) return undefined;
-    sources.push({
-      node: initializer.node,
-      path: [...initializer.projection, ...path],
-    });
-  }
-  for (const initializer of read.binding.referenceInitializers) {
-    if (semanticReferenceIterationUnknown(initializer, state)) return undefined;
-    if (semanticReferenceSourcesInactive(initializer, state)) continue;
-    const [key, ...suffix] = path;
-    for (const choice of key === undefined
-      ? [undefined]
-      : semanticAliasSelectionChoices(key)) {
-      const projection = semanticCopiedReferencePath(
-        initializer,
-        choice === undefined ? [] : [choice],
-        "identity",
-      );
-      if (projection !== null)
-        sources.push({
-          node: initializer.node,
-          path: [...projection, ...suffix],
-        });
-    }
-  }
-  return sources;
 };
 
 const isCommonJsModuleObject = (
@@ -509,30 +367,90 @@ const hasCommonJsModuleSource = (
   includeUnknown: boolean,
   target: "module" | "delegate",
 ): boolean => {
-  type Work = ModuleObjectSource & { readonly ancestors: ReadonlySet<t.Node> };
-  const pending: Work[] = [{ node, path: [], ancestors: new Set() }];
+  type Work = ModuleObjectSource & {
+    readonly ancestors: ReadonlySet<object>;
+    /** Await occurs after this many requested outer property selections. */
+    readonly awaitDepths: readonly number[];
+  };
+  const pending: Work[] = [
+    { node, path: [], ancestors: new Set(), awaitDepths: [] },
+  ];
   // Keep depths separate and join finite key alternatives at each source read.
   const selections = new SemanticAliasSelections(() => {
     state.valueResourceLimits.add("alias-selections");
   });
-  const examined = new WeakMap<t.Node, Set<string>>();
+  const contexts = new WeakMap<
+    t.Node,
+    Map<
+      string,
+      {
+        readonly identities: Map<string, object>;
+      }
+    >
+  >();
+  const examined = new WeakSet<object>();
+  let additionalStates = 0;
   for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
     const value = unwrapJavaScriptExpression(next.node).node;
-    if (next.ancestors.has(value)) {
+    const { awaitDepths } = next;
+    const byMode =
+      contexts.get(value) ??
+      new Map<string, { readonly identities: Map<string, object> }>();
+    const modeKey = JSON.stringify(awaitDepths);
+    let context = byMode.get(modeKey);
+    if (context === undefined) {
+      context = { identities: new Map() };
+      byMode.set(modeKey, context);
+      contexts.set(value, byMode);
+    }
+    const path = selections.normalize(context, next.path);
+    if (selections.limited) return true;
+    const pathKey = JSON.stringify(path);
+    let identity = context.identities.get(pathKey);
+    if (identity === undefined) {
+      // Consumption contexts must not provide an unbounded second path to
+      // expansion beyond the shared selector budget.
+      if (
+        (byMode.size > 1 || context.identities.size > 0) &&
+        ++additionalStates > SEMANTIC_ALIAS_SELECTION_LIMIT
+      ) {
+        state.valueResourceLimits.add("alias-selections");
+        return true;
+      }
+      identity = {};
+      context.identities.set(pathKey, identity);
+    }
+    if (next.ancestors.has(identity)) {
       if (includeUnknown) return true;
       continue;
     }
-    const ancestors = new Set([...next.ancestors, value]);
-    const enqueue = (...sources: ModuleObjectSource[]) => {
-      pending.push(...sources.map((source) => ({ ...source, ancestors })));
+    if (examined.has(identity)) continue;
+    examined.add(identity);
+    const ancestors = new Set([...next.ancestors, identity]);
+    const enqueueAt = (
+      depths: readonly number[],
+      ...sources: ModuleObjectSource[]
+    ) => {
+      pending.push(
+        ...sources.map((source) => ({
+          ...source,
+          ancestors,
+          awaitDepths: depths,
+        })),
+      );
     };
-    const path = selections.normalize(value, next.path);
-    if (selections.limited) return true;
-    const byPath = examined.get(value) ?? new Set<string>();
-    const identity = JSON.stringify(path);
-    if (byPath.has(identity)) continue;
-    byPath.add(identity);
-    examined.set(value, byPath);
+    const enqueue = (...sources: ModuleObjectSource[]) => {
+      enqueueAt(awaitDepths, ...sources);
+    };
+    if (t.isAwaitExpression(value)) {
+      enqueueAt(
+        [...new Set([...awaitDepths, path.length])].sort(
+          (left, right) => left - right,
+        ),
+        { node: value.argument, path },
+      );
+      continue;
+    }
     if (t.isMemberExpression(value) || t.isOptionalMemberExpression(value)) {
       enqueue({
         node: value.object,
@@ -550,7 +468,9 @@ const hasCommonJsModuleSource = (
       const [key, ...remaining] = path;
       if (key !== undefined)
         for (const choice of semanticAliasSelectionChoices(key))
-          enqueue(
+          enqueueAt(
+            // Awaiting a fresh container does not await one of its children.
+            awaitDepths.filter((depth) => depth !== path.length),
             ...(t.isObjectExpression(value)
               ? semanticObjectPropertyReferences(value, [choice], state)
               : semanticArrayPropertyReferences(value, [choice])
@@ -583,10 +503,18 @@ const hasCommonJsModuleSource = (
       t.isOptionalCallExpression(value) ||
       t.isNewExpression(value)
     ) {
-      let returned = moduleReturnedReferences.get(state);
+      let factories = moduleReturnedReferences.get(state);
+      if (factories === undefined) {
+        factories = new Map();
+        moduleReturnedReferences.set(state, factories);
+      }
+      const mode = awaitDepths.includes(path.length)
+        ? "awaited-call"
+        : "direct-call";
+      let returned = factories.get(mode);
       if (returned === undefined) {
-        returned = createSemanticReturnedReferences(state, "direct-call");
-        moduleReturnedReferences.set(state, returned);
+        returned = createSemanticReturnedReferences(state, mode);
+        factories.set(mode, returned);
       }
       enqueue(
         ...returned(value.callee).references.map((source) => ({

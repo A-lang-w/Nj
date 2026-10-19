@@ -128,10 +128,16 @@ interface BindPatternInput {
   readonly fallbackSources?: readonly {
     readonly node: t.Node;
     readonly projection: readonly (string | number | null)[];
+    readonly iterationSources?: NonNullable<
+      JavaScriptSemanticBindingState["initializers"][number]["iterationSources"]
+    >;
   }[];
   readonly requiredSources?: readonly {
     readonly node: t.Node;
     readonly projection: readonly (string | number | null)[];
+    readonly iterationSources?: NonNullable<
+      JavaScriptSemanticBindingState["initializers"][number]["iterationSources"]
+    >;
   }[];
 }
 
@@ -1774,7 +1780,15 @@ const bindPattern = (input: BindPatternInput): void => {
           : (initializer ?? pattern.right),
       requiredSources: [
         ...(requiredSources ?? []),
-        ...(initializer === null ? [] : [{ node: initializer, projection }]),
+        ...(initializer === null
+          ? []
+          : [
+              {
+                node: initializer,
+                projection,
+                ...(iterationSources === undefined ? {} : { iterationSources }),
+              },
+            ]),
       ],
     });
     bindPattern({
@@ -1788,7 +1802,15 @@ const bindPattern = (input: BindPatternInput): void => {
       referenceOnly: true,
       fallbackSources: [
         ...(fallbackSources ?? []),
-        ...(initializer === null ? [] : [{ node: initializer, projection }]),
+        ...(initializer === null
+          ? []
+          : [
+              {
+                node: initializer,
+                projection,
+                ...(iterationSources === undefined ? {} : { iterationSources }),
+              },
+            ]),
       ],
       ...(requiredSources === undefined ? {} : { requiredSources }),
     });

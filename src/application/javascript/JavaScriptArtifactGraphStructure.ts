@@ -41,6 +41,7 @@ import {
 import {
   artifactPathResolutionProperties,
   resolveArtifactPathByContext,
+  type ArtifactPathResolution,
 } from "./JavaScriptArtifactPathResolution.js";
 
 interface PackageRoleInput {
@@ -525,15 +526,19 @@ export const addJavaScriptPackageNodes = (
       packageValue.status === "included" &&
       packageValue.main_status === "default"
     ) {
-      const defaultPath = `${file.path.slice(0, -"package.json".length)}index.js`;
-      const defaultEntry = context.filesByPath.get(defaultPath);
-      if (defaultEntry?.container_sha256 === file.container_sha256)
-        registerPackageEntrypointOwner(context, file, defaultPath);
-      else if (
-        context.unanalyzedFiles?.get(defaultPath)?.container_sha256 ===
-        file.container_sha256
-      )
-        registerPossiblePackageOwner(context, file);
+      registerPackageResolutionOwner(
+        context,
+        file,
+        resolveArtifactPathByContext({
+          declaredPath: "",
+          sourcePath: file.path,
+          context: "package-entrypoint",
+          runtimePathKind: "node-entrypoint",
+          files: context.filesByPath,
+          directoryPaths: context.directoryPaths,
+          unanalyzedFiles: context.unanalyzedFiles,
+        }),
+      );
     }
     addPackageRole(context, {
       packageNode: node,
@@ -655,25 +660,8 @@ const addPackageRole = (
     directoryPaths: context.directoryPaths,
     unanalyzedFiles: context.unanalyzedFiles,
   });
-  if (input.kind === "electron-main") {
-    if (resolution.resolution_status === "resolved")
-      registerPackageEntrypointOwner(
-        context,
-        input.packageFile,
-        resolution.resolved_path,
-      );
-    else if (
-      resolution.resolution_status === "unavailable" &&
-      !(
-        resolution.candidate_path !== undefined &&
-        isJsonModuleTarget(
-          resolution.candidate_path,
-          context.unanalyzedFiles?.get(resolution.candidate_path)?.kind,
-        )
-      )
-    )
-      registerPossiblePackageOwner(context, input.packageFile);
-  }
+  if (input.kind === "electron-main")
+    registerPackageResolutionOwner(context, input.packageFile, resolution);
   const role = createElectronRoleNode(context, {
     kind: input.kind,
     anchor: input.packageFile,
@@ -708,6 +696,30 @@ const addPackageRole = (
     anchor: input.packageFile,
     resolution,
   });
+};
+
+const registerPackageResolutionOwner = (
+  context: JavaScriptArtifactGraphContext,
+  packageFile: JavaScriptArtifactFile,
+  resolution: ArtifactPathResolution,
+): void => {
+  if (resolution.resolution_status === "resolved")
+    registerPackageEntrypointOwner(
+      context,
+      packageFile,
+      resolution.resolved_path,
+    );
+  else if (
+    resolution.resolution_status === "unavailable" &&
+    !(
+      resolution.candidate_path !== undefined &&
+      isJsonModuleTarget(
+        resolution.candidate_path,
+        context.unanalyzedFiles?.get(resolution.candidate_path)?.kind,
+      )
+    )
+  )
+    registerPossiblePackageOwner(context, packageFile);
 };
 
 const registerPackageEntrypointOwner = (

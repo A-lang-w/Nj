@@ -436,22 +436,35 @@ const resolveNodeRuntimeEntrypoint = (
     return unresolvedCandidate("unavailable", [
       "Windows-relative runtime paths require target-platform and drive context that the selected logical artifact inventory does not establish.",
     ]);
-  const { runtimePathKind: _runtimePathKind, ...sourceInput } = input;
-  const runtimeInput = { ...sourceInput, moduleKind: "require" as const };
+  const runtimeInput = { ...input, moduleKind: "require" as const };
+  if (input.context === "package-entrypoint" && input.declaredPath === "")
+    return resolveNodePackageMain(
+      runtimeInput,
+      posix.dirname(input.sourcePath),
+      undefined,
+    );
   if (
     runtimeInput.context !== "package-entrypoint" &&
     !isRuntimePathDeclaration(runtimeInput)
-  )
-    return resolvePath(runtimeInput);
+  ) {
+    const { runtimePathKind: _runtimePathKind, ...moduleInput } = runtimeInput;
+    return resolvePath(moduleInput);
+  }
   const candidate = contextualCandidate(runtimeInput);
   if (typeof candidate !== "string") return candidate;
   const confined = confineCandidate(candidate);
   if (typeof confined !== "string") return confined;
   // Node entrypoints use runtime file/directory probes. They do not originate
   // in emitted TypeScript import syntax and cannot select a source substitute.
-  const resolution = resolveCandidate(runtimeInput, confined, new Set());
-  // Runtime entrypoint analysis has no extension or directory fallback, but
-  // retain the normalized loader path when that exact target is absent.
+  const resolution =
+    input.context === "package-entrypoint"
+      ? resolveNodePackageMain(
+          runtimeInput,
+          posix.dirname(input.sourcePath),
+          confined,
+        )
+      : resolveCandidate(runtimeInput, confined, new Set());
+  // Retain the normalized declaration when Node's owned probes are exhausted.
   return resolution.status === "not-found" &&
     resolution.candidatePath === undefined
     ? { ...resolution, candidatePath: confined }
@@ -1476,12 +1489,12 @@ const resolveDirectory = (
           ? metadata.module
           : undefined;
   if (entry === undefined)
-    return (
-      resolveFileCandidates(
-        input,
-        indexCandidates(directory, input.moduleKind),
-      ) ?? notFoundCandidate()
-    );
+    return input.moduleKind !== undefined
+      ? resolveNodePackageMain(input, directory, undefined)
+      : (resolveFileCandidates(
+          input,
+          indexCandidates(directory, input.moduleKind),
+        ) ?? notFoundCandidate());
   if (typeof entry !== "string" || entry.length === 0)
     return unresolvedCandidate("unavailable", [
       `Directory package metadata ${metadata.path} is not valid package JSON.`,
@@ -1522,46 +1535,47 @@ const resolveDirectory = (
 const resolveNodePackageMain = (
   input: ResolveArtifactPathInput,
   directory: string,
-  mainPath: string,
+  mainPath: string | undefined,
 ): CandidateResolution => {
-  const normalizedMain = mainPath.replace(/\/$/u, "");
-  for (const suffix of NODE_PACKAGE_MAIN_SUFFIXES) {
-    const isDirectoryIndex = suffix.startsWith("/");
-    if (normalizedMain === "" && !isDirectoryIndex) continue;
-    const selected = resolveFileCandidates(input, [
-      isDirectoryIndex
-        ? posix.join(normalizedMain, suffix.slice(1))
-        : posix.normalize(`${normalizedMain}${suffix}`),
-    ]);
-    if (selected === null) continue;
-    if (input.moduleKind === "require") return selected;
-    // ESM probes the normalized main, then appends the selected suffix to
-    // the original declaration before finalizing the resulting file path.
-    const finalized = confineCandidate(
-      relativeCandidate(input.sourcePath, `${input.declaredPath}${suffix}`),
-    );
-    if (typeof finalized !== "string") return finalized;
-    const finalizedFile = resolveFileCandidates(input, [
-      finalized.replace(/\/$/u, ""),
-    ]);
-    if (finalizedFile !== null) return finalizedFile;
-    if (hasContainerDirectory(input, finalized))
-      return {
-        ...unresolvedCandidate("rejected", [
-          `The selected legacy ESM package main finalizes to directory ${finalized}; directory imports are unsupported and no later main or index candidate was tried.`,
-        ]),
-        candidatePath: finalized,
-      };
-    return unresolvedCandidate("not-found", [
-      `The selected legacy ESM package main finalizes to ${finalized}, which is not an inventoried file; no later main or index candidate was tried.`,
-    ]);
-  }
+  const normalizedMain = mainPath?.replace(/\/$/u, "");
+  if (normalizedMain !== undefined)
+    for (const suffix of NODE_PACKAGE_MAIN_SUFFIXES) {
+      const isDirectoryIndex = suffix.startsWith("/");
+      if (normalizedMain === "" && !isDirectoryIndex) continue;
+      const selected = resolveFileCandidates(input, [
+        isDirectoryIndex
+          ? posix.join(normalizedMain, suffix.slice(1))
+          : posix.normalize(`${normalizedMain}${suffix}`),
+      ]);
+      if (selected === null) continue;
+      if (input.moduleKind === "require") return selected;
+      // ESM probes the normalized main, then appends the selected suffix to
+      // the original declaration before finalizing the resulting file path.
+      const finalized = confineCandidate(
+        relativeCandidate(input.sourcePath, `${input.declaredPath}${suffix}`),
+      );
+      if (typeof finalized !== "string") return finalized;
+      const finalizedFile = resolveFileCandidates(input, [
+        finalized.replace(/\/$/u, ""),
+      ]);
+      if (finalizedFile !== null) return finalizedFile;
+      if (hasContainerDirectory(input, finalized))
+        return {
+          ...unresolvedCandidate("rejected", [
+            `The selected legacy ESM package main finalizes to directory ${finalized}; directory imports are unsupported and no later main or index candidate was tried.`,
+          ]),
+          candidatePath: finalized,
+        };
+      return unresolvedCandidate("not-found", [
+        `The selected legacy ESM package main finalizes to ${finalized}, which is not an inventoried file; no later main or index candidate was tried.`,
+      ]);
+    }
   const fallback = resolveFileCandidates(
     input,
     indexCandidates(directory, input.moduleKind),
   );
   if (fallback !== null) return fallback;
-  return input.moduleKind === "require"
+  return input.moduleKind === "require" && mainPath !== undefined
     ? { ...notFoundCandidate(), stopsAncestorLookup: true }
     : notFoundCandidate();
 };
@@ -1602,6 +1616,13 @@ const runtimeArchiveRoot = (path: string): string | undefined => {
 };
 
 /** One archive-path admission rule serves files, directories and their metadata. */
+const isNodeFilesystemLookup = (input: ResolveArtifactPathInput): boolean =>
+  input.runtimePathKind === "node-entrypoint" ||
+  (input.moduleKind !== undefined &&
+    (input.context === "module-specifier" ||
+      input.context === "package-entrypoint"));
+
+/** Runtime launch and module lookup share archive occurrence admission. */
 const crossesRuntimeArchiveBoundary = (
   input: ResolveArtifactPathInput,
   path: string,
@@ -1612,8 +1633,7 @@ const crossesRuntimeArchiveBoundary = (
   const sourceArchive = runtimeArchiveRoot(input.sourcePath);
   const targetArchive = runtimeArchiveRoot(path);
   return (
-    input.context === "module-specifier" &&
-    input.moduleKind !== undefined &&
+    isNodeFilesystemLookup(input) &&
     ((sourceArchive !== undefined && !path.startsWith(sourceArchive)) ||
       (targetArchive !== undefined &&
         !input.sourcePath.startsWith(targetArchive)))
@@ -1646,11 +1666,7 @@ const findFileCandidate = (
     admitsRuntimeContainer(input, path, target.container_sha256)
   )
     return { resolvedPath: path, status: "resolved", limitations: [] };
-  if (
-    target !== undefined &&
-    input.context === "module-specifier" &&
-    input.moduleKind !== undefined
-  )
+  if (target !== undefined && isNodeFilesystemLookup(input))
     return {
       resolvedPath: null,
       status: "unavailable",

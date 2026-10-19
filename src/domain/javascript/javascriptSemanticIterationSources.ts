@@ -15,6 +15,7 @@ import { semanticCopiedReferencePath } from "./javascriptSemanticReferenceSource
 interface IterationSourceValue {
   readonly node: t.Node;
   readonly projection: JavaScriptSemanticPropertyPath;
+  readonly iterationSources?: readonly IterationSourceValue[];
 }
 
 /** An iterator receiver or property reference store, with default guards. */
@@ -137,7 +138,16 @@ const visit = (
       ...guards,
       requiredSources: [
         ...(guards.requiredSources ?? []),
-        ...(source === undefined ? [] : [source]),
+        ...(source === undefined
+          ? []
+          : [
+              {
+                ...source,
+                ...(guards.iterationSources === undefined
+                  ? {}
+                  : { iterationSources: guards.iterationSources }),
+              },
+            ]),
       ],
     });
     visit(
@@ -148,7 +158,16 @@ const visit = (
         ...guards,
         fallbackSources: [
           ...(guards.fallbackSources ?? []),
-          ...(source === undefined ? [] : [source]),
+          ...(source === undefined
+            ? []
+            : [
+                {
+                  ...source,
+                  ...(guards.iterationSources === undefined
+                    ? {}
+                    : { iterationSources: guards.iterationSources }),
+                },
+              ]),
         ],
       },
     );

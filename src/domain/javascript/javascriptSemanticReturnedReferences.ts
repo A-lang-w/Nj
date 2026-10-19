@@ -6,6 +6,8 @@ import {
 } from "./javascriptAstValues.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
+import { semanticProjectedSourcesAtRead } from "./javascriptSemanticProjectedSources.js";
 import {
   semanticPropertyPathKeyMatches,
   type JavaScriptSemanticPropertyPath,
@@ -18,6 +20,7 @@ import {
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 
 /** A reference potentially handed to a caller or generator consumer. */
@@ -30,6 +33,8 @@ interface Candidate {
   readonly node: t.Node;
   /** `undefined` means any projection depth after different projection depths merge. */
   readonly path: SemanticAliasSelectionPath | undefined;
+  /** Member selection happens at its use, while a captured function keeps its read. */
+  readonly readAt?: t.Node;
 }
 
 export interface SemanticReturnedReferenceResult {
@@ -57,19 +62,49 @@ interface ObjectTargetUnknown {
 /** Resolve local result references conservatively, without claiming call execution. */
 export const createSemanticReturnedReferences = (
   state: JavaScriptSemanticAnalysisState,
-  consumption: "potential-reference" | "direct-call" = "potential-reference",
+  consumption:
+    | "potential-reference"
+    | "direct-call"
+    | "awaited-call" = "potential-reference",
 ): ((callee: t.Node) => SemanticReturnedReferenceResult) => {
-  const results = new WeakMap<t.Node, SemanticReturnedReferenceResult>();
+  const results = new WeakMap<
+    t.Node,
+    {
+      readonly result: SemanticReturnedReferenceResult;
+      readonly iterationUnknown: boolean;
+      readonly dependencies: readonly {
+        readonly binding: JavaScriptSemanticBindingState;
+        readonly writes: number;
+        readonly escapes: number;
+      }[];
+    }
+  >();
   const objectTargets = new WeakMap<t.ObjectExpression, ObjectTargetIndex>();
   return (callee) => {
     const existing = results.get(callee);
-    if (existing !== undefined) return existing;
+    if (
+      existing !== undefined &&
+      existing.iterationUnknown === state.arrayIterationUnknown &&
+      existing.dependencies.every(
+        ({ binding, writes, escapes }) =>
+          binding.memberWrites.length === writes &&
+          binding.escapedPaths.length === escapes,
+      )
+    )
+      return existing.result;
+    const dependencies = new Map<
+      JavaScriptSemanticBindingState,
+      { readonly writes: number; readonly escapes: number }
+    >();
     const functions = new Set<t.Function>();
     const work: Candidate[] = [];
     // A transition depends on the source read and current projection, not the
     // initializer history used to reach it. Keeping history out of the key lets
     // shared diamonds and reassignment cycles converge to the graph fixed point.
-    const projectionDepths = new WeakMap<t.Node, number | undefined>();
+    const projectionDepths = new WeakMap<
+      t.Node,
+      Map<string, number | undefined>
+    >();
     const expanded = new WeakMap<t.Node, Set<string>>();
     const result: {
       references: readonly SemanticReturnedReference[];
@@ -82,25 +117,36 @@ export const createSemanticReturnedReferences = (
       state.valueResourceLimits.add("alias-selections");
       result.precision = "widened";
     });
-    const enqueue = (node: t.Node, path: Candidate["path"]): void => {
+    const enqueue = (
+      node: t.Node,
+      path: Candidate["path"],
+      readAt?: t.Node,
+    ): void => {
       const source = unwrapJavaScriptExpression(node).node;
-      if (!projectionDepths.has(source)) {
-        projectionDepths.set(source, path?.length);
+      const readKey = `${readAt?.start ?? -1}:${readAt?.end ?? -1}`;
+      const depths = projectionDepths.get(source) ?? new Map();
+      projectionDepths.set(source, depths);
+      if (!depths.has(readKey)) {
+        depths.set(readKey, path?.length);
       } else {
-        const previous = projectionDepths.get(source);
+        const previous = depths.get(readKey);
         if (previous === undefined || previous !== path?.length) {
           if (previous !== undefined) result.precision = "widened";
-          projectionDepths.set(source, undefined);
+          depths.set(readKey, undefined);
           path = undefined;
         }
       }
       if (path !== undefined) path = selections.normalize(source, path);
-      const key = path === undefined ? "*" : JSON.stringify(path);
+      const key = JSON.stringify([readKey, path ?? null]);
       const paths = expanded.get(source) ?? new Set<string>();
       if (paths.has(key)) return;
       paths.add(key);
       expanded.set(source, paths);
-      work.push({ node: source, path });
+      work.push({
+        node: source,
+        path,
+        ...(readAt === undefined ? {} : { readAt }),
+      });
     };
     enqueue(callee, []);
     while (work.length > 0) {
@@ -111,23 +157,61 @@ export const createSemanticReturnedReferences = (
       if (t.isIdentifier(node)) {
         const binding = resolveSemanticBindingState(state, node, node.name);
         if (binding === undefined) continue;
+        dependencies.set(binding, {
+          writes: binding.memberWrites.length,
+          escapes: binding.escapedPaths.length,
+        });
+        if (current.path !== undefined) {
+          const selectedSources = semanticProjectedSourcesAtRead(
+            binding,
+            current.readAt ?? node,
+            current.path,
+            state,
+            false,
+          );
+          if (selectedSources !== undefined) {
+            for (const source of selectedSources)
+              pending.push({
+                ...source,
+                ...(current.path.length === 0
+                  ? {}
+                  : { readAt: current.readAt ?? node }),
+              });
+            for (let index = pending.length - 1; index >= 0; index--) {
+              const child = pending[index];
+              if (child !== undefined)
+                enqueue(child.node, child.path, child.readAt);
+            }
+            continue;
+          }
+          result.precision = "widened";
+        }
         const selected = semanticBindingAtRead(
           binding,
-          node,
+          current.readAt ?? node,
           state.parentsByNode,
         ).binding;
         for (const initializer of [
           ...selected.initializers,
           ...selected.referenceInitializers,
         ]) {
+          if (semanticReferenceSourcesInactive(initializer, state)) continue;
           pending.push({
             node: initializer.node,
             path:
               current.path === undefined
                 ? undefined
                 : [...initializer.projection, ...current.path],
+            ...(current.path?.length === 0
+              ? {}
+              : { readAt: current.readAt ?? node }),
           });
         }
+        if (current.path === undefined)
+          for (const effect of binding.memberWrites)
+            for (const source of effect.assignedSources ?? [])
+              if (!semanticReferenceSourcesInactive(source, state))
+                pending.push({ node: source.node, path: undefined });
       } else if (
         t.isMemberExpression(node) ||
         t.isOptionalMemberExpression(node)
@@ -146,6 +230,7 @@ export const createSemanticReturnedReferences = (
         pending.push({
           ...current,
           node: receiver,
+          readAt: current.readAt ?? node,
           path:
             current.path === undefined
               ? undefined
@@ -257,7 +342,7 @@ export const createSemanticReturnedReferences = (
       }
       for (let index = pending.length - 1; index >= 0; index--) {
         const child = pending[index];
-        if (child !== undefined) enqueue(child.node, child.path);
+        if (child !== undefined) enqueue(child.node, child.path, child.readAt);
       }
     }
     const output = [...functions].flatMap((callable) => {
@@ -265,19 +350,28 @@ export const createSemanticReturnedReferences = (
       // the yielded/resolved contents. Escape analysis still retains those
       // potential references for their eventual consumers.
       if (
-        consumption === "direct-call" &&
-        (callable.generator || callable.async)
+        consumption !== "potential-reference" &&
+        (callable.generator ||
+          (consumption === "direct-call" && callable.async))
       )
         return [];
       return semanticCallableResultExpressions(callable).flatMap(
         ({ node, delegated, kind }) =>
-          node === null || (consumption === "direct-call" && kind !== "return")
+          node === null ||
+          (consumption !== "potential-reference" && kind !== "return")
             ? []
             : [{ node, projection: delegated ? [null] : [] }],
       );
     });
     result.references = output;
-    results.set(callee, result);
+    results.set(callee, {
+      result,
+      iterationUnknown: state.arrayIterationUnknown,
+      dependencies: [...dependencies].map(([binding, counts]) => ({
+        binding,
+        ...counts,
+      })),
+    });
     if (result.precision === "widened")
       state.returnedReferenceWidenings.add(callee);
     return result;

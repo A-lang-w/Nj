@@ -3658,6 +3658,148 @@ it("resolves Node runtime entrypoints without substituting emitted TypeScript so
     });
 });
 
+describe("Node launch package main ownership", () => {
+  it.each(["index.js", "index.json", "index.cjs"])(
+    "uses the same package index producer for a default launch with %s",
+    (fallback) => {
+      expect(
+        resolve({
+          declaredPath: "",
+          sourcePath: "app/package.json",
+          context: "package-entrypoint",
+          runtimePathKind: "node-entrypoint",
+          files: fileMap([
+            file("app/package.json", "root"),
+            file(`app/${fallback}`, "root"),
+            file("app.js", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        resolution_status: fallback === "index.cjs" ? "not-found" : "resolved",
+        resolved_path: fallback === "index.cjs" ? null : `app/${fallback}`,
+      });
+    },
+  );
+
+  it("keeps unavailable main bytes ahead of a present package index", () => {
+    const source = file("app/package.json", "root");
+    expect(
+      resolve({
+        declaredPath: "declared.cjs",
+        sourcePath: source.path,
+        context: "package-entrypoint",
+        runtimePathKind: "node-entrypoint",
+        files: fileMap([source, file("app/index.js", "root")]),
+        unanalyzedFiles: {
+          get: (path) =>
+            path === "app/declared.cjs"
+              ? {
+                  path,
+                  container_sha256: source.container_sha256,
+                  sha256: null,
+                  bytes: null,
+                  inventory_artifact_id: null,
+                  kind: "javascript",
+                  hash_status: "unavailable",
+                  limitations: ["main readback unavailable"],
+                }
+              : undefined,
+          hasDirectory: () => false,
+        },
+      }),
+    ).toMatchObject({
+      resolution_status: "unavailable",
+      resolved_path: null,
+      candidate_path: "app/declared.cjs",
+    });
+  });
+
+  it.each([
+    ["missing.cjs", "index.js", "app/index.js"],
+    ["sub/missing", "index.json", "app/index.json"],
+    ["directory", "index.js", "app/index.js"],
+    ["declared.cjs", "index.js", "app/declared.cjs"],
+    ["missing.cjs", "index.cjs", null],
+  ] as const)(
+    "uses Node package main lookup for %s with %s",
+    (declaredPath, fallback, expected) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/package.json",
+          context: "package-entrypoint",
+          runtimePathKind: "node-entrypoint",
+          files: fileMap([
+            file("app/package.json", "root"),
+            file(`app/${fallback}`, "root"),
+            file("app/declared.cjs", "root"),
+            file("app/directory/package.json", "root", '{"main":"nested.cjs"}'),
+            file("app/directory/nested.cjs", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        resolution_status: expected === null ? "not-found" : "resolved",
+        resolved_path: expected,
+      });
+    },
+  );
+
+  it.each([
+    [
+      "app/package.json",
+      "../resources/CODE.ASAR/window.cjs",
+      "resources/CODE.ASAR/window.cjs",
+      "package-entrypoint",
+    ],
+    [
+      "resources/APP.ASAR/package.json",
+      "../window.cjs",
+      "resources/window.cjs",
+      "package-entrypoint",
+    ],
+    [
+      "main.cjs",
+      "./resources/CODE.ASAR/window.cjs",
+      "resources/CODE.ASAR/window.cjs",
+      "filesystem-expression",
+    ],
+  ] as const)(
+    "retains archive launch lookup for %s loading %s",
+    (sourcePath, declaredPath, target, context) => {
+      expect(
+        resolve({
+          sourcePath,
+          declaredPath,
+          context,
+          runtimePathKind: "node-entrypoint",
+          files: fileMap([file(sourcePath, "source"), file(target, "target")]),
+        }),
+      ).toMatchObject({ resolution_status: "resolved", resolved_path: target });
+    },
+  );
+
+  it("does not use package fallback for a utility entrypoint or an unproven main container", () => {
+    for (const [context, declaredPath, status] of [
+      ["filesystem-expression", "./missing.cjs", "not-found"],
+      ["package-entrypoint", "declared.cjs", "unavailable"],
+      ["package-entrypoint", "../../escape.cjs", "rejected"],
+    ] as const)
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/package.json",
+          context,
+          runtimePathKind: "node-entrypoint",
+          files: fileMap([
+            file("app/package.json", "source"),
+            file("app/index.js", "source"),
+            file("app/declared.cjs", "foreign"),
+          ]),
+        }),
+      ).toMatchObject({ resolution_status: status, resolved_path: null });
+  });
+});
+
 it.each(["sub\\main.cjs", ".\\main.cjs", "C:main.cjs"])(
   "retains unknown host semantics for the Windows-relative entrypoint %s",
   (declaredPath) => {

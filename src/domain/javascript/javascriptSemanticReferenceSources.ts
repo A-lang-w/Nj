@@ -5,13 +5,17 @@ import {
   type JavaScriptSemanticPropertyPath as PropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
+import {
+  evaluateSemanticExpression,
+  semanticValueDefinitelyDefined,
+} from "./javascriptSemanticValues.js";
 import { semanticSlotAtPath } from "./javascriptSemanticSlots.js";
 import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
 
 interface ReferenceSource {
   readonly node: t.Node;
   readonly projection: PropertyPath;
+  readonly iterationSources?: readonly ReferenceSource[];
 }
 
 /** Native array iteration preserves numeric slots only while its iterator is intact. */
@@ -29,12 +33,42 @@ export const semanticReferenceIterationUnknown = (
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>
   source.iterationSources?.some(
-    (iterable) =>
-      !semanticKnownArrayIteration(
-        semanticSelectedReferenceSlot(iterable, state, iterable.node)?.value,
-        state,
-      ),
+    (iterable) => !selectedReferenceIterationKnown(iterable, state),
   ) === true;
+
+const selectedReferenceIterationKnown = (
+  source: ReferenceSource,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  let values = [evaluateSemanticExpression(source.node, state, source.node)];
+  for (const key of source.projection) {
+    if (typeof key === "object" && key !== null) return false;
+    const selected = new Set<JavaScriptSemanticValue>();
+    for (const value of values) {
+      if (key === null) {
+        // for-of projects any position of a native array. Its finite slot
+        // inventory can prove every possible nested iterable without treating
+        // a computed object property or custom iterator as an own-index read.
+        if (
+          !semanticKnownArrayIteration(value, state) ||
+          value.status !== "array" ||
+          value.unknownItems
+        )
+          return false;
+        for (const slot of value.items) {
+          if (slot.presence !== "present") return false;
+          selected.add(slot.value);
+        }
+      } else {
+        const slot = semanticSlotAtPath(value, [String(key)]);
+        if (slot.presence !== "present") return false;
+        selected.add(slot.value);
+      }
+    }
+    values = [...selected];
+  }
+  return values.every((value) => semanticKnownArrayIteration(value, state));
+};
 
 /** Exclude references whose source slot or destructuring fallback is absent. */
 export const semanticReferenceSourcesInactive = (
@@ -47,19 +81,18 @@ export const semanticReferenceSourcesInactive = (
 ): boolean =>
   reference.requiredSources?.some(
     (source) =>
+      !semanticReferenceIterationUnknown(source, state) &&
       semanticSelectedReferenceSlot(source, state, source.node)?.presence ===
-      "absent",
+        "absent",
   ) === true ||
   reference.fallbackSources?.some((source) => {
     // Selection precedes effects through the chosen reference. A later escape
     // cannot make a fallback that was excluded at destructuring reachable.
     const slot = semanticSelectedReferenceSlot(source, state, source.node);
     return (
+      !semanticReferenceIterationUnknown(source, state) &&
       slot?.presence === "present" &&
-      (slot.value.status === "literal" ||
-        slot.value.status === "union" ||
-        slot.value.status === "object" ||
-        slot.value.status === "array")
+      semanticValueDefinitelyDefined(slot.value)
     );
   }) === true;
 
