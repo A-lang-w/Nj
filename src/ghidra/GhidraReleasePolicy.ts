@@ -1,5 +1,14 @@
 /** Ghidra build whose bridge behavior this REA release verifies. */
 export const SUPPORTED_GHIDRA_VERSION = "12.1.4";
+/**
+ * Additional release lines admitted with an explicit unverified limitation.
+ *
+ * Ghidra development builds use their upcoming release number in
+ * `application.version`. Keeping these lines separate from the verified build
+ * avoids claiming conformance that has not run while allowing targeted bridge
+ * and processor fixes to be exercised against a source-built distribution.
+ */
+const COMPATIBLE_GHIDRA_RELEASE_LINES = [{ major: 12, minor: 3 }] as const;
 /** Verified JDK major; admission uses the installation's declared bounds. */
 export const SUPPORTED_GHIDRA_JAVA_MAJOR = 21;
 
@@ -43,7 +52,7 @@ export const ghidraReleaseCompatibility = (
   if (raw === SUPPORTED_GHIDRA_VERSION)
     return { status: "verified", version, raw };
   const verified = verifiedGhidraRelease();
-  return version.major === verified.major && version.minor === verified.minor
+  return isCompatibleReleaseLine(version, verified)
     ? { status: "compatible", version, raw }
     : { status: "unsupported", version, raw };
 };
@@ -57,7 +66,7 @@ export const unverifiedGhidraBuildLimitation = (
 ): string | undefined => {
   const compatibility = ghidraReleaseCompatibility(providerVersion);
   if (compatibility.status !== "compatible") return undefined;
-  return `This session uses Ghidra ${providerVersion}. The bridge is verified against ${SUPPORTED_GHIDRA_VERSION}; other ${ghidraReleaseLine()} builds are accepted and the observed version is reported.`;
+  return `This session uses Ghidra ${providerVersion}. The bridge is verified against ${SUPPORTED_GHIDRA_VERSION}; ${acceptedGhidraReleaseLines()} builds are accepted without that verification and the observed version is reported.`;
 };
 
 /** Release line accepted by this bridge, such as `12.1.x`. */
@@ -75,15 +84,35 @@ export const ghidraVersionDetail = (raw: string | null | undefined): string => {
     case "verified":
       return compatibility.raw;
     case "compatible":
-      return `${compatibility.raw}; compatible ${ghidraReleaseLine()} release (verified build ${SUPPORTED_GHIDRA_VERSION})`;
+      return `${compatibility.raw}; compatible unverified release (accepted lines ${acceptedGhidraReleaseLines()}; verified build ${SUPPORTED_GHIDRA_VERSION})`;
     case "unsupported":
-      return `${compatibility.raw}; accepted releases are ${ghidraReleaseLine()} (verified build ${SUPPORTED_GHIDRA_VERSION})`;
+      return `${compatibility.raw}; accepted releases are ${acceptedGhidraReleaseLines()} (verified build ${SUPPORTED_GHIDRA_VERSION})`;
     default: {
       const unreachable: never = compatibility;
       return unreachable;
     }
   }
 };
+
+const acceptedGhidraReleaseLines = (): string =>
+  [
+    ghidraReleaseLine(),
+    ...COMPATIBLE_GHIDRA_RELEASE_LINES.map(releaseLineLabel),
+  ].join(", ");
+
+const releaseLineLabel = (line: {
+  readonly major: number;
+  readonly minor: number;
+}): string => `${String(line.major)}.${String(line.minor)}.x`;
+
+const isCompatibleReleaseLine = (
+  version: GhidraReleaseVersion,
+  verified: GhidraReleaseVersion,
+): boolean =>
+  (version.major === verified.major && version.minor === verified.minor) ||
+  COMPATIBLE_GHIDRA_RELEASE_LINES.some(
+    (line) => version.major === line.major && version.minor === line.minor,
+  );
 
 /** Whether this release line can run the packaged bridge. */
 export const ghidraReleaseAccepted = (

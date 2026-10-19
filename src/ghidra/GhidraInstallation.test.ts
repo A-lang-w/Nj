@@ -244,9 +244,10 @@ describe("Ghidra installation inspection", () => {
     ["12.1.2", "27", 27],
     ["12.1.2-2.1", "27", 27],
     ["12.1.0", "21.0.2", 21],
+    ["12.3", "25.0.2", 25],
     [SUPPORTED_GHIDRA_VERSION, "25.0.1", 25],
   ])(
-    "accepts Ghidra %s with JDK %s on the verified release line",
+    "accepts Ghidra %s with JDK %s on an admitted release line",
     async (providerVersion, javaVersion, major) => {
       const result = await inspectGhidraInstallation(
         {
