@@ -58,23 +58,35 @@ export class BinaryLayoutService {
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    return this.#inspect(rawInput, options, (input) =>
-      this.provider.inspect(input, options),
-    );
+    const validated = this.validate(rawInput);
+    if (!validated.ok) return validated;
+    return this.inspectValidated(validated.value, options);
   }
 
   /** Complete the owned one-shot lifecycle before validating and publishing Evidence. */
-  inspectAndClose(
+  async inspectAndClose(
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    return this.#inspect(rawInput, options, (input) =>
+    const validated = this.validate(rawInput);
+    if (!validated.ok) return validated;
+    return this.#inspect(validated.value, options, (input) =>
       this.provider.inspectAndClose(input, options),
     );
   }
 
+  /** Inspect input that validate() already admitted, without reparsing it. */
+  inspectValidated(
+    input: InspectBinaryLayoutInput,
+    options?: ExecutionOptions,
+  ): Promise<Result<Evidence, AnalysisError>> {
+    return this.#inspect(input, options, (selected) =>
+      this.provider.inspect(selected, options),
+    );
+  }
+
   async #inspect(
-    rawInput: unknown,
+    input: InspectBinaryLayoutInput,
     options: ExecutionOptions | undefined,
     inspect: (
       input: Parameters<BinaryLayoutPort["inspect"]>[0],
@@ -82,9 +94,6 @@ export class BinaryLayoutService {
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted)
       return err(new AnalysisCancelledError(OPERATION));
-    const validated = this.validate(rawInput);
-    if (!validated.ok) return validated;
-    const input = validated.value;
     const inspected = await inspect(input);
     if (!inspected.ok) return inspected;
     const diagnostics = binaryLayoutSchema.shape.diagnostics.safeParse(

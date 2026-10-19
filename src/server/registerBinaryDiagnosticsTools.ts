@@ -48,9 +48,12 @@ export const registerBinaryDiagnosticsTools = (
                 );
                 if (!ready.ok) return ready;
               }
-              const inspected = await service.inspect(validated.value, {
-                signal: context.mcpReq.signal,
-              });
+              const inspected = await service.inspectValidated(
+                validated.value,
+                {
+                  signal: context.mcpReq.signal,
+                },
+              );
               return detail === "summary" && inspected.ok
                 ? summarizeRetainedAnalysis(inspected.value, retention)
                 : inspected;
