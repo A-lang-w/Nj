@@ -32,6 +32,8 @@ it.each([
   "curl_version_info",
   "_Z3foov@@VERSION_1",
   "--leading-option with spaces\nand-newline",
+  "native_\u{1F680}_symbol",
+  "native_\uFFFD_symbol",
 ])(
   "preserves native symbol %j as one argument and scoped Evidence",
   async (symbol) => {
@@ -99,23 +101,29 @@ it.each([
   },
 );
 
-it.each(["", "a\u0000b", null, 1])(
-  "rejects invalid symbol %j before artifact admission",
-  async (symbol) => {
-    const digest = vi.fn();
-    const run = vi.fn();
-    const service = new TestReverseEngineeringService({ digest, run });
-    const result = await service.inspectWithObjdump({
-      path: "/unread-artifact",
-      operation: "disassemble",
-      symbol,
-    });
-    expect(result).toMatchObject({
-      ok: false,
-      error: { _tag: "AnalysisInputError" },
-    });
-    expect(digest).not.toHaveBeenCalled();
-    expect(run).not.toHaveBeenCalled();
-    await service.close();
-  },
-);
+it.each([
+  "",
+  "a\u0000b",
+  "\ud800",
+  "\udc00",
+  "prefix\ud800suffix",
+  "prefix\udc00\ud800suffix",
+  null,
+  1,
+])("rejects invalid symbol %j before artifact admission", async (symbol) => {
+  const digest = vi.fn();
+  const run = vi.fn();
+  const service = new TestReverseEngineeringService({ digest, run });
+  const result = await service.inspectWithObjdump({
+    path: "/unread-artifact",
+    operation: "disassemble",
+    symbol,
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisInputError" },
+  });
+  expect(digest).not.toHaveBeenCalled();
+  expect(run).not.toHaveBeenCalled();
+  await service.close();
+});

@@ -23,7 +23,8 @@ const objdumpDisassemblyInputSchema = objdumpArtifactInputSchema.extend({
   symbol: z
     .string()
     .min(1)
-    .regex(/^[^\u0000]*$/u)
+    // Unicode mode preserves paired surrogates as a single astral code point.
+    .regex(/^[^\u0000\uD800-\uDFFF]*$/u)
     .describe(
       "Native symbol to disassemble. Matching and symbol boundaries follow GNU objdump; omitted means all code sections.",
     )
