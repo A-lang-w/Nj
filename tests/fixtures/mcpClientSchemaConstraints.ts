@@ -40,6 +40,35 @@ export const arrayItemSchemaError = (
   return undefined;
 };
 
+/** Reject Gemini-incompatible empty-string literals in advertised input positions. */
+export const emptyStringLiteralSchemaError = (
+  schema: unknown,
+  path: string,
+): string | undefined => {
+  if (!isRecord(schema)) return undefined;
+  if (schema.const === "") return `${path}.const is an empty string`;
+  if (Array.isArray(schema.enum) && schema.enum.some((value) => value === ""))
+    return `${path}.enum contains an empty string`;
+  for (const [key, value] of Object.entries(schema)) {
+    const children =
+      schemaMaps.has(key) && isRecord(value)
+        ? Object.entries(value).map(
+            ([name, child]) => [`${key}.${name}`, child] as const,
+          )
+        : schemaArrays.has(key) && Array.isArray(value)
+          ? value.map(
+              (child: unknown, index) => [`${key}[${index}]`, child] as const,
+            )
+          : schemaChildren.has(key)
+            ? [[key, value] as const]
+            : [];
+    for (const [suffix, child] of children) {
+      const error = emptyStringLiteralSchemaError(child, `${path}.${suffix}`);
+      if (error !== undefined) return error;
+    }
+  }
+  return undefined;
+};
 /** Reject Gemini-incompatible boolean literals in advertised input positions. */
 export const booleanLiteralSchemaError = (
   schema: unknown,

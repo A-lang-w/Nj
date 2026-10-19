@@ -234,6 +234,18 @@ const normalizeAdvertisedSchema = (value: unknown): SchemaNormalization => {
     if (node.type === undefined) node.type = "boolean";
     changed = true;
   }
+  if (node.const === "") {
+    delete node.const;
+    if (node.type === undefined) node.type = "string";
+    changed = true;
+  }
+  if (Array.isArray(node.enum) && node.enum.some((item) => item === "")) {
+    // An empty enum member is rejected by Gemini function declarations; widen
+    // to the declared type so canonical-valid empty strings stay accepted.
+    delete node.enum;
+    if (node.type === undefined) node.type = "string";
+    changed = true;
+  }
 
   const negated = Object.hasOwn(value, "not")
     ? normalizeAdvertisedSchema(value.not)

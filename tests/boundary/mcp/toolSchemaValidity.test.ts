@@ -12,6 +12,7 @@ import { GENERATED_MCP_TOOL_CATALOG } from "../../fixtures/mcpToolCatalog.js";
 import {
   arrayItemSchemaError,
   booleanLiteralSchemaError,
+  emptyStringLiteralSchemaError,
 } from "../../fixtures/mcpClientSchemaConstraints.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
@@ -50,6 +51,11 @@ function schemaErrors(tools: readonly ToolSchemas[]): string[] {
             `${tool.name}.${kind}`,
           );
           if (literalError !== undefined) return [literalError];
+          const emptyLiteralError = emptyStringLiteralSchemaError(
+            schema,
+            `${tool.name}.${kind}`,
+          );
+          if (emptyLiteralError !== undefined) return [emptyLiteralError];
         }
         return [];
       } catch (cause: unknown) {

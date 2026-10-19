@@ -10,6 +10,7 @@ import {
   transformAdvertisedInputJsonSchema,
 } from "./toolSchemaMetadata.js";
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "./javascript/javascriptRuntimeReconciliationExample.js";
+import { applicationFeatureSeedSchema } from "../domain/javascript/javascriptFeatureTraceSchemas.js";
 
 it.each(["draft-2020-12", "draft-07"] as const)(
   "honors projection options independently of cached wire transformations in %s",
@@ -567,5 +568,75 @@ describe("advertised Boolean schema composition", () => {
     });
     expect(presented.default).toEqual(literal);
     expect(presented.examples).toEqual([literal]);
+  });
+});
+
+describe("advertised empty-string literals", () => {
+  it("keeps canonical empty-string-literal inputs accepted after advertisement", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        value: { type: "string", const: "" },
+      },
+      required: ["value"],
+      additionalProperties: false,
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    const canonicalValidate = new Ajv2020({ strict: false }).compile(canonical);
+    const advertisedValidate = new Ajv2020({ strict: false }).compile(
+      advertised,
+    );
+    expect(canonicalValidate({ value: "" })).toBe(true);
+    expect(canonicalValidate({ value: "route" })).toBe(false);
+    expect(advertisedValidate({ value: "" })).toBe(true);
+    expect(advertisedValidate({ value: "route" })).toBe(true);
+    expect(advertised.properties).toEqual({ value: { type: "string" } });
+  });
+
+  it("widens an enum that contains an empty member", () => {
+    const canonical = {
+      type: "object",
+      properties: { value: { type: "string", enum: ["", "exact"] } },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.properties).toEqual({ value: { type: "string" } });
+  });
+
+  it("widens an affected oneOf to anyOf without losing branch guidance", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        value: {
+          oneOf: [{ type: "string", const: "" }, {}],
+        },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    const canonicalValidate = new Ajv2020({ strict: false }).compile(canonical);
+    const advertisedValidate = new Ajv2020({ strict: false }).compile(
+      advertised,
+    );
+    expect(canonicalValidate({ value: "route" })).toBe(true);
+    expect(advertisedValidate({ value: "route" })).toBe(true);
+    expect(advertised).toHaveProperty(["properties", "value", "anyOf"]);
+  });
+
+  it("removes the recorded trace seed's empty-string literals from the advertisement", () => {
+    const canonical = z.toJSONSchema(
+      z.strictObject({ seed: applicationFeatureSeedSchema }),
+      { io: "input", target: "draft-2020-12" },
+    );
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(JSON.stringify(advertised)).not.toContain('"const":""');
+    const canonicalValidate = new Ajv2020({ strict: false }).compile(canonical);
+    const advertisedValidate = new Ajv2020({ strict: false }).compile(
+      advertised,
+    );
+    const emptyRoute = { kind: "route", value: "", match: "exact" };
+    expect(canonicalValidate({ seed: emptyRoute })).toBe(true);
+    expect(advertisedValidate({ seed: emptyRoute })).toBe(true);
+    expect(
+      canonicalValidate({ seed: { kind: "route", value: "", match: "contains" } }),
+    ).toBe(false);
   });
 });
