@@ -850,6 +850,24 @@ describe("advertised empty-string literals", () => {
     });
   });
 
+  it("normalizes nested targets against their owning resource", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        nested: {
+          $id: "https://example.com/nested",
+          type: "object",
+          properties: { value: { $ref: "#/default" } },
+          default: { not: { $ref: "#/payload" } },
+          payload: { const: "" },
+        },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.properties.nested.default).toEqual({});
+    expect(advertised.properties.nested.payload).toEqual({ type: "string" });
+  });
+
   it("resolves annotation references within nested resources", () => {
     const canonical = {
       type: "object",

@@ -816,7 +816,7 @@ const normalizeReferencedTargets = (
       // target at its callers rather than dangling.
       const removed = normalizeAdvertisedSchema(
         resolved.value,
-        source,
+        resource,
         new Set([entry.reference]),
       );
       fileDangling(entry, removed.schema);
@@ -824,7 +824,7 @@ const normalizeReferencedTargets = (
     }
     const result = normalizeAdvertisedSchema(
       resolved.value,
-      source,
+      resource,
       new Set([entry.reference]),
     );
     if (!result.changed) continue;
@@ -833,7 +833,7 @@ const normalizeReferencedTargets = (
     const replacement = isObject(presented)
       ? normalizeAdvertisedSchema(
           presented,
-          source,
+          resource,
           new Set([entry.reference]),
         ).schema
       : result.schema;
