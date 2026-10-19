@@ -111,7 +111,7 @@ const runSetupWorkflow = async (
   let { hopperPath, providerEnvironment } = initialState;
   const discovery = await discoverSetupState({
     host,
-    providerEnvironment,
+    providerConfigured: initialState.providerConfigured,
     forceHopperInstall: options.installHopper,
     hopperLauncherConfigured: initialState.hopperLauncherConfigured === true,
     proposeHopper:
@@ -128,11 +128,15 @@ const runSetupWorkflow = async (
     options.installSkill === undefined;
   const interactiveSelection =
     confirm !== undefined && !options.structured && clientSelectionAllowed;
-  let selectedClientIds = options.allDetectedClients
-    ? discovery.detectedClientIds
-    : (options.clientIds ??
-      options.readinessScope?.clients ??
-      discovery.defaultClientIds);
+  let selectedClientIds = [
+    ...new Set(
+      options.allDetectedClients
+        ? discovery.detectedClientIds
+        : (options.clientIds ??
+            options.readinessScope?.clients ??
+            discovery.defaultClientIds),
+    ),
+  ];
   let selectedSkillClientIds =
     options.skillClientIds ??
     options.readinessScope?.skillClients ??

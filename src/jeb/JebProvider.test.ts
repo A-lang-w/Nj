@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
 
+import { createJebAnalysisProvider } from "../composition/jeb.js";
 import { JebProvider } from "./JebProvider.js";
-import type { JebMcpConnection } from "./JebMcpConnection.js";
+import type {
+  JebMcpConnection,
+  JebMcpConnectionTimeouts,
+} from "./JebMcpConnection.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisProtocolError,
   AnalysisCancelledError,
+  AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jebResultSchemas } from "../domain/jeb/jebAnalysis.js";
@@ -42,6 +47,36 @@ const providerWith = (connection: JebMcpConnection) =>
   });
 
 describe("JebProvider live availability", () => {
+  it("passes its validated environment timeout to the production connection", async () => {
+    let configured: JebMcpConnectionTimeouts | undefined;
+    const provider = createJebAnalysisProvider(
+      { REA_JEB_MCP_TIMEOUT_MS: "900000" },
+      (_endpoint, timeouts) => {
+        configured = timeouts;
+        return scriptedConnection({});
+      },
+    );
+    expect(configured).toEqual({ requestTimeoutMs: 900_000 });
+    await provider.close();
+  });
+
+  it("rejects an invalid JEB timeout before constructing its MCP connection", async () => {
+    let constructed = false;
+    const provider = createJebAnalysisProvider(
+      { REA_JEB_MCP_TIMEOUT_MS: "0" },
+      () => {
+        constructed = true;
+        return scriptedConnection({});
+      },
+    );
+    expect(constructed).toBe(false);
+    await expect(provider.inspectAvailability()).resolves.toMatchObject({
+      status: "unavailable",
+      diagnostics: { setting: "REA_JEB_MCP_TIMEOUT_MS" },
+    });
+    await provider.close();
+  });
+
   it("reports only the operations advertised by the live engine", async () => {
     const connection = scriptedConnection({
       get_client_information: {
@@ -358,9 +393,14 @@ it("forwards in-flight cancellation to the MCP call", async () => {
     async call(_name, _args, signal) {
       entered();
       await new Promise<void>((_resolve, reject) =>
-        signal!.addEventListener("abort", () => reject(signal!.reason), {
-          once: true,
-        }),
+        signal!.addEventListener(
+          "abort",
+          () =>
+            reject(
+              new AnalysisCancelledError(_name, { cause: signal!.reason }),
+            ),
+          { once: true },
+        ),
       );
       return {};
     },
@@ -373,5 +413,107 @@ it("forwards in-flight cancellation to the MCP call", async () => {
   controller.abort();
   const result = await pending;
   expect(result.ok).toBe(false);
-  if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  if (!result.ok) {
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(controller.signal.reason);
+  }
+});
+
+it("refreshes cached unknown metadata only through an explicit information probe", async () => {
+  const responses: Record<string, JsonValue> = {
+    get_client_information: { success: true, gui_client: false },
+    list_units: { success: true, units: [] },
+  };
+  const connection = scriptedConnection(responses);
+  const provider = providerWith(connection);
+  try {
+    const first = await provider.execute({
+      operation: "list_jeb_units",
+      input: { count: 2, index: 0 },
+    });
+    if (!first.ok) throw first.error;
+    expect(first.value.provider.version).toBeNull();
+    responses.get_client_information = {
+      success: true,
+      version: "5.49.0",
+      gui_client: true,
+    };
+    const inspected = await provider.execute({
+      operation: "inspect_jeb_client",
+      input: {},
+    });
+    if (!inspected.ok) throw inspected.error;
+    const after = await provider.execute({
+      operation: "list_jeb_units",
+      input: { count: 2, index: 0 },
+    });
+    if (!after.ok) throw after.error;
+    expect(after.value.provider.version).toBe("5.49.0");
+    expect(after.value.result).toMatchObject({
+      engine: { version: "5.49.0", gui_client: true },
+    });
+    expect(connection.calls.map(([name]) => name)).toEqual([
+      "list_units",
+      "get_client_information",
+      "get_client_information",
+      "list_units",
+    ]);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("keeps concurrent client inspections bound to their own parsed metadata", async () => {
+  const connection = scriptedConnection({});
+  let replies = 0;
+  connection.call = async () => ({
+    success: true,
+    version: `inspection-${++replies}`,
+    gui_client: replies === 1,
+  });
+  const provider = providerWith(connection);
+  try {
+    const results = await Promise.all([
+      provider.execute({ operation: "inspect_jeb_client", input: {} }),
+      provider.execute({ operation: "inspect_jeb_client", input: {} }),
+    ]);
+    for (const [index, result] of results.entries()) {
+      if (!result.ok) throw result.error;
+      expect(result.value.provider.version).toBe(`inspection-${index + 1}`);
+      expect(result.value.result).toMatchObject({
+        engine: {
+          version: result.value.provider.version,
+          gui_client: index === 0,
+        },
+      });
+    }
+  } finally {
+    await provider.close();
+  }
+});
+
+it("preserves provider-authored timeout guidance when projecting the requested operation", async () => {
+  const reason = new Error("selected deadline elapsed");
+  const timeout = new AnalysisTimeoutError("list_units", 123, {
+    cause: reason,
+    userMessage: "The selected MCP request budget elapsed.",
+    remediationAction: "Increase the selected MCP request budget.",
+  });
+  const provider = providerWith(scriptedConnection({ list_units: timeout }));
+  try {
+    const result = await provider.execute({
+      operation: "list_jeb_units",
+      input: { count: 2, index: 0 },
+    });
+    if (result.ok) throw new Error("Timed-out request passed");
+    expect(result.error).toMatchObject({
+      operation: "list_jeb_units",
+      timeoutMs: 123,
+      userMessage: timeout.userMessage,
+      remediationAction: timeout.remediationAction,
+    });
+    expect(result.error.cause).toBe(reason);
+  } finally {
+    await provider.close();
+  }
 });

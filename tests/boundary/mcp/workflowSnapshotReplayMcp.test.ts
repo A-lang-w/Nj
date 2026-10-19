@@ -416,6 +416,8 @@ describe("MCP composed workflow snapshot replay", () => {
       readConfiguration: () => parseConfig({}),
       createBinarySession: () => createWorkflowSession(provider),
       createArtifactBinarySession: () => createWorkflowSession(provider),
+      createNativeDispatchBinarySession: () => createWorkflowSession(provider),
+      createNativeBinarySession: () => createWorkflowSession(provider),
       createManagedBinarySession: () => createWorkflowSession(provider),
     };
     const replay = await runDirectAnalysis(
