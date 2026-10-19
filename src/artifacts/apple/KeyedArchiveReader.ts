@@ -8,7 +8,9 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import {
   negativeZeroRealLimitation,
+  nonFiniteRealLimitation,
   unknownDateLimitation,
+  unknownScalarLimitation,
 } from "../../domain/apple/plistValue.js";
 import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js";
 import {
@@ -86,9 +88,10 @@ export const decodeKeyedArchiveBytes = (
         }
       : parseXmlPropertyList(xmlText ?? "");
   const {
-    unknownRealCount,
+    nonFiniteRealCount,
     negativeZeroRealCount,
     unknownDateCount,
+    unknownScalarCount,
     ...graph
   } = projectKeyedArchive(parsed.value, selection);
   const numbers = createPlistNumberProjection(parsed.numberLiterals);
@@ -115,17 +118,18 @@ export const decodeKeyedArchiveBytes = (
       ...(parsed.omittedPrototypeKeys === 0
         ? []
         : [omittedPrototypeKeysLimitation(parsed.omittedPrototypeKeys)]),
-      ...(unknownRealCount === 0
+      ...(nonFiniteRealCount === 0
         ? []
-        : [
-            `${String(unknownRealCount)} non-finite real value(s) are reported as { "$plist_type": "real", "value": null } because JSON evidence cannot preserve NaN vs infinity.`,
-          ]),
+        : [nonFiniteRealLimitation(nonFiniteRealCount)]),
       ...(negativeZeroRealCount === 0
         ? []
         : [negativeZeroRealLimitation(negativeZeroRealCount)]),
       ...(unknownDateCount === 0
         ? []
         : [unknownDateLimitation(unknownDateCount)]),
+      ...(unknownScalarCount === 0
+        ? []
+        : [unknownScalarLimitation(unknownScalarCount)]),
     ],
   };
 };

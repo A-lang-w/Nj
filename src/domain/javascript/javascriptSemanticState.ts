@@ -109,6 +109,8 @@ export interface JavaScriptSemanticAnalysisState {
   readonly valueResourceLimits: Set<JavaScriptSemanticResourceLimit>;
   /** Getter query bounds encountered while resolving object and class properties. */
   readonly getterResourceLimits: Set<JavaScriptSemanticResourceLimit>;
+  /** Callee sites whose possible local returns needed a broader projection. */
+  readonly returnedReferenceWidenings: Set<t.Node>;
   readonly parentsByNode: WeakMap<t.Node, t.Node>;
   readonly scopes: JavaScriptSemanticScopeState[];
   readonly scopesById: Map<string, JavaScriptSemanticScopeState>;
@@ -146,6 +148,8 @@ export interface JavaScriptSemanticAnalysisState {
   readonly ambientBindingWrites: Map<string, t.Node[]>;
   /** Source-local writes, tagged by global, import.meta or CJS module identity. */
   readonly ambientWrites: SemanticPropertyPathCoverage;
+  /** Ambient object identities passed to calls whose effects are not evaluated. */
+  readonly ambientEscapes: SemanticPropertyPathCoverage;
   /** Source sites distinguish replacement before an ambient identity capture from later writes. */
   readonly ambientWriteEffects: JavaScriptSemanticMemberEffect[];
 }

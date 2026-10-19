@@ -490,3 +490,82 @@ it("unreferences process and stream handles when stop reports incomplete cleanup
     supervisor.dispose();
   }
 });
+
+it.each(["close", "abort"] as const)(
+  "awaits output without a deadline until %s",
+  async (outcome) => {
+    const producer = Object.assign(new EventEmitter(), {
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      exitCode: null,
+      signalCode: null,
+      kill: () => false,
+    });
+    const owner = new ProviderProcessSupervisor({
+      process: producer,
+      ownsProcessLifetime: true,
+    });
+    const controller = new AbortController();
+    const removeListener = vi.spyOn(controller.signal, "removeEventListener");
+    let settled = false;
+    const pending = owner
+      .waitForOutputClose(undefined, controller.signal)
+      .then((result) => {
+        settled = true;
+        return result;
+      });
+    try {
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      if (outcome === "close") producer.emit("close", 0, null);
+      else controller.abort();
+      expect(await pending).toBe(outcome === "close");
+      expect(removeListener).toHaveBeenCalledWith(
+        "abort",
+        expect.any(Function),
+      );
+    } finally {
+      removeListener.mockRestore();
+      owner.dispose();
+      producer.stdout.destroy();
+      producer.stderr.destroy();
+    }
+  },
+);
+
+it("keeps current checkpoint coverage separate from historically dropped output", () => {
+  const producer = Object.assign(new EventEmitter(), {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    exitCode: null,
+    signalCode: null,
+    kill: () => false,
+  });
+  const supervisor = new ProviderProcessSupervisor(
+    { process: producer, ownsProcessLifetime: false },
+    { maxDiagnosticBytes: 0 },
+  );
+  try {
+    producer.stdout.write("earlier dropped output");
+    expect(supervisor.snapshot().diagnosticTruncated).toBe(true);
+    const checkpoint = supervisor.checkpointOutput();
+    const current = supervisor.snapshotOutputSince(checkpoint);
+    expect(current.complete).toBe(true);
+    expect(current.snapshot.diagnosticTruncated).not.toBe(true);
+    expect(current.snapshot.stdout).toEqual({
+      text: "",
+      bytes: 0,
+      observedBytes: 0,
+    });
+    producer.stderr.write("current dropped output");
+    expect(supervisor.snapshotOutputSince(checkpoint)).toMatchObject({
+      complete: false,
+      snapshot: { diagnosticTruncated: true },
+    });
+    expect(supervisor.snapshot().diagnosticTruncated).toBe(true);
+  } finally {
+    supervisor.dispose();
+    producer.stdout.destroy();
+    producer.stderr.destroy();
+  }
+});

@@ -3,6 +3,8 @@ import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import spawn from "cross-spawn";
+import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
+import { UpdateCommandProgress } from "./UpdateCommandProgress.js";
 import { lt, valid } from "semver";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
@@ -40,148 +42,167 @@ export const MAX_UPDATE_COMMAND_OUTPUT_BYTES = 2 * 1024 * 1024;
 /** Grace period before an uncooperative update subprocess is escalated to SIGKILL. */
 export const DEFAULT_UPDATE_TERMINATION_GRACE_MS = 1_000;
 
-/** Run an updater subprocess with complete diagnostics and isolated machine output. */
+/** Aggregate raw-byte retention policy for package-manager replies and diagnostics. */
+export const UPDATE_COMMAND_OUTPUT_BYTES = 4 * 1024 * 1024;
+
+/** Complete metadata queries share launch and collection with diagnostic-only installs. */
 export const runUpdateCommand = (
   command: readonly string[],
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
   output: UpdateOutput = "structured",
   workingDirectory: string | undefined = undefined,
-  maxOutputBytes: number = MAX_UPDATE_COMMAND_OUTPUT_BYTES,
+  maxOutputBytes?: number,
   terminationGraceMs: number = DEFAULT_UPDATE_TERMINATION_GRACE_MS,
 ): Promise<Result<string, string>> =>
-  new Promise((resolveResult) => {
-    const [executable, ...args] = command;
-    if (executable === undefined) {
-      resolveResult(err("No executable supplied."));
-      return;
-    }
-    // A fresh installed entry point must not inherit a package runner's invocation identity.
-    const environment = withoutPackageRunnerIdentity(selectedEnvironment);
-    const child = spawn(executable, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: environment,
-      windowsHide: true,
-      ...(workingDirectory === undefined ? {} : { cwd: workingDirectory }),
-    });
-    let stdout = "";
-    let stderr = "";
-    let observedBytes = 0;
-    let exceeded = false;
-    let settled = false;
-    let killTimer: NodeJS.Timeout | undefined;
+  runUpdateProcess(
+    command,
+    selectedEnvironment,
+    output,
+    workingDirectory,
+    "complete",
+    maxOutputBytes,
+    terminationGraceMs,
+  );
 
-    const clearKillTimer = (): void => {
-      if (killTimer !== undefined) {
-        clearTimeout(killTimer);
-        killTimer = undefined;
-      }
-    };
-
-    const cleanup = (): void => {
-      clearKillTimer();
-      child.removeListener("error", onError);
-      child.removeListener("close", onClose);
-      child.removeListener("exit", onExit);
-      child.stdout?.removeListener("data", onStdoutData);
-      child.stderr?.removeListener("data", onStderrData);
-    };
-
-    const settle = (result: Result<string, string>): void => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolveResult(result);
-    };
-
-    const onExit = (): void => {
-      clearKillTimer();
-    };
-
-    const terminate = (): void => {
-      if (child.exitCode !== null || child.signalCode !== null) return;
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        // Subprocess may have already terminated.
-      }
-      if (child.exitCode === null && child.signalCode === null) {
-        if (terminationGraceMs <= 0) {
-          try {
-            child.kill("SIGKILL");
-          } catch {
-            // Subprocess may have already terminated.
-          }
-        } else {
-          killTimer = setTimeout(() => {
-            if (child.exitCode === null && child.signalCode === null) {
-              try {
-                child.kill("SIGKILL");
-              } catch {
-                // Subprocess may have already terminated.
-              }
-            }
-          }, terminationGraceMs);
-          killTimer.unref?.();
-        }
-      }
-    };
-
-    const onData = (stream: "stdout" | "stderr", chunk: string): void => {
-      if (exceeded) return;
-      observedBytes += Buffer.byteLength(chunk, "utf8");
-      if (observedBytes > maxOutputBytes) {
-        exceeded = true;
-        child.stdout?.destroy();
-        child.stderr?.destroy();
-        terminate();
-        return;
-      }
-      if (stream === "stdout") stdout += chunk;
-      else stderr += chunk;
-      if (output === "human") process.stderr.write(chunk);
-    };
-
-    const onStdoutData = (chunk: string): void => onData("stdout", chunk);
-    const onStderrData = (chunk: string): void => onData("stderr", chunk);
-
-    child.stdout?.setEncoding("utf8");
-    child.stderr?.setEncoding("utf8");
-    child.stdout?.on("data", onStdoutData);
-    child.stderr?.on("data", onStderrData);
-
-    const onError = (cause: Error): void =>
-      settle(
-        exceeded
-          ? err(
-              `Update command output exceeded the collection limit of ${String(maxOutputBytes)} bytes.`,
-            )
-          : err(cause.message),
-      );
-
-    const onClose = (
-      code: number | null,
-      signal: NodeJS.Signals | null,
-    ): void =>
-      settle(
-        exceeded
-          ? err(
-              `Update command output exceeded the collection limit of ${String(maxOutputBytes)} bytes.`,
-            )
-          : code === 0
-            ? ok(stdout.trim())
-            : err(
-                stderr.trim() ||
-                  stdout.trim() ||
-                  (signal === null
-                    ? `Process exited with code ${String(code)}.`
-                    : `Process terminated by ${signal}.`),
-              ),
-      );
-
-    child.once("exit", onExit);
-    child.once("error", onError);
-    child.once("close", onClose);
+const runUpdateProcess = async (
+  command: readonly string[],
+  selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
+  output: UpdateOutput,
+  workingDirectory: string | undefined,
+  retention: "complete" | "diagnostics",
+  maxOutputBytes?: number,
+  terminationGraceMs: number = DEFAULT_UPDATE_TERMINATION_GRACE_MS,
+): Promise<Result<string, string>> => {
+  const [executable, ...args] = command;
+  if (executable === undefined) return err("No executable supplied.");
+  const environment = withoutPackageRunnerIdentity(selectedEnvironment);
+  const child = spawn(executable, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: environment,
+    windowsHide: true,
+    ...(workingDirectory === undefined ? {} : { cwd: workingDirectory }),
   });
+  let processFailure: string | undefined;
+  let observedBytes = 0;
+  let exceeded = false;
+  let killTimer: NodeJS.Timeout | undefined;
+
+  const clearKillTimer = (): void => {
+    if (killTimer !== undefined) {
+      clearTimeout(killTimer);
+      killTimer = undefined;
+    }
+  };
+
+  const onExit = (): void => {
+    clearKillTimer();
+  };
+
+  const terminate = (): void => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      // Subprocess may have already terminated.
+    }
+    if (child.exitCode === null && child.signalCode === null) {
+      if (terminationGraceMs <= 0) {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // Subprocess may have already terminated.
+        }
+      } else {
+        killTimer = setTimeout(() => {
+          if (child.exitCode === null && child.signalCode === null) {
+            try {
+              child.kill("SIGKILL");
+            } catch {
+              // Subprocess may have already terminated.
+            }
+          }
+        }, terminationGraceMs);
+        killTimer.unref?.();
+      }
+    }
+  };
+
+  child.once("exit", onExit);
+
+  const supervisor = new ProviderProcessSupervisor(
+    { process: child, ownsProcessLifetime: true },
+    {
+      maxDiagnosticBytes: maxOutputBytes ?? UPDATE_COMMAND_OUTPUT_BYTES,
+      onDiagnostic: (event) => {
+        if (event.type === "error") processFailure ??= event.message;
+        if (maxOutputBytes !== undefined && event.type === "output") {
+          observedBytes += event.bytes;
+          if (observedBytes > maxOutputBytes && !exceeded) {
+            exceeded = true;
+            child.stdout?.destroy();
+            child.stderr?.destroy();
+            terminate();
+          }
+        }
+      },
+    },
+  );
+  const progress =
+    output === "human" ? new UpdateCommandProgress(process.stderr) : undefined;
+  if (progress !== undefined) {
+    for (const stream of [child.stdout, child.stderr])
+      if (stream !== null) progress.pipe(stream);
+  }
+  try {
+    // Drain even an oversized reply. Verbosity must not interrupt a package install.
+    // Keep the existing launch/signal policy; this collector owns no process-tree authority.
+    await supervisor.waitForOutputClose();
+    const progressFailure = await progress?.close();
+    const snapshot = supervisor.snapshot();
+    if (exceeded)
+      return err(
+        `Update command output exceeded the collection limit of ${String(maxOutputBytes)} bytes.`,
+      );
+    if (processFailure !== undefined) return err(processFailure);
+    if (snapshot.outputIncomplete === true)
+      return err("Update command output did not close completely.");
+    if (retention === "complete" && snapshot.diagnosticTruncated === true)
+      return err(
+        `Update command output exceeded the ${UPDATE_COMMAND_OUTPUT_BYTES}-byte complete-output retention budget; reply was not accepted.`,
+      );
+    if (snapshot.exitCode !== 0 || snapshot.signal !== null) {
+      const detail =
+        snapshot.stderr.text.trim() ||
+        snapshot.stdout.text.trim() ||
+        (typeof snapshot.signal === "string"
+          ? `Process terminated by ${snapshot.signal}.`
+          : typeof snapshot.exitCode === "number"
+            ? `Process exited with code ${snapshot.exitCode}.`
+            : "Update command failed without a recorded exit status.");
+      return err(
+        snapshot.diagnosticTruncated
+          ? `${detail}\n[Update diagnostics truncated at ${UPDATE_COMMAND_OUTPUT_BYTES} bytes; later output omitted.]`
+          : detail,
+      );
+    }
+    if (
+      retention === "complete" &&
+      (snapshot.stdout.invalidUtf8 || snapshot.stderr.invalidUtf8)
+    )
+      return err(
+        "Update command returned invalid UTF-8; complete output is unavailable.",
+      );
+    if (progressFailure !== undefined)
+      return err(`Update progress output failed: ${progressFailure.message}`);
+    return ok(retention === "diagnostics" ? "" : snapshot.stdout.text.trim());
+  } finally {
+    clearKillTimer();
+    child.removeListener("exit", onExit);
+    // Reached only after physical close; no child or inherited pipe remains pending.
+    supervisor.dispose();
+    await progress?.close();
+  }
+};
 
 const requireCommandOutput = async (
   command: readonly string[],
@@ -441,11 +462,12 @@ export const systemUpdateHost = (
     },
     installVersion: async (installation, version, output) => {
       const context = packageManagerContext(installation, environment);
-      const result = await runUpdateCommand(
+      const result = await runUpdateProcess(
         updateInstallCommand(installation, version),
         context.environment,
         output,
         context.workingDirectory,
+        "diagnostics",
       );
       return result.ok ? ok(undefined) : result;
     },
