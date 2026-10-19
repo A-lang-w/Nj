@@ -167,17 +167,25 @@ const HIERARCHY_KEY =
  * names the referenced object; the hierarchy walk visits each object once.
  */
 const keyedArchiveTable = (objectTable: readonly unknown[]) => {
+  // Many objects share one descriptor, so each referenced chain is parsed once.
+  const classChains = new Map<number, ReadonlySet<string>>();
   /** The class and superclass names a class descriptor declares in `$classes`. */
-  const classChain = (classReference: unknown): readonly string[] => {
+  const classChain = (classReference: unknown): ReadonlySet<string> => {
     const uid = archiveUid(classReference);
+    const cached = uid === undefined ? undefined : classChains.get(uid);
+    if (cached !== undefined) return cached;
     const descriptor = record(
       uid === undefined ? classReference : objectTable[uid],
     );
-    return Array.isArray(descriptor.$classes)
-      ? descriptor.$classes.filter(
-          (name): name is string => typeof name === "string",
-        )
-      : [];
+    const chain = new Set(
+      Array.isArray(descriptor.$classes)
+        ? descriptor.$classes.filter(
+            (name): name is string => typeof name === "string",
+          )
+        : [],
+    );
+    if (uid !== undefined) classChains.set(uid, chain);
+    return chain;
   };
   const classNameOf = (value: unknown): string | null => {
     const classReference = record(value).$class;
@@ -307,9 +315,7 @@ const keyedArchiveTable = (objectTable: readonly unknown[]) => {
   };
   const archivedArrayClass = (classReference: unknown): boolean => {
     const classNames = classChain(classReference);
-    return (
-      classNames.includes("NSArray") || classNames.includes("NSMutableArray")
-    );
+    return classNames.has("NSArray") || classNames.has("NSMutableArray");
   };
   return { resolve, hierarchy, classChain };
 };
@@ -517,10 +523,10 @@ const archivedKindBases: readonly (readonly [
  */
 const classifyObject = (
   className: string | null,
-  classChain: readonly string[] = [],
+  classChain: ReadonlySet<string> = new Set(),
 ): InterfaceBuilderObject["kind"] => {
   for (const [kind, bases] of archivedKindBases)
-    if (bases.some((base) => classChain.includes(base))) return kind;
+    if (bases.some((base) => classChain.has(base))) return kind;
   const value = className?.toLowerCase() ?? "";
   if (value.includes("constraint")) return "constraint";
   if (value.includes("layoutguide")) return "layout_guide";
