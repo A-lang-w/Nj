@@ -36,7 +36,10 @@ import {
   type SemanticGlobalBindingFacts,
 } from "./javascriptSemanticOpaqueEffects.js";
 import { createSemanticLexicalReceiverOwner } from "./javascriptSemanticReceiverOwners.js";
-import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
+import {
+  semanticLiteralObjectReferenceSources,
+  semanticReferenceSourcesInactive,
+} from "./javascriptSemanticReferenceSources.js";
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
 import {
   isUnshadowedGlobal,
@@ -366,7 +369,7 @@ export const createSemanticReceiverReferences = (
       prototypeUnchanged: (owner, read) =>
         semanticAmbientPrototypeUnchanged(state, owner, read),
     });
-    const reflectiveSetReceivers = new WeakMap<
+    const nativeSetReceivers = new WeakMap<
       t.Node,
       { readonly target: t.Node; readonly receiver: t.Node }
     >();
@@ -755,29 +758,62 @@ export const createSemanticReceiverReferences = (
         : intrinsics.intrinsicInvocation(node);
       if (
         setterInvocation?.kind === "known" &&
-        setterInvocation.path.join(".") === "intrinsic.Reflect.set" &&
         setterInvocation.arguments !== undefined &&
         !setterInvocation.arguments.some(t.isSpreadElement)
       ) {
         const args = setterInvocation.arguments;
         const target = args[0];
-        const receiver = args.length < 4 ? target : args[3];
-        const key = intrinsics.staticString(args[1]);
+        let receiver = target;
+        let keys: readonly string[] | undefined;
+        if (setterInvocation.path.join(".") === "intrinsic.Reflect.set") {
+          receiver = args.length < 4 ? target : args[3];
+          const key = intrinsics.staticString(args[1]);
+          if (key !== undefined) keys = [key];
+        } else if (
+          setterInvocation.path.join(".") === "intrinsic.Object.assign"
+        ) {
+          const copied = new Set<string>();
+          const knownSources = args.slice(1).every((source) => {
+            if (!t.isObjectExpression(source)) return false;
+            const own = semanticLiteralObjectReferenceSources(source);
+            // Source getters run between target writes and can change a later
+            // descriptor. Unknown enumerations retain the ordinary escape.
+            if (
+              own.unknownKeys ||
+              own.sources.some(
+                ({ kind }) => kind !== "data" && kind !== "method",
+              )
+            )
+              return false;
+            for (const key of own.properties.keys()) copied.add(key);
+            return true;
+          });
+          if (knownSources && copied.size > 0) keys = [...copied];
+        }
         if (
           t.isExpression(target) &&
           t.isExpression(receiver) &&
-          key !== undefined
+          keys !== undefined
         ) {
-          const selected = accessorReferences(target, [key]);
+          // The target value is captured at its argument, but native [[Set]]
+          // selects its descriptor after every argument has been evaluated.
+          const selections = keys.map((key) =>
+            accessorReferences(target, [key], node),
+          );
           // Provisional receiver selection cannot prove its own write snapshot.
           // Completed queries require the same binding and descriptor capture
           // proof as other source callable consumers before removing an escape.
           if (
-            selected.references.length > 0 &&
-            (selected.complete || !includeUnknownResults)
+            selections.every(
+              (selected) =>
+                selected.complete ||
+                (!includeUnknownResults && selected.references.length > 0),
+            )
           ) {
-            reflectiveSetReceivers.set(node, { target, receiver });
-            for (const { node: member } of selected.references) {
+            nativeSetReceivers.set(node, { target, receiver });
+            for (const { node: member } of selections.flatMap(
+              (selected) => selected.references,
+            )) {
               if (!t.isObjectMethod(member) && !t.isClassMethod(member))
                 continue;
               retain(member);
@@ -996,7 +1032,7 @@ export const createSemanticReceiverReferences = (
         const value = values.pop();
         if (value === undefined || covered.has(value)) continue;
         const setter =
-          parent === null ? undefined : reflectiveSetReceivers.get(parent);
+          parent === null ? undefined : nativeSetReceivers.get(parent);
         // The native operation calls the selected source setter with its fixed
         // receiver; it does not independently invoke every function in either
         // input. Any source-body escape is still indexed at its own use site.

@@ -1,10 +1,12 @@
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 
 import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
-const SHIM = 'var Q=(e=>typeof require<"u"?require:e)(function(){});';
+const SHIM_VALUE = '(e=>typeof require<"u"?require:e)(function(){})';
+const SHIM = `var Q=${SHIM_VALUE};`;
 
 const windows = (source: string, path = "bundle.cjs") => {
   const file = parseJavaScriptSource(source, path);
@@ -13,7 +15,121 @@ const windows = (source: string, path = "bundle.cjs") => {
     .browser_windows;
 };
 
-describe("proven require shim invocation identity", () => {
+describe("require shim logical assignment identity", () => {
+  it.each(["||=", "??="])(
+    "retains a proven callable shim across %s",
+    (operator) => {
+      expect(
+        windows(
+          `${SHIM}Q ${operator} other;new (Q("electron").BrowserWindow)({});`,
+        ),
+      ).toHaveLength(1);
+    },
+  );
+
+  it.each([
+    ["Q ||= other;Q ??= fallback;", 'Q("electron")'],
+    ["Q ||= other;", 'Q.call(null,"electron")'],
+    ["Q ??= other;const saved=Q;", 'saved("electron")'],
+    ["const saved=Q;Q=other;", 'saved("electron")'],
+    ["Q ||= other;globalThis.Q=other;", 'Q("electron")'],
+  ])("retains an ordered callable capture: %s %s", (setup, load) => {
+    expect(
+      windows(`${SHIM}${setup}new (${load}.BrowserWindow)({});`),
+    ).toHaveLength(1);
+  });
+
+  it("selects logical writes before a consumer in the same expression", () => {
+    expect(
+      windows(
+        `${SHIM}(Q ||= other,Q ??= fallback,new (Q("electron").BrowserWindow)({}));`,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("selects a definite initialization before a logical write in one expression", () => {
+    expect(
+      windows(
+        `var Q;(Q=${SHIM_VALUE},Q ||= other);new (Q("electron").BrowserWindow)({});`,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it.each([
+    "Q &&= other;",
+    "Q &&= other;Q ||= fallback;",
+    "Q=null;Q ||= other;",
+    "Q=0;Q ??= other;",
+    "if(flag)Q=other;Q ||= fallback;",
+    "Q ||= other;function change(){Q=other}change();",
+    "Q ||= other;external(()=>{Q=other});",
+    "for(const value of values){Q ||= other;Q=value;}",
+    "Q &&= box.value;",
+    "const box={get value(){module.require=other;return Q}};Q &&= box.value;",
+    "Q ||= other;module.require=other;",
+    'eval("Q=other");Q ||= other;',
+  ])("does not erase preceding or deferred replacements: %s", (setup) => {
+    expect(
+      windows(`${SHIM}${setup}new (Q("electron").BrowserWindow)({});`),
+    ).toEqual([]);
+  });
+
+  it.each([
+    `var Q;if(flag){${SHIM.replace("var Q", "Q")}}Q ||= other;new (Q("electron").BrowserWindow)({});`,
+    `new (Q("electron").BrowserWindow)({});${SHIM}Q ||= other;`,
+  ])(
+    "does not infer an initialized entry from conditional or later syntax: %s",
+    (source) => {
+      expect(windows(source)).toEqual([]);
+    },
+  );
+
+  it.each([
+    "globalThis.Q=other;Q ||= fallback;",
+    "Q ||= fallback;globalThis.Q=other;",
+    "const target=globalThis;target.Q=other;Q ??= fallback;",
+  ])("retains global slot invalidation around skipped writes: %s", (setup) => {
+    expect(
+      windows(
+        `${SHIM}${setup}new (Q("electron").BrowserWindow)({});`,
+        "bundle.js",
+      ),
+    ).toEqual([]);
+  });
+
+  it("proves local callable retention at runtime without evaluating the RHS getter", () => {
+    const source = `function run(){${SHIM}Q ||= box.value;Q ??= box.value;new (Q("electron").BrowserWindow)({});}run();`;
+    let constructed = 0;
+    let getterReads = 0;
+    runInNewContext(source, {
+      require: () => ({
+        BrowserWindow: class {
+          constructor() {
+            constructed++;
+          }
+        },
+      }),
+      box: {
+        get value() {
+          getterReads++;
+          return () => undefined;
+        },
+      },
+    });
+    expect([constructed, getterReads]).toEqual([1, 0]);
+    expect(windows(source)).toHaveLength(1);
+  });
+
+  it("keeps independently indexed RHS effects separate from the retained value", () => {
+    expect(
+      windows(
+        `${SHIM}const box={get value(){module.require=other;return Q}};Q ||= box.value;new (Q("electron").BrowserWindow)({});`,
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("require shim host loader helper identity", () => {
   it.each([
     'Q.call(null,"electron")',
     'Q.apply(null,["electron"])',
@@ -81,7 +197,9 @@ describe("proven require shim invocation identity", () => {
       [],
     );
   });
+});
 
+describe("require shim source and module-family policy", () => {
   it.each([
     `const require=other;${SHIM}`,
     "var Q=(e=>false?require:e)(function(){});",

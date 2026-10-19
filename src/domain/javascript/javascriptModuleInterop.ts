@@ -117,6 +117,8 @@ interface InteropHelper {
 }
 
 interface InteropReferenceSource {
+  /** The result may be the captured source object itself. */
+  readonly identity?: true;
   readonly node: t.Expression;
   readonly projection: SemanticFunctionValueProjection | undefined;
   /** Namespace default selection does not select a slot on the input. */
@@ -1179,6 +1181,22 @@ export const createSemanticModuleInterop = (
       );
       const prototype = invocation?.arguments?.[0];
       const intrinsic = invocation?.path.join(".");
+      if (
+        invocation?.kind === "known" &&
+        intrinsic === "intrinsic.Object.assign" &&
+        t.isExpression(prototype)
+      )
+        // Object targets retain the identity selected before later arguments.
+        // This possible alias is not a primitive-boxing or freshness proof;
+        // copied slots remain owned by the shared reference-store graph.
+        return [
+          {
+            identity: true,
+            node: prototype,
+            projection,
+            projectionOffset: 0,
+          },
+        ];
       const descriptors =
         intrinsic === "intrinsic.Object.getOwnPropertyDescriptors";
       if (

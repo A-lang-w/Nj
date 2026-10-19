@@ -1016,10 +1016,17 @@ const initializerHasNoUndefinedEntry = (
   return t.isVariableDeclaration(declaration) && declaration.kind !== "var";
 };
 
+/** An optional value proof may remove skipped logical writes. It must describe
+ * the retained initializer's value at the supplied read, including intervening
+ * effects; execution order and competing binding writes remain owned here. */
 export const semanticBindingAtRead = (
   binding: JavaScriptSemanticBindingState,
   read: t.Node,
   parents: WeakMap<t.Node, t.Node>,
+  initializerIsTruthy?: (
+    initializer: JavaScriptSemanticBindingState["initializers"][number],
+    read: t.Node,
+  ) => boolean,
 ): SemanticBindingRead => {
   if (
     binding.initializers.length === 0 &&
@@ -1122,7 +1129,13 @@ export const semanticBindingAtRead = (
       hasDefiniteInitializer,
       hasCoveredReadValue,
     };
-  const selected = selectInitializers(binding, position, read, parents);
+  const selected = selectInitializers(
+    binding,
+    position,
+    read,
+    parents,
+    initializerIsTruthy,
+  );
   if (selected === undefined)
     return {
       status: "unresolved",
@@ -1160,6 +1173,7 @@ const selectInitializers = (
   position: StatementPosition | null,
   read: t.Node,
   parents: WeakMap<t.Node, t.Node>,
+  initializerIsTruthy?: Parameters<typeof semanticBindingAtRead>[3],
 ):
   | {
       readonly binding: Pick<
@@ -1205,6 +1219,7 @@ const selectInitializers = (
     preceding,
     binding,
     parents,
+    initializerIsTruthy,
   );
   // Preserve the owner's identity when selection removes no facts. Consumers
   // can then reuse the binding's dependency-aware provenance memo rather than
@@ -1229,6 +1244,19 @@ const selectInitializers = (
   };
 };
 
+const initializerAssignment = (
+  initializer: JavaScriptSemanticBindingState["initializers"][number],
+  parents: WeakMap<t.Node, t.Node>,
+): t.AssignmentExpression | undefined => {
+  const node = initializer.node,
+    parent = parents.get(node);
+  return t.isAssignmentExpression(node)
+    ? node
+    : t.isAssignmentExpression(parent) && parent.right === node
+      ? parent
+      : undefined;
+};
+
 /** Logical writes may keep prior aliases. An RHS fact alone does not prove an
  * empty local: the complete binding must exclude incoming/default/other writes.
  */
@@ -1237,20 +1265,14 @@ const initializerMayRetainEntry = (
   binding: JavaScriptSemanticBindingState,
   parents: WeakMap<t.Node, t.Node>,
 ): boolean => {
-  const node = initializer.node,
-    parent = parents.get(node);
-  const assignment = t.isAssignmentExpression(node)
-    ? node
-    : t.isAssignmentExpression(parent) && parent.right === node
-      ? parent
-      : undefined;
+  const assignment = initializerAssignment(initializer, parents);
   if (
     assignment === undefined ||
     !["&&=", "||=", "??="].includes(assignment.operator)
   )
     return false;
   const emptyLocal =
-    node === assignment.right &&
+    initializer.node === assignment.right &&
     binding.kind === "variable" &&
     !binding.runtimeImport &&
     binding.initializers.length === 1 &&
@@ -1264,7 +1286,8 @@ const initializerMayRetainEntry = (
   return !emptyLocal;
 };
 
-/** Certain writes replace prior origins; short-circuit writes retain both. */
+/** Certain writes replace prior origins; short-circuit writes retain both
+ * unless one covered entry is proven truthy at every intervening logical read. */
 const retainedInitializerOrigins = (
   origins: readonly {
     readonly initializer: JavaScriptSemanticBindingState["initializers"][number];
@@ -1272,6 +1295,7 @@ const retainedInitializerOrigins = (
   }[],
   binding: JavaScriptSemanticBindingState,
   parents: WeakMap<t.Node, t.Node>,
+  initializerIsTruthy?: Parameters<typeof semanticBindingAtRead>[3],
 ) => {
   const latest = origins.reduce<StatementPosition | null>(
     (latest, { initializer, position }) =>
@@ -1282,19 +1306,54 @@ const retainedInitializerOrigins = (
         : latest,
     null,
   );
+  const candidates = origins.filter(
+    ({ position }) =>
+      latest === null ||
+      (position?.index === latest.index &&
+        position?.declaratorIndex === latest.declaratorIndex) ||
+      (position !== null && positionPrecedes(latest, position)),
+  );
+  if (
+    initializerIsTruthy !== undefined &&
+    latest !== null &&
+    candidates.length > 1
+  ) {
+    const entries = candidates.filter(
+      ({ initializer }) =>
+        !initializerMayRetainEntry(initializer, binding, parents),
+    );
+    const entry = entries.length === 1 ? entries[0] : undefined;
+    const entryPosition = entry?.position;
+    if (
+      entry !== undefined &&
+      entryPosition !== undefined &&
+      entryPosition !== null &&
+      entryPosition.index >= 0 &&
+      candidates.every(({ initializer, position }) => {
+        if (initializer === entry.initializer) return true;
+        const write = initializerAssignment(initializer, parents);
+        return (
+          write !== undefined &&
+          (write.operator === "||=" || write.operator === "??=") &&
+          position !== null &&
+          (positionPrecedes(entryPosition, position) ||
+            semanticExpressionEvaluationOrder(
+              entry.initializer.node,
+              write.left,
+              parents,
+            ) === "before") &&
+          initializerIsTruthy(entry.initializer, write.left)
+        );
+      })
+    )
+      return {
+        replacesEntry: true,
+        retained: new Set([entry.initializer]),
+      };
+  }
   return {
     replacesEntry: latest !== null,
-    retained: new Set(
-      origins
-        .filter(
-          ({ position }) =>
-            latest === null ||
-            (position?.index === latest.index &&
-              position?.declaratorIndex === latest.declaratorIndex) ||
-            (position !== null && positionPrecedes(latest, position)),
-        )
-        .map(({ initializer }) => initializer),
-    ),
+    retained: new Set(candidates.map(({ initializer }) => initializer)),
   };
 };
 

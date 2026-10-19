@@ -383,6 +383,8 @@ interface ModuleDelegateWrite extends ModuleDelegateOwner {
   readonly shortCircuitsOnInitialDelegate?: true;
   /** Metadata preserves an existing shared data value, but cannot prove one exists. */
   readonly preservesInitialDataValue?: true;
+  /** An assigned value needs exact source proof before it can preserve the delegate. */
+  readonly assignedValue?: t.Node;
 }
 
 const writesModuleRequire = (
@@ -661,10 +663,24 @@ const writesModuleRequire = (
   // Inert deletes and short-circuit assignments do not invalidate each other's
   // initial-state proof. Any preceding non-inert write or escape removes it.
   let effectiveWrites = writes;
+  const copiesInitialDelegate = new Set<ModuleDelegateWrite>();
+  const isInitialDelegate = (value: t.Node): boolean =>
+    hostLoaderPath(value, state, true)?.join(".") ===
+    `intrinsic.${HOST_LOADER}.delegate`;
+  for (const write of writes)
+    if (
+      write.delegate === "require" &&
+      write.assignedValue !== undefined &&
+      t.isAssignmentExpression(write.node) &&
+      isInitialDelegate(write.node.left) &&
+      isInitialDelegate(write.assignedValue)
+    )
+      copiesInitialDelegate.add(write);
   const requiresPriorChange = (write: ModuleDelegateWrite): boolean =>
     write.deletesInitiallyAbsentOwnSlot === true ||
     write.shortCircuitsOnInitialDelegate === true ||
-    write.preservesInitialDataValue === true;
+    write.preservesInitialDataValue === true ||
+    copiesInitialDelegate.has(write);
   if (escapeEffects !== undefined && writes.some(requiresPriorChange)) {
     const possibleDefinitions = createSemanticPrecedingEffectIndex(
       state.parentsByNode,
@@ -906,6 +922,7 @@ const preservesDescriptorValue = (
     references.nodes.length === 0
   )
     return false;
+  const escapeEffects = semanticAmbientEscapeEffects(state);
   return references.nodes.every((descriptor) => {
     if (
       !t.isObjectExpression(descriptor) ||
@@ -935,9 +952,10 @@ const preservesDescriptorValue = (
     }
     return (
       prototype !== undefined ||
-      (!state.opaqueEffects.globalSites.some(
-        (effect) => !semanticEffectFollowsInitialCapture(read, effect, state),
-      ) &&
+      (escapeEffects !== undefined &&
+        !state.opaqueEffects.globalSites.some(
+          (effect) => !semanticEffectFollowsInitialCapture(read, effect, state),
+        ) &&
         [...fields, "__proto__"].every(
           (key) =>
             !semanticAmbientWriteMayMatch(
@@ -945,6 +963,15 @@ const preservesDescriptorValue = (
               ["global", "Object", "prototype", key],
               (effect) =>
                 !(effect.path.length === 2 && effect.path[1] === "Object") &&
+                !semanticEffectFollowsInitialCapture(read, effect.node, state),
+            ),
+        ) &&
+        [...fields, "__proto__"].every(
+          (key) =>
+            !semanticAmbientWriteMayMatch(
+              { ambientWriteEffects: escapeEffects },
+              ["global", "Object", "prototype", key],
+              (effect) =>
                 !semanticEffectFollowsInitialCapture(read, effect.node, state),
             ),
         ))
@@ -1002,6 +1029,8 @@ export const semanticModuleDelegateWriteOwner = (
     // Defining an own __proto__ property does not invoke the legacy setter.
     return key !== "__proto__" || mutation?.kind === "set" ? owner : undefined;
   }
+  if (key === delegate && t.isAssignmentExpression(node, { operator: "=" }))
+    return { ...owner, assignedValue: node.right };
   if (
     key === delegate &&
     t.isAssignmentExpression(node) &&
@@ -1413,6 +1442,9 @@ const HOST_LOADER_IDENTITIES: Readonly<Record<string, readonly string[]>> = {
 const hostLoaderPath = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  // The write index proves source identity separately from initial-state
+  // validity; its preceding-effect gate must validate every such candidate.
+  initialModuleDelegate = false,
 ): readonly string[] | undefined => {
   let current = node;
   let selected: ModuleProjection = [];
@@ -1554,7 +1586,8 @@ const hostLoaderPath = (
         if (selected.length === 0) return [HOST_MODULE];
         const [property, ...suffix] = selected;
         return property?.key === "require" &&
-          semanticHostRequireModuleWritesIntact(property.capture, state)
+          (initialModuleDelegate ||
+            semanticHostRequireModuleWritesIntact(property.capture, state))
           ? callable("delegate", suffix)
           : undefined;
       }

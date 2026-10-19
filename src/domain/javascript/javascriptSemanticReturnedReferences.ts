@@ -910,6 +910,7 @@ const createSemanticCallableReferences = (
 ): ((
   callee: t.Node | readonly t.Node[],
   projection?: readonly (string | number | null)[],
+  projectionRead?: t.Node,
 ) => CallableReferenceSelection) => {
   let results = new WeakMap<t.Node, Map<string, CallableReferenceSelection>>();
   const objectTargets = new WeakMap<t.ObjectExpression, ObjectTargetIndex>();
@@ -954,7 +955,7 @@ const createSemanticCallableReferences = (
   let factsReady = semanticFreshObjectFactsReady(state);
   let ownSlotFactsReady =
     captureProofs === undefined || semanticAmbientOwnSlotFactsReady(state);
-  return (callee, projection = []) => {
+  return (callee, projection = [], projectionRead) => {
     const ready = semanticFreshObjectFactsReady(state);
     const slotsReady =
       captureProofs === undefined || semanticAmbientOwnSlotFactsReady(state);
@@ -968,7 +969,10 @@ const createSemanticCallableReferences = (
     const single = t.isNode(callee) ? callee : undefined;
     const captureSite = roots[0];
     if (captureSite === undefined) return { references: [], complete: true };
-    const projectionKey = JSON.stringify(projection);
+    const projectionKey = JSON.stringify([
+      projection,
+      projectionRead === undefined ? undefined : captureKey([projectionRead]),
+    ]);
     const existing =
       single === undefined
         ? undefined
@@ -1016,7 +1020,7 @@ const createSemanticCallableReferences = (
             initializers: new Set(),
             ...(captureProofs === undefined
               ? {}
-              : { captures: projection.map(() => node) }),
+              : { captures: projection.map(() => projectionRead ?? node) }),
           },
           parent: null,
         });
@@ -1339,14 +1343,24 @@ const createSemanticCallableReferences = (
         pending.push({ ...item, node: node.right });
       } else if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
         complete = false;
-        // Opt-in reachability is not exact return identity. Keep it in this
-        // query's iterative graph and guard callback cycles like alias cycles.
-        if (callResultSources !== undefined) {
-          if (item.initializers.has(node)) frame.blockers.add(node);
-          else {
+        // Native returned inputs and opt-in reachability are possible contents,
+        // not exact return identity. Keep the original capture and projection,
+        // and guard call-result cycles in the same graph as alias cycles.
+        if (item.initializers.has(node)) frame.blockers.add(node);
+        else {
+          const identitySources = interop
+            .callReferenceSources(node, undefined)
+            .flatMap((source) =>
+              source.identity === true ? [source.node] : [],
+            );
+          const resultSources = [
+            ...identitySources,
+            ...(callResultSources?.(node) ?? []),
+          ];
+          if (resultSources.length > 0) {
             const initializers = new Set(item.initializers);
             initializers.add(node);
-            for (const source of callResultSources(node))
+            for (const source of resultSources)
               pending.push({ ...item, node: source, initializers });
           }
         }
@@ -1721,7 +1735,8 @@ export const createSemanticCallableTargets = (
     );
 };
 
-/** Descriptor lookup retains accessor callables without invoking getters. */
+/** Descriptor lookup retains accessor callables without invoking getters.
+ * A supplied projection read can follow the capture of the target value. */
 export const createSemanticAccessorReferences = (
   state: JavaScriptSemanticAnalysisState,
   captureProofs?: CallableCaptureProofs,
@@ -1878,6 +1893,16 @@ const selectObjectTargets = (
   if (key !== null && key !== undefined) {
     const property = index.propertyByName.get(String(key));
     if (property !== undefined) {
+      // A final data descriptor has no accessor callable. Its stored value is
+      // a different selection, even when that value is itself a function.
+      if (
+        accessors &&
+        path.length === 0 &&
+        !index.trailingUnknownsByProperty.has(property) &&
+        (t.isObjectProperty(property) ||
+          t.isObjectMethod(property, { kind: "method" }))
+      )
+        return;
       const unknowns: ObjectTargetUnknown[] = [];
       for (
         let unknown = index.trailingUnknownsByProperty.get(property);

@@ -1574,16 +1574,18 @@ export const createAmbientPathResolver = (
                 ],
               );
           else unknown();
-        } else if (updated?.status === "unknown" || typeof key !== "string")
+        } else if (
+          updated?.status === "unknown" ||
+          typeof key !== "string" ||
+          (facts?.sourceSlotsComplete?.() === true &&
+            !sourceFacts.ownSlotUnchanged(root, key, read))
+        )
+          // A write without definite replacement coverage still invalidates
+          // the initial descriptor value, including later call arguments.
           unknown();
         else if (t.isArrayExpression(root)) {
           const initial = initialArrayOwnDataSlot(root, key);
-          if (
-            initial.status === "unknown" ||
-            (facts?.sourceSlotsComplete?.() === true &&
-              !sourceFacts.ownSlotUnchanged(root, key, read))
-          )
-            unknown();
+          if (initial.status === "unknown") unknown();
           else if (
             initial.status === "data" &&
             (field === "value" || field === null)

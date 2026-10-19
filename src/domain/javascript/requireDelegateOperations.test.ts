@@ -157,3 +157,47 @@ describe("inert require shim selection", () => {
     ).toBe(1);
   });
 });
+
+describe("copying the initial module delegate", () => {
+  it.each([
+    "module.require=module.require;",
+    "const alias=module;alias.require=module.require;",
+    "const alias=module;module.require=alias.require;",
+    "const saved=module.require;module.require=saved;",
+    "const {require:saved}=module;module.require=saved;",
+    "module.require=module.require;module.require=module.require;",
+    "delete module.require;module.require=module.require;",
+  ])("preserves an exact initial delegate value: %s", (setup) => {
+    expect(windows(setup)).toBe(1);
+    expect(windows(setup, 'new(require("electron").BrowserWindow)({});')).toBe(
+      1,
+    );
+  });
+
+  it.each([
+    "module.require=other;module.require=module.require;",
+    "module.__proto__.require=other;module.require=module.require;",
+    "patch(module);module.require=module.require;",
+    "const saved=module.require;patch(module);module.require=saved;",
+    "const saved=module.require;module.require=other;module.require=saved;",
+    "let saved=module.require;if(flag)saved=other;module.require=saved;",
+    "const source={require:other};module.require=source.require;",
+    "module.require=require;",
+    "module.require=flag?module.require:other;",
+    "let target=module;if(flag)target=unknown;target.require=module.require;",
+    "const target=new Proxy(module,{set(){module.require=other;return true}});target.require=module.require;",
+  ])("retains changed or uncertain delegate values: %s", (setup) => {
+    expect(windows(setup)).toBe(0);
+  });
+
+  it("retains the existing conservative escape policy after a descriptor call", () => {
+    // The descriptor metadata itself preserves the value. Its intrinsic call
+    // still exposes the target in the generic escape inventory, so a later
+    // copy cannot yet prove that its source retains the initial delegate.
+    expect(
+      windows(
+        'Object.defineProperty(module.__proto__,"require",{enumerable:false});module.require=module.require;',
+      ),
+    ).toBe(0);
+  });
+});

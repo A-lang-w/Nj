@@ -57,7 +57,7 @@ cliTest(
     const load =
       'new (require.call.call(require,null,"electron").BrowserWindow)({});';
     const connection = await connectLocalToolsMcp();
-    for (const [setup, windows, loader = load] of [
+    for (const [setup, windows, loader = load, filename = "main.cjs"] of [
       ["class C{static{this.call.call=other}}", 0],
       ["class C{static{this.call=other}}", 1],
       ["const obj={__proto__:Function.prototype};obj.call.call=other;", 0],
@@ -73,6 +73,41 @@ cliTest(
       [
         'Object.defineProperty(module.__proto__,"require",{enumerable:false});',
         1,
+      ],
+      ["module.require=module.require;", 1],
+      [
+        'patch(Object.prototype);Object.defineProperty(module.__proto__,"require",{enumerable:false});',
+        0,
+      ],
+      [
+        "const target=Object.assign({},{helper:Function.prototype.call});target.helper.call=other;",
+        0,
+      ],
+      [
+        'const target={helper:{}};const descriptor=Object.getOwnPropertyDescriptor(target,"helper",target.helper=Function.prototype.call);descriptor.value.call=other;',
+        0,
+      ],
+      [
+        'var Q=(e=>typeof require<"u"?require:e)(function(){});Q ||= other;',
+        1,
+        'new(Q("electron").BrowserWindow)({});',
+      ],
+      [
+        'var Q=(e=>typeof require<"u"?require:e)(function(){});Q ??= other;',
+        1,
+        'new(Q("electron").BrowserWindow)({});',
+      ],
+      [
+        'var Q=(e=>typeof require<"u"?require:e)(function(){});const base={set value(v){this.Q=other}};base.value=0;const box={__proto__:base,set value(v){}};Reflect.set(box,"value",(delete box.value,0),globalThis);',
+        0,
+        'new(Q("electron").BrowserWindow)({});',
+        "main.js",
+      ],
+      [
+        'var Q=(e=>typeof require<"u"?require:e)(function(){});const box={set value(v){this.Q=other}};Object.assign(box,{value:0});',
+        1,
+        'new(Q("electron").BrowserWindow)({});',
+        "main.js",
       ],
       [
         'var Q=(e=>typeof require<"u"?require:e)(function(){});',
@@ -116,9 +151,9 @@ cliTest(
       await writeFixtureFiles(root, {
         "package.json": JSON.stringify({
           name: "class-fixture",
-          main: "main.cjs",
+          main: filename,
         }),
-        "main.cjs": `${setup}${loader}`,
+        [filename]: `${setup}${loader}`,
       });
       for (const surface of ["CLI", "stdio MCP"] as const) {
         const result = await analyzeJavaScriptDirectory(

@@ -485,3 +485,40 @@ describe("possible current wrapper in module children", () => {
     ).toHaveLength(1);
   });
 });
+
+describe("descriptor metadata after prototype escape", () => {
+  it.each([
+    'patch(Object.prototype);Object.defineProperty(module.__proto__,"require",{enumerable:false});',
+    'patch(Object);Reflect.defineProperty(module.__proto__,"require",{enumerable:false});',
+    "const prototype=Object.prototype;patch(prototype);Object.defineProperties(module.__proto__,{require:{enumerable:false}});",
+    'const descriptor={enumerable:false};patch(Object.prototype);Object.defineProperty(module.__proto__,"require",descriptor);',
+    'patch(Object.prototype);Object.defineProperty(module.constructor,"_load",{writable:true});',
+  ])("retains possible inherited descriptor fields through %s", (setup) => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `const load=require;${setup}new(load("electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toHaveLength(0);
+  });
+
+  it.each([
+    'patch({});Object.defineProperty(module.__proto__,"require",{enumerable:false});',
+    'const local={prototype:{}};patch(local.prototype);Object.defineProperty(module.__proto__,"require",{enumerable:false});',
+    'Object.defineProperty(module.__proto__,"require",{enumerable:false});patch(Object.prototype);',
+    'patch(Object.prototype);Object.defineProperty(module.__proto__,"require",{__proto__:null,enumerable:false});',
+  ])("retains a proven descriptor boundary through %s", (setup) => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        `${setup}new(require("electron").BrowserWindow)({});`,
+      ).electron.browser_windows,
+    ).toHaveLength(1);
+  });
+
+  it("retains a load before a later prototype escape", () => {
+    expect(
+      analyzeJavaScriptStaticSource(
+        'Object.defineProperty(module.__proto__,"require",{enumerable:false});new(require("electron").BrowserWindow)({});patch(Object.prototype);',
+      ).electron.browser_windows,
+    ).toHaveLength(1);
+  });
+});

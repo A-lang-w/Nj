@@ -38,8 +38,8 @@ import {
  *     : e)(function (e) { ... });
  *
  * Minification then turns `require("electron")` into `Q("electron")`, which the
- * direct-require resolver cannot follow. The shim is accepted only when one
- * never-reassigned binding holds a flat IIFE whose arrow callee guards the
+ * direct-require resolver cannot follow. The shim is accepted only when the
+ * captured binding value is a flat IIFE whose arrow callee guards the
  * unshadowed global `require` behind its availability test, and is applied to a
  * fallback function. `Q("electron")` inside that scope is then the same literal
  * require. Syntax is proven, never inferred from the binding name, and a shim
@@ -61,12 +61,19 @@ export const semanticRequireShimBinding = (
     binding === undefined ||
     semanticResolutionBlocked(state, reference, reference.name) ||
     semanticOpaqueBindingReadMayHaveChanged(binding, reference, state) ||
-    semanticBindingMayHaveBlockFunctionWrite(binding, state) ||
-    binding.definitions.length !== 1 ||
-    binding.definitions[0]?.kind === "assignment"
+    semanticBindingMayHaveBlockFunctionWrite(binding, state)
   )
     return false;
-  const atRead = semanticBindingAtRead(binding, reference, state.parentsByNode);
+  const atRead = semanticBindingAtRead(
+    binding,
+    reference,
+    state.parentsByNode,
+    (initializer, read) =>
+      initializer.projection.length === 0 &&
+      !semanticOpaqueBindingReadMayHaveChanged(binding, read, state) &&
+      !semanticGlobalBindingReadMayHaveChanged(binding, read, state) &&
+      semanticRequireShimValueSource(initializer.node, state) !== undefined,
+  );
   if (
     // Unordered reads retain possible initializers for conservative alias
     // effects. They do not prove that the loader exists at this call site.
