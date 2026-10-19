@@ -22,6 +22,7 @@ import {
 } from "../cliObservationOptions.js";
 import { runCliJavaScriptApplicationAnalysis } from "./javascriptApplicationAnalysis.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
 /** Register CLI equivalents of the Electron MCP tools. */
@@ -41,7 +42,6 @@ const registerElectronFuseCommand = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
 ): void => {
-  const service = createElectronFuseService();
   cli.command(CLI_COMMANDS.inspectElectronFuses, {
     description:
       "Inspect packaged Electron fuse bytes without launching the application",
@@ -55,11 +55,18 @@ const registerElectronFuseCommand = (
     run: ({ args }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectElectronFuses, async () => {
-          const result = await service.inspect(
-            { path: absoluteElectronFusePath(args.path) },
-            { signal },
+          const service = createElectronFuseService();
+          return finishAnalysisCommand(
+            () =>
+              service.inspect(
+                { path: absoluteElectronFusePath(args.path) },
+                { signal },
+              ),
+            service,
+            service.provider.identity.id,
+            "inspect_electron_fuses",
+            signal,
           );
-          return result.ok ? result.value : projectAnalysisError(result.error);
         }),
       ),
   });
@@ -117,12 +124,21 @@ const registerElectronActiveCommand = (
               await import("../application/javascript/ElectronActiveObservationService.js");
             const { createElectronScenarioProvider } =
               await import("../composition/electronScenario.js");
-            const result = await captureElectronScenario(
-              createElectronScenarioProvider(environment),
-              parsed.data,
-              { signal },
+            const provider = createElectronScenarioProvider(environment);
+            const result = await finishAnalysisCommand(
+              () => captureElectronScenario(provider, parsed.data, { signal }),
+              {
+                close: async () => {
+                  await provider.close?.();
+                },
+              },
+              provider.identity().id,
+              "capture_electron_scenario",
+              signal,
             );
-            return result.ok ? result.value : cliError(result.error);
+            return "code" in result
+              ? { error: "Electron analysis failed", ...result }
+              : result;
           },
         ),
       ),
@@ -200,7 +216,6 @@ const registerElectronTargetList = (
             },
             "rea-cdp-electron",
             "list_electron_targets",
-            undefined,
             signal,
           );
         }),
@@ -242,7 +257,6 @@ const registerElectronPageInspection = (
             },
             "rea-cdp-electron",
             "inspect_electron_page",
-            undefined,
             signal,
           );
         }),
@@ -266,7 +280,7 @@ const registerJavaScriptApplicationCommand = (
         logCliCommand(logger, CLI_COMMANDS.analyzeJavaScriptApplication, () =>
           runCliJavaScriptApplicationAnalysis(
             {
-              input_path: args.path,
+              input_path: absoluteCallerPath(args.path),
               format: options.artifactFormat,
               integrity_policy: options.integrityPolicy,
               ...(options.maxSemanticNodes === undefined
@@ -277,6 +291,15 @@ const registerJavaScriptApplicationCommand = (
                 : {
                     max_semantic_nodes_per_file:
                       options.maxSemanticNodesPerFile,
+                  }),
+              ...(options.maxSemanticUnknowns === undefined
+                ? {}
+                : { max_semantic_unknowns: options.maxSemanticUnknowns }),
+              ...(options.maxSemanticUnknownsPerFile === undefined
+                ? {}
+                : {
+                    max_semantic_unknowns_per_file:
+                      options.maxSemanticUnknownsPerFile,
                   }),
               ...(options.sourcePath === undefined
                 ? {}

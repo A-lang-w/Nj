@@ -48,8 +48,23 @@ const identityResponseSchema = z.strictObject({
     z.discriminatedUnion("state", [
       z.strictObject({
         pid: z.number().int().positive(),
+        state: z.literal("absent"),
+        identity: z.null().optional(),
+        reason: z.literal("not-in-snapshot"),
+      }),
+      z.strictObject({
+        pid: z.number().int().positive(),
         state: z.literal("readable"),
         identity: z.string().min(1),
+        effective_uid: z.number().int().nonnegative().optional(),
+        lifecycle: z.enum(["non-zombie", "zombie"]).optional(),
+        relation: z
+          .strictObject({
+            state: z.literal("observed"),
+            parent_pid: z.number().int().nonnegative(),
+            process_group_id: z.number().int().nonnegative(),
+          })
+          .optional(),
         reason: z.null().optional(),
       }),
       z.strictObject({
@@ -111,11 +126,16 @@ const STDERR_EXCERPT_LIMIT = 512;
 
 /** The native Darwin process-ownership reader could not be prepared. */
 export class DarwinProcessOwnershipInspectionError extends Error {
+  readonly #cleanupOwner: { close(): Promise<void> } | undefined;
+  get cleanupOwner(): { close(): Promise<void> } | undefined {
+    return this.#cleanupOwner;
+  }
   constructor(
     message: string,
     options?: ErrorOptions & {
       readonly compilerOutcome?: DarwinCompilerOutcome;
       readonly capturedOutput?: AnalysisCapturedOutput;
+      readonly cleanupOwner?: { close(): Promise<void> } | undefined;
       readonly cleanupFailure?: AnalysisError;
       readonly cancellation?: { readonly reason: unknown };
     },
@@ -124,6 +144,7 @@ export class DarwinProcessOwnershipInspectionError extends Error {
       compilerOutcome,
       capturedOutput,
       cleanupFailure,
+      cleanupOwner,
       cancellation,
       ...errorOptions
     } = options ?? {};
@@ -131,6 +152,7 @@ export class DarwinProcessOwnershipInspectionError extends Error {
     this.name = "DarwinProcessOwnershipInspectionError";
     this.compilerOutcome = compilerOutcome;
     this.capturedOutput = capturedOutput;
+    this.#cleanupOwner = cleanupOwner;
     this.cleanupFailure = cleanupFailure;
     this.cancellation = cancellation;
   }
@@ -143,6 +165,7 @@ export class DarwinProcessOwnershipInspectionError extends Error {
   /** Preserve the physical preparation failure while following the exact cleanup owner. */
   withCleanupFailure(
     cleanup: AnalysisError,
+    owner?: { close(): Promise<void> },
   ): DarwinProcessOwnershipInspectionError {
     const combined =
       this.cleanupFailure === undefined || this.cleanupFailure === cleanup
@@ -160,6 +183,7 @@ export class DarwinProcessOwnershipInspectionError extends Error {
         ? {}
         : { capturedOutput: this.capturedOutput }),
       cleanupFailure: combined,
+      cleanupOwner: owner ?? this.cleanupOwner,
       ...(this.cancellation === undefined
         ? {}
         : { cancellation: this.cancellation }),
@@ -393,6 +417,7 @@ export const createDarwinProcessRunTokenReader = (
   let closePromise: Promise<void> | undefined;
   let closed = false;
   let exitCleanupInstalled = false;
+  const activeCommands = new Set<Promise<string>>();
 
   const cleanupAtExit = () => {
     if (root !== undefined) rmSync(root.path, { recursive: true, force: true });
@@ -504,7 +529,9 @@ export const createDarwinProcessRunTokenReader = (
                   "Darwin process ownership helper preparation failed",
                   { cause },
                 );
-          throw primary.withCleanupFailure(cleanup);
+          throw primary.withCleanupFailure(cleanup, {
+            close: () => cleanupRoot(operationRoot),
+          });
         }
       }
       throw cause;
@@ -578,6 +605,7 @@ export const createDarwinProcessRunTokenReader = (
               cause: waited.reason,
               cancellation: { reason: waited.reason },
               cleanupFailure: finalized.error.cleanupFailure,
+              cleanupOwner: finalized.error.cleanupOwner,
             },
           );
         }
@@ -588,19 +616,36 @@ export const createDarwinProcessRunTokenReader = (
     }
   };
 
+  const runHelper = (
+    arguments_: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<string> => {
+    if (closed)
+      return Promise.reject(new Error("Darwin process token reader is closed"));
+    const pending = (async () => {
+      const binary = await compile(signal);
+      const { stdout } = await execFileOutput(binary, arguments_, {
+        timeout: 15_000,
+        stopSignal: "SIGTERM",
+        ...(signal === undefined ? {} : { signal }),
+      });
+      signal?.throwIfAborted();
+      return stdout;
+    })();
+    activeCommands.add(pending);
+    return pending.finally(() => {
+      activeCommands.delete(pending);
+    });
+  };
+
   const read = async (
     processes: readonly ProcessTableEntry[],
     signal?: AbortSignal,
   ): Promise<ReadonlyMap<number, ProcessRunTokenObservation>> => {
     signal?.throwIfAborted();
     if (processes.length === 0) return new Map();
-    const binary = await compile(signal);
     const pids = processes.map(({ pid }) => String(pid));
-    const { stdout } = await execFileOutput(binary, pids, {
-      timeout: 15_000,
-      ...(signal === undefined ? {} : { signal }),
-    });
-    signal?.throwIfAborted();
+    const stdout = await runHelper(pids, signal);
     const decoded = safeParseJson(stdout);
     if (!decoded.ok)
       throw new Error(
@@ -645,12 +690,8 @@ export const createDarwinProcessRunTokenReader = (
     signal?: AbortSignal,
   ): Promise<ReadonlyMap<number, ProcessIdentityObservation>> => {
     if (processes.length === 0) return new Map();
-    const binary = await compile(signal);
     const pids = processes.map(({ pid }) => String(pid));
-    const { stdout } = await execFileOutput(binary, ["--identities", ...pids], {
-      timeout: 15_000,
-      ...(signal === undefined ? {} : { signal }),
-    });
+    const stdout = await runHelper(["--identities", ...pids], signal);
     const decoded = safeParseJson(stdout);
     if (!decoded.ok)
       throw new Error(
@@ -675,8 +716,33 @@ export const createDarwinProcessRunTokenReader = (
       observations.set(
         result.pid,
         result.state === "readable"
-          ? { state: "readable", identity: result.identity }
-          : { state: "unavailable", reason: result.reason },
+          ? {
+              state: "readable",
+              identity: result.identity,
+              ...(result.effective_uid === undefined
+                ? {}
+                : { effectiveUid: result.effective_uid }),
+              ...(result.lifecycle === undefined
+                ? {}
+                : {
+                    lifecycle: {
+                      state: "observed" as const,
+                      lifecycle: result.lifecycle,
+                    },
+                  }),
+              ...(result.relation === undefined
+                ? {}
+                : {
+                    relation: {
+                      state: "observed" as const,
+                      parentPid: result.relation.parent_pid,
+                      processGroupId: result.relation.process_group_id,
+                    },
+                  }),
+            }
+          : result.state === "absent"
+            ? { state: "absent", reason: result.reason }
+            : { state: "unavailable", reason: result.reason },
       );
     }
     if (observations.size !== requested.size)
@@ -696,6 +762,7 @@ export const createDarwinProcessRunTokenReader = (
         operation.controller.abort();
         await operation.promise;
       }
+      await Promise.allSettled(activeCommands);
       await cleanupRoot();
     })().catch((cause: unknown) => {
       if (closePromise === pendingClose) closePromise = undefined;
