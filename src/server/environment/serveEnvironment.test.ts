@@ -3,6 +3,8 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { DEFAULT_MAX_REQUEST_BODY_SIZE } from "@modelcontextprotocol/server";
+import { once } from "node:events";
+import { connect } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { environmentServeSource } from "../../../tests/fixtures/environmentServe.js";
@@ -232,16 +234,25 @@ describe("serveEnvironment", () => {
     expect(entry.card.name).toBe("renamed");
     const card = await fetch(new URL(ENVIRONMENT_CARD_PATH, entry.url));
     await expect(card.json()).resolves.toMatchObject({ name: "renamed" });
-    const oversized = await fetch(new URL(ENVIRONMENT_RPC_PATH, entry.url), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "[".repeat(DEFAULT_MAX_REQUEST_BODY_SIZE + 1),
+    // The bound is answered from Content-Length before any body is read, and the
+    // connection then closes over the unread upload, so a raw socket reads the reply.
+    const listener = new URL(entry.url);
+    const socket = connect(Number(listener.port), listener.hostname);
+    await once(socket, "connect");
+    let reply = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk: string) => {
+      reply += chunk;
     });
-    expect(oversized.status).toBe(413);
-    await expect(oversized.json()).resolves.toMatchObject({
-      id: null,
-      error: { code: -32000 },
-    });
+    socket.write(
+      `POST ${ENVIRONMENT_RPC_PATH} HTTP/1.1\r\nHost: ${listener.host}\r\n` +
+        `Content-Type: application/json\r\nContent-Length: ${String(DEFAULT_MAX_REQUEST_BODY_SIZE + 1)}\r\n\r\n[`,
+    );
+    await once(socket, "end");
+    socket.destroy();
+    expect(reply).toMatch(/^HTTP\/1\.1 413 /u);
+    expect(reply).toContain('"id":null');
+    expect(reply).toContain('"code":-32000');
     await entry.close();
     await expect(
       fetch(new URL(ENVIRONMENT_CARD_PATH, entry.url)),
