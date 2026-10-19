@@ -65,6 +65,68 @@ const NATIVE_LOADER_CASES = [
     0,
   ],
   ["Reflect.set(module,'require',module.require);", 1],
+  ["Reflect.set({__proto__:null},'require',module.require,module);", 1],
+  ["Reflect.set({},'require',module.require,module);", 1],
+  ["module.extra=0;Reflect.set({},'require',module.require,module);", 1],
+  ["delete module.require;Reflect.set({},'require',module.require,module);", 1],
+  [
+    "const target={__proto__:null};Reflect.set(target,'require',module.require,module);",
+    1,
+  ],
+  [
+    "Reflect.set({__proto__:{__proto__:null}},'require',module.require,module);",
+    1,
+  ],
+  ["Reflect.set({require:0},'require',module.require,module);", 1],
+  [
+    "Reflect.set({get require(){return other}},'require',module.require,module);",
+    1,
+  ],
+  [
+    "const set=Reflect.set;set({__proto__:null},'require',module.require,module);",
+    1,
+  ],
+  [
+    "Reflect.apply(Reflect.set,Reflect,[{__proto__:null},'require',module.require,module]);",
+    1,
+  ],
+  [
+    "const target={__proto__:null};Object.defineProperty(target,'require',{set(){this.require=other}});Reflect.set(target,'require',module.require,module);",
+    0,
+  ],
+  [
+    "const target={__proto__:null};Object.setPrototypeOf(target,{set require(value){this.require=other}});Reflect.set(target,'require',module.require,module);",
+    0,
+  ],
+  [
+    "Reflect.set({__proto__:{set require(value){this.require=other}}},'require',module.require,module);",
+    0,
+  ],
+  [
+    "const target={__proto__:null};Reflect.set(target,'require',module.require,module,Object.defineProperty(target,'require',{set(){this.require=other}}));",
+    0,
+  ],
+  [
+    "const target={__proto__:null};Reflect.set(target,'require',module.require,module,Object.setPrototypeOf(target,{set require(value){this.require=other}}));",
+    0,
+  ],
+  [
+    "let target={set require(value){this.require=other}};Reflect.set(target,'require',module.require,module,(target={__proto__:null}));",
+    0,
+  ],
+  [
+    "let base={set require(value){this.require=other}};const target={__proto__:base};base={__proto__:null};Reflect.set(target,'require',module.require,module);",
+    0,
+  ],
+  [
+    "let base={__proto__:null};const target={__proto__:base};base={set require(value){this.require=other}};Reflect.set(target,'require',module.require,module);",
+    1,
+  ],
+  [
+    "Object.defineProperty(Object.prototype,'require',{set(value){module.require=other},configurable:true});Reflect.set({},'require',module.require,module);",
+    0,
+  ],
+  ["Reflect.set({__proto__:null},'require',other,module);", 0],
   ["const saved=module.require;Reflect.set(module,'require',saved);", 1],
   ["const set=Reflect.set;set(module,'require',module.require);", 1],
   ["Reflect.set.call(Reflect,module,'require',module.require);", 1],

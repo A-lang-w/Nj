@@ -12,6 +12,13 @@ import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplicat
 const bundle = `var t=(e=>typeof require<"u"?require:typeof Proxy<"u"?new Proxy(e,{get:(o,r)=>(typeof require<"u"?require:o)[r]}):e)(function(e){if(typeof require<"u")return require.apply(this,arguments);throw Error('Dynamic require of "'+e+'" is not supported')});var n=t("electron");new n.BrowserWindow({webPreferences:{nodeIntegration:!0,contextIsolation:!1}});n.ipcMain.handle("get-version",()=>"1.0.0");`;
 
 const helperMutationCases = [
+  ["const list={0:module,at(){return {}}};list.at(0).require=other;", 1],
+  ["const list={0:module,at(){return this[0]}};list.at().require=other;", 0],
+  ["Reflect.set({__proto__:null},'require',module.require,module);", 1],
+  [
+    "Reflect.set({__proto__:{set require(value){this.require=other}}},'require',module.require,module);",
+    0,
+  ],
   ["class C{static{this.call.call=other}}", 0],
   ["class C{static{this.call=other}}", 1],
   ["const obj={__proto__:Function.prototype};obj.call.call=other;", 0],

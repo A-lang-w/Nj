@@ -179,6 +179,11 @@ export const createSemanticModuleInterop = (
           readonly captures?: readonly t.Node[];
         }
       | undefined;
+    /** Complete source-call/result coverage supersedes nominal native aliases.
+     * It is queried separately from cached invocation syntax. */
+    readonly sourceCallResultComplete?: (
+      node: t.CallExpression | t.OptionalCallExpression,
+    ) => boolean;
     /** A producer may supply complete provisional facts before publication. */
     readonly bindingReadMayHaveChanged?: (
       binding: JavaScriptSemanticBindingState,
@@ -1225,7 +1230,10 @@ export const createSemanticModuleInterop = (
         ) ?? null;
       referenceInvocations.set(node, selected);
     }
-    return selected ?? undefined;
+    return selected?.path[1] === "Array" &&
+      options?.sourceCallResultComplete?.(node) === true
+      ? undefined
+      : (selected ?? undefined);
   };
 
   /** Parsed conversion sources are possible references, never loader proof.

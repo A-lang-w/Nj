@@ -7,7 +7,10 @@ import {
 } from "./javascriptRequireShimOrigin.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { semanticExpressionValueDiscarded } from "./javascriptSemanticExpressionUsage.js";
-import { semanticOwnReferenceCandidates } from "./javascriptSemanticObjectReferences.js";
+import {
+  semanticOwnReferenceCandidates,
+  semanticEverySourcePropertySlot,
+} from "./javascriptSemanticObjectReferences.js";
 import {
   createSemanticModuleStorageQuery,
   semanticAmbientBindingPaths,
@@ -682,6 +685,11 @@ const writesModuleRequire = (
       (copy.lookupTarget === undefined ||
         [HOST_MODULE, HOST_MODULE_PROTOTYPE].includes(
           hostLoaderPath(copy.lookupTarget, state, true)?.join(".") ?? "",
+        ) ||
+        initialDelegateLookupWithoutSetter(
+          copy.lookupTarget,
+          write.node,
+          state,
         )) &&
       (copy.targetKind === "delegate"
         ? isInitialDelegate(copy.target)
@@ -781,12 +789,12 @@ const objectMayDefineDelegate = (
   );
 };
 
-/** Boxed strings can only copy indices, but an installed setter can replace
- * any delegate. Require the completed owner/escape snapshot before treating
- * those writes as local data stores on the initial wrapper object. */
-const initialModuleAssignmentSettersAbsent = (
+/** Initial setter absence depends on the owners actually traversed by the
+ * operation, checked against the completed mutation and escape snapshot. */
+const initialAssignmentSettersAbsent = (
   capture: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  owners: readonly (readonly string[])[],
 ): boolean => {
   const escapes = semanticAmbientEscapeEffects(state);
   if (!semanticFreshObjectFactsReady(state) || escapes === undefined)
@@ -796,7 +804,7 @@ const initialModuleAssignmentSettersAbsent = (
     (node === undefined ||
       !semanticEffectFollowsInitialCapture(capture, node, state));
   const affectsOwner = (path: JavaScriptSemanticPropertyPath): boolean =>
-    [["commonjs-module"], ["global", "Object", "prototype"]].some((owner) =>
+    owners.some((owner) =>
       path
         .slice(0, owner.length)
         .every((key, index) =>
@@ -810,6 +818,47 @@ const initialModuleAssignmentSettersAbsent = (
     ) &&
     !escapes.some(
       (effect) => affectsOwner(effect.path) && precedes(effect.node),
+    )
+  );
+};
+
+/** Reflect.set reads descriptors without invoking getters. An ordinary lookup
+ * without a setter either copies the initial value to the receiver or fails
+ * without changing it. Value and prototype captures keep their own read times. */
+const initialDelegateLookupWithoutSetter = (
+  target: t.Node,
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (!semanticFreshObjectFactsReady(state)) return false;
+  const facts = {
+    ownSlotUnchanged: (owner: t.Node, key: string, at: t.Node) =>
+      semanticAmbientOwnSlotUnchanged(state, owner, key, at),
+    physicalPrototype: (owner: t.Node, at: t.Node) =>
+      semanticAmbientPrototypeUnchanged(state, owner, at)
+        ? { status: "unchanged" as const }
+        : { status: "unknown" as const },
+  };
+  const targets = semanticOwnReferenceCandidates(target, [], state, facts);
+  return (
+    targets.complete &&
+    targets.nodes.every(
+      (node) =>
+        t.isObjectExpression(node) &&
+        semanticEverySourcePropertySlot(
+          node,
+          "require",
+          read,
+          state,
+          facts,
+          (slot) =>
+            slot.kind === "missing" ||
+            (slot.kind === "source" && !slot.mayInvokeSetter) ||
+            (slot.kind === "ordinary-prototype" &&
+              initialAssignmentSettersAbsent(read, state, [
+                ["global", "Object", "prototype"],
+              ])),
+        ),
     )
   );
 };
@@ -831,7 +880,10 @@ const assignedDelegateValues = (
       if (
         literal.found &&
         typeof literal.value === "string" &&
-        initialModuleAssignmentSettersAbsent(capture, state)
+        initialAssignmentSettersAbsent(capture, state, [
+          ["commonjs-module"],
+          ["global", "Object", "prototype"],
+        ])
       )
         continue;
       if (objectMayDefineDelegate(object, state, true)) return undefined;

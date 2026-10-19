@@ -419,7 +419,11 @@ export const createAmbientPathResolver = (
     SemanticAllocatedReceiverIdentity,
     Set<SemanticConstructedReceiver>
   >();
-  const intrinsics = createSemanticModuleInterop(state);
+  const intrinsics = createSemanticModuleInterop(state, {
+    sourceCallResultComplete: (node) =>
+      facts?.sourceSlotsComplete?.() === true &&
+      syntaxReferences(node).complete,
+  });
   const staticClassSlots = createSemanticStaticClassSlotReferences(
     state,
     facts?.freshObject ?? intrinsics.isFreshObject,
