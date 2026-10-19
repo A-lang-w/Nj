@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,7 +13,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { createWebScreenshotArtifact } from "../dist/domain/webScreenshot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import { finishScreenshotVerifier } from "./lib/browser-screenshot-verifier-cleanup.mjs";
+import { createVerifierRun } from "./lib/verifier-run.mjs";
 
 const executable = process.env.REA_BROWSER_EXECUTABLE;
 assert.ok(
@@ -35,6 +36,8 @@ const transport = new StdioClientTransport({
   stderr: "pipe",
 });
 let browser;
+let completed;
+const failures = [];
 const cases = [];
 try {
   await client.connect(transport);
@@ -159,16 +162,22 @@ try {
         click_and_keyboard: true,
       });
     } finally {
-      await context.close();
+      try {
+        await context.close();
+      } catch (cause) {
+        failures.push(cause);
+      }
     }
   }
+} catch (cause) {
+  failures.push(cause);
 } finally {
-  await Promise.allSettled([
-    client.close(),
-    transport.close(),
-    browser?.close(),
-  ]);
-  await rm(workspace, { recursive: true, force: true });
+  completed = await finishScreenshotVerifier(
+    run,
+    workspace,
+    [() => client.close(), () => transport.close(), () => browser?.close()],
+    failures,
+  );
 }
 console.log(
   JSON.stringify(
@@ -178,7 +187,7 @@ console.log(
       cases,
       elapsed_ms: performance.now() - started,
       verifier_process_resources: process.resourceUsage(),
-      ...(await completeVerifierRun(run)),
+      ...completed,
     },
     null,
     2,

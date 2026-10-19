@@ -610,7 +610,10 @@ it.each([
 
 it.each([
   "scripts/verify-screenshot-regions.mjs",
+  "scripts/lib/browser-screenshot-verifier-cleanup.mjs",
+  "scripts/lib/browser-screenshot-verifier-cleanup.d.mts",
   "scripts/fixtures/visual-coding-page.html",
+  "src/domain/screenshotRegion.ts",
   "package.json",
 ])("keeps screenshot verifier input %s on the browser lane", async (path) => {
   const { directory } = await fixture();
@@ -633,8 +636,11 @@ it.each([
   );
   const plan = await classify(directory, base, head);
   const { CI_FLAGS } = await loadScopes();
+  const expected = ["code", "browser"];
+  if (path === "src/domain/screenshotRegion.ts")
+    expected.push("runtime", "docs");
   for (const flag of CI_FLAGS)
-    expect(plan[flag], flag).toBe(flag === "code" || flag === "browser");
+    expect(plan[flag], flag).toBe(expected.includes(flag));
   expect(plan.reasons).toEqual([]);
 });
 
