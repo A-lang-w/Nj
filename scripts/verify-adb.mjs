@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,11 +32,12 @@ const check = (name, condition, detail = "") => {
   if (!condition) failures += 1;
 };
 
-const run = async (operation, input) => {
+const run = async (operation, input, onFailure) => {
   const result = await service.execute(operation, input);
   if (!result.ok) {
     process.stdout.write(`[FAIL] ${operation} — ${result.error.message}\n`);
     failures += 1;
+    onFailure?.(result.error);
     return null;
   }
   return result.value.normalized_result;
@@ -246,15 +247,27 @@ try {
       await import("node:fs/promises").then((fs) =>
         fs.writeFile(payload, payloadBytes),
       );
-      const deviceTarget = `/data/local/tmp/rea-verify-${Date.now()}.txt`;
-      const pushed = await run("push_adb_file", {
-        serial,
-        local_path: payload,
-        device_path: deviceTarget,
-        overwrite: false,
-      });
-      if (pushed !== null) {
-        try {
+      const deviceTarget = `/data/local/tmp/rea-verify-${randomUUID()}.txt`;
+      let pushMayHaveWritten = false;
+      let pushed;
+      try {
+        pushed = await run(
+          "push_adb_file",
+          {
+            serial,
+            local_path: payload,
+            device_path: deviceTarget,
+            overwrite: false,
+          },
+          (error) => {
+            pushMayHaveWritten = hasCompletedPushObservation(
+              error,
+              serial,
+              deviceTarget,
+            );
+          },
+        );
+        if (pushed !== null) {
           check(
             "push reports matching device-side digest",
             pushed.device_digest_source === "device_sha256sum" &&
@@ -272,7 +285,9 @@ try {
               pulled.sha256 === pushed.sha256,
               `${pulled.bytes} bytes`,
             );
-        } finally {
+        }
+      } finally {
+        if ((pushed !== null && pushed !== undefined) || pushMayHaveWritten) {
           try {
             await removeVerifierProbeFile(
               resolveAdbBinary(process.env).binary,
@@ -450,5 +465,15 @@ function formatFailure(cause) {
     const reason = cause.diagnostics?.reason;
     return `${cause.name}: ${cause.message}${details}${typeof reason === "string" ? ` reason=${reason}` : ""}`;
   }
+
   return String(cause);
+}
+
+function hasCompletedPushObservation(error, serial, devicePath) {
+  const observation = error?.partialObservation;
+  return (
+    observation?.operation === "push_adb_file" &&
+    observation.parameters?.serial === serial &&
+    observation.parameters?.device_path === devicePath
+  );
 }

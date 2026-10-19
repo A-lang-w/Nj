@@ -15,7 +15,9 @@ const runVerifier = async (
   settings: {
     closeFails?: boolean;
     probeCleanupFails?: boolean;
+    probeCleanupFailures?: number;
     pushFails?: boolean;
+    pushPartialFails?: boolean;
     pullFails?: boolean;
     thrown?: "undefined" | "null";
   } = {},
@@ -66,6 +68,14 @@ export const createAdbDeviceAnalysisProvider = () => ({
     if (process.env.REA_ADB_THROW === "null") throw null;
     if (operation === "push_adb_file" && process.env.REA_ADB_PUSH_FAIL === "1")
       return { ok: false, error: { message: "device push refused" } };
+    if (operation === "push_adb_file" && process.env.REA_ADB_PUSH_PARTIAL_FAIL === "1")
+      return { ok: false, error: {
+        message: "device digest mismatch after push",
+        partialObservation: {
+          operation,
+          parameters: { serial: input.serial, device_path: input.device_path },
+        },
+      } };
     if (operation === "pull_adb_file" && process.env.REA_ADB_PULL_FAIL === "1")
       return { ok: false, error: { message: "device pull refused" } };
     const result = {
@@ -101,9 +111,10 @@ export const createAdbDeviceAnalysisProvider = () => ({
   await writeFile(
     join(root, "dist", "process", "ExecFileOutput.js"),
     `import { appendFile } from "node:fs/promises";
+let cleanupAttempts = 0;
 export const execFileOutput = async (binary, arguments_, options) => {
   await appendFile(process.env.REA_ADB_REMOVE_MARKER, JSON.stringify({ binary, arguments_, options }) + "\\n");
-  if (process.env.REA_ADB_REMOVE_FAIL === "1") throw new Error("device cleanup refused");
+  if (cleanupAttempts++ < Number(process.env.REA_ADB_REMOVE_FAIL_COUNT)) throw new Error("device cleanup refused");
   return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
 };\n`,
   );
@@ -118,8 +129,11 @@ export const execFileOutput = async (binary, arguments_, options) => {
         ...process.env,
         REA_ADB_PATH: "fixture-adb",
         REA_ADB_REMOVE_MARKER: probeRemovals,
-        REA_ADB_REMOVE_FAIL: settings.probeCleanupFails ? "1" : "0",
+        REA_ADB_REMOVE_FAIL_COUNT: String(
+          settings.probeCleanupFails ? 3 : (settings.probeCleanupFailures ?? 0),
+        ),
         REA_ADB_PUSH_FAIL: settings.pushFails ? "1" : "0",
+        REA_ADB_PUSH_PARTIAL_FAIL: settings.pushPartialFails ? "1" : "0",
         REA_ADB_PULL_FAIL: settings.pullFails ? "1" : "0",
         REA_ADB_CLOSE_MARKER: marker,
         REA_ADB_CLOSE_FAIL: settings.closeFails ? "1" : "0",
@@ -156,13 +170,27 @@ it("runs the production verifier successfully and closes its provider", async ()
     "--",
   ]);
   expect(removal.arguments_[6]).toMatch(
-    /^\/data\/local\/tmp\/rea-verify-\d+\.txt$/u,
+    /^\/data\/local\/tmp\/rea-verify-[0-9a-f-]{36}\.txt$/u,
   );
   expect(removal.options).toMatchObject({
     timeout: 10_000,
     maxBuffer: 64 * 1024,
     stopSignal: "SIGTERM",
   });
+});
+
+it("uses a distinct UUID probe path for each verifier run", async () => {
+  const first = await runVerifier();
+  const second = await runVerifier();
+  const extractPath = (result: Awaited<ReturnType<typeof runVerifier>>) => {
+    const [removal] = result.removals
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    return removal.arguments_[6];
+  };
+
+  expect(extractPath(first)).not.toBe(extractPath(second));
 });
 
 it("removes the device probe after the pull fails", async () => {
@@ -182,13 +210,37 @@ it("does not remove a device path when the push fails", async () => {
   expect(result.removals).toBe("");
 });
 
+it("removes the probe when the push failed after confirmed device write", async () => {
+  const result = await runVerifier({ pushPartialFails: true });
+
+  expect(result.status).toBe(1);
+  expect(result.stdout).toContain("device digest mismatch after push");
+  expect(result.stdout).toContain("[ok] device transfer probe removed");
+  const [removal] = result.removals
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(removal.arguments_[6]).toMatch(
+    /^\/data\/local\/tmp\/rea-verify-[0-9a-f-]{36}\.txt$/u,
+  );
+});
+
+it("retries transient device probe cleanup failures", async () => {
+  const result = await runVerifier({ probeCleanupFailures: 1 });
+
+  expect(result.status).toBe(0);
+  expect(result.stdout).toContain("[ok] device transfer probe removed");
+  expect(result.removals.trim().split("\n")).toHaveLength(2);
+});
+
 it("fails the verifier when removing its device probe fails", async () => {
   const result = await runVerifier({ probeCleanupFails: true });
 
   expect(result.status).toBe(1);
   expect(result.stdout).toContain(
-    "[FAIL] device transfer probe removed — Error: device cleanup refused",
+    "[FAIL] device transfer probe removed — Unable to remove verifier probe after 3 attempts",
   );
+  expect(result.removals.trim().split("\n")).toHaveLength(3);
   expect(result.stdout).not.toContain("all adb device checks passed");
   expect(result.closed).toBe("closed");
 });
