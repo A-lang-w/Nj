@@ -739,6 +739,7 @@ export const createSemanticClassConstructionStages = (
         : [],
     );
     const stages: {
+      owner: t.Function | t.Class;
       constructor: t.Function | undefined;
       fields: readonly ClassTargetMember[];
       fresh: boolean;
@@ -760,6 +761,7 @@ export const createSemanticClassConstructionStages = (
       isFreshObject(base)
     ) {
       const stage = {
+        owner: candidate.node,
         constructor: candidate.node,
         fields: [],
         fresh,
@@ -799,6 +801,7 @@ export const createSemanticClassConstructionStages = (
       }
       unknownReceiver ||= locals.get(owner) !== true;
       const stage = {
+        owner,
         constructor: index.constructorMethod,
         fields: index.fields,
         fresh,

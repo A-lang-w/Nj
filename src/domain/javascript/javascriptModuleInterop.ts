@@ -33,6 +33,7 @@ import { SemanticPropertyPathCoverage } from "./javascriptSemanticPropertyPaths.
 import {
   SEMANTIC_PHYSICAL_PROTOTYPE,
   SEMANTIC_SOURCE_PROTO_DESCRIPTOR,
+  SEMANTIC_OWN_PROPERTY_DESCRIPTOR,
   semanticCallableValueIdentity,
   semanticFunctionValueReadDependencies,
   type SemanticFunctionValueReadDependency,
@@ -77,6 +78,11 @@ const INTRINSICS: Readonly<Record<string, readonly string[]>> = {
   __getOwnPropDesc: ["Object", "getOwnPropertyDescriptor"],
   __hasOwnProp: ["Object", "prototype", "hasOwnProperty"],
 };
+const OWN_DESCRIPTOR_INTRINSICS = new Set([
+  "intrinsic.Object.getOwnPropertyDescriptor",
+  "intrinsic.Reflect.getOwnPropertyDescriptor",
+  "intrinsic.Object.getOwnPropertyDescriptors",
+]);
 
 interface IntrinsicDependency {
   readonly path: readonly string[];
@@ -110,6 +116,7 @@ interface InteropReferenceSource {
   readonly projection: SemanticFunctionValueProjection | undefined;
   /** Namespace default selection does not select a slot on the input. */
   readonly projectionOffset: number;
+  readonly capturePrefix?: readonly t.Node[];
 }
 
 const completedFreshObjectFacts =
@@ -813,9 +820,14 @@ export const createSemanticModuleInterop = (
           (node, path, bound) =>
             intrinsicReadChanged(node, path, bound, facts, true),
         );
+        const path = invocation?.path.join(".");
         return (
           invocation?.kind === "known" &&
-          invocation.path.join(".") === "intrinsic.Object.create"
+          (path === "intrinsic.Object.create" ||
+            path === "intrinsic.Object.getOwnPropertyDescriptors" ||
+            (mode === "fresh" &&
+              (path === "intrinsic.Object.getOwnPropertyDescriptor" ||
+                path === "intrinsic.Reflect.getOwnPropertyDescriptor")))
         );
       }
       if (!t.isIdentifier(current)) return false;
@@ -998,12 +1010,57 @@ export const createSemanticModuleInterop = (
         intrinsicReadChanged,
       );
       const prototype = invocation?.arguments?.[0];
+      const intrinsic = invocation?.path.join(".");
+      const descriptors =
+        intrinsic === "intrinsic.Object.getOwnPropertyDescriptors";
+      if (
+        invocation?.kind === "known" &&
+        t.isExpression(prototype) &&
+        (descriptors ||
+          intrinsic === "intrinsic.Object.getOwnPropertyDescriptor" ||
+          intrinsic === "intrinsic.Reflect.getOwnPropertyDescriptor")
+      ) {
+        const offset = descriptors ? 2 : 1;
+        const key = descriptors
+          ? (projection?.[0] ?? (escapedContents ? null : undefined))
+          : (staticString(invocation.arguments?.[1]) ?? null);
+        const field =
+          projection === undefined || projection.length < offset
+            ? escapedContents
+              ? null
+              : undefined
+            : projection[offset - 1];
+        // A descriptor owns its fields; replacing .value does not mutate the
+        // captured property. Only selections through a field expose contents.
+        if (
+          (typeof key === "string" || key === null) &&
+          (field === "value" ||
+            field === "get" ||
+            field === "set" ||
+            field === null)
+        )
+          return [
+            {
+              node: prototype,
+              projection: [
+                SEMANTIC_OWN_PROPERTY_DESCRIPTOR,
+                key,
+                field,
+                ...(projection?.slice(offset) ?? [null]),
+              ],
+              projectionOffset: offset,
+              capturePrefix: [node, node, node],
+            },
+          ];
+        return [];
+      }
       if (
         invocation?.kind === "known" &&
         invocation.path.join(".") === "intrinsic.Object.create" &&
         invocation.arguments?.length === 1 &&
         t.isExpression(prototype)
       ) {
+        if (projection?.[0] === SEMANTIC_OWN_PROPERTY_DESCRIPTOR) return [];
         if (projection?.length === 0 && !escapedContents) return [];
         const selected = (offset: number): InteropReferenceSource => ({
           node: prototype,
@@ -1132,6 +1189,18 @@ export const createSemanticModuleInterop = (
     const args = invocation.arguments;
     if (args.some((argument) => !t.isExpression(argument))) return undefined;
     const path = invocation.path.join(".");
+    if (
+      [
+        "intrinsic.Object.getOwnPropertyDescriptor",
+        "intrinsic.Reflect.getOwnPropertyDescriptor",
+        "intrinsic.Object.getOwnPropertyDescriptors",
+      ].includes(path) &&
+      args[0] !== undefined &&
+      isObjectValue(args[0], "fresh")
+    )
+      // Own reflection on a source allocation neither invokes its property
+      // getters nor exposes it to user code. A Proxy remains unresolved.
+      return args.slice(1);
     if (path === "intrinsic.Object.create" && args.length === 1) return [];
     if (path === "intrinsic.Reflect.deleteProperty") return args.slice(1, 2);
     if (path === "intrinsic.Reflect.set") {
@@ -1284,6 +1353,21 @@ export const createSemanticModuleInterop = (
     origin,
     callOrigin,
     callReferenceSources,
+    /** Possible allocation ownership does not grant a fresh-object proof. */
+    descriptorAllocation: (node: t.Node) => {
+      if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
+        return false;
+      const invocation = resolveJavaScriptIntrinsicInvocation(
+        node,
+        intrinsicPath,
+        boundIntrinsic,
+        intrinsicReadChanged,
+      );
+      return (
+        invocation?.kind === "known" &&
+        OWN_DESCRIPTOR_INTRINSICS.has(invocation.path.join("."))
+      );
+    },
     nonEscapingConversionInput,
     callArgumentEscapes,
     intrinsicPath,

@@ -12,6 +12,96 @@ const windows = (source: string) => {
 const loadWindow = 'new(load("electron").BrowserWindow)({});';
 const callWindow = 'new(load.call(null,"electron").BrowserWindow)({});';
 
+describe("wrapper exports parameter mapping", () => {
+  it.each([
+    "arguments[0]=module;exports.require=other;",
+    "const args=arguments;args[0]=module;exports.require=other;",
+    "const args=arguments;arguments={};args[0]=module;exports.require=other;",
+    "(()=>{arguments[0]=module})();exports.require=other;",
+    "arguments[0]=module;delete arguments[0];arguments[0]={};exports.require=other;",
+    'Object.defineProperty(arguments,"0",{value:module,writable:false});exports.require=other;',
+  ])("retains a value written through a mapped slot: %s", (setup) => {
+    expect(windows(`const load=require;${setup}${loadWindow}`)).toEqual([]);
+  });
+
+  it.each([
+    '"use strict";const load=require;arguments[0]=module;exports.require=other;',
+    "const load=require;delete arguments[0];arguments[0]=module;exports.require=other;",
+    'const load=require;Object.defineProperty(arguments,"0",{get(){return module}});exports.require=other;',
+    'const load=require;Object.defineProperty(arguments,"0",{value:{},writable:false});arguments[0]=module;exports.require=other;',
+    "const load=require;arguments[0].safe={};exports.require=other;",
+    "const load=require;const initial=exports;arguments[0]=module;initial.require=other;",
+  ])("preserves an exports value outside the mapping: %s", (source) => {
+    expect(windows(`${source}${loadWindow}`)).toHaveLength(1);
+  });
+});
+
+it.each([
+  "var exports;const saved=exports;exports={};",
+  "var module;const saved=module.exports;module={};",
+  "var exports=(exports.toString.call.call=other,{});const saved={toString:{call:{}}};",
+  "var module=(module.exports.toString.call.call=other,{});const saved={toString:{call:{}}};",
+  "var exports=exports;const saved=exports;",
+])(
+  "retains an initial wrapper object before later var rebinding: %s",
+  (setup) => {
+    expect(
+      windows(
+        `${setup}saved.toString.call.call=other;new(require.call.call(require,null,"electron").BrowserWindow)({});`,
+      ),
+    ).toEqual([]);
+  },
+);
+
+it.each([
+  "arguments[3]={valueOf(){module.require=other;return 0}};+arguments[3];",
+  'Object.defineProperty(arguments,"length",{get(){module.require=other;return 0}});void arguments.length;',
+])("retains mutations caused by changed scalar slots: %s", (setup) => {
+  expect(windows(`const load=require;${setup}${loadWindow}`)).toEqual([]);
+});
+
+it.each([
+  "var exports={run(){exports.value.require=other},value:module};exports.run();",
+  "var exports={run:()=>{exports.value.require=other},value:module};exports.run();",
+  "var exports={run:(value=exports.value)=>{value.require=other},value:module};exports.run();",
+  "var exports={Factory:class{field=(exports.value.require=other)},value:module};new exports.Factory();",
+])(
+  "selects the rebound wrapper value in deferred initializer regions: %s",
+  (setup) => {
+    expect(
+      windows(`${setup}new(require("electron").BrowserWindow)({});`),
+    ).toEqual([]);
+  },
+);
+
+it.each([
+  'var exports={[(exports.toString.call.call=other,"run")](){}};',
+  'var module=class{[(module.exports.toString.call.call=other,"run")](){}};',
+  "var exports=({value=(exports.toString.call.call=other)}={});",
+  "var exports=(()=>{exports.toString.call.call=other;return {}})();",
+  "var module=(()=>{module.exports.toString.call.call=other;return {}})();",
+])(
+  "retains immediate key and default evaluation before wrapper initialization: %s",
+  (setup) => {
+    expect(
+      windows(
+        `${setup}new(require.call.call(require,null,"electron").BrowserWindow)({});`,
+      ),
+    ).toEqual([]);
+  },
+);
+
+it.each([
+  "var exports;exports={toString:{call:{}}};const saved=exports;",
+  "var module;module={exports:{toString:{call:{}}}};const saved=module.exports;",
+])("selects a var replacement captured before mutation: %s", (setup) => {
+  expect(
+    windows(
+      `${setup}saved.toString.call.call=other;new(require.call.call(require,null,"electron").BrowserWindow)({});`,
+    ),
+  ).toHaveLength(1);
+});
+
 describe.each(["", '"use strict";'])(
   "wrapper argument values: %s",
   (directive) => {

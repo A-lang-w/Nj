@@ -47,10 +47,11 @@ export const createSemanticBuiltinDataReplacementQuery =
     const owner = proof.owner ?? ["global"];
     const location = [...owner, name];
     const knownDataSlot =
-      owner.length === 1
+      location.join(".") === "commonjs-module.exports" ||
+      (owner.length === 1
         ? semanticGlobalRootHasDataDescriptor(name)
         : location.join(".") === "global.require.main" ||
-          location.join(".") === "global.process.mainModule";
+          location.join(".") === "global.process.mainModule");
     if (!facts.complete || !knownDataSlot) return undefined;
     const candidates = sources.get(name) ?? [];
     let replacement: SemanticIterationSource | undefined;

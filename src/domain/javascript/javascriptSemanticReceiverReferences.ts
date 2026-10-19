@@ -72,6 +72,7 @@ export interface SemanticUnknownConstructorReceiver {
 }
 
 type ReceiverQuery = ((node: t.ThisExpression) => readonly t.Node[]) & {
+  wrapper(node: t.ThisExpression): boolean;
   constructed(node: t.ThisExpression): readonly SemanticConstructedReceiver[];
   unknown(
     node: t.ThisExpression,
@@ -205,6 +206,7 @@ export const createSemanticReceiverReferences = (
   >();
   let activationSites = new WeakMap<t.Node, Set<t.Node>>();
   let unknownActivations = new WeakSet<t.Node>();
+  let classReceiverUnknown: ((owner: t.Class) => boolean) | undefined;
   let factsReady = semanticFreshObjectFactsReady(state);
   let capturesReady = semanticAmbientIdentitySourcesReady(state);
   let ownSlotFactsReady = semanticAmbientOwnSlotFactsReady(state);
@@ -314,6 +316,21 @@ export const createSemanticReceiverReferences = (
       receiverObjects.isFreshObject,
       includeUnknownResults,
     );
+    const classConstructionUnknown = new WeakMap<t.Class, boolean>();
+    classReceiverUnknown = (owner) =>
+      classConstructionUnknown.get(owner) ??
+      classStages(owner, state.program).at(-1)?.unknownReceiver === true;
+    const retainClassConstruction = (
+      stages: ReturnType<typeof classStages>,
+    ) => {
+      for (const stage of stages)
+        if (t.isClass(stage.owner))
+          classConstructionUnknown.set(
+            stage.owner,
+            classConstructionUnknown.get(stage.owner) === true ||
+              stage.unknownReceiver,
+          );
+    };
     const unknownConstructionRoots = new Set<t.Node>();
     const groups = new Map<
       string,
@@ -404,19 +421,20 @@ export const createSemanticReceiverReferences = (
                 ({ node }) => node,
               );
         for (const node of inherited) values.add(node);
-        if (
-          classStages(declaration.owner, name).some(
-            (stage) => stage.unknownReceiver,
-          ) ||
-          inherited.some((node) => !receiverObjects.isFreshObject(node))
-        )
+        if (inherited.some((node) => !receiverObjects.isFreshObject(node)))
           values.add(state.program);
       }
       return [...values];
     };
-    const retainReceivers = (target: t.Function, values: readonly t.Node[]) => {
+    const privateParentUses: { name: t.PrivateName; target: t.Function }[] = [];
+    const retainReceivers = (
+      target: t.Function,
+      values: readonly t.Node[],
+      name?: t.PrivateName,
+    ) => {
       retain(target);
       for (const receiver of values) retain(target, receiver);
+      if (name !== undefined) privateParentUses.push({ name, target });
     };
     const construct = (
       callee: t.Node,
@@ -456,6 +474,7 @@ export const createSemanticReceiverReferences = (
         };
         const identity = semanticAllocatedReceiverIdentity(allocation);
         const stages = t.isClass(target) ? classStages(target, allocation) : [];
+        retainClassConstruction(stages);
         const activations: t.Node[] = t.isFunction(target)
           ? [target]
           : stages.flatMap((stage) => [
@@ -564,7 +583,7 @@ export const createSemanticReceiverReferences = (
               (write === undefined || semanticWriteSiteReadsFirst(write))) ||
               (member.kind === "set" && write !== undefined && !deletion))
           )
-            retainReceivers(member, values);
+            retainReceivers(member, values, privateName);
         }
       }
       if (t.isNewExpression(node)) {
@@ -620,7 +639,15 @@ export const createSemanticReceiverReferences = (
         activations.add(node);
         activationSites.set(target, activations);
         if (branded !== undefined) {
-          retainReceivers(target, branded);
+          retainReceivers(
+            target,
+            branded,
+            (t.isMemberExpression(callee) ||
+              t.isOptionalMemberExpression(callee)) &&
+              t.isPrivateName(callee.property)
+              ? callee.property
+              : undefined,
+          );
           continue;
         }
         retain(target, receiver);
@@ -755,13 +782,25 @@ export const createSemanticReceiverReferences = (
       const sourceReturn =
         t.isReturnStatement(parent) ||
         (t.isArrowFunctionExpression(parent) && parent.body === current);
+      const intrinsicConsumer =
+        t.isCallExpression(parent) || t.isOptionalCallExpression(parent)
+          ? constructionInvocations.intrinsicInvocation(parent)
+          : undefined;
+      const prototypeConsumer =
+        intrinsicConsumer?.kind === "known" &&
+        intrinsicConsumer.path.length === 3 &&
+        ["Object", "Reflect"].includes(intrinsicConsumer.path[1] ?? "") &&
+        ["getPrototypeOf", "setPrototypeOf"].includes(
+          intrinsicConsumer.path[2] ?? "",
+        );
       // Literal invocation arrays can contain a consumed callable selection.
       // Walk their leaves without hiding other arguments or nested contents.
       const values = [current];
       while (values.length > 0) {
         const value = values.pop();
         if (value === undefined || covered.has(value)) continue;
-        unknownConstructionRoots.add(value);
+        if (!prototypeConsumer || value !== intrinsicConsumer?.arguments?.[0])
+          unknownConstructionRoots.add(value);
         const unwrapped = unwrapJavaScriptExpression(value).node;
         if (t.isArrayExpression(unwrapped)) {
           for (const element of unwrapped.elements)
@@ -791,6 +830,30 @@ export const createSemanticReceiverReferences = (
           unknownActivations.add(stage.constructor);
         for (const field of stage.fields) unknownActivations.add(field.node);
       }
+      const receiverStages = classStages(node, state.program);
+      retainClassConstruction(receiverStages);
+      for (const stage of receiverStages)
+        if (stage.unknownReceiver)
+          for (const field of stage.fields) {
+            const unknown = unknownReceivers.get(field.node) ?? [];
+            unknown.push({
+              kind: "unknown-constructor-receiver",
+              allocation: node,
+              source: node,
+            });
+            unknownReceivers.set(field.node, unknown);
+          }
+    }
+    // Private brands constrain the receiver to a constructed instance. Parent
+    // changes must be compared with construction captures, including escapes,
+    // rather than with the private method's source position.
+    for (const { name, target } of privateParentUses) {
+      const declaration = privateTargets(name);
+      if (
+        declaration?.members.some((member) => !member.static) === true &&
+        classReceiverUnknown(declaration.owner)
+      )
+        retain(target, state.program);
     }
     // An explicitly unused default is a known non-invocation. Keep independent
     // calls and escapes, and leave unobserved stored/exported uses unknown.
@@ -835,9 +898,14 @@ export const createSemanticReceiverReferences = (
     const body = state.parentsByNode.get(owner);
     const declaring =
       body === undefined ? undefined : state.parentsByNode.get(body);
-    return t.isClass(declaring) && declaring.superClass != null
-      ? returned(declaring.superClass).references.map(({ node }) => node)
-      : [];
+    if (!t.isClass(declaring) || declaring.superClass == null) return [];
+    if (receivers === undefined) indexReceivers();
+    const inherited = returned(declaring.superClass).references.map(
+      ({ node }) => node,
+    );
+    return classReceiverUnknown?.(declaring)
+      ? [state.program, ...inherited]
+      : inherited;
   };
   const refresh = () => {
     const captured = semanticAmbientIdentitySourcesReady(state);
@@ -887,6 +955,9 @@ export const createSemanticReceiverReferences = (
       : [...known, ...inheritedReceiver(owner)];
   };
   const result: ReceiverQuery = Object.assign(query, {
+    wrapper: (node: t.ThisExpression) =>
+      t.isProgram(lexicalOwner(node)) &&
+      javaScriptRuntimeContext(state.program) === "commonjs",
     constructed: (node: t.ThisExpression) => {
       const owner = lexicalOwner(node);
       if (

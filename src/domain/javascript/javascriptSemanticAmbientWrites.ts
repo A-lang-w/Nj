@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 
 import {
   readExactJavaScriptLiteral,
@@ -36,6 +37,8 @@ import {
   semanticModuleDelegateWriteOwner,
   semanticCommonJsWrapperArgumentsReference,
   semanticCommonJsWrapperArgumentValueChanged,
+  semanticCommonJsWrapperMappedParameterSlot,
+  semanticCommonJsWrapperInitialBinding,
 } from "./javascriptSemanticRequireOrigin.js";
 import {
   semanticCallableValueIdentity,
@@ -50,6 +53,7 @@ import {
   semanticBuiltinDataPrototypeOwner,
   SEMANTIC_PHYSICAL_PROTOTYPE,
   SEMANTIC_SOURCE_PROTO_DESCRIPTOR,
+  SEMANTIC_OWN_PROPERTY_DESCRIPTOR,
   type SemanticFunctionValueProjection,
 } from "./javascriptSemanticFunctionValues.js";
 import {
@@ -122,6 +126,51 @@ import {
 
 const GLOBAL_OBJECT_NAMES = ["globalThis", "global", "window", "self"];
 
+/** The literal supplies initial own data slots; captured stores own later values. */
+const initialArrayOwnDataSlot = (
+  owner: t.Node,
+  key: string,
+):
+  | { readonly status: "unknown" | "missing" }
+  | {
+      readonly status: "data";
+      readonly value: t.Expression;
+    } => {
+  if (
+    !t.isArrayExpression(owner) ||
+    owner.elements.some((element) => t.isSpreadElement(element))
+  )
+    return { status: "unknown" };
+  if (key === "length")
+    return {
+      status: "data",
+      value: t.numericLiteral(owner.elements.length),
+    };
+  const index = semanticArrayIndex(key);
+  const value = index === null ? undefined : owner.elements[index];
+  return t.isExpression(value)
+    ? { status: "data", value }
+    : { status: "missing" };
+};
+
+const prototypeQueryTarget = (
+  node: t.Node,
+  interop: ReturnType<typeof createSemanticModuleInterop>,
+): t.Node | undefined => {
+  if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
+    return undefined;
+  const invocation = interop.intrinsicInvocation(node);
+  if (
+    invocation?.kind !== "known" ||
+    invocation.path.length !== 3 ||
+    !["Object", "Reflect"].includes(invocation.path[1] ?? "") ||
+    invocation.path[2] !== "getPrototypeOf"
+  )
+    return undefined;
+  const target = invocation.arguments?.[0];
+  return t.isNode(target) && !t.isSpreadElement(target) ? target : undefined;
+};
+
 const globalObjectName = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
@@ -154,16 +203,18 @@ const capturedReplacement = (
   sources: readonly SemanticIterationSource[] | undefined,
   read: t.Node | undefined,
   state: JavaScriptSemanticAnalysisState,
+  completedAt?: t.Node,
 ): SemanticIterationSource | undefined => {
   if (read === undefined) return undefined;
   let selected: SemanticIterationSource | undefined;
   for (const source of sources ?? [])
     if (
-      semanticDefiniteMutationPrecedesRead(
-        source.mutation,
-        read,
-        state.parentsByNode,
-      ) &&
+      (source.mutation === completedAt ||
+        semanticDefiniteMutationPrecedesRead(
+          source.mutation,
+          read,
+          state.parentsByNode,
+        )) &&
       (selected === undefined ||
         semanticEffectTiming(source.mutation, selected.mutation, state) ===
           "before")
@@ -238,6 +289,14 @@ interface AmbientReferenceFacts {
     read: t.Node,
   ) => SemanticIterationSource | undefined;
   readonly hasGlobalRootStores?: () => boolean;
+  /** A severed mapped parameter retains the argument value captured there. */
+  readonly wrapperParameterRead?: (
+    key: string,
+    read: t.Node,
+  ) => {
+    readonly read: t.Node;
+    readonly completedAt?: t.Node;
+  };
   readonly stores: WeakMap<
     SemanticStorageIdentity,
     SemanticReferenceStoreIndex<SemanticIterationSource>
@@ -725,6 +784,7 @@ export const createAmbientPathResolver = (
       copySelection?: string | null,
       context?: (typeof pending)[number],
       owner?: t.Node,
+      completedAt?: t.Node,
     ) => {
       let replacement: SemanticIterationSource | undefined;
       let prototypeReplacement: SemanticIterationSource | undefined;
@@ -736,6 +796,7 @@ export const createAmbientPathResolver = (
           facts?.replacements.get(identity)?.get(firstKey),
           selectedAt,
           state,
+          completedAt,
         );
       prototypeReplacement = capturedReplacement(
         facts?.replacements.get(identity)?.get(SEMANTIC_PHYSICAL_PROTOTYPE),
@@ -978,6 +1039,7 @@ export const createAmbientPathResolver = (
         // Unknown order remains a possible alias, including deferred calls.
         if (
           selectedAt !== undefined &&
+          source.mutation !== completedAt &&
           semanticEffectTiming(selectedAt, source.mutation, state) === "after"
         )
           continue;
@@ -1129,10 +1191,18 @@ export const createAmbientPathResolver = (
       readCaptures: AmbientCaptures,
       copySelection?: string | null,
     ): boolean => {
-      // CommonJS wrapper storage keeps its existing nominal-path owner. It
-      // is not a global binding or a shared builtin object in this graph.
-      if (!semanticSharedStorageHasDescriptorFacts(owner)) return false;
+      // The wrapper module's own exports slot retains its nominal owner.
+      // Other CommonJS paths remain alias-only; initial exports is separate.
       const suffix = storage.slice(owner.length);
+      if (
+        !semanticSharedStorageHasDescriptorFacts(owner) &&
+        !(
+          owner.length === 1 &&
+          owner[0] === "commonjs-module" &&
+          (suffix.length === 0 || suffix[0] === "exports")
+        )
+      )
+        return false;
       if (hasInternalSelector(suffix)) return false;
       const identity = facts?.sharedStorage(owner);
       if (identity === undefined) return false;
@@ -1181,6 +1251,28 @@ export const createAmbientPathResolver = (
       if (hasInternalSelector(canonical)) {
         for (const identity of semanticPossibleFunctionValueIdentities(
           canonical,
+          (storage, offset, owner) => {
+            const captures = [
+              ...Array<t.Node | undefined>(
+                Math.max(0, canonical.length - readCaptures.length),
+              ).fill(undefined),
+              ...readCaptures,
+            ].slice(-canonical.length);
+            return owner[0] === "commonjs-module" && owner.length > 1
+              ? selectStorage(
+                  storage,
+                  1,
+                  ["commonjs-module"],
+                  [
+                    undefined,
+                    ...owner.slice(1).map(() => captures[offset]),
+                    ...captures.slice(offset),
+                  ],
+                  copySelection,
+                )
+              : selectStorage(storage, offset, owner, captures, copySelection);
+          },
+          () => retain([null]),
         ))
           retain(identity, readCaptures, copySelection);
         return;
@@ -1380,6 +1472,128 @@ export const createAmbientPathResolver = (
             [...source.projection.map(() => source.node), ...readCaptures],
           );
       };
+      if (
+        possibleWrites &&
+        (t.isObjectExpression(root) || t.isArrayExpression(root)) &&
+        suffix?.[0] === SEMANTIC_OWN_PROPERTY_DESCRIPTOR
+      ) {
+        const key = suffix[1];
+        const field = suffix[2];
+        // ArraySetLength always stores a number, including after coercion.
+        if (t.isArrayExpression(root) && key === "length") continue;
+        const read = captures[0] ?? root;
+        const remaining = suffix.slice(3);
+        const updated =
+          typeof key === "string"
+            ? sourceFacts.selectedOwnSlot?.(root, key, read)
+            : undefined;
+        const unknown = () => {
+          for (const identity of semanticUnknownReferenceIdentities())
+            retain(identity);
+        };
+        if (updated?.status === "updated") {
+          if (
+            (field === "value" || field === null) &&
+            updated.sources.every(
+              (source) => source.data === true || source.writable === true,
+            )
+          )
+            for (const source of updated.sources)
+              continueCaptured(
+                source.node,
+                [
+                  ...source.projection.map((key) =>
+                    key === null ? null : String(key),
+                  ),
+                  ...remaining,
+                ],
+                [
+                  ...source.projection.map(() => source.node),
+                  ...captures.slice(3),
+                ],
+              );
+          else unknown();
+        } else if (updated?.status === "unknown" || typeof key !== "string")
+          unknown();
+        else if (t.isArrayExpression(root)) {
+          const initial = initialArrayOwnDataSlot(root, key);
+          if (
+            initial.status === "unknown" ||
+            (facts?.sourceSlotsComplete?.() === true &&
+              !sourceFacts.ownSlotUnchanged(root, key, read))
+          )
+            unknown();
+          else if (
+            initial.status === "data" &&
+            (field === "value" || field === null)
+          )
+            continueCaptured(initial.value, remaining, captures.slice(3));
+        } else {
+          const own = staticObjectOwnProperty(root, key);
+          if (own.status === "dynamic") unknown();
+          else if (own.status === "explicit") {
+            const property = own.property;
+            if (
+              (field === "value" || field === null) &&
+              (t.isObjectProperty(property) || property.kind === "method")
+            )
+              continueCaptured(
+                t.isObjectProperty(property) ? property.value : property,
+                remaining,
+                captures.slice(3),
+              );
+            else if (
+              t.isObjectMethod(property) &&
+              (property.kind === field || field === null)
+            )
+              continueCaptured(
+                property,
+                escapedContents && remaining.length === 0 ? [null] : remaining,
+                captures.slice(3),
+              );
+            if (
+              typeof own.pairedAccessor === "object" &&
+              (own.pairedAccessor.kind === field || field === null)
+            )
+              continueCaptured(
+                own.pairedAccessor,
+                escapedContents && remaining.length === 0 ? [null] : remaining,
+                captures.slice(3),
+              );
+            else if (
+              own.pairedAccessor === "unknown" &&
+              (field === "get" || field === "set" || field === null)
+            )
+              unknown();
+          }
+        }
+        // An own descriptor never selects a prototype property or invokes a
+        // getter to obtain its data value.
+        continue;
+      }
+      if (
+        possibleWrites &&
+        suffix?.includes(SEMANTIC_OWN_PROPERTY_DESCRIPTOR) &&
+        (t.isArrayExpression(root) ||
+          t.isFunction(root) ||
+          t.isClass(root) ||
+          t.isNewExpression(root))
+      ) {
+        if (suffix[0] !== SEMANTIC_OWN_PROPERTY_DESCRIPTOR) {
+          for (const identity of semanticUnknownReferenceIdentities())
+            retain(identity);
+          continue;
+        }
+        const key = suffix[1];
+        if (
+          (t.isFunction(root) || t.isClass(root)) &&
+          (key === "name" || key === "length")
+        )
+          continue;
+        for (const identity of semanticUnknownReferenceIdentities())
+          retain(identity);
+        continue;
+      }
       if (possibleWrites && t.isFunction(root))
         retain([...semanticCallableValueIdentity(root), ...(suffix ?? [])]);
       const constructedPhysical =
@@ -1390,7 +1604,8 @@ export const createAmbientPathResolver = (
       let capturedPrototypeReplaced = false;
       if (
         current.constructed !== undefined ||
-        (!t.isIdentifier(root) && facts?.freshObject(root))
+        (!t.isIdentifier(root) &&
+          (facts?.freshObject(root) || intrinsics.descriptorAllocation(root)))
       ) {
         if (
           !hasInternalSelector(suffix) &&
@@ -1551,6 +1766,12 @@ export const createAmbientPathResolver = (
         continue;
       }
       if (possibleWrites && t.isThisExpression(root)) {
+        if (receiverReferences.wrapper(root))
+          retain(
+            ["commonjs-exports", ...(suffix ?? [])],
+            captures,
+            current.copySelection,
+          );
         if (receiverReferences.unknown(root).length > 0)
           for (const identity of semanticUnknownReferenceIdentities())
             retain(identity);
@@ -1874,6 +2095,7 @@ export const createAmbientPathResolver = (
                 suffix.length > 0 &&
                 key !== "1" &&
                 key !== "2" &&
+                key !== "0" &&
                 !(key === "length" && suffix.length === 1))
             )
               for (const identity of semanticUnknownReferenceIdentities())
@@ -1890,6 +2112,57 @@ export const createAmbientPathResolver = (
                 captures.slice(1),
                 current.copySelection,
               );
+            if (allContents || key === null || key === "0")
+              retain(
+                ["commonjs-exports", ...remaining],
+                captures.slice(1),
+                current.copySelection,
+              );
+          }
+          continue;
+        }
+        if (
+          current.binding === undefined &&
+          javaScriptRuntimeContext(state.program) === "commonjs" &&
+          (isUnshadowedGlobal(root, state, "exports") ||
+            semanticCommonJsWrapperInitialBinding(root, "exports", state))
+        ) {
+          if (
+            (state.ambientBindingWrites.get("exports") ?? []).some(
+              (write) =>
+                !semanticEffectFollowsInitialCapture(root, write, state),
+            )
+          )
+            for (const identity of semanticUnknownReferenceIdentities())
+              retain(identity);
+          else {
+            const slot = semanticCommonJsWrapperMappedParameterSlot(
+              "exports",
+              state,
+            );
+            const mappedRead =
+              slot === undefined
+                ? undefined
+                : facts?.wrapperParameterRead?.(slot, root);
+            const mapped =
+              slot === undefined
+                ? undefined
+                : followStores(
+                    state.program,
+                    suffix === undefined ? undefined : [slot, ...suffix],
+                    [mappedRead?.read ?? root, ...captures],
+                    shiftedOwnOnly(ownOnly, 1),
+                    current.copySelection,
+                    undefined,
+                    undefined,
+                    mappedRead?.completedAt,
+                  );
+            if (mapped?.replacement === undefined)
+              retain(
+                ["commonjs-exports", ...(suffix ?? [])],
+                captures,
+                current.copySelection,
+              );
           }
           continue;
         }
@@ -1897,7 +2170,8 @@ export const createAmbientPathResolver = (
         // its identity through the same alias/projection owner used for writes.
         if (
           current.binding === undefined &&
-          isUnshadowedGlobal(root, state, "module")
+          (isUnshadowedGlobal(root, state, "module") ||
+            semanticCommonJsWrapperInitialBinding(root, "module", state))
         ) {
           retain(
             ["commonjs-module", ...(suffix ?? [])],
@@ -2136,16 +2410,13 @@ export const createAmbientPathResolver = (
         possibleWrites &&
         (t.isCallExpression(root) || t.isOptionalCallExpression(root))
       ) {
-        for (const source of intrinsics.callReferenceSources(
-          root,
-          suffix,
-          escapedContents,
-        ))
-          continueCaptured(
-            source.node,
-            source.projection,
-            captures.slice(source.projectionOffset),
-          );
+        for (const source of replacement !== undefined
+          ? []
+          : intrinsics.callReferenceSources(root, suffix, escapedContents))
+          continueCaptured(source.node, source.projection, [
+            ...(source.capturePrefix ?? []),
+            ...captures.slice(source.projectionOffset),
+          ]);
         const bound = functionInterop.boundIntrinsic(root);
         const allocation = bound?.boundFunction?.allocations[0];
         if (allocation !== undefined)
@@ -2649,6 +2920,9 @@ export const createAmbientPathResolver = (
         read: t.Node,
         nativePrototypesIntact: boolean,
       ) =>
+        (key !== "__proto__" &&
+          nativePrototypesIntact &&
+          intrinsics.descriptorAllocation(owner)) ||
         semanticEverySourcePropertySlot(
           owner,
           key,
@@ -2750,13 +3024,6 @@ const completedPrototypes = new WeakMap<
   NonNullable<AmbientReferenceFacts["prototypeUnchanged"]>
 >();
 
-/** Runtime constructor parents use the same captured mutation/escape proof. */
-export const semanticAmbientPrototypeUnchanged = (
-  state: JavaScriptSemanticAnalysisState,
-  owner: t.Node,
-  read: t.Node,
-): boolean => completedPrototypes.get(state)?.(owner, read) === true;
-
 /** Slot captures become provable before the final ambient writes are published. */
 export const semanticAmbientOwnSlotFactsReady = (
   state: JavaScriptSemanticAnalysisState,
@@ -2774,6 +3041,14 @@ export const semanticAmbientOwnSlotUnchanged = (
   completedOwnSlots.get(state)?.(owner, key, read, since, acceptedWrites) ===
   true;
 
+/** Constructor inheritance uses the same normalized prototype mutations as
+ * captured property lookup. Without an invocation site, retain every effect. */
+export const semanticAmbientPrototypeUnchanged = (
+  state: JavaScriptSemanticAnalysisState,
+  owner: t.Node,
+  read: t.Node = state.program,
+): boolean => completedPrototypes.get(state)?.(owner, read) === true;
+
 export const semanticAmbientIdentitySourcesReady = (
   state: JavaScriptSemanticAnalysisState,
 ): boolean => completedAmbientResolvers.has(state);
@@ -2788,6 +3063,15 @@ export const semanticAmbientBindingPaths = (
     completedAmbientResolvers.get(state) ??
     createAmbientPathResolver(state, true)
   ).binding(binding, capture);
+
+/** Completed receiver paths retain the shared owner's captured own slots. */
+export const semanticAmbientReferencePaths = (
+  node: t.Node,
+  capture: t.Node,
+  projection: AmbientProjection,
+  state: JavaScriptSemanticAnalysisState,
+): readonly AmbientPath[] | undefined =>
+  completedAmbientResolvers.get(state)?.(node, capture, false, projection);
 
 /** Each slot keeps its own capture when shared Module owners are normalized. */
 export type SemanticModuleProjection = readonly {
@@ -3052,6 +3336,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     ReturnType<typeof createSemanticBuiltinDataReplacementQuery>
   >();
   let sourceSlotsComplete = false;
+  let wrapperParameterRead: AmbientReferenceFacts["wrapperParameterRead"];
   const referenceFacts: AmbientReferenceFacts = {
     stores,
     sharedStorage,
@@ -3061,9 +3346,18 @@ export function* indexJavaScriptAmbientWritesSteps(
       if (selected !== undefined) inertReferenceStores.add(selected);
       return selected;
     },
-    builtinMemberReplacement: (owner, key, read) =>
-      builtinMemberReplacements.get(owner.join("."))?.(key, read),
+    builtinMemberReplacement: (owner, key, read) => {
+      const selected = builtinMemberReplacements.get(owner.join("."))?.(
+        key,
+        read,
+      );
+      if (selected !== undefined && owner[0] === "commonjs-module")
+        inertReferenceStores.add(selected);
+      return selected;
+    },
     hasGlobalRootStores: () => globalRootSources.size > 0,
+    wrapperParameterRead: (key, read) =>
+      wrapperParameterRead?.(key, read) ?? { read },
     replacements,
     storeKinds,
     ownReferenceStored: (source) => inertReferenceStores.add(source),
@@ -3078,22 +3372,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     freshObject: interop.isFreshObject,
     ownSlotUnchanged: (owner, key, read, since, acceptedWrites) =>
       ownSlotUnchanged?.(owner, key, read, since, acceptedWrites) === true,
-    prototypeTarget: (node) => {
-      if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
-        return undefined;
-      const invocation = interop.intrinsicInvocation(node);
-      if (
-        invocation?.kind !== "known" ||
-        invocation.path.length !== 3 ||
-        !["Object", "Reflect"].includes(invocation.path[1] ?? "") ||
-        invocation.path[2] !== "getPrototypeOf"
-      )
-        return undefined;
-      const target = invocation.arguments?.[0];
-      return t.isNode(target) && !t.isSpreadElement(target)
-        ? target
-        : undefined;
-    },
+    prototypeTarget: (node) => prototypeQueryTarget(node, interop),
   };
   let ambientWrites = createAmbientPathResolver(state, true, referenceFacts);
   let observeOpaqueInvocation = createOpaqueObserver?.(ambientWrites);
@@ -3399,8 +3678,13 @@ export function* indexJavaScriptAmbientWritesSteps(
       ordinaryContainers.set(root, ordinary);
     }
     if (!ordinary) return "unknown";
-    if (t.isArrayExpression(root))
-      return key === "length" ? "unknown" : "missing";
+    if (t.isArrayExpression(root)) {
+      // Length writes coerce their RHS and can delete indexed slots; they are
+      // not ordinary reference stores despite the initial own data descriptor.
+      if (key === "length") return "unknown";
+      const initial = initialArrayOwnDataSlot(root, key);
+      return initial.status === "data" ? "own" : initial.status;
+    }
     const slots = dataSlots.get(root) ?? new Map<string, DataSlot>();
     let slot = slots.get(key);
     if (slot === undefined) {
@@ -3542,6 +3826,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     (node) => !inertShimNode(node),
   );
   for (const [owner, key] of [
+    [["commonjs-module"], "exports"],
     [["global", "require"], "main"],
     [["global", "process"], "mainModule"],
   ] as const) {
@@ -3829,6 +4114,12 @@ export function* indexJavaScriptAmbientWritesSteps(
     const byKey = memberWrites.get(root);
     return [...(byKey?.get(key) ?? []), ...(byKey?.get(null) ?? [])];
   };
+  const writesAffectingOwnSlot = (owner: SemanticLocalIdentity, key: string) =>
+    !isSemanticAllocatedReceiverIdentity(owner) &&
+    t.isArrayExpression(owner) &&
+    semanticArrayIndex(key) !== null
+      ? [...writesToMember(owner, key), ...writesToMember(owner, "length")]
+      : writesToMember(owner, key);
   interface ReceiverSlot {
     readonly root: SemanticLocalIdentity;
     readonly key: string;
@@ -4309,7 +4600,13 @@ export function* indexJavaScriptAmbientWritesSteps(
     const descriptor = inertDescriptorMutation(site);
     return (
       descriptor !== undefined &&
-      (descriptor.key !== key ||
+      ((descriptor.key !== key &&
+        !(
+          descriptor.key === "length" &&
+          !isSemanticAllocatedReceiverIdentity(owner) &&
+          t.isArrayExpression(owner) &&
+          semanticArrayIndex(key) !== null
+        )) ||
         (presenceOnly &&
           !isSemanticAllocatedReceiverIdentity(owner) &&
           staticObjectOwnProperty(owner, key).status === "explicit"))
@@ -4345,10 +4642,18 @@ export function* indexJavaScriptAmbientWritesSteps(
       activeDescriptorEffects(owner),
       true,
     ) &&
-    !writesToMember(owner, key).some(
+    !writesAffectingOwnSlot(owner, key).some(
       (site) =>
         semanticEffectTiming(read, site, state) !== "after" &&
-        !(t.isAssignmentExpression(site) && site.operator === "=") &&
+        !(
+          t.isAssignmentExpression(site) &&
+          site.operator === "=" &&
+          !(
+            t.isArrayExpression(owner) &&
+            semanticArrayIndex(key) !== null &&
+            writesToMember(owner, "length").includes(site)
+          )
+        ) &&
         !preservesOwnSlot(owner, site, key, true),
     );
   ownSlotUnchanged = (owner, key, read, since, acceptedWrites) =>
@@ -4360,7 +4665,7 @@ export function* indexJavaScriptAmbientWritesSteps(
       false,
       since,
     ) &&
-    !writesToMember(owner, key).some(
+    !writesAffectingOwnSlot(owner, key).some(
       (site) =>
         site !== read &&
         site !== since &&
@@ -4403,6 +4708,12 @@ export function* indexJavaScriptAmbientWritesSteps(
         descriptorEffects.get(owner)?.get(site) === true
       )
         continue;
+      const queriedPrototype = prototypeQueryTarget(site, proofInterop);
+      if (
+        queriedPrototype !== undefined &&
+        freshRoot(queriedPrototype, site) === owner
+      )
+        continue;
       if (
         t.isAssignmentExpression(site) &&
         site.operator === "=" &&
@@ -4439,23 +4750,35 @@ export function* indexJavaScriptAmbientWritesSteps(
     key: string,
     source: SemanticIterationSource,
   ): boolean => {
-    const initial = staticObjectOwnProperty(owner, key);
-    const wrapperSlot =
-      owner === state.program ? dataSlot(owner, key) : undefined;
+    let initial = staticObjectOwnProperty(owner, key);
     if (
       initial.status === "dynamic" &&
-      wrapperSlot !== "own" &&
-      wrapperSlot !== "missing"
+      key !== "__proto__" &&
+      proofInterop.descriptorAllocation(owner) &&
+      proofInterop.isFreshObject(owner)
+    )
+      // Native descriptor objects contain only writable own data fields.
+      // Treat an unproved field as absent so inherited setters still need
+      // the ordinary prototype-integrity proof below.
+      initial = { status: "missing" };
+    const initialDataSlot =
+      owner === state.program || t.isArrayExpression(owner)
+        ? dataSlot(owner, key)
+        : undefined;
+    if (
+      initial.status === "dynamic" &&
+      initialDataSlot !== "own" &&
+      initialDataSlot !== "missing"
     )
       return false;
-    let exists = wrapperSlot === "own" || initial.status === "explicit";
+    let exists = initialDataSlot === "own" || initial.status === "explicit";
     let accessor =
       initial.status === "explicit" &&
       t.isObjectMethod(initial.property) &&
       initial.property.kind !== "method";
     let writable = exists && !accessor;
     let configurable = exists;
-    let enumerable = exists && !(wrapperSlot === "own" && key === "length");
+    let enumerable = exists && !(initialDataSlot === "own" && key === "length");
     let value: t.Node | undefined =
       initial.status === "explicit" && t.isObjectProperty(initial.property)
         ? initial.property.value
@@ -4689,6 +5012,54 @@ export function* indexJavaScriptAmbientWritesSteps(
       return true;
     }
     return false;
+  };
+  wrapperParameterRead = (key, read) => {
+    let cutoff = read;
+    let completedAt: t.Node | undefined;
+    for (const site of new Set([
+      ...writesToMember(state.program, key),
+      ...activeDescriptorEffects(state.program),
+    ])) {
+      if (
+        !semanticDefiniteMutationPrecedesRead(site, cutoff, state.parentsByNode)
+      )
+        continue;
+      if (
+        t.isUnaryExpression(site, { operator: "delete" }) &&
+        (t.isMemberExpression(site.argument) ||
+          t.isOptionalMemberExpression(site.argument)) &&
+        semanticStaticPropertyKey(
+          site.argument.property,
+          site.argument.computed,
+        ) === key
+      ) {
+        cutoff = site.argument;
+        completedAt = undefined;
+        continue;
+      }
+      const parsed = inertDescriptorMutation(site);
+      if (parsed?.key !== key) continue;
+      const accessor = ["get", "set"].some(
+        (field) =>
+          staticObjectOwnProperty(parsed.descriptor, field).status ===
+          "explicit",
+      );
+      const writable = staticObjectProperty(parsed.descriptor, "writable");
+      const writableValue =
+        writable.status === "explicit"
+          ? readExactJavaScriptLiteral(writable.property.value)
+          : undefined;
+      const frozen =
+        writableValue?.found === true && writableValue.value === false;
+      if (!accessor && !frozen) continue;
+      const target = trustedMutation(site)?.invocation.arguments?.[0];
+      cutoff = accessor && t.isNode(target) ? target : site;
+      completedAt = accessor ? undefined : site;
+    }
+    return {
+      read: cutoff,
+      ...(completedAt === undefined ? {} : { completedAt }),
+    };
   };
   completedOwnSlots.set(state, ownSlotUnchanged);
   completedPrototypes.set(state, prototypeUnchanged);

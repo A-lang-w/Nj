@@ -5,6 +5,7 @@ import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import {
   createSemanticModuleStorageQuery,
   semanticAmbientBindingPaths,
+  semanticAmbientReferencePaths,
   semanticAmbientEscapeEffects,
   semanticAmbientIdentitySourcesReady,
   type SemanticModuleProjection as ModuleProjection,
@@ -56,6 +57,7 @@ import {
   semanticFunctionValueIdentity,
   isSemanticUnknownReferenceIdentity,
   semanticFunctionValueReadDependencies,
+  SEMANTIC_OWN_PROPERTY_DESCRIPTOR,
 } from "./javascriptSemanticFunctionValues.js";
 import {
   semanticGlobalBindingReadMayHaveChanged,
@@ -148,12 +150,17 @@ const commonJsWrapperBindingHasPriorWrite = (
   site: t.Node,
   binding: NonNullable<ReturnType<typeof resolveSemanticBindingState>>,
   state: JavaScriptSemanticAnalysisState,
+  duringInitializer = false,
 ): boolean => {
   const writes = state.bindingWrites.get(binding.bindingId) ?? [];
   const declarationInitializers = binding.initializers
     .map(({ node }) => node)
     .filter(
       (initializer) =>
+        !(
+          duringInitializer &&
+          semanticReadDuringInitializer(site, initializer, state)
+        ) &&
         !writes.some((write) => semanticNodeWithin(initializer, write, state)),
     );
   return (
@@ -178,6 +185,44 @@ const semanticNodeWithin = (
     current = state.parentsByNode.get(current);
   }
   return false;
+};
+
+/** Function bodies/default parameters and instance fields run after their
+ * enclosing value is allocated; computed keys still run during allocation. */
+const semanticReadDuringInitializer = (
+  site: t.Node,
+  initializer: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  let current = site;
+  while (current !== initializer) {
+    const parent = state.parentsByNode.get(current);
+    if (parent === undefined) return false;
+    if (
+      t.isFunction(parent) &&
+      (parent.body === current ||
+        parent.params.some((param) => param === current))
+    ) {
+      const invocation = state.parentsByNode.get(parent);
+      if (
+        parent.async ||
+        parent.generator ||
+        !t.isCallExpression(invocation) ||
+        unwrapJavaScriptExpression(invocation.callee).node !== parent
+      )
+        return false;
+    }
+    if (
+      (t.isClassProperty(parent) ||
+        t.isClassPrivateProperty(parent) ||
+        t.isClassAccessorProperty(parent)) &&
+      !parent.static &&
+      parent.value === current
+    )
+      return false;
+    current = parent;
+  }
+  return true;
 };
 
 /** Classify a call through an exact recovered factory-loader binding. */
@@ -393,11 +438,45 @@ const writesModuleRequire = (
     visited = new Set<string>(),
     projection: ModuleProjection = [],
   ): boolean => {
+    const completed = semanticAmbientReferencePaths(
+      node,
+      node,
+      projection.map(({ key }) => (key === null ? null : String(key))),
+      state,
+    );
+    if (
+      completed !== undefined &&
+      !completed.some(
+        (path) => path[0] === "commonjs-module" && path.length > 1,
+      )
+    )
+      return completed.some(
+        (path) =>
+          path[0] === null ||
+          (path[0] === "commonjs-module" && path.length === 1),
+      );
     const { root: value, members } = electronMemberPath(node);
     const selected = [
       ...members.map((key) => ({ key, capture: node })),
       ...projection,
     ];
+    if (t.isCallExpression(value) || t.isOptionalCallExpression(value))
+      return interop.callReferenceSources(value, members).some((source) => {
+        const path = source.projection;
+        if (
+          path?.[0] !== SEMANTIC_OWN_PROPERTY_DESCRIPTOR ||
+          (path[2] !== "value" && path[2] !== null)
+        )
+          return false;
+        const keys = [path[1]!, ...path.slice(3)];
+        return isModuleObject(source.node, visited, [
+          ...keys.map((key) => ({
+            key: typeof key === "symbol" ? null : key,
+            capture: value,
+          })),
+          ...projection,
+        ]);
+      });
     if (!t.isIdentifier(value)) return false;
     if (value.name === "module") {
       const original =
@@ -850,6 +929,44 @@ const wrapperArgumentReferences = new WeakMap<
   readonly t.Identifier[]
 >();
 
+const COMMONJS_WRAPPER_PARAMETERS = [
+  "exports",
+  "require",
+  "module",
+  "__filename",
+  "__dirname",
+] as const;
+
+/** Capturing a wrapper var before a later source write still reads the host
+ * parameter. Whole-binding stability cannot describe that earlier value. */
+export const semanticCommonJsWrapperInitialBinding = (
+  reference: t.Node,
+  name: "exports" | "module",
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (
+    !t.isIdentifier(reference, { name }) ||
+    javaScriptRuntimeContext(state.program) !== "commonjs"
+  )
+    return false;
+  const binding = commonJsWrapperBindingDeclaration(reference, name, state);
+  return (
+    binding !== undefined &&
+    !commonJsWrapperBindingHasPriorWrite(reference, binding, state, true)
+  );
+};
+
+/** Parameter mapping shares the canonical arguments slots only in sloppy
+ * wrappers; slot deletion and descriptor severing belong to heap facts. */
+export const semanticCommonJsWrapperMappedParameterSlot = (
+  name: (typeof COMMONJS_WRAPPER_PARAMETERS)[number],
+  state: JavaScriptSemanticAnalysisState,
+): string | undefined =>
+  javaScriptRuntimeContext(state.program) === "commonjs" &&
+  !semanticStrictContext(state.program, state)
+    ? String(COMMONJS_WRAPPER_PARAMETERS.indexOf(name))
+    : undefined;
+
 /** Ordinary functions own arguments; arrow bodies retain the wrapper object. */
 const semanticWrapperArgumentReferences = (
   state: JavaScriptSemanticAnalysisState,
@@ -922,13 +1039,7 @@ export const semanticCommonJsWrapperArgumentValueChanged = (
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
   if (semanticStrictContext(state.program, state)) return false;
-  const parameters = [
-    "exports",
-    "require",
-    "module",
-    "__filename",
-    "__dirname",
-  ];
+  const parameters = COMMONJS_WRAPPER_PARAMETERS;
   const names =
     key == null
       ? parameters
@@ -964,11 +1075,28 @@ const semanticWrapperArgumentsExposedBefore = (
   state.program.sourceType === "script" &&
   javaScriptRuntimeContext(state.program) === "commonjs" &&
   !semanticStrictContext(state.program, state) &&
-  semanticWrapperArgumentReferences(state).some(
-    (reference) =>
+  semanticWrapperArgumentReferences(state).some((reference) => {
+    const member = state.parentsByNode.get(reference);
+    if (
+      (t.isMemberExpression(member) || t.isOptionalMemberExpression(member)) &&
+      member.object === reference &&
+      ["length", "3", "4"].includes(
+        semanticStaticPropertyKey(member.property, member.computed) ?? "",
+      )
+    ) {
+      const use = state.parentsByNode.get(member);
+      if (
+        t.isUnaryExpression(use) &&
+        use.argument === member &&
+        ["void", "typeof", "!"].includes(use.operator)
+      )
+        return false;
+    }
+    return (
       semanticCommonJsWrapperArgumentsReference(reference, state) &&
-      !semanticEffectFollowsInitialCapture(capture, reference, state),
-  );
+      !semanticEffectFollowsInitialCapture(capture, reference, state)
+    );
+  });
 
 /** Binding integrity is independent of module.require's delegate validity.
  * The shim's inertness proof uses this same owner without recursively asking

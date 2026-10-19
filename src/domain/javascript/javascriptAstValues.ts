@@ -153,20 +153,20 @@ export const semanticObjectPrototypeProperty = (
 };
 
 /** Find the effective explicit property, preserving unresolved overrides. */
-const objectGetterSetters = new WeakMap<
+const objectAccessorPairs = new WeakMap<
   t.ObjectMethod,
-  "present" | "absent" | "unknown"
+  t.ObjectMethod | "absent" | "unknown"
 >();
-const objectGetterSetter = (
+const objectAccessorPair = (
   object: t.ObjectExpression,
-  getter: t.ObjectMethod,
+  accessor: t.ObjectMethod,
   name: string,
 ) => {
-  const cached = objectGetterSetters.get(getter);
+  const cached = objectAccessorPairs.get(accessor);
   if (cached !== undefined) return cached;
-  let result: "present" | "absent" | "unknown" = "absent";
+  let result: t.ObjectMethod | "absent" | "unknown" = "absent";
   for (
-    let index = object.properties.indexOf(getter) - 1;
+    let index = object.properties.indexOf(accessor) - 1;
     index >= 0;
     index -= 1
   ) {
@@ -182,11 +182,14 @@ const objectGetterSetter = (
       break;
     }
     if (key !== name) continue;
-    if (t.isObjectMethod(property, { kind: "get" })) continue;
-    result = t.isObjectMethod(property, { kind: "set" }) ? "present" : "absent";
+    if (t.isObjectMethod(property) && property.kind === accessor.kind) continue;
+    result =
+      t.isObjectMethod(property) && property.kind !== "method"
+        ? property
+        : "absent";
     break;
   }
-  objectGetterSetters.set(getter, result);
+  objectAccessorPairs.set(accessor, result);
   return result;
 };
 
@@ -200,6 +203,7 @@ export const staticObjectOwnProperty = (
       readonly status: "explicit";
       readonly property: t.ObjectProperty | t.ObjectMethod;
       readonly setter?: "present" | "absent" | "unknown";
+      readonly pairedAccessor?: t.ObjectMethod | "absent" | "unknown";
     } => {
   if (object === undefined) return { status: "missing" };
   if (!t.isObjectExpression(object)) return { status: "dynamic" };
@@ -240,12 +244,22 @@ export const staticObjectOwnProperty = (
       const key = semanticStaticPropertyKey(property.key, property.computed);
       if (key === null) return { status: "dynamic" };
       if (key !== name) continue;
+      const pairedAccessor =
+        t.isObjectMethod(property) && property.kind !== "method"
+          ? objectAccessorPair(current, property, name)
+          : undefined;
       return {
         status: "explicit",
         property,
         ...(t.isObjectMethod(property, { kind: "get" })
-          ? { setter: objectGetterSetter(current, property, name) }
+          ? {
+              setter:
+                typeof pairedAccessor === "object"
+                  ? ("present" as const)
+                  : (pairedAccessor ?? "unknown"),
+            }
           : {}),
+        ...(pairedAccessor === undefined ? {} : { pairedAccessor }),
       };
     }
     return { status: "missing" };

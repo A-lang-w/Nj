@@ -13,6 +13,10 @@ import {
 } from "./javascriptSemanticOpaqueEffects.js";
 import { ELECTRON_MODULE } from "./javascriptElectronMemberWrites.js";
 import {
+  semanticHostRequireIntact,
+  semanticHostRequireModuleWritesIntact,
+} from "./javascriptSemanticRequireOrigin.js";
+import {
   indexJavaScriptElectronIdentitySteps,
   type JavaScriptElectronIdentity,
 } from "./javascriptSemanticAnalysis.js";
@@ -703,6 +707,12 @@ export class JavaScriptSymbolicBindings {
     const binding = resolveSemanticBindingState(this.state, node, node.name);
     if (
       !binding &&
+      node.name === "require" &&
+      !semanticHostRequireIntact(node, node, this.state)
+    )
+      return symbolicUnknown("host loader may have changed before capture");
+    if (
+      !binding &&
       node.name === "undefined" &&
       !semanticResolutionBlocked(this.state, node, node.name)
     )
@@ -1127,7 +1137,9 @@ export class JavaScriptSymbolicBindings {
         ) {
           const spec = args[0];
           result =
-            spec?.kind === "literal" && typeof spec.value === "string"
+            semanticHostRequireModuleWritesIntact(node, this.state) &&
+            spec?.kind === "literal" &&
+            typeof spec.value === "string"
               ? { kind: "external", path: [spec.value] }
               : symbolicUnknown("dynamic require");
         } else if (

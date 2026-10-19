@@ -8,11 +8,16 @@ export const SEMANTIC_PHYSICAL_PROTOTYPE = Symbol("physical-prototype");
 export const SEMANTIC_SOURCE_PROTO_DESCRIPTOR = Symbol(
   "source-proto-descriptor",
 );
+/** Own descriptor fields do not invoke accessors or follow inherited slots. */
+export const SEMANTIC_OWN_PROPERTY_DESCRIPTOR = Symbol(
+  "own-property-descriptor",
+);
 export type SemanticFunctionValueProjection = readonly (
   | string
   | null
   | typeof SEMANTIC_PHYSICAL_PROTOTYPE
   | typeof SEMANTIC_SOURCE_PROTO_DESCRIPTOR
+  | typeof SEMANTIC_OWN_PROPERTY_DESCRIPTOR
 )[];
 type Projection = SemanticFunctionValueProjection;
 
@@ -277,6 +282,13 @@ const WRAPPER_MODULE_INSTANCE: FunctionValue = {
   ...MODULE_INSTANCE,
   path: ["commonjs-module"],
 };
+// Node calls the CommonJS wrapper with its initial exports object as `this`.
+// Replacing module.exports or the exports binding does not replace this owner.
+const WRAPPER_EXPORTS: FunctionValue = {
+  path: ["commonjs-exports"],
+  kind: "object-instance",
+  owner: OBJECT,
+};
 const MODULE_CHILDREN: FunctionValue = {
   path: ["module-children"],
   kind: "object-instance",
@@ -339,7 +351,7 @@ const VALUE_MEMBERS: Readonly<
   "global.process.__proto__.__proto__.constructor": {
     prototype: PROCESS_EVENT_EMITTER_PROTOTYPE,
   },
-  "commonjs-module": MODULE_INSTANCE_MEMBERS,
+  "commonjs-module": { ...MODULE_INSTANCE_MEMBERS, exports: WRAPPER_EXPORTS },
   "module-instance": {
     ...MODULE_INSTANCE_MEMBERS,
     // Another module's exports are externally supplied. Source-added instance
@@ -492,6 +504,50 @@ const physicalPrototypeValue = (
   // descriptors and native accessor receiver binding belong to lookup callers.
   propertyValue(value, "__proto__");
 
+/** Initial own descriptor contents, separate from ordinary property lookup. */
+const ownDescriptorValues = (
+  value: FunctionValue,
+  key: string,
+  field: string | null,
+): readonly FunctionValue[] => {
+  if (value.kind === "unknown-external") return [UNKNOWN_EXTERNAL];
+  const nativeAccessor =
+    (value === OBJECT_PROTOTYPE && key === "__proto__") ||
+    (value === FUNCTION_PROTOTYPE && ["caller", "arguments"].includes(key));
+  if (nativeAccessor)
+    return field === "get" || field === "set" || field === null
+      ? [ordinary(["native-accessor", key], false)]
+      : [];
+  const ownData =
+    FUNCTION_MEMBERS[value.path.join(".")]?.includes(key) === true ||
+    (value === FUNCTION_PROTOTYPE && INVOCATION_HELPERS.includes(key)) ||
+    (key === "constructor" &&
+      ["object-prototype", "function-prototype", "instance-prototype"].includes(
+        value.kind,
+      )) ||
+    (key === "prototype" &&
+      (value.ownsPrototype === true ||
+        value.kind === "function-constructor" ||
+        value.kind === "object-constructor")) ||
+    (hasFunctionHelpers(value) && ["name", "length"].includes(key)) ||
+    ((value === MODULE_INSTANCE || value === WRAPPER_MODULE_INSTANCE) &&
+      ["exports", "children"].includes(key)) ||
+    (value === MODULE_CHILDREN &&
+      (key === "length" || semanticArrayIndex(key) !== null)) ||
+    value === MODULE_CACHE ||
+    (value === MODULE_CONSTRUCTOR && ["Module", "_cache"].includes(key)) ||
+    (value === MODULE_PROTOTYPE && key === "require") ||
+    (value === PROCESS_INSTANCE && key === "mainModule") ||
+    (value.path.join(".") === "global.require" &&
+      ["main", "cache"].includes(key));
+  if (!ownData)
+    return propertyValue(value, key) === undefined && hasOpenMembers(value)
+      ? [UNKNOWN_EXTERNAL]
+      : [];
+  if (field !== "value" && field !== null) return [];
+  return possiblePropertyValues(value, key);
+};
+
 /** Keep the traversed links and shadow slots with the value selection owner. */
 const inheritedCallable = (
   value: FunctionValue,
@@ -569,6 +625,8 @@ const rootValue = (
   }
   if (path[0] === "commonjs-module")
     return { value: WRAPPER_MODULE_INSTANCE, length: 1 };
+  if (path[0] === "commonjs-exports")
+    return { value: WRAPPER_EXPORTS, length: 1 };
   return undefined;
 };
 
@@ -582,20 +640,34 @@ const selectedValues = (
     ownFrom: number,
     suffixOffset: number,
   ) => void,
+  retainUnknownDescriptor?: () => void,
 ): readonly FunctionValue[] => {
   let values = [initial];
-  for (const [index, key] of projection.entries()) {
+  for (let index = 0; index < projection.length; index += 1) {
+    let key: Projection[number] = projection[index] ?? null;
+    const descriptor = key === SEMANTIC_OWN_PROPERTY_DESCRIPTOR;
+    const field = descriptor ? projection[index + 2] : undefined;
+    if (descriptor) {
+      key = projection[index + 1] ?? null;
+      index += 2;
+    }
+    const selectedProjection: Projection = descriptor
+      ? [key, ...projection.slice(index + 1)]
+      : projection.slice(index);
     const next = new Map<string, FunctionValue>();
     for (const value of values) {
       // Object identity and its nominal member storage remain separate from
       // the selected value's type. Source edges can replace known members too.
       if (
         retainStorageProjection !== undefined &&
-        (value.path[0] === "commonjs-module" || value.path[0] === "global")
+        (!descriptor || field === "value" || field === null) &&
+        (value.path[0] === "commonjs-module" ||
+          value.path[0] === "commonjs-exports" ||
+          value.path[0] === "global")
       ) {
         const replaced = retainStorageProjection(
-          [...value.path, ...projection.slice(index)],
-          index,
+          [...value.path, ...selectedProjection],
+          descriptor ? index - 1 : index,
           value.path,
           value.path[0] === "commonjs-module" &&
             (key === null ||
@@ -611,6 +683,7 @@ const selectedValues = (
       // An unknown own slot can also be supplied by a shared prototype. The
       // builtin inventory owns this chain; consumers only retain storage edges.
       if (
+        !descriptor &&
         retainStorageProjection !== undefined &&
         value.kind !== "unknown-external" &&
         typeof key !== "symbol" &&
@@ -651,15 +724,23 @@ const selectedValues = (
           : [key];
       if (key === null && hasOpenMembers(value))
         next.set("unknown-external:unknown-external", UNKNOWN_EXTERNAL);
-      if (key === null && value === MODULE_CHILDREN)
+      if (
+        key === null &&
+        value === MODULE_CHILDREN &&
+        (!descriptor || field === "value" || field === null)
+      )
         next.set("object-instance:module-instance", MODULE_INSTANCE);
       for (const property of keys) {
         const prototype =
           property === SEMANTIC_PHYSICAL_PROTOTYPE
             ? physicalPrototypeValue(value)
             : undefined;
-        const selections =
-          typeof property === "symbol"
+        const selections = descriptor
+          ? typeof property === "string" &&
+            (typeof field === "string" || field === null)
+            ? ownDescriptorValues(value, property, field)
+            : []
+          : typeof property === "symbol"
             ? prototype === undefined
               ? []
               : [prototype]
@@ -685,7 +766,17 @@ const selectedValues = (
     if (values.length === 0) break;
   }
   for (const value of values)
-    if (value.path[0] === "commonjs-module" || value.path[0] === "global")
+    if (
+      value.kind === "unknown-external" &&
+      projection.includes(SEMANTIC_OWN_PROPERTY_DESCRIPTOR)
+    )
+      retainUnknownDescriptor?.();
+  for (const value of values)
+    if (
+      value.path[0] === "commonjs-module" ||
+      value.path[0] === "commonjs-exports" ||
+      value.path[0] === "global"
+    )
       retainStorageProjection?.(value.path, projection.length, value.path);
   return values;
 };
@@ -715,6 +806,7 @@ export const semanticFunctionValueReadDependencies = (
       ![
         "global",
         "commonjs-module",
+        "commonjs-exports",
         "callable-value",
         "function-family",
       ].includes(selected[0]!)
@@ -778,6 +870,7 @@ export const semanticFunctionValueIdentity = (
 export const semanticPossibleFunctionValueIdentities = (
   path: Projection,
   retainStorageProjection?: StorageProjectionObserver,
+  retainUnknownDescriptor?: () => void,
 ): readonly Path[] => {
   const root = rootValue(path);
   return root === undefined
@@ -794,10 +887,14 @@ export const semanticPossibleFunctionValueIdentities = (
                 owner,
                 publishNominal,
               ),
+        undefined,
+        retainUnknownDescriptor,
       )
         .filter(
           (value) =>
-            value.path[0] === "global" || value.path[0] === "commonjs-module",
+            value.path[0] === "global" ||
+            value.path[0] === "commonjs-module" ||
+            value.path[0] === "commonjs-exports",
         )
         .map((value) => value.path);
 };

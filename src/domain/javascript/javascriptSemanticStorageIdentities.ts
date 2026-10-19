@@ -11,10 +11,11 @@ export const isSemanticSharedStorageIdentity = (
 ): identity is SemanticSharedStorageIdentity =>
   "kind" in identity && identity.kind === "shared-storage";
 
-/** CommonJS nominal storage currently owns aliases, not descriptor facts. */
+/** CommonJS module nominal storage owns aliases, not descriptor facts. The
+ * initial exports object is a distinct shared heap owner. */
 export const semanticSharedStorageHasDescriptorFacts = (
   path: readonly unknown[],
-): boolean => path[0] === "global";
+): boolean => path[0] === "global" || path[0] === "commonjs-exports";
 
 /** One analysis interns shared owners across all provisional/refined queries. */
 export const createSemanticSharedStorageIdentities = () => {
