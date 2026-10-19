@@ -1,18 +1,27 @@
-import { constants } from "node:fs";
-import { copyFile, mkdir, readdir, stat, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
 import { getHeapStatistics } from "node:v8";
 
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
   AnalysisAccessDeniedError,
+  AnalysisArtifactChangedError,
   AnalysisInputError,
+  AnalysisOutputError,
   AnalysisResourceConstraintError,
   type AnalysisInputIssue,
 } from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { RegularFileChangedError } from "../../filesystem/RegularFile.js";
+import {
+  bindArtifactFileCleanup,
+  ArtifactFileCleanupFailure,
+} from "../../artifacts/ArtifactFileOperation.js";
+import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { writeEnvironmentBundle } from "./environmentBundleWrite.js";
 import { sealOwnedJsonInput } from "../OwnedJsonInput.js";
 import { nativeJsonParseRequiredBytes } from "../JsonInputFile.js";
 import { readRegularFile } from "../RegularFileRead.js";
@@ -24,7 +33,6 @@ import {
   ENVIRONMENT_EXPORT_OPERATION,
   planEnvironmentBundle,
   registryPackageSource,
-  type EnvironmentBundlePlan,
   type EnvironmentPackageSource,
 } from "./environmentBundle.js";
 import type { EnvironmentSource } from "./environmentSource.js";
@@ -82,92 +90,39 @@ const systemCode = (cause: unknown): string | undefined =>
     ? cause.code
     : undefined;
 
-/** Host permission failures are typed; any other filesystem failure is unexpected and propagates. */
-const rethrowUnlessDenied = (cause: unknown, path: string): never => {
-  const code = systemCode(cause);
-  if (code === "EACCES" || code === "EPERM")
-    throw new AnalysisAccessDeniedError(
-      ENVIRONMENT_EXPORT_OPERATION,
-      path,
-      code,
-      {
-        cause,
-      },
-    );
-  throw cause;
-};
-
-/** The directory may be absent or an empty directory; anything else is refused before any write. */
-const checkDirectory = async (
-  directory: string,
-): Promise<Result<undefined, AnalysisError>> => {
-  let entries: readonly string[];
-  try {
-    entries = await readdir(directory);
-  } catch (cause: unknown) {
-    const code = systemCode(cause);
-    if (code === "ENOENT") return ok(undefined);
-    if (code === "ENOTDIR")
-      return err(
-        inputError(
-          {
-            path: ["directory"],
-            reason: "invalid_value",
-            message: "The bundle directory path names a file.",
-          },
-          `${directory} exists and is not a directory.`,
-        ),
-      );
-    return rethrowUnlessDenied(cause, directory);
-  }
-  if (entries.length > 0)
-    return err(
-      inputError(
-        {
-          path: ["directory"],
-          reason: "invalid_value",
-          message:
-            "The bundle directory must be absent or empty; nothing is overwritten.",
-        },
-        `${directory} is not empty (${String(entries.length)} entries); choose an absent or empty directory.`,
-      ),
-    );
-  return ok(undefined);
-};
-
-/** The tarball must be a regular file; its bytes are copied, never inspected. */
-const checkTarball = async (
+const accessDeniedError = (
+  cause: unknown,
   path: string,
-): Promise<Result<EnvironmentPackageSource, AnalysisError>> => {
-  try {
-    const info = await stat(path);
-    if (!info.isFile())
-      return err(
-        inputError(
-          {
-            path: ["package_tarball"],
-            reason: "invalid_value",
-            message: "The package tarball must be a regular file.",
-          },
-          `${path} is not a regular file.`,
-        ),
+): AnalysisAccessDeniedError | undefined => {
+  const seen = new Set<Error>();
+  let current = cause;
+  while (current instanceof Error && !seen.has(current)) {
+    seen.add(current);
+    const code = systemCode(current);
+    if (code === "EACCES" || code === "EPERM") {
+      const error = new AnalysisAccessDeniedError(
+        ENVIRONMENT_EXPORT_OPERATION,
+        path,
+        code,
+        {
+          cause,
+          ...(cause instanceof ArtifactReaderFailure &&
+          cause.cleanup !== undefined
+            ? { cleanup: cause.cleanup }
+            : {}),
+        },
       );
-  } catch (cause: unknown) {
-    const code = systemCode(cause);
-    if (code === "ENOENT" || code === "ENOTDIR" || code === "ENAMETOOLONG")
-      return err(
-        inputError(
-          {
-            path: ["package_tarball"],
-            reason: "invalid_value",
-            message: "The package tarball path must name an existing file.",
-          },
-          `${path} does not exist.`,
-        ),
-      );
-    return rethrowUnlessDenied(cause, path);
+      bindArtifactFileCleanup(cause, error);
+      return error;
+    }
+    current = current.cause;
   }
-  return ok({ kind: "tarball", path });
+  return undefined;
+};
+
+/** Host permission failures retain their typed cause; unexpected failures propagate. */
+const rethrowUnlessDenied = (cause: unknown, path: string): never => {
+  throw accessDeniedError(cause, path) ?? cause;
 };
 
 /** A path that is not a readable regular file, including inline JSON text offered as one. */
@@ -208,17 +163,46 @@ const readInput = async (
   role: "manifest" | "evidence",
   path: string,
 ): Promise<Result<EnvironmentExportFile, AnalysisError>> => {
+  const resources = new ArtifactResourceScope();
   let bytes: Buffer;
   try {
     // Admit the whole read against the opened file's own size, before materializing the
     // exact bytes the bundle copies.
     bytes = await readRegularFile(path, {
+      resources,
       admit: (state) => {
         const refused = headroomRefusal(path, state.size);
         if (refused !== undefined) throw refused;
       },
     });
   } catch (cause: unknown) {
+    if (cause instanceof RegularFileCleanupFailure) {
+      const failure = new ArtifactFileCleanupFailure(
+        cause,
+        AnalysisCleanupLease.forCloseOwner(cause.owner, path),
+      );
+      const cleanup = new AnalysisOutputError(
+        ENVIRONMENT_EXPORT_OPERATION,
+        `Could not confirm closing the ${role} input file.`,
+        {
+          cause: failure,
+          cleanup: failure.cleanup,
+          diagnostics: { input_path: path, input_role: role },
+        },
+      );
+      bindArtifactFileCleanup(failure, cleanup);
+      const primary =
+        cause.outcome.kind === "failed" ? cause.outcome.cause : undefined;
+      return err(
+        primary instanceof AnalysisError
+          ? analysisErrorWithCleanupFailure(
+              primary,
+              cleanup,
+              ENVIRONMENT_EXPORT_OPERATION,
+            ).bindCleanupDependencies([primary, cleanup])
+          : cleanup,
+      );
+    }
     if (cause instanceof AnalysisResourceConstraintError) return err(cause);
     if (cause instanceof RegularFileChangedError)
       return err(
@@ -284,100 +268,71 @@ export const readEnvironmentExportInputs = async (
   return ok({ manifest: manifest.value, evidence: evidence.value });
 };
 
-/** Captured content (the manifest and Evidence copies) stays readable by its owner only, whatever the umask. */
-const CAPTURED_FILE_MODE = 0o600;
-
-const writeNew = async (
-  root: string,
-  relative: string,
-  content: string | Uint8Array,
-  mode?: number,
-): Promise<WrittenBundleFile> => {
-  const path = join(root, relative);
-  try {
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, content, {
-      flag: "wx",
-      ...(mode === undefined ? {} : { mode }),
-    });
-  } catch (cause: unknown) {
-    rethrowUnlessDenied(cause, path);
-  }
-  return { path: relative, bytes: Buffer.byteLength(content) };
-};
-
-const copyNew = async (
-  root: string,
-  relative: string,
-  from: string,
-): Promise<WrittenBundleFile> => {
-  const path = join(root, relative);
-  try {
-    await mkdir(dirname(path), { recursive: true });
-    await copyFile(from, path, constants.COPYFILE_EXCL);
-    return { path: relative, bytes: (await stat(path)).size };
-  } catch (cause: unknown) {
-    return rethrowUnlessDenied(cause, path);
-  }
-};
-
 const packageSourceValue = (source: EnvironmentPackageSource): JsonValue =>
   source.kind === "registry"
     ? { kind: "registry", specifier: source.specifier }
     : { kind: "tarball", path: source.path };
 
-/** Write every planned file in plan order; manifest and evidence are the authenticated bytes unchanged. */
-const writeBundle = async (
-  input: EnvironmentExportInput,
-  plan: EnvironmentBundlePlan,
-): Promise<readonly WrittenBundleFile[]> => {
-  const written: WrittenBundleFile[] = [];
-  for (const file of plan.files)
-    written.push(await writeNew(input.directory, file.path, file.content));
-  written.push(
-    await writeNew(
-      input.directory,
-      plan.copies.manifest,
-      input.manifest.bytes,
-      CAPTURED_FILE_MODE,
-    ),
-  );
-  written.push(
-    await writeNew(
-      input.directory,
-      plan.copies.evidence,
-      input.evidence.bytes,
-      CAPTURED_FILE_MODE,
-    ),
-  );
-  if (plan.copies.tarball !== null && plan.packageSource.kind === "tarball")
-    written.push(
-      await copyNew(
-        input.directory,
-        plan.copies.tarball,
-        plan.packageSource.path,
-      ),
-    );
-  return written;
-};
-
 /** Export the authenticated pair as an agent environment bundle folder. */
 export const exportEnvironmentBundle = async (
   input: EnvironmentExportInput,
 ): Promise<Result<EnvironmentExportResult, AnalysisError>> => {
-  const directory = await checkDirectory(input.directory);
-  if (!directory.ok) return directory;
-  const packageSource =
+  const packageSource: EnvironmentPackageSource =
     input.packageTarball === undefined
-      ? ok<EnvironmentPackageSource>(registryPackageSource())
-      : await checkTarball(input.packageTarball);
-  if (!packageSource.ok) return packageSource;
+      ? registryPackageSource()
+      : { kind: "tarball", path: input.packageTarball };
   const plan = planEnvironmentBundle(input.source, {
     name: input.name,
-    packageSource: packageSource.value,
+    packageSource,
   });
   if (!plan.ok) return plan;
-  const files = await writeBundle(input, plan.value);
+  let files: readonly WrittenBundleFile[];
+  try {
+    files = await writeEnvironmentBundle(input, plan.value);
+  } catch (cause: unknown) {
+    if (cause instanceof AnalysisError) return err(cause);
+    const denied = accessDeniedError(cause, input.directory);
+    if (denied !== undefined) return err(denied);
+    if (cause instanceof RegularFileChangedError)
+      return err(
+        new AnalysisArtifactChangedError(
+          ENVIRONMENT_EXPORT_OPERATION,
+          cause.path,
+          cause.message,
+          { cause },
+        ),
+      );
+    if (cause instanceof ArtifactReaderFailure) {
+      if (cause.reason === "path" && cause.cleanup === undefined)
+        return err(
+          inputError(
+            {
+              path: ["directory"],
+              reason: "invalid_value",
+              message: cause.message,
+            },
+            cause.message,
+          ),
+        );
+      const error = new AnalysisOutputError(
+        ENVIRONMENT_EXPORT_OPERATION,
+        cause.message,
+        {
+          cause,
+          ...(cause.cleanup === undefined ? {} : { cleanup: cause.cleanup }),
+        },
+      );
+      bindArtifactFileCleanup(cause, error);
+      return err(error);
+    }
+    if (cause instanceof Error && systemCode(cause) !== undefined)
+      return err(
+        new AnalysisOutputError(ENVIRONMENT_EXPORT_OPERATION, cause.message, {
+          cause,
+        }),
+      );
+    throw cause;
+  }
   return ok({
     status: "exported",
     directory: input.directory,

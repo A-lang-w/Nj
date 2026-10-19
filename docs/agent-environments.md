@@ -334,6 +334,14 @@ remove it in the same layer, which is how a checkout rather than a release is
 run. The command prints the
 written files with their sizes and the pinned package source.
 
+Export uses the shared output-tree owner to check directory identities around
+exclusive creates, verify written bytes, and reject unowned entries before
+reporting success. It does not delete an inspectable partial folder on failure.
+Node's portable pathname APIs leave a syscall-boundary race, so the output's
+parent directories must be trusted. On POSIX output files use mode `0600`;
+Windows inherits ACLs and REA does not establish owner-only access there. Choose
+an already private Windows destination when captured content needs it.
+
 The Dockerfile sets `MCP_HOST=0.0.0.0` and `MCP_PORT=18765`, the port the
 framework maps for an MCP server env; the framework's own deploy supplies
 `MCP_HOST`, `MCP_PORT` and `ENVIRONMENT_NAME`, so the served card carries the

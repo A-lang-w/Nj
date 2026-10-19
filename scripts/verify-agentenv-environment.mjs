@@ -13,6 +13,7 @@ import {
   runOwnedCommand,
 } from "../dist/process/OwnedCommand.js";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { execNpm } from "./lib/verify-package-core.mjs";
 
 const AGENTENV_VERSION = "0.9.1334";
 const AGENTENV_PIN = `agentenv-framework ${AGENTENV_VERSION}`;
@@ -123,8 +124,7 @@ try {
   await writeFile(capturePath, JSON.stringify(capture));
   await writeFile(manifestPath, JSON.stringify(manifest));
   // The lane proves this checkout, not the registry package: pack it and install the tarball in the image.
-  const { stdout: packed } = await execFileAsync(
-    "npm",
+  const { stdout: packed } = await execNpm(
     ["pack", "--ignore-scripts", "--json", "--pack-destination", runtime.path],
     { cwd: checkout, env: environment, maxBuffer: 16 * 1024 * 1024 },
   );

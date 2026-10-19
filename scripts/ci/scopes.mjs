@@ -443,6 +443,7 @@ export const SCOPES = {
     "scripts/verify-agentenv-environment.mjs",
     "src/{application,server}/environment/**",
     "src/application/{JsonInputFile,OwnedJsonInput,RegularFileRead}.ts",
+    "src/artifacts/{SafeOutputTree*,ArtifactResourceScope,StreamBytes}.ts",
     "src/cliJsonInput.ts",
     "src/server/http/**",
     "src/{cli,cliCommandNames,cli/environmentCommands}.ts",

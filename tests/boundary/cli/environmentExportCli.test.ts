@@ -1,4 +1,11 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readdir,
+  readFile,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect } from "vitest";
@@ -13,6 +20,43 @@ import {
 } from "../../fixtures/environmentServe.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+
+cliTest(
+  "returns a tagged JSON error when a read input descriptor cannot be closed",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-export-input-close-cli-");
+    const files = await writeEnvironmentServeFiles(root);
+    const preload = join(root, "fail-close.mjs");
+    await writeFile(
+      preload,
+      `import fs from 'node:fs';\nimport { syncBuiltinESMExports } from 'node:module';\nconst original = fs.promises.open;\nfs.promises.open = async (...args) => {\n  const handle = await original(...args);\n  if (args[0] === ${JSON.stringify(files.manifestPath)}) handle.close = async () => { throw Object.assign(new Error('controlled persistent close failure'), { code: 'EIO' }); };\n  return handle;\n};\nsyncBuiltinESMExports();\n`,
+    );
+    const directory = join(root, "bundle");
+    const result = await cli.run({
+      arguments: [
+        "environment-export",
+        files.manifestPath,
+        "--evidence",
+        files.capturePath,
+        directory,
+        "--json",
+      ],
+      environment: {
+        NODE_OPTIONS: `--import=${preload} --max-old-space-size=768`,
+        NODE_DISABLE_COMPILE_CACHE: "1",
+      },
+      timeoutMs: 30_000,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      details: { operation: "environment-export" },
+    });
+    expect(JSON.stringify(result.json)).toContain("cleanup");
+    await expect(readFile(join(directory, "README.md"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);
 
 const BUNDLE_FILES = [
   "README.md",
@@ -160,3 +204,81 @@ describe("rea environment-export", () => {
     },
   );
 });
+
+cliTest.skipIf(process.platform === "win32")(
+  "produces readable private files independently of an owner-read-masking umask",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-export-umask-");
+    const files = await writeEnvironmentServeFiles(root);
+    const preload = join(root, "umask.mjs");
+    await writeFile(preload, "process.umask(0o400);\n");
+    const directory = join(root, "bundle");
+    const result = await cli.run({
+      arguments: [
+        "environment-export",
+        files.manifestPath,
+        "--evidence",
+        files.capturePath,
+        directory,
+        "--json",
+      ],
+      environment: {
+        NODE_OPTIONS: `--import=${preload} --max-old-space-size=768`,
+        NODE_DISABLE_COMPILE_CACHE: "1",
+      },
+      timeoutMs: 30_000,
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    for (const relative of BUNDLE_FILES) {
+      expect((await stat(join(directory, relative))).mode & 0o777).toBe(0o600);
+      expect(
+        (await readFile(join(directory, relative))).length,
+      ).toBeGreaterThan(0);
+    }
+    expect(
+      await readFile(join(directory, "envs/grafana-example/evidence.json")),
+    ).toEqual(await readFile(files.capturePath));
+  },
+);
+
+cliTest.skipIf(process.platform === "win32")(
+  "preserves the filesystem meaning of symlink/.. for the destination and tarball",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-export-selected-path-");
+    const physical = join(root, "physical");
+    const nested = join(physical, "nested");
+    await mkdir(nested, { recursive: true });
+    await symlink(nested, join(root, "link"), "dir");
+    const files = await writeEnvironmentServeFiles(root);
+    const bytes = Buffer.from("selected packed package");
+    await writeFile(join(physical, "package.tgz"), bytes);
+    const directory = `${root}/link/../bundle`;
+    const packagePath = `${root}/link/../package.tgz`;
+    const result = await cli.run({
+      arguments: [
+        "environment-export",
+        files.manifestPath,
+        "--evidence",
+        files.capturePath,
+        directory,
+        "--package-tarball",
+        packagePath,
+        "--json",
+      ],
+      timeoutMs: 30_000,
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.json).toMatchObject({
+      directory,
+      package_source: { kind: "tarball", path: packagePath },
+    });
+    expect(
+      await readFile(
+        join(physical, "bundle/envs/grafana-example/rea-agents.tgz"),
+      ),
+    ).toEqual(bytes);
+    await expect(
+      readFile(join(root, "bundle/README.md")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
