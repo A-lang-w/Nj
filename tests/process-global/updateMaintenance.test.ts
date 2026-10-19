@@ -412,6 +412,41 @@ describe("update subprocess boundaries", () => {
     expect(result).toEqual(ok(`${"x".repeat(1024 * 1024)}${literal}`));
   });
 
+  it("reports actual stderr and launch failures", async () => {
+    await expect(
+      runUpdateCommand(
+        [
+          process.execPath,
+          "-e",
+          'process.stderr.write("EACCES /test/install"); process.exitCode = 2',
+        ],
+        process.env,
+      ),
+    ).resolves.toEqual(err("EACCES /test/install"));
+    const missing = await runUpdateCommand(
+      [join(home, "missing-executable")],
+      process.env,
+    );
+    expect(missing).toMatchObject({ ok: false });
+    if (!missing.ok) expect(missing.error).toContain("ENOENT");
+  });
+
+  it("verifies the requested package entry rather than PATH's rea", async () => {
+    const packageRoot = join(home, "package");
+    const script = join(packageRoot, "scripts", "rea.mjs");
+    await mkdir(dirname(script), { recursive: true });
+    await writeFile(script, 'process.stdout.write("3.3.0\\n")');
+    await expect(
+      systemUpdateHost(packageRoot, home).installedVersion({
+        manager: "npm",
+        prefix: home,
+        packageRoot,
+      }),
+    ).resolves.toEqual(ok("3.3.0"));
+  });
+});
+
+describe("update subprocess output collection limits", () => {
   it("terminates the subprocess and reports an explicit error when output exceeds the collection limit", async () => {
     const result = await runUpdateCommand(
       [
@@ -420,9 +455,26 @@ describe("update subprocess boundaries", () => {
         'process.stdout.write("x".repeat(3 * 1024 * 1024))',
       ],
       process.env,
-      "structured",
-      undefined,
-      MAX_UPDATE_COMMAND_OUTPUT_BYTES,
+    );
+    expect(result).toEqual(
+      err(
+        `Update command output exceeded the collection limit of ${String(MAX_UPDATE_COMMAND_OUTPUT_BYTES)} bytes.`,
+      ),
+    );
+  });
+
+  it("terminates an endless stream and enforces the default output limit when omitted", async () => {
+    const script = [
+      'const chunk = "x".repeat(64 * 1024);',
+      "const write = () => {",
+      "  while (process.stdout.write(chunk));",
+      '  process.stdout.once("drain", write);',
+      "};",
+      "write();",
+    ].join(" ");
+    const result = await runUpdateCommand(
+      [process.execPath, "-e", script],
+      process.env,
     );
     expect(result).toEqual(
       err(
@@ -500,39 +552,6 @@ describe("update subprocess boundaries", () => {
       100,
     );
     expect(result).toEqual(ok(stdoutContent));
-  });
-
-  it("reports actual stderr and launch failures", async () => {
-    await expect(
-      runUpdateCommand(
-        [
-          process.execPath,
-          "-e",
-          'process.stderr.write("EACCES /test/install"); process.exitCode = 2',
-        ],
-        process.env,
-      ),
-    ).resolves.toEqual(err("EACCES /test/install"));
-    const missing = await runUpdateCommand(
-      [join(home, "missing-executable")],
-      process.env,
-    );
-    expect(missing).toMatchObject({ ok: false });
-    if (!missing.ok) expect(missing.error).toContain("ENOENT");
-  });
-
-  it("verifies the requested package entry rather than PATH's rea", async () => {
-    const packageRoot = join(home, "package");
-    const script = join(packageRoot, "scripts", "rea.mjs");
-    await mkdir(dirname(script), { recursive: true });
-    await writeFile(script, 'process.stdout.write("3.3.0\\n")');
-    await expect(
-      systemUpdateHost(packageRoot, home).installedVersion({
-        manager: "npm",
-        prefix: home,
-        packageRoot,
-      }),
-    ).resolves.toEqual(ok("3.3.0"));
   });
 });
 

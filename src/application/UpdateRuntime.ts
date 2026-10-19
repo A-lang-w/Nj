@@ -51,7 +51,7 @@ export const runUpdateCommand = (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
   output: UpdateOutput = "structured",
   workingDirectory: string | undefined = undefined,
-  maxOutputBytes?: number,
+  maxOutputBytes: number = MAX_UPDATE_COMMAND_OUTPUT_BYTES,
   terminationGraceMs: number = DEFAULT_UPDATE_TERMINATION_GRACE_MS,
 ): Promise<Result<string, string>> =>
   runUpdateProcess(
