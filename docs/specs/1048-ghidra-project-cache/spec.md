@@ -16,7 +16,7 @@ and config hot-reload.
 Two problems compound:
 
 1. **Time** — large targets re-analyze every session (a 39 MB DLL with ~77k
-   procedures ≈ 20 min). #2358/#2150 allow a *manual* pre-import selected with
+   procedures ≈ 20 min). #2358/#2150 allow a _manual_ pre-import selected with
    `-process`, but that is unmanaged and needs an env edit.
 2. **Continuity** — even with a saved project, saved analysis is not reusable:
    `docs/installation.md` 702-707 says exported analysis snapshots cannot be
@@ -46,7 +46,7 @@ re-import (minutes), and previously retained observations load again.
 - Cross-machine sharing. The store is local and owner-only.
 - Replacing the provider-neutral **analysis snapshot**
   (`AnalysisSnapshotCache.ts`), which caches Evidence JSON, not the database;
-  this plan makes those snapshots *replayable*, not redundant.
+  this plan makes those snapshots _replayable_, not redundant.
 - Making the **manual** `REA_GHIDRA_EXISTING_PROJECT` path replayable — an
   operator-provided project is not manifest-verified, so it keeps its random
   session identity and stays deliberately non-replayable.
@@ -79,11 +79,11 @@ re-import (minutes), and previously retained observations load again.
 
 ### Provenance vs identity (the rebinding)
 
-`import_mode` and `existing_project.session_id` describe *how* the program was
+`import_mode` and `existing_project.session_id` describe _how_ the program was
 obtained; they are provenance, not analysis semantics. Move them out of the
 digest-bearing `parameters` and report them in Evidence/diagnostics. Then:
 
-- A **REA-managed cache session** (hit *or* miss) commits a stable
+- A **REA-managed cache session** (hit _or_ miss) commits a stable
   `project_cache: { key }` parameter, so both modes produce the same
   `analysis_profile` and `analysisProfilesEqual` matches. Prior snapshots replay.
   - `key` is computed from the **pre-marker** intent profile, so there is no
@@ -190,7 +190,7 @@ open_binary(target)
 - **Publish gate (all required):** handshake succeeded (`#ready`),
   `analysis_complete && !analysis_timed_out`, no client mutating operation this
   session, and `!forceStop`.
-  - *Why:* a miss drops `-readOnly` so Ghidra saves. On Linux/macOS the bridge
+  - _Why:_ a miss drops `-readOnly` so Ghidra saves. On Linux/macOS the bridge
     reports `read_only = !transport.equals("unix-socket")`
     (`ReaGhidraBridge.java` 453), so annotations are enabled and would be
     published and served to all later sessions as analysis. Bridge-internal
@@ -223,11 +223,11 @@ and prunes by `last_used_at` on publish; never evict a locked entry.
 
 ### Configuration (additive, opt-in)
 
-| Variable | Meaning | Default |
-|---|---|---|
-| `REA_GHIDRA_PROJECT_CACHE` | `off` \| `read` \| `on` (`on` also populates) | `off` |
-| `REA_GHIDRA_PROJECT_CACHE_DIR` | absolute cache root | `<home>/.rea/cache/ghidra-projects` |
-| `REA_GHIDRA_PROJECT_CACHE_MAX_BYTES` | size cap | 10 GiB |
+| Variable                             | Meaning                                       | Default                             |
+| ------------------------------------ | --------------------------------------------- | ----------------------------------- |
+| `REA_GHIDRA_PROJECT_CACHE`           | `off` \| `read` \| `on` (`on` also populates) | `off`                               |
+| `REA_GHIDRA_PROJECT_CACHE_DIR`       | absolute cache root                           | `<home>/.rea/cache/ghidra-projects` |
+| `REA_GHIDRA_PROJECT_CACHE_MAX_BYTES` | size cap                                      | 10 GiB                              |
 
 Reject combining `REA_GHIDRA_PROJECT_CACHE` with
 `REA_GHIDRA_EXISTING_PROJECT`/`REA_GHIDRA_EXISTING_PROGRAM`. Import-time

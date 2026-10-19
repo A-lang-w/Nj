@@ -1101,10 +1101,14 @@ export class GhidraClient {
       this.#detachSocket = undefined;
       socket?.destroy();
       this.#socket = undefined;
+      // Only wait for a save when this session can actually publish. Other
+      // closes keep the prompt stop path instead of paying the save grace.
+      const expectPublication =
+        shutdownConfirmed && this.#canPublishManagedProject();
       let exitedNaturally = false;
       if (this.#process !== undefined) {
         exitedNaturally = await this.#process.waitForExit(
-          forceStop ? 500 : PROJECT_SAVE_GRACE_MS,
+          forceStop || !expectPublication ? 500 : PROJECT_SAVE_GRACE_MS,
         );
         this.#processSnapshot = this.#process.snapshot();
         const stopped = await this.#process.stop();
@@ -1130,7 +1134,7 @@ export class GhidraClient {
       // stop that had to terminate or kill the JVM may have interrupted the
       // project save, and a shallow layout check cannot tell a truncated
       // project from a complete one.
-      await this.#publishManagedProject(!exitedNaturally || !shutdownConfirmed);
+      await this.#publishManagedProject(!expectPublication || !exitedNaturally);
       this.#lastDiagnostics = this.#diagnostics();
       this.#process = undefined;
       this.#launch = undefined;
@@ -1250,6 +1254,21 @@ export class GhidraClient {
     if (GHIDRA_MUTATING_OPERATIONS.has(operation)) this.#clientMutated = true;
   }
 
+  /** Whether this session's state could become a cache entry on a clean close. */
+  #canPublishManagedProject(): boolean {
+    const persistence = this.#options.projectPersistence;
+    const info = this.#sessionInfo;
+    return (
+      persistence !== undefined &&
+      persistence.publishable &&
+      info !== undefined &&
+      this.#launch !== undefined &&
+      info.analysis_complete &&
+      !info.analysis_timed_out &&
+      !this.#clientMutated
+    );
+  }
+
   /**
    * Persist a clean, complete fresh import into the managed project cache. Runs
    * while the private runtime still holds the saved project and before it is
@@ -1258,19 +1277,11 @@ export class GhidraClient {
    * stored as analysis. A cache failure never fails session cleanup.
    */
   async #publishManagedProject(uncleanSession: boolean): Promise<void> {
+    if (uncleanSession || !this.#canPublishManagedProject()) return;
     const persistence = this.#options.projectPersistence;
     const info = this.#sessionInfo;
     const launch = this.#launch;
-    if (
-      persistence === undefined ||
-      !persistence.publishable ||
-      uncleanSession ||
-      info === undefined ||
-      launch === undefined ||
-      !info.analysis_complete ||
-      info.analysis_timed_out ||
-      this.#clientMutated
-    )
+    if (persistence === undefined || info === undefined || launch === undefined)
       return;
     const published = await persistence.store
       .publish({
