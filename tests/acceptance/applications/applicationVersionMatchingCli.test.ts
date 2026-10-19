@@ -356,12 +356,20 @@ cliTest(
       v1: "module.exports = { greet: () => 1 };\n",
       v2: "module.exports = { greet: () => 2 };\n",
     };
-    const analyze = async (name: string, version: string, utilSource: string) => {
+    const analyze = async (
+      name: string,
+      version: string,
+      utilSource: string,
+    ) => {
       const application = join(root, name);
       await mkdir(join(application, "src"), { recursive: true });
       await writeFile(
         join(application, "package.json"),
-        JSON.stringify({ name: "export-fixture", version, main: "src/main.js" }),
+        JSON.stringify({
+          name: "export-fixture",
+          version,
+          main: "src/main.js",
+        }),
       );
       await writeFile(
         join(application, "src/main.js"),
@@ -424,10 +432,15 @@ cliTest(
     // An edited file's export is not paired by name alone.
     const changed = await compare(base, edited);
     const utilExport = baseExports.find(({ observations }) =>
-      observations.some(({ properties }) => properties.module_path === "src/util.js"),
+      observations.some(
+        ({ properties }) => properties.module_path === "src/util.js",
+      ),
     );
     expect(changed.items).toContainEqual(
-      expect.objectContaining({ left_node_id: utilExport?.node_id, status: "removed" }),
+      expect.objectContaining({
+        left_node_id: utilExport?.node_id,
+        status: "removed",
+      }),
     );
   },
 );
