@@ -26,7 +26,8 @@ later increment.
   capture's records, so no further record-coverage refusal is defined.
 - Build an `McpServer` from the manifest alone: each tool's input schema lists
   every path parameter as a required string described by its segment index,
-  rule and observed values, every observed query name as an optional string,
+  rule and observed values (at most ten, each cut at 64 characters, with a
+  count of the rest), every observed query name as an optional string,
   and an optional `body` object for `POST`, `PUT` and `PATCH` (a query name
   that collides with a path parameter becomes `query_<name>`, and the body
   becomes `request_body` when a query parameter is named `body`), closed with

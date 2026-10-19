@@ -6,6 +6,8 @@ import {
   environmentCard,
   environmentToolDefinitions,
   environmentToolInputSchema,
+  MAX_DESCRIBED_VALUE_CHARS,
+  MAX_DESCRIBED_VALUES,
 } from "./environmentTools.js";
 
 const source = environmentServeSource();
@@ -53,6 +55,33 @@ describe("environmentToolDefinitions", () => {
         /^Path segment 2 \((?:after-uid-literal|opaque-token|sibling-variance)\); observed: .*general/u,
       ),
     });
+  });
+
+  it("bounds a parameter's observed values in its description, leaving the full list to the manifest", () => {
+    const users = tool("get_users_by_id");
+    const long = "x".repeat(1000);
+    const values = [
+      long,
+      ...Array.from({ length: 24 }, (_, i) => `v${String(i)}`),
+    ];
+    const [param] = users.params;
+    if (param === undefined)
+      throw new Error("Fixture tool must have a path parameter");
+    const schema = environmentToolInputSchema({
+      ...users,
+      params: [{ ...param, observed_values: values }],
+    });
+    const description = schema.properties.id?.description ?? "";
+    expect(description).toContain(
+      `${"x".repeat(MAX_DESCRIBED_VALUE_CHARS)}…, v0,`,
+    );
+    expect(description).not.toContain(
+      "x".repeat(MAX_DESCRIBED_VALUE_CHARS + 1),
+    );
+    expect(description).toContain(
+      `v${String(MAX_DESCRIBED_VALUES - 2)} and 15 more in the manifest`,
+    );
+    expect(description).not.toContain(`v${String(MAX_DESCRIBED_VALUES - 1)},`);
   });
 
   it("derives optional string query parameters and no body for reads", () => {

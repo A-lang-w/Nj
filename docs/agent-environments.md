@@ -178,7 +178,8 @@ connecting to `/mcp`:
 `capabilities.tools` lists the same names, descriptions and input schemas that
 `tools/list` advertises over MCP. Path parameters are required strings whose
 description names the segment index, the templating rule and the observed
-values; query parameter names are optional strings; write methods accept an
+values (at most ten, each cut at 64 characters, with a count of the rest; the
+manifest keeps them all); query parameter names are optional strings; write methods accept an
 optional `body` object described by the recorded top-level key types. Each
 input keeps its own argument: a query name equal to a path parameter's name is
 advertised as `query_<name>`, and the write body as `request_body` when a query

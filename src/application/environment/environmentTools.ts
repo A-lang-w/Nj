@@ -28,8 +28,27 @@ export interface EnvironmentToolDefinition {
   readonly tool: EnvironmentManifestTool;
 }
 
-const observed = (values: readonly string[]): string =>
-  values.length === 0 ? "none" : values.join(", ");
+/** A parameter description lists at most this many observed values, each cut to this many characters; the manifest keeps them all. */
+export const MAX_DESCRIBED_VALUES = 10;
+export const MAX_DESCRIBED_VALUE_CHARS = 64;
+
+/** The value's first characters, never ending inside a surrogate pair, marked when cut. */
+const cut = (value: string): string => {
+  if (value.length <= MAX_DESCRIBED_VALUE_CHARS) return value;
+  const last = value.charCodeAt(MAX_DESCRIBED_VALUE_CHARS - 1);
+  const end =
+    last >= 0xd800 && last <= 0xdbff
+      ? MAX_DESCRIBED_VALUE_CHARS - 1
+      : MAX_DESCRIBED_VALUE_CHARS;
+  return `${value.slice(0, end)}…`;
+};
+
+const observed = (values: readonly string[]): string => {
+  if (values.length === 0) return "none";
+  const shown = values.slice(0, MAX_DESCRIBED_VALUES).map(cut).join(", ");
+  const rest = values.length - MAX_DESCRIBED_VALUES;
+  return rest > 0 ? `${shown} and ${String(rest)} more in the manifest` : shown;
+};
 
 const bodyDescription = (tool: EnvironmentManifestTool): string =>
   tool.body_shape === null
