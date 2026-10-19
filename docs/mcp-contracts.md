@@ -2,7 +2,8 @@
 
 Use this reference to call REA tools and interpret their replies on one MCP
 connection. Start with [tool results](#tool-results), [retained Evidence](#retained-application-evidence-inputs),
-and [session discovery](#identity-and-discovery). See [cancellation](#progress-and-cancellation)
+and [session discovery](#identity-and-discovery). See [transports](#transports)
+for the opt-in HTTP listener, [cancellation](#progress-and-cancellation)
 for partial-result recovery and [first-query deadlines](#ghidra-first-query-deadlines-and-recovery)
 when a cold provider exceeds the client's wait.
 
@@ -132,6 +133,12 @@ is null. `total` counts all matching heads; each page preserves complete records
 in stable unknown ID order. Filters apply before paging. Pages reflect current
 session state, so keep the unknown ledger unchanged while traversing it.
 
+Automatically retained workflow questions include their immutable result
+Evidence ID. Distinct results retain independent questions and source links;
+repeating the same result does not create another unknown. Workflow Evidence
+keeps the original residual question text. Explicit `record_unknown` requests
+keep caller-selected identity and reject duplicate creation.
+
 For a portable exported bundle, the CLI shares this projection:
 `rea inspect-evidence-bundle '{"path":"/tmp/evidence.json","detail":"summary","filters":{"operation":"analyze_function"}}' --format json`.
 The CLI validates and materializes that local bundle under its existing memory
@@ -209,6 +216,14 @@ segments are inferences. Because paging follows the full grouping, every page is
 inferred Evidence whenever any group is templated, and derived Evidence only when
 no group was templated.
 See [derived API surfaces](web-network-captures.md#derived-api-surface).
+
+`inspect_analysis_view` also accepts `environment-manifest` for retained HAR capture
+Evidence, projecting the primary origin's request lines into named tools with path
+templates, parameters, observed query names, value-free body shapes and record
+pointers, plus excluded groups and three fixed unknowns. Templates, parameters and
+names are inferences; the Evidence is inferred whenever any tool or excluded group
+is templated, and derived otherwise.
+See [environment manifests](web-network-captures.md#environment-manifest).
 
 `inspect_analysis_view` projects a caller-selected view of already completed
 `inspect_binary_layout`, `analyze_javascript_application`, or `analyze_function`
@@ -355,6 +370,17 @@ checking that a client received the full catalog. An operation absent from all
 groups is missing from the complete inventory; it is not an implicit
 unavailable entry.
 
+`get_call_graph` and `trace_call_path` report `forward` and `backward` modes.
+Each requires `procedure_address` plus `procedure_callees` or `procedure_callers`,
+respectively. The tool is available when either traversal mode is supported;
+`default_mode_available` describes the default forward direction. Read each mode's
+missing operations and remediation before selecting a direction. These facts
+describe traversal prerequisites, not relationship completeness or a guarantee
+for every selector. A trace whose start and goal resolve to the same address can
+finish without reading relationships, even when neither traversal mode is
+available. Discovery does not block that direct invocation or replace its typed
+partial/error outcomes.
+
 The `effects` and `annotations` arrays list the true members of their fixed
 vocabularies. A known member omitted from either array is false. This applies
 only to these closed flag sets; it does not make an omitted tool, provider, mode,
@@ -417,6 +443,96 @@ File cleanup can also remain after snapshot publication or after profile
 inspection fails or is cancelled before a provider client exists. If no client
 remains, no provider run or health observation is available; follow the cleanup
 error's reported resources.
+
+## Transports
+
+stdio is the default transport and the only one that client registrations,
+`rea mcp doctor` and the MCP registry entry describe. `rea mcp --http [--host H]
+[--port N]` is an opt-in alternative that serves the same catalog over the
+streamable HTTP transport at `/mcp`; it replaces stdio for that process rather
+than running beside it. Host and port come from the flags, then `MCP_HOST` and
+`MCP_PORT`, then `127.0.0.1` and an ephemeral port. The bound URL is announced
+as one JSON log line on stderr (`"msg":"MCP transport listening"` with `url`)
+at every `REA_LOG_LEVEL`, because an ephemeral port is otherwise unreachable;
+stdout stays unused.
+
+This endpoint uses plain HTTP without TLS or client authentication. Use it only
+within a trusted local or isolated environment; an explicit non-loopback bind
+makes the same tools and active analysis state reachable at that address. It
+does not provide separate users or independent target sessions. Standard client
+registrations continue to use a dedicated stdio process.
+
+The HTTP server is stateful and serves one client at a time on one server
+instance. `initialize` returns an `Mcp-Session-Id`; `notifications/initialized`
+is acknowledged with `202`; responses arrive as JSON or SSE frames; `DELETE
+/mcp` with the session id ends the session with `200`. Ending a session is not
+a server shutdown: the process keeps listening, the instance keeps its providers
+and the shared active target, and the next client opens a fresh session against
+them. A client ending or replacing a session cancels its running tool calls and
+prompt completions, stops request-body reads and fences further message dispatch,
+then waits up to ten seconds for request dispatch, handlers and cleanup to finish before reusing the
+server. A timeout returns `503`; the old calls remain owned, and later requests
+retry the drain rather than starting another session against those resources.
+Requests that finish parsing or SDK dispatch after their session closed are
+refused, and their response streams are cancelled. Tool callbacks whose
+validation finishes after cancellation never start.
+Body forwarding stops when SDK request processing ends, including early header
+and size refusals, rather than remaining active until the session closes.
+HTTP input/route dispatch is limited to eight concurrent requests by default,
+shared by MCP and plain routes. Excess requests receive `503` with a closing
+connection before their bodies are converted, read or cloned. An embedder can
+select `maxConcurrentDispatches`; the SDK's per-body size limit still applies.
+MCP responses with fully read or bodyless requests do not hold admission slots,
+so an idle MCP SSE stream does not prevent later calls. Plain routes retain their
+slots through response delivery and response-source cancellation cleanup. An
+unread upload retains its slot until input finishes or either side closes,
+even with a long response. Sequential keep-alive is supported; a peer pipelining
+behind an unfinished response is disconnected before queued requests dispatch.
+Concurrent MCP requests use separate connections.
+This bounds concurrent input work, not total provider or process memory.
+Provider-backed prompt completions use the same request owner and drain, so a
+cancelled completion cannot keep using providers after handover or shutdown.
+HTTP factories enable `RequestTrackingMcpServer` tracking so completion is tracked
+even when cancellation suppresses the SDK's reply; stdio retains the SDK's
+original callback behavior. Full server shutdown stops the listener and waits
+for MCP work, plain-route handlers and response-source cancellation to settle
+before running provider shutdown hooks or closing providers. Response producers
+must finish provider work before closing their stream and expose asynchronous
+disconnect cleanup through the stream's `cancel()` result. Cancellation does not
+delay delivery of a HEAD reply; a caller retaining a sibling of a teed response
+must consume or cancel that sibling before shutdown can finish. Failed response
+cleanup remains owned, blocks further admission and prevents provider teardown.
+The server continues cleanup
+automatically when they finish, including after a client handover timed out.
+All routes return `503` until the server factory succeeds; startup failure closes
+the listener and joins its pending replies before rejecting the factory.
+The newest client replaces an open session: an `initialize` that arrives
+while a session is open ends that session instead of being refused, because a
+client that exits without `DELETE` must not wedge the listener; the replaced
+client's open streams are closed and its later requests are refused. Only an
+`initialize` that carries the streamable headers (`Content-Type:
+application/json` and an `Accept` naming both `application/json` and
+`text/event-stream`) and passes the Host and Origin checks can replace a
+session; any other sessionless POST goes to the live transport, which refuses
+it without disturbing the session. Requests that carry no valid session id are
+refused with `400` or `404` as the SDK transport defines. A bind is loopback by
+address class, not spelling, and is classified from the address the listener
+actually bound: any `127.0.0.0/8` address, `::1`, or an IPv4-mapped loopback.
+Configured names, including `localhost` and its aliases, do not establish that
+the bound address is local; names are added only after classifying the actual IP.
+On such a bind, requests whose `Host` header is outside the SDK loopback allowlist plus
+the configured name and the bound address are refused with `403`, and a browser
+`Origin` outside that allowlist is refused the same way (a missing `Origin`
+passes); a non-loopback bind relaxes both checks and logs the relaxation. A reply sent before a request body was read (a refused `Host` or `Origin`, an unknown route, the startup `503`) closes the connection after the reply, so an unread upload cannot keep a socket open. Request targets are taken verbatim as origin-form paths (`//host/path` is a path, not another origin); an absolute-form target, a target containing a raw fragment delimiter (`#`), or one whose path URL parsing would rewrite (dot segments such as `/public/../mcp`), is refused with `400`, and a method Fetch does not support with `405`. Percent-encoded `%23` remains valid query data. Only a lone `initialize` can replace an open session; a batch that carries one is left to the transport's refusal. Scoped
+IPv6 literals (`fe80::1%eth0`) are refused before binding, because no URL can
+name them. Listener errors reach the runtime's connection-loss handler only
+after a successful bind; a bind failure prints the listen-failure message alone. Request bodies are bounded by the SDK's
+4 MiB limit, and the response budget keeps its stdio-derived floor. The
+listener ends on SIGINT or SIGTERM only, not on stdin EOF, and exits `130` or
+`143` after cleanup settles. A signal that arrives while startup is still
+running is recorded and acted on as soon as the listener and its providers are
+owned, so startup never ends without cleanup; a second signal during startup
+exits immediately.
 
 ## Progress and cancellation
 
@@ -751,6 +867,12 @@ after SDK conversion and check advertised validation and actual calls.
 Individual model APIs can impose additional nesting limits; complete producer
 captures can exceed ten structural levels.
 
+`search_bytes` advertises its pattern and mask as descriptive strings. Its
+shared canonical validator scans byte pairs, whitespace, wildcards and aligned
+masks without a repeating regular expression or temporary byte arrays. The
+server rejects malformed or unconstrained patterns before provider dispatch;
+the advertised strings alone do not express those rules.
+
 Boolean literal constraints in input schemas are relaxed only in this
 advertisement. For example, a boolean `const` is presented as `type: boolean`;
 an affected `not` is omitted, conditional predicates and their branches are
@@ -856,6 +978,21 @@ retain limitations from the selected dimension; an overall function claim
 includes all dimension limitations. Equal CFGs establish only equal observed
 block sizes and successor relationships. Text from different provider
 identities remains unknown.
+
+The `references` dimension preserves each edge's direction, endpoint identity
+and available kind facts. Within one artifact it compares exact raw endpoint
+coordinates, including the address space; hexadecimal case and zero padding
+do not change identity. Resolving an endpoint to a containing procedure does
+not replace the raw coordinate. Unparseable coordinates stay unknown.
+
+Across artifacts, reference endpoints use stable procedure names. Missing or
+address-generated names remain unknown. A name observed at multiple procedure
+entries retains its label constraint but cannot establish equal endpoints.
+Pairing preserves duplicate counts and considers alternative compatible
+pairings; array order never identifies an edge. Compatible records with
+unknown endpoint identity or kind facts remain `unknown`. Independent known
+facts that contradict every possible pairing still establish `changed`.
+Source Evidence retains the original addresses, names and unavailable facts.
 
 ### Comparison input shapes
 
