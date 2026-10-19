@@ -1,3 +1,4 @@
+import { setImmediate } from "node:timers/promises";
 import { INSPECT_ANALYSIS_VIEW_OPERATION } from "../../domain/analysisView/analysisViewErrors.js";
 import { z } from "zod";
 
@@ -92,8 +93,12 @@ export const inspectAnalysisViewValidatedWithFiles = async (
     source: input.source,
   });
   if (!parent.ok) return parent;
-  const cancelled = (): boolean => options.signal?.aborted === true;
-  if (cancelled())
+  // Authentication and projection are synchronous; yield so a pending abort is dispatched before each check.
+  const cancelled = async (): Promise<boolean> => {
+    await setImmediate();
+    return options.signal?.aborted === true;
+  };
+  if (await cancelled())
     return err(new AnalysisCancelledError(INSPECT_ANALYSIS_VIEW_OPERATION));
   const id = parent.value.evidence_id;
   const projected = inspectAnalysisViewValidated(
@@ -101,7 +106,7 @@ export const inspectAnalysisViewValidatedWithFiles = async (
     (evidenceId) => (evidenceId === id ? parent.value : lookup?.(evidenceId)),
   );
   // A request cancelled during projection delivers and records nothing.
-  return cancelled()
+  return (await cancelled())
     ? err(new AnalysisCancelledError(INSPECT_ANALYSIS_VIEW_OPERATION))
     : projected;
 };

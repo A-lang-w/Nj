@@ -634,6 +634,28 @@ it("merges pairs before sibling-variance so the two rules compose", () => {
     ).toEqual(["/api/repos/{repo_namespace}/{repo_name}/issues"]);
 });
 
+it("keeps each pair parameter's role when sibling-variance later templates the segment before the pair", () => {
+  const projected = manifest(
+    ["sibling-variance", "sibling-pair-variance"],
+    syntheticCapture([
+      ["GET", "https://g.test/api/root/group1s/alice-1/common/issues"],
+      ["GET", "https://g.test/api/root/group1s/bob-2/ledger/issues"],
+      ["GET", "https://g.test/api/root/group1s/carol-3/books/issues"],
+      ["GET", "https://g.test/api/root/group2s/dave-4/x1/issues"],
+      ["GET", "https://g.test/api/root/group2s/erin-5/x2/issues"],
+      ["GET", "https://g.test/api/root/group2s/finn-6/x3/issues"],
+    ]),
+  );
+  expect(projected.tools).toHaveLength(1);
+  expect(
+    projected.tools[0]?.params.map((param) => [param.name, param.rule]),
+  ).toEqual([
+    ["root_id", "sibling-variance"],
+    ["namespace", "sibling-pair-variance"],
+    ["name", "sibling-pair-variance"],
+  ]);
+});
+
 it("never folds a literal sibling into a format-rule parameter", () => {
   const projected = manifest(
     ALL_RULES,

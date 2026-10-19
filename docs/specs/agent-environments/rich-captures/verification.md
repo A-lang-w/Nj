@@ -11,7 +11,7 @@ and `mcp-catalog:check` all exit 0. oxlint on the 12 changed TypeScript files
 reports no finding that main does not already report for the same files.
 
 `npm run test:prepare`, then `npm run test:changed` (the tests related to the
-changed files): 84 files, 1529 passed, 3 skipped, 0 failed. They include:
+changed files): 84 files, 1531 passed, 3 skipped, 0 failed. They include:
 
 - the service: an Evidence file projects exactly what the same Evidence projects
   inline; a capture whose response text exceeds the inline budget is refused
@@ -25,11 +25,13 @@ changed files): 84 files, 1529 passed, 3 skipped, 0 failed. They include:
 - the file source module: the size estimate, the authentication headroom
   refusal, a cancelled request refused before reading, and a read within the
   caller's resource scope; the service returns typed cancellation for a
-  cancelled file request;
+  cancelled file request; a request aborted while it runs, even after its read, returns typed
+  cancellation because the service yields before each check;
 - the pair rule: three owner/repo pairs merge for collection and numeric detail
   routes, while two pairs, or three pairs sharing one namespace, stay literal;
   with `sibling-variance` also selected the pair still merges, because pairs
-  are merged first.
+  are merged first. Each pair parameter keeps its role when
+  `sibling-variance` later templates the segment before the pair.
 
 ## A rich capture
 

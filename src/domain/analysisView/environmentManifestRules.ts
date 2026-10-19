@@ -36,6 +36,8 @@ export interface ParamPart {
   readonly kind: "param";
   readonly rule: ManifestRule;
   readonly values: ReadonlySet<string>;
+  /** Which half of a sibling-pair-variance pair; fixed when the pair forms so later merges cannot change it. */
+  readonly pairRole?: "namespace" | "name";
 }
 export type RoutePart = LiteralPart | ParamPart;
 
@@ -114,16 +116,18 @@ const mergeGroups = (
     parts: shape.parts.map((part, index) =>
       part.kind === "literal"
         ? part
-        : param(
-            part.rule,
-            groups.flatMap((group) => {
-              const sibling = group.parts[index];
-              if (sibling === undefined) return [];
-              return sibling.kind === "param"
-                ? [...sibling.values]
-                : [sibling.value];
-            }),
-          ),
+        : {
+            ...part,
+            values: new Set(
+              groups.flatMap((group) => {
+                const sibling = group.parts[index];
+                if (sibling === undefined) return [];
+                return sibling.kind === "param"
+                  ? [...sibling.values]
+                  : [sibling.value];
+              }),
+            ),
+          },
     ),
     positions: groups
       .flatMap((group) => group.positions)
@@ -332,7 +336,10 @@ const mergePairBucket = (
     first,
     first.parts.map((part, index) =>
       index === position || index === position + 1
-        ? param("sibling-pair-variance", [literalAt(first, index)])
+        ? {
+            ...param("sibling-pair-variance", [literalAt(first, index)]),
+            pairRole: index === position ? "namespace" : "name",
+          }
         : part,
     ),
   );
@@ -440,13 +447,12 @@ const paramBaseName = (parts: readonly RoutePart[], index: number): string => {
       return stem.length > 0 ? `${stem}_id` : "id";
     }
     case "sibling-pair-variance": {
-      // The pair's first position follows the plural literal; the second follows the first.
-      const second = parts[index - 1]?.kind === "param";
-      const plural = parts[second ? index - 2 : index - 1];
+      // The role was fixed when the pair formed; the plural literal precedes the pair's first half.
+      const role = part.pairRole ?? "namespace";
+      const plural = parts[role === "name" ? index - 2 : index - 1];
       const stem =
         plural?.kind === "literal" ? sanitizeToken(singular(plural.value)) : "";
-      const suffix = second ? "name" : "namespace";
-      return stem.length > 0 ? `${stem}_${suffix}` : suffix;
+      return stem.length > 0 ? `${stem}_${role}` : role;
     }
   }
 };

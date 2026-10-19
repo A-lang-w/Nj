@@ -975,6 +975,25 @@ describe("inspectAnalysisViewWithFiles", () => {
     ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
   });
 
+  it("returns typed cancellation when a running file request is aborted", async () => {
+    const controller = new AbortController();
+    const parent = analysisViewCaptureEvidence(
+      environmentManifestCaptureFixture(),
+    );
+    const path = await writeEvidenceFile(parent);
+    const running = inspectAnalysisViewWithFiles(
+      { source: { kind: "evidence-file", path }, view },
+      undefined,
+      { signal: controller.signal },
+    );
+    // Queued before the request yields after its synchronous work, so it is seen even if the read already finished.
+    setImmediate(() => controller.abort());
+    expect(await running).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError" },
+    });
+  });
+
   it("leaves file sources to the file-aware entry point", () => {
     expect(
       inspectAnalysisView({
