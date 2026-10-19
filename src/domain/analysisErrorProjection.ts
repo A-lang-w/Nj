@@ -40,21 +40,41 @@ import { ProviderAdapterError } from "./providerAdapterError.js";
 import { ProviderSelectionError } from "./providerSelectionError.js";
 import { UnknownRegistryError } from "./unknownRegistryError.js";
 import { providerRetryAction } from "./providerOperationHealth.js";
-import type { AnalysisError, AnalysisErrorTag } from "./analysisErrorBase.js";
+import {
+  resolvedAnalysisError,
+  type AnalysisError,
+  type AnalysisErrorTag,
+} from "./analysisErrorBase.js";
 
 /** Project expected failures into exhaustive, secret-safe caller fields. */
 export const projectAnalysisError = (
   error: AnalysisError,
 ): AnalysisErrorProjection => {
+  const composed = error;
+  error = resolvedAnalysisError(error);
+  let diagnosticSource = error;
+  while (
+    diagnosticSource.diagnostics === undefined &&
+    diagnosticSource.cleanupPrimary !== undefined
+  )
+    diagnosticSource = diagnosticSource.cleanupPrimary;
+  const diagnostics = diagnosticSource.diagnostics;
+  const capturedOutput = composed.capturedOutput ?? error.capturedOutput;
+  const partialObservation =
+    composed.partialObservation ?? error.partialObservation;
   assertKnownAnalysisErrorTag(error._tag);
   const underlyingCode = underlyingErrorCode(error);
   const code = error.cleanupIncomplete ? "cleanup_incomplete" : underlyingCode;
   const primaryDetails = errorDetails(error);
   const details = {
     ...primaryDetails,
-    ...(error.diagnostics === undefined
+    ...(composed === error || composed.cleanupReport === undefined
       ? {}
-      : { diagnostics: error.diagnostics }),
+      : { cleanup_report: jsonValueSchema.parse(composed.cleanupReport) }),
+    ...(diagnostics === undefined ? {} : { diagnostics }),
+    ...(composed === error || composed.diagnostics === undefined
+      ? {}
+      : { cleanup_history: composed.diagnostics }),
     ...(error.cleanupIncomplete
       ? {
           cleanup: "incomplete",
@@ -66,15 +86,19 @@ export const projectAnalysisError = (
             primaryDetails?.execution_failure ?? underlyingCode,
         }
       : {}),
-    ...(error.capturedOutput === undefined
-      ? {}
-      : { captured_output: { ...error.capturedOutput } }),
-    ...(error.partialObservation === undefined
+    ...(capturedOutput === undefined
       ? {}
       : {
-          partial_observation: isImmutableJsonSnapshot(error.partialObservation)
-            ? error.partialObservation
-            : jsonValueSchema.parse(error.partialObservation),
+          captured_output: {
+            ...capturedOutput,
+          },
+        }),
+    ...(partialObservation === undefined
+      ? {}
+      : {
+          partial_observation: isImmutableJsonSnapshot(partialObservation)
+            ? partialObservation
+            : jsonValueSchema.parse(partialObservation),
         }),
   };
   return {
@@ -87,7 +111,7 @@ export const projectAnalysisError = (
         error.retryable) ||
       (code === "resource_constraint" &&
         error instanceof AnalysisResourceConstraintError &&
-        error.resource === "capacity"),
+        (error.retryable ?? error.resource === "capacity")),
     remediation: {
       action: analysisErrorRemediationAction(error),
     },
@@ -110,7 +134,7 @@ const underlyingErrorCode = (
   if (error instanceof BrowserObservationError)
     return error.userCategory === "cancelled"
       ? "cancelled"
-      : browserErrorCode(error.reason);
+      : BROWSER_ERROR_CODES[error.reason];
   if (error instanceof ArtifactOperationError)
     return artifactOperationCode(error);
   if (error instanceof BinaryTargetError)
@@ -126,22 +150,25 @@ const underlyingErrorCode = (
   return staticErrorCode(error._tag);
 };
 
-const browserErrorCode = (
-  reason: BrowserObservationError["reason"],
-): AnalysisErrorProjection["code"] => {
-  if (reason === "cancelled") return "cancelled";
-  if (reason === "timeout") return "provider_timeout";
-  if (reason === "payload_limit") return "truncated";
-  if (
-    reason === "target_not_found" ||
-    reason === "target_not_allowed" ||
-    reason === "service_worker_blocked" ||
-    reason === "target_changed"
-  )
-    return "target_unavailable";
-  if (reason === "endpoint_unreachable" || reason === "disconnected")
-    return "provider_unavailable";
-  return "unreadable_output";
+const BROWSER_ERROR_CODES: Readonly<
+  Record<BrowserObservationError["reason"], AnalysisErrorProjection["code"]>
+> = {
+  endpoint_unreachable: "provider_unavailable",
+  invalid_endpoint_response: "unreadable_output",
+  target_not_found: "target_unavailable",
+  target_not_allowed: "target_unavailable",
+  service_worker_blocked: "target_unavailable",
+  target_changed: "target_unavailable",
+  protocol_error: "unreadable_output",
+  disconnected: "provider_unavailable",
+  payload_limit: "truncated",
+  window_not_found: "unreadable_output",
+  window_metadata_missing: "unreadable_output",
+  process_ownership_unavailable: "unreadable_output",
+  cleanup_failed: "execution_failure",
+  cancelled: "cancelled",
+  timeout: "provider_timeout",
+  secret_unavailable: "unreadable_output",
 };
 
 const artifactOperationCode = (
@@ -439,8 +466,9 @@ const providerErrorDetails = (
 const primaryBrowserFailureReason = (
   error: BrowserObservationError,
 ): string | undefined => {
-  if (!(error.cause instanceof AggregateError)) return undefined;
-  const primary = error.cause.errors[0];
+  const aggregate = error.cause instanceof AggregateError;
+  const primary =
+    error.cause instanceof AggregateError ? error.cause.errors[0] : error.cause;
   if (primary instanceof BrowserObservationError) return primary.reason;
   if (primary instanceof AnalysisCancelledError) return "cancelled";
   if (primary instanceof AnalysisTimeoutError) return "timeout";
@@ -448,7 +476,7 @@ const primaryBrowserFailureReason = (
     return typeof primary._tag === "string"
       ? primary._tag
       : "execution_failure";
-  return "execution_failure";
+  return aggregate ? "execution_failure" : undefined;
 };
 
 const lifecycleErrorDetails = (
