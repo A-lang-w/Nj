@@ -39,7 +39,15 @@ export interface RecordedExchange {
   readonly bodyText: string | null;
   /** Set when the retained bytes are not UTF-8, so `bodyText` holds their base64 rather than a lossy decoding. */
   readonly bodyEncoding?: "base64";
+  /** Set when only a prefix of a large base64 body was decoded; replay reports it truncated. */
+  readonly bodyCut?: true;
 }
+
+/** Replayed bodies larger than this are cut at a UTF-8 boundary and flagged. */
+export const REPLAY_BODY_LIMIT_BYTES = 256 * 1024;
+
+/** Base64 characters that decode to just over the replay limit, so a cut prefix still fills it. */
+const BASE64_PREFIX_CHARS = Math.ceil((REPLAY_BODY_LIMIT_BYTES + 4) / 3) * 4;
 
 /** A manifest and the parent capture it cites, authenticated and cross-checked. */
 export interface EnvironmentSource {
@@ -95,7 +103,9 @@ const contentTextSchema = z.object({
   }),
 });
 
-const STRICT_UTF8 = new TextDecoder("utf-8", { fatal: true });
+/** Strict, and keeping a leading byte-order mark, so replay returns the recorded text unchanged. */
+const strictUtf8 = (): TextDecoder =>
+  new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 /** The retained response text of one record, decoding HAR base64 content when the decoder kept it as valid UTF-8. */
 const recordedBody = (
@@ -112,15 +122,21 @@ const recordedBody = (
   );
   if (binary === undefined || binary.content_base64 === null)
     return { bodyText: null };
+  // Replay returns at most REPLAY_BODY_LIMIT_BYTES, so a large body is decoded only that far.
+  const cut = binary.content_base64.length > BASE64_PREFIX_CHARS;
+  const encoded = cut
+    ? binary.content_base64.slice(0, BASE64_PREFIX_CHARS)
+    : binary.content_base64;
+  const flags = cut ? { bodyCut: true as const } : {};
   try {
-    return {
-      bodyText: STRICT_UTF8.decode(
-        Buffer.from(binary.content_base64, "base64"),
-      ),
-    };
+    // A cut prefix may end inside a character; streaming leaves that tail undecoded.
+    const text = strictUtf8().decode(Buffer.from(encoded, "base64"), {
+      stream: cut,
+    });
+    return { bodyText: text, ...flags };
   } catch {
     // Binary or non-UTF-8 bytes: keep them exactly, as base64, instead of inventing replacement characters.
-    return { bodyText: binary.content_base64, bodyEncoding: "base64" };
+    return { bodyText: encoded, bodyEncoding: "base64", ...flags };
   }
 };
 

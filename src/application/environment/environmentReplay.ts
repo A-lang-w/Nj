@@ -7,14 +7,14 @@ import { err, ok, type Result } from "../../domain/result.js";
 import { safeParseJson } from "../../domain/safeJson.js";
 import { environmentToolArguments } from "./environmentTools.js";
 import {
+  REPLAY_BODY_LIMIT_BYTES,
   ENVIRONMENT_SERVE_OPERATION,
   type EnvironmentManifestTool,
   type EnvironmentSource,
   type RecordedExchange,
 } from "./environmentSource.js";
 
-/** Replayed bodies larger than this are cut at a UTF-8 boundary and flagged. */
-export const REPLAY_BODY_LIMIT_BYTES = 256 * 1024;
+export { REPLAY_BODY_LIMIT_BYTES } from "./environmentSource.js";
 
 /** Caller arguments as the MCP tool receives them. */
 export type ReplayArguments = Readonly<Record<string, unknown>>;
@@ -128,7 +128,8 @@ const replayBody = (
   const text = exchange.bodyText;
   if (text === null) return { body: null, truncated: false };
   const prefix = utf8Prefix(text, REPLAY_BODY_LIMIT_BYTES);
-  if (prefix.length < text.length) return { body: prefix, truncated: true };
+  if (prefix.length < text.length || exchange.bodyCut === true)
+    return { body: prefix, truncated: true };
   if (exchange.bodyEncoding === "base64")
     return { body: text, truncated: false };
   if (

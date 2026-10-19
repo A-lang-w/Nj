@@ -318,5 +318,35 @@ describe("replayEnvironmentTool bodies", () => {
       body: binary.toString("base64"),
       replay: { body_encoding: "base64", body_recorded: true },
     });
+    // A leading byte-order mark is recorded content, not decoding noise.
+    expect(
+      replay(
+        "get_users_by_id",
+        { id: "2" },
+        base64Source(Buffer.from([0xef, 0xbb, 0xbf, 0x41])),
+      ).body,
+    ).toBe("\uFEFFA");
+  });
+
+  it("decodes only the replayable prefix of a large retained base64 body and flags it truncated", () => {
+    for (const [fill, encoding] of [
+      [0x61, "utf-8"],
+      [0xff, "base64"],
+    ] as const) {
+      const large = Buffer.alloc(REPLAY_BODY_LIMIT_BYTES * 2, fill);
+      const result = replay(
+        "get_users_by_id",
+        { id: "2" },
+        base64Source(large),
+      );
+      expect(result.replay).toMatchObject({
+        truncated: true,
+        body_encoding: encoding,
+      });
+      expect(typeof result.body).toBe("string");
+      expect(
+        Buffer.byteLength(result.body as string, "utf8"),
+      ).toBeLessThanOrEqual(REPLAY_BODY_LIMIT_BYTES);
+    }
   });
 });

@@ -44,7 +44,8 @@ later increment.
   when the capture kept no response body, so a `null` body is not mistaken for
   a recorded one), `body_encoding` (`base64` when the retained bytes are not
   UTF-8, so they are returned exactly rather than decoded lossily) and
-  `truncated`, as both
+  `truncated` (a large retained base64 body is decoded only up to that limit),
+  as both
   structured content and text, with REA's existing target-content provenance
   marker in `_meta`.
 - Serve the card with exactly the echo example's keys and nesting: `name`
