@@ -11,6 +11,7 @@ import { silentLogger } from "../logger.js";
 import { HopperProvider } from "../hopper/HopperProvider.js";
 import { hopperLoaderArgsForTarget } from "../hopper/HopperAnalysisProfile.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
+import { parseBinaryTarget } from "../application/BinaryTargetResolver.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import { ghidraRiscvLimitations } from "./GhidraRiscvProfile.js";
 import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
@@ -213,6 +214,41 @@ describe("bounded Ghidra RISC-V admission: position-independent executables", ()
       load_model: "pie",
       expected_default_image_base: "0x10000",
     });
+  });
+
+  it("admits a valid RISC-V PIE whose program headers start beyond 4096 and end past 65536", async () => {
+    const testFile = join(installDir, "pie-high-phoff.elf");
+    const fileSize = 75000;
+    const phoff = 70000;
+    const phentsize = 56;
+    const phnum = 2;
+    const buffer = Buffer.alloc(fileSize);
+    buffer.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]); // ELF64, little-endian, version 1
+    buffer.writeUInt16LE(3, 16); // ET_DYN
+    buffer.writeUInt16LE(243, 18); // EM_RISCV
+    buffer.writeUInt32LE(1, 20); // EV_CURRENT
+    buffer.writeBigUInt64LE(BigInt(phoff), 32); // e_phoff
+    buffer.writeUInt32LE(0x5, 48); // e_flags: double-float ABI | RVC
+    buffer.writeUInt16LE(64, 52); // e_ehsize
+    buffer.writeUInt16LE(phentsize, 54); // e_phentsize
+    buffer.writeUInt16LE(phnum, 56); // e_phnum
+
+    // Program headers at phoff:
+    // Entry 0: PT_LOAD (1)
+    buffer.writeUInt32LE(1, phoff);
+    // Entry 1: PT_INTERP (3)
+    buffer.writeUInt32LE(3, phoff + phentsize);
+
+    await writeFile(testFile, buffer);
+    const resolved = await parseBinaryTarget(testFile);
+    if (!resolved.ok) throw new Error(resolved.error.message);
+    expect(resolved.value.kind).toBe("executable");
+    expect(resolved.value.architecture).toBe("riscv");
+    if (resolved.value.architecture === "riscv") {
+      expect(resolved.value.riscv.hasInterpreter).toBe(true);
+    }
+    const support = ghidra().inspectTargetSupport(resolved.value);
+    expect(support.status).toBe("supported");
   });
 });
 
