@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   analysisViewCaptureEvidence,
   analysisViewCaptureFixture,
+  environmentManifestCaptureFixture,
 } from "../../../tests/fixtures/analysisView.js";
 import {
   environmentServeFixture,
@@ -47,6 +48,27 @@ describe("loadEnvironmentSource", () => {
     expect(source.exchanges.get(search?.record_ordinals[0] ?? -1)?.query).toBe(
       "?query=probe&type=dash-db",
     );
+  });
+
+  it("refuses capture Evidence in a format other than HAR before pairing it", () => {
+    const fixture = environmentServeFixture();
+    for (const format of ["saz", "mitmproxy"] as const) {
+      const evidence = analysisViewCaptureEvidence({
+        ...analysisViewCaptureFixture(),
+        format,
+      });
+      expect(refusal(fixture.manifest, evidence)).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["evidence", "normalized_result", "format"],
+              expected: "har",
+            },
+          ],
+        },
+      });
+    }
   });
 
   it("refuses a manifest whose parent is not the supplied evidence with a typed invalid request", () => {
@@ -140,5 +162,35 @@ describe("loadEnvironmentSource", () => {
         ]),
       },
     });
+  });
+});
+
+describe("loadEnvironmentSource recorded request lines", () => {
+  it("keeps the delimiter of an explicit empty query in the recorded exchange", () => {
+    const capture = environmentManifestCaptureFixture();
+    const record = capture.records.find((entry) =>
+      JSON.stringify(entry.reported).includes("/api/users/2"),
+    );
+    if (record === undefined) throw new Error("Fixture lacks /api/users/2");
+    const reported = structuredClone(record.reported) as {
+      request: { url: string };
+    };
+    reported.request.url = `${reported.request.url}?`;
+    record.reported = reported;
+    const evidence = analysisViewCaptureEvidence(capture);
+    const manifest = inspectAnalysisView({
+      source: { kind: "inline", evidence },
+      view: { kind: "environment-manifest" },
+    });
+    if (!manifest.ok) throw manifest.error;
+    const loaded = loadEnvironmentSource(manifest.value, evidence);
+    if (!loaded.ok) throw loaded.error;
+    const exchanges = [...loaded.value.exchanges.values()];
+    expect(
+      exchanges.find((entry) => entry.path === "/api/users/2")?.query,
+    ).toBe("?");
+    expect(
+      exchanges.find((entry) => entry.path === "/api/users/3")?.query,
+    ).toBeNull();
   });
 });

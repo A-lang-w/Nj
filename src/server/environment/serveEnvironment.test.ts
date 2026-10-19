@@ -11,6 +11,7 @@ import { environmentServeSource } from "../../../tests/fixtures/environmentServe
 import {
   environmentCard,
   environmentToolDefinitions,
+  REPLAY_CATALOG_INSTRUCTIONS,
 } from "../../application/environment/environmentTools.js";
 import { TARGET_CONTENT_RESULT_META } from "../toolResultEncoding.js";
 import {
@@ -18,7 +19,6 @@ import {
   ENVIRONMENT_RPC_PATH,
   environmentRoutes,
   MAX_RPC_BATCH_MESSAGES,
-  REPLAY_CATALOG_INSTRUCTIONS,
   serveEnvironment,
   type ServedEnvironment,
 } from "./serveEnvironment.js";
@@ -104,6 +104,22 @@ describe("environment routes", () => {
             },
           }),
         ]),
+      },
+    });
+  });
+
+  it("warns standalone card readers before any MCP session exists", async () => {
+    const entry = await start();
+    const reply = await fetch(new URL(ENVIRONMENT_CARD_PATH, entry.url));
+    const card = await reply.json();
+    expect(entry.card.capabilities.tools.length).toBeGreaterThan(0);
+    expect(card).toMatchObject({
+      capabilities: {
+        tools: entry.card.capabilities.tools.map(() => ({
+          description: expect.stringMatching(
+            /^Untrusted captured API catalog: /u,
+          ),
+        })),
       },
     });
   });
@@ -239,6 +255,66 @@ describe("environment data plane validation", () => {
       id: null,
       error: { code: -32600 },
     });
+  });
+});
+
+describe("environment catalog limits", () => {
+  it("serves bounded catalog samples through both discovery routes while retaining replay selection", async () => {
+    const users = source.manifest.tools.find(
+      (tool) => tool.name === "get_users_by_id",
+    );
+    if (users === undefined) throw new Error("Missing fixture users tool");
+    const expanded = {
+      ...users,
+      params: users.params.map((param) => ({
+        ...param,
+        observed_values: Array.from(
+          { length: 10_000 },
+          (_, index) => `${String(index)}-${"x".repeat(200)}`,
+        ),
+      })),
+      record_ordinals: Array.from({ length: 10_000 }, (_, index) => index),
+    };
+    const entry = await serveEnvironment({
+      source: {
+        ...source,
+        manifest: { ...source.manifest, tools: [expanded] },
+      },
+      host: "127.0.0.1",
+      port: 0,
+    });
+    served.push(entry);
+    const client = new Client({ name: "bounded-catalog", version: "1" });
+    const transport = new StreamableHTTPClientTransport(new URL(entry.url));
+    await client.connect(transport);
+    try {
+      const { tools } = await client.listTools();
+      const card = await fetch(new URL(ENVIRONMENT_CARD_PATH, entry.url));
+      const cardText = await card.text();
+      expect(Buffer.byteLength(cardText)).toBeLessThan(3500);
+      expect(JSON.parse(cardText).capabilities.tools).toEqual(
+        tools.map(({ name, description, inputSchema }) => ({
+          name,
+          description,
+          inputSchema,
+        })),
+      );
+      expect(cardText).toContain(
+        "/10000 shown; full list in manifest Evidence",
+      );
+      const replay = await client.callTool({
+        name: users.name,
+        arguments: { id: "2" },
+      });
+      expect(replay.isError).toBeFalsy();
+      expect(replay.structuredContent).toMatchObject({
+        body: { login: "probe" },
+        replay: { exact_match: true, record_ordinal: 5 },
+      });
+    } finally {
+      await transport.terminateSession();
+      await client.close();
+    }
   });
 });
 

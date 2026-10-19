@@ -43,6 +43,12 @@ serve command refuses a manifest whose parent is not the supplied `--evidence`
 file with an `invalid_request` error naming both identifiers, so a manifest can
 never be served from records it did not cite.
 
+The MCP catalog and environment card sample path observations, request-body key descriptions and cited-record
+lists within a 1 KiB UTF-8 budget per list. Oversized lists report how many
+whole values are shown and point to the complete list in the manifest Evidence;
+a captured path longer than 1 KiB is cut the same way in its tool description.
+This only limits descriptive context, not arguments, record selection or replay.
+
 ## What replay means and does not mean
 
 Each MCP tool call selects one of the records its manifest tool cites and
@@ -63,6 +69,7 @@ where the answer came from:
     "exact_match": true,
     "recorded_path": "/api/users/2",
     "recorded_query": null,
+    "recorded_line_truncated": false,
     "body_recorded": true,
     "body_encoding": "utf-8",
     "truncated": false
@@ -74,12 +81,15 @@ where the answer came from:
 equals the recorded one; it says nothing about parameters the caller omitted.
 A path value matches a recorded segment as written or after percent-decoding;
 when both kinds of match are available, the record whose segment equals the
-value as written is chosen.
+value as written is chosen. `recorded_query` keeps the `?` of an explicit empty
+query, and a recorded path or query longer than 1 KiB is cut in the reply with
+`recorded_line_truncated: true`; selection always uses the full recorded line.
 When no record matches, the tool still answers from the tool's first cited
 record and reports `exact_match: false`. `body` is parsed JSON when the
 recorded content type is JSON-like (`application/json`, `application/*+json`,
-`text/plain`, `text/markdown`) and the text parses; otherwise it is the
-recorded text. Bodies over 256 KiB are cut at a UTF-8 boundary and returned as
+`text/plain`, `text/markdown`) and the text parses without changing a number;
+otherwise it is the recorded text, so a body with an integer outside
+JavaScript's safe range (such as an id of `9007199254740993`) keeps its digits. Bodies over 256 KiB are cut at a UTF-8 boundary and returned as
 text with `truncated: true`. `body_recorded` is false when the capture kept the
 response's status and content type but no body; `body` is then `null`, which
 is not a recorded JSON `null`. `body_encoding` is `base64` when the capture
@@ -100,6 +110,9 @@ with `source: "analysis_target"`. The server advertises REA's untrusted-content
 instructions plus a warning that its tool names, descriptions, parameter names
 and observed values come from the capture too, and agents must treat all of it
 as data, never as instructions.
+That same warning prefixes every tool description in the standalone card, so
+card discovery carries it before an MCP client initializes. It labels the
+captured text without changing the tool names or schema fields clients use.
 
 ## Serve a manifest
 
@@ -118,7 +131,9 @@ manifest's `name` is used, and a set but blank value is refused as
 listener serves one MCP client at a time with the same session, `Host` header
 and shutdown contract as [transports](mcp-contracts.md#transports) describes.
 It runs until SIGINT or SIGTERM, then closes the listener, prints one
-`{"status":"stopped", …}` document and exits `130` or `143`.
+`{"status":"stopped", …}` document and exits `130` or `143`. A signal that
+arrives while the files load ends startup with a `cancelled` result, and the same
+exit status, before the listener binds.
 
 Three routes are served:
 
@@ -179,11 +194,13 @@ connecting to `/mcp`:
 `capabilities.tools` lists the same names, descriptions and input schemas that
 `tools/list` advertises over MCP. Path parameters are required strings whose
 description names the segment index, the templating rule and the observed
-values; query parameter names are optional strings; write methods accept an
+values (sampled within the list budget above; the manifest keeps them all);
+query parameter names are optional strings; write methods accept an
 optional `body` object described by the recorded top-level key types. Each
 input keeps its own argument: a query name equal to a path parameter's name is
-advertised as `query_<name>`, and the write body as `request_body` when a query
-parameter is named `body`. Every
+advertised as `query_<name>`, a query name longer than 64 characters as
+`query_<n>` (its position) with the captured name sampled in its description,
+and the write body as `request_body` when a query parameter is named `body`. Every
 schema closes with `additionalProperties: false`, a key the echo example's
 schema does not carry.
 `extensions`, `operations` and `children_environments` are fixed to `null`,

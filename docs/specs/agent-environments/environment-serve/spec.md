@@ -28,21 +28,29 @@ later increment.
   every path parameter as a required string described by its segment index,
   rule and observed values, every observed query name as an optional string,
   and an optional `body` object for `POST`, `PUT` and `PATCH` (a query name
-  that collides with a path parameter becomes `query_<name>`, and the body
+  that collides with a path parameter becomes `query_<name>`, a query name
+  longer than 64 characters becomes `query_<n>`, and the body
   becomes `request_body` when a query parameter is named `body`), closed with
   `additionalProperties: false` so unknown arguments are refused; the
   description reads `METHOD template; replays retained records [ordinals];
   evidence ev_…`. The served catalog stays separate from REA's own tool
   contracts and digests.
+- Prefix tool descriptions with the shared captured-catalog warning so
+  standalone card readers receive the trust notice before MCP initialization.
+- Bound each path-observation, body-key and cited-ordinal description sample to 1 KiB
+  of UTF-8 whole values before joining them, with a separate omitted-count and
+  manifest-Evidence notice, and cut a captured path longer than 1 KiB in its
+  tool description. Keep complete arrays and replay semantics unchanged.
 - Replay by selecting, among the tool's cited records, the one whose path
   segments at the parameter indexes match the most supplied values, then the
   most of those segments equal to the value as written rather than only after
   percent-decoding, then the most supplied query values, keeping manifest order
   on ties; return `status`,
-  `content_type`, `body` (parsed JSON for JSON-like content types that parse,
-  else text; bodies over 256 KiB cut at a UTF-8 boundary with
+  `content_type`, `body` (parsed JSON for JSON-like content types that parse
+  without changing a number, else text; bodies over 256 KiB cut at a UTF-8 boundary with
   `truncated: true`) and `replay` with `record_ordinal`, `evidence_id`,
-  `exact_match`, `recorded_path`, `recorded_query`, `body_recorded` (false
+  `exact_match`, `recorded_path` and `recorded_query` (each cut to 1 KiB, with
+  `recorded_line_truncated`; an explicit empty query is `?`), `body_recorded` (false
   when the capture kept no response body, so a `null` body is not mistaken for
   a recorded one), `body_encoding` (`base64` when the retained bytes are not
   UTF-8, so they are returned exactly rather than decoded lossily) and
@@ -62,7 +70,8 @@ later increment.
   then `127.0.0.1` and port `0`), announce the bound URL as one pino JSON line
   on stderr, serve through the shared streamable HTTP listener, and run until
   SIGINT or SIGTERM only, then close, print one `stopped` document and exit
-  `130` or `143` through the shared command cancellation handler; a listener
+  `130` or `143` through the shared command cancellation handler; a signal
+  during loading returns `cancelled` before binding; a listener
   failure after binding is logged and ends the command with a
   `resource_constraint` error and exit `1`.
 - Register the flat `environment-serve` command in the CLI inventory with

@@ -140,6 +140,29 @@ const recordedBody = (
   }
 };
 
+/** WHATWG reports an explicit empty query (`/api?`) as "", like no query; the recorded URL keeps the delimiter. */
+const recordedQuery = (
+  record: WebNetworkCaptureRecord,
+  query: string | undefined,
+): string | null => {
+  if (query === undefined) return null;
+  if (query !== "") return query;
+  const reported = record.reported;
+  const request =
+    typeof reported === "object" &&
+    reported !== null &&
+    !Array.isArray(reported)
+      ? reported.request
+      : undefined;
+  const url =
+    typeof request === "object" && request !== null && !Array.isArray(request)
+      ? request.url
+      : undefined;
+  return typeof url === "string" && url.split("#", 1)[0]?.includes("?") === true
+    ? "?"
+    : null;
+};
+
 const recordedExchange = (
   record: WebNetworkCaptureRecord,
 ): RecordedExchange | undefined => {
@@ -148,7 +171,7 @@ const recordedExchange = (
   return {
     ordinal: record.ordinal,
     path: line.path,
-    query: line.query === undefined || line.query === "" ? null : line.query,
+    query: recordedQuery(record, line.query),
     status: line.status,
     contentType: line.rawMime === "" ? null : line.rawMime,
     ...recordedBody(record),
@@ -225,6 +248,21 @@ const parseCaptureEvidence = (
           },
         ],
         "The evidence file is not web network capture Evidence.",
+      ),
+    );
+  // The manifest view projects HAR captures only, and replay reads HAR's response fields.
+  if (capture.data.format !== "har")
+    return err(
+      inputError(
+        [
+          {
+            path: ["evidence", "normalized_result", "format"],
+            reason: "invalid_value",
+            expected: "har",
+            message: `Agent environments replay HAR captures; this capture's format is ${capture.data.format}.`,
+          },
+        ],
+        "The evidence file is not a HAR capture.",
       ),
     );
   return ok({
