@@ -33,15 +33,36 @@ not equivalence with another engine's pseudocode or analysis database.
 | Procedures       | Both non-external and external functions are listed. A local thunk remains distinct from its resolved target; exact and qualified name lookup fails on ambiguity rather than guessing.                                                                                                          |
 | Strings          | Only Ghidra-defined string `Data` is observed. Items report charset, byte length, and whether a required null terminator is missing. The API cannot distinguish a present terminator from fixed/Pascal layouts when no terminator is missing, so that state is named `present_or_not_required`. |
 | Memory           | Memory-block end addresses are exclusive. Read/write/execute, initialization, overlay, address space, and image base are direct Ghidra observations.                                                                                                                                            |
-| Inventory        | Procedure, symbol, and string listings plus searches return the complete matching collection in one response; callers do not provide offsets or result-count limits.                                                                                                                            |
+| Inventory        | Provider listings and searches return the complete matching collection. Large MCP procedure/string listings retain that Evidence and return a continuation for bounded pages; follow `coverage.next_offset` to read all rows.                                                                   |
 | Search           | Literal and Java-regex searches return every match in the immutable provider-defined inventory; string search does not cover every text sequence in artifact bytes. Search waits for a reply or caller cancellation; there are no caller-supplied offsets or result-count limits.               |
-| Analysis state   | The socket is exposed only after default auto-analysis completes. Established operations wait for their reply or caller cancellation; there is no fixed response-size ceiling.                                                                                                                  |
+| Analysis state   | The authenticated bridge serves bounded progress snapshots during auto-analysis. Inventory and function operations wait for analysis and finalization to complete. Progress previews do not establish complete inventory coverage.                                                              |
 
 String-search completeness applies only to Ghidra-defined string `Data`. Packed
 or undefined literals, including Rust strings, may be absent; an empty result
 does not prove text is absent. Both list and search Evidence carry this
 limitation. When an address is known, use `read_bytes` and `xrefs` to inspect
 bytes and references.
+
+## Optional completed-analysis cache
+
+On Linux/macOS, set `REA_GHIDRA_CACHE_DIR` to a directory to reuse completed
+baseline analysis across sessions. Caching is disabled by default and on
+Windows. Entries are keyed by target digest, Ghidra version, committed analysis
+profile (including seeds and analyzer options), and bridge Java sources.
+Each hit is copied into the private session directory and checked against its
+manifest size and SHA-256 before import. The bridge also checks the saved
+target and profile identity.
+
+The baseline is saved before analysis extensions and interactive annotations;
+extensions run again in each session, and later names/comments never update
+the cache. Missing or invalid entries trigger ordinary analysis. Cache access
+failures fall back only after partial session files are removed; failed cleanup
+remains owned and prevents successful startup.
+
+Cached archives persist until the selected directory is cleared. REA does not
+currently evict old entries automatically. Clear the directory while sessions
+are closed to reclaim space. Target bytes and the Ghidra installation remain
+unchanged.
 
 ## PE debug-symbol coverage
 
@@ -162,7 +183,7 @@ profile stages before retrying their retained descriptors.
 
 | Concern                 | Ghidra contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Decompiler lifetime     | One persistent `DecompInterface` is opened for the imported Program and disposed during bridge shutdown. Native decompilation has no fixed per-function deadline. External functions or functions without bodies return `null`; cancellation and native failure remain distinct.                                                                                                                                                                                                                                                                                                                                           |
+| Decompiler lifetime     | One persistent `DecompInterface` is opened for the imported Program and disposed during bridge shutdown. Each native decompilation has a 30-second deadline, reported as an analysis timeout. External functions or functions without bodies return `null`; cancellation and native failure remain distinct.                                                                                                                                                                                                                                                                                                               |
 | Serialization           | A FIFO sends one Program request at a time. Caller cancellation removes queued work promptly and is passed to active socket waits. This is an adapter safety commitment, not a claim that every Ghidra API is thread-safe.                                                                                                                                                                                                                                                                                                                                                                                                 |
 | Function identity       | Every function result carries the entry address and Ghidra FunctionManager classification for external, thunk, and resolved thunk target. These are observations, not proof that unresolved targetless calls have been recovered.                                                                                                                                                                                                                                                                                                                                                                                          |
 | Assembly and pseudocode | Assembly is complete Ghidra Listing text; pseudocode is Ghidra decompiler output. Neither is original source, and cross-provider comparison never treats Hopper and Ghidra text as equal or unequal semantic facts.                                                                                                                                                                                                                                                                                                                                                                                                        |

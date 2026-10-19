@@ -31,6 +31,58 @@ import type {
   ProcessCaptureCleanupReport,
 } from "../../../src/domain/process/processCapture.js";
 const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
+
+it.each(["list_procedures", "list_strings"] as const)(
+  "validates retained %s delivery against its canonical contract",
+  (operation) => {
+    const rows = Array.from({ length: 200 }, (_, index) => ({
+      address: `0x${index.toString(16)}`,
+      value: `inventory row ${index}`,
+    }));
+    const evidence = createEvidence(
+      undefined,
+      { id: "fixture", name: "Fixture", version: "1" },
+      { operation, parameters: {}, result: rows },
+    );
+    const contract = toolContract(operation);
+    const boundedDelivery = new ToolResultDelivery(4096);
+    const result = boundedDelivery.toEvidenceToolResult(evidence, contract, {
+      ok: true,
+      value: "recorded",
+    });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      delivery: "retained-inventory",
+      total_items: rows.length,
+      evidence_id: evidence.evidence_id,
+    });
+    expect(
+      contract.outputSchema.safeParse(result.structuredContent).success,
+    ).toBe(true);
+
+    const unretained = boundedDelivery.toEvidenceToolResult(
+      evidence,
+      contract,
+      undefined,
+    );
+    expect(unretained.isError).toBe(true);
+    expect(unretained.structuredContent).not.toHaveProperty("continuation");
+
+    const retentionFailure = new HopperProcessError(76);
+    expect(
+      boundedDelivery.toEvidenceToolResult(
+        evidence,
+        contract,
+        err(retentionFailure),
+      ),
+    ).toEqual(
+      boundedDelivery.toErrorToolResult(
+        retentionFailure,
+        contract.returnsTargetContent,
+      ),
+    );
+  },
+);
 const UNTRUSTED_TARGET_CONTENT = {
   provenance: { untrusted_content: true, source: "analysis_target" },
 };

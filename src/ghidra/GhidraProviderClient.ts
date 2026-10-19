@@ -922,6 +922,8 @@ const projectPrimarySessionError = (
           ? failure
           : failure.cancellation.reason,
     });
+  if (failure.kind === "remote" && failure.remoteCode === "decompile_timeout")
+    return new AnalysisTimeoutError(operation, 30_000, context);
   if (failure.kind === "analysis_timeout")
     return new AnalysisTimeoutError(
       operation,

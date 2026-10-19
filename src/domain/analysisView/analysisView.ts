@@ -128,6 +128,7 @@ import {
   dartAotViewRequestSchema,
   dartAotViewContextSchema,
 } from "./dartAotView.js";
+import { projectAddressedInventoryView } from "./addressedInventoryView.js";
 
 const summaryViewSchema = z.strictObject({ kind: z.literal("summary") });
 const facetViewSchema = z.strictObject({
@@ -170,9 +171,15 @@ const itemViewSchema = z.discriminatedUnion("collection", [
   moduleItemViewSchema,
   sectionOrSymbolItemViewSchema,
 ]);
-const pageViewSchema = z.strictObject({
+export const pageViewSchema = z.strictObject({
   kind: z.literal("page"),
-  collection: z.enum(["sections", "symbols", "modules"]),
+  collection: z.enum([
+    "sections",
+    "symbols",
+    "modules",
+    "procedures",
+    "strings",
+  ]),
   offset: z.number().int().nonnegative(),
   limit: z.number().int().positive(),
 });
@@ -263,11 +270,13 @@ inlineEvidenceInputSchema._zod.processJSONSchema =
   evidenceSchema._zod.processJSONSchema;
 
 /** Unauthenticated inline input or an exact same-session retained reference. */
+export const retainedEvidenceReferenceSchema = z.strictObject({
+  kind: z.literal("retained-evidence"),
+  evidence_id: prefixedDigestSchema("ev"),
+});
+
 export const analysisViewSourceSchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    kind: z.literal("retained-evidence"),
-    evidence_id: prefixedDigestSchema("ev"),
-  }),
+  retainedEvidenceReferenceSchema,
   z.strictObject({
     kind: z.literal("inline"),
     evidence: inlineEvidenceInputSchema,
@@ -362,6 +371,8 @@ const viewResultBase = {
     "inspect_desktop_application",
     "analyze_javascript_application",
     "analyze_function",
+    "list_procedures",
+    "list_strings",
     "inspect_artifact",
     "inventory_artifact",
     "inspect_wasm_artifact",
@@ -817,7 +828,7 @@ const unsupportedParent = (
     parentArtifactPath(parent),
     parent.operation === "capture_browser_scenario"
       ? `Parent Evidence operation "capture_browser_scenario" supports only the environment-manifest view.`
-      : `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views. Use completed binary layout, JavaScript application, native function, artifact inventory/inspection, WASM, Mach-O, Interface Builder, EVM, managed artifact or member, Android package, Dart AOT, or web network capture Evidence.`,
+      : `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views. Use completed binary layout, JavaScript application, native function, procedure inventory, artifact inventory/inspection, WASM, Mach-O, Interface Builder, EVM, managed artifact or member, Android package, Dart AOT, or web network capture Evidence.`,
   );
 
 const parentArtifactPath = (parent: AnalysisViewParent): string => {
@@ -939,6 +950,20 @@ export const projectAnalysisView = (
         ),
       );
     const projected = projectNativeFunctionView(parent, native.data, view);
+    return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
+  }
+  if (parent.operation === "list_procedures") {
+    const projected = projectAddressedInventoryView(parent, view, {
+      operation: "list_procedures",
+      collection: "procedures",
+    });
+    return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
+  }
+  if (parent.operation === "list_strings") {
+    const projected = projectAddressedInventoryView(parent, view, {
+      operation: "list_strings",
+      collection: "strings",
+    });
     return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
   }
   const project = retainedViewProjectors.get(parent.operation);

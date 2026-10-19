@@ -1,3 +1,4 @@
+import { createEvidence } from "../../../src/domain/evidence.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -99,13 +100,23 @@ describe("read_bytes contract", () => {
       contract?.inputSchema.safeParse({ address: "0x1000", length: 0 }).success,
     ).toBe(false);
     expect(
-      contract?.outputSchema.shape.normalized_result.safeParse({
-        address: "0x1000",
-        requested_bytes: 4097,
-        returned_bytes: 4097,
-        bytes_hex: "ff".repeat(4097),
-        complete: true,
-      }).success,
+      contract?.outputSchema.safeParse(
+        createEvidence(
+          undefined,
+          { id: "fixture", name: "Fixture", version: "1" },
+          {
+            operation: "read_bytes",
+            parameters: {},
+            result: {
+              address: "0x1000",
+              requested_bytes: 4097,
+              returned_bytes: 4097,
+              bytes_hex: "ff".repeat(4097),
+              complete: true,
+            },
+          },
+        ),
+      ).success,
     ).toBe(true);
   });
 });
@@ -116,18 +127,28 @@ describe("list_strings contract", () => {
       ({ name }) => name === "list_strings",
     );
     expect(
-      contract?.outputSchema.shape.normalized_result.safeParse([
-        {
-          address: "0x1000",
-          value: "coffee",
-          string: {
-            encoding: "UTF-8",
-            termination: "present_or_not_required",
-            byte_length: 6,
+      contract?.outputSchema.safeParse(
+        createEvidence(
+          undefined,
+          { id: "fixture", name: "Fixture", version: "1" },
+          {
+            operation: "list_strings",
+            parameters: {},
+            result: [
+              {
+                address: "0x1000",
+                value: "coffee",
+                string: {
+                  encoding: "UTF-8",
+                  termination: "present_or_not_required",
+                  byte_length: 6,
+                },
+              },
+              { address: "0x1008", value: "beans" },
+            ],
           },
-        },
-        { address: "0x1008", value: "beans" },
-      ]).success,
+        ),
+      ).success,
     ).toBe(true);
   });
 });

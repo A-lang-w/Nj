@@ -10,6 +10,7 @@ import {
 import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
 import { parseBinaryTarget } from "../BinaryTargetResolver.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
+import type { ProgressReporter } from "../ProgressReporter.js";
 import {
   EvidenceIntegrityError,
   AnalysisSnapshotMismatchError,
@@ -26,6 +27,7 @@ export type AnalysisSnapshotLoader = () => Promise<
 
 export interface BinarySessionOpenOptions {
   readonly signal?: AbortSignal;
+  readonly progress?: ProgressReporter;
   readonly targetKind?: BinaryTarget["kind"];
   readonly formatHint?: ExecutableFormatHint;
   readonly architecture?: BinaryArchitecture;

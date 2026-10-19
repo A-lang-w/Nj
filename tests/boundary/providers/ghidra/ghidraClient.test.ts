@@ -170,7 +170,7 @@ describe("GhidraClient ready-only dispatch", () => {
 });
 
 it("reports unknown startup work and stops notifications when cancellation releases the process", async () => {
-  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   const launcher = new FixtureLauncher("silent");
   const client = clientFor(launcher, { startupTimeoutMs: 30_000 });
   const controller = new AbortController();
@@ -204,8 +204,8 @@ it("reports unknown startup work and stops notifications when cancellation relea
   expect(updates).toHaveLength(1);
 });
 
-it("keeps one shared startup despite a failed progress sink and stops reports after readiness", async () => {
-  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+it("keeps one shared startup when progress delivery fails", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   const launcher = new FixtureLauncher();
   let releaseLaunch: (() => void) | undefined;
   let markLaunchPending: (() => void) | undefined;
@@ -236,11 +236,11 @@ it("keeps one shared startup despite a failed progress sink and stops reports af
   await launchPending;
   await vi.advanceTimersByTimeAsync(10_000);
   expect(reports).toBe(1);
+  vi.useRealTimers();
   releaseLaunch?.();
   await expect(started).resolves.toMatchObject({ ok: true });
   await expect(concurrent).resolves.toMatchObject({ ok: true });
   expect(launcher.processes).toHaveLength(1);
-  await vi.advanceTimersByTimeAsync(30_000);
   expect(reports).toBe(1);
 });
 
@@ -914,6 +914,40 @@ describe("GhidraClient captured source snapshot", () => {
     await expect(client.readTargetSnapshot()).resolves.toMatchObject({
       ok: false,
       error: { kind: "protocol" },
+    });
+  });
+});
+
+describe("Ghidra startup progress", () => {
+  it("streams procedure discoveries until the analysis handshake completes", async () => {
+    const launcher = new FixtureLauncher("analyzing_then_complete");
+    const client = clientFor(launcher, { startupTimeoutMs: 5_000 });
+    const updates: ProgressUpdate[] = [];
+
+    const started = await client.start(undefined, {
+      report: async (update) => {
+        updates.push(update);
+      },
+    });
+
+    if (!started.ok) throw started.error;
+    expect(started.value.analysis_complete).toBe(true);
+    expect(
+      launcher.requests.filter((method) => method === "ping").length,
+    ).toBeGreaterThan(1);
+    expect(launcher.requests).toContain("analysis_snapshot");
+
+    const analysisUpdate = updates.find(
+      (update) => update.phase === "ghidra_analysis",
+    );
+    expect(analysisUpdate).toBeDefined();
+    expect(JSON.parse(analysisUpdate?.message ?? "null")).toEqual({
+      status: "analyzing",
+      observed: 2,
+      procedures: [
+        { address: "0x1000", name: "fixture_main", kind: "Function" },
+        { address: "0x1010", name: "fixture_thunk", kind: "Thunk" },
+      ],
     });
   });
 });

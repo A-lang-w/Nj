@@ -178,6 +178,22 @@ describe.skipIf(process.platform === "win32")(
 describe.skipIf(process.platform === "win32")(
   "Ghidra LaunchSupport JVM compatibility",
   () => {
+    it("leaves GC and JIT worker sizing to JVM ergonomics", async () => {
+      const { session, launcher, analysisArguments } = await fixture("quiet");
+      const launched = await launcher.launch(session);
+      if (!launched.ok) throw launched.error;
+      expect(
+        analysisArguments[0]?.some((arg) =>
+          arg.startsWith("-XX:ParallelGCThreads="),
+        ),
+      ).toBe(false);
+      expect(
+        analysisArguments[0]?.some((arg) =>
+          arg.startsWith("-XX:CICompilerCount="),
+        ),
+      ).toBe(false);
+    });
+
     it("reports the selected heap after LaunchSupport's earlier heap argument", async () => {
       const { session, launcher, analysisArguments } =
         await fixture("heap-override");

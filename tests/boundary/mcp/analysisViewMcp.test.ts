@@ -49,6 +49,96 @@ import { BINARY_LAYOUT_TEST_PROVIDER } from "../../fixtures/binaryDiagnostics/la
 import { wasmArtifactFixture } from "../../fixtures/wasm/artifact.js";
 import { evmInterfaceFixture } from "../../fixtures/evm/interface.js";
 import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
+import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+
+it.each(["list_procedures", "list_strings"] as const)(
+  "retrieves every retained %s row through its advertised MCP continuation",
+  async (operation) => {
+    const rows = Array.from({ length: 600 }, (_, index) => ({
+      address: `0x${(0x1000 + index).toString(16)}`,
+      value: `inventory item ${index}`,
+      ...(operation === "list_procedures"
+        ? { procedure: { external: false, thunk: false, thunk_target: null } }
+        : {
+            string: {
+              encoding: "UTF-8",
+              termination: "present_or_not_required",
+              byte_length: 20,
+            },
+          }),
+    }));
+    const { mcp, session, calls, close } = await connectGhidraMcp(
+      "retained-inventory",
+      () => Promise.resolve(ok(rows)),
+      { delivery: new ToolResultDelivery(128 * 1024) },
+    );
+    onTestFinished(close);
+    const receipt = await mcp.callTool({ name: operation, arguments: {} });
+    expect(receipt.isError, JSON.stringify(receipt)).not.toBe(true);
+    const schema = await advertisedMcpToolSchemas(mcp, operation);
+    expect(
+      schema.ajv.validate(schema.outputSchema, receipt.structuredContent),
+    ).toBe(true);
+    expect(
+      toolContract(operation).outputSchema.safeParse(receipt.structuredContent)
+        .success,
+    ).toBe(true);
+    expect(receipt.structuredContent).toMatchObject({
+      delivery: "retained-inventory",
+      total_items: rows.length,
+    });
+
+    const receiptData = z
+      .object({ evidence_id: z.string() })
+      .parse(receipt.structuredContent);
+    const retained = session.evidenceById(receiptData.evidence_id);
+    expect(retained?.normalized_result).toEqual(rows);
+    expect(retained?.provider.id).toBe("ghidra");
+    const viewSchemas = await advertisedMcpToolSchemas(
+      mcp,
+      "inspect_analysis_view",
+    );
+    const readerPath = new URL(
+      "../../../scripts/lib/mcp-verifier-results.mjs",
+      import.meta.url,
+    ).href;
+    const reader: {
+      requireMcpInventoryResult: (
+        result: unknown,
+        name: string,
+        call: (request: {
+          name: string;
+          arguments: Record<string, unknown>;
+        }) => Promise<unknown>,
+      ) => Promise<unknown>;
+    } = await import(readerPath);
+    let pages = 0;
+    const recovered = await reader.requireMcpInventoryResult(
+      receipt,
+      operation,
+      async (request) => {
+        expect(
+          viewSchemas.ajv.validate(viewSchemas.inputSchema, request.arguments),
+        ).toBe(true);
+        const response = await mcp.callTool(request);
+        expect(response.isError).not.toBe(true);
+        expect(
+          viewSchemas.ajv.validate(
+            viewSchemas.outputSchema,
+            response.structuredContent,
+          ),
+        ).toBe(true);
+        const evidence = parseEvidence(response.structuredContent);
+        expect(evidence.evidence_links).toContain(receiptData.evidence_id);
+        pages++;
+        return response;
+      },
+    );
+    expect(recovered).toEqual(rows);
+    expect(pages).toBeGreaterThan(1);
+    expect(calls).toEqual([operation]);
+  },
+);
 
 const connect = async (
   binaryLayout?: BinaryLayoutService,

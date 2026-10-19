@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { inventoryResultOf } from "./toolOutputSchemaPrimitives.js";
 import { byteSearchResultSchema } from "../domain/native/bytePattern.js";
 import {
   artifactInventorySummaryViewResultSchema,
@@ -114,7 +115,9 @@ const bookmarkFacetSchema = z.discriminatedUnion("state", [
 ]);
 
 /** Exact structured-content schemas shared by direct analysis providers. */
-export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
+export const officialOutputSchemas: Readonly<
+  Record<string, z.ZodType<Record<string, unknown>>>
+> = {
   search_bytes: evidenceResultOf(byteSearchResultSchema),
   annotate_native_function: evidenceResultOf(nativeFunctionAnnotationsSchema),
   inspect_native_load_image: evidenceResultOf(nativeLoadImageSchema),
@@ -131,9 +134,17 @@ export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   list_bookmarks: evidenceResultOf(z.array(analysisBookmarkSchema)),
   list_documents: evidenceResultOf(z.array(z.string())),
   list_names: evidenceResultOf(z.array(addressedValue)),
-  list_procedures: evidenceResultOf(z.array(addressedValue)),
+  list_procedures: inventoryResultOf(
+    z.array(addressedValue),
+    "list_procedures",
+    "procedures",
+  ),
   list_segments: segmentOutput,
-  list_strings: evidenceResultOf(z.array(analysisStringSchema)),
+  list_strings: inventoryResultOf(
+    z.array(analysisStringSchema),
+    "list_strings",
+    "strings",
+  ),
   next_address: evidenceResultOf(z.string()),
   prev_address: evidenceResultOf(z.string()),
   procedure_address: evidenceResultOf(z.string()),

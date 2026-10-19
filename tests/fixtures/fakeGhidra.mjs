@@ -92,6 +92,7 @@ else {
       providerVersion,
       profileDigest,
       targetSha256,
+      snapshots: { value: 0 },
     };
     socket.on("data", (chunk) => onSocketData(socket, server, chunk, state));
   });
@@ -162,6 +163,33 @@ const handleOutputFailure = (socket, state) => {
 const handleRequest = (socket, server, request, state) => {
   if (request.method === "ping") {
     handlePing(socket, request, state);
+    return;
+  }
+  if (request.method === "analysis_snapshot") {
+    state.snapshots.value += 1;
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: true,
+        result: {
+          status:
+            state.mode === "analyzing_then_complete" ? "analyzing" : "complete",
+          observed: 2,
+          procedures: [
+            procedureItem(),
+            {
+              address: "0x1010",
+              value: "fixture_thunk",
+              procedure: {
+                external: false,
+                thunk: true,
+                thunk_target: "0x1000",
+              },
+            },
+          ],
+        },
+      })}\n`,
+    );
     return;
   }
   if (
@@ -288,6 +316,9 @@ const handlePing = (socket, request, state) => {
     profileDigest: state.profileDigest,
     targetSha256: state.targetSha256,
     timedOut: state.mode === "analysis_timeout",
+    analysisComplete:
+      state.mode !== "analyzing_then_complete" ||
+      (state.snapshots.value > 0 && state.pings.value >= 5),
   });
   const response = `${JSON.stringify({ id: request.id, ok: true, result })}\n`;
   if (state.mode === "fragmented") {
@@ -303,13 +334,14 @@ const sessionInfo = ({
   profileDigest: digest,
   targetSha256: sha256,
   timedOut,
+  analysisComplete,
 }) => ({
   name: "REA Ghidra bridge",
   run_id: sessionRunId,
   profile_digest: digest,
   provider: { id: "ghidra", version },
   read_only: transport !== "unix-socket",
-  analysis_complete: !timedOut,
+  analysis_complete: analysisComplete && !timedOut,
   analysis_timed_out: timedOut,
   capabilities: [
     "read_binary_inventory_summary",

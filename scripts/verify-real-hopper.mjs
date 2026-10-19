@@ -30,6 +30,7 @@ import {
   requireMcpOperationResult,
   requireMcpLifecycleResult,
   requireMcpEvidenceResult,
+  requireMcpInventoryResult,
   sortVerifierNames,
   requireWorkflowEvidenceProvider,
 } from "./lib/mcp-verifier-results.mjs";
@@ -154,9 +155,10 @@ const verifyByteAccess = async (client, options, firstAddress) => {
 };
 
 const verifyCurrentTarget = async (client, options) => {
-  const procedures = requireMcpEvidenceResult(
+  const procedures = await requireMcpInventoryResult(
     await client.callTool({ name: "list_procedures", arguments: {} }, options),
     "list_procedures",
+    (request) => client.callTool(request, options),
   );
   const firstAddress = firstProcedureAddress(procedures);
   const byteAccess = await verifyByteAccess(client, options, firstAddress);

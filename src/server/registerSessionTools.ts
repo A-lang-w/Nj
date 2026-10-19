@@ -179,9 +179,11 @@ const registerOpenLifecycleTool = (
     toolRegistrationOptions(openContract),
     async (input, context) => {
       const snapshotPath = input.snapshot_path;
+      const progress = mcpProgressReporter(context);
       const opened = await logToolExecution(logger, openContract.name, () =>
         session.open(input.path, {
           signal: context.mcpReq.signal,
+          progress,
           ...(input.format === undefined ? {} : { formatHint: input.format }),
           ...(input.architecture === undefined
             ? {}

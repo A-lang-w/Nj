@@ -1,3 +1,5 @@
+import { jsonValueSchema } from "../../../../src/domain/jsonValue.js";
+import { createEvidence } from "../../../../src/domain/evidence.js";
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -151,8 +153,17 @@ describe("Hopper API facade", () => {
         (candidate) => candidate.name === name,
       );
       if (contract === undefined) throw new Error(`missing ${name} contract`);
-      const parsed =
-        contract.outputSchema.shape.normalized_result.safeParse(value);
+      const parsed = contract.outputSchema.safeParse(
+        createEvidence(
+          undefined,
+          { id: "fixture", name: "Fixture", version: "1" },
+          {
+            operation: name,
+            parameters: {},
+            result: jsonValueSchema.parse(value),
+          },
+        ),
+      );
       if (!parsed.success) throw new Error(`${name}: ${parsed.error.message}`);
       expect(parsed.success, name).toBe(true);
     }

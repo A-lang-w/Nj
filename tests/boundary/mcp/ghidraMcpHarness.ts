@@ -17,6 +17,7 @@ import { GHIDRA_SESSION_CAPABILITIES } from "../../../src/ghidra/GhidraSessionVa
 import type { GhidraSessionInfo } from "../../../src/ghidra/GhidraSessionValues.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
+import type { ToolResultDelivery } from "../../../src/server/toolResult.js";
 import {
   ghidraFunctionClassification,
   ghidraFunctionDossier,
@@ -30,6 +31,7 @@ export const connectGhidraMcp = async (
   name: string,
   execute?: ReturnType<GhidraProviderClientFactory>["callTool"],
   fixture: {
+    readonly delivery?: ToolResultDelivery;
     readonly targetPath?: string;
     readonly pdb?: GhidraSessionInfo["pdb"];
     readonly sessionTarget?: GhidraSessionInfo["target"];
@@ -72,7 +74,10 @@ export const connectGhidraMcp = async (
   );
   const server = createServer(
     { kind: "session", session },
-    { logger: silentLogger },
+    {
+      logger: silentLogger,
+      ...(fixture.delivery ? { delivery: fixture.delivery } : {}),
+    },
   );
   const mcp = new Client({ name, version: "1.0.0" });
   const [clientTransport, serverTransport] =

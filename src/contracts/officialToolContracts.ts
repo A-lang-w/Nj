@@ -114,7 +114,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "list_procedures",
-    "List every analyzed procedure as address/value pairs after provider analysis. Ghidra metadata distinguishes thunks and external functions; use returned addresses in later function operations.",
+    "List every analyzed procedure as address/value pairs after provider analysis. Ghidra metadata distinguishes thunks and external functions; use returned addresses in later function operations. Large MCP inventories return a retained-inventory receipt; follow its inspect_analysis_view continuation and coverage.next_offset to read every row.",
     z.object({ document }),
   ),
   official(
@@ -124,7 +124,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "list_strings",
-    "List every provider-reported string object or candidate, or filter to one address, as address/value pairs with encoding, terminator status, and byte length when available. Hopper reads complete typed objects and retains its original display text as provider_value; long literals may span adjacent unterminated objects. Kuna scans mapped printable sequences of at least five characters, including unterminated fragments; references are not computed.",
+    "List every provider-reported string object or candidate, or filter to one address, as address/value pairs with encoding, terminator status, and byte length when available. Hopper reads complete typed objects and retains its original display text as provider_value; long literals may span adjacent unterminated objects. Kuna scans mapped printable sequences of at least five characters, including unterminated fragments; references are not computed. Large MCP inventories return a retained-inventory receipt; follow its inspect_analysis_view continuation and coverage.next_offset to read every row.",
     z.object({ document, address: optionalAddress }),
   ),
   official(

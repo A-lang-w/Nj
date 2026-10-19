@@ -243,6 +243,13 @@ application and semantic coverage. The result carries a digest of the selected
 facts. Actual serialized size determines MCP transport admission: reduce the
 page size or export retained Evidence if the view is too large.
 
+When a `list_procedures` or `list_strings` MCP response exceeds the transport
+budget, REA retains the complete inventory and returns a ready
+`inspect_analysis_view` continuation. Use its page view with collection
+`procedures` or `strings`, then follow `coverage.next_offset` until coverage is
+exhausted. Smaller limits help when individual names or string values make a
+page too large.
+
 Completed `inspect_artifact` and atomic `inventory_artifact` Evidence also
 support summary and inventory views. A summary reports the manifest's expected
 counts separately from available record counts, observed entry kinds, inventory
@@ -723,11 +730,14 @@ engine readiness or a percentage of Ghidra auto-analysis. A longer server
 startup allowance does not extend the client's deadline; progress also does not
 extend it unless the client explicitly implements that policy.
 
-While Ghidra startup is pending, REA sends a waiting notification every ten
-seconds when the request has a progress token. Its message gives elapsed waiting
-time; import, auto-analysis and bridge readiness may all still be pending.
-Waiting notifications stop when startup settles or the caller cancels. They do
-not measure engine work completed.
+While Ghidra imports the target, REA sends waiting notifications with elapsed
+time when the request has a progress token. Once the authenticated bridge
+connects, notifications can carry bounded JSON previews of observed procedures
+and analysis status while auto-analysis and finalization continue. Unchanged
+status is reported at most every ten seconds. These previews can omit rows and
+are not the complete inventory; use `list_procedures` after startup succeeds.
+Notifications stop when startup settles or the caller cancels. They do not
+measure a percentage of engine work completed.
 
 The pinned SDK can reset the request's inactivity timeout on progress with
 `resetTimeoutOnProgress: true`. These options belong in the same second
