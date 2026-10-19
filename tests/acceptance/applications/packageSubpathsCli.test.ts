@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, join, relative } from "node:path";
+import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { expect } from "vitest";
@@ -11,6 +10,7 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
+import { writeFixtureFiles } from "../../support/workspace/writeFixtureFiles.js";
 
 const createPackageSubpathFixture = async () => {
   const root = await createTestTempDirectory("rea-package-subpaths-");
@@ -85,13 +85,7 @@ const createPackageSubpathFixture = async () => {
     "node_modules/scalar.js": "module.exports = 'scalar sibling';",
     "node_modules/scalar/package.json": JSON.stringify({ exports: false }),
   };
-  await Promise.all(
-    Object.entries(files).map(async ([path, content]) => {
-      const absolute = join(root, path);
-      await mkdir(dirname(absolute), { recursive: true });
-      await writeFile(absolute, content);
-    }),
-  );
+  await writeFixtureFiles(root, files);
   return { root, source, selfSource, importSource };
 };
 
