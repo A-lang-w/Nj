@@ -103,7 +103,8 @@ export const bundleDockerfile = (source: EnvironmentPackageSource): string =>
     `ENV MCP_PORT=${String(BUNDLE_MCP_PORT)}`,
     READINESS_PROBE_LAYER,
     installLine(source),
-    "COPY manifest.json evidence.json /env/",
+    // Owned by the runtime user, so a private host umask cannot make the inputs unreadable.
+    "COPY --chown=node:node manifest.json evidence.json /env/",
     "USER node",
     'CMD ["rea","environment-serve","/env/manifest.json","--evidence","/env/evidence.json"]',
     "",
@@ -125,7 +126,9 @@ const replayCheck = (
   return {
     tool: tool.name,
     recordOrdinal: ordinal,
-    status: exchange?.status ?? tool.statuses[0] ?? null,
+    // An exchange's own unknown status is what replay returns; fall back only when the record is absent.
+    status:
+      exchange === undefined ? (tool.statuses[0] ?? null) : exchange.status,
   };
 };
 
@@ -169,7 +172,7 @@ export const bundleVerifier = (
     '    description = f"listed {count} tools, expected {TOOL_COUNT}"',
     "    if result is not None:",
     "        status = None if result.isError else replayed_status(result)",
-    "        passed = passed and status == RECORDED_STATUS",
+    "        passed = passed and not result.isError and status == RECORDED_STATUS",
     '        description += f"; {TOOL} replayed status {status!r}, recorded {RECORDED_STATUS!r}"',
     "    else:",
     '        description += "; no GET tool without path parameters to replay"',

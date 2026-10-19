@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { copyFile, mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { getHeapStatistics } from "node:v8";
 
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
@@ -11,8 +12,12 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { nativeJsonParseRequiredBytes } from "../JsonInputFile.js";
 import { readRegularFile } from "../RegularFileRead.js";
-import { parseUtf8Json } from "../Utf8JsonInput.js";
+import {
+  JSON_INPUT_RESOURCE_REMEDIATION,
+  parseUtf8Json,
+} from "../Utf8JsonInput.js";
 import {
   ENVIRONMENT_EXPORT_OPERATION,
   planEnvironmentBundle,
@@ -172,6 +177,30 @@ const NOT_A_FILE_CODES = new Set([
   "ENAMETOOLONG",
 ]);
 
+/** Refuse, as a resource constraint, a file whose whole read and native parse would not fit live heap headroom. */
+const headroomRefusal = (
+  path: string,
+  inputBytes: number,
+): AnalysisResourceConstraintError | undefined => {
+  const heap = getHeapStatistics();
+  const requiredBytes = nativeJsonParseRequiredBytes(inputBytes);
+  return requiredBytes <= heap.total_available_size
+    ? undefined
+    : new AnalysisResourceConstraintError(
+        ENVIRONMENT_EXPORT_OPERATION,
+        "memory",
+        "Insufficient heap headroom to read and parse the complete JSON file",
+        {
+          input_path: path,
+          input_file_bytes: inputBytes,
+          required_heap_bytes: requiredBytes,
+          available_heap_bytes: heap.total_available_size,
+          heap_size_limit_bytes: heap.heap_size_limit,
+        },
+        { remediationAction: JSON_INPUT_RESOURCE_REMEDIATION },
+      );
+};
+
 /** Read one input once: the same bytes are parsed for authentication and copied into the bundle. */
 const readInput = async (
   role: "manifest" | "evidence",
@@ -179,6 +208,9 @@ const readInput = async (
 ): Promise<Result<EnvironmentExportFile, AnalysisError>> => {
   let bytes: Buffer;
   try {
+    // Admit the whole read before materializing it; the bundle needs these exact bytes.
+    const refused = headroomRefusal(path, (await stat(path)).size);
+    if (refused !== undefined) return err(refused);
     bytes = await readRegularFile(path);
   } catch (cause: unknown) {
     if (NOT_A_FILE_CODES.has(systemCode(cause) ?? ""))

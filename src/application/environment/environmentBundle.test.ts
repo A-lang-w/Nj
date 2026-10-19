@@ -62,7 +62,9 @@ describe("planEnvironmentBundle", () => {
     expect(lines).toContain(
       `RUN npm install -g --ignore-scripts --no-fund --no-audit rea-agents@${PACKAGE_METADATA.version}`,
     );
-    expect(lines).toContain("COPY manifest.json evidence.json /env/");
+    expect(lines).toContain(
+      "COPY --chown=node:node manifest.json evidence.json /env/",
+    );
     expect(lines).toContain("USER node");
     expect(lines.at(-1)).toBe(
       'CMD ["rea","environment-serve","/env/manifest.json","--evidence","/env/evidence.json"]',
@@ -102,6 +104,9 @@ describe("planEnvironmentBundle", () => {
     expect(verifier).toContain("TOOL_COUNT = 19");
     expect(verifier).toContain('TOOL = "get_annotations"');
     expect(verifier).toContain("RECORDED_STATUS = 200");
+    expect(verifier).toContain(
+      "passed = passed and not result.isError and status == RECORDED_STATUS",
+    );
     expect(verifier).toContain("await session.list_tools()");
     expect(verifier).toContain("await session.call_tool(TOOL, {})");
     expect(verifier).toContain(
@@ -178,5 +183,27 @@ describe("planEnvironmentBundle", () => {
         },
       });
     }
+  });
+});
+
+describe("planEnvironmentBundle replay check", () => {
+  it("keeps the first record's unknown status instead of borrowing another record's", () => {
+    const source = environmentServeSource();
+    const first = source.exchanges.get(25);
+    if (first === undefined) throw new Error("Fixture lacks record 25");
+    const exchanges = new Map(source.exchanges);
+    exchanges.set(25, { ...first, status: null });
+    const planned = planEnvironmentBundle(
+      { ...source, exchanges },
+      { packageSource: registryPackageSource() },
+    );
+    if (!planned.ok) throw planned.error;
+    expect(planned.value.check).toMatchObject({
+      recordOrdinal: 25,
+      status: null,
+    });
+    expect(
+      file(planned.value, "artifacts/check_grafana-example/verify.py"),
+    ).toContain("RECORDED_STATUS = None");
   });
 });

@@ -1,7 +1,8 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import * as v8 from "node:v8";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   environmentServeFixture,
@@ -15,6 +16,8 @@ import {
   exportEnvironmentBundle,
   readEnvironmentExportInputs,
 } from "./environmentExport.js";
+
+vi.mock("node:v8", { spy: true });
 
 const listFiles = async (root: string): Promise<string[]> =>
   (await readdir(root, { recursive: true, withFileTypes: true }))
@@ -58,6 +61,32 @@ describe("readEnvironmentExportInputs", () => {
       await readFile(files.capturePath),
     );
     expect(inputs.value.evidence.value).toEqual(fixture.capture);
+  });
+
+  it("refuses an input whose whole read and parse would not fit live heap headroom, before reading it", async () => {
+    const root = await createTestTempDirectory("rea-environment-export-heap-");
+    const files = await writeEnvironmentServeFiles(
+      root,
+      environmentServeFixture(),
+    );
+    vi.mocked(v8.getHeapStatistics).mockReturnValueOnce({
+      ...v8.getHeapStatistics(),
+      total_available_size: 1024,
+    });
+    const refused = await readEnvironmentExportInputs(
+      files.manifestPath,
+      files.capturePath,
+    );
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      resource: "memory",
+      reportedLimits: {
+        input_path: files.manifestPath,
+        available_heap_bytes: 1024,
+      },
+    });
   });
 
   it("refuses inline JSON, a directory and a file that is not JSON by role", async () => {

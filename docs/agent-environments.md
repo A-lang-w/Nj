@@ -202,7 +202,9 @@ grafana-example/
   tasks/smoke.json                          deploy_env (local sandbox), then env_outcome_verifier
 ```
 
-The command reads each file once, then authenticates and cross-checks the
+The command reads each file once, after checking that reading and parsing the
+whole file fits the process's live heap headroom (a file that does not is
+refused as a `resource_constraint` before it is read), then authenticates and cross-checks the
 pair as `environment-serve` does, so a manifest projected from another capture
 is refused with the same `invalid_request` before anything is written, and the
 bytes it copies are the bytes it authenticated. The bundle directory must be
@@ -219,7 +221,8 @@ framework maps for an MCP server env; the framework's own deploy supplies
 `MCP_HOST`, `MCP_PORT` and `ENVIRONMENT_NAME`, so the served card carries the
 env's name. It installs Debian's `python3` because the framework's local
 sandbox probes a container's readiness with `python3` inside it, which the slim
-Node image lacks. The image runs as the image's non-root `node` user and starts
+Node image lacks. It copies the two inputs owned by the image's non-root `node`
+user, so a private host umask cannot leave them unreadable, runs as that user and starts
 `rea environment-serve /env/manifest.json --evidence /env/evidence.json`. The
 `env.toml` names the environment because the framework otherwise reads the
 name from Python sources the image does not have.
@@ -227,8 +230,10 @@ name from Python sources the image does not have.
 `verify.py` is the framework's `async def verify(mcp_url)` shape over its
 Python MCP client: it lists the tools and checks the count equals the
 manifest's, calls the first `GET` tool without path parameters with no
-arguments and checks the replayed `status` equals the recorded status of that
-tool's first cited record, and returns one `replay` result whose description
+arguments and checks the call did not fail and its replayed `status` equals the
+recorded status of that tool's first cited record (an unknown recorded status
+stays unknown; it is not borrowed from another record), and returns one
+`replay` result whose description
 reports both checks. A manifest with no such tool yields a verifier that checks
 the count only and says so. `tasks/smoke.json` deploys the env on the local
 sandbox and runs that verifier against the env's MCP endpoint; the first run
