@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { Readable } from "node:stream";
+import { finished } from "node:stream";
 
 /** Fetch rejects a body on these methods, so their request streams are not forwarded. */
 const BODYLESS_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD"]);
@@ -14,7 +14,8 @@ export class UnsupportedRequestTargetError extends Error {
 
 /** Join an origin-form target onto the listener's origin verbatim, so `//host/path` stays a path and a path that URL parsing would rewrite (dot segments) is refused rather than routed elsewhere. */
 const requestUrl = (target: string, origin: string): URL => {
-  if (!target.startsWith("/")) throw new UnsupportedRequestTargetError(target);
+  if (!target.startsWith("/") || target.includes("#"))
+    throw new UnsupportedRequestTargetError(target);
   const url = new URL(`${origin}${target}`);
   const rawPath = target.split("?")[0] ?? "";
   if (url.pathname !== rawPath) throw new UnsupportedRequestTargetError(target);
@@ -30,6 +31,58 @@ const toHeaders = (incoming: IncomingMessage["headers"]): Headers => {
     else headers.set(name, value);
   }
   return headers;
+};
+
+/** Cancelling a body stops reads; the response owner closes an unread upload after replying. */
+const requestBody = (request: IncomingMessage): ReadableStream<Uint8Array> => {
+  let ended = false;
+  let controller: ReadableStreamDefaultController<Uint8Array>;
+  let cleanup = (): void => undefined;
+  const onData = (chunk: unknown): void => {
+    if (ended) return;
+    if (!Buffer.isBuffer(chunk)) {
+      ended = true;
+      request.pause();
+      request.off("data", onData);
+      controller.error(new TypeError("HTTP request body must be bytes"));
+      return;
+    }
+    controller.enqueue(new Uint8Array(chunk));
+    if ((controller.desiredSize ?? 0) <= 0) request.pause();
+  };
+  return new ReadableStream<Uint8Array>(
+    {
+      start(target) {
+        controller = target;
+        request.pause();
+        cleanup = finished(
+          request,
+          { readable: true, writable: false },
+          (cause) => {
+            request.off("data", onData);
+            cleanup();
+            if (ended) return;
+            ended = true;
+            if (cause) controller.error(cause);
+            else controller.close();
+          },
+        );
+        request.on("data", onData);
+      },
+      pull() {
+        if (!ended) request.resume();
+      },
+      cancel() {
+        ended = true;
+        request.pause();
+        request.off("data", onData);
+        // Keep finished's error/close ownership until the raw request settles.
+      },
+    },
+    new ByteLengthQueuingStrategy({
+      highWaterMark: request.readableHighWaterMark,
+    }),
+  );
 };
 
 /** Translate a node:http request into a web Request whose signal aborts when the client leaves. */
@@ -49,7 +102,7 @@ export const toWebRequest = (
     signal: controller.signal,
     ...(BODYLESS_METHODS.has(method)
       ? {}
-      : { body: Readable.toWeb(request), duplex: "half" }),
+      : { body: requestBody(request), duplex: "half" }),
   });
 };
 
@@ -70,6 +123,10 @@ const responseHeaders = (
 /** Resolve on the next `drain` or `close`, removing both listeners, so a long stream does not accumulate waiters. */
 const drainOrClose = (target: ServerResponse): Promise<void> =>
   new Promise((resolve) => {
+    if (target.destroyed) {
+      resolve();
+      return;
+    }
     const settle = (): void => {
       target.off("drain", settle);
       target.off("close", settle);
@@ -79,30 +136,45 @@ const drainOrClose = (target: ServerResponse): Promise<void> =>
     target.once("close", settle);
   });
 
-/** Copy a body into the reply chunk by chunk with backpressure. When the client has left, or leaves, the body is cancelled without waiting, since a teed body's cancellation settles only with its sibling; the cancel also ends a pending read. */
+export interface WebResponseOptions {
+  readonly closeConnection?: boolean;
+  /** Retain cleanup independently of request completion, including pending tee cancellation. */
+  readonly onBodyCleanup?: (cleanup: Promise<void>) => void;
+}
+
+const retainCleanup = (
+  cleanup: Promise<void>,
+  options: WebResponseOptions,
+): void => {
+  options.onBodyCleanup?.(cleanup);
+  // The owner receives the original outcome; standalone writers stay nonblocking.
+  void cleanup.catch(() => undefined);
+};
+
+/** Copy with backpressure; request completion does not wait on source cancellation. */
 const pumpBody = async (
-  body: ReadableStream<Uint8Array>,
+  reader: ReadableStreamDefaultReader<Uint8Array>,
   target: ServerResponse,
+  cancel: () => void,
 ): Promise<void> => {
-  const reader = body.getReader();
   let left = false;
   const leave = (): void => {
+    if (left) return;
     left = true;
-    void reader.cancel().catch(() => undefined);
+    cancel();
   };
-  // A route that resolved after its client disconnected finds the reply already closed.
-  if (target.destroyed) {
-    leave();
-    return;
-  }
   target.once("close", leave);
   try {
+    if (target.destroyed) {
+      leave();
+      return;
+    }
     for (
       let next = await reader.read();
       !next.done && !left;
       next = await reader.read()
     )
-      if (!target.write(next.value)) await drainOrClose(target);
+      if (!target.write(next.value) && !left) await drainOrClose(target);
   } finally {
     target.off("close", leave);
   }
@@ -113,18 +185,44 @@ const pumpBody = async (
 export const writeWebResponse = async (
   response: Response,
   target: ServerResponse,
-  options: { readonly closeConnection?: boolean } = {},
+  options: WebResponseOptions = {},
 ): Promise<void> => {
-  target.writeHead(
-    response.status,
-    responseHeaders(response.headers, options.closeConnection ?? false),
-  );
-  target.flushHeaders();
-  if (response.body === null || target.req.method === "HEAD") {
-    target.end();
-    // Not awaited: cancelling one branch of a teed body settles only once its sibling is consumed or cancelled too.
-    void response.body?.cancel().catch(() => undefined);
-    return;
+  // One owner spans headers, pumping and completion. The pump borrows its reader,
+  // so every output failure cancels the same source exactly once before release.
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  try {
+    reader = response.body?.getReader();
+  } catch (cause: unknown) {
+    retainCleanup(Promise.reject(cause), options);
+    throw cause;
   }
-  await pumpBody(response.body, target);
+  let cancelled = false;
+  const cancel = (): void => {
+    if (cancelled || reader === undefined) return;
+    cancelled = true;
+    retainCleanup(reader.cancel(), options);
+  };
+  try {
+    if (target.destroyed) {
+      cancel();
+      return;
+    }
+    target.writeHead(
+      response.status,
+      responseHeaders(response.headers, options.closeConnection ?? false),
+    );
+    target.flushHeaders();
+    if (reader === undefined || target.req.method === "HEAD") {
+      target.end();
+      // A tee's sibling may remain caller-owned; delivery does not wait for its cleanup.
+      cancel();
+      return;
+    }
+    await pumpBody(reader, target, cancel);
+  } catch (cause: unknown) {
+    cancel();
+    throw cause;
+  } finally {
+    reader?.releaseLock();
+  }
 };

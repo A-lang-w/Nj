@@ -286,6 +286,12 @@ reported separately as configured-secret exclusions.
 Re-import saved graphs whose pattern-based exclusions lack `pattern` before
 using them in source-to-bundle comparisons.
 
+Entries that change during an import retain an unavailable-entry diagnostic
+alongside readable siblings. If enumeration of an already admitted root fails,
+the graph keeps its observed children and records the root failure as a
+top-level limitation. That partial inventory does not establish absence among
+unexamined children.
+
 JavaScript and TypeScript import parsing requires valid UTF-8. Malformed source
 bytes retain their original hashes and sizes with a decoding diagnostic; REA
 does not infer module targets from replacement characters.
@@ -371,7 +377,8 @@ rea environment-export manifest.json --evidence capture.json ./grafana-example -
 
 The folder holds a `README.md` with the bundle's provenance, an env folder
 `envs/<name>/` with a `Dockerfile` that installs this exact `rea-agents`
-version and serves the copied `manifest.json` and `evidence.json` with
+version and serves the copied `manifest.json` and `evidence.json` (written
+readable by their owner only, since they hold captured content) with
 `environment-serve`, a Python verifier under `artifacts/check_<name>/` and the
 smoke task `tasks/smoke.json`. `--package-tarball` copies a packed `rea-agents`
 tarball into the env folder and installs it instead of the registry package,

@@ -30,7 +30,8 @@ previous increment.
   nothing is ever overwritten.
 - Write `README.md`, `envs/<name>/Dockerfile`, `envs/<name>/env.toml`,
   `envs/<name>/manifest.json` and `envs/<name>/evidence.json` as byte-exact
-  copies of the inputs, `artifacts/check_<name>/verify.py` and
+  copies of the inputs (mode `0600`, so captured content stays readable by its
+  owner only whatever the umask), `artifacts/check_<name>/verify.py` and
   `tasks/smoke.json`, where `<name>` defaults to the manifest's kebab-case name
   and `--name` must be a kebab-case label of at most 64 characters.
 - The Dockerfile reads `FROM node:24.18.0-bookworm-slim`, sets

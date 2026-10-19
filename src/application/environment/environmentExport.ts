@@ -265,15 +265,22 @@ export const readEnvironmentExportInputs = async (
   return ok({ manifest: manifest.value, evidence: evidence.value });
 };
 
+/** Captured content (the manifest and Evidence copies) stays readable by its owner only, whatever the umask. */
+const CAPTURED_FILE_MODE = 0o600;
+
 const writeNew = async (
   root: string,
   relative: string,
   content: string | Uint8Array,
+  mode?: number,
 ): Promise<WrittenBundleFile> => {
   const path = join(root, relative);
   try {
     await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, content, { flag: "wx" });
+    await writeFile(path, content, {
+      flag: "wx",
+      ...(mode === undefined ? {} : { mode }),
+    });
   } catch (cause: unknown) {
     rethrowUnlessDenied(cause, path);
   }
@@ -309,10 +316,20 @@ const writeBundle = async (
   for (const file of plan.files)
     written.push(await writeNew(input.directory, file.path, file.content));
   written.push(
-    await writeNew(input.directory, plan.copies.manifest, input.manifest.bytes),
+    await writeNew(
+      input.directory,
+      plan.copies.manifest,
+      input.manifest.bytes,
+      CAPTURED_FILE_MODE,
+    ),
   );
   written.push(
-    await writeNew(input.directory, plan.copies.evidence, input.evidence.bytes),
+    await writeNew(
+      input.directory,
+      plan.copies.evidence,
+      input.evidence.bytes,
+      CAPTURED_FILE_MODE,
+    ),
   );
   if (plan.copies.tarball !== null && plan.packageSource.kind === "tarball")
     written.push(

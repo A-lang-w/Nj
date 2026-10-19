@@ -38,6 +38,8 @@ export interface ReplayResult {
 
 interface MatchScore {
   readonly pathMatches: number;
+  /** Path matches whose recorded segment equals the value as given, not only after decoding. */
+  readonly verbatimMatches: number;
   readonly queryMatches: number;
   readonly exact: boolean;
 }
@@ -60,11 +62,13 @@ const scoreExchange = (
   const segments = exchange.path.split("/").slice(1);
   let pathProvided = 0;
   let pathMatches = 0;
+  let verbatimMatches = 0;
   for (const param of tool.params) {
     const value = args[param.name];
     if (typeof value !== "string") continue;
     pathProvided += 1;
     const segment = segments[param.index];
+    if (segment === value) verbatimMatches += 1;
     if (
       segment !== undefined &&
       (segment === value || decoded(segment) === value)
@@ -82,12 +86,20 @@ const scoreExchange = (
   }
   return {
     pathMatches,
+    verbatimMatches,
     queryMatches,
     exact: pathMatches === pathProvided && queryMatches === queryProvided,
   };
 };
 
-/** Choose the record whose path segments, then query values, best match the call; ties keep manifest order. */
+const outranks = (score: MatchScore, best: MatchScore): boolean =>
+  score.pathMatches !== best.pathMatches
+    ? score.pathMatches > best.pathMatches
+    : score.verbatimMatches !== best.verbatimMatches
+      ? score.verbatimMatches > best.verbatimMatches
+      : score.queryMatches > best.queryMatches;
+
+/** Choose the record whose path segments, then verbatim spellings, then query values best match the call; ties keep manifest order. */
 export const selectReplayExchange = (
   tool: EnvironmentManifestTool,
   exchanges: ReadonlyMap<number, RecordedExchange>,
@@ -101,12 +113,7 @@ export const selectReplayExchange = (
     const exchange = exchanges.get(ordinal);
     if (exchange === undefined) continue;
     const score = scoreExchange(tool, queryArguments, exchange, args);
-    if (
-      best === undefined ||
-      score.pathMatches > best.score.pathMatches ||
-      (score.pathMatches === best.score.pathMatches &&
-        score.queryMatches > best.score.queryMatches)
-    )
+    if (best === undefined || outranks(score, best.score))
       best = { exchange, score };
   }
   return best === undefined
