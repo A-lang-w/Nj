@@ -260,6 +260,81 @@ interface AmbientBoundedCapture {
 }
 type AmbientCapture = t.Node | AmbientBoundedCapture;
 type AmbientCaptures = readonly (AmbientCapture | undefined)[];
+type AmbientLocalCallback = (
+  node: SemanticLocalIdentity,
+  path: AmbientProjection,
+  captures: AmbientCaptures,
+) => void;
+type AmbientSharedCallback = (
+  owner: SemanticSharedStorageIdentity,
+  path: AmbientProjection,
+) => void;
+/** One resolver worklist entry. The caller's write site selects initializers
+ * for the written target; reads reached through an initializer occur at their
+ * own position. */
+interface AmbientPendingRead {
+  node: t.Node;
+  suffix: AmbientSelectionProjection;
+  captures: AmbientCaptures;
+  ownOnly?: readonly number[];
+  copySelection?: string | null | undefined;
+  readsAtSelf?: true;
+  binding?: JavaScriptSemanticBindingState;
+  constructed?: SemanticConstructedReceiver;
+  capturedPrototype?: SemanticConstructedReceiver;
+  inheritedMember?: boolean;
+  readContext?: {
+    readonly read?: t.ThisExpression | t.Super;
+    /** Evaluation of a returned expression is bounded by its invocation. */
+    readonly invokedAt?: t.Node | undefined;
+    readonly invocationOwner?: t.Function | undefined;
+    /** Receiver evaluation bounds initialization, independently of slot mutation captures. */
+    readonly initializedAt?: t.Node;
+  };
+}
+/** Escaped contents of one shared owner: the paths its stores retain and the
+ * owner callbacks that expansion raises. */
+interface AmbientSharedContents {
+  readonly paths: readonly AmbientPath[];
+  readonly locals: readonly (readonly [
+    SemanticLocalIdentity,
+    AmbientProjection,
+    AmbientCaptures,
+  ])[];
+  readonly shared: readonly (readonly [
+    SemanticSharedStorageIdentity,
+    AmbientProjection,
+  ])[];
+  readonly reads: readonly (readonly [
+    SemanticLocalIdentity,
+    AmbientProjection,
+    AmbientCaptures,
+  ])[];
+}
+/** Queries of one facts snapshot share each owner's escaped contents. A
+ * pending entry marks an expansion in progress; a cyclic store expands inline. */
+type AmbientQuerySnapshot = Map<
+  SemanticSharedStorageIdentity,
+  AmbientSharedContents | "pending"
+>;
+type AmbientPathQuery = (
+  node: t.Node,
+  capture?: t.Node,
+  escapedContents?: boolean,
+  projection?: AmbientProjection,
+  localIdentity?: AmbientLocalCallback,
+  sharedIdentity?: AmbientSharedCallback,
+  localStorageRead?: AmbientLocalCallback,
+) => readonly AmbientPath[];
+/** Which owners a global root store's receiver may denote under the facts of
+ * one generation: shared owners it selects, whether an ambient path stayed
+ * unresolved, and whether a complete fresh local alternative exists. */
+interface AmbientGlobalSourceReceiver {
+  readonly generation: number | undefined;
+  readonly shared: ReadonlySet<SemanticSharedStorageIdentity>;
+  readonly unresolved: boolean;
+  readonly local: boolean;
+}
 const captureNode = (
   capture: AmbientCapture | undefined,
 ): t.Node | undefined =>
@@ -335,6 +410,10 @@ interface AmbientReferenceFacts {
     read: t.Node,
   ) => SemanticIterationSource | undefined;
   readonly hasGlobalRootStores?: () => boolean;
+  /** Changes whenever the producer binds or extends a late fact: the store
+   * index, replacement indexes, or an own-slot/prototype proof. Resolver memos
+   * of per-store proofs are keyed by it. */
+  readonly generation?: () => number;
   /** A severed mapped parameter retains the argument value captured there. */
   readonly wrapperParameterRead?: (
     key: string,
@@ -558,11 +637,39 @@ export const createAmbientPathResolver = (
     }
     return kind ?? "unknown";
   };
+  // Own-slot presence depends on the source, projection, read and the current
+  // facts only. Widening re-expansions and later queries repeat the same
+  // triple, so each proof is kept per facts generation.
+  const ownSourceSlots = new WeakMap<
+    t.Node,
+    Map<string, WeakMap<t.Node, { generation: number; present: boolean }>>
+  >();
   const ownSourceSlotPresent = (
     source: t.Node,
     projection: AmbientPath,
     read: t.Node,
-  ): boolean => syntaxReferences(source, projection, read, true).complete;
+  ): boolean => {
+    const generation = facts?.generation?.();
+    if (generation === undefined)
+      return syntaxReferences(source, projection, read, true).complete;
+    let byProjection = ownSourceSlots.get(source);
+    if (byProjection === undefined) {
+      byProjection = new Map();
+      ownSourceSlots.set(source, byProjection);
+    }
+    const key = JSON.stringify(projection);
+    let byRead = byProjection.get(key);
+    if (byRead === undefined) {
+      byRead = new WeakMap();
+      byProjection.set(key, byRead);
+    }
+    const recorded = byRead.get(read);
+    if (recorded !== undefined && recorded.generation === generation)
+      return recorded.present;
+    const present = syntaxReferences(source, projection, read, true).complete;
+    byRead.set(read, { generation, present });
+    return present;
+  };
   const descriptorInterop = createSemanticModuleInterop(state, {
     intrinsicPath: intrinsics.intrinsicPath,
     ...(facts?.intrinsicWriteFacts === undefined
@@ -762,62 +869,22 @@ export const createAmbientPathResolver = (
       return path;
     },
   });
-  const resolve = (
-    node: t.Node,
-    capture?: t.Node,
-    escapedContents = false,
-    projection: AmbientProjection = [],
-    localIdentity?: (
-      node: SemanticLocalIdentity,
-      path: AmbientProjection,
-      captures: AmbientCaptures,
+  // One worklist expansion. The seed queues the query's own reads; a possible
+  // write query without any result bails out as undefined.
+  const expand = (
+    seed: (
+      pending: AmbientPendingRead[],
+      followShared: (identity: SemanticSharedStorageIdentity) => void,
     ) => void,
-    initialBinding?: JavaScriptSemanticBindingState,
-    sharedIdentity?: (
-      owner: SemanticSharedStorageIdentity,
-      path: AmbientProjection,
-    ) => void,
-    localStorageRead?: (
-      owner: SemanticLocalIdentity,
-      path: AmbientProjection,
-      captures: AmbientCaptures,
-    ) => void,
-  ): readonly AmbientPath[] => {
-    const prior =
-      possibleWrites || initialBinding !== undefined
-        ? undefined
-        : cached.get(node);
-    if (prior !== undefined) return prior;
+    capture: t.Node | undefined,
+    escapedContents: boolean,
+    localIdentity?: AmbientLocalCallback,
+    sharedIdentity?: AmbientSharedCallback,
+    localStorageRead?: AmbientLocalCallback,
+    snapshot?: AmbientQuerySnapshot,
+  ): Map<string, AmbientPath> | undefined => {
     const result = new Map<string, AmbientPath>();
-    // The caller's write site selects initializers for the written target.
-    // Reads reached through an initializer occur at their own position.
-    const pending: {
-      node: t.Node;
-      suffix: AmbientSelectionProjection;
-      captures: AmbientCaptures;
-      ownOnly?: readonly number[];
-      copySelection?: string | null | undefined;
-      readsAtSelf?: true;
-      binding?: JavaScriptSemanticBindingState;
-      constructed?: SemanticConstructedReceiver;
-      capturedPrototype?: SemanticConstructedReceiver;
-      inheritedMember?: boolean;
-      readContext?: {
-        readonly read?: t.ThisExpression | t.Super;
-        /** Evaluation of a returned expression is bounded by its invocation. */
-        readonly invokedAt?: t.Node | undefined;
-        readonly invocationOwner?: t.Function | undefined;
-        /** Receiver evaluation bounds initialization, independently of slot mutation captures. */
-        readonly initializedAt?: t.Node;
-      };
-    }[] = [
-      {
-        node,
-        suffix: projection,
-        captures: (projection ?? []).map(() => capture ?? node),
-        ...(initialBinding === undefined ? {} : { binding: initialBinding }),
-      },
-    ];
+    const pending: AmbientPendingRead[] = [];
     // Join projections at their producing expression, rather than enumerating
     // alias histories. Each key can only widen to a wildcard, and conflicting
     // depths widen to unknown, so diamonds and cycles have finite state.
@@ -927,11 +994,15 @@ export const createAmbientPathResolver = (
         const sourceProjection = source.projection.map((key) =>
           key === null || typeof key === "object" ? null : String(key),
         );
+        // A static literal without an own __proto__ key cannot reach the
+        // native prototype setter through [[Set]].
         const copiedPrototype =
           source.propertyWrite === "set" &&
           source.propertyCopy === "value" &&
           path?.length === 1 &&
-          path[0] === null;
+          path[0] === null &&
+          (source.copiedKeys === undefined ||
+            source.copiedKeys.includes("__proto__"));
         const lookup =
           source.propertyLookup === undefined
             ? (source.target?.object ?? owner)
@@ -1144,26 +1215,14 @@ export const createAmbientPathResolver = (
           source.target !== undefined &&
           !globalSourceGuards.has(source)
         ) {
-          const selected = new Set<SemanticSharedStorageIdentity>();
-          const local = new Set<SemanticLocalIdentity>();
-          globalSourceGuards.add(source);
-          const paths = resolve(
-            source.target.object,
-            source.mutation,
-            false,
-            [],
-            (owner, path) => {
-              if (path?.length === 0) local.add(owner);
-            },
-            undefined,
-            (owner, path) => {
-              if (path?.length === 0) selected.add(owner);
-            },
-          );
-          globalSourceGuards.delete(source);
+          const receiver = globalSourceReceiver(source, source.target.object);
           // An unresolved receiver may still be the original intrinsic. Only
           // complete fresh local alternatives can exclude that shared owner.
-          if (!selected.has(identity) && paths.length === 0 && local.size > 0)
+          if (
+            !receiver.shared.has(identity) &&
+            !receiver.unresolved &&
+            receiver.local
+          )
             continue;
         }
         // A definite first-slot replacement also cuts paths through its old
@@ -1393,6 +1452,27 @@ export const createAmbientPathResolver = (
       if (expanded.has(signature)) return false;
       expanded.add(signature);
       expandedStorage.set(identity, expanded);
+      if (
+        snapshot !== undefined &&
+        possibleWrites &&
+        escapedContents &&
+        suffix.length === 0 &&
+        captures.length === 0 &&
+        copySelection === undefined
+      ) {
+        const contents = sharedContents(identity, snapshot);
+        if (contents !== undefined) {
+          for (const path of contents.paths)
+            result.set(JSON.stringify(path), path);
+          for (const [owner, path, ownerCaptures] of contents.locals)
+            localIdentity?.(owner, path, ownerCaptures);
+          for (const [owner, path] of contents.shared)
+            sharedIdentity?.(owner, path);
+          for (const [owner, path, ownerCaptures] of contents.reads)
+            localStorageRead?.(owner, path, ownerCaptures);
+          return false;
+        }
+      }
       followStores(identity, suffix, captures, [], copySelection);
       return false;
     };
@@ -1483,6 +1563,9 @@ export const createAmbientPathResolver = (
         canonical = canonicalAmbientPath(["global", ...canonical.slice(2)]);
       }
     };
+    seed(pending, (identity) => {
+      followStores(identity, [], []);
+    });
     while (pending.length > 0) {
       const current = pending.pop();
       if (current === undefined) break;
@@ -1578,10 +1661,7 @@ export const createAmbientPathResolver = (
           suffix = undefined;
           ownOnly = [];
         }
-        if (!possibleWrites) {
-          cached.set(node, []);
-          return [];
-        }
+        if (!possibleWrites) return undefined;
       }
       byCopy.set(current.copySelection, { suffix, captures, ownOnly });
       bySelection.set(selectionKind, byCopy);
@@ -3160,10 +3240,130 @@ export const createAmbientPathResolver = (
         }
       }
     }
+    return result;
+  };
+  const resolve = (
+    node: t.Node,
+    capture?: t.Node,
+    escapedContents = false,
+    projection: AmbientProjection = [],
+    localIdentity?: AmbientLocalCallback,
+    initialBinding?: JavaScriptSemanticBindingState,
+    sharedIdentity?: AmbientSharedCallback,
+    localStorageRead?: AmbientLocalCallback,
+    snapshot?: AmbientQuerySnapshot,
+  ): readonly AmbientPath[] => {
+    const prior =
+      possibleWrites || initialBinding !== undefined
+        ? undefined
+        : cached.get(node);
+    if (prior !== undefined) return prior;
+    const result = expand(
+      (pending) =>
+        pending.push({
+          node,
+          suffix: projection,
+          captures: (projection ?? []).map(() => capture ?? node),
+          ...(initialBinding === undefined ? {} : { binding: initialBinding }),
+        }),
+      capture,
+      escapedContents,
+      localIdentity,
+      sharedIdentity,
+      localStorageRead,
+      snapshot,
+    );
+    if (result === undefined) {
+      cached.set(node, []);
+      return [];
+    }
     const paths = [...result.values()];
     if (!possibleWrites && initialBinding === undefined)
       cached.set(node, paths);
     return paths;
+  };
+  // Escaped contents of a shared owner select every store into it with no
+  // read capture at the owner's own slot, so the expansion is the same for
+  // every query of one facts snapshot. Expand it once per snapshot and replay
+  // the retained paths and owner callbacks.
+  const sharedContents = (
+    identity: SemanticSharedStorageIdentity,
+    snapshot: AmbientQuerySnapshot,
+  ): AmbientSharedContents | undefined => {
+    const recorded = snapshot.get(identity);
+    if (recorded === "pending") return undefined;
+    if (recorded !== undefined) return recorded;
+    snapshot.set(identity, "pending");
+    const locals: [
+      SemanticLocalIdentity,
+      AmbientProjection,
+      AmbientCaptures,
+    ][] = [];
+    const shared: [SemanticSharedStorageIdentity, AmbientProjection][] = [];
+    const reads: [SemanticLocalIdentity, AmbientProjection, AmbientCaptures][] =
+      [];
+    // Every queued read occurs at its own store, so no query capture applies.
+    const result = expand(
+      (_, followShared) => followShared(identity),
+      undefined,
+      true,
+      (node, path, captures) => locals.push([node, path, captures]),
+      (owner, path) => shared.push([owner, path]),
+      (node, path, captures) => reads.push([node, path, captures]),
+      snapshot,
+    );
+    const contents = {
+      paths: [...(result?.values() ?? [])],
+      locals,
+      shared,
+      reads,
+    };
+    snapshot.set(identity, contents);
+    return contents;
+  };
+  // A global root store's refined receiver proof depends on that store and
+  // the current facts only, while every query reaching its shared owner needs
+  // it. Keep it per facts generation; a proof taken while another store is
+  // guarded may be weaker, so only top-level proofs are retained.
+  const globalSourceReceivers = new WeakMap<
+    SemanticIterationSource,
+    AmbientGlobalSourceReceiver
+  >();
+  const globalSourceReceiver = (
+    source: SemanticIterationSource,
+    target: t.Node,
+  ): AmbientGlobalSourceReceiver => {
+    const generation = facts?.generation?.();
+    const recorded = globalSourceReceivers.get(source);
+    if (recorded !== undefined && recorded.generation === generation)
+      return recorded;
+    const topLevel = globalSourceGuards.size === 0;
+    const shared = new Set<SemanticSharedStorageIdentity>();
+    const localRoots = new Set<SemanticLocalIdentity>();
+    globalSourceGuards.add(source);
+    const paths = resolve(
+      target,
+      source.mutation,
+      false,
+      [],
+      (owner, path) => {
+        if (path?.length === 0) localRoots.add(owner);
+      },
+      undefined,
+      (owner, path) => {
+        if (path?.length === 0) shared.add(owner);
+      },
+    );
+    globalSourceGuards.delete(source);
+    const receiver = {
+      generation,
+      shared,
+      unresolved: paths.length > 0,
+      local: localRoots.size > 0,
+    };
+    if (topLevel && generation !== undefined)
+      globalSourceReceivers.set(source, receiver);
+    return receiver;
   };
   const activeDescriptorInputs = new WeakSet<t.Node>();
   return Object.assign(
@@ -3198,6 +3398,31 @@ export const createAmbientPathResolver = (
         localStorageRead,
       ),
     {
+      /** Queries of one facts snapshot share each shared owner's escaped
+       * contents. Use it for one pass whose facts do not change meanwhile. */
+      snapshot: (): AmbientPathQuery => {
+        const snapshot: AmbientQuerySnapshot = new Map();
+        return (
+          node,
+          capture,
+          escapedContents = false,
+          projection = [],
+          localIdentity,
+          sharedIdentity,
+          localStorageRead,
+        ) =>
+          resolve(
+            node,
+            capture,
+            escapedContents,
+            projection,
+            localIdentity,
+            undefined,
+            sharedIdentity,
+            localStorageRead,
+            snapshot,
+          );
+      },
       nativePrototypeDescriptorIntact,
       nonEscapingBoundTarget: (node: t.Node) => {
         // The callable owner first selects a possible bind allocation. Ordinary
@@ -3861,6 +4086,8 @@ export function* indexJavaScriptAmbientWritesSteps(
     ReturnType<typeof createSemanticBuiltinDataReplacementQuery>
   >();
   let sourceSlotsComplete = false;
+  // Bumped at every late binding below; see AmbientReferenceFacts.generation.
+  let factsGeneration = 0;
   let wrapperParameterRead: AmbientReferenceFacts["wrapperParameterRead"];
   const referenceFacts: AmbientReferenceFacts = {
     stores,
@@ -3881,6 +4108,7 @@ export function* indexJavaScriptAmbientWritesSteps(
       return selected;
     },
     hasGlobalRootStores: () => globalRootSources.size > 0,
+    generation: () => factsGeneration,
     wrapperParameterRead: (key, read) =>
       wrapperParameterRead?.(key, read) ?? { read },
     replacements,
@@ -4165,10 +4393,21 @@ export function* indexJavaScriptAmbientWritesSteps(
             previous.every((key, index) => key === joined[index])))
       )
         continue;
+      // A bulk copy's unknown first slot is bounded by its literal's own keys.
+      // A possible __proto__ copy changes every inherited read, like any
+      // prototype store.
+      const copiedKeys =
+        joined?.length === 1 && joined[0] === null
+          ? source.copiedKeys
+          : undefined;
       entries.set(
         source,
         joined,
-        storeKinds.get(source) === "prototype" || joined?.[0] === "__proto__",
+        storeKinds.get(source) === "prototype" ||
+          joined?.[0] === "__proto__" ||
+          copiedKeys?.includes("__proto__") === true
+          ? "all"
+          : (copiedKeys ?? "first"),
       );
       stores.set(node, entries);
       for (const dependent of dependents.get(node) ?? [])
@@ -4176,6 +4415,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     }
     yield;
   }
+  factsGeneration += 1;
   // Possible eval sites are proof inputs before pruning, not published facts.
   // The observer reuses its invocation owner and resolves final sites below.
   const weakGlobalSites = [...state.opaqueEffects.globalSites];
@@ -4280,8 +4520,9 @@ export function* indexJavaScriptAmbientWritesSteps(
         });
       }
     }
+    const weakEscapeQuery = ambientWrites.snapshot();
     for (const escape of escapes)
-      for (const identity of ambientWrites(
+      for (const identity of weakEscapeQuery(
         escape.target,
         escape.node,
         true,
@@ -4390,6 +4631,7 @@ export function* indexJavaScriptAmbientWritesSteps(
         ),
       );
   }
+  factsGeneration += 1;
   // Provisional result/receiver caches retain all possible inherited objects.
   // Refinement owns fresh caches and consumes the frozen weak proof inputs.
   ambientWrites = createAmbientPathResolver(state, true, {
@@ -4522,11 +4764,14 @@ export function* indexJavaScriptAmbientWritesSteps(
     t.Node,
     JavaScriptSemanticMemberEffect[]
   >();
+  // Resolver facts stay frozen across the retained and refined escape passes;
+  // refinement only changes this consumer's escape and descriptor effects.
+  const escapeFactQuery = ambientWrites.snapshot();
   const retainEscapeFacts = (
     escape: (typeof escapes)[number],
     original: boolean,
   ): void => {
-    for (const path of ambientWrites(
+    for (const path of escapeFactQuery(
       escape.target,
       escape.node,
       true,
@@ -4977,6 +5222,9 @@ export function* indexJavaScriptAmbientWritesSteps(
     paths: readonly AmbientPath[];
     source?: SemanticIterationSource;
   }[] = [];
+  // Descriptor and prototype effects retained below belong to this consumer;
+  // the resolver's own-slot proofs are bound only after every escape resolves.
+  const escapeQuery = ambientWrites.snapshot();
   const resolveEscape = (
     escape: (typeof escapes)[number],
     source?: SemanticIterationSource,
@@ -5011,7 +5259,7 @@ export function* indexJavaScriptAmbientWritesSteps(
         return;
       }
     }
-    const paths = ambientWrites(
+    const paths = escapeQuery(
       escape.target,
       escape.node,
       true,
@@ -5335,6 +5583,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     }
     return true;
   };
+  factsGeneration += 1;
   const trustedDataSource = (source: SemanticIterationSource, key: string) => {
     const parsed = inertDescriptorMutation(source.mutation);
     const selected =
@@ -5669,6 +5918,7 @@ export function* indexJavaScriptAmbientWritesSteps(
     sources.push(source);
     byKey.set(receiver.key, sources);
     replacements.set(receiver.root, byKey);
+    factsGeneration += 1;
   }
   for (const source of replacementSources) {
     if (
@@ -5759,6 +6009,7 @@ export function* indexJavaScriptAmbientWritesSteps(
   completedOwnSlots.set(state, ownSlotUnchanged);
   completedPrototypes.set(state, prototypeUnchanged);
   sourceSlotsComplete = true;
+  factsGeneration += 1;
   // Resolve possible identities against one completed store snapshot before
   // publishing any writes. Incremental publication would invalidate loader
   // origin indexes for every target and replay a full source scan each time.
