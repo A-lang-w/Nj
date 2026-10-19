@@ -581,6 +581,7 @@ export class ReverseEngineeringService {
           ]),
       "A non-zero process exit is preserved as an observed command result.",
       ...(operation === "inspect_with_objdump" &&
+      parameters.operation === "dwarf" &&
       parameters.follow_debug_links === true
         ? [
             "DWARF output may include local debug-link files whose identities are not bound to Evidence.",
