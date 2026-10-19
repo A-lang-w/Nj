@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import type { EnvironmentExportResult } from "../application/environment/environmentExport.js";
 import { z } from "incur";
 import type { Logger } from "pino";
@@ -200,12 +200,12 @@ const exportEnvironmentCommand = async (
   const exported = await exportEnvironmentBundle({
     ...inputs.value,
     source: source.value,
-    directory: resolve(input.directory),
+    directory: absoluteCallerPath(input.directory),
     name: input.name,
     packageTarball:
       input.packageTarball === undefined
         ? undefined
-        : resolve(input.packageTarball),
+        : absoluteCallerPath(input.packageTarball),
   });
   return exported.ok
     ? exportDocument(exported.value)
