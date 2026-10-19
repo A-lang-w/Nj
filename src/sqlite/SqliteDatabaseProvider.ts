@@ -8,7 +8,10 @@ import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
 } from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactResourceRetryFailure,
+  ArtifactResourceScope,
+} from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type {
   AnalysisCapturedOutput,
@@ -64,7 +67,7 @@ interface PendingSnapshotCleanup {
 /** Inspect a provider-owned copy through a cancellable SQLite child, without source writes. */
 export class SqliteDatabaseProvider implements SqliteDatabasePort {
   readonly #active = new Set<Promise<SqliteOutcome>>();
-  readonly #artifactResources = new ArtifactResourceScope();
+  readonly #artifactResources: ArtifactResourceScope;
   readonly #pendingCleanup = new Map<
     SqliteRuntimeRoot,
     PendingSnapshotCleanup
@@ -78,7 +81,10 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
     readonly createRuntime: () => Promise<
       Pick<PrivateRuntimeRoot, "path" | "close">
     > = () => PrivateRuntimeRoot.create({ prefix: "rea-sqlite-database-" }),
-  ) {}
+    artifactResources: ArtifactResourceScope = new ArtifactResourceScope(),
+  ) {
+    this.#artifactResources = artifactResources;
+  }
 
   /** Return exact original DB/WAL identities and current schema/selected committed rows. */
   async inspect(
@@ -147,6 +153,17 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
             { reason: cleanup.reason },
             { operation, cause },
           );
+          // A synthesized descriptor failure must resolve with its artifact
+          // leases: without the binding a later close() that releases every
+          // descriptor leaves the caller's error reporting incomplete cleanup
+          // and its stale descriptor paths forever.
+          if (
+            cause instanceof ArtifactResourceRetryFailure &&
+            cause.cleanupLeases.length > 0
+          )
+            new AnalysisCleanupLeaseGroup(descriptorFailure, [
+              ...cause.cleanupLeases,
+            ]);
         }
         const cleaned = await this.#retryCleanup();
         if (descriptorFailure !== undefined && !cleaned.ok)
@@ -304,7 +321,8 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
     let root: Pick<PrivateRuntimeRoot, "path" | "close"> | undefined;
     let processOwner: ProviderProcessSupervisor | undefined;
     let processCleanup:
-      Extract<ProviderProcessStopResult, { status: "incomplete" }> | undefined;
+      | Extract<ProviderProcessStopResult, { status: "incomplete" }>
+      | undefined;
     let retainedOutput: AnalysisCapturedOutput | undefined;
     let phase = "configuration";
     let result: Result<AnalysisExecution, AnalysisError>;
@@ -430,7 +448,14 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
           output: retainedOutput,
           process: undefined,
         });
-        new AnalysisCleanupLeaseGroup(cleaned.error, [lease]);
+        // The wrapper embeds any prior cleanup failure as previous_error;
+        // keep that owner as a separate dependency so the wrapper resolves
+        // only after both the root retry and the prior owner confirm release.
+        const priorOwner =
+          !result.ok && result.error.cleanupIncomplete
+            ? [result.error, lease]
+            : [lease];
+        new AnalysisCleanupLeaseGroup(cleaned.error, priorOwner);
         return cleaned;
       }
     }
