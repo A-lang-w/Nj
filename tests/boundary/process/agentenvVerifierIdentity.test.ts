@@ -8,11 +8,13 @@ import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 // The local framework and these executable shebang fixtures target POSIX hosts.
-it
-  .skipIf(process.platform === "win32")
-  .each(["agent-env 0.9.9999", "other-runner 0.9.1334"])(
-  "refuses the observed executable identity %s before touching Docker",
-  async (version) => {
+it.skipIf(process.platform === "win32").each([
+  ["agent-env 0.9.9999", false],
+  ["other-runner 0.9.1334", false],
+  ["agent-env 0.9.1334", true],
+] as const)(
+  "admits the observed executable identity %s before Docker: %s",
+  async (version, accepted) => {
     const root = await createTestTempDirectory("rea-agentenv-identity-");
     const runner = join(root, "agent-env.mjs");
     const docker = join(root, "docker.mjs");
@@ -55,6 +57,8 @@ it
     );
     expect(result.stderr).toContain('"public_cases": 0');
     expect(result.stderr).not.toContain('"status": "passed"');
-    await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
+    if (accepted) expect(await readFile(marker, "utf8")).toBe("called");
+    else
+      await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );

@@ -1,5 +1,9 @@
 # Verification
 
+The initial author record below describes the original macOS tree. The Linux
+followup record at the end covers the integrated serve changes and subsequent
+repairs in this PR. The two records have different toolchains and cache states.
+
 Verified base: 24574576e4fa74ff56eda965ae287555b7552c03, the tip of the environment-serve increment on fetched main b83b9caf (this increment builds on it).
 
 The worktree carries the manifest-view, streamable-HTTP and serve increments
@@ -242,3 +246,50 @@ dispatched from this tree. The built projects ran on this host's Node 22.23.1
 rather than the pinned 24.18.0. The `/usr/bin/time -l` figures account for
 each command and the children it waited for; Docker's own work runs in the
 daemon and is outside them. Windows was not run.
+
+## Linux followup verification (2026-10-19)
+
+The original PR was updated from main after #4955 and #4975 merged. The
+followups retain the author's commits and portable-name checks, seal private
+JSON parser output once for shared immutable authentication/replay, reserve
+sealing work before reading, preflight the served catalog before exporting,
+translate changed-file failures by input role, defer export imports during CLI
+registration, and verify the supplied framework executable before attributing
+its results. The default `rea mcp` transport remains stdio.
+
+Executed on Linux x64 with Node 24.18.0, npm 11.16.0, Docker 20.10.24,
+Python 3.12.13 and an isolated `agentenv-framework==0.9.1334` environment:
+
+- `turbo run typecheck lint:built format:check docs:check:built knip metadata:check artifacts:skills --concurrency=1`: ten tasks passed, one cached, 289.315 s elapsed, 284.552 s CPU, 4450.18 MiB peak process-family RSS.
+- The focused source/compiled CLI/SDK/lifecycle/configuration run passed 399 tests in 24 files. A later run passed the updated 231 CI-selection cases, three executable-identity cases and ten product-catalog cases. The latter needed its generated catalog first; its initial missing-file failure was preparation, not a passing check.
+- Four previously recorded, unauthenticated real GitHub API responses were exported with the checkout tarball. The generated Dockerfile built unchanged. A fresh non-root container replayed every response twice through the official MCP SDK, matching body, status, Evidence ordinal/id and untrusted-content provenance. Discovery/card parity and tarball removal passed. The standalone test supplies `ENVIRONMENT_NAME` as the framework does. Runtime verification with the built image took 12.393 s / 6.002 s CPU / 313.11 MiB process-family RSS; image-build cost is excluded. A Docker stats sample was 250.5 MiB, not a measured container peak.
+- The production `verify-agentenv-environment.mjs` observed `agent-env 0.9.1334`, exported its 28-record source-owned Grafana-shaped fixture, deployed it with the real framework and passed `tasks/smoke.json`. The receipt reported five public cases, one sandbox torn down, no new task containers and no supervised descendants. This successful run used already prepared infrastructure: 141.697 s / 101.971 s CPU / 501.61 MiB process-family RSS. Earlier attempts failed because this host's proxy environment required optional SOCKS support and its default home sandbox directory was unwritable. Only the test process's proxy variables were cleared; supported `XDG_STATE_HOME` and `AGENT_ENV_LOCAL_SANDBOX_DIR` pointed into temporary storage. The shared Docker daemon was not reconfigured or restarted. The framework's persistent registry helper and images remain as its documented behavior.
+
+A matched public `environment-serve`/SDK task compared the pre-followup serve
+build with the final implementation. Both used the same GitHub capture with
+1,000 synthetic HAR-extension items (each containing additional containers),
+one first call and twenty warm identical replays. Fixture generation was
+excluded. This is controlled stress data, not newly observed application data.
+Larger 25,000/75,000-item projection attempts returned the existing typed
+representation-budget refusal; that budget was not relaxed.
+
+| Measurement             |      Before |       After |
+| ----------------------- | ----------: | ----------: |
+| Cold listener startup   | 2189.064 ms | 2862.860 ms |
+| First call              |   76.950 ms |   45.265 ms |
+| Twenty warm calls       |  324.119 ms |  267.132 ms |
+| Completed task elapsed  |     3.229 s |     3.885 s |
+| Completed task CPU      |     3.196 s |     3.827 s |
+| Peak process-family RSS |  466.43 MiB |  470.21 MiB |
+
+These single completed samples do not establish an overall speed or memory
+improvement. Separate identity regressions establish that large reported JSON
+trees are shared rather than copied and that caller-owned mutable trees are
+not frozen. Token usage was not measured. CPU is child user+system time;
+process-family memory sums sampled descendant RSS every 50 ms and may count
+shared pages twice. Docker daemon/container CPU and peaks are outside that
+process-family measurement and remain unmeasured. Builds used one task at a
+time, one CPU and a soft 3 GiB Go limit; Docker builds were serialized and
+limited to one CPU/4 GiB, and the standalone replay container to one CPU/2 GiB.
+Windows execution and the published registry package were not tested in this
+followup; the checkout tarball proves the code before its release.

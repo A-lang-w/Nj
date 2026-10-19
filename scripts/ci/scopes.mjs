@@ -441,8 +441,9 @@ export const SCOPES = {
   agentenv: [
     ".github/workflows/real-agentenv.yml",
     "scripts/verify-agentenv-environment.mjs",
-    "tests/boundary/process/agentenvVerifierIdentity.test.ts",
     "src/{application,server}/environment/**",
+    "src/application/{JsonInputFile,OwnedJsonInput,RegularFileRead}.ts",
+    "src/cliJsonInput.ts",
     "src/server/http/**",
     "src/{cli,cliCommandNames,cli/environmentCommands}.ts",
     "src/config/{environmentName,mcpHttpEndpoint}.ts",
