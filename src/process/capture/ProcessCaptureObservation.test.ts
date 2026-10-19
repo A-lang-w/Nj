@@ -1,6 +1,10 @@
-import { expect, it } from "vitest";
+import { lstat, open, opendir, readlink } from "node:fs/promises";
+import { expect, it, vi } from "vitest";
 
-import { snapshotRoots } from "./FilesystemSnapshot.js";
+import {
+  ProcessCaptureSnapshotFailure,
+  snapshotRoots,
+} from "./FilesystemSnapshot.js";
 import { buildCaptureResult } from "./ProcessCaptureLifecycle.js";
 import { isInitializedPtyRoot, readLinuxChildren } from "./ProcessSampling.js";
 import { TerminalRenderer } from "./TerminalRenderer.js";
@@ -8,6 +12,8 @@ import { parseProcessScenario } from "../../domain/process/processScenario.js";
 import type { ProcessCapture } from "../../domain/process/processCaptureParsing.js";
 import type { ProcessCaptureTruncationDetails } from "../../domain/process/processCaptureCoverage.js";
 import { emptyProcessCapture as emptyCapture } from "../../domain/process/processCapture.fixture.js";
+
+vi.mock("node:fs/promises", { spy: true });
 
 const base = {
   executable: "/bin/sh",
@@ -266,14 +272,51 @@ it("admits PTY samples only after stable session and token setup", () => {
 
 it("cancels filesystem snapshots before traversing declared roots", async () => {
   const controller = new AbortController();
-  controller.abort();
-  await expect(
-    snapshotRoots(
-      parseProcessScenario({
-        ...base,
-        filesystem_observation_paths: ["/tmp"],
-      }),
-      controller.signal,
-    ),
-  ).rejects.toMatchObject({ name: "AbortError" });
+  const reason = new Error("cancel before snapshot traversal");
+  controller.abort(reason);
+  const scenario = parseProcessScenario({
+    ...base,
+    filesystem_observation_paths: ["/tmp"],
+  });
+  const reads = [
+    vi.mocked(lstat),
+    vi.mocked(open),
+    vi.mocked(opendir),
+    vi.mocked(readlink),
+  ];
+  for (const read of reads) {
+    read.mockClear();
+    read.mockRejectedValue(new Error("Unexpected filesystem traversal"));
+  }
+  try {
+    const failure = await snapshotRoots(scenario, controller.signal).catch(
+      (cause: unknown) => cause,
+    );
+    expect(failure).toBeInstanceOf(ProcessCaptureSnapshotFailure);
+    if (!(failure instanceof ProcessCaptureSnapshotFailure)) throw failure;
+    expect(failure.cause).toBe(reason);
+    expect(failure.reason).toBe("cancelled");
+    expect(failure.userCategory).toBe("cancelled");
+    expect(failure.cleanupIncomplete).toBe(false);
+    expect(failure.cleanupLeases).toEqual([]);
+    expect(failure.readFailures).toEqual([]);
+    expect(failure.snapshot).toEqual({
+      files: [],
+      completeRoots: [],
+      truncated: true,
+      coverage: {
+        files_limit: scenario.limits.files,
+        depth_limit: scenario.limits.filesystem_depth,
+        enumeration_truncated: true,
+        enumeration_reasons: [],
+        enumeration_omissions: [],
+        hash_budget_bytes: scenario.limits.file_bytes,
+        hashed_bytes: 0,
+        hash_omissions: [],
+      },
+    });
+    for (const read of reads) expect(read).not.toHaveBeenCalled();
+  } finally {
+    for (const read of reads) read.mockRestore();
+  }
 });
