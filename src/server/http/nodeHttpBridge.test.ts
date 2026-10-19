@@ -92,6 +92,40 @@ it("finishes a HEAD reply without waiting on a teed body whose sibling stays liv
   });
 });
 
+it("returns when a client leaves a teed streaming body whose sibling stays live", async () => {
+  const cached = new Response(
+    new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        controller.enqueue(encoder.encode("data: first\n\n"));
+      },
+      pull: () => new Promise(() => undefined),
+    }),
+    { headers: { "content-type": "text/event-stream" } },
+  );
+  let settled = false;
+  const server = createServer((_request, response) => {
+    const settle = (): void => {
+      settled = true;
+    };
+    void writeWebResponse(cached.clone(), response).then(settle, settle);
+  });
+  servers.push(server);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+  const leave = new AbortController();
+  const response = await fetch(`http://127.0.0.1:${String(port)}/events`, {
+    signal: leave.signal,
+  });
+  if (response.body === null) throw new Error("Expected a streamed body");
+  const first = await response.body.getReader().read();
+  expect(decoder.decode(first.value)).toBe("data: first\n\n");
+  leave.abort();
+  await vi.waitFor(() => {
+    expect(settled).toBe(true);
+  });
+});
+
 it("forwards method, URL, headers and the request body as a web Request", async () => {
   const seen: Request[] = [];
   const origin = await serve(async (request) => {

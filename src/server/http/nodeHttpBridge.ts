@@ -1,6 +1,6 @@
+import { once } from "node:events";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
 
 /** Fetch rejects a body on these methods, so their request streams are not forwarded. */
 const BODYLESS_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD"]);
@@ -68,6 +68,28 @@ const responseHeaders = (
   return fields;
 };
 
+/** Copy a body into the reply chunk by chunk with backpressure; when the client leaves, cancel the body without waiting, since a teed body's cancellation settles only with its sibling. */
+const pumpBody = async (
+  body: ReadableStream<Uint8Array>,
+  target: ServerResponse,
+): Promise<void> => {
+  const reader = body.getReader();
+  const gone = new Promise<undefined>((resolve) => {
+    target.once("close", () => resolve(undefined));
+  });
+  let next = await Promise.race([reader.read(), gone]);
+  while (next !== undefined && !next.done) {
+    if (!target.write(next.value))
+      await Promise.race([once(target, "drain"), gone]);
+    next = await Promise.race([reader.read(), gone]);
+  }
+  if (next === undefined) {
+    void reader.cancel().catch(() => undefined);
+    return;
+  }
+  target.end();
+};
+
 /** Stream a web Response into node:http, flushing headers and each chunk as it arrives; `closeConnection` ends the socket after this reply. A HEAD reply ends after the headers and cancels any body the route attached. */
 export const writeWebResponse = async (
   response: Response,
@@ -85,5 +107,5 @@ export const writeWebResponse = async (
     void response.body?.cancel().catch(() => undefined);
     return;
   }
-  await pipeline(Readable.fromWeb(response.body), target);
+  await pumpBody(response.body, target);
 };
