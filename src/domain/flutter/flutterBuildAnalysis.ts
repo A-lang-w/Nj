@@ -3,6 +3,33 @@ import { localPathStringSchema } from "../localPath.js";
 import { digestSchema } from "../digests.js";
 
 /**
+ * Flutter library inventory reads every `lib/<abi>/(libapp|libflutter).so`
+ * member and reports the literal directory label, so an explicit selector
+ * has to admit the same labels: one archive path segment that is neither
+ * empty nor a separator or control character. Selection stays an exact
+ * match against the reported labels, so an admitted selector can only ever
+ * name a payload discovery already found.
+ */
+const abiSelectorGrammar = /^[^\x00-\x1f\x7f/\\]+$/u;
+
+/** Selector bound matching a single archive path segment's practical length. */
+const ABI_SELECTOR_MAX_LENGTH = 255;
+
+/**
+ * `identify_flutter_build` reports the labels it read verbatim, so the
+ * advertised schema describes those labels rather than a lowercase subset
+ * of them.
+ */
+export const abiSelectorSchema = z
+  .string()
+  .min(1)
+  .max(ABI_SELECTOR_MAX_LENGTH)
+  .regex(
+    abiSelectorGrammar,
+    "ABI name as it appears under lib/, e.g. arm64-v8a",
+  );
+
+/**
  * Caller intent for Flutter build identification. This family is pure
  * parsing: it reads an APK's `lib/<abi>/libapp.so` and `libflutter.so`
  * directly and runs no engine, tool, or device.
@@ -15,14 +42,7 @@ export const flutterInputSchemas = {
     path: localPathStringSchema.describe(
       "Local APK file carrying a Flutter AOT payload",
     ),
-    abi: z
-      .string()
-      .min(2)
-      .max(16)
-      .regex(
-        /^[a-z0-9_\x2d]+$/u,
-        "ABI name as it appears under lib/, e.g. arm64-v8a",
-      )
+    abi: abiSelectorSchema
       .optional()
       .describe(
         "ABI to inspect; defaults to arm64-v8a, x86_64, x86, armeabi-v7a, then remaining ABIs alphabetically",

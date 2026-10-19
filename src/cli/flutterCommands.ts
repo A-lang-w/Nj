@@ -4,7 +4,10 @@ import type { FlutterBuildAnalysisPort } from "../application/flutter/FlutterBui
 import { createFlutterBuildAnalysisProvider } from "../composition/flutter.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
-import type { FlutterOperation } from "../domain/flutter/flutterBuildAnalysis.js";
+import {
+  abiSelectorSchema,
+  type FlutterOperation,
+} from "../domain/flutter/flutterBuildAnalysis.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
@@ -51,10 +54,7 @@ export const registerFlutterCommands = (
           .describe("Local APK carrying a Flutter payload"),
       }),
       optionSchema: z.object({
-        abi: z
-          .string()
-          .min(2)
-          .max(16)
+        abi: abiSelectorSchema
           .optional()
           .describe("ABI under lib/ to inspect; defaults to the preferred one"),
       }),
