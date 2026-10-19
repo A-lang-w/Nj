@@ -1579,9 +1579,13 @@ inside the 30-minute job (the first attempt at most 15 minutes), so a hung or
 retried run ends with the verifier's failed receipt rather than the runner's
 kill. The framework builds its gateway and service-db
 images from `public.ecr.aws` on every fresh runner, and hosted runners share
-that registry's anonymous pull quota; when the run fails with that registry's
-`429 Too Many Requests` and at least five minutes of the budget would remain
-after the pause, the verifier waits 90 seconds and runs once more,
+that registry's anonymous pull quota. The receipt's `agent_env_run` records the
+last run whether it passed or failed, with `public_ecr_quota` set to
+`data_limit` or `rate` when that registry's `429 Too Many Requests` ended it.
+The data-transfer cap (`toomanyrequests: Data limit exceeded`) is counted per
+source IP, so it fails the lane at once: a pause on the same runner cannot lift
+it. When a rate refusal ends the run and at least five minutes of the budget
+would remain after the pause, the verifier waits 90 seconds and runs once more,
 recording `attempts: 2` and `retried_for` in the receipt. Any other failure
 ends the lane at once.
 
