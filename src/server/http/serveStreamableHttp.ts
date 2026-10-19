@@ -111,22 +111,44 @@ const NO_SHUTDOWN_HOOK = (): void => undefined;
 const SHUTTING_DOWN = (): Response =>
   jsonError(503, -32000, "Server shutting down");
 
-/** The headers the SDK requires of a streamable POST; a request without them is left to the transport's refusal. */
+/** Split a header field on `separator` outside quoted strings, honouring backslash escapes (RFC 9110). */
+const splitUnquoted = (value: string, separator: string): string[] => {
+  const parts: string[] = [];
+  let current = "";
+  let quoted = false;
+  let escaped = false;
+  for (const char of value) {
+    if (escaped) escaped = false;
+    else if (quoted && char === "\\") escaped = true;
+    else if (char === '"') quoted = !quoted;
+    else if (char === separator && !quoted) {
+      parts.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  parts.push(current);
+  return parts;
+};
 /** The media type proper of one header value or Accept range: no parameters, lowercase. */
 const mediaType = (value: string): string =>
-  (value.split(";")[0] ?? "").trim().toLowerCase();
+  (splitUnquoted(value, ";")[0] ?? "").trim().toLowerCase();
 /** An Accept range's quality weight; a missing or unreadable `q` counts as 1, as in RFC 9110. */
 const quality = (range: string): number => {
-  const q = /;\s*q\s*=\s*([0-9.]+)/iu.exec(range)?.[1];
-  const value = q === undefined ? 1 : Number(q);
+  const q = splitUnquoted(range, ";")
+    .slice(1)
+    .map((parameter) => parameter.split("="))
+    .find(([name]) => name?.trim().toLowerCase() === "q")?.[1];
+  const value = q === undefined ? 1 : Number(q.trim());
   return Number.isFinite(value) ? value : 1;
 };
+/** The headers the SDK requires of a streamable POST; a request without them is left to the transport's refusal. */
 const hasStreamablePostHeaders = (request: Request): boolean => {
   // Exact media ranges with a positive weight: `application/json-patch+json`, `text/event-streaming`
   // and `application/json;q=0` do not count.
   const accepted = new Set(
-    (request.headers.get("accept") ?? "")
-      .split(",")
+    splitUnquoted(request.headers.get("accept") ?? "", ",")
       .filter((range) => quality(range) > 0)
       .map(mediaType),
   );
