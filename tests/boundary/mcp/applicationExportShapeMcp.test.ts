@@ -170,8 +170,16 @@ describe("application workflow MCP parity", () => {
         name: "analyze_javascript_application",
         arguments: { input_path: relative(process.cwd(), leftRoot) },
       });
-      expect(relativeApplication.isError).not.toBe(true);
-      expect(relativeApplication.structuredContent).toMatchObject({
+      expect(relativeApplication.isError).toBe(true);
+      expect(JSON.stringify(relativeApplication.content)).toContain(
+        "input_path must be an absolute local filesystem path",
+      );
+      const absoluteApplication = await client.callTool({
+        name: "analyze_javascript_application",
+        arguments: { input_path: leftRoot },
+      });
+      expect(absoluteApplication.isError).not.toBe(true);
+      expect(absoluteApplication.structuredContent).toMatchObject({
         evidence_id: left.value.evidence_id,
         normalized_result: { input_path: leftAnalysis.input_path },
         subject: { local_path: left.value.subject?.local_path },
