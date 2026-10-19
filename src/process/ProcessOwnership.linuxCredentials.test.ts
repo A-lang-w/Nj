@@ -6,7 +6,10 @@ vi.mock("node:fs/promises", async (importOriginal) => ({
   readFile: filesystem.readFile,
 }));
 
-import { createSystemProcessOwnershipHost } from "./ProcessOwnershipObservation.js";
+import {
+  createSystemProcessOwnershipHost,
+  readProcessOwnershipFacts,
+} from "./ProcessOwnershipObservation.js";
 import { verifyNoTokenOwnedProcesses } from "./ProcessOwnership.js";
 import { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
 
@@ -107,8 +110,7 @@ it
   const statusReads = filesystem.readFile.mock.calls.filter(
     ([path]) => path === "/proc/900/status",
   );
-  if (mode === "readable-token" || mode === "non-access-failure")
-    expect(statusReads).toHaveLength(0);
+  if (mode === "readable-token") expect(statusReads).toHaveLength(0);
   else if (mode.startsWith("foreign-account"))
     expect(statusReads.length).toBeGreaterThan(0);
   expect(signalGroup).not.toHaveBeenCalled();
@@ -123,6 +125,14 @@ it.each(["environ", "status"])(
     filesystem.readFile.mockImplementation(
       async (path: string, options: { signal?: AbortSignal }) => {
         expect(options.signal).toBe(controller.signal);
+        if (path.endsWith("/stat")) {
+          const fields = Array<string>(20).fill("0");
+          fields[0] = "S";
+          fields[1] = "1";
+          fields[2] = "900";
+          fields[19] = "100";
+          return `900 (fixture) ${fields.join(" ")}`;
+        }
         if (!path.endsWith(`/${stage}`)) throw denied("EACCES");
         controller.abort(reason);
         throw reason;
@@ -130,7 +140,7 @@ it.each(["environ", "status"])(
     );
     const host = createSystemProcessOwnershipHost("linux", {});
     await expect(
-      host.runTokens!(
+      readProcessOwnershipFacts(
         [
           {
             pid: 900,
@@ -140,6 +150,7 @@ it.each(["environ", "status"])(
             command: "fixture",
           },
         ],
+        host,
         controller.signal,
       ),
     ).rejects.toBe(reason);

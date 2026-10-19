@@ -86,7 +86,8 @@ it.each(
     "live",
     "unavailable",
     "lifecycle-unavailable",
-    "replaced",
+    "replaced-zombie",
+    "replaced-live",
     "unavailable-zombie",
   ].flatMap((lifetime) =>
     [true, false].flatMap((related) =>
@@ -118,8 +119,9 @@ it.each(
         return { state: "unavailable", reason: "identity read denied" };
       return {
         state: "readable",
-        identity:
-          lifetime === "replaced" ? String(identityReads) : "same-generation",
+        identity: lifetime.startsWith("replaced-")
+          ? String(identityReads)
+          : "same-generation",
         lifecycle:
           tokenRead && lifetime === "lifecycle-unavailable"
             ? { state: "unavailable", reason: "lifecycle read denied" }
@@ -127,7 +129,7 @@ it.each(
                 state: "observed",
                 lifecycle:
                   tokenRead &&
-                  ["zombie", "replaced", "unavailable-zombie"].includes(
+                  ["zombie", "replaced-zombie", "unavailable-zombie"].includes(
                     lifetime,
                   )
                     ? "zombie"
@@ -168,7 +170,9 @@ it.each(
       [{ pid: row.pid, identity: baseline }],
       { leaderPid: 100, processGroupId: 100, evidenceOwner },
     );
-    if (lifetime === "zombie") {
+    if (
+      ["zombie", "replaced-zombie", "unavailable-zombie"].includes(lifetime)
+    ) {
       expect(result).toEqual({ cleaned: true, signaled: false });
       expect(evidenceOwner.candidates).toEqual([]);
     } else {
@@ -178,9 +182,7 @@ it.each(
           {
             pid: row.pid,
             reason:
-              lifetime === "unavailable" ||
-              lifetime === "unavailable-zombie" ||
-              lifetime === "replaced"
+              lifetime === "unavailable" || lifetime === "replaced-live"
                 ? "process-identity-unavailable"
                 : "environment-unreadable",
           },

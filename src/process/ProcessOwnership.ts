@@ -13,7 +13,7 @@ import { descendantsOf, liveProcesses } from "./ProcessOwnershipProcessTree.js";
 import { readProcessRunTokens } from "./ProcessRunTokenObservations.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {
-  isSettledProcessOwnershipFact,
+  processIdentityHasExited,
   ProcessOwnershipEvidenceOwner,
 } from "./ProcessOwnershipEvidence.js";
 
@@ -182,6 +182,8 @@ export interface ProcessOwnershipHost {
   processIdentities?(
     processes: readonly ProcessTableEntry[],
     signal?: AbortSignal,
+    /** Linux UID enrichment is selective; omitted means UID remains unknown. */
+    effectiveUidPids?: ReadonlySet<number>,
   ): Promise<ReadonlyMap<number, ProcessIdentityObservation>>;
   /** Snapshot identities before launch, honoring startup cancellation. */
   captureBaseline?(signal?: AbortSignal): Promise<ProcessOwnershipBaseline>;
@@ -191,12 +193,7 @@ export interface ProcessOwnershipHost {
 /** Whether one live process exposed its ownership token to the host. */
 export type ProcessRunTokenObservation =
   | { readonly state: "readable"; readonly runId: string | undefined }
-  | {
-      readonly state: "unavailable";
-      readonly reason: string;
-      /** Native credential read during token inspection; requires matching surrounding identities. */
-      readonly effectiveUid?: number;
-    };
+  | { readonly state: "unavailable"; readonly reason: string };
 
 /** Narrow Windows P0 seam for bounded process-tree termination. */
 export interface WindowsProcessTreeHost {
@@ -983,13 +980,7 @@ const processOwnershipFailures = async (
     const facts = await readProcessOwnershipFacts(members, host);
     const failures: ProcessOwnershipValidationFailure[] = [];
     for (const fact of facts) {
-      if (fact.identityAfter.state === "absent") continue;
-      if (
-        fact.identityAfter.state === "readable" &&
-        fact.identityAfter.lifecycle?.state === "observed" &&
-        fact.identityAfter.lifecycle.lifecycle === "zombie"
-      )
-        continue;
+      if (processIdentityHasExited(fact.identityAfter)) continue;
       const relation =
         fact.identityAfter.state === "readable" &&
         fact.identityAfter.relation?.state === "observed"
@@ -1152,10 +1143,11 @@ const currentProcessUid = (): number | undefined =>
 const environmentWithheldFromInspection = (
   diagnostic: string,
   observedUid: number | undefined,
+  platform: NodeJS.Platform | undefined,
 ): boolean => {
   const uid = currentProcessUid();
   if (uid !== undefined && observedUid !== undefined && observedUid !== uid)
-    return true;
+    return platform !== "linux" || /^(?:EACCES|EPERM)(?::|$)/u.test(diagnostic);
   return (
     diagnostic === PLATFORM_BINARY_ENVIRONMENT_WITHHELD ||
     diagnostic === RESTRICTED_PROCESS_ENVIRONMENT_WITHHELD
@@ -1226,6 +1218,7 @@ const scanTokenOwnedProcesses = async (
       environmentWithheldFromInspection(
         candidate.diagnostic,
         candidate.process.uid,
+        host.platform,
       )
     ) {
       withheld.push(candidate);
@@ -1321,20 +1314,17 @@ const scanWithOwnershipEvidence = async (
   );
   let facts = initialFacts;
   for (let attempt = 0; attempt < TOKEN_READ_RETRY_ATTEMPTS; attempt += 1) {
-    const pendingPids = new Set(
-      facts
-        .filter(
-          (fact) =>
-            fact.token.state === "unavailable" &&
-            !isSettledProcessOwnershipFact(fact),
-        )
-        .map(({ process }) => process.pid),
-    );
-    if (pendingPids.size === 0) break;
+    const retryRows = facts
+      .filter(
+        (fact) =>
+          fact.token.state === "unavailable" &&
+          !processIdentityHasExited(fact.identityAfter),
+      )
+      .map(({ process }) => process);
+    if (retryRows.length === 0) break;
     await new Promise<void>((resolve) =>
       setTimeout(resolve, TOKEN_READ_RETRY_DELAY_MS),
     );
-    const retryRows = candidates.filter(({ pid }) => pendingPids.has(pid));
     const retries = await readProcessOwnershipFacts(retryRows, host);
     const retryByPid = new Map(retries.map((fact) => [fact.process.pid, fact]));
     facts = facts.map((fact) => retryByPid.get(fact.process.pid) ?? fact);
@@ -1362,7 +1352,7 @@ const scanWithOwnershipEvidence = async (
   const identities = new Map<number, string | null>();
 
   for (const fact of facts) {
-    if (isSettledProcessOwnershipFact(fact)) continue;
+    if (processIdentityHasExited(fact.identityAfter)) continue;
     if (fact.state === "replaced")
       failures.push({
         pid: fact.process.pid,
@@ -1407,11 +1397,15 @@ const scanWithOwnershipEvidence = async (
     const observedUid =
       fact.state === "same-generation" &&
       fact.identityAfter.state === "readable"
-        ? (fact.identityAfter.effectiveUid ?? fact.token.effectiveUid)
+        ? fact.identityAfter.effectiveUid
         : undefined;
     if (
       knownUnrelated &&
-      environmentWithheldFromInspection(fact.token.reason, observedUid)
+      environmentWithheldFromInspection(
+        fact.token.reason,
+        observedUid,
+        host.platform,
+      )
     ) {
       unverified.push({
         pid: fact.process.pid,

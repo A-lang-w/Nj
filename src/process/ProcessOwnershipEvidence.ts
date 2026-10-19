@@ -6,15 +6,14 @@ import type {
   ProcessTableEntry,
 } from "./ProcessOwnership.js";
 
-/** A settled fact retires only the observed lifetime, never a reused or unknown one. */
-export const isSettledProcessOwnershipFact = (
-  fact: ProcessOwnershipFact,
+/** Positive native exit settles cleanup without establishing ownership or signal authority. */
+export const processIdentityHasExited = (
+  identity: ProcessIdentityObservation,
 ): boolean =>
-  fact.state === "absent" ||
-  (fact.state === "same-generation" &&
-    fact.identityAfter.state === "readable" &&
-    fact.identityAfter.lifecycle?.state === "observed" &&
-    fact.identityAfter.lifecycle.lifecycle === "zombie");
+  identity.state === "absent" ||
+  (identity.state === "readable" &&
+    identity.lifecycle?.state === "observed" &&
+    identity.lifecycle.lifecycle === "zombie");
 
 export interface RetainedProcessOwnershipCandidate {
   readonly pid: number;
@@ -213,7 +212,7 @@ export class ProcessOwnershipEvidenceOwner {
       // bounded observations, not claims about later PID reuse or global
       // liveness.
       if (
-        isSettledProcessOwnershipFact(fact) ||
+        processIdentityHasExited(fact.identityAfter) ||
         (previous.identity !== undefined &&
           fact.identityAfter.state === "readable" &&
           fact.identityAfter.identity !== previous.identity)
@@ -278,7 +277,7 @@ export class ProcessOwnershipEvidenceOwner {
       if (
         this.#candidates.has(pid) ||
         (retiredPids.has(pid) && fact.state !== "same-generation") ||
-        isSettledProcessOwnershipFact(fact)
+        processIdentityHasExited(fact.identityAfter)
       )
         continue;
       const identity = fact.identityAfter;

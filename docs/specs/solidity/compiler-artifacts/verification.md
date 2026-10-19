@@ -2,15 +2,15 @@
 
 ## Current integration verification — 19 October 2026
 
-Integration base: `255d906e1` (REA 6.7.0), Linux x64, Node 24.18.0,
+Integration base: `aacf740a0` (REA 6.7.0), Linux x64, Node 24.18.0,
 npm 11.16.0, unchanged `solc 0.8.30+commit.73712a01.Emscripten.clang`
 and bundled `evmole@0.9.3`.
 
 - `npm run check:ci`: all eight static tasks and architecture checks passed.
-- `npm run verify:test-discovery`: all 1,661 test files discovered exactly once.
+- `npm run verify:test-discovery`: all 1,670 test files discovered exactly once.
 - `node scripts/verify-solc-artifacts.mjs`: 80 public CLI/stdio-MCP cases passed,
   with verified process-lineage cleanup and zero descendants.
-- Complete repair regression selection: 329 passed across 26 files, covering
+- Complete repair regression selection: 399 passed across 30 files, covering
   native ownership, compiler metadata, advertised schemas, firmware, browser,
   launcher and report guards. The full JADX integration file passed all 48 cases.
 - Native ownership tests prove that settled absent/zombie lifetimes require no
@@ -24,10 +24,10 @@ and bundled `evmole@0.9.3`.
   advertised MCP catalog accepts the portable canonical-base64 schemas.
 - Process regressions failed before native lifetime and credential facts were
   reconciled consistently. Explicit absence and same-generation zombies settle
-  cleanup; unknown/replaced lifetimes and related unreadable tokens still fail.
-  Linux permission-denied token reads retain native effective UID; cleanup uses
-  it only when surrounding process identities match. Other-account processes remain
-  explicit unverified observations without signaling authority.
+  cleanup; unknown final native state and related unreadable live tokens still fail.
+  Native UID facts use the upstream identity owner. Unrelated other-account
+  permission denials remain explicit unverified observations without signaling
+  authority; other Linux I/O failures still block cleanup.
 - Real recorded-crash CLI/stdio-MCP verification: 42 cases passed, with empty
   verified process lineage and all executable/memory/network guards enabled.
 - Recorded-crash verification retains its memory, executable, network and cleanup
@@ -39,7 +39,7 @@ Full hosted qualification and platform results are reported in the
 [PR checks](https://github.com/morluto/rea/pull/3024/checks). Local Linux results do
 not establish native macOS/Windows execution. Historical cost and live-agent
 results below remain pinned to their identified revisions. The ownership fixes
-add credential reads only after Linux token permission failures; their completed
+reuse upstream selective credential reads for unreadable Linux tokens; their completed
 workflow CPU, process-family memory and token costs have not been measured.
 
 ## Historical verification — 13 October 2026

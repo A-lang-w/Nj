@@ -2,7 +2,7 @@ import { z } from "zod";
 import { canBorrowParsedJsonSnapshot } from "../immutableJson.js";
 
 import { localPathStringSchema } from "../localPath.js";
-import { canonicalBase64Schema } from "../base64Schema.js";
+import { canonicalBase64Schema } from "../stringPatterns.js";
 
 const unsignedHex = z.string().regex(/^0x(?:0|[1-9a-f][0-9a-f]{0,15})$/);
 const index = z.number().int().nonnegative();

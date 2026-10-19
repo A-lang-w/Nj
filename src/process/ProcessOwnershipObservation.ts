@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { parseLinuxProcessStat } from "./LinuxProcessStat.js";
+import { parseLinuxProcessEffectiveUid } from "./LinuxProcessStatus.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 
 import { launcherIdentityFailure } from "./ProcessOwnershipIdentity.js";
@@ -480,53 +481,6 @@ export const parseProcessEnvironment = (
       }),
   );
 
-/** Read credentials only when Linux refuses access to the ownership token. */
-const readLinuxProcessRunToken = async (
-  pid: number,
-  signal?: AbortSignal,
-): Promise<ProcessRunTokenObservation> => {
-  try {
-    const environment = parseProcessEnvironment(
-      await readFile(`/proc/${pid}/environ`, { encoding: "utf8", signal }),
-    );
-    return { state: "readable", runId: environment.REA_PROCESS_RUN_ID };
-  } catch (cause: unknown) {
-    if (isExpectedAbort(cause, signal)) throw cause;
-    const failure = {
-      state: "unavailable" as const,
-      reason: errorMessage(cause),
-    };
-    if (
-      !(cause instanceof Error) ||
-      !("code" in cause) ||
-      (cause.code !== "EACCES" && cause.code !== "EPERM")
-    )
-      return failure;
-    try {
-      const status = await readFile(`/proc/${pid}/status`, {
-        encoding: "utf8",
-        signal,
-      });
-      const records = status
-        .split("\n")
-        .filter((line) => line.startsWith("Uid:"));
-      const match =
-        records.length === 1
-          ? /^Uid:[ \t]+(\d+)[ \t]+(\d+)[ \t]+(\d+)[ \t]+(\d+)[ \t]*$/u.exec(
-              records[0]!,
-            )
-          : null;
-      const effectiveUid = match === null ? undefined : Number(match[2]);
-      return effectiveUid !== undefined && Number.isSafeInteger(effectiveUid)
-        ? { ...failure, effectiveUid }
-        : failure;
-    } catch (credentialCause: unknown) {
-      if (isExpectedAbort(credentialCause, signal)) throw credentialCause;
-      return failure;
-    }
-  }
-};
-
 const identityFact = (
   observations: ReadonlyMap<number, ProcessIdentityObservation> | undefined,
   pid: number,
@@ -545,6 +499,7 @@ const readIdentityFacts = async (
   host: ProcessOwnershipHost,
   phase: "before" | "after",
   signal?: AbortSignal,
+  effectiveUidPids?: ReadonlySet<number>,
 ): Promise<ReadonlyMap<number, ProcessIdentityObservation>> => {
   signal?.throwIfAborted();
   if (host.processIdentities === undefined)
@@ -558,10 +513,11 @@ const readIdentityFacts = async (
       ]),
     );
   try {
-    const observations =
-      signal === undefined
-        ? await host.processIdentities(processes)
-        : await host.processIdentities(processes, signal);
+    const observations = await host.processIdentities(
+      processes,
+      signal,
+      effectiveUidPids,
+    );
     signal?.throwIfAborted();
     return new Map<number, ProcessIdentityObservation>(
       processes.map(({ pid }) => [pid, identityFact(observations, pid, phase)]),
@@ -630,11 +586,17 @@ export const readProcessOwnershipFacts = async (
   }
   signal?.throwIfAborted();
 
+  const effectiveUidPids = new Set(
+    processes
+      .filter(({ pid }) => tokens.get(pid)?.state !== "readable")
+      .map(({ pid }) => pid),
+  );
   const identityAfter = await readIdentityFacts(
     processes,
     host,
     "after",
     signal,
+    effectiveUidPids,
   );
   signal?.throwIfAborted();
   const facts = processes.map((process): ProcessOwnershipFact => {
@@ -746,7 +708,7 @@ export const createSystemProcessOwnershipHost = (
   };
   const processIdentities: NonNullable<
     ProcessOwnershipHost["processIdentities"]
-  > = async (processes, signal) => {
+  > = async (processes, signal, effectiveUidPids) => {
     if (processes.length === 0) return new Map();
     if (platform === "linux")
       return new Map<number, ProcessIdentityObservation>(
@@ -763,27 +725,78 @@ export const createSystemProcessOwnershipHost = (
                 ...(signal === undefined ? {} : { signal }),
               });
               const parsed = parseLinuxProcessStat(stat);
-              return [
-                pid,
-                parsed === undefined || parsed.pid !== pid
-                  ? ({
-                      state: "unavailable",
-                      reason: "malformed_proc_stat",
-                    } as const)
-                  : ({
-                      state: "readable",
-                      identity: `linux-starttime:${parsed.startTime}`,
-                      lifecycle: {
-                        state: "observed",
-                        lifecycle: parsed.lifecycle,
-                      },
-                      relation: {
-                        state: "observed",
-                        parentPid: parsed.parentPid,
-                        processGroupId: parsed.processGroupId,
-                      },
-                    } as const),
-              ] as const;
+              if (parsed === undefined || parsed.pid !== pid)
+                return [
+                  pid,
+                  {
+                    state: "unavailable",
+                    reason: "malformed_proc_stat",
+                  } as const,
+                ] as const;
+
+              const readableIdentity = (
+                facts: typeof parsed,
+                effectiveUid?: number,
+              ) => ({
+                state: "readable" as const,
+                identity: `linux-starttime:${facts.startTime}`,
+                ...(effectiveUid === undefined ? {} : { effectiveUid }),
+                lifecycle: {
+                  state: "observed" as const,
+                  lifecycle: facts.lifecycle,
+                },
+                relation: {
+                  state: "observed" as const,
+                  parentPid: facts.parentPid,
+                  processGroupId: facts.processGroupId,
+                },
+              });
+
+              if (!effectiveUidPids?.has(pid))
+                return [pid, readableIdentity(parsed)] as const;
+
+              let status: string;
+              try {
+                status = await readFile(`/proc/${String(pid)}/status`, {
+                  encoding: "utf8",
+                  ...(signal === undefined ? {} : { signal }),
+                });
+              } catch (cause: unknown) {
+                if (isExpectedAbort(cause, signal)) throw cause;
+                return [pid, readableIdentity(parsed)] as const;
+              }
+              signal?.throwIfAborted();
+              const effectiveUid = parseLinuxProcessEffectiveUid(status);
+              if (effectiveUid === undefined)
+                return [pid, readableIdentity(parsed)] as const;
+
+              let afterStatus: string;
+              try {
+                afterStatus = await readFile(`/proc/${String(pid)}/stat`, {
+                  encoding: "utf8",
+                  ...(signal === undefined ? {} : { signal }),
+                });
+              } catch (cause: unknown) {
+                if (isExpectedAbort(cause, signal)) throw cause;
+                return [pid, readableIdentity(parsed)] as const;
+              }
+              signal?.throwIfAborted();
+              const verified = parseLinuxProcessStat(afterStatus);
+              if (
+                verified !== undefined &&
+                verified.pid === pid &&
+                verified.startTime !== parsed.startTime
+              )
+                return [
+                  pid,
+                  {
+                    state: "unavailable",
+                    reason: "process_identity_changed_during_uid_observation",
+                  } as const,
+                ] as const;
+              if (verified === undefined || verified.pid !== pid)
+                return [pid, readableIdentity(parsed)] as const;
+              return [pid, readableIdentity(verified, effectiveUid)] as const;
             } catch (cause: unknown) {
               if (isExpectedAbort(cause, signal)) throw cause;
               if (
@@ -949,14 +962,6 @@ export const createSystemProcessOwnershipHost = (
     },
     async runTokens(processes, signal) {
       signal?.throwIfAborted();
-      if (platform === "linux") {
-        const tokens = new Map<number, ProcessRunTokenObservation>();
-        for (const { pid } of processes) {
-          signal?.throwIfAborted();
-          tokens.set(pid, await readLinuxProcessRunToken(pid, signal));
-        }
-        return tokens;
-      }
       if (platform !== "darwin" || processes.length === 0) return new Map();
       try {
         return (await darwinTokens?.read(processes, signal)) ?? new Map();
