@@ -281,6 +281,7 @@ const resolvePath = (input: ResolveArtifactPathInput): CandidateResolution => {
     (posix.isAbsolute(input.declaredPath) ||
       win32.isAbsolute(input.declaredPath) ||
       (input.context === "module-specifier" &&
+        input.moduleKind !== "require" &&
         /^file:/iu.test(input.declaredPath)))
   )
     // Host syntax is not a canonical logical path. In particular, Windows

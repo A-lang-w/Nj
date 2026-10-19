@@ -189,8 +189,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         properties: expect.objectContaining({
           module_link_kind: "import",
           specifier: "FILE:///src/uri-dep.cjs?token=%2F#entry",
-          resolved_path: "src/uri-dep.cjs",
-          resolution_status: "resolved",
+          resolved_path: null,
+          resolution_status: "unavailable",
         }),
         evidence: sourceEvidence("src/imports.mjs", importSource),
       }),
