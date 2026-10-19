@@ -387,8 +387,10 @@ interface ModuleDelegateWrite extends ModuleDelegateOwner {
   /** Copy identity and capture points are separate from prior-effect validity. */
   readonly delegateCopy?: {
     readonly target: t.Node;
-    readonly targetKind: "module" | "delegate" | "prototype";
+    readonly targetKind: "module" | "delegate" | "prototype" | "module-owner";
     readonly values: readonly t.Node[];
+    /** Reflect.set also looks up a descriptor on its independent first target. */
+    readonly lookupTarget?: t.Node;
   };
 }
 
@@ -677,12 +679,22 @@ const writesModuleRequire = (
     if (
       write.delegate === "require" &&
       copy !== undefined &&
+      (copy.lookupTarget === undefined ||
+        [HOST_MODULE, HOST_MODULE_PROTOTYPE].includes(
+          hostLoaderPath(copy.lookupTarget, state, true)?.join(".") ?? "",
+        )) &&
       (copy.targetKind === "delegate"
         ? isInitialDelegate(copy.target)
-        : hostLoaderPath(copy.target, state, true)?.join(".") ===
-          (copy.targetKind === "module"
-            ? HOST_MODULE
-            : HOST_MODULE_PROTOTYPE)) &&
+        : (copy.targetKind === "module-owner"
+            ? [HOST_MODULE, HOST_MODULE_PROTOTYPE]
+            : [
+                copy.targetKind === "module"
+                  ? HOST_MODULE
+                  : HOST_MODULE_PROTOTYPE,
+              ]
+          ).includes(
+            hostLoaderPath(copy.target, state, true)?.join(".") ?? "",
+          )) &&
       copy.values.every(isInitialDelegate)
     )
       copiesInitialDelegate.add(write);
@@ -733,6 +745,9 @@ const objectMayDefineDelegate = (
   // Exact non-string primitives have no own keys after boxing. Nonempty
   // strings do: their indexed characters can invoke target setters.
   if (
+    t.isRegExpLiteral(node) ||
+    (t.isArrayExpression(node) &&
+      node.elements.every((element) => element === null)) ||
     (literal.found &&
       (typeof literal.value !== "string" || literal.value.length === 0)) ||
     t.isBigIntLiteral(node) ||
@@ -1125,6 +1140,28 @@ export const semanticModuleDelegateWriteOwner = (
     )
       return { ...owner, deletesInitiallyAbsentOwnSlot: true };
     if (mutation?.kind === "set-prototype") return wrapper ? owner : undefined;
+    if (mutation?.kind === "set" && key === "require") {
+      const native = completedNativeInvocation(node, interop, state);
+      const target = args?.[3] ?? args?.[0];
+      const value = args?.[2];
+      if (
+        native?.kind === "known" &&
+        native.path.join(".") === "intrinsic.Reflect.set" &&
+        args?.[0] !== undefined &&
+        !args.some(t.isSpreadElement) &&
+        target !== undefined &&
+        value !== undefined
+      )
+        return {
+          ...owner,
+          delegateCopy: {
+            target,
+            targetKind: "module-owner",
+            lookupTarget: args[0],
+            values: [value],
+          },
+        };
+    }
     if (mutation?.kind === "assign") {
       if (
         args !== undefined &&

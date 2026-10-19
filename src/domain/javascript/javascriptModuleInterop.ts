@@ -33,12 +33,16 @@ import {
   resolveJavaScriptIntrinsicInvocation,
   type JavaScriptBoundHelperRead,
 } from "./javascriptIntrinsicInvocation.js";
-import { SemanticPropertyPathCoverage } from "./javascriptSemanticPropertyPaths.js";
+import {
+  semanticArrayIndex,
+  SemanticPropertyPathCoverage,
+} from "./javascriptSemanticPropertyPaths.js";
 import {
   SEMANTIC_PHYSICAL_PROTOTYPE,
   SEMANTIC_SOURCE_PROTO_DESCRIPTOR,
   SEMANTIC_OWN_PROPERTY_DESCRIPTOR,
   semanticCallableValueIdentity,
+  semanticArrayReferenceResult,
   semanticFunctionValueReadDependencies,
   type SemanticFunctionValueReadDependency,
   type SemanticFunctionValueReadPath,
@@ -207,7 +211,6 @@ export const createSemanticModuleInterop = (
   const helpers = new Map<string, InteropHelper | null>();
   const origins = new Map<string, InteropOrigin>();
   const calls = new WeakMap<t.Node, InteropOrigin>();
-  const intrinsicBindings = new Map<string, readonly string[] | null>();
   const writes: {
     readonly scope: string;
     readonly offset: number;
@@ -306,9 +309,9 @@ export const createSemanticModuleInterop = (
     return ["intrinsic"];
   };
 
-  const intrinsicPath =
-    options?.intrinsicPath ??
-    ((node: t.Node): readonly string[] | undefined => {
+  const createIntrinsicPath = (references = false) => {
+    const intrinsicBindings = new Map<string, readonly string[] | null>();
+    return (node: t.Node): readonly string[] | undefined => {
       let current = node;
       const visited = new Set<string>();
       const pending: { id: string; suffixLength: number }[] = [];
@@ -329,7 +332,30 @@ export const createSemanticModuleInterop = (
         const { root, members } = electronMemberPath(current);
         if (members.some((member) => member === null)) return finish(undefined);
         suffix = [...(members as readonly string[]), ...suffix];
-        for (const global of ["Object", "Function", "Reflect"])
+        if (references) {
+          let method = suffix.length - 1;
+          while (
+            method >= 0 &&
+            ["call", "apply", "bind"].includes(suffix[method]!)
+          )
+            method -= 1;
+          if (
+            method >= 0 &&
+            semanticArrayReferenceResult(suffix[method]!) !== undefined
+          )
+            return finish([
+              "intrinsic",
+              "Array",
+              "prototype",
+              ...suffix.slice(method),
+            ]);
+        }
+        for (const global of [
+          "Object",
+          "Function",
+          "Reflect",
+          ...(references ? ["Array"] : []),
+        ])
           if (isUnshadowedGlobal(root, state, global))
             return finish(["intrinsic", global, ...suffix]);
         for (const global of ["globalThis", "global", "window", "self"])
@@ -356,8 +382,12 @@ export const createSemanticModuleInterop = (
         suffix = [...initializer.projection.map(String), ...suffix];
         current = initializer.node;
       }
-    });
-
+    };
+  };
+  const intrinsicPath = options?.intrinsicPath ?? createIntrinsicPath();
+  // Nominal native candidates only add possible result aliases. They never
+  // establish callable integrity, freshness, or an escape exclusion.
+  const referenceIntrinsicPath = createIntrinsicPath(true);
   // A nominal alias path is sufficient for conservative mutation lookup, but
   // helper proof also needs each read to follow initialization. An alias copy
   // retains the earlier function capture; a member read captures it anew.
@@ -754,7 +784,14 @@ export const createSemanticModuleInterop = (
     node: t.Node,
     proofFacts?: SemanticGlobalBindingFacts,
     checkEscapes = false,
+    references = false,
   ): JavaScriptIntrinsicInvocation | undefined => {
+    const selectedPath = references ? referenceIntrinsicPath : intrinsicPath;
+    const captured = (value: t.Node) => {
+      if (!references) return capturedIntrinsic(value, proofFacts);
+      const path = selectedPath(value);
+      return path === undefined ? undefined : { path, capturedAt: value };
+    };
     const visited = new Set<string>();
     const argumentGroups: t.CallExpression["arguments"][] = [];
     const allocations: t.CallExpression[] = [];
@@ -778,7 +815,8 @@ export const createSemanticModuleInterop = (
         const initializer = semanticStableInitializer(binding, state);
         if (
           binding === undefined ||
-          intrinsicBindingReadMayHaveChanged(binding, current, proofFacts) ||
+          (!references &&
+            intrinsicBindingReadMayHaveChanged(binding, current, proofFacts)) ||
           initializer === undefined ||
           initializer.projection.length !== 0 ||
           (initializer.node.end ?? Infinity) >= (current.start ?? -1) ||
@@ -795,8 +833,8 @@ export const createSemanticModuleInterop = (
       let bindTarget = root;
       let bindingArguments: JavaScriptIntrinsicInvocation["arguments"] =
         expandJavaScriptInvocationArguments(current.arguments);
-      let captured = capturedIntrinsic(current.callee, proofFacts);
-      const calleePath = captured?.path ?? intrinsicPath(current.callee);
+      let capturedValue = captured(current.callee);
+      const calleePath = capturedValue?.path ?? selectedPath(current.callee);
       let terminal = calleePath?.at(-1) === "bind";
       let path: readonly string[] | undefined = calleePath?.slice(0, -1);
       if (members.at(-1) === "bind") {
@@ -815,9 +853,10 @@ export const createSemanticModuleInterop = (
         // Reuse the invocation owner for generic call/apply/Reflect.apply of bind.
         const invocation = resolveJavaScriptIntrinsicInvocation(
           current,
-          intrinsicPath,
-          (node) => boundIntrinsic(node, proofFacts, checkEscapes),
+          selectedPath,
+          (node) => boundIntrinsic(node, proofFacts, checkEscapes, references),
           (node, path, bound) =>
+            !references &&
             intrinsicReadChanged(node, path, bound, proofFacts, checkEscapes),
         );
         if (
@@ -828,8 +867,8 @@ export const createSemanticModuleInterop = (
           return undefined;
         bindTarget = invocation.receiver;
         bindingArguments = invocation.arguments;
-        captured = capturedIntrinsic(bindTarget, proofFacts);
-        path = captured?.path ?? intrinsicPath(bindTarget);
+        capturedValue = captured(bindTarget);
+        path = capturedValue?.path ?? selectedPath(bindTarget);
         terminal = path !== undefined;
       }
       // A possible alias can still invoke an intrinsic through bind. Keep its
@@ -837,7 +876,7 @@ export const createSemanticModuleInterop = (
       // weakening the stricter capture proof used for namespace helpers.
       allocationTargets.push(bindTarget);
       callableReads.push(current.callee, bindTarget);
-      opaqueArguments ||= terminal && captured === undefined;
+      opaqueArguments ||= terminal && capturedValue === undefined;
       receiver = bindingArguments?.[0];
       const ownArguments = bindingArguments?.slice(1) ?? [];
       opaqueArguments ||=
@@ -856,33 +895,36 @@ export const createSemanticModuleInterop = (
         allocationTargets,
         prototypeTarget: bindTarget,
       };
-      const helperChanged = bindReads.some(({ node, allocationIndex }) => {
-        const source =
-          allocationIndex === allocations.length - 1
-            ? capturedIntrinsic(node, proofFacts)
-            : undefined;
-        const sourceFacts = proofFacts ?? options?.boundFunctionWriteFacts;
-        return source?.sourceFunction !== undefined && sourceFacts !== undefined
-          ? dependencyReadChanged(source, sourceFacts, checkEscapes)
-          : intrinsicReadChanged(
-              node,
-              boundPath,
-              allocationIndex === allocations.length - 1
-                ? undefined
-                : {
-                    value: {
-                      ...boundFunction,
-                      allocations: allocations.slice(allocationIndex + 1),
-                      allocationTargets: allocationTargets.slice(
-                        allocationIndex + 1,
-                      ),
+      const helperChanged =
+        !references &&
+        bindReads.some(({ node, allocationIndex }) => {
+          const source =
+            allocationIndex === allocations.length - 1
+              ? capturedIntrinsic(node, proofFacts)
+              : undefined;
+          const sourceFacts = proofFacts ?? options?.boundFunctionWriteFacts;
+          return source?.sourceFunction !== undefined &&
+            sourceFacts !== undefined
+            ? dependencyReadChanged(source, sourceFacts, checkEscapes)
+            : intrinsicReadChanged(
+                node,
+                boundPath,
+                allocationIndex === allocations.length - 1
+                  ? undefined
+                  : {
+                      value: {
+                        ...boundFunction,
+                        allocations: allocations.slice(allocationIndex + 1),
+                        allocationTargets: allocationTargets.slice(
+                          allocationIndex + 1,
+                        ),
+                      },
+                      projection: ["bind"],
                     },
-                    projection: ["bind"],
-                  },
-              proofFacts,
-              checkEscapes,
-            );
-      });
+                proofFacts,
+                checkEscapes,
+              );
+        });
       opaqueArguments ||= helperChanged;
       return {
         kind: opaqueArguments ? "opaque" : "known",
@@ -904,11 +946,12 @@ export const createSemanticModuleInterop = (
     node: t.Node,
     proofFacts?: SemanticGlobalBindingFacts,
     checkEscapes = false,
+    references = false,
   ): JavaScriptIntrinsicInvocation | undefined => {
     if (activeBoundValues.has(node)) return undefined;
     activeBoundValues.add(node);
     try {
-      return resolveBoundIntrinsic(node, proofFacts, checkEscapes);
+      return resolveBoundIntrinsic(node, proofFacts, checkEscapes, references);
     } finally {
       activeBoundValues.delete(node);
     }
@@ -1164,6 +1207,27 @@ export const createSemanticModuleInterop = (
     };
   };
 
+  const referenceInvocations = new WeakMap<
+    t.Node,
+    JavaScriptIntrinsicInvocation | null
+  >();
+  const possibleReferenceInvocation = (
+    node: t.CallExpression | t.OptionalCallExpression,
+  ) => {
+    let selected = referenceInvocations.get(node);
+    if (selected === undefined) {
+      selected =
+        resolveJavaScriptIntrinsicInvocation(
+          node,
+          referenceIntrinsicPath,
+          (value) => boundIntrinsic(value, undefined, false, true),
+          () => false,
+        ) ?? null;
+      referenceInvocations.set(node, selected);
+    }
+    return selected ?? undefined;
+  };
+
   /** Parsed conversion sources are possible references, never loader proof.
    * The caller owns source captures and mutations; no provisional loader or
    * intrinsic-integrity result is retained in this selection. */
@@ -1179,6 +1243,81 @@ export const createSemanticModuleInterop = (
         boundIntrinsic,
         intrinsicReadChanged,
       );
+      const resultInvocation = possibleReferenceInvocation(node);
+      const resultShape =
+        resultInvocation?.path.length === 4 &&
+        resultInvocation.path.slice(0, 3).join(".") ===
+          "intrinsic.Array.prototype"
+          ? semanticArrayReferenceResult(resultInvocation.path[3]!)
+          : undefined;
+      const receiver =
+        resultInvocation?.receiver ?? resultInvocation?.memberReceiver;
+      if (
+        resultInvocation?.kind === "known" &&
+        resultShape !== undefined &&
+        t.isExpression(receiver)
+      ) {
+        if (resultShape.kind === "element")
+          return [
+            {
+              node: receiver,
+              projection: [null, ...(projection ?? [])],
+              projectionOffset: 0,
+              capturePrefix: [node],
+            },
+          ];
+        const sources: InteropReferenceSource[] =
+          resultShape.kind === "receiver"
+            ? [
+                {
+                  identity: true,
+                  node: receiver,
+                  projection,
+                  projectionOffset: 0,
+                },
+              ]
+            : [];
+        const key = projection?.[0];
+        if (
+          key === null ||
+          (typeof key === "string" && semanticArrayIndex(key) !== null) ||
+          (escapedContents &&
+            (projection === undefined || projection.length === 0))
+        ) {
+          const suffix = projection?.slice(1) ?? [];
+          // Reordering methods retain any input element; the result array's
+          // own properties remain distinct for allocating methods.
+          sources.push({
+            node: receiver,
+            projection: [null, ...suffix],
+            projectionOffset: 1,
+            capturePrefix: [node],
+          });
+          const inputs = resultShape.arguments;
+          if (inputs !== undefined)
+            for (const input of resultInvocation.arguments?.slice(
+              inputs.start,
+              inputs.count === undefined
+                ? undefined
+                : inputs.start + inputs.count,
+            ) ?? [])
+              if (t.isExpression(input)) {
+                sources.push({
+                  node: input,
+                  projection: suffix,
+                  projectionOffset: 1,
+                });
+                if (inputs.spreads)
+                  sources.push({
+                    node: input,
+                    projection: [null, ...suffix],
+                    projectionOffset: 1,
+                    capturePrefix: [node],
+                  });
+              }
+        }
+        return sources;
+      }
       const prototype = invocation?.arguments?.[0];
       const intrinsic = invocation?.path.join(".");
       if (
@@ -1197,6 +1336,59 @@ export const createSemanticModuleInterop = (
             projectionOffset: 0,
           },
         ];
+      if (invocation?.kind === "known" && t.isExpression(prototype)) {
+        if (intrinsic === "intrinsic.Object")
+          return [
+            {
+              identity: true,
+              node: prototype,
+              projection,
+              projectionOffset: 0,
+            },
+          ];
+        if (intrinsic === "intrinsic.Reflect.get")
+          return [
+            {
+              node: prototype,
+              projection: [
+                staticString(invocation.arguments?.[1]) ?? null,
+                ...(projection ?? []),
+              ],
+              projectionOffset: 0,
+              capturePrefix: [node],
+            },
+          ];
+        if (
+          intrinsic === "intrinsic.Object.values" ||
+          intrinsic === "intrinsic.Object.entries"
+        ) {
+          const entries = intrinsic === "intrinsic.Object.entries";
+          const element = projection?.[0];
+          const selected =
+            element === null ||
+            (typeof element === "string" &&
+              semanticArrayIndex(element) !== null);
+          const contents =
+            escapedContents &&
+            (projection === undefined || projection.length === 0);
+          if (
+            contents ||
+            (selected &&
+              (!entries || projection?.[1] === "1" || projection?.[1] === null))
+          ) {
+            const offset = entries ? 2 : 1;
+            return [
+              {
+                node: prototype,
+                projection: [null, ...(projection?.slice(offset) ?? [])],
+                projectionOffset: offset,
+                capturePrefix: [node],
+              },
+            ];
+          }
+          return [];
+        }
+      }
       const descriptors =
         intrinsic === "intrinsic.Object.getOwnPropertyDescriptors";
       if (

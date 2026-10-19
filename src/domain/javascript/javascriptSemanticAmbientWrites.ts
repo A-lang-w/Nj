@@ -2598,12 +2598,24 @@ export const createAmbientPathResolver = (
               suffix?.slice(1),
               captures.slice(1),
             );
-          else
+          else {
+            // Read the actual global object's storage before selecting a
+            // nominal builtin value. Captured intrinsic identities do not
+            // re-read the global binding that originally exposed them.
+            if (possibleWrites && suffix !== undefined && suffix.length > 0)
+              selectStorage(
+                ["global", ...suffix],
+                1,
+                ["global"],
+                [undefined, ...captures],
+                current.copySelection,
+              );
             retain(
               ["global", ...(suffix ?? [])],
               captures,
               current.copySelection,
             );
+          }
           continue;
         }
         if (
@@ -2613,12 +2625,35 @@ export const createAmbientPathResolver = (
         ) {
           const replacement = facts?.globalRootReplacement?.(root.name, root);
           if (replacement !== undefined) continueCaptured(replacement.node);
-          else
+          else {
+            if (
+              possibleWrites &&
+              !(
+                root.name === "require" &&
+                javaScriptRuntimeContext(state.program) === "commonjs"
+              )
+            )
+              selectStorage(
+                ["global", root.name, ...(suffix ?? [])],
+                1,
+                ["global"],
+                [
+                  undefined,
+                  boundCapture(
+                    root,
+                    current.readContext?.invokedAt,
+                    current.readContext?.invocationOwner,
+                  ),
+                  ...captures,
+                ],
+                current.copySelection,
+              );
             retain(
               ["global", root.name, ...(suffix ?? [])],
               captures,
               current.copySelection,
             );
+          }
           continue;
         }
         const binding =

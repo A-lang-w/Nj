@@ -195,25 +195,16 @@ const OBJECT_PROTOTYPE_DATA_METHODS = [
   "valueOf",
 ] as const;
 
-const ARRAY_PROTOTYPE_DATA_METHODS = [
-  "at",
+// Keep the versionless presence baseline at longstanding ES5 slots. Syntax
+// support does not prove newer builtins exist (values shipped after destructuring).
+// Later methods remain possible identities, never initial-presence proofs.
+const INITIAL_ARRAY_PROTOTYPE_DATA_METHODS = [
   "concat",
-  "copyWithin",
-  "entries",
   "every",
-  "fill",
   "filter",
-  "find",
-  "findIndex",
-  "findLast",
-  "findLastIndex",
-  "flat",
-  "flatMap",
   "forEach",
-  "includes",
   "indexOf",
   "join",
-  "keys",
   "lastIndexOf",
   "map",
   "pop",
@@ -227,14 +218,70 @@ const ARRAY_PROTOTYPE_DATA_METHODS = [
   "sort",
   "splice",
   "toLocaleString",
+  "toString",
+  "unshift",
+] as const;
+
+const ARRAY_PROTOTYPE_DATA_METHODS = [
+  ...INITIAL_ARRAY_PROTOTYPE_DATA_METHODS,
+  "copyWithin",
+  "entries",
+  "fill",
+  "find",
+  "findIndex",
+  "keys",
+  "values",
+
+  "at",
+  "findLast",
+  "findLastIndex",
+  "flat",
+  "flatMap",
+  "includes",
   "toReversed",
   "toSorted",
   "toSpliced",
-  "toString",
-  "unshift",
-  "values",
   "with",
 ] as const;
+
+/** Possible native result shape, independent of target-version presence or
+ * proof that a selected method still has its initial callable identity. */
+const ARRAY_REFERENCE_RESULTS: Readonly<
+  Record<
+    string,
+    {
+      readonly kind: "element" | "receiver" | "copy";
+      readonly arguments?: {
+        readonly start: number;
+        readonly count?: number;
+        readonly spreads?: true;
+      };
+    }
+  >
+> = {
+  at: { kind: "element" },
+  pop: { kind: "element" },
+  shift: { kind: "element" },
+  find: { kind: "element" },
+  findLast: { kind: "element" },
+  reverse: { kind: "receiver" },
+  sort: { kind: "receiver" },
+  copyWithin: { kind: "receiver" },
+  fill: { kind: "receiver", arguments: { start: 0, count: 1 } },
+  slice: { kind: "copy" },
+  filter: { kind: "copy" },
+  toReversed: { kind: "copy" },
+  toSorted: { kind: "copy" },
+  splice: { kind: "copy" },
+  concat: { kind: "copy", arguments: { start: 0, spreads: true } },
+  toSpliced: { kind: "copy", arguments: { start: 2 } },
+  with: { kind: "copy", arguments: { start: 1, count: 1 } },
+};
+
+export const semanticArrayReferenceResult = (method: string) =>
+  Object.hasOwn(ARRAY_REFERENCE_RESULTS, method)
+    ? ARRAY_REFERENCE_RESULTS[method]
+    : undefined;
 
 /** Required initial data slots only; optional legacy accessors/methods are not
  * presence proofs. Callers still own prototype identity and mutation checks. */
@@ -245,7 +292,7 @@ export const semanticInitialBuiltinPrototypeDataProperty = (
   key === "constructor" ||
   (owner === "Array" && key === "length") ||
   (owner === "Array"
-    ? ARRAY_PROTOTYPE_DATA_METHODS
+    ? INITIAL_ARRAY_PROTOTYPE_DATA_METHODS
     : OBJECT_PROTOTYPE_DATA_METHODS
   ).some((name) => name === key);
 

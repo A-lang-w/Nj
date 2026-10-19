@@ -49,7 +49,6 @@ describe("initial inherited literal data slots", () => {
     "const {toString:target=globalThis}=[];",
     "const {map:target=globalThis}=[];",
     "const {slice:target=globalThis}=[];",
-    "const {values:target=globalThis}=[];",
     "const {hasOwnProperty:target=globalThis}=[];",
     "const {nested:{toString:target=globalThis}}={nested:{}};",
     "const {toString:target=globalThis}={__proto__:{}};",

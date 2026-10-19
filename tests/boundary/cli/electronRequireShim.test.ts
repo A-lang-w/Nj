@@ -29,6 +29,18 @@ const helperMutationCases = [
   ["Object.assign(module,{require:module.require});", 1],
   ["module.require &&= module.require;", 1],
   ["Object.assign(module,0);", 1],
+  ["Object.assign(module,[]);", 1],
+  ["Object.assign(module,/x/);", 1],
+  ["Reflect.set(module,'require',module.require);", 1],
+  ["require(__filename);module.children.at(0).require=other;", 0],
+  ["Object.values({owner:module})[0].require=other;", 0],
+  ["require(__filename);module.children.slice().require=other;", 1],
+  [
+    'const {toReversed:target=globalThis}=[];var Q=(e=>typeof require<"u"?require:e)(function(){});target.Q=other;',
+    0,
+    'new(Q("electron").BrowserWindow)({});',
+    "main.js",
+  ],
   ['Object.assign(module,"abc");', 1],
   [
     'Object.defineProperty(module,"0",{set(value){this.require=other}});Object.assign(module,"abc");',
