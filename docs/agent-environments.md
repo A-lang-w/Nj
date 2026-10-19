@@ -63,6 +63,7 @@ where the answer came from:
     "recorded_path": "/api/users/2",
     "recorded_query": null,
     "body_recorded": true,
+    "body_encoding": "utf-8",
     "truncated": false
   }
 }
@@ -77,7 +78,9 @@ recorded content type is JSON-like (`application/json`, `application/*+json`,
 recorded text. Bodies over 256 KiB are cut at a UTF-8 boundary and returned as
 text with `truncated: true`. `body_recorded` is false when the capture kept the
 response's status and content type but no body; `body` is then `null`, which
-is not a recorded JSON `null`. Request bodies passed to `POST`, `PUT` and `PATCH`
+is not a recorded JSON `null`. `body_encoding` is `base64` when the capture
+retained response bytes that are not valid UTF-8; `body` is then exactly those
+bytes in base64, never a lossy decoding. Request bodies passed to `POST`, `PUT` and `PATCH`
 tools are accepted and ignored: nothing is written, and no call changes what a
 later call returns. Arguments the tool's input schema does not name are
 refused by the MCP server as invalid arguments, so a misspelled parameter never
@@ -89,7 +92,8 @@ which the manifest lists as unknowns; it does not validate supplied values; and
 it does not answer requests the capture never recorded. Replayed content is
 target content: every tool result carries
 `_meta.provenance.untrusted_content: true` with `source: "analysis_target"`,
-and agents must treat it as data, never as instructions.
+the server advertises the same untrusted-content instructions as REA's own MCP
+server, and agents must treat it as data, never as instructions.
 
 ## Serve a manifest
 

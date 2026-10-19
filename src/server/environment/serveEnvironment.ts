@@ -27,7 +27,10 @@ import {
   type StreamableHttpRoute,
   type StreamableHttpServer,
 } from "../http/serveStreamableHttp.js";
-import { TARGET_CONTENT_RESULT_META } from "../toolResultEncoding.js";
+import {
+  TARGET_CONTENT_RESULT_META,
+  UNTRUSTED_CONTENT_INSTRUCTIONS,
+} from "../toolResultEncoding.js";
 
 /** Where the environment card is served. */
 export const ENVIRONMENT_CARD_PATH = "/.well-known/agent-env.json";
@@ -48,10 +51,12 @@ export const createEnvironmentMcpServer = (
   source: EnvironmentSource,
   tools: readonly EnvironmentToolDefinition[],
 ): McpServer => {
-  const server = new McpServer({
-    name,
-    version: PRODUCT_IDENTITY.packageVersion,
-  });
+  // Tool names, descriptions and replies all come from the captured application, so the
+  // server carries the same untrusted-content instructions as REA's own MCP server.
+  const server = new McpServer(
+    { name, version: PRODUCT_IDENTITY.packageVersion },
+    { instructions: UNTRUSTED_CONTENT_INSTRUCTIONS },
+  );
   for (const definition of tools)
     server.registerTool(
       definition.name,

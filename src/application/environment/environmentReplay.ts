@@ -31,6 +31,7 @@ export interface ReplayResult {
     readonly recorded_path: string;
     readonly recorded_query: string | null;
     readonly body_recorded: boolean;
+    readonly body_encoding: "utf-8" | "base64";
     readonly truncated: boolean;
   };
 }
@@ -128,6 +129,8 @@ const replayBody = (
   if (text === null) return { body: null, truncated: false };
   const prefix = utf8Prefix(text, REPLAY_BODY_LIMIT_BYTES);
   if (prefix.length < text.length) return { body: prefix, truncated: true };
+  if (exchange.bodyEncoding === "base64")
+    return { body: text, truncated: false };
   if (
     exchange.contentType !== null &&
     isJsonLike(mediaTypeEssence(exchange.contentType))
@@ -171,6 +174,7 @@ export const replayEnvironmentTool = (
       recorded_path: exchange.path,
       recorded_query: exchange.query,
       body_recorded: exchange.bodyText !== null,
+      body_encoding: exchange.bodyEncoding ?? "utf-8",
       truncated,
     },
   });

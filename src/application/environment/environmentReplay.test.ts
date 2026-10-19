@@ -56,6 +56,48 @@ const singleExchangeSource = (
   return { ...source, exchanges: new Map([[ordinal, exchange]]) };
 };
 
+/** The fixture source with /api/users/2's response replaced by HAR base64 content the decoder retained. */
+const base64Source = (bytes: Buffer): EnvironmentSource => {
+  const capture = environmentManifestCaptureFixture();
+  const record = capture.records.find(
+    (entry) =>
+      typeof entry.reported === "object" &&
+      entry.reported !== null &&
+      "request" in entry.reported &&
+      JSON.stringify(entry.reported).includes("/api/users/2"),
+  );
+  if (record === undefined) throw new Error("Fixture lacks /api/users/2");
+  const reported = structuredClone(record.reported) as {
+    response: { content: { text: string; encoding?: string } };
+  };
+  reported.response.content.text = bytes.toString("base64");
+  reported.response.content.encoding = "base64";
+  record.reported = reported;
+  record.binary_fields = [
+    {
+      pointer: "/response/content/text",
+      representation: "har-base64-content",
+      state: "retained",
+      content_base64: bytes.toString("base64"),
+      bytes: bytes.length,
+      sha256: "0".repeat(64),
+    },
+  ];
+  const evidence = analysisViewCaptureEvidence(capture);
+  const manifest = inspectAnalysisView({
+    source: { kind: "inline", evidence },
+    view: { kind: "environment-manifest" },
+  });
+  if (!manifest.ok) throw manifest.error;
+  expect(environmentServeFixture().manifest.evidence_id).not.toBe(
+    manifest.value.evidence_id,
+  );
+  return environmentServeSource({
+    manifest: manifest.value,
+    capture: evidence,
+  });
+};
+
 describe("replayEnvironmentTool selection", () => {
   it("replays the record whose path segments equal the supplied parameters as an exact match", () => {
     const result = replay("get_users_by_id", { id: "2" });
@@ -263,48 +305,18 @@ describe("replayEnvironmentTool bodies", () => {
     ).toMatchObject({ body: exact, replay: { truncated: false } });
   });
 
-  it("decodes HAR base64 response content the decoder retained as bytes", () => {
-    const capture = environmentManifestCaptureFixture();
-    const record = capture.records.find(
-      (entry) =>
-        typeof entry.reported === "object" &&
-        entry.reported !== null &&
-        "request" in entry.reported &&
-        JSON.stringify(entry.reported).includes("/api/users/2"),
-    );
-    if (record === undefined) throw new Error("Fixture lacks /api/users/2");
-    const bytes = Buffer.from('{"login":"decoded"}', "utf8");
-    const reported = structuredClone(record.reported) as {
-      response: { content: { text: string; encoding?: string } };
-    };
-    reported.response.content.text = bytes.toString("base64");
-    reported.response.content.encoding = "base64";
-    record.reported = reported;
-    record.binary_fields = [
-      {
-        pointer: "/response/content/text",
-        representation: "har-base64-content",
-        state: "retained",
-        content_base64: bytes.toString("base64"),
-        bytes: bytes.length,
-        sha256: "0".repeat(64),
-      },
-    ];
-    const evidence = analysisViewCaptureEvidence(capture);
-    const manifest = inspectAnalysisView({
-      source: { kind: "inline", evidence },
-      view: { kind: "environment-manifest" },
+  it("decodes retained HAR base64 bytes that are UTF-8 and keeps other bytes as base64", () => {
+    const decoded = base64Source(Buffer.from('{"login":"decoded"}', "utf8"));
+    expect(replay("get_users_by_id", { id: "2" }, decoded)).toMatchObject({
+      body: { login: "decoded" },
+      replay: { body_encoding: "utf-8" },
     });
-    if (!manifest.ok) throw manifest.error;
-    const decoded = environmentServeSource({
-      manifest: manifest.value,
-      capture: evidence,
+    const binary = Buffer.from([0xff, 0xfe, 0x00, 0x41]);
+    expect(
+      replay("get_users_by_id", { id: "2" }, base64Source(binary)),
+    ).toMatchObject({
+      body: binary.toString("base64"),
+      replay: { body_encoding: "base64", body_recorded: true },
     });
-    expect(replay("get_users_by_id", { id: "2" }, decoded).body).toEqual({
-      login: "decoded",
-    });
-    expect(environmentServeFixture().manifest.evidence_id).not.toBe(
-      manifest.value.evidence_id,
-    );
   });
 });
