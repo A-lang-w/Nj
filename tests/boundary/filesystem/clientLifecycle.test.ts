@@ -419,48 +419,55 @@ describe("Codex per-tool field repair and empty tools table preservation", () =>
     );
   });
 
-  it("preserves valid tool fields such as approval_mode when repairing malformed output_token_limit in a tool entry", async () => {
-    const home = await createTestTempDirectory("rea-codex-tools-limit-repair-");
-    roots.push(home);
-    const configPath = join(home, ".codex/config.toml");
-    await mkdir(dirname(configPath), { recursive: true });
-    const original = [
-      "[mcp_servers.rea]",
-      'command = "old-rea"',
-      'args = ["mcp"]',
-      "",
-      "[mcp_servers.rea.tools.partially_broken_limit]",
-      'approval_mode = "approve"',
-      'output_token_limit = "bad"',
-      "",
-    ].join("\n");
-    await writeFile(configPath, original);
+  it.each(['"bad"', "1.0", "1e3"])(
+    "preserves valid tool fields such as approval_mode when repairing malformed output_token_limit %s in a tool entry",
+    async (invalidLimit) => {
+      const home = await createTestTempDirectory(
+        "rea-codex-tools-limit-repair-",
+      );
+      roots.push(home);
+      const configPath = join(home, ".codex/config.toml");
+      await mkdir(dirname(configPath), { recursive: true });
+      const original = [
+        "[mcp_servers.rea]",
+        'command = "rea"',
+        'args = ["mcp"]',
+        "startup_timeout_sec = 30",
+        "tool_timeout_sec = 450",
+        "",
+        "[mcp_servers.rea.tools.partially_broken_limit]",
+        'approval_mode = "approve"',
+        `output_token_limit = ${invalidLimit}`,
+        "",
+      ].join("\n");
+      await writeFile(configPath, original);
 
-    const client = { name: "codex", configPath, format: "toml" } as const;
-    expect(
-      await configureClientConfiguration(client, {}, ["rea", "mcp"]),
-    ).toMatchObject({ status: "configured" });
+      const client = { name: "codex", configPath, format: "toml" } as const;
+      expect(
+        await configureClientConfiguration(client, {}, ["rea", "mcp"]),
+      ).toMatchObject({ status: "configured" });
 
-    const configured = await readFile(configPath, "utf8");
-    expect(parseToml(configured)).toMatchObject({
-      mcp_servers: {
-        rea: {
-          command: "rea",
-          args: ["mcp"],
-          startup_timeout_sec: 30,
-          tool_timeout_sec: 450,
-          tools: {
-            partially_broken_limit: {
-              approval_mode: "approve",
+      const configured = await readFile(configPath, "utf8");
+      expect(parseToml(configured)).toMatchObject({
+        mcp_servers: {
+          rea: {
+            command: "rea",
+            args: ["mcp"],
+            startup_timeout_sec: 30,
+            tool_timeout_sec: 450,
+            tools: {
+              partially_broken_limit: {
+                approval_mode: "approve",
+              },
             },
           },
         },
-      },
-    });
-    expect(parseToml(configured)).not.toHaveProperty(
-      "mcp_servers.rea.tools.partially_broken_limit.output_token_limit",
-    );
-  });
+      });
+      expect(parseToml(configured)).not.toHaveProperty(
+        "mcp_servers.rea.tools.partially_broken_limit.output_token_limit",
+      );
+    },
+  );
 
   it("retains an explicitly empty Codex tools table and remains unchanged on refresh", async () => {
     const home = await createTestTempDirectory("rea-codex-empty-tools-");

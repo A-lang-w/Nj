@@ -14,6 +14,7 @@ import {
   clientServerPath,
   codexToolApprovalModeSchema,
   codexToolOutputTokenLimitSchema,
+  hasTomlFloatProperty,
   legacyClientServerPath,
   OMP_DISABLED_SERVERS_KEY,
   parseClientConfiguration,
@@ -836,9 +837,11 @@ const codexToolEntry = (
         entry[key] = parsedApproval.data;
       }
     } else if (key === "output_token_limit") {
-      const parsedLimit = codexToolOutputTokenLimitSchema.safeParse(prop);
-      if (parsedLimit.success) {
-        entry[key] = parsedLimit.data;
+      if (!hasTomlFloatProperty(value, key)) {
+        const parsedLimit = codexToolOutputTokenLimitSchema.safeParse(prop);
+        if (parsedLimit.success) {
+          entry[key] = parsedLimit.data;
+        }
       }
     } else {
       entry[key] = prop;

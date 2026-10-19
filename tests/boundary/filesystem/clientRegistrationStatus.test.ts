@@ -474,6 +474,8 @@ function registerClientToolPolicyTests(): void {
     '[mcp_servers.rea.tools.binary_session]\noutput_token_limit = "bad"',
     "[mcp_servers.rea.tools.binary_session]\noutput_token_limit = 0",
     "[mcp_servers.rea.tools.binary_session]\noutput_token_limit = -10",
+    "[mcp_servers.rea.tools.binary_session]\noutput_token_limit = 1.0",
+    "[mcp_servers.rea.tools.binary_session]\noutput_token_limit = 1e3",
   ])(
     "reports malformed Codex tools setting %s as invalid",
     async (toolsFragment) => {
