@@ -2,7 +2,7 @@ import { z } from "incur";
 import type { Logger } from "pino";
 
 import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { logCliCommand } from "../cliLogging.js";
+import { isCliOperationFailure, logCliCommand } from "../cliLogging.js";
 import { parseConfig } from "../config/parseConfig.js";
 import type { GhidraProjectCacheConfig } from "../config/ghidraProjectCache.js";
 import {
@@ -81,11 +81,12 @@ export const registerCacheCommands = (
             : await verifyCache(resolved, options.repair);
         },
         (value) =>
-          typeof value === "object" &&
-          value !== null &&
-          "failed_repairs" in value &&
-          Array.isArray(value.failed_repairs) &&
-          value.failed_repairs.length > 0,
+          isCliOperationFailure(value) ||
+          (typeof value === "object" &&
+            value !== null &&
+            "failed_repairs" in value &&
+            Array.isArray(value.failed_repairs) &&
+            value.failed_repairs.length > 0),
       ),
   });
 };

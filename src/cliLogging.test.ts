@@ -65,7 +65,7 @@ it("classifies the cache maintenance error envelope as a command failure", async
   }
 });
 
-it("does not let a custom failure predicate mask an error envelope", async () => {
+it("lets a command-specific predicate add failure cases without masking them", async () => {
   const envelope = {
     error: "Cache verification failed",
     ...projectAnalysisError(
@@ -79,7 +79,7 @@ it("does not let a custom failure predicate mask an error envelope", async () =>
       silentLogger,
       CLI_COMMANDS.cacheVerify,
       async () => envelope,
-      () => false,
+      (value) => isCliOperationFailure(value) || false,
     );
     expect(process.exitCode).toBe(1);
   } finally {

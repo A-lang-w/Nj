@@ -102,8 +102,9 @@ export const cliOperationFailureIdentity = (
 
 /**
  * Log one CLI command with duration and a stable success or failure status.
- * `isCommandFailure` can add command-specific failure outcomes; it cannot mask
- * an error envelope the shared classification already recognizes.
+ * `isCommandFailure` can override the inferred outcome for command-specific
+ * results; callers that only add failure cases combine it with
+ * `isCliOperationFailure` so a shared error envelope is never hidden.
  */
 export const logCliCommand = async <Value>(
   logger: Logger,
@@ -115,8 +116,7 @@ export const logCliCommand = async <Value>(
   try {
     const value = await execute();
     const inferredFailure = inferCliOperationFailure(value);
-    const failed =
-      inferredFailure !== undefined || (isCommandFailure?.(value) ?? false);
+    const failed = isCommandFailure?.(value) ?? inferredFailure !== undefined;
     if (isRecord(value))
       loggedFailures.set(
         value,
