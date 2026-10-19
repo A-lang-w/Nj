@@ -13,26 +13,24 @@ import { selectSolcArtifact } from "../domain/evm/solcArtifactSelection.js";
 import { evmWorkerRequestSchema } from "./EvmInterfaceWorkerContract.js";
 import { projectEvmoleInterface } from "./EvmoleInterfaceAdapter.js";
 import { inspectSolidityMetadata } from "./SolidityMetadata.js";
-import {
-  EVM_INTERFACE_LIMITS,
-  EVM_FILE_SIZE_FAILURE_EXIT,
-} from "./EvmoleRelease.js";
+import { EVM_FILE_SIZE_FAILURE_EXIT } from "./EvmoleRelease.js";
 
 class UnsupportedContainer extends Error {}
 
 /** Admit bounded encoded parts before allocating a complete worker reply. */
 const encodeReply = (
   reply: unknown,
+  budget: number,
 ): Result<string, { reason: "output-limit"; message: string }> => {
   const parts: string[] = [];
   let bytes = 0;
   for (const part of jsonParts(reply)) {
     bytes += Buffer.byteLength(part);
-    if (bytes > EVM_INTERFACE_LIMITS.outputBytes) {
+    if (bytes > budget) {
       parts.length = 0;
       return err({
         reason: "output-limit",
-        message: "Complete interface evidence exceeds the 16 MiB reply budget.",
+        message: `Complete interface evidence exceeds the ${String(budget)} byte reply budget.`,
       });
     }
     parts.push(part);
@@ -171,15 +169,18 @@ const main = async (): Promise<void> => {
       ...compilerFailureContext,
     };
   }
-  const admitted = encodeReply(reply);
+  const admitted = encodeReply(reply, request.file_size_bytes);
   let encoded: string;
   if (admitted.ok) encoded = admitted.value;
   else {
-    const failure = encodeReply({
-      ok: false,
-      ...admitted.error,
-      ...compilerFailureContext,
-    });
+    const failure = encodeReply(
+      {
+        ok: false,
+        ...admitted.error,
+        ...compilerFailureContext,
+      },
+      request.file_size_bytes,
+    );
     encoded = failure.ok
       ? failure.value
       : JSON.stringify({

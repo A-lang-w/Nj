@@ -77,6 +77,7 @@ try {
       expectedError = false,
       expectedCategory = "invalid_input",
       detail,
+      fileSizeLimit,
     } = options;
     const input = {
       path,
@@ -139,11 +140,22 @@ try {
       let failed = false,
         stdout;
       try {
-        ({ stdout } = await execute(process.execPath, args, {
-          env: environment,
-          timeout: 45_000,
-          maxBuffer: 32 * 1024 * 1024,
-        }));
+        ({ stdout } = await execute(
+          fileSizeLimit === undefined ? process.execPath : "/usr/bin/prlimit",
+          fileSizeLimit === undefined
+            ? args
+            : [
+                `--fsize=${String(fileSizeLimit)}:`,
+                "--",
+                process.execPath,
+                ...args,
+              ],
+          {
+            env: environment,
+            timeout: 45_000,
+            maxBuffer: 32 * 1024 * 1024,
+          },
+        ));
       } catch (cause) {
         if (typeof cause.code !== "number" || typeof cause.stdout !== "string")
           throw cause;
@@ -455,6 +467,40 @@ try {
       [warning],
     );
   }
+  // A synthetic carrier fits the inherited file limit; its expanded Evidence does not.
+  const limited = {
+    contracts: {
+      [sourceUnit]: {
+        LinkedFixture: {
+          evm: {
+            deployedBytecode: { object: "6000".repeat(500) },
+          },
+        },
+      },
+    },
+    errors: [linked.errors[0]],
+  };
+  const limitedPath = join(root.path, "limited-reply.json");
+  const limitedText = JSON.stringify(limited);
+  assert.ok(Buffer.byteLength(limitedText) < 4096);
+  await writeFile(limitedPath, limitedText);
+  const limitedFailure = await inspect("cli", limitedPath, "solc-json", {
+    selection,
+    fileSizeLimit: 4096,
+    expectedError: true,
+    expectedCategory: "execution_failure",
+  });
+  assert.match(limitedFailure.details.reason, /4096 byte reply budget/u);
+  assert.equal(
+    limitedFailure.details.diagnostics.carrier_sha256,
+    sha256(limitedText),
+  );
+  assert.deepEqual(
+    limitedFailure.details.diagnostics.compiler_diagnostics.map(
+      ({ raw_json }) => JSON.parse(raw_json),
+    ),
+    limited.errors,
+  );
   // Cancel an admitted, gated real worker; this does not assert active inference.
   const gate = await createEvmVerifierGate(root.path, environment);
   const cliArguments = [

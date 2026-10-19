@@ -252,6 +252,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           snapshot_path: snapshotPath,
           reply_path: replyPath,
           failure_marker_path: join(root.path, "resource.failure"),
+          file_size_bytes: workerLimits.fileSizeBytes,
           encoding: input.encoding,
         }),
         { flag: "wx", mode: 0o600 },
