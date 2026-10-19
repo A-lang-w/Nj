@@ -4,13 +4,17 @@ import { join } from "node:path";
 import { describe, expect } from "vitest";
 
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
+import { loadEnvironmentSource } from "../../../src/application/environment/environmentSource.js";
 
 import {
   analysisViewCaptureEvidence,
   analysisViewCaptureFixture,
   environmentManifestCaptureFixture,
 } from "../../fixtures/analysisView.js";
-import { writeEnvironmentServeFiles } from "../../fixtures/environmentServe.js";
+import {
+  environmentServeSource,
+  writeEnvironmentServeFiles,
+} from "../../fixtures/environmentServe.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -103,7 +107,11 @@ cliTest(
   "refuses a fully authenticated capture whose discovery exceeds capacity before listening",
   async ({ cli }) => {
     const records = environmentManifestCaptureFixture();
-    const first = records.records[0]!;
+    const ordinal = environmentServeSource().manifest.tools.find(
+      (tool) => tool.name === "get_users_by_id",
+    )?.record_ordinals[0];
+    const first = records.records.find((record) => record.ordinal === ordinal);
+    if (first === undefined) throw new Error("Fixture has no cited API record");
     const reported = first.reported;
     if (
       typeof reported !== "object" ||
@@ -118,13 +126,26 @@ cliTest(
       Array.isArray(request)
     )
       throw new Error("Fixture has no request object");
-    request.url = `https://example.test/api/users/2?${Array.from({ length: 10000 }, (_, index) => `q_${index}=x`).join("&")}`;
+    if (typeof request.url !== "string") throw new Error("Fixture has no URL");
+    const url = new URL(request.url);
+    const query = new URLSearchParams(url.search);
+    for (let index = 0; index < 10000; index += 1)
+      query.append(`q_${index}`, "x");
+    url.search = query.toString();
+    request.url = url.href;
     const capture = analysisViewCaptureEvidence(records);
     const manifest = inspectAnalysisView({
       source: { kind: "inline", evidence: capture },
       view: { kind: "environment-manifest" },
     });
     if (!manifest.ok) throw manifest.error;
+    const source = loadEnvironmentSource(manifest.value, capture);
+    if (!source.ok) throw source.error;
+    expect(
+      source.value.manifest.tools.some(
+        (tool) => tool.query_parameter_names.length >= 10000,
+      ),
+    ).toBe(true);
     const root = await createTestTempDirectory(
       "rea-environment-catalog-capacity-",
     );
