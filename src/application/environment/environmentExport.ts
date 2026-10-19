@@ -12,6 +12,7 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { sealOwnedJsonInput } from "../OwnedJsonInput.js";
 import { nativeJsonParseRequiredBytes } from "../JsonInputFile.js";
 import { readRegularFile } from "../RegularFileRead.js";
 import {
@@ -183,13 +184,13 @@ const headroomRefusal = (
   inputBytes: number,
 ): AnalysisResourceConstraintError | undefined => {
   const heap = getHeapStatistics();
-  const requiredBytes = nativeJsonParseRequiredBytes(inputBytes);
+  const requiredBytes = nativeJsonParseRequiredBytes(inputBytes) * 2;
   return requiredBytes <= heap.total_available_size
     ? undefined
     : new AnalysisResourceConstraintError(
         ENVIRONMENT_EXPORT_OPERATION,
         "memory",
-        "Insufficient heap headroom to read and parse the complete JSON file",
+        "Insufficient heap headroom to read, parse and seal the complete JSON file",
         {
           input_path: path,
           input_file_bytes: inputBytes,
@@ -250,7 +251,12 @@ const readInput = async (
         `${path} is not valid JSON: ${parsed.error}`,
       ),
     );
-  return ok({ path, bytes, value: parsed.value });
+  const snapshot = await sealOwnedJsonInput(
+    parsed.value,
+    ENVIRONMENT_EXPORT_OPERATION,
+  );
+  if (!snapshot.ok) return snapshot;
+  return ok({ path, bytes, value: snapshot.value });
 };
 
 /** Read both files once; the caller authenticates the parsed values and the export copies the same bytes. */

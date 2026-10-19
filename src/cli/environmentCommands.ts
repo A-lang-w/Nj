@@ -93,12 +93,14 @@ const serveEnvironmentCommand = async (
     input.manifest,
     CLI_COMMANDS.environmentServe,
     signal,
+    { snapshot: true },
   );
   if (!manifest.ok) return manifest.error;
   const evidence = await parseCliJsonInput(
     input.evidence,
     CLI_COMMANDS.environmentServe,
     signal,
+    { snapshot: true },
   );
   if (!evidence.ok) return evidence.error;
   const { loadEnvironmentSource } =

@@ -10,8 +10,9 @@ import {
   AnalysisInputError,
   type AnalysisInputIssue,
 } from "../../domain/analysisErrorCore.js";
-import { parseEvidence, type Evidence } from "../../domain/evidence.js";
+import { immutableEvidence, type Evidence } from "../../domain/evidence.js";
 import { projectInputIssues } from "../../domain/inputIssueProjection.js";
+import { immutableJsonSnapshotMember } from "../../domain/immutableJson.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   webNetworkCaptureSchema,
@@ -78,7 +79,9 @@ const parseEvidenceFile = (
   value: unknown,
 ): Result<Evidence, AnalysisError> => {
   try {
-    return ok(parseEvidence(value));
+    for (const key of ["parameters", "raw_result", "normalized_result"])
+      immutableJsonSnapshotMember(value, key);
+    return ok(immutableEvidence(value));
   } catch (cause: unknown) {
     if (!(cause instanceof z.ZodError)) throw cause;
     return err(
@@ -205,9 +208,17 @@ const parseCaptureEvidence = (
 > => {
   const evidence = parseEvidenceFile(operation, "evidence", value);
   if (!evidence.ok) return evidence;
-  const capture = webNetworkCaptureSchema.safeParse(
-    evidence.value.normalized_result,
+  const normalized = immutableJsonSnapshotMember(
+    evidence.value,
+    "normalized_result",
   );
+  const records = immutableJsonSnapshotMember(normalized, "records");
+  if (Array.isArray(records))
+    for (let index = 0; index < records.length; index += 1) {
+      const record = immutableJsonSnapshotMember(records, String(index));
+      immutableJsonSnapshotMember(record, "reported");
+    }
+  const capture = webNetworkCaptureSchema.safeParse(normalized);
   if (
     evidence.value.operation !== "inspect_web_network_capture" ||
     !capture.success

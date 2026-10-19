@@ -12,6 +12,7 @@ import streamArray from "stream-json/streamers/stream-array.js";
 
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { sealOwnedJsonInput } from "./OwnedJsonInput.js";
 import { withRegularFile } from "./RegularFileRead.js";
 import {
   JSON_BYTE_ORDER_MARK_MESSAGE,
@@ -40,10 +41,10 @@ export const nativeJsonParseRequiredBytes = (inputBytes: number): number =>
   // whose individual container allocations cannot be intercepted.
   inputBytes * 72 + READ_CHUNK_BYTES;
 
-/** Keep native parsing only when input copies and value expansion fit live headroom. */
-const nativeParseFits = (inputBytes: number): boolean =>
+/** Snapshot mode also reserves one projection for cooperative sealing bookkeeping. */
+const nativeParseFits = (inputBytes: number, snapshot = false): boolean =>
   inputBytes <= NATIVE_PARSE_READ_BUDGET &&
-  nativeJsonParseRequiredBytes(inputBytes) <=
+  nativeJsonParseRequiredBytes(inputBytes) * (snapshot ? 2 : 1) <=
     getHeapStatistics().total_available_size;
 
 /** One selected root member; repeated keys begin again with last-value semantics. */
@@ -250,6 +251,7 @@ export const readJsonInputFile = (
   operation: string,
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
+  snapshot = false,
 ): Promise<Result<unknown, JsonInputFileFailure>> =>
   withRegularFile(
     path,
@@ -263,8 +265,12 @@ export const readJsonInputFile = (
           path,
           operation,
           signal,
+          snapshot,
         );
-        if (native !== undefined) return native;
+        if (native !== undefined)
+          return native.ok && snapshot
+            ? await sealOwnedJsonInput(native.value, operation, signal)
+            : native;
         await pipeline(
           decodedChunks(handle, stats.size, path, signal),
           // Fuse synchronous token stages so only file chunks cross the async
@@ -279,7 +285,7 @@ export const readJsonInputFile = (
                 packNumbers: false,
               }),
               packJsonScalars(operation, stats.size, path),
-              admitJsonAssembly(operation, stats.size, path),
+              admitJsonAssembly(operation, stats.size, path, snapshot ? 2 : 1),
               streamValues(),
               (row: unknown): typeof none => {
                 if (
@@ -300,7 +306,9 @@ export const readJsonInputFile = (
           signal === undefined ? {} : { signal },
         );
         return found
-          ? ok(value)
+          ? snapshot
+            ? await sealOwnedJsonInput(value, operation, signal)
+            : ok(value)
           : err(invalidJson(operation, "JSON document is empty"));
       } catch (cause: unknown) {
         const failure = jsonReadFailure(cause, operation, stats.size, path);
@@ -429,6 +437,7 @@ const admitJsonAssembly = (
   operation: string,
   inputFileBytes: number,
   path: string,
+  retainedMultiplier = 1,
 ) => {
   let projectedBytes = 0;
   let nextCheck = 0;
@@ -455,7 +464,8 @@ const admitJsonAssembly = (
       // values. Keep another whole projection available for container growth,
       // plus the next chunk of estimates between samples. This is admission
       // against live runtime headroom, not a fixed document-size policy.
-      const requiredBytes = projectedBytes + READ_CHUNK_BYTES;
+      const requiredBytes =
+        projectedBytes * retainedMultiplier + READ_CHUNK_BYTES;
       if (requiredBytes > heap.total_available_size)
         throw new AnalysisResourceConstraintError(
           operation,
@@ -577,8 +587,9 @@ const readNativeJson = async (
   path: string,
   operation: string,
   signal?: AbortSignal,
+  snapshot = false,
 ): Promise<Result<unknown, JsonInputFileFailure> | undefined> => {
-  if (!nativeParseFits(size)) return undefined;
+  if (!nativeParseFits(size, snapshot)) return undefined;
   const prefix = await readPrefix(handle, size + 1, signal);
   if (!prefix.complete || prefix.bytes.length !== size)
     throw new RegularFileChangedError(path);

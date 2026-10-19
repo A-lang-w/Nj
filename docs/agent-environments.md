@@ -248,13 +248,17 @@ grafana-example/
 ```
 
 The command reads each file once, after checking that reading and parsing the
-whole file fits the process's live heap headroom (a file that does not is
+whole file, including sealing traversal, fits the process's live heap headroom (a file that does not is
 refused as a `resource_constraint` before it is read), then authenticates and cross-checks the
 pair as `environment-serve` does, so a manifest projected from another capture
 is refused with the same `invalid_request` before anything is written, and the
 bytes it copies are the bytes it authenticated. The bundle directory must be
 absent or empty; an occupied directory is refused and nothing in it changes.
-`--name` replaces the manifest's kebab-case name as the env folder and env id;
+The complete tool catalog must also fit the server's advertised catalog budget
+before any files are written. Privately parsed JSON is sealed once so authentication
+and replay share immutable response trees rather than copying the capture repeatedly.
+`--name` replaces the manifest's portable kebab-case name as the env folder and env id
+(Windows device names such as `con` and `lpt1` are refused);
 `--package-tarball <path>` copies a packed `rea-agents` tarball into the env
 folder and makes the Dockerfile install it instead of the registry package and
 remove it in the same layer, which is how a checkout rather than a release is

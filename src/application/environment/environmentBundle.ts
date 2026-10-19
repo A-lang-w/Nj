@@ -6,6 +6,7 @@ import type {
   EnvironmentManifestTool,
   EnvironmentSource,
 } from "./environmentSource.js";
+import { environmentToolDefinitions } from "./environmentTools.js";
 
 /** Operation name every refusal of the export command reports. */
 export const ENVIRONMENT_EXPORT_OPERATION = "environment-export";
@@ -20,7 +21,8 @@ export const BUNDLE_MCP_PORT = 18765;
 export const BUNDLE_TARBALL_NAME = "rea-agents.tgz";
 
 /** Folder and env id rule: a kebab-case label the agentenv framework accepts as a local id. */
-const BUNDLE_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+const BUNDLE_NAME =
+  /^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const BUNDLE_NAME_MAX_LENGTH = 64;
 
 /** Where the Dockerfile installs the CLI from. */
@@ -73,7 +75,7 @@ const nameError = (name: string): AnalysisInputError =>
   new AnalysisInputError(
     ENVIRONMENT_EXPORT_OPERATION,
     {
-      userMessage: `The bundle name ${JSON.stringify(name)} is not a kebab-case label of at most ${String(BUNDLE_NAME_MAX_LENGTH)} characters.`,
+      userMessage: `The bundle name ${JSON.stringify(name)} is not a portable kebab-case label of at most ${String(BUNDLE_NAME_MAX_LENGTH)} characters.`,
     },
     [
       {
@@ -81,7 +83,7 @@ const nameError = (name: string): AnalysisInputError =>
         reason: "invalid_format",
         expected: BUNDLE_NAME.source,
         message:
-          "The bundle name is the env folder and env id; use lowercase letters, digits and single hyphens.",
+          "The bundle name is the env folder and env id; use lowercase letters, digits and single hyphens, excluding Windows device names.",
       },
     ],
   );
@@ -275,6 +277,13 @@ export const planEnvironmentBundle = (
   const name = options.name ?? source.manifest.name;
   if (!BUNDLE_NAME.test(name) || name.length > BUNDLE_NAME_MAX_LENGTH)
     return err(nameError(name));
+  const catalog = environmentToolDefinitions(
+    source.manifest,
+    source.evidenceId,
+    name,
+    ENVIRONMENT_EXPORT_OPERATION,
+  );
+  if (!catalog.ok) return catalog;
   const toolCount = source.manifest.tools.length;
   const check = replayCheck(source);
   const envFolder = `envs/${name}`;
