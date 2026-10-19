@@ -1,17 +1,32 @@
 type SemanticStoredProjection = readonly (string | null)[] | undefined;
 
+/** First-slot keys one store can write: its path's own first key, every key,
+ * or the static key set a bulk copy's literal source supplies. */
+export type SemanticStoreKeys = "first" | "all" | readonly string[];
+
 interface StoredReference<Source> {
   readonly source: Source;
   readonly order: number;
   path: SemanticStoredProjection;
-  key: string | undefined;
+  keys: readonly string[] | undefined;
 }
+
+const sameKeys = (
+  left: readonly string[] | undefined,
+  right: readonly string[] | undefined,
+): boolean =>
+  left === undefined || right === undefined
+    ? left === right
+    : left.length === right.length &&
+      left.every((key, index) => key === right[index]);
 
 /**
  * One heap owner's possible stores, updated by its publishing producer. Exact
  * first-slot reads skip unrelated stores; semantic matching and capture proofs
  * remain with the consumer. Unknown projections and prototype-changing stores
- * stay candidates for every key. No query result or readiness fact is cached.
+ * stay candidates for every key, while a bulk copy from a static literal is a
+ * candidate only for the keys that literal supplies. No query result or
+ * readiness fact is cached.
  */
 export class SemanticReferenceStoreIndex<Source> {
   readonly #entries = new Map<Source, StoredReference<Source>>();
@@ -26,31 +41,57 @@ export class SemanticReferenceStoreIndex<Source> {
     return this.#entries.get(source)?.path;
   }
 
-  set(source: Source, path: SemanticStoredProjection, allKeys = false): void {
-    const key = allKeys ? undefined : (path?.[0] ?? undefined);
+  set(
+    source: Source,
+    path: SemanticStoredProjection,
+    keys: SemanticStoreKeys = "first",
+  ): void {
+    const first = path?.[0];
+    const selected =
+      keys === "all"
+        ? undefined
+        : keys === "first"
+          ? typeof first === "string"
+            ? [first]
+            : undefined
+          : keys;
     let entry = this.#entries.get(source);
     if (entry === undefined) {
-      entry = { source, path, key, order: this.#entries.size };
+      entry = { source, path, keys: selected, order: this.#entries.size };
       this.#entries.set(source, entry);
     } else {
       entry.path = path;
-      if (entry.key === key) return;
-      if (entry.key === undefined) this.#unknown.delete(entry);
-      else {
-        const previous = this.#exact.get(entry.key);
-        previous?.delete(entry);
-        if (previous?.size === 0) this.#exact.delete(entry.key);
-      }
-      entry.key = key;
+      if (sameKeys(entry.keys, selected)) return;
+      this.#unlist(entry);
+      entry.keys = selected;
     }
-    if (key === undefined) this.#unknown.add(entry);
-    else {
+    this.#list(entry);
+  }
+
+  #list(entry: StoredReference<Source>): void {
+    if (entry.keys === undefined) {
+      this.#unknown.add(entry);
+      return;
+    }
+    for (const key of entry.keys) {
       let selected = this.#exact.get(key);
       if (selected === undefined) {
         selected = new Set();
         this.#exact.set(key, selected);
       }
       selected.add(entry);
+    }
+  }
+
+  #unlist(entry: StoredReference<Source>): void {
+    if (entry.keys === undefined) {
+      this.#unknown.delete(entry);
+      return;
+    }
+    for (const key of entry.keys) {
+      const selected = this.#exact.get(key);
+      selected?.delete(entry);
+      if (selected?.size === 0) this.#exact.delete(key);
     }
   }
 
@@ -62,7 +103,7 @@ export class SemanticReferenceStoreIndex<Source> {
   *candidates(
     key: string | null | undefined,
   ): IterableIterator<[Source, SemanticStoredProjection]> {
-    if (typeof key !== "string" || this.#exact.size === 0) {
+    if (typeof key !== "string") {
       yield* this;
       return;
     }

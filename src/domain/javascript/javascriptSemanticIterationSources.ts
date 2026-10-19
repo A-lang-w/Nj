@@ -2,8 +2,10 @@ import * as t from "@babel/types";
 
 import {
   semanticObjectPatternKeys,
+  semanticObjectPrototypeProperty,
   runtimeFunctionParameters,
   semanticStaticPropertyKey,
+  unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
@@ -24,6 +26,8 @@ export interface SemanticIterationSource extends IterationSourceValue {
   readonly requiredSources?: readonly IterationSourceValue[];
   /** Copy the selected target key from one own source slot, preserving its name. */
   readonly propertyCopy?: "value" | "descriptor";
+  /** Own keys a literal source can copy; absent while any copied key is unknown. */
+  readonly copiedKeys?: readonly string[];
   /** A descriptor getter stores the value returned when its property is read. */
   readonly invocationResult?: true;
   /** Definitions bypass setters; assignments and value copies use [[Set]]. */
@@ -31,6 +35,24 @@ export interface SemanticIterationSource extends IterationSourceValue {
   /** Reflect.set starts descriptor lookup here and writes target.object. */
   readonly propertyLookup?: { readonly target: t.Node | undefined };
 }
+
+/** Bulk copies read a literal source's own enumerable keys once, before any
+ * copied getter runs. Spreads and dynamic keys leave every key possible. A
+ * colon-form `__proto__` entry sets the literal's prototype instead of an own
+ * key, so it is never copied; shorthand, computed and method forms are. */
+const copiedLiteralKeys = (source: t.Node): readonly string[] | undefined => {
+  const literal = unwrapJavaScriptExpression(source).node;
+  if (!t.isObjectExpression(literal)) return undefined;
+  const keys: string[] = [];
+  for (const property of literal.properties) {
+    if (t.isSpreadElement(property)) return undefined;
+    if (property === semanticObjectPrototypeProperty(literal)) continue;
+    const key = semanticStaticPropertyKey(property.key, property.computed);
+    if (key === null) return undefined;
+    keys.push(key);
+  }
+  return keys;
+};
 
 /** Parsed data mutators feed the same reference graph as assignment stores. */
 export const semanticIntrinsicDataStores = (
@@ -45,49 +67,50 @@ export const semanticIntrinsicDataStores = (
     const args = recipient.invocation.arguments;
     const values =
       mutation.kind === "assign" ? args?.slice(1) : args?.slice(1, 2);
-    return (values ?? []).flatMap((source) =>
-      t.isNode(source) && !t.isSpreadElement(source)
-        ? [
-            {
-              kind: "reference-store" as const,
-              node: source,
-              projection: [],
-              mutation: mutationSite,
-              propertyWrite:
-                mutation.kind === "assign"
-                  ? ("set" as const)
-                  : ("define" as const),
-              target: t.memberExpression(
-                target,
-                t.identifier("copiedProperty"),
-                true,
-              ),
-              propertyCopy:
-                mutation.kind === "assign"
-                  ? ("value" as const)
-                  : ("descriptor" as const),
-            },
-            ...(mutation.kind === "define-properties"
-              ? [
-                  {
-                    kind: "reference-store" as const,
-                    node: source,
-                    projection: [],
-                    mutation: mutationSite,
-                    propertyWrite: "define" as const,
-                    target: t.memberExpression(
-                      target,
-                      t.identifier("copiedProperty"),
-                      true,
-                    ),
-                    propertyCopy: "descriptor" as const,
-                    invocationResult: true as const,
-                  },
-                ]
-              : []),
-          ]
-        : [],
-    );
+    return (values ?? []).flatMap((source) => {
+      if (!t.isNode(source) || t.isSpreadElement(source)) return [];
+      const copiedKeys = copiedLiteralKeys(source);
+      const copied = copiedKeys === undefined ? {} : { copiedKeys };
+      return [
+        {
+          kind: "reference-store" as const,
+          node: source,
+          projection: [],
+          mutation: mutationSite,
+          propertyWrite:
+            mutation.kind === "assign" ? ("set" as const) : ("define" as const),
+          target: t.memberExpression(
+            target,
+            t.identifier("copiedProperty"),
+            true,
+          ),
+          propertyCopy:
+            mutation.kind === "assign"
+              ? ("value" as const)
+              : ("descriptor" as const),
+          ...copied,
+        },
+        ...(mutation.kind === "define-properties"
+          ? [
+              {
+                kind: "reference-store" as const,
+                node: source,
+                projection: [],
+                mutation: mutationSite,
+                propertyWrite: "define" as const,
+                target: t.memberExpression(
+                  target,
+                  t.identifier("copiedProperty"),
+                  true,
+                ),
+                propertyCopy: "descriptor" as const,
+                invocationResult: true as const,
+                ...copied,
+              },
+            ]
+          : []),
+      ];
+    });
   }
   if (mutation?.kind !== "define-property" && mutation?.kind !== "set")
     return [];

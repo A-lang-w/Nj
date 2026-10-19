@@ -50,6 +50,10 @@ it.each([
   'Object.prototype.get=()=>Function.prototype.call;Object.defineProperty(Object.prototype,"extra",{});({}).extra.call=0;',
   'const descriptor={get:()=>({})};descriptor.get=()=>Function.prototype.call;Object.defineProperty(Object.prototype,"extra",descriptor);({}).extra.call=0;',
   'const getter=flag?()=>({}):input;Object.defineProperty(Object.prototype,"extra",{get:getter});({}).extra.call=0;',
+  'Object.assign(Object.prototype,{["extra"]:Function.prototype.call});({}).extra.call=0;',
+  "Object.assign(Object.prototype,{...{extra:Function.prototype.call}});({}).extra.call=0;",
+  "Object.assign(Object.prototype,{[key]:Function.prototype.call});({}).extra.call=0;",
+  "const obj={};const __proto__={extra:Function.prototype.call};Object.assign(obj,{__proto__});obj.extra.call=0;",
 ])("follows source stores in shared prototype slots: %s", (setup) => {
   expect(windows(setup)).toEqual([]);
 });
@@ -76,6 +80,8 @@ it.each([
   "Object.defineProperties(Object.prototype,{extra:{get(){return {}}}});({}).extra.call=0;",
   'Object.prototype.__defineGetter__("extra",()=>({}));({}).extra.call=0;',
   'Object.prototype.__defineSetter__("extra",()=>Function.prototype.call);const saved=({}).extra??{};saved.call=0;',
+  "Object.assign(Object.prototype,{__proto__:{extra:Function.prototype.call}});({}).extra.call=0;",
+  "Object.assign(Object.prototype,{});({}).extra.call=0;",
 ])(
   "keeps captures and local owners separate from shared stores: %s",
   (setup) => {

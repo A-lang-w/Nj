@@ -21,7 +21,7 @@ it("keeps unknown, whole-owner, wildcard, and prototype alternatives in publicat
   stores.set("other", ["other"]);
   stores.set("whole", []);
   stores.set("wildcard", [null, "nested"]);
-  stores.set("prototype", ["__proto__"], true);
+  stores.set("prototype", ["__proto__"], "all");
   stores.set("later", ["selected"]);
   expect([...stores.candidates("selected")].map(([source]) => source)).toEqual([
     "exact",
@@ -71,10 +71,29 @@ it("keeps replacement paths current without duplicating or reordering a source",
     ["first", ["y"]],
     ["second", [null]],
   ]);
-  stores.set("second", ["z"], true);
+  stores.set("second", ["z"], "all");
   expect([...stores.candidates("x")]).toEqual([["second", ["z"]]]);
   stores.set("second", ["z"]);
   expect([...stores.candidates("x")]).toEqual([]);
+});
+
+it("selects a bulk copy only for the keys its static literal supplies", () => {
+  const stores = new SemanticReferenceStoreIndex<string>();
+  stores.set("copy", [null], ["a", "b"]);
+  stores.set("empty", [null], []);
+  stores.set("unknown", [null]);
+  const sources = (key: string | null) =>
+    [...stores.candidates(key)].map(([source]) => source);
+  expect(sources("a")).toEqual(["copy", "unknown"]);
+  expect(sources("b")).toEqual(["copy", "unknown"]);
+  expect(sources("c")).toEqual(["unknown"]);
+  expect(sources(null)).toEqual(["copy", "empty", "unknown"]);
+  stores.set("copy", [null]);
+  expect(sources("c")).toEqual(["copy", "unknown"]);
+  stores.set("copy", [null], ["c"]);
+  expect(sources("a")).toEqual(["unknown"]);
+  expect(sources("c")).toEqual(["copy", "unknown"]);
+  expect([...stores]).toHaveLength(3);
 });
 
 it.each([null, undefined])(
