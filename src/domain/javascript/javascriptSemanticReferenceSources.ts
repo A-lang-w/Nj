@@ -235,7 +235,11 @@ const referenceSelectionStable = (
     );
     facts.inertPrefixes.set(selection, inertPrefix);
   }
-  if (!inertPrefix || state.prototypeEnumerationMayAffect === false)
+  if (
+    !inertPrefix ||
+    (state.prototypeEnumerationMayAffect === false &&
+      !syntaxDataSourceFacts(source.node).requiresKnownReadPrefix)
+  )
     return inertPrefix;
   if (
     !facts.arrays.every(followsSelection) ||
@@ -260,17 +264,28 @@ const referenceSelectionStable = (
   return prototypeReads.every(followsSelection);
 };
 
-const syntaxDataSources = new WeakMap<t.Node, boolean>();
+interface SyntaxDataSourceFacts {
+  readonly inert: boolean;
+  readonly requiresKnownReadPrefix: boolean;
+}
+
+const syntaxDataSources = new WeakMap<t.Node, SyntaxDataSourceFacts>();
 
 /** Prove inert evaluation and reads without traversing deferred callable bodies. */
-const syntaxDataSource = (root: t.Node): boolean => {
+const syntaxDataSourceFacts = (root: t.Node): SyntaxDataSourceFacts => {
   const cached = syntaxDataSources.get(root);
   if (cached !== undefined) return cached;
   let safe = true;
+  let requiresKnownReadPrefix = false;
   const skipped = new Set<t.Node>();
   traverseJavaScriptAst(root, {
     skip: (node) => !safe || skipped.has(node),
     enter: (node) => {
+      // RegExp own slots are known at allocation, but the shared prototype
+      // inventory does not establish its inherited getters are intact. Any
+      // earlier unknown read must retain effects, including through a physical
+      // prototype or alias whose mutation has no named RegExp reference.
+      if (t.isRegExpLiteral(node)) requiresKnownReadPrefix = true;
       if (
         readExactJavaScriptLiteral(node).found ||
         t.isBigIntLiteral(node) ||
@@ -338,9 +353,13 @@ const syntaxDataSource = (root: t.Node): boolean => {
       safe = false;
     },
   });
-  syntaxDataSources.set(root, safe);
-  return safe;
+  const facts = { inert: safe, requiresKnownReadPrefix };
+  syntaxDataSources.set(root, facts);
+  return facts;
 };
+
+const syntaxDataSource = (root: t.Node): boolean =>
+  syntaxDataSourceFacts(root).inert;
 
 const semanticDataSources = new WeakMap<JavaScriptSemanticValue, boolean>();
 
@@ -555,6 +574,9 @@ const syntaxDataProperty = (
     const index = semanticArrayIndex(key);
     return index === null ? undefined : (node.elements[index] ?? undefined);
   }
+  // Literal allocation creates this own data slot with value zero, regardless
+  // of RegExp.prototype. The source-selection gate owns intervening effects.
+  if (t.isRegExpLiteral(node) && key === "lastIndex") return "defined";
   if (t.isClassExpression(node)) {
     const method = syntaxClassStaticMethod(node, key);
     if (method !== undefined) return method;
@@ -597,6 +619,7 @@ const syntaxReferenceSourceDefined = (
     readExactJavaScriptLiteral(node).found ||
     t.isObjectExpression(node) ||
     t.isArrayExpression(node) ||
+    t.isRegExpLiteral(node) ||
     t.isClassExpression(node) ||
     t.isFunction(node)
   );

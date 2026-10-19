@@ -383,8 +383,12 @@ interface ModuleDelegateWrite extends ModuleDelegateOwner {
   readonly shortCircuitsOnInitialDelegate?: true;
   /** Metadata preserves an existing shared data value, but cannot prove one exists. */
   readonly preservesInitialDataValue?: true;
-  /** An assigned value needs exact source proof before it can preserve the delegate. */
-  readonly assignedValue?: t.Node;
+  /** Copy identity and capture points are separate from prior-effect validity. */
+  readonly delegateCopy?: {
+    readonly target: t.Node;
+    readonly targetKind: "module" | "delegate";
+    readonly values: readonly t.Node[];
+  };
 }
 
 const writesModuleRequire = (
@@ -667,15 +671,18 @@ const writesModuleRequire = (
   const isInitialDelegate = (value: t.Node): boolean =>
     hostLoaderPath(value, state, true)?.join(".") ===
     `intrinsic.${HOST_LOADER}.delegate`;
-  for (const write of writes)
+  for (const write of writes) {
+    const copy = write.delegateCopy;
     if (
       write.delegate === "require" &&
-      write.assignedValue !== undefined &&
-      t.isAssignmentExpression(write.node) &&
-      isInitialDelegate(write.node.left) &&
-      isInitialDelegate(write.assignedValue)
+      copy !== undefined &&
+      (copy.targetKind === "module"
+        ? hostLoaderPath(copy.target, state, true)?.join(".") === HOST_MODULE
+        : isInitialDelegate(copy.target)) &&
+      copy.values.every(isInitialDelegate)
     )
       copiesInitialDelegate.add(write);
+  }
   const requiresPriorChange = (write: ModuleDelegateWrite): boolean =>
     write.deletesInitiallyAbsentOwnSlot === true ||
     write.shortCircuitsOnInitialDelegate === true ||
@@ -746,6 +753,43 @@ const objectMayDefineDelegate = (
       );
     })
   );
+};
+
+/** Literal assign sources expose data values at their creation captures. Only
+ * the final own property is copied; unknown keys, accessors and prototype-setter
+ * keys can have other effects and cannot certify an initial-value copy. */
+const assignedDelegateValues = (
+  sources: readonly (t.Node | undefined)[],
+  state: JavaScriptSemanticAnalysisState,
+): readonly t.Node[] | undefined => {
+  const values: t.Node[] = [];
+  for (const source of sources) {
+    if (source === undefined) return undefined;
+    const object = unwrapJavaScriptExpression(source).node;
+    if (!t.isObjectExpression(object)) {
+      if (objectMayDefineDelegate(object, state, true)) return undefined;
+      continue;
+    }
+    const prototype = semanticObjectPrototypeProperty(object);
+    if (
+      object.properties.some((property) => {
+        if (t.isSpreadElement(property)) return true;
+        const key = semanticStaticPropertyKey(property.key, property.computed);
+        return (
+          key === null ||
+          (t.isObjectMethod(property) && property.kind !== "method") ||
+          (key === "__proto__" && property !== prototype)
+        );
+      })
+    )
+      return undefined;
+    const own = staticObjectOwnProperty(object, "require");
+    if (own.status === "missing") continue;
+    if (own.status !== "explicit" || !t.isObjectProperty(own.property))
+      return undefined;
+    values.push(own.property.value);
+  }
+  return values;
 };
 
 /** Whether the original global process object can still own effects at this source site. */
@@ -1003,15 +1047,48 @@ export const semanticModuleDelegateWriteOwner = (
     )
       return { ...owner, deletesInitiallyAbsentOwnSlot: true };
     if (mutation?.kind === "set-prototype") return wrapper ? owner : undefined;
-    if (mutation?.kind === "assign")
-      return args === undefined ||
-        args
+    if (mutation?.kind === "assign") {
+      if (
+        args !== undefined &&
+        !args
           .slice(1)
           .some((source) =>
             objectMayDefineDelegate(source, state, wrapper, delegate),
           )
-        ? owner
-        : undefined;
+      )
+        return undefined;
+      const values =
+        wrapper && delegate === "require" && args !== undefined
+          ? assignedDelegateValues(args.slice(1), state)
+          : undefined;
+      // Possible native ownership retains writes. Suppressing one requires
+      // completed proof that the selected callable and helpers stayed native.
+      const native =
+        values === undefined
+          ? undefined
+          : interop.intrinsicInvocation(
+              node,
+              {
+                ambientWrites: state.ambientWrites,
+                ambientWriteEffects: state.ambientWriteEffects,
+                complete: semanticFreshObjectFactsReady(state),
+              },
+              true,
+            );
+      return native?.kind === "known" &&
+        native.path.join(".") === "intrinsic.Object.assign" &&
+        values !== undefined &&
+        args?.[0] !== undefined
+        ? {
+            ...owner,
+            delegateCopy: {
+              target: args[0],
+              targetKind: "module",
+              values,
+            },
+          }
+        : owner;
+    }
     if (
       owner.shared &&
       invocation?.kind === "known" &&
@@ -1030,7 +1107,14 @@ export const semanticModuleDelegateWriteOwner = (
     return key !== "__proto__" || mutation?.kind === "set" ? owner : undefined;
   }
   if (key === delegate && t.isAssignmentExpression(node, { operator: "=" }))
-    return { ...owner, assignedValue: node.right };
+    return {
+      ...owner,
+      delegateCopy: {
+        target: node.left,
+        targetKind: "delegate",
+        values: [node.right],
+      },
+    };
   if (
     key === delegate &&
     t.isAssignmentExpression(node) &&

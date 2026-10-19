@@ -75,6 +75,7 @@ cliTest(
         1,
       ],
       ["module.require=module.require;", 1],
+      ["Object.assign(module,{require:module.require});", 1],
       [
         'patch(Object.prototype);Object.defineProperty(module.__proto__,"require",{enumerable:false});',
         0,
@@ -105,6 +106,30 @@ cliTest(
       ],
       [
         'var Q=(e=>typeof require<"u"?require:e)(function(){});const box={set value(v){this.Q=other}};Object.assign(box,{value:0});',
+        1,
+        'new(Q("electron").BrowserWindow)({});',
+        "main.js",
+      ],
+      [
+        'var Q=(e=>typeof require<"u"?require:e)(function(){});patch(Object);const box={set value(v){this.Q=other}};Object.assign(box,{value:0});',
+        0,
+        'new(Q("electron").BrowserWindow)({});',
+        "main.js",
+      ],
+      [
+        'var Q=(e=>typeof require<"u"?require:e)(function(){});const {lastIndex:target=globalThis}=/x/;target.Q=other;',
+        1,
+        'new(Q("electron").BrowserWindow)({});',
+        "main.js",
+      ],
+      [
+        'var Q=(e=>typeof require<"u"?require:e)(function(){});class A{static root=globalThis;static get value(){return this.root}}class B extends A{static early=B.result;static root={};static get result(){return super.value}}B.early.Q=other;',
+        0,
+        'new(Q("electron").BrowserWindow)({});',
+        "main.js",
+      ],
+      [
+        'var Q=(e=>typeof require<"u"?require:e)(function(){});class A{static root=globalThis;static get value(){return this.root}}class B extends A{static root={};static late=B.result;static get result(){return super.value}}B.late.Q=other;',
         1,
         'new(Q("electron").BrowserWindow)({});',
         "main.js",

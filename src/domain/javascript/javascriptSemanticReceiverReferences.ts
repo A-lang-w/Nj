@@ -754,7 +754,7 @@ export const createSemanticReceiverReferences = (
         return;
       const invocation = invocations.intrinsicInvocation(node);
       const setterInvocation = includeUnknownResults
-        ? invocation
+        ? invocations.intrinsicInvocation(node, invocationFacts, true)
         : intrinsics.intrinsicInvocation(node);
       if (
         setterInvocation?.kind === "known" &&

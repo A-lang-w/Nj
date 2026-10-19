@@ -1382,8 +1382,13 @@ export const createAmbientPathResolver = (
         nodes.set(root, modes);
       }
       expansionKey = expansionAtRead(current.readContext?.read, expansionKey);
+      // Re-entering a class through an earlier field initializer is a distinct
+      // slot capture, just like a recovered static `this` receiver. Joining it
+      // with the outer read can erase the selected inherited getter before
+      // the static-slot owner applies its initialization-order proof.
       expansionKey = expansionAtRead(
-        current.readContext?.initializedAt,
+        current.readContext?.initializedAt ??
+          (t.isClass(root) ? captures[0] : undefined),
         expansionKey,
       );
       const selectionKind =

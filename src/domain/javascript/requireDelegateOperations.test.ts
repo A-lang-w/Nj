@@ -201,3 +201,56 @@ describe("copying the initial module delegate", () => {
     ).toBe(0);
   });
 });
+
+describe("Object.assign copies of the initial module delegate", () => {
+  it.each([
+    "Object.assign(module,{require:module.require});",
+    "Object.assign(module,{unrelated:0,require:module.require});",
+    "Object.assign(module,{require:other,require:module.require});",
+    'Object.assign(module,{["require"]:module.require});',
+    "const target=module;Object.assign(target,{require:module.require});",
+    "const saved=module.require;Object.assign(module,{require:saved});",
+    "const {require:saved}=module;Object.assign(module,{require:saved});",
+    "const assign=Object.assign;assign(module,{require:module.require});",
+    "Object.assign.call(null,module,{require:module.require});",
+    "Reflect.apply(Object.assign,null,[module,{require:module.require}]);",
+    "Object.assign(module,{require:module.require},{require:module.require});",
+    "Object.assign(module,{},null,{require:module.require},{unrelated:1});",
+    "let target=module;Object.assign(target,{require:module.require},{unrelated:(target={},0)});",
+    "let saved=module.require;Object.assign(module,{require:saved},{unrelated:(saved=other,0)});",
+    "const assign=Object.assign;patch(Object);assign(module,{require:module.require});",
+    "const apply=Reflect.apply;patch(Reflect);apply(Object.assign,null,[module,{require:module.require}]);",
+    "const assign=Object.assign;Object.assign=other;assign(module,{require:module.require});",
+    "const assign=Object.assign;patch(assign);assign(module,{require:module.require});",
+  ])("preserves captured initial values through %s", (setup) => {
+    expect(windows(setup)).toBe(1);
+    expect(windows(setup, 'new(require("electron").BrowserWindow)({});')).toBe(
+      1,
+    );
+  });
+
+  it.each([
+    "Object.assign(module,{require:module.require},{require:other});",
+    "Object.assign(module,{require:module.require},{require});",
+    "Object.assign(module,{require:module.require},unknown);",
+    "Object.assign(module,{require:module.require},{...unknown});",
+    "Object.assign(module,{get require(){return module.require}});",
+    "Object.assign(module,{require:module.require},{get unrelated(){module.require=other;return 0}});",
+    "module.require=other;Object.assign(module,{require:module.require});",
+    "patch(module);Object.assign(module,{require:module.require});",
+    "Object.assign(module,{require:module.require},(patch(module),{}));",
+    "let target=module;if(flag)target=unknown;Object.assign(target,{require:module.require});",
+    "const target=new Proxy(module,{set(){module.require=other;return true}});Object.assign(target,{require:module.require});",
+    'Object.assign(module,{require:module.require,["__proto__"]:other});',
+    "patch(Object);Object.assign(module,{require:module.require});",
+    "patch(Reflect);Reflect.apply(Object.assign,null,[module,{require:module.require}]);",
+    "patch(Object.assign);Object.assign.call(null,module,{require:module.require});",
+    "const assign=Object.assign;patch(assign);assign.call(null,module,{require:module.require});",
+    "Object.assign=other;Object.assign(module,{require:module.require});",
+    "Object.assign(module,{[key]:other,require:module.require});",
+    "Object.assign(module,{get unrelated(){module.constructor._load=other;return 0}},{require:module.require});",
+    'Object.defineProperty(module,"unrelated",{set(){module.require=other}});Object.assign(module,{require:module.require,unrelated:0});',
+  ])("retains changed or unresolved assignment effects through %s", (setup) => {
+    expect(windows(setup)).toBe(0);
+  });
+});

@@ -1568,17 +1568,22 @@ export const createSemanticModuleInterop = (
         ? dependency.path
         : undefined;
     },
+    /** Native exclusions can opt into owner-escape proof from a frozen snapshot. */
     intrinsicInvocation: (
       node:
         | t.CallExpression
         | t.OptionalCallExpression
         | t.TaggedTemplateExpression,
+      proofFacts?: SemanticGlobalBindingFacts,
+      checkEscapes = false,
     ) =>
       resolveJavaScriptIntrinsicInvocation(
         node,
         intrinsicPath,
-        boundIntrinsic,
-        intrinsicReadChanged,
+        (node) => boundIntrinsic(node, proofFacts, checkEscapes),
+        (node, path, bound) =>
+          (checkEscapes && proofFacts?.complete !== true) ||
+          intrinsicReadChanged(node, path, bound, proofFacts, checkEscapes),
       ),
     boundIntrinsic,
     nonEscapingBoundTarget,

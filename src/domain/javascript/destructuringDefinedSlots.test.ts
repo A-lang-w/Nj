@@ -25,6 +25,31 @@ describe("destructuring defined source slots", () => {
     ["string length", 'const {length:target=globalThis}="x";'],
     ["empty string length", 'const {length:target=globalThis}="";'],
     ["string index", 'const {0:target=globalThis}="x";'],
+    ["fresh RegExp lastIndex", "const {lastIndex:target=globalThis}=/x/;"],
+    [
+      "computed RegExp lastIndex",
+      'const {["lastIndex"]:target=globalThis}=/x/g;',
+    ],
+    [
+      "nested RegExp lastIndex",
+      "const {value:{lastIndex:target=globalThis}}={value:/x/};",
+    ],
+    [
+      "RegExp lastIndex inherited from a literal prototype",
+      "const {lastIndex:target=globalThis}={__proto__:/x/};",
+    ],
+    [
+      "own RegExp lastIndex over a prototype accessor",
+      "Object.defineProperty(RegExp.prototype,'lastIndex',{get(){return undefined}});const {lastIndex:target=globalThis}=/x/;",
+    ],
+    [
+      "RegExp slot captured before a later default mutates it",
+      "const {value:saved,value:{lastIndex:target=globalThis},unused=(saved.lastIndex=undefined)}={value:/x/};",
+    ],
+    [
+      "RegExp slot captured before a later prototype getter mutates it",
+      "Object.defineProperty(RegExp.prototype,'source',{get(){this.lastIndex=undefined}});const {lastIndex:target=globalThis,source:ignored}=/x/;",
+    ],
     [
       "nested string length",
       'const {value:{length:target=globalThis}}={value:"x"};',
@@ -42,7 +67,9 @@ describe("destructuring defined source slots", () => {
       ).endpoints.filter(({ mechanism }) => mechanism === "call:fetch"),
     ).toMatchObject([{ value: "/local" }]);
   });
+});
 
+describe("destructuring missing or mutable source slots", () => {
   it.each([
     [
       "unknown computed static method",
@@ -74,6 +101,55 @@ describe("destructuring defined source slots", () => {
       "const {prototype:{constructor:saved},unused=(saved.helper=undefined),helper:target=globalThis}=class{static helper(){}};",
     ],
     ["missing string index", 'const {1:target=globalThis}="x";'],
+    ["missing RegExp property", "const {missing:target=globalThis}=/x/;"],
+    [
+      "property below RegExp lastIndex",
+      "const {lastIndex:{missing:target=globalThis}}=/x/;",
+    ],
+    [
+      "RegExp lastIndex changed through an alias",
+      "const source=/x/,alias=source;alias.lastIndex=undefined;const {lastIndex:target=globalThis}=source;",
+    ],
+    [
+      "RegExp lastIndex redefined as undefined",
+      "const source=/x/;Object.defineProperty(source,'lastIndex',{value:undefined});const {lastIndex:target=globalThis}=source;",
+    ],
+    [
+      "earlier default mutating RegExp lastIndex",
+      "const {value:saved,unused=(saved.lastIndex=undefined),value:{lastIndex:target=globalThis}}={value:/x/};",
+    ],
+    [
+      "earlier prototype getter mutating RegExp lastIndex",
+      "Object.defineProperty(RegExp.prototype,'source',{get(){this.lastIndex=undefined}});const {source:ignored,lastIndex:target=globalThis}=/x/;",
+    ],
+    [
+      "earlier physical prototype getter mutating RegExp lastIndex",
+      "Object.defineProperty(Object.getPrototypeOf(/x/),'source',{get(){this.lastIndex=undefined}});const {source:ignored,lastIndex:target=globalThis}=/y/;",
+    ],
+    [
+      "earlier Reflect prototype getter mutating RegExp lastIndex",
+      "Object.defineProperty(Reflect.getPrototypeOf(/x/),'source',{get(){this.lastIndex=undefined}});const {source:ignored,lastIndex:target=globalThis}=/y/;",
+    ],
+    [
+      "earlier aliased prototype getter mutating RegExp lastIndex",
+      "const getPrototype=Reflect.getPrototypeOf;const prototype=getPrototype(/x/);Object.defineProperty(prototype,'source',{get(){this.lastIndex=undefined}});const {source:ignored,lastIndex:target=globalThis}=/y/;",
+    ],
+    [
+      "earlier legacy prototype getter mutating RegExp lastIndex",
+      "Object.defineProperty(/x/.__proto__,'source',{get(){this.lastIndex=undefined}});const {source:ignored,lastIndex:target=globalThis}=/y/;",
+    ],
+    [
+      "accessor replacing a RegExp container value",
+      "const source={value:/x/};Object.defineProperty(source,'value',{get(){return {lastIndex:undefined}}});const {value:{lastIndex:target=globalThis}}=source;",
+    ],
+    [
+      "RegExp rest omitting nonenumerable lastIndex",
+      "const {...copy}=/x/;const {lastIndex:target=globalThis}=copy;",
+    ],
+    [
+      "RegExp spread omitting nonenumerable lastIndex",
+      "const {lastIndex:target=globalThis}={.../x/};",
+    ],
     ["noncanonical string index", 'const {"00":target=globalThis}="x";'],
     [
       "ignored string prototype length",
