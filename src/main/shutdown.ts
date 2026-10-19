@@ -1,11 +1,9 @@
-import type { StdioServerHandle } from "@modelcontextprotocol/server/stdio";
-
 import type { BinarySession } from "../application/binary/BinarySession.js";
 import type { Logger } from "pino";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import type { RuntimeDependencies } from "./types.js";
+import type { McpServerHandle, RuntimeDependencies } from "./types.js";
 import { MCP_SHUTDOWN_FAILED } from "./messages.js";
 
 interface ShutdownCleanupOwner {
@@ -16,7 +14,7 @@ interface ShutdownCleanupOwner {
 
 /** Resources the started MCP transport adds to process shutdown. */
 export interface McpTransportOwners {
-  readonly handle: StdioServerHandle;
+  readonly handle: McpServerHandle;
   readonly closeAndroid?: () => Promise<void>;
   readonly closeOptionalProviders?: () => Promise<void>;
 }
@@ -49,6 +47,8 @@ export const createShutdown = (input: {
       if (!closed.ok) throw closed.error;
     }),
   ];
+  // The attached transport's barrier before shared owners close.
+  let prepareShutdown: (() => Promise<void>) | undefined;
   let startupSettled = false;
   let lastAttemptFailed = false;
   let shutdownUnregistered = false;
@@ -62,7 +62,7 @@ export const createShutdown = (input: {
     if (shutdownAttempt !== undefined) return shutdownAttempt;
     requested.abort();
     const pending = cleanupOwners.filter(({ closed }) => !closed);
-    const attempt = closeOwners(pending).then((failure) => {
+    const attempt = drainThenClose(prepareShutdown, pending).then((failure) => {
       lastAttemptFailed = failure !== undefined;
       if (failure !== undefined) throw failure.cause;
       if (startupSettled) unregisterOnce();
@@ -96,6 +96,7 @@ export const createShutdown = (input: {
     attachTransport: (owners) => {
       // A transport attached after a request is closed by `finish`.
       if (!requested.signal.aborted) startupSettled = true;
+      prepareShutdown = owners.handle.prepareShutdown;
       cleanupOwners.unshift(
         ...[
           () => owners.handle.close(),
@@ -135,6 +136,25 @@ const cleanupOwner = (close: () => Promise<void>): ShutdownCleanupOwner => ({
   closed: false,
   attempted: false,
 });
+
+/**
+ * Drain the transport, then close owners. HTTP handlers can still own provider
+ * resources after cancellation, so a failed drain closes nothing and keeps
+ * every owner for a later retry.
+ */
+const drainThenClose = async (
+  prepareShutdown: (() => Promise<void>) | undefined,
+  owners: readonly ShutdownCleanupOwner[],
+): Promise<{ readonly cause: unknown } | undefined> => {
+  try {
+    await prepareShutdown?.();
+  } catch (cause: unknown) {
+    // The attempt covered these owners even though none of them closed.
+    for (const owner of owners) owner.attempted = true;
+    return { cause };
+  }
+  return closeOwners(owners);
+};
 
 /** Close owners concurrently and return their combined failure, if any. */
 const closeOwners = async (
