@@ -14,21 +14,25 @@ const linux = it.skipIf(process.platform !== "linux");
 // Real kernel-limit verification with a synthetic Unblob producer; real Unblob
 // has its own verifier. Python keeps SIGXFSZ ignored, so an over-limit write
 // fails with EFBIG and leaves a truncated file, as the real producer would.
+// The producer asserts the kernel left exactly min(attempted, limit) bytes,
+// then reports what is on disk, so only the ceiling's relation to the staging
+// budget can expose the truncation.
 const firmwareService = async (
-  stagedBytes: number,
-  extractionFileBytes: number,
+  attemptedBytes: number,
+  extractionFileLimit: number,
 ) => {
   const directory = await createTestTempDirectory("rea-firmware-limits-");
   const command = join(directory, "unblob-probe");
+  const probeFileLimit = FIRMWARE_LIMITS.reportBytes + 1;
   await writeFile(
     command,
     `#!/usr/bin/python3
-import hashlib, json, os, resource, sys
+import errno, hashlib, json, os, resource, sys
 if '--version' in sys.argv:
-    assert resource.getrlimit(resource.RLIMIT_FSIZE) == (${String(FIRMWARE_LIMITS.reportBytes)}, ${String(FIRMWARE_LIMITS.reportBytes)})
+    assert resource.getrlimit(resource.RLIMIT_FSIZE) == (${String(probeFileLimit)}, ${String(probeFileLimit)})
     print('26.6.4')
     sys.exit(0)
-assert resource.getrlimit(resource.RLIMIT_FSIZE) == (${String(extractionFileBytes)}, ${String(extractionFileBytes)})
+assert resource.getrlimit(resource.RLIMIT_FSIZE) == (${String(extractionFileLimit)}, ${String(extractionFileLimit)})
 args = sys.argv[1:]
 report = args[args.index('--report') + 1]
 log = args[args.index('--log') + 1]
@@ -36,10 +40,18 @@ source = args[-1]
 child = os.path.join(args[args.index('--extract-dir') + 1], 'rootfs', 'config')
 with open(source, 'rb') as handle:
     data = handle.read()
-content = b'x' * ${String(stagedBytes)}
 os.makedirs(os.path.dirname(child))
-with open(child, 'wb') as handle:
-    handle.write(content)
+with open(child, 'wb', buffering=0) as handle:
+    pending = memoryview(b'x' * ${String(attemptedBytes)})
+    try:
+        while pending:
+            pending = pending[handle.write(pending):]
+    except OSError as error:
+        if error.errno != errno.EFBIG:
+            raise
+with open(child, 'rb') as handle:
+    content = handle.read()
+assert len(content) == min(${String(attemptedBytes)}, ${String(extractionFileLimit)})
 with open(log, 'w') as handle:
     handle.write('resource fixture log\\n')
 def stat(path, size):
@@ -79,17 +91,14 @@ with open(report, 'w') as handle:
   return { service, path, output: join(directory, "output"), launches };
 };
 
-linux.each([
-  [1, 1, FIRMWARE_LIMITS.reportBytes],
-  [16 * 1024 * 1024, 14, 16 * 1024 * 1024],
-])(
-  "keeps the mandatory producer report writable under a %i-byte staging budget",
-  async (budget, stagedBytes, extractionFileBytes) => {
-    const fixture = await firmwareService(stagedBytes, extractionFileBytes);
+linux(
+  "keeps the mandatory producer report writable under a 1-byte staging budget",
+  async () => {
+    const fixture = await firmwareService(1, FIRMWARE_LIMITS.reportBytes + 1);
     const outcome = await fixture.service.execute("extract_firmware", {
       path: fixture.path,
       output_directory: fixture.output,
-      max_output_bytes: budget,
+      max_output_bytes: 1,
     });
     if (!outcome.ok) throw outcome.error;
     const result = firmwareResultSchemas.extract_firmware.parse(
@@ -98,27 +107,35 @@ linux.each([
     expect(result.files).toEqual([
       expect.objectContaining({
         relative_path: "rootfs/config",
-        size: stagedBytes,
+        size: 1,
       }),
     ]);
     await assertFirmwareCleanup(fixture.launches);
   },
 );
 
-linux(
-  "rejects staged output beyond the aggregate budget below the report ceiling",
-  async () => {
-    const fixture = await firmwareService(1000, FIRMWARE_LIMITS.reportBytes);
+linux.each([
+  ["below the report ceiling", 64, 1000, FIRMWARE_LIMITS.reportBytes + 1],
+  [
+    "when the kernel stops a staged file at the ceiling",
+    16 * 1024 * 1024,
+    16 * 1024 * 1024 + 4096,
+    16 * 1024 * 1024 + 1,
+  ],
+])(
+  "rejects staged output beyond the aggregate budget %s",
+  async (_case, budget, attemptedBytes, extractionFileLimit) => {
+    const fixture = await firmwareService(attemptedBytes, extractionFileLimit);
     const outcome = await fixture.service.execute("extract_firmware", {
       path: fixture.path,
       output_directory: fixture.output,
-      max_output_bytes: 64,
+      max_output_bytes: budget,
     });
     expect(outcome).toMatchObject({
       ok: false,
       error: {
         _tag: "AnalysisOutputError",
-        reason: "Staging byte budget exceeded (64)",
+        reason: `Staging byte budget exceeded (${String(budget)})`,
       },
     });
     await expect(access(fixture.output)).rejects.toMatchObject({
