@@ -46,7 +46,7 @@ export interface ServeStreamableHttpOptions {
   readonly createMcpServer: (
     context: McpRequestContext,
   ) => RequestTrackingMcpServer | Promise<RequestTrackingMcpServer>;
-  /** Maximum time a handover or shutdown waits for cancelled tool handlers. */
+  /** Maximum time a client session handover waits for cancelled tool handlers. */
   readonly sessionDrainTimeoutMs?: number;
   readonly routes?: readonly StreamableHttpRoute[];
   readonly logger?: Logger;
@@ -232,6 +232,7 @@ export class McpSessionSlot {
     private readonly logger: Logger | undefined,
     private readonly drainTimeoutMs = DEFAULT_SESSION_DRAIN_TIMEOUT_MS,
   ) {
+    instance.enableRequestTracking();
     const protocol = protocolOf(instance);
     const captured = protocol.onclose ?? NO_SHUTDOWN_HOOK;
     let running = false;
@@ -286,7 +287,14 @@ export class McpSessionSlot {
     await this.#arming?.catch(() => undefined);
     const open = this.#live;
     // The session stays owned until its shutdown succeeds, so a retry can finish it.
-    await open?.transport.close();
+    try {
+      await open?.transport.close();
+    } catch (cause: unknown) {
+      // Shutdown may have joined a handover that already started its bounded
+      // drain. Retry that timeout with shutdown's completion-based wait.
+      if (!(cause instanceof SessionDrainTimeoutError)) throw cause;
+      await open?.transport.close();
+    }
     if (this.#live === open) this.#live = undefined;
     // Without a live transport nothing fires the instance's hook; run it here, once.
     this.#shutdownHook();
@@ -340,7 +348,11 @@ export class McpSessionSlot {
     protocol.onclose = NO_SHUTDOWN_HOOK;
     try {
       await shutdown();
-      if (!(await this.instance.drainToolCalls(this.drainTimeoutMs)))
+      if (
+        !(await this.instance.drainToolCalls(
+          this.#closed ? undefined : this.drainTimeoutMs,
+        ))
+      )
         throw new SessionDrainTimeoutError(this.drainTimeoutMs);
       // A timed-out handler remains owned and blocks reuse until a later drain succeeds.
       if (this.#live?.transport === transport) this.#live = undefined;

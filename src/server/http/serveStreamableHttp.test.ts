@@ -925,54 +925,78 @@ it.each(["replacement", "DELETE"])(
   },
 );
 
-it("refuses reuse after a drain timeout and retries the retained handler before shutdown", async () => {
-  let release!: () => void;
-  let entered!: () => void;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  let shutdowns = 0;
-  const { served } = await start({
-    sessionDrainTimeoutMs: 0,
-    createMcpServer: () => {
-      const server = createEchoServer(() => {
-        shutdowns += 1;
-      });
-      server.registerTool("slow", { inputSchema: z.object({}) }, async () => {
-        entered();
-        await gate;
-        return { content: [] };
-      });
-      return server;
-    },
-  });
-  const first = await connect(served.url);
-  try {
-    void first.client
-      .callTool({ name: "slow", arguments: {} })
-      .catch(() => undefined);
-    await started;
-    const refused = await fetch(served.url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-      },
-      body: await initializeRequest().text(),
+it.each(["after timeout", "during drain"])(
+  "automatically completes shutdown %s when the retained handler settles",
+  async (shutdownTiming) => {
+    let release!: () => void;
+    let entered!: () => void;
+    let draining!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
     });
-    expect(refused.status).toBe(503);
-    await expect(served.close()).rejects.toThrow(
-      "still has running tool calls",
-    );
-    expect(shutdowns).toBe(0);
-    release();
-    await expect(served.close()).resolves.toBeUndefined();
-    expect(shutdowns).toBe(1);
-  } finally {
-    release();
-    await first.client.close();
-  }
-});
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const drainStarted = new Promise<void>((resolve) => {
+      draining = resolve;
+    });
+    let shutdowns = 0;
+    const { served } = await start({
+      sessionDrainTimeoutMs: 0,
+      createMcpServer: () => {
+        const server = createEchoServer(() => {
+          shutdowns += 1;
+        });
+        const drain = server.drainToolCalls.bind(server);
+        vi.spyOn(server, "drainToolCalls").mockImplementation((timeoutMs) => {
+          const result = drain(timeoutMs);
+          draining();
+          return result;
+        });
+        server.registerTool("slow", { inputSchema: z.object({}) }, async () => {
+          entered();
+          await gate;
+          return { content: [] };
+        });
+        return server;
+      },
+    });
+    const first = await connect(served.url);
+    try {
+      void first.client
+        .callTool({ name: "slow", arguments: {} })
+        .catch(() => undefined);
+      await started;
+      const replacement = fetch(served.url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: await initializeRequest().text(),
+      }).catch((cause: unknown) => {
+        // Full shutdown closes listener sockets, including this pending handover.
+        if (shutdownTiming === "during drain") return undefined;
+        throw cause;
+      });
+      await drainStarted;
+      const pendingClose =
+        shutdownTiming === "during drain" ? served.close() : undefined;
+      const refused = await replacement;
+      if (shutdownTiming === "after timeout") expect(refused?.status).toBe(503);
+      let closed = false;
+      const closing = (pendingClose ?? served.close()).then(() => {
+        closed = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(closed).toBe(false);
+      expect(shutdowns).toBe(0);
+      release();
+      await closing;
+      expect(shutdowns).toBe(1);
+    } finally {
+      release();
+      await first.client.close();
+    }
+  },
+);

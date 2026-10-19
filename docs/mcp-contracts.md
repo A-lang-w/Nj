@@ -456,19 +456,28 @@ as one JSON log line on stderr (`"msg":"MCP transport listening"` with `url`)
 at every `REA_LOG_LEVEL`, because an ephemeral port is otherwise unreachable;
 stdout stays unused.
 
+This endpoint uses plain HTTP without TLS or client authentication. Use it only
+within a trusted local or isolated environment; an explicit non-loopback bind
+makes the same tools and active analysis state reachable at that address. It
+does not provide separate users or independent target sessions. Standard client
+registrations continue to use a dedicated stdio process.
+
 The HTTP server is stateful and serves one client at a time on one server
 instance. `initialize` returns an `Mcp-Session-Id`; `notifications/initialized`
 is acknowledged with `202`; responses arrive as JSON or SSE frames; `DELETE
 /mcp` with the session id ends the session with `200`. Ending a session is not
 a server shutdown: the process keeps listening, the instance keeps its providers
 and the shared active target, and the next client opens a fresh session against
-them. Ending or replacing a session cancels its running tool calls and waits
+them. A client ending or replacing a session cancels its running tool calls and waits
 up to ten seconds for their handlers and cleanup to finish before reusing the
 server. A timeout returns `503`; the old calls remain owned, and later requests
 retry the drain rather than starting another session against those resources.
 Tool callbacks whose validation finishes after cancellation never start.
-HTTP factories use `RequestTrackingMcpServer` so completion is tracked even
-when cancellation suppresses the SDK's reply.
+HTTP factories enable `RequestTrackingMcpServer` tracking so completion is tracked
+even when cancellation suppresses the SDK's reply; stdio retains the SDK's
+original callback behavior. Full server shutdown stops the listener and waits
+for owned handlers to settle before closing providers. It continues cleanup
+automatically when they finish, including after a client handover timed out.
 The newest client replaces an open session: an `initialize` that arrives
 while a session is open ends that session instead of being refused, because a
 client that exits without `DELETE` must not wedge the listener; the replaced

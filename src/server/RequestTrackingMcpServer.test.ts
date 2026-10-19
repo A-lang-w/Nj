@@ -5,29 +5,33 @@ import { z } from "zod";
 
 import { RequestTrackingMcpServer } from "./RequestTrackingMcpServer.js";
 
-it("preserves the SDK's context-only callback for a tool without an input schema", async () => {
-  const server = new RequestTrackingMcpServer({
-    name: "context-only",
-    version: "1",
-  });
-  server.registerTool("context", {}, (context) => ({
-    content: [{ type: "text", text: String(context.mcpReq.signal.aborted) }],
-  }));
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: "context-client", version: "1" });
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-    expect((await client.callTool({ name: "context" })).content).toEqual([
-      { type: "text", text: "false" },
-    ]);
-    expect(await server.drainToolCalls(0)).toBe(true);
-  } finally {
-    await client.close();
-    await server.close();
-  }
-});
+it.each([false, true])(
+  "preserves context-only callbacks with HTTP tracking enabled=%s",
+  async (tracking) => {
+    const server = new RequestTrackingMcpServer({
+      name: "context-only",
+      version: "1",
+    });
+    if (tracking) server.enableRequestTracking();
+    server.registerTool("context", {}, (context) => ({
+      content: [{ type: "text", text: String(context.mcpReq.signal.aborted) }],
+    }));
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "context-client", version: "1" });
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      expect((await client.callTool({ name: "context" })).content).toEqual([
+        { type: "text", text: "false" },
+      ]);
+      expect(await server.drainToolCalls(0)).toBe(true);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  },
+);
 
 it("never starts a tool whose asynchronous input validation finishes after transport cancellation", async () => {
   let release!: () => void;
@@ -43,6 +47,7 @@ it("never starts a tool whose asynchronous input validation finishes after trans
     name: "validation-race",
     version: "1",
   });
+  server.enableRequestTracking();
   server.registerTool(
     "slow_validation",
     {

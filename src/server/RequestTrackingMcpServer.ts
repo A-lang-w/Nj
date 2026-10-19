@@ -12,6 +12,12 @@ import {
 /** Owns tool completion independently of transport cancellation and suppressed replies. */
 export class RequestTrackingMcpServer extends McpServer {
   readonly #calls = new Set<Promise<unknown>>();
+  #tracking = false;
+
+  /** HTTP sessions share resources across transports; stdio keeps the SDK's original behavior. */
+  enableRequestTracking(): void {
+    this.#tracking = true;
+  }
 
   override registerTool<
     OutputArgs extends StandardSchemaWithJSON,
@@ -53,7 +59,8 @@ export class RequestTrackingMcpServer extends McpServer {
   #track<T>(
     context: ServerContext,
     callback: () => T | Promise<T>,
-  ): Promise<T> {
+  ): T | Promise<T> {
+    if (!this.#tracking) return callback();
     // SDK validation can finish after its transport closed. Such a callback
     // must never start work against the next session's shared resources.
     const call = Promise.resolve().then(() => {
@@ -65,12 +72,14 @@ export class RequestTrackingMcpServer extends McpServer {
   }
 
   /** Wait for running handlers, including their finally blocks; a timeout retains ownership. */
-  async drainToolCalls(timeoutMs: number): Promise<boolean> {
+  async drainToolCalls(timeoutMs?: number): Promise<boolean> {
     if (this.#calls.size === 0) return true;
+    const settled = Promise.allSettled(this.#calls).then(() => true);
+    if (timeoutMs === undefined) return settled;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
-        Promise.allSettled(this.#calls).then(() => true),
+        settled,
         new Promise<false>((resolve) => {
           timer = setTimeout(() => resolve(false), timeoutMs);
         }),
