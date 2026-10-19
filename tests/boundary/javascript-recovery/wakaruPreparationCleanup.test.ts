@@ -243,3 +243,67 @@ it.skipIf(process.platform === "win32")(
     }
   },
 );
+
+it.skipIf(process.platform === "win32")(
+  "lets a cross-provider retry release the retained preparation failure",
+  async () => {
+    const root = await createTestTempDirectory("rea-wakaru-shared-");
+    const sourcePath = join(root, "source.js");
+    const output = join(root, "output");
+    await writeFile(sourcePath, "module.exports = 42;");
+    const helperRoot = join(root, "rea-process-token-residual");
+    let attempts = 0;
+    const cleanupFailure = new ProviderCleanupError(
+      "process-ownership",
+      [helperRoot],
+      {
+        reason:
+          "The Darwin ownership helper root remains owned until removal succeeds.",
+      },
+      { operation: "prepare_owned_process" },
+    );
+    const cleanupOwner = {
+      close: async () => {
+        attempts += 1;
+        throw cleanupFailure;
+      },
+    };
+    preparation.failure = new WakaruPreparationCleanupFailure(
+      cleanupOwner,
+      new DarwinProcessOwnershipInspectionError(
+        "Darwin process ownership helper preparation failed",
+        { cleanupFailure, cleanupOwner },
+      ),
+      new AnalysisTimeoutError("recover_javascript_sources", 120_000),
+    );
+    const provider = new WakaruProvider({});
+    try {
+      const result = await provider.recover({
+        path: sourcePath,
+        output_directory: output,
+        extraction_mode: "structural",
+        rewrite_level: "standard",
+      });
+      if (result.ok) throw new Error("Expected preparation cleanup failure");
+      // The helper root is the only retained owner, so the caller sees the
+      // wrapper that follows its process-global marker.
+      expect(result.error).toBeInstanceOf(WakaruPreparationCleanupFailure);
+      expect(projectAnalysisError(result.error).code).toBe(
+        "cleanup_incomplete",
+      );
+      expect(result.error.cleanupResources).toContain(helperRoot);
+      // Another owned-process launch retries the same helper root and resolves
+      // the shared marker without this provider running or closing.
+      cleanupFailure.resolveCleanup();
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(projectAnalysisError(result.error).code).toBe("provider_timeout");
+      expect(result.error.cleanupResources).toStrictEqual([]);
+      // A retired helper root must not be retried by this provider either.
+      await provider.close();
+      expect(attempts).toBe(0);
+    } finally {
+      preparation.failure = undefined;
+      await provider.close().catch(() => undefined);
+    }
+  },
+);

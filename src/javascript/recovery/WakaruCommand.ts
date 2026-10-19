@@ -104,6 +104,12 @@ export class WakaruPreparationCleanupFailure extends ProviderCleanupError {
         cleanupPrimary: previousError,
       },
     );
+    // The Darwin helper root is process-global, so another owned-process launch
+    // can retire that same root and resolve its marker. Follow the marker
+    // lifecycle instead of copying its resources once, so a cross-provider
+    // retry stops this wrapper reporting a released path as retained.
+    const marker = preparation.cleanupFailure;
+    if (marker !== undefined) this.bindCleanupDependencies([marker]);
   }
 }
 

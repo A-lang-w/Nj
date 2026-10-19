@@ -64,6 +64,23 @@ const retainedResources = (
   ...(pending.root === undefined ? [] : [pending.root]),
 ];
 
+/**
+ * Retry a retained helper root only while its shared marker is live: another
+ * owned-process launch may already have retired the same process-global root.
+ */
+const retryPreparationCleanup = async (
+  preparation: WakaruPreparationCleanupFailure,
+): Promise<void> => {
+  if (preparation.preparation.cleanupFailure?.cleanupIncomplete !== true)
+    return;
+  try {
+    await preparation.cleanupOwner.close();
+  } catch (cause: unknown) {
+    // The helper root is still owned; report it instead of a clean close.
+    void cause;
+  }
+};
+
 /** Serialized recovery adapter retaining failed process, workspace and publication cleanup. */
 export class WakaruProvider implements JavaScriptRecoveryPort {
   #tail: Promise<void> = Promise.resolve();
@@ -236,6 +253,18 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
         root = undefined;
       }
       if (residuals.length > 0) {
+        if (
+          preparation !== undefined &&
+          pending !== undefined &&
+          pending.process === undefined &&
+          pending.tree === undefined &&
+          pending.root === undefined
+        )
+          // A launch preparation failure is the only retained owner here, and
+          // it follows the process-global helper-root marker: return it so a
+          // retry from another owned-process launch resolves the caller-visible
+          // failure instead of waiting for this provider to run or close again.
+          return err(preparation);
         // Confirmed cleanup must reveal the typed primary for ordinary
         // workspace failures too, not only failures that already retained one.
         const cleanupPrimary =
@@ -342,12 +371,7 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
       primary === undefined ? {} : { cleanupPrimary: primary };
     if (pending.preparation !== undefined) {
       const preparation = pending.preparation;
-      try {
-        await preparation.cleanupOwner.close();
-      } catch (cause: unknown) {
-        // The helper root is still owned; report it instead of a clean close.
-        void cause;
-      }
+      await retryPreparationCleanup(preparation);
       if (preparation.preparation.cleanupFailure?.cleanupIncomplete === true) {
         // This retry still owns the helper root: resolve it with the owner's
         // next success instead of leaving a released path reported as live.
