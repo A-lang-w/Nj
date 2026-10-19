@@ -4,6 +4,8 @@ import {
   il2cppMetadataSchema,
   type Il2cppMetadata,
 } from "../il2cpp/il2cppMetadata.js";
+import { createEvidence } from "../evidence.js";
+import { freezeJsonSnapshot } from "../immutableJson.js";
 import { projectIl2cppMetadataView } from "./il2cppMetadataView.js";
 
 afterEach(() => {
@@ -72,12 +74,12 @@ const page = {
 
 it("validates a sealed parent once across pages and keeps counts exact", () => {
   const parse = vi.spyOn(il2cppMetadataSchema, "safeParse");
-  const sealed = parent(structuredClone(report), true);
+  const sealed = parent(freezeJsonSnapshot(structuredClone(report)), true);
   for (const offset of [0, 1]) {
     const view = projectIl2cppMetadataView(sealed, { ...page, offset });
     if (!view.ok) throw view.error;
     expect(view.value).toMatchObject({
-      items: [report.types[offset]],
+      items: [{ index: offset, ...report.types[offset] }],
       counts: { images: 1, types: 2, methods: 1, nested_types: 1 },
     });
   }
@@ -90,4 +92,80 @@ it("revalidates unsealed inline input on every page", () => {
   projectIl2cppMetadataView(inline, page);
   projectIl2cppMetadataView(inline, page);
   expect(parse).toHaveBeenCalledTimes(2);
+});
+
+it("intersects batch identities, fields, image ranges and exact names in source order", () => {
+  const source = parent(freezeJsonSnapshot(structuredClone(report)), true);
+  const result = projectIl2cppMetadataView(source, {
+    ...page,
+    indices: [1, 0, 1, 100],
+    image_indices: [0],
+    names: ["Inner"],
+    namespaces: [""],
+    declaring_types: [0],
+    fields: ["name"],
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value).toMatchObject({
+    items: [{ index: 1, name: "Inner" }],
+    coverage: { total: 1, exhausted: true },
+    counts: { images: 1, types: 2, methods: 1 },
+  });
+  const identityOnly = projectIl2cppMetadataView(source, {
+    ...page,
+    fields: [],
+  });
+  if (!identityOnly.ok) throw identityOnly.error;
+  expect(identityOnly.value).toMatchObject({ items: [{ index: 0 }] });
+});
+
+it.each([
+  "indices",
+  "image_indices",
+  "names",
+  "namespaces",
+  "declaring_types",
+] as const)("keeps an empty %s selection empty", (field) => {
+  const result = projectIl2cppMetadataView(parent(report, false), {
+    ...page,
+    [field]: [],
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value).toMatchObject({
+    items: [],
+    coverage: { total: 0, exhausted: true },
+  });
+});
+
+it("does not trust a forged seal flag or a shallow frozen mutable report", () => {
+  const mutable = structuredClone(report);
+  Object.freeze(mutable);
+  const source = parent(mutable, true);
+  const first = projectIl2cppMetadataView(source, page);
+  if (!first.ok) throw first.error;
+  mutable.types[0]!.name = "Changed";
+  const second = projectIl2cppMetadataView(source, page);
+  if (!second.ok) throw second.error;
+  expect(second.value).toMatchObject({
+    items: [{ index: 0, name: "Changed" }],
+  });
+});
+
+it("refuses a parent whose subject contradicts the recorded artifact identity", () => {
+  const result = projectIl2cppMetadataView(
+    {
+      ...parent(report, false),
+      subject: createEvidence(
+        { path: report.artifact.path, format: "file", sha256: "c".repeat(64) },
+        { id: "fixture", name: "fixture", version: "1" },
+        {
+          operation: "inspect_il2cpp_metadata",
+          parameters: {},
+          result: report,
+        },
+      ).subject,
+    },
+    page,
+  );
+  expect(result.ok).toBe(false);
 });

@@ -93,8 +93,11 @@ rea inspect-il2cpp-metadata /absolute/path/global-metadata.dat --json
 
 The command decodes a version 29, 31 or 39 `global-metadata.dat` and reports assembly
 images, type and method names, index ranges, header sections and SHA-256. It
-does not decrypt metadata or link names to native code addresses. MCP returns every row by
-default; `detail: "summary"` returns counts and pages rows on request. See [IL2CPP metadata](il2cpp-metadata.md).
+does not decrypt metadata or link names to native code addresses. MCP defaults
+to compact counts with retained Evidence; query indexed rows with filters,
+batch indices and selected fields. The CLI defaults to complete Evidence;
+`--detail summary --evidence_output FILE` exports the full result to a new file
+and returns a compact overview. See [IL2CPP metadata](il2cpp-metadata.md).
 
 Inspect an embedded cargo-auditable Rust dependency list without installing
 Rust or configuring a disassembler:

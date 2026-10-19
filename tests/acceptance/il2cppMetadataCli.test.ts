@@ -1,7 +1,9 @@
+import { desktopSummarySchema } from "../../src/domain/analysisView/desktopApplicationView.js";
 import { createHash } from "node:crypto";
-import { unlink, writeFile } from "node:fs/promises";
+import { readFile, realpath, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect } from "vitest";
+import { expect, it } from "vitest";
+import { readEvidenceBundle } from "../../src/application/EvidenceBundleFiles.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   analysisViewResultSchema,
@@ -55,14 +57,14 @@ cliTest(
       report,
     );
 
-    // Omitted detail delivers the complete rows, like the other inspection tools.
+    // The default keeps complete Evidence while returning a compact receipt.
     const omitted = await call("inspect_il2cpp_metadata", { path });
     expect(omitted.isError, JSON.stringify(omitted)).not.toBe(true);
     expect(
-      il2cppMetadataSchema.parse(
+      il2cppMetadataSummaryViewResultSchema.parse(
         parseEvidence(omitted.structuredContent).normalized_result,
-      ).methods,
-    ).toEqual(FIXTURE_METHODS);
+      ).summary.counts.methods,
+    ).toBe(FIXTURE_METHODS.length);
     const summarized = await call("inspect_il2cpp_metadata", {
       path,
       detail: "summary",
@@ -72,17 +74,23 @@ cliTest(
       parseEvidence(summarized.structuredContent).normalized_result,
     );
     expect(view.summary.counts).toEqual({
+      sections: 31,
       images: 2,
       types: 4,
       methods: 5,
       nested_types: 1,
     });
-    expect(view.summary.sections).toEqual(report.sections);
+    expect(view.summary).not.toHaveProperty("sections");
     expect(view.summary.index_widths).toEqual(report.index_widths);
 
     // Pages come from retained Evidence, not the file.
     await unlink(path);
-    for (const collection of ["images", "types", "methods"] as const) {
+    for (const collection of [
+      "sections",
+      "images",
+      "types",
+      "methods",
+    ] as const) {
       const rows: unknown[] = [];
       let offset = 0;
       do {
@@ -103,7 +111,9 @@ cliTest(
         rows.push(...projected.items);
         offset = projected.coverage.next_offset ?? report[collection].length;
       } while (offset < report[collection].length);
-      expect(rows).toEqual(report[collection]);
+      expect(rows).toEqual(
+        report[collection].map((row, index) => ({ index, ...row })),
+      );
     }
     await client.ping();
   },
@@ -162,6 +172,205 @@ cliTest(
       expect(parseMcpToolError(response).error).toMatchObject(expected);
     }
     await client.ping();
+  },
+  30000,
+);
+
+it("queries compact retained metadata through the real SDK with exact row identities and fields", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-sdk-selection-");
+  const path = join(root, "global-metadata.dat");
+  const fixture = createIl2cppMetadataFixture({ version: 31 });
+  await writeFile(path, fixture.bytes);
+  const { client, call } = await connectLocalToolsMcp();
+  const directory = await call("inspect_desktop_application", { path: root });
+  const directoryView = analysisViewResultSchema.parse(
+    parseEvidence(directory.structuredContent).normalized_result,
+  );
+  if (directoryView.kind !== "summary")
+    throw new Error("Expected a directory summary");
+  const probe = desktopSummarySchema
+    .parse(directoryView.summary)
+    .next_probe_groups.find(
+      (group) => group.operation === "inspect_il2cpp_metadata",
+    )?.example;
+  if (probe === undefined)
+    throw new Error("Missing IL2CPP metadata next operation");
+  expect(probe.path).toBe(await realpath(path));
+  const response = await call(probe.operation, { path: probe.path });
+  expect(response.isError).not.toBe(true);
+  const overview = il2cppMetadataSummaryViewResultSchema.parse(
+    parseEvidence(response.structuredContent).normalized_result,
+  );
+  expect(overview.summary.counts).toEqual({
+    sections: 31,
+    images: 2,
+    types: 4,
+    methods: 5,
+    nested_types: 1,
+  });
+  expect(overview.summary).not.toHaveProperty("sections");
+  expect(overview.summary).not.toHaveProperty("methods");
+  await unlink(path);
+  const source = {
+    kind: "retained-evidence",
+    evidence_id: overview.parent_evidence_id,
+  };
+  const selected = async (view: Record<string, unknown>) => {
+    const result = await call("inspect_analysis_view", {
+      source,
+      view: { kind: "il2cpp-metadata", ...view },
+    });
+    expect(result.isError).not.toBe(true);
+    const evidence = parseEvidence(result.structuredContent);
+    expect(evidence.evidence_links).toContain(overview.parent_evidence_id);
+    const payload = analysisViewResultSchema.parse(evidence.normalized_result);
+    if (payload.kind !== "il2cpp-metadata")
+      throw new Error("Wrong collection response");
+    expect(payload.artifact.sha256).toBe(
+      createHash("sha256").update(fixture.bytes).digest("hex"),
+    );
+    return payload;
+  };
+  expect(
+    (
+      await selected({
+        collection: "sections",
+        names: ["methods"],
+        fields: ["count"],
+      })
+    ).items,
+  ).toEqual([{ index: 5, count: null }]);
+  expect(
+    (
+      await selected({
+        collection: "types",
+        indices: [3, 0, 3, 999],
+        fields: ["namespace"],
+      })
+    ).items,
+  ).toEqual([
+    { index: 0, namespace: "Game" },
+    { index: 3, namespace: "System" },
+  ]);
+  expect(
+    (
+      await selected({
+        collection: "types",
+        image_indices: [0],
+        namespaces: ["Game"],
+        names: ["Player"],
+        fields: ["name"],
+      })
+    ).items,
+  ).toEqual([{ index: 0, name: "Player" }]);
+  const methods = {
+    collection: "methods",
+    declaring_types: [0, 1],
+    names: [".ctor", "Add"],
+    fields: ["name", "declaring_type"],
+  };
+  expect((await selected(methods)).items).toEqual([
+    { index: 0, name: ".ctor", declaring_type: 0 },
+    { index: 2, name: "Add", declaring_type: 1 },
+  ]);
+  expect(await selected({ ...methods, offset: 1, limit: 1 })).toMatchObject({
+    items: [{ index: 2, name: "Add", declaring_type: 1 }],
+    coverage: { total: 2, exhausted: true, next_offset: null },
+  });
+  expect(
+    (await selected({ collection: "methods", indices: [2, 0], fields: [] }))
+      .items,
+  ).toEqual([{ index: 0 }, { index: 2 }]);
+  expect(await selected({ collection: "types", indices: [] })).toMatchObject({
+    items: [],
+    coverage: { total: 0, exhausted: true },
+  });
+  const invalid = await call("inspect_analysis_view", {
+    source,
+    view: {
+      kind: "il2cpp-metadata",
+      collection: "methods",
+      fields: ["namespace"],
+    },
+  });
+  expect(parseMcpToolError(invalid).error.code).toBe("invalid_request");
+  await client.ping();
+}, 30000);
+
+cliTest(
+  "exports complete metadata Evidence for compact CLI delivery and portable selected reads",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-il2cpp-cli-export-");
+    const path = join(root, "global-metadata.dat");
+    const bundle = join(root, "evidence.json");
+    const refused = await cli.run({
+      arguments: [
+        "inspect-il2cpp-metadata",
+        join(root, "must-not-be-read"),
+        "--detail",
+        "summary",
+        "--json",
+      ],
+    });
+    expect(refused.exitCode).toBe(1);
+    expect(refused.json).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [{ path: ["evidence_output"] }] },
+    });
+    await writeFile(path, createIl2cppMetadataFixture().bytes);
+    const args = [
+      "inspect-il2cpp-metadata",
+      path,
+      "--detail",
+      "summary",
+      "--evidence_output",
+      bundle,
+      "--json",
+    ];
+    const result = await cli.run({ arguments: args });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.json).toMatchObject({
+      evidence_bundle: { path: bundle, bytes: expect.any(Number) },
+      summary: { normalized_result: { kind: "summary" } },
+    });
+    const before = await readFile(bundle);
+    const overwrite = await cli.run({ arguments: args });
+    expect(overwrite.exitCode).toBe(1);
+    expect(await readFile(bundle)).toEqual(before);
+    const saved = await readEvidenceBundle(bundle);
+    if (!saved.ok) throw saved.error;
+    const evidence = saved.value.records[0];
+    if (evidence === undefined)
+      throw new Error("Missing exported source Evidence");
+    expect(JSON.stringify(overwrite.json)).toContain(evidence.evidence_id);
+    expect(
+      il2cppMetadataSchema.parse(evidence.normalized_result).methods,
+    ).toEqual(FIXTURE_METHODS);
+    await unlink(path);
+    const query = join(root, "query.json");
+    await writeFile(
+      query,
+      JSON.stringify({
+        source: { kind: "inline", evidence },
+        view: {
+          kind: "il2cpp-metadata",
+          collection: "methods",
+          indices: [2, 0],
+          fields: ["name"],
+        },
+      }),
+    );
+    const selected = await cli.run({
+      arguments: ["inspect-analysis-view", query, "--json"],
+    });
+    expect(selected.exitCode, selected.stderr).toBe(0);
+    expect(parseEvidence(selected.json).normalized_result).toMatchObject({
+      items: [
+        { index: 0, name: ".ctor" },
+        { index: 2, name: "Add" },
+      ],
+      parent_evidence_id: evidence.evidence_id,
+    });
   },
   30000,
 );

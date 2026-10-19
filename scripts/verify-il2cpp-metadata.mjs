@@ -109,9 +109,10 @@ try {
     console.log("[ok] image type ranges and type method ranges agree");
 
     const summary = contract.outputSchema.parse(
-      await call(operation, { path, detail: "summary" }),
+      await call(operation, { path }),
     ).normalized_result;
     assert.deepEqual(summary.summary.counts, {
+      sections: report.sections.length,
       images: report.images.length,
       types: report.types.length,
       methods: report.methods.length,
@@ -129,7 +130,10 @@ try {
         })
       ).normalized_result,
     );
-    assert.deepEqual(page.items, report.methods.slice(0, 16));
+    assert.deepEqual(
+      page.items,
+      report.methods.slice(0, 16).map((row, index) => ({ ...row, index })),
+    );
     const last = analysisViewResultSchema.parse(
       (
         await call("inspect_analysis_view", {
@@ -146,7 +150,14 @@ try {
         })
       ).normalized_result,
     );
-    assert.deepEqual(last.items, report.types.slice(-4));
+    const lastOffset = Math.max(0, report.types.length - 4);
+    assert.deepEqual(
+      last.items,
+      report.types.slice(lastOffset).map((row, index) => ({
+        ...row,
+        index: lastOffset + index,
+      })),
+    );
     assert.equal(last.coverage.next_offset ?? null, null);
     assert.deepEqual(
       await hashVerifierFile(path, resources),

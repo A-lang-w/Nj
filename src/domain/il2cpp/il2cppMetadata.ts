@@ -40,12 +40,6 @@ export const IL2CPP_METADATA_SECTION_NAMES = [
 /** Decoded metadata versions; 29 and 31 use fixed 4-byte indices. */
 export const IL2CPP_METADATA_VERSIONS = [29, 31, 39] as const;
 
-export const IL2CPP_METADATA_COLLECTIONS = [
-  "images",
-  "types",
-  "methods",
-] as const;
-
 const count = z.number().int().nonnegative();
 /** Serialized metadata indices use -1 for an absent reference. */
 const optionalIndex = z.number().int().min(-1);
@@ -58,9 +52,9 @@ export const inspectIl2cppMetadataInputSchema = z.strictObject({
   ),
   detail: z
     .enum(["complete", "summary"])
-    .default("complete")
+    .default("summary")
     .describe(
-      "complete (default) returns every image, type and method row inline; summary retains every row and returns counts with a linked inspect_analysis_view summary",
+      "summary (default) retains complete Evidence and returns identity and collection counts; complete returns every image, type and method row inline",
     ),
 });
 
@@ -87,14 +81,18 @@ export const il2cppMetadataTypeSchema = z.strictObject({
   method_count: count,
   nested_type_start: optionalIndex,
   nested_type_count: count,
-  /** Enclosing type derived from the nestedTypes section; -1 for top-level types. */
-  declaring_type: optionalIndex,
+  /** Enclosing type derived from the nestedTypes section. */
+  declaring_type: optionalIndex.describe(
+    "Enclosing TypeDefinitionIndex derived from nestedTypes; -1 means no enclosing metadata type was recorded",
+  ),
 });
 
 /** Method definition; row position is its MethodIndex. */
 export const il2cppMetadataMethodSchema = z.strictObject({
   name: z.string(),
-  declaring_type: optionalIndex,
+  declaring_type: optionalIndex.describe(
+    "Declared TypeDefinitionIndex from this MethodDefinition; -1 is an absent reference",
+  ),
 });
 
 /** Unrefined report fields, shared with projections that omit row collections. */

@@ -415,18 +415,20 @@ interface MetadataTables {
   readonly readString: ReturnType<typeof createStringReader>;
 }
 
-const readImages = ({
+function* readImages({
   bytes,
   section,
   widths,
   recordBytes: sizes,
   counts,
   readString,
-}: MetadataTables): Il2cppMetadataDecoded["images"] => {
+}: MetadataTables): Generator<void, Il2cppMetadataDecoded["images"]> {
   const images = section("images");
   const typeTotal = counts.typeDefinitions;
   const width = widths.type_definition;
-  return Array.from({ length: counts.images }, (_, index) => {
+  const result: Il2cppMetadataDecoded["images"] = [];
+  for (let index = 0; index < counts.images; index++) {
+    if (index % 256 === 0) yield;
     const at = images.offset + index * sizes.images;
     const image = {
       name: readString(bytes.readInt32LE(at), `image ${index} name`),
@@ -439,17 +441,20 @@ const readImages = ({
       image.type_count,
       typeTotal,
     );
-    return image;
-  });
-};
+    result.push(image);
+  }
+  return result;
+}
 
 /** Record each type's enclosing type from its declaring type's nestedTypes range. */
-const assignNesting = (
+function* assignNesting(
   { bytes, section, counts }: MetadataTables,
   types: Il2cppMetadataDecoded["types"],
-) => {
+) {
+  let work = 0;
   const nestedTypes = section("nestedTypes");
   for (const [index, type] of types.entries()) {
+    if (work++ % 256 === 0) yield;
     checkRange(
       `type ${index} nested types`,
       type.nested_type_start,
@@ -457,6 +462,7 @@ const assignNesting = (
       counts.nestedTypes,
     );
     for (let offset = 0; offset < type.nested_type_count; offset += 1) {
+      if (work++ % 256 === 0) yield;
       const nested = bytes.readInt32LE(
         nestedTypes.offset +
           (type.nested_type_start + offset) * NESTED_TYPE_ENTRY_BYTES,
@@ -480,17 +486,20 @@ const assignNesting = (
       target.declaring_type = index;
     }
   }
-  rejectNestingCycles(types);
-};
+  yield* rejectNestingCycles(types);
+}
 
 /** Each enclosing chain must reach a top-level type. */
-const rejectNestingCycles = (types: Il2cppMetadataDecoded["types"]) => {
+function* rejectNestingCycles(types: Il2cppMetadataDecoded["types"]) {
   // 0 unvisited, 1 on the current chain, 2 reaches a top-level type.
+  let work = 0;
   const state = new Uint8Array(types.length);
   for (let first = 0; first < types.length; first += 1) {
+    if (work++ % 256 === 0) yield;
     const chain: number[] = [];
     let current = first;
     while (current !== -1 && state[current] === 0) {
+      if (work++ % 256 === 0) yield;
       state[current] = 1;
       chain.push(current);
       current = types[current]!.declaring_type;
@@ -500,16 +509,23 @@ const rejectNestingCycles = (types: Il2cppMetadataDecoded["types"]) => {
         "nested-type-conflict",
         `type ${current} is nested inside itself through its declaring types`,
       );
-    for (const index of chain) state[index] = 2;
+    for (const index of chain) {
+      if (work++ % 256 === 0) yield;
+      state[index] = 2;
+    }
   }
-};
+}
 
-const readTypes = (tables: MetadataTables): Il2cppMetadataDecoded["types"] => {
+function* readTypes(
+  tables: MetadataTables,
+): Generator<void, Il2cppMetadataDecoded["types"]> {
   const { bytes, section, widths, recordBytes: sizes, counts } = tables;
   const { readString, typeDefinitionTypeIndices } = tables;
   const typeDefinitions = section("typeDefinitions");
   const methodTotal = counts.methods;
-  const types = Array.from({ length: counts.typeDefinitions }, (_, index) => {
+  const types: Il2cppMetadataDecoded["types"] = [];
+  for (let index = 0; index < counts.typeDefinitions; index++) {
+    if (index % 256 === 0) yield;
     const at = typeDefinitions.offset + index * sizes.typeDefinitions;
     // int32 starts follow both string indices, the type indices, the
     // generic container index and flags.
@@ -537,23 +553,25 @@ const readTypes = (tables: MetadataTables): Il2cppMetadataDecoded["types"] => {
       type.method_count,
       methodTotal,
     );
-    return type;
-  });
-  assignNesting(tables, types);
+    types.push(type);
+  }
+  yield* assignNesting(tables, types);
   return types;
-};
+}
 
-const readMethods = ({
+function* readMethods({
   bytes,
   section,
   widths,
   recordBytes: sizes,
   counts,
   readString,
-}: MetadataTables): Il2cppMetadataDecoded["methods"] => {
+}: MetadataTables): Generator<void, Il2cppMetadataDecoded["methods"]> {
   const methods = section("methods");
   const typeTotal = counts.typeDefinitions;
-  return Array.from({ length: counts.methods }, (_, index) => {
+  const result: Il2cppMetadataDecoded["methods"] = [];
+  for (let index = 0; index < counts.methods; index++) {
+    if (index % 256 === 0) yield;
     const at = methods.offset + index * sizes.methods;
     const method = {
       name: readString(bytes.readInt32LE(at), `method ${index} name`),
@@ -564,20 +582,24 @@ const readMethods = ({
         "index-out-of-range",
         `method ${index} declares type ${method.declaring_type} outside the ${typeTotal} type definitions`,
       );
-    return method;
-  });
-};
+    result.push(method);
+  }
+  return result;
+}
 
 /**
  * Type method ranges and method declaring types must agree in both
  * directions, so a damaged range cannot strand or misattribute a method.
  */
-const checkMethodOwners = (
+function* checkMethodOwners(
   types: Il2cppMetadataDecoded["types"],
   methods: Il2cppMetadataDecoded["methods"],
-) => {
-  for (const [index, type] of types.entries())
+) {
+  let work = 0;
+  for (const [index, type] of types.entries()) {
+    if (work++ % 256 === 0) yield;
     for (let offset = 0; offset < type.method_count; offset += 1) {
+      if (work++ % 256 === 0) yield;
       const method = type.method_start + offset;
       const declaring = methods[method]!.declaring_type;
       if (declaring !== index)
@@ -586,7 +608,9 @@ const checkMethodOwners = (
           `method ${method} is in type ${index}'s range but declares type ${declaring}`,
         );
     }
+  }
   for (const [index, method] of methods.entries()) {
+    if (work++ % 256 === 0) yield;
     const owner = types[method.declaring_type];
     if (
       owner !== undefined &&
@@ -598,24 +622,33 @@ const checkMethodOwners = (
         `method ${index} declares type ${method.declaring_type} but is outside its method range`,
       );
   }
-};
+}
 
 /** Each type belongs to at most one image. */
-const checkImageRanges = (images: Il2cppMetadataDecoded["images"]) => {
-  const ranges = images
-    .map((image, index) => ({ ...image, index }))
-    .filter((image) => image.type_count > 0)
-    .sort((left, right) => left.type_start - right.type_start);
-  for (let at = 1; at < ranges.length; at += 1) {
+function* checkImageRanges(images: Il2cppMetadataDecoded["images"]) {
+  const ranges: { start: number; end: number; index: number }[] = [];
+  for (let index = 0; index < images.length; index++) {
+    if (index % 256 === 0) yield;
+    const image = images[index]!;
+    if (image.type_count > 0)
+      ranges.push({
+        start: image.type_start,
+        end: image.type_start + image.type_count,
+        index,
+      });
+  }
+  ranges.sort((left, right) => left.start - right.start);
+  for (let at = 1; at < ranges.length; at++) {
+    if (at % 256 === 0) yield;
     const previous = ranges[at - 1]!;
     const current = ranges[at]!;
-    if (previous.type_start + previous.type_count > current.type_start)
+    if (previous.end > current.start)
       throw new Il2cppMetadataFormatFailure(
         "image-range-overlap",
-        `image ${previous.index} types [${previous.type_start}, ${previous.type_start + previous.type_count}) overlap image ${current.index} starting at type ${current.type_start}`,
+        `image ${previous.index} types [${previous.start}, ${previous.end}) overlap image ${current.index} starting at type ${current.start}`,
       );
   }
-};
+}
 
 /** Row counts known from the header and record sizes, before rows are built. */
 export interface Il2cppMetadataRowCounts {
@@ -625,13 +658,13 @@ export interface Il2cppMetadataRowCounts {
 }
 
 /** Decode image, type and method names without native binaries or decryption. */
-export const readIl2cppMetadata = (
+export function* readIl2cppMetadataSteps(
   bytes: Buffer,
   options: {
     /** Called before any row is decoded; may throw to refuse the file. */
     readonly beforeRows?: (counts: Il2cppMetadataRowCounts) => void;
   } = {},
-): Il2cppMetadataDecoded => {
+): Generator<void, Il2cppMetadataDecoded> {
   const { version, headerBytes, sections } = readHeader(bytes);
   checkSections(bytes, headerBytes, sections);
   const byName = new Map(sections.map((entry) => [entry.name, entry]));
@@ -654,11 +687,12 @@ export const readIl2cppMetadata = (
     types: tables.counts.typeDefinitions,
     methods: tables.counts.methods,
   });
-  const images = readImages(tables);
-  checkImageRanges(images);
-  const types = readTypes(tables);
-  const methods = readMethods(tables);
-  checkMethodOwners(types, methods);
+  yield;
+  const images = yield* readImages(tables);
+  yield* checkImageRanges(images);
+  const types = yield* readTypes(tables);
+  const methods = yield* readMethods(tables);
+  yield* checkMethodOwners(types, methods);
   return {
     metadata_version: version,
     index_widths: widths,
@@ -667,4 +701,16 @@ export const readIl2cppMetadata = (
     types,
     methods,
   };
+}
+
+/** Synchronous consumption of the same decoder for byte-level callers. */
+export const readIl2cppMetadata = (
+  bytes: Buffer,
+  options: Parameters<typeof readIl2cppMetadataSteps>[1] = {},
+): Il2cppMetadataDecoded => {
+  const steps = readIl2cppMetadataSteps(bytes, options);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
 };

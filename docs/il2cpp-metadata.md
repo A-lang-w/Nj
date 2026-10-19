@@ -15,23 +15,21 @@ symbolic links are rejected.
 
 ## MCP
 
-MCP returns every row by default, like the other inspection tools. A large game
-produces megabytes of rows, so select `detail: "summary"` first. MCP requires an
-absolute filesystem path:
+MCP defaults to a compact summary and retains the complete decoded Evidence in
+the session. MCP requires an absolute filesystem path:
 
 ```json
 {
   "name": "inspect_il2cpp_metadata",
   "arguments": {
-    "path": "/artifacts/Data/Managed/Metadata/global-metadata.dat",
-    "detail": "summary"
+    "path": "/artifacts/Data/Managed/Metadata/global-metadata.dat"
   }
 }
 ```
 
 The summary retains the complete decoded Evidence in the session and returns a
 linked `inspect_analysis_view` overview: artifact identity, metadata version,
-index widths, sections and `counts` (`images`, `types`, `methods` and
+index widths and `counts` (`sections`, `images`, `types`, `methods` and
 `nested_types`) without rows. Use `normalized_result.parent_evidence_id` to page
 the original rows without reopening or decoding the file:
 
@@ -50,10 +48,39 @@ the original rows without reopening or decoding the file:
 }
 ```
 
-Collections are `images`, `types` and `methods`. `limit` defaults to 64. The page
-offset is the metadata index of the first returned row. `limit` has no cap of
-its own beyond the MCP response budget. Select `detail: "complete"` to return
-every row inline when the result fits that budget, as a small game's often does.
+Collections are `sections`, `images`, `types` and `methods`. Every returned row
+includes its source `index`, scoped by artifact SHA-256 and collection. All
+collections accept batch `indices`, exact `names` and `fields`. Types also accept
+`image_indices`, `namespaces` and `declaring_types`; methods accept
+`declaring_types`. Filters intersect, duplicate indices are returned once, and
+rows retain metadata order. An empty filter selects no rows; `fields: []`
+returns indices only. Omitted fields return the complete selected rows.
+
+For example, after resolving a type index, retrieve selected method facts:
+
+```json
+{
+  "source": {
+    "kind": "retained-evidence",
+    "evidence_id": "<parent_evidence_id>"
+  },
+  "view": {
+    "kind": "il2cpp-metadata",
+    "collection": "methods",
+    "declaring_types": [1555],
+    "names": ["SendMessage"],
+    "fields": ["name", "declaring_type"]
+  }
+}
+```
+
+`offset` counts matching rows, not source indices. `limit` defaults to 64;
+`coverage.next_offset` continues that filtered page. Coverage describes retained
+metadata facts only; runtime behavior and correspondence to native code remain
+unknown. Each view preserves the parent Evidence link, artifact identity and
+limitations. Queries work after the source file is removed. Select
+`detail: "complete"` to return every row inline within the separate MCP response
+budget.
 
 ## CLI
 
@@ -61,7 +88,21 @@ every row inline when the result fits that budget, as a small game's often does.
 rea inspect-il2cpp-metadata /absolute/path/global-metadata.dat --json
 ```
 
-The CLI returns the complete result. It has no detail option.
+The CLI defaults to complete Evidence. For compact delivery, explicitly preserve
+the full Evidence in a new file:
+
+```bash
+rea inspect-il2cpp-metadata /absolute/path/global-metadata.dat \
+  --detail summary --evidence_output /tmp/metadata-evidence.json --json
+jq -c '{source: {kind: "inline", evidence: .records[0]}, view: {kind: "il2cpp-metadata", collection: "methods", indices: [9785], fields: ["name", "declaring_type"]}}' \
+  /tmp/metadata-evidence.json > /tmp/metadata-query.json
+rea inspect-analysis-view /tmp/metadata-query.json --json
+```
+
+Use the exported Evidence with the CLI's inline Evidence source format described
+in [CLI and Evidence](cli.md#run-a-command). Compact delivery requires
+`--evidence_output`; existing files are never overwritten. The full export
+preserves every decoded row for subsequent queries without the original file.
 
 ## Observations
 
@@ -92,9 +133,8 @@ for top-level types. The start of an empty range can retain the original value
 `-1`.
 
 The complete inventory of a large game is several megabytes and can exceed
-the MCP response budget; summary delivery and paging avoid that. The tool has
-no name search: page the collections, or filter the complete CLI JSON with a
-tool such as `jq`.
+the MCP response budget. Summary delivery and filtered, projected pages keep
+unneeded rows out of agent context without discarding the source Evidence.
 
 ## Failures
 
@@ -129,9 +169,14 @@ string, and an empty range's start must lie between -1 and the collection size.
 Every Unity-written file checked so far satisfies both; metadata rewritten by
 other tools may be rejected.
 
-There is no partial success. A file that changes during reading and a cancelled
-request keep their own distinct errors. Resource guards bound the selected file
-to 256 MiB and the complete report to 64 MiB. MCP also applies its
+An incomplete inventory is never reported as complete. Failures after a verified
+snapshot retain partial source Evidence with its SHA-256, byte length and any
+validated section row counts; these counts do not establish that names and
+relationships were decoded. A file that changes during reading and a cancelled
+request keep distinct errors. Decode checkpoints yield for cancellation, and
+close waits for active work. Each reader admits one inspection at a time.
+Resource guards bound the selected file to 256 MiB and the encoded complete
+report to 64 MiB, checking JSON/UTF-8 expansion before serialization. MCP also applies its
 [response transport budget](mcp-contracts.md); a complete report within the
 report limit can still require the summary and paging path.
 
@@ -154,3 +199,12 @@ were compiled into the native binary or how they behave at runtime.
 `global-metadata.dat` through the public CLI and MCP. It is opt-in, like
 `verify:pcap`, because no real game metadata ships with the repository. Normal
 inspection does not need it.
+
+The follow-up was checked against the public Cpp2IL
+[`Simple_2022_3_35` sample](https://github.com/SamboyCoding/Cpp2IL/tree/b5ad444b82267cb1e4b88b8b373c008105bdea52/TestFiles/Simple_2022_3_35):
+version 31, 1,892,268 bytes, SHA-256
+`2441635a7c234a1a34deccc6a9906d6f5abcbdab078a38b2bf488a52a4962c48`.
+An independent byte-layout oracle matched all 36 images, 2,468 types and 12,409
+methods. Corresponding managed DLLs independently matched names and ownership
+for 35 images, 2,463 types and 12,406 methods; the generated image has no matching
+DLL. This does not establish real-producer coverage for versions 29 or 39.

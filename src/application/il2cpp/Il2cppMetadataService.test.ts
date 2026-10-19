@@ -68,21 +68,25 @@ it("rejects invalid paths and extra arguments before invoking the reader", async
   expect(calls.count).toBe(0);
 });
 
-it("refuses summary delivery without Evidence retention before reading", async () => {
-  const calls = { count: 0 };
-  const result = await serviceReturning(report, calls).inspect({
-    path: report.artifact.path,
-    detail: "summary",
-  });
-  expect(result.ok).toBe(false);
-  if (!result.ok)
-    expect(result.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
-  expect(calls.count).toBe(0);
-});
+it.each(["summary", undefined] as const)(
+  "refuses %s summary delivery without Evidence retention before reading",
+  async (detail) => {
+    const calls = { count: 0 };
+    const result = await serviceReturning(report, calls).inspect({
+      path: report.artifact.path,
+      ...(detail === undefined ? {} : { detail }),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
+    expect(calls.count).toBe(0);
+  },
+);
 
-it("returns complete artifact-bound Evidence without retention by default", async () => {
+it("returns explicit complete artifact-bound Evidence without retention", async () => {
   const result = await serviceReturning(report).inspect({
     path: report.artifact.path,
+    detail: "complete",
   });
   if (!result.ok) throw result.error;
   expect(result.value.parameters).toEqual({ path: report.artifact.path });
@@ -112,7 +116,10 @@ it("reports cancellation before and after reading", async () => {
     { signal: aborted.signal },
   );
   expect(before.ok).toBe(false);
-  if (!before.ok) expect(before.error).toBeInstanceOf(AnalysisCancelledError);
+  if (!before.ok) {
+    expect(before.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(before.error.cause).toBe(aborted.signal.reason);
+  }
   expect(calls.count).toBe(0);
 
   const during = new AbortController();
@@ -128,5 +135,12 @@ it("reports cancellation before and after reading", async () => {
     { signal: during.signal },
   );
   expect(after.ok).toBe(false);
-  if (!after.ok) expect(after.error).toBeInstanceOf(AnalysisCancelledError);
+  if (!after.ok) {
+    expect(after.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(after.error.cause).toBe(during.signal.reason);
+    expect(after.error.partialObservation).toMatchObject({
+      operation: "inspect_il2cpp_metadata",
+      normalized_result: report,
+    });
+  }
 });

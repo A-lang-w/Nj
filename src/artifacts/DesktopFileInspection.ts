@@ -2,8 +2,7 @@ import type { FileHandle } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 import type { DesktopFile, DesktopFact } from "../domain/desktopApplication.js";
-import type { JsonValue } from "../domain/jsonValue.js";
-import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
+import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { parsePeRecord, peRvaToFileOffset } from "../domain/binaryTarget.js";
 import { readManagedMetadataLayout } from "../dotnet/ManagedMetadataLayout.js";
 import { readAssemblyReferenceName } from "../dotnet/ManagedMetadataInventoryRows.js";
@@ -27,24 +26,6 @@ class DesktopProbeLimit extends ArtifactReaderFailure {
     });
   }
 }
-
-/** Count the producer-owned, shallow fact shape without expanding target strings. */
-const factJsonBytes = (value: JsonValue): number => {
-  if (typeof value === "string") return jsonStringByteLength(value);
-  if (Array.isArray(value)) {
-    let bytes = 2 + Math.max(0, value.length - 1);
-    for (const child of value) bytes += factJsonBytes(child);
-    return bytes;
-  }
-  if (value !== null && typeof value === "object") {
-    const entries = Object.entries(value);
-    let bytes = 2 + Math.max(0, entries.length - 1);
-    for (const [key, child] of entries)
-      bytes += jsonStringByteLength(key) + 1 + factJsonBytes(child);
-    return bytes;
-  }
-  return String(value).length;
-};
 
 /** Inspect selected ranges on an already admitted descriptor; never hash payloads. */
 export const inspectDesktopFile = async (
@@ -103,7 +84,9 @@ export const inspectDesktopFile = async (
     return result;
   };
   const fact = (observation: DesktopFact) => {
-    const reservation = 512 + factJsonBytes(observation.value) * 12;
+    const remaining = budget.maximumRetainedBytes - budget.retainedBytes;
+    const reservation =
+      512 + jsonValueByteLength(observation.value, (remaining - 512) / 12) * 12;
     if (reservation > budget.maximumRetainedBytes - budget.retainedBytes)
       throw new ArtifactReaderFailure(
         "limit",

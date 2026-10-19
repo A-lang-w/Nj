@@ -41,7 +41,9 @@ export class Il2cppMetadataService {
     retention: AnalysisViewRetention = NO_RETENTION,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
+      return err(
+        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
+      );
     const input = inspectIl2cppMetadataInputSchema.safeParse(rawInput);
     if (!input.success)
       return err(
@@ -66,8 +68,6 @@ export class Il2cppMetadataService {
     }
     const inspected = await this.provider.inspect(providerInput, options);
     if (!inspected.ok) return inspected;
-    if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
     const report = il2cppMetadataSchema.safeParse(inspected.value);
     if (!report.success || report.data.artifact.path !== providerInput.path)
       return err(
@@ -110,6 +110,13 @@ export class Il2cppMetadataService {
         ],
       },
     );
+    if (options?.signal?.aborted)
+      return err(
+        new AnalysisCancelledError(OPERATION, {
+          cause: options.signal.reason,
+          partialObservation: evidence,
+        }),
+      );
     return detail === "summary"
       ? summarizeRetainedAnalysis(evidence, retention)
       : ok(evidence);

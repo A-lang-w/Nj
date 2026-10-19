@@ -1,3 +1,4 @@
+import { setImmediate } from "node:timers/promises";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
@@ -5,12 +6,14 @@ import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
+  assertArtifactReadActive,
 } from "../artifacts/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import type { Il2cppMetadataPort } from "../application/il2cpp/Il2cppMetadataPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { jsonStringLength } from "../domain/jsonStringLength.js";
+import { createEvidence } from "../domain/evidence.js";
+import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -30,8 +33,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   Il2cppMetadataFormatFailure,
-  readIl2cppMetadata,
-  type Il2cppMetadataDecoded,
+  readIl2cppMetadataSteps,
   type Il2cppMetadataRowCounts,
 } from "./Il2cppMetadataFile.js";
 
@@ -64,47 +66,7 @@ const TYPE_ROW = rowOverhead({
 });
 const METHOD_ROW = rowOverhead({ name: "", declaring_type: 0 });
 
-/**
- * A lower bound on the serialized rows. Rows share decoded names, so the
- * report can be far larger than the file; refusing from this bound avoids
- * building a string the budget would reject anyway. Once the bound passes
- * `limit` it returns early, so no single name is escaped past the budget.
- */
-const serializedRowsLowerBound = (
-  decoded: Il2cppMetadataDecoded,
-  limit: number,
-) => {
-  const lengths = new Map<string, number>();
-  let total = 0;
-  const text = (value: string) => {
-    let length = lengths.get(value);
-    if (length === undefined) {
-      // UTF-16 code units never exceed UTF-8 bytes.
-      length = jsonStringLength(value, limit - total);
-      lengths.set(value, length);
-    }
-    return length;
-  };
-  for (const image of decoded.images) {
-    total += IMAGE_ROW + text(image.name);
-    if (total > limit) return total;
-  }
-  for (const type of decoded.types) {
-    total += TYPE_ROW + text(type.name) + text(type.namespace);
-    if (total > limit) return total;
-  }
-  for (const method of decoded.methods) {
-    total += METHOD_ROW + text(method.name);
-    if (total > limit) return total;
-  }
-  return total;
-};
-
-const failureForPrimary = (
-  cause: unknown,
-  path: string,
-  signal?: AbortSignal,
-): AnalysisError => {
+const failureForPrimary = (cause: unknown, path: string): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
   if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
     return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
@@ -158,8 +120,6 @@ const failureForPrimary = (
         },
       ]);
   }
-  // A decoder interrupted by cancellation can fail in any way; report the cancellation.
-  if (signal?.aborted) return new AnalysisCancelledError(OPERATION, { cause });
   return new ProviderAdapterError(
     IL2CPP_METADATA_PROVIDER_IDENTITY.id,
     OPERATION,
@@ -181,10 +141,16 @@ const failureFor = (
   const primary =
     cause instanceof ArtifactFileCleanupFailure &&
     cause.fileCleanupFailure.outcome.kind === "failed"
-      ? failureForPrimary(cause.fileCleanupFailure.outcome.cause, path, signal)
+      ? failureForPrimary(cause.fileCleanupFailure.outcome.cause, path)
       : cause instanceof ArtifactFileCleanupFailure && signal?.aborted
         ? new AnalysisCancelledError(OPERATION, { cause: signal.reason })
-        : failureForPrimary(cause, path, signal);
+        : failureForPrimary(cause, path);
+  if (
+    cause instanceof ArtifactReaderFailure &&
+    cause.partialObservation !== undefined &&
+    primary.partialObservation === undefined
+  )
+    primary.retainPartialObservation(cause.partialObservation);
   if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
     return primary;
   const cleanup = new ProviderCleanupError(
@@ -198,12 +164,12 @@ const failureFor = (
   return error;
 };
 
-const outputLimit = (path: string, maximumBytes: number) =>
+const reportLimit = (path: string, maximumBytes: number) =>
   new AnalysisResourceConstraintError(
     OPERATION,
-    "transport",
-    `Complete IL2CPP metadata for ${path} exceeds the inline output budget; no partial success is returned.`,
-    { maximum_output_bytes: maximumBytes },
+    "memory",
+    `Complete IL2CPP metadata for ${path} exceeds the retained report budget; no complete inventory is retained.`,
+    { maximum_report_bytes: maximumBytes },
   );
 
 /** Lower bound from row counts alone, so oversized files fail before rows are allocated. */
@@ -212,13 +178,55 @@ const countLowerBound = ({ images, types, methods }: Il2cppMetadataRowCounts) =>
   types * (TYPE_ROW + 2 * EMPTY_NAME) +
   methods * (METHOD_ROW + EMPTY_NAME);
 
+/** Source identity survives a failed inventory without claiming decoded coverage. */
+const metadataSourceEvidence = (
+  artifact: Il2cppMetadata["artifact"],
+  counts: Il2cppMetadataRowCounts | undefined,
+) =>
+  createEvidence(
+    {
+      path: artifact.path,
+      sha256: artifact.sha256,
+      format: "file",
+    },
+    IL2CPP_METADATA_PROVIDER_IDENTITY,
+    {
+      operation: "observe_il2cpp_metadata_source",
+      predicateType: "rea.il2cpp-metadata-source",
+      parameters: { path: artifact.path },
+      result: {
+        artifact,
+        inventory_status: "not-returned-as-complete",
+        ...(counts === undefined
+          ? {}
+          : { validated_section_row_counts: { ...counts } }),
+      },
+      confidence: "observed",
+      limitations: [
+        "This partial source observation does not contain a complete metadata inventory. Section row counts, when available, are derived from the validated header extents and record layout; names and relationships may remain unexamined.",
+      ],
+      locations: [
+        { kind: "artifact-path", path: artifact.path },
+        {
+          kind: "file-offset-range",
+          start: 0,
+          end: artifact.bytes,
+        },
+      ],
+    },
+  );
+
 /** Stable in-process decoding without subprocesses, temporary files, native binaries or decryption. */
 export class Il2cppMetadataProvider implements Il2cppMetadataPort {
   readonly identity = IL2CPP_METADATA_PROVIDER_IDENTITY;
   readonly #resources = new ArtifactResourceScope();
+  #inspecting = false;
 
   /** `outputBytes` exists so tests can reach the guard with small files. */
-  constructor(private readonly outputBytes: number = OUTPUT_BYTES) {}
+  constructor(
+    private readonly outputBytes: number = OUTPUT_BYTES,
+    private readonly yieldControl: () => Promise<void> = setImmediate,
+  ) {}
 
   async close(): Promise<void> {
     try {
@@ -245,52 +253,91 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
     input: Il2cppMetadataProviderInput,
     options?: ExecutionOptions,
   ): Promise<Result<Il2cppMetadata, AnalysisError>> {
+    if (options?.signal?.aborted)
+      return err(
+        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
+      );
+    if (this.#inspecting)
+      return err(
+        new AnalysisResourceConstraintError(
+          OPERATION,
+          "memory",
+          "Only one IL2CPP metadata inspection is admitted per reader.",
+          { maximum_concurrent_inspections: 1 },
+        ),
+      );
+    this.#inspecting = true;
+    const observed: {
+      artifact?: Il2cppMetadata["artifact"];
+      counts?: Il2cppMetadataRowCounts;
+    } = {};
     try {
-      const snapshot = await this.#resources.run(() =>
-        readStableArtifact(
+      return await this.#resources.run(async () => {
+        const snapshot = await readStableArtifact(
           input.path,
           INPUT_BYTES,
           options?.signal,
           undefined,
           this.#resources,
-        ),
-      );
-      options?.signal?.throwIfAborted();
-      const limit = this.outputBytes;
-      const decoded = readIl2cppMetadata(snapshot.bytes, {
-        beforeRows: (counts) => {
-          if (countLowerBound(counts) > limit)
-            throw outputLimit(input.path, limit);
-        },
-      });
-      if (serializedRowsLowerBound(decoded, limit) > limit)
-        throw outputLimit(input.path, limit);
-      const report = {
-        ...decoded,
-        artifact: {
+        );
+        observed.artifact = {
           path: input.path,
           sha256: snapshot.sha256,
           bytes: snapshot.bytes.length,
-        },
-        limitations: [
-          "Only unencrypted global-metadata.dat versions 29, 31 and 39 are decoded; image, type and method names and counts are observed file content, not runtime behavior.",
-          "Native code addresses, IL2CPP binary registration, fields, properties, signatures and generic instances are not recovered.",
-          "declaring_type for types is derived from the nestedTypes section; row positions are the metadata TypeDefinitionIndex and MethodIndex values.",
-        ],
-      };
-      if (Buffer.byteLength(JSON.stringify(report), "utf8") > limit)
-        throw outputLimit(input.path, limit);
-      const parsed = il2cppMetadataSchema.safeParse(report);
-      if (!parsed.success)
-        throw new AnalysisOutputError(
-          OPERATION,
-          "IL2CPP metadata reader produced invalid section ranges or report values.",
-          { cause: parsed.error },
-        );
-      options?.signal?.throwIfAborted();
-      return ok(parsed.data);
+        };
+        assertArtifactReadActive(options?.signal);
+        const limit = this.outputBytes;
+        const steps = readIl2cppMetadataSteps(snapshot.bytes, {
+          beforeRows: (counts) => {
+            observed.counts = counts;
+            if (countLowerBound(counts) > limit)
+              throw reportLimit(input.path, limit);
+          },
+        });
+        let step = steps.next();
+        while (!step.done) {
+          await this.yieldControl();
+          assertArtifactReadActive(options?.signal);
+          step = steps.next();
+        }
+        const decoded = step.value;
+        const report = {
+          ...decoded,
+          artifact: {
+            path: input.path,
+            sha256: snapshot.sha256,
+            bytes: snapshot.bytes.length,
+          },
+          limitations: [
+            "Only unencrypted global-metadata.dat versions 29, 31 and 39 are decoded; image, type and method names and counts are observed file content, not runtime behavior.",
+            "Native code addresses, IL2CPP binary registration, fields, properties, signatures and generic instances are not recovered.",
+            "declaring_type for types is derived from the nestedTypes section; row positions are the metadata TypeDefinitionIndex and MethodIndex values.",
+          ],
+        };
+        if (jsonValueByteLength(report, limit) > limit)
+          throw reportLimit(input.path, limit);
+        const parsed = il2cppMetadataSchema.safeParse(report);
+        if (!parsed.success)
+          throw new AnalysisOutputError(
+            OPERATION,
+            "IL2CPP metadata reader produced invalid section ranges or report values.",
+            { cause: parsed.error },
+          );
+        assertArtifactReadActive(options?.signal);
+        return ok(parsed.data);
+      });
     } catch (cause: unknown) {
-      return err(failureFor(cause, input.path, options?.signal));
+      const failure = failureFor(cause, input.path, options?.signal);
+      if (
+        observed.artifact !== undefined &&
+        failure.partialObservation === undefined
+      )
+        failure.retainPartialObservation(
+          metadataSourceEvidence(observed.artifact, observed.counts),
+        );
+      return err(failure);
+    } finally {
+      this.#inspecting = false;
     }
   }
 }
