@@ -80,3 +80,4 @@ website/.i18n-*/
 
 # Jarvis local vault
 jarvis/teardowns/
+jarvis/.env

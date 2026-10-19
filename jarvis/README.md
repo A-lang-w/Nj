@@ -22,7 +22,7 @@ Requires Node 24+ (runs the `.ts` sources directly) and a Chrome-family browser 
 
 ## Model backend (optional)
 
-Keys come from environment variables only; nothing is stored or committed.
+Keys come from environment variables or an optional, gitignored `jarvis/.env` (copy `jarvis/.env.example`, add `OPENAI_API_KEY=your-key`, no quotes). Nothing is committed. Note: if your checkout is in a synced folder such as Google Drive, `.env` will sync there.
 
 | Variable | Backend |
 | --- | --- |

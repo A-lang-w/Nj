@@ -118,6 +118,11 @@ export function createJarvisServer(
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    process.loadEnvFile(path.join(path.dirname(publicDir), ".env"));
+  } catch {
+    // .env is optional; real environment variables still apply
+  }
   const cfg = loadConfig();
   const model = selectBackend();
   createJarvisServer(cfg, model).listen(cfg.port, "127.0.0.1", () => {
