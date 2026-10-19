@@ -621,6 +621,24 @@ describe("advertised empty-string literals", () => {
     });
   });
 
+  it("drops a negative group that references a widened definition", () => {
+    const canonical = {
+      $defs: { empty: { type: "string", const: "" } },
+      type: "object",
+      properties: { value: { not: { $ref: "#/$defs/empty" } } },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    const canonicalValidate = new Ajv2020({ strict: false }).compile(canonical);
+    const advertisedValidate = new Ajv2020({ strict: false }).compile(
+      advertised,
+    );
+    expect(canonicalValidate({ value: "route" })).toBe(true);
+    expect(canonicalValidate({ value: "" })).toBe(false);
+    expect(advertisedValidate({ value: "route" })).toBe(true);
+    expect(advertised.properties).toEqual({ value: {} });
+    expect(advertised.$defs).toEqual({ empty: { type: "string" } });
+  });
+
   it("widens an affected oneOf to anyOf without losing branch guidance", () => {
     const canonical = {
       type: "object",

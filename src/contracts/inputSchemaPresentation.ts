@@ -170,7 +170,39 @@ const preserveSharedDefault = (
     schema.default = defaults[0];
 };
 
-const normalizeAdvertisedSchema = (value: unknown): SchemaNormalization => {
+const referencesChangingTarget = (
+  node: unknown,
+  root: unknown,
+  active: ReadonlySet<string> = new Set(),
+): boolean => {
+  // A local reference hides the target's widening from the branch that uses
+  // it. Treat such a sensitive branch as changed so its constraint is dropped.
+  if (Array.isArray(node))
+    return node.some((child) => referencesChangingTarget(child, root, active));
+  if (!isObject(node)) return false;
+  if (typeof node.$ref === "string" && !active.has(node.$ref)) {
+    const target = resolveReference(
+      root as Readonly<Record<string, unknown>>,
+      node.$ref,
+    );
+    if (target === undefined) return false;
+    if (normalizeAdvertisedSchema(target, root).changed) return true;
+    return referencesChangingTarget(
+      target,
+      root,
+      new Set([...active, node.$ref]),
+    );
+  }
+  return Object.entries(node).some(([key, child]) => {
+    if (key === "const" || key === "enum") return false;
+    return referencesChangingTarget(child, root, active);
+  });
+};
+
+const normalizeAdvertisedSchema = (
+  value: unknown,
+  root: unknown = value,
+): SchemaNormalization => {
   if (!isObject(value)) return { schema: value, changed: false };
 
   const node: Record<string, unknown> = { ...value };
@@ -178,14 +210,14 @@ const normalizeAdvertisedSchema = (value: unknown): SchemaNormalization => {
   const normalizeMap = (map: Readonly<Record<string, unknown>>) =>
     Object.fromEntries(
       Object.entries(map).map(([name, child]) => {
-        const result = normalizeAdvertisedSchema(child);
+        const result = normalizeAdvertisedSchema(child, root);
         changed ||= result.changed;
         return [name, result.schema];
       }),
     );
   const normalizeList = (list: readonly unknown[]) =>
     list.map((child) => {
-      const result = normalizeAdvertisedSchema(child);
+      const result = normalizeAdvertisedSchema(child, root);
       changed ||= result.changed;
       return result;
     });
@@ -209,7 +241,7 @@ const normalizeAdvertisedSchema = (value: unknown): SchemaNormalization => {
     ) {
       const results = Array.isArray(child)
         ? normalizeList(child)
-        : [normalizeAdvertisedSchema(child)];
+        : [normalizeAdvertisedSchema(child, root)];
       const nestedChanged = results.some((result) => result.changed);
       if (
         key === "contains" &&
@@ -270,9 +302,9 @@ const normalizeAdvertisedSchema = (value: unknown): SchemaNormalization => {
   }
 
   const negated = Object.hasOwn(value, "not")
-    ? normalizeAdvertisedSchema(value.not)
+    ? normalizeAdvertisedSchema(value.not, root)
     : undefined;
-  if (negated?.changed) {
+  if (negated?.changed || referencesChangingTarget(value.not, root)) {
     // Widening a predicate under `not` narrows the containing schema.
     changed = true;
     delete node.not;
@@ -281,15 +313,15 @@ const normalizeAdvertisedSchema = (value: unknown): SchemaNormalization => {
   }
 
   const conditional = Object.hasOwn(value, "if")
-    ? normalizeAdvertisedSchema(value.if)
+    ? normalizeAdvertisedSchema(value.if, root)
     : undefined;
   const thenBranch = Object.hasOwn(value, "then")
-    ? normalizeAdvertisedSchema(value.then)
+    ? normalizeAdvertisedSchema(value.then, root)
     : undefined;
   const elseBranch = Object.hasOwn(value, "else")
-    ? normalizeAdvertisedSchema(value.else)
+    ? normalizeAdvertisedSchema(value.else, root)
     : undefined;
-  if (conditional?.changed) {
+  if (conditional?.changed || referencesChangingTarget(value.if, root)) {
     // Changing the predicate can route canonical-valid inputs into a rejecting branch.
     changed = true;
     delete node.if;
