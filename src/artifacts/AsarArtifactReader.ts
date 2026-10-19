@@ -25,7 +25,8 @@ import {
 import { closeAsarHandle, readValidatedAsarEntry } from "./AsarEntryStream.js";
 import { admitAsarHeader } from "./AsarHeader.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
+import type { FileHandleChunkStream } from "../filesystem/readFileHandleChunks.js";
+import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
 import {
   readAsarListing,
   type AsarListedEntry,
@@ -62,7 +63,7 @@ export class AsarArtifactReader implements ArtifactReader {
         const snapshotPath = this.#snapshotPath();
         this.#resetArchiveState();
         this.#entries.clear();
-        const admitted = await this.#admitHeader(snapshotPath);
+        const admitted = await this.#admitHeader(snapshotPath, signal);
         this.#archiveSize = admitted.archiveBytes;
         this.#headerSize = admitted.headerBytes;
         abortIfNeeded(signal);
@@ -121,7 +122,7 @@ export class AsarArtifactReader implements ArtifactReader {
     }
   }
 
-  async #admitHeader(snapshotPath: string) {
+  async #admitHeader(snapshotPath: string, signal?: AbortSignal) {
     const headerHandle = await this.#openOwned(
       snapshotPath,
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
@@ -133,7 +134,10 @@ export class AsarArtifactReader implements ArtifactReader {
         }
       | { readonly ok: false; readonly cause: unknown };
     try {
-      admission = { ok: true, value: await admitAsarHeader(headerHandle) };
+      admission = {
+        ok: true,
+        value: await admitAsarHeader(headerHandle, signal),
+      };
     } catch (cause: unknown) {
       admission = { ok: false, cause };
     }
@@ -336,19 +340,14 @@ export class AsarArtifactReader implements ArtifactReader {
         source,
         digesting,
         createWriteStream(snapshotPath, { flags: "wx", mode: 0o600 }),
-        signal === undefined ? {} : { signal },
       );
       const completedInput = inputHandle;
       inputHandle = undefined;
       await this.#closeOwnedHandle(completedInput);
+      abortIfNeeded(signal);
       this.#snapshot = { path: snapshotPath, sha256: hash.digest("hex") };
     } catch (cause: unknown) {
-      let failure =
-        signal?.aborted === true
-          ? new ArtifactReaderFailure("cancelled", "ASAR operation cancelled", {
-              cause,
-            })
-          : asarFailure(this.path, "snapshot", cause);
+      let failure = asarFailure(this.path, "snapshot", cause);
       if (inputHandle !== undefined) {
         const failedInput = inputHandle;
         inputHandle = undefined;
@@ -491,7 +490,7 @@ export class AsarArtifactReader implements ArtifactReader {
         );
       }
       abortIfNeeded(signal);
-      const source = this.#ownedReadStream(openedHandle, { start: 0 });
+      const source = this.#ownedReadStream(openedHandle, { start: 0, signal });
       handle = undefined;
       const output = readValidatedAsarEntry(
         source,
@@ -573,9 +572,9 @@ export class AsarArtifactReader implements ArtifactReader {
       readonly signal?: AbortSignal | undefined;
       readonly releaseOnClose?: boolean;
     },
-  ): Readable {
+  ): FileHandleChunkStream {
     const { releaseOnClose, ...readOptions } = options;
-    const source = readFileHandleChunks(handle, readOptions);
+    const source = readArtifactFileChunks(handle, readOptions);
     const owned = this.#ownedHandles.get(handle);
     if (owned === undefined)
       throw new ArtifactReaderFailure("integrity", "ASAR handle has no owner");
@@ -662,7 +661,9 @@ const parseArchiveOffset = (value: string): number | undefined => {
 
 const abortIfNeeded = (signal?: AbortSignal): void => {
   if (signal?.aborted === true)
-    throw new ArtifactReaderFailure("cancelled", "ASAR operation cancelled");
+    throw new ArtifactReaderFailure("cancelled", "ASAR operation cancelled", {
+      cause: signal.reason,
+    });
 };
 
 const waitForOperation = async (
@@ -677,7 +678,9 @@ const waitForOperation = async (
     const onAbort = (): void => {
       removeAbortListener();
       reject(
-        new ArtifactReaderFailure("cancelled", "ASAR operation cancelled"),
+        new ArtifactReaderFailure("cancelled", "ASAR operation cancelled", {
+          cause: signal.reason,
+        }),
       );
     };
     signal.addEventListener("abort", onAbort, { once: true });

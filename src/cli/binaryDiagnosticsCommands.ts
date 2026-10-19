@@ -1,6 +1,5 @@
 import { inspectByteEntropyInputSchema } from "../domain/native/byteEntropy.js";
 import { z } from "incur";
-import { resolve } from "node:path";
 import {
   createByteEntropyService,
   createRecordedCrashService,
@@ -74,7 +73,7 @@ export const registerBinaryDiagnosticsCommands = (
               () =>
                 pe.inspect(
                   {
-                    path: resolve(args.path),
+                    path: absoluteCallerPath(args.path),
                     max_file_bytes: options.maxFileBytes,
                     max_entries: options.maxEntries,
                   },
@@ -83,6 +82,7 @@ export const registerBinaryDiagnosticsCommands = (
               pe,
               "rea-pe-resources",
               "inspect_pe_resources",
+              signal,
             ),
         );
       }),
@@ -98,7 +98,7 @@ export const registerBinaryDiagnosticsCommands = (
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectBinaryLayout, async () => {
           const result = await service.inspectAndClose(
-            { path: resolve(args.path) },
+            { path: absoluteCallerPath(args.path) },
             { signal },
           );
           return result.ok ? result.value : projectAnalysisError(result.error);
@@ -109,7 +109,11 @@ export const registerBinaryDiagnosticsCommands = (
   cli.command(CLI_COMMANDS.inspectRecordedCrash, {
     description:
       "Inspect supplied core registers/signals and optional debugger mapping evidence",
-    args: z.object({ path: z.string().describe("Local Linux amd64 ELF core") }),
+    args: z.object({
+      path: z
+        .string()
+        .describe("Local Linux ELF64 amd64 or AArch64 little-endian core"),
+    }),
     options: z.object({
       debuggerContext: z
         .boolean()
@@ -121,7 +125,7 @@ export const registerBinaryDiagnosticsCommands = (
         logCliCommand(logger, CLI_COMMANDS.inspectRecordedCrash, async () => {
           const result = await recorded.inspectAndClose(
             {
-              path: resolve(args.path),
+              path: absoluteCallerPath(args.path),
               include_debugger_context: options.debuggerContext,
             },
             { signal },

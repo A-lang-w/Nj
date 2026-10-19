@@ -31,7 +31,7 @@ import {
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { createEvidence } from "../domain/evidence.js";
+import { evmInterfaceEvidence } from "../application/evm/EvmInterfaceEvidence.js";
 import type { InspectEvmInterfaceInput } from "../domain/evm/evmInterface.js";
 import { evmInterfaceSchema } from "../domain/evm/evmInterface.js";
 import { solidityMetadataSchema } from "../domain/evm/solidityMetadata.js";
@@ -85,19 +85,15 @@ const replySchema = z.discriminatedUnion("ok", [
 type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
 type EvmOutcome = Result<EvmInterfaceExecution, AnalysisError>;
 
-const evmExecutionEvidence = (
-  input: InspectEvmInterfaceInput,
-  execution: EvmInterfaceExecution,
-) =>
-  createEvidence(execution.subject ?? undefined, execution.provider, {
-    operation: OPERATION,
-    parameters: input,
-    result: execution.result,
-    ...(execution.rawResult === null ? {} : { rawResult: execution.rawResult }),
-    confidence: "inferred",
-    locations: execution.locations,
-    limitations: execution.limitations,
-  });
+const compactErrorProjection = (error: AnalysisError) => {
+  const projection = projectAnalysisError(error);
+  if (error.capturedOutput === undefined) return projection;
+  // The cleanup result owns this exact captured stream. Other diagnostics and
+  // partial Evidence retain their original fields, including stdout/stderr.
+  const details = { ...projection.details };
+  delete details.captured_output;
+  return { ...projection, details };
+};
 
 const evmCleanupFailure = (
   input: InspectEvmInterfaceInput,
@@ -108,7 +104,7 @@ const evmCleanupFailure = (
   cause?: unknown,
 ): ProviderCleanupError => {
   const partialObservation = result.ok
-    ? evmExecutionEvidence(input, result.value)
+    ? evmInterfaceEvidence(input, result.value)
     : result.error.partialObservation;
   const capturedOutput = result.ok
     ? output
@@ -118,7 +114,7 @@ const evmCleanupFailure = (
     resources,
     {
       reason,
-      previous_error: result.ok ? null : projectAnalysisError(result.error),
+      previous_error: result.ok ? null : compactErrorProjection(result.error),
       ...(capturedOutput === undefined
         ? {}
         : { captured_output: { ...capturedOutput } }),
@@ -194,7 +190,10 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
       this.environment.REA_EVM_PRLIMIT_COMMAND ?? "/usr/bin/prlimit";
     let result: Result<EvmInterfaceExecution, AnalysisError>;
     try {
-      if (options?.signal?.aborted) throw new AnalysisCancelledError(OPERATION);
+      if (options?.signal?.aborted)
+        throw new AnalysisCancelledError(OPERATION, {
+          cause: options.signal.reason,
+        });
       if (process.platform !== "linux" || process.arch !== "x64")
         throw new AnalysisCapabilityUnavailableError(
           EVMOLE_PROVIDER_IDENTITY.id,
@@ -331,7 +330,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           cause instanceof ArtifactReaderFailure ? cause.cleanup : undefined;
         if (options?.signal?.aborted)
           throw new AnalysisCancelledError(OPERATION, {
-            cause,
+            cause: options.signal.reason,
             capturedOutput,
             ...(cleanup === undefined ? {} : { cleanup }),
           });
@@ -444,7 +443,10 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         }),
       );
     } catch (cause: unknown) {
-      if (cause instanceof OwnedCommandFailure)
+      if (
+        cause instanceof OwnedCommandFailure &&
+        cause.cleanupOwner !== undefined
+      )
         processOwner = cause.cleanupOwner;
       let fileFailure: EvmFileSizeFailureEvidence | undefined;
       let markerCleanupFailure: ArtifactReaderFailure | undefined;
@@ -561,12 +563,13 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
     }
     return result.ok && options?.signal?.aborted
       ? err(
-          new AnalysisCancelledError(
-            OPERATION,
-            retainedOutput === undefined
-              ? undefined
-              : { capturedOutput: retainedOutput },
-          ),
+          new AnalysisCancelledError(OPERATION, {
+            cause: options.signal.reason,
+            partialObservation: evmInterfaceEvidence(input, result.value),
+            ...(retainedOutput === undefined
+              ? {}
+              : { capturedOutput: retainedOutput }),
+          }),
         )
       : result;
   }

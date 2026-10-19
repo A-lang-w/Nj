@@ -2,7 +2,8 @@ import {
   schemaArrays,
   schemaChildren,
   schemaMaps,
-} from "./inputSchemaPresentation.js";
+  schemaLiteralValues,
+} from "./jsonSchemaKeywords.js";
 
 // Kimi expands schema-local references before sending tools to Moonshot.
 // Compact advertisements must fit after expansion, independently of client
@@ -11,8 +12,6 @@ import {
 /** Annotation keys that carry guidance but no validation semantics. */
 const annotationKeys = new Set(["description", "examples", "default", "title"]);
 
-/** Keys whose values are literal data, never nested schemas to rewrite. */
-const dataKeys = new Set(["const", "enum", "examples", "default"]);
 const definitionKeys = new Set(["$defs", "definitions"]);
 // An empty schema accepts every JSON value. Kimi otherwise infers string.
 const jsonValueTypes = [
@@ -23,8 +22,16 @@ const jsonValueTypes = [
   "number",
   "string",
 ];
+// An empty item schema accepts every JSON value, including arbitrarily nested
+// arrays, while satisfying clients that require `items` for array types.
+const jsonValueSchema = () => ({ type: [...jsonValueTypes], items: {} });
 
 export type AdvertisedInputSchemaPresentation = "inline" | "reduced";
+
+/** Budget selected by the caller for compact MCP input-schema presentation. */
+export interface CompactInputSchemaPresentation {
+  readonly budgetBytes: number;
+}
 
 export interface CompactedInputSchema {
   readonly schema: Record<string, unknown>;
@@ -62,7 +69,7 @@ const rebuildSchemaPositions = (
   if (!isSchemaObject(node)) return node;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(node)) {
-    if (dataKeys.has(key)) {
+    if (schemaLiteralValues.has(key)) {
       out[key] = value;
       continue;
     }
@@ -152,7 +159,7 @@ const inlineWithinBudget = (
       yield "]";
     } else if (isSchemaObject(value)) {
       if (position === "schema" && Object.keys(value).length === 0) {
-        yield JSON.stringify({ type: jsonValueTypes });
+        yield JSON.stringify(jsonValueSchema());
         return;
       }
       if (position === "schema" && typeof value.$ref === "string") {
@@ -284,7 +291,13 @@ const reduceToShallowProperties = (
           : {};
       return [
         name,
-        { ...(type === undefined ? {} : { type }), ...description },
+        {
+          ...(type === undefined ? {} : { type }),
+          // Reduced inputs intentionally omit nested validation, but clients
+          // still require an item schema to accept an array declaration.
+          ...(types?.includes("array") ? { items: jsonValueSchema() } : {}),
+          ...description,
+        },
       ];
     }),
   );
@@ -335,3 +348,13 @@ export const compactAdvertisedInputSchema = (
     presentation: "reduced",
   };
 };
+
+/** Return the JSON schema clients receive for the selected input presentation. */
+export const presentAdvertisedInputSchema = (
+  schema: Record<string, unknown>,
+  compactPresentation: CompactInputSchemaPresentation | undefined,
+): Record<string, unknown> =>
+  compactPresentation === undefined
+    ? schema
+    : compactAdvertisedInputSchema(schema, compactPresentation.budgetBytes)
+        .schema;
