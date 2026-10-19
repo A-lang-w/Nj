@@ -4,6 +4,7 @@ import { environmentServeSource } from "../../../tests/fixtures/environmentServe
 import type { EnvironmentManifestTool } from "./environmentSource.js";
 import {
   environmentCard,
+  environmentToolArguments,
   environmentToolDefinitions,
   environmentToolInputSchema,
   REPLAY_CATALOG_INSTRUCTIONS,
@@ -112,12 +113,12 @@ describe("environment catalog description budgets", () => {
       "path display truncated; full value in manifest Evidence",
     );
     expect(definition?.description).not.toContain("\uFFFD");
-    expect(Object.hasOwn(definition?.inputSchema.properties ?? {}, query)).toBe(
-      true,
-    );
+    expect(
+      Object.hasOwn(definition?.inputSchema.properties ?? {}, "query_1"),
+    ).toBe(true);
     expect(
       Buffer.byteLength(
-        definition?.inputSchema.properties[query]?.description ?? "",
+        definition?.inputSchema.properties.query_1?.description ?? "",
       ),
     ).toBeLessThan(1400);
   });
@@ -157,6 +158,40 @@ describe("environment catalog description budgets", () => {
     expect(definition?.inputSchema.properties.id?.description).toContain(
       observations[0],
     );
+  });
+
+  it("cuts a long captured path in the tool description and keeps it whole in the manifest", () => {
+    const users = tool("get_users_by_id");
+    const long = {
+      ...users,
+      path_template: `/api/${"segment/".repeat(200_000)}{id}`,
+    };
+    const [definition] = environmentToolDefinitions(
+      { ...source.manifest, tools: [long] },
+      source.evidenceId,
+    );
+    expect(Buffer.byteLength(definition?.description ?? "")).toBeLessThan(2048);
+    expect(definition?.description).toContain(
+      "path display truncated; full value in manifest Evidence",
+    );
+    expect(definition?.tool.path_template).toBe(long.path_template);
+  });
+
+  it("advertises an oversized query name under a short, collision-safe alias", () => {
+    const longName = "n".repeat(100_000);
+    const search = {
+      ...tool("get_search"),
+      query_parameter_names: [longName, "query_1"],
+    };
+    const args = environmentToolArguments(search);
+    expect(args.query.get(longName)).toBe("query_1");
+    expect(args.query.get("query_1")).toBe("query_query_1");
+    const schema = environmentToolInputSchema(search);
+    expect(Buffer.byteLength(JSON.stringify(schema))).toBeLessThan(4096);
+    expect(schema.properties.query_1?.description).toContain(
+      "query name display truncated; full value in manifest Evidence",
+    );
+    expect(search.query_parameter_names[0]).toBe(longName);
   });
 
   it("reports an omitted oversized value instead of publishing an unbounded or partial observation", () => {

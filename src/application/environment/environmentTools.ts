@@ -75,6 +75,9 @@ const describeList = <Value>(
     : `${listed}${sample.length === 0 ? "" : ", "}… (${String(sample.length)}/${String(values.length)} shown; full list in manifest Evidence)`;
 };
 
+/** Captured query names longer than this are advertised under a short alias; the manifest keeps the name. */
+export const MAX_QUERY_ARGUMENT_CHARS = 64;
+
 const bodyDescription = (tool: EnvironmentManifestTool): string =>
   tool.body_shape === null
     ? "Request body; the capture retained no JSON body shape for this tool."
@@ -109,8 +112,12 @@ export const environmentToolArguments = (
 ): EnvironmentToolArguments => {
   const taken = new Set(tool.params.map((param) => param.name));
   const query = new Map<string, string>();
-  for (const name of tool.query_parameter_names) {
-    const argument = freeName(taken, name, "query_");
+  for (const [index, name] of tool.query_parameter_names.entries()) {
+    const preferred =
+      name.length <= MAX_QUERY_ARGUMENT_CHARS
+        ? name
+        : `query_${String(index + 1)}`;
+    const argument = freeName(taken, preferred, "query_");
     taken.add(argument);
     query.set(name, argument);
   }

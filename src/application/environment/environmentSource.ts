@@ -135,6 +135,29 @@ const recordedBody = (
   }
 };
 
+/** WHATWG reports an explicit empty query (`/api?`) as "", like no query; the recorded URL keeps the delimiter. */
+const recordedQuery = (
+  record: WebNetworkCaptureRecord,
+  query: string | undefined,
+): string | null => {
+  if (query === undefined) return null;
+  if (query !== "") return query;
+  const reported = record.reported;
+  const request =
+    typeof reported === "object" &&
+    reported !== null &&
+    !Array.isArray(reported)
+      ? reported.request
+      : undefined;
+  const url =
+    typeof request === "object" && request !== null && !Array.isArray(request)
+      ? request.url
+      : undefined;
+  return typeof url === "string" && url.split("#", 1)[0]?.includes("?") === true
+    ? "?"
+    : null;
+};
+
 const recordedExchange = (
   record: WebNetworkCaptureRecord,
 ): RecordedExchange | undefined => {
@@ -143,7 +166,7 @@ const recordedExchange = (
   return {
     ordinal: record.ordinal,
     path: line.path,
-    query: line.query === undefined || line.query === "" ? null : line.query,
+    query: recordedQuery(record, line.query),
     status: line.status,
     contentType: line.rawMime === "" ? null : line.rawMime,
     ...recordedBody(record),

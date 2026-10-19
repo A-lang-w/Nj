@@ -6,7 +6,6 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { safeParseJson } from "../../domain/safeJson.js";
 import { environmentToolArguments } from "./environmentTools.js";
 import {
   REPLAY_BODY_LIMIT_BYTES,
@@ -32,6 +31,8 @@ export interface ReplayResult {
     readonly exact_match: boolean;
     readonly recorded_path: string;
     readonly recorded_query: string | null;
+    /** Set when the recorded path or query was cut to REPLAY_METADATA_LIMIT_BYTES; the Evidence record keeps it whole. */
+    readonly recorded_line_truncated: boolean;
     readonly body_recorded: boolean;
     readonly body_encoding: "utf-8" | "base64";
     readonly truncated: boolean;
@@ -184,6 +185,9 @@ const replayBody = (
   return { body: text, truncated: false };
 };
 
+/** Recorded paths and queries are cut to this many UTF-8 bytes in replies. */
+export const REPLAY_METADATA_LIMIT_BYTES = 1024;
+
 /** Replay one tool call from the retained record that best matches its arguments. */
 export const replayEnvironmentTool = (
   source: EnvironmentSource,
@@ -203,6 +207,11 @@ export const replayEnvironmentTool = (
     );
   const { exchange, exact } = selected;
   const { body, truncated } = replayBody(exchange);
+  const recordedPath = utf8Prefix(exchange.path, REPLAY_METADATA_LIMIT_BYTES);
+  const recordedQuery =
+    exchange.query === null
+      ? null
+      : utf8Prefix(exchange.query, REPLAY_METADATA_LIMIT_BYTES);
   return ok({
     status: exchange.status,
     content_type: exchange.contentType,
@@ -211,8 +220,11 @@ export const replayEnvironmentTool = (
       record_ordinal: exchange.ordinal,
       evidence_id: source.evidenceId,
       exact_match: exact,
-      recorded_path: exchange.path,
-      recorded_query: exchange.query,
+      recorded_path: recordedPath,
+      recorded_query: recordedQuery,
+      recorded_line_truncated:
+        recordedPath.length < exchange.path.length ||
+        (recordedQuery?.length ?? 0) < (exchange.query?.length ?? 0),
       body_recorded: exchange.bodyText !== null,
       body_encoding: exchange.bodyEncoding ?? "utf-8",
       truncated,
