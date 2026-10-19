@@ -189,5 +189,19 @@ it
         ].join(" "),
       ),
     );
+
+    if (operation !== "start_adb_activity") return;
+    const mistyped = await client.callTool({
+      name: operation,
+      arguments: {
+        ...input,
+        extras: [{ key: "flag", type: "boolean", value: "yes" }],
+      },
+    });
+    expect(mistyped.isError).toBe(true);
+    expect(responseText(mistyped)).toContain(
+      "Input validation error: Invalid arguments for tool start_adb_activity: extras.0.value: Boolean extra values must be true or false",
+    );
+    expect(await fakeAdb.calls()).toEqual(calls);
   },
 );
