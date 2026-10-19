@@ -10,7 +10,7 @@ import {
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createServer as createNetServer } from "node:net";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createDesktopApplicationService } from "../../../src/composition/desktop.js";
 import { desktopApplicationSchema } from "../../../src/domain/desktopApplication.js";
@@ -1109,5 +1109,64 @@ it("changes snapshot identity when probe limits change retained read ranges", as
   );
   expect(partial.report.root.snapshot_sha256).not.toBe(
     complete.report.root.snapshot_sha256,
+  );
+});
+
+it("rejects expanded managed facts before serializing an over-budget value", async () => {
+  const root = await createTestTempDirectory("rea-desktop-fact-capacity-");
+  const name = `UnityEngine.${"\u0001".repeat(600_000)}`;
+  await put(
+    root,
+    "Game_Data/Managed/Assembly-CSharp.dll",
+    buildManagedPeFixture({ references: [name] }),
+  );
+  const serialized = vi.spyOn(JSON, "stringify");
+  onTestFinished(() => serialized.mockRestore());
+  const observed = await inspect(root);
+  const materializedFacts = serialized.mock.calls.filter(
+    ([value]) =>
+      value !== null &&
+      typeof value === "object" &&
+      Reflect.get(value, "name") === name,
+  ).length;
+  serialized.mockRestore();
+  const file = observed.report.files.find((row) => row.path.endsWith(".dll"));
+  expect(file?.facts.map((fact) => fact.kind)).toEqual([
+    "native-image-header",
+    "pe-cli-directory",
+  ]);
+  expect(file?.issues).toContain(
+    "Directory facts reached the retained metadata budget",
+  );
+  expect(observed.report.coverage.status).toBe("partial");
+  expect(
+    observed.report.candidates.map((candidate) => candidate.family),
+  ).not.toContain("unity-mono");
+  expect(materializedFacts).toBe(0);
+});
+
+it("preserves admitted Unicode and escaped AssemblyRef names in complete Evidence", async () => {
+  const root = await createTestTempDirectory("rea-desktop-fact-text-");
+  const name = `UnityEngine.${'雪🧪"\\\n\u0001'.repeat(1024)}`;
+  await put(
+    root,
+    "Game_Data/Managed/Assembly-CSharp.dll",
+    buildManagedPeFixture({ references: [name] }),
+  );
+  const { report } = await inspect(root);
+  const file = report.files.find((row) => row.path.endsWith(".dll"));
+  expect(file?.issues).toEqual([]);
+  expect(file?.facts).toContainEqual({
+    kind: "unity-assembly-reference",
+    offset: expect.any(Number),
+    value: {
+      name,
+      token: "0x23000001",
+      managed_directory: "Game_Data/Managed",
+    },
+  });
+  expect(report.coverage.status).toBe("complete-within-scan");
+  expect(report.candidates.map((candidate) => candidate.family)).toContain(
+    "unity-mono",
   );
 });
