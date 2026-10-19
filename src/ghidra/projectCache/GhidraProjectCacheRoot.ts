@@ -24,9 +24,8 @@ export interface GhidraProjectCacheRootHost {
   verifyPrivateDirectory(path: string): unknown;
 }
 
-const systemRootHost = (authority?: WindowsNativeAuthority) => {
-  const native = (): WindowsNativeAuthority =>
-    authority ?? requireWindowsNativeAuthority();
+const systemRootHost = (): GhidraProjectCacheRootHost => {
+  const native = (): WindowsNativeAuthority => requireWindowsNativeAuthority();
   return {
     createPrivateDirectory(parent: string): string {
       const created = createdDirectorySchema.parse(
