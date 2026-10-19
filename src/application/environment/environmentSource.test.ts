@@ -49,6 +49,27 @@ describe("loadEnvironmentSource", () => {
     );
   });
 
+  it("refuses capture Evidence in a format other than HAR before pairing it", () => {
+    const fixture = environmentServeFixture();
+    for (const format of ["saz", "mitmproxy"] as const) {
+      const evidence = analysisViewCaptureEvidence({
+        ...analysisViewCaptureFixture(),
+        format,
+      });
+      expect(refusal(fixture.manifest, evidence)).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["evidence", "normalized_result", "format"],
+              expected: "har",
+            },
+          ],
+        },
+      });
+    }
+  });
+
   it("refuses a manifest whose parent is not the supplied evidence with a typed invalid request", () => {
     const fixture = environmentServeFixture();
     const other = analysisViewCaptureEvidence(analysisViewCaptureFixture());

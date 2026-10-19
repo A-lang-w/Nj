@@ -214,6 +214,21 @@ const parseCaptureEvidence = (
         "The evidence file is not web network capture Evidence.",
       ),
     );
+  // The manifest view projects HAR captures only, and replay reads HAR's response fields.
+  if (capture.data.format !== "har")
+    return err(
+      inputError(
+        [
+          {
+            path: ["evidence", "normalized_result", "format"],
+            reason: "invalid_value",
+            expected: "har",
+            message: `Agent environments replay HAR captures; this capture's format is ${capture.data.format}.`,
+          },
+        ],
+        "The evidence file is not a HAR capture.",
+      ),
+    );
   return ok({
     records: capture.data.records,
     evidenceId: evidence.value.evidence_id,
