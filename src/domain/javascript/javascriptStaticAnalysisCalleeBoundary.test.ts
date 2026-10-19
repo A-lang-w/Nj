@@ -10,6 +10,48 @@ const expressionWrappers = [
 ] as const;
 
 it.each([
+  ["const holder = { loader: module }; holder.loader", true],
+  ["const holder = { inner: { loader: module } }; holder.inner.loader", true],
+  ["const holder = [module]; holder[0]", true],
+  [
+    "const holder = { loader: module }; const { loader } = holder; loader",
+    true,
+  ],
+  [
+    "const holder = { loader: module }; const loader = holder.loader; loader",
+    true,
+  ],
+  [
+    "const holder = { loader: module }; const alias = { ...holder }; alias.loader",
+    true,
+  ],
+  ["const holder = { loader: module, loader: {} }; holder.loader", false],
+  ["const holder = { loader: {} }; holder.loader", false],
+  ["const holder = { loader: module.exports }; holder.loader", false],
+  ["const holder = { loader: module }; holder.missing", false],
+  ["let holder = {}; while (flag) holder = holder.slot; holder", true],
+  ["const holder = {}; holder.loader = module; holder.loader", true],
+  ["const holder = {}; if (flag) holder.loader = module; holder.loader", true],
+  [
+    "const holder = {}; const alias = holder; alias.loader = module; holder.loader",
+    true,
+  ],
+])(
+  "tracks the selected module-object container slot: %s",
+  (receiver, expected) => {
+    const analysis = analyzeJavaScriptStaticSource(
+      `${receiver}.require("./shared.cjs");`,
+    );
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.references).toEqual(
+      expected
+        ? [expect.objectContaining({ kind: "require", specifier: null })]
+        : [],
+    );
+  },
+);
+
+it.each([
   ['const load = module.require.bind(module); load("./shared.cjs");', true],
   [
     'const api = module; const load = api.require.bind(api); load("./shared.cjs");',
@@ -21,6 +63,10 @@ it.each([
   ],
   ['module.require.call(module, "./shared.cjs");', true],
   ['module.require.apply(module, ["./shared.cjs"]);', true],
+  [
+    'const load = module.require.bind.call(module.require, module); load("./shared.cjs");',
+    true,
+  ],
   [
     'const module = { require() {} }; const load = module.require.bind(module); load("./shared.cjs");',
     false,

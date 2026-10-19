@@ -47,6 +47,68 @@ it.each([
   },
 );
 
+it.each([
+  ['app.setAppPath.call(app, "./other");', true],
+  ['app.setAppPath.apply(app, ["./other"]);', true],
+  ['Reflect.apply(app.setAppPath, app, ["./other"]);', true],
+  [
+    'const invoke = Reflect.apply; invoke(app.setAppPath, app, ["./other"]);',
+    true,
+  ],
+  [
+    'const invoke = Reflect.apply.bind(Reflect); invoke(app.setAppPath, app, ["./other"]);',
+    true,
+  ],
+  [
+    'const invoke = Reflect.apply; Reflect.apply = () => {}; invoke(app.setAppPath, app, ["./other"]);',
+    true,
+  ],
+  ['const change = app.setAppPath.bind(app); change("./other");', true],
+  ['app["setAppPath"][`call`](app, "./other");', true],
+  [
+    'const runtime = app; runtime.setAppPath.apply(runtime, ["./other"]);',
+    true,
+  ],
+  ['const change = app.setAppPath; change.call(app, "./other");', true],
+  ['function local(app) { app.setAppPath.call(app, "./other"); }', false],
+  [
+    'const local = { setAppPath() {} }; local.setAppPath.bind(local)("./other");',
+    false,
+  ],
+  ['app.setAppPath.other(app, "./other");', false],
+  [
+    'const Reflect = { apply() {} }; Reflect.apply(app.setAppPath, app, ["./other"]);',
+    false,
+  ],
+  [
+    'Reflect.apply = () => {}; Reflect.apply(app.setAppPath, app, ["./other"]);',
+    false,
+  ],
+  [
+    'const local = { setAppPath() {} }; Reflect.apply(local.setAppPath, local, ["./other"]);',
+    false,
+  ],
+])(
+  "retains indirect application path changes by Electron identity: %s",
+  (call, expected) => {
+    const analysis = analyzeJavaScriptStaticSource(`
+    const { app } = require("electron");
+    ${call}
+  `);
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.electron.app_path_changes ?? []).toEqual(
+      expected
+        ? [
+            expect.objectContaining({
+              module_key: null,
+              location: expect.any(Object),
+            }),
+          ]
+        : [],
+    );
+  },
+);
+
 it("recovers APIs through an ES module default import of Electron", () => {
   const analysis = analyzeJavaScriptStaticSource(`
     import electron from "electron";

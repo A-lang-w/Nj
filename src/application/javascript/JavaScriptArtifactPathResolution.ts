@@ -283,7 +283,13 @@ const resolvePath = (input: ResolveArtifactPathInput): CandidateResolution => {
       (input.context === "module-specifier" &&
         input.moduleKind !== "require" &&
         /^file:/iu.test(input.declaredPath)))
-  )
+  ) {
+    if (input.context === "module-specifier" && input.moduleKind === "import") {
+      const admitted = decodeModuleUrlPath(
+        stripQueryAndFragment(htmlUrlText(input.declaredPath)),
+      );
+      if (typeof admitted !== "string") return admitted;
+    }
     // Host syntax is not a canonical logical path. In particular, Windows
     // separators and drive letters must not be reclassified as invalid/URLs.
     return input.declaredPath.includes("\0") ||
@@ -294,6 +300,7 @@ const resolvePath = (input: ResolveArtifactPathInput): CandidateResolution => {
       : unresolvedCandidate("unavailable", [
           "An absolute runtime host path has no established mapping to the selected logical artifact root.",
         ]);
+  }
   if (input.runtimePathKind === "node-entrypoint")
     return resolveNodeRuntimeEntrypoint(input);
   if (input.moduleKind === "compiler-dependent") {
@@ -589,10 +596,6 @@ const contextualCandidate = (
     )
       return bareModuleCandidate(input);
     if (input.moduleKind !== "require") {
-      if (/%(?:2f|5c)/iu.test(stripQueryAndFragment(declared)))
-        return unresolvedCandidate("rejected", [
-          "ES module URL paths cannot contain percent-encoded slash or backslash bytes.",
-        ]);
       const decoded = decodeModuleUrlPath(stripQueryAndFragment(declared));
       if (typeof decoded !== "string") return decoded;
       declared = decoded;
@@ -647,6 +650,10 @@ const contextualCandidate = (
 const decodeModuleUrlPath = (
   declared: string,
 ): string | CandidateResolution => {
+  if (/%(?:2f|5c)/iu.test(declared))
+    return unresolvedCandidate("rejected", [
+      "ES module URL paths cannot contain percent-encoded slash or backslash bytes.",
+    ]);
   let decoded: string;
   try {
     decoded = decodeURIComponent(declared);
@@ -777,7 +784,6 @@ const bareModuleCandidate = (
     if (typeof confined !== "string") return confined;
     dependencyDirectory = posix.dirname(confined);
   }
-  const source = input.files.get(input.sourcePath);
   let nearestNotFound: CandidateResolution | null = null;
   for (const directory of packageLookupDirectories(input)) {
     const candidate = posix.join(directory, dependencyDirectory);
@@ -789,14 +795,7 @@ const bareModuleCandidate = (
           (!request.dependencyExportsEligible ||
             metadata.exports === undefined)));
     const packageResolution =
-      metadata.kind !== "absent" ||
-      hasContainerDirectory(
-        input.files,
-        candidate,
-        source?.container_sha256,
-        input.directoryPaths,
-        input.unanalyzedFiles,
-      )
+      metadata.kind !== "absent" || hasContainerDirectory(input, candidate)
         ? resolvePackageDependency(input, candidate, request, metadata)
         : request.packageSubpath === "." && input.moduleKind !== "import"
           ? resolveFileCandidates(
@@ -1034,16 +1033,7 @@ const resolveLegacyEsmSubpath = (
     return unresolvedCandidate("unavailable", [unrepresentableBase.limitation]);
   const file = resolveFileCandidates(input, [candidate]);
   if (file !== null) return file;
-  const source = input.files.get(input.sourcePath);
-  if (
-    hasContainerDirectory(
-      input.files,
-      candidate,
-      source?.container_sha256,
-      input.directoryPaths,
-      input.unanalyzedFiles,
-    )
-  )
+  if (hasContainerDirectory(input, candidate))
     return unresolvedCandidate("rejected", [
       `ESM package subpath ${candidate} names a directory; directory imports are unsupported and package main or index lookup was not attempted.`,
     ]);
@@ -1156,37 +1146,35 @@ const parseBarePackageRequest = (
 };
 
 const hasContainerDirectory = (
-  files: ReadonlyMap<string, JavaScriptArtifactFile>,
+  input: ResolveArtifactPathInput,
   candidate: string,
-  containerSha256: string | undefined,
-  directoryPaths: ReadonlySet<string> | undefined,
-  unanalyzedFiles?: JavaScriptUnanalyzedArtifactLookup,
 ): boolean => {
-  if (directoryPaths?.has(candidate) === true) return true;
+  if (input.directoryPaths?.has(candidate) === true) return true;
   if (
     [...indexCandidates(candidate), posix.join(candidate, "package.json")].some(
       (path) => {
-        const file = files.get(path);
+        const file = input.files.get(path);
         return (
           file !== undefined &&
-          (containerSha256 === undefined ||
-            file.container_sha256 === containerSha256)
+          admitsRuntimeContainer(input, path, file.container_sha256)
         );
       },
     )
   )
     return true;
-  // Inventory has files rather than directory entries. Any same-container
-  // descendant establishes a package directory even without package.json.
+  // Inventory has files rather than directory entries. An admitted descendant
+  // establishes a package directory even without package.json.
   const prefix = `${candidate}/`;
-  for (const [path, file] of files)
+  for (const [path, file] of input.files)
     if (
       path.startsWith(prefix) &&
-      (containerSha256 === undefined ||
-        file.container_sha256 === containerSha256)
+      admitsRuntimeContainer(input, path, file.container_sha256)
     )
       return true;
-  return unanalyzedFiles?.hasDirectory(candidate, containerSha256) ?? false;
+  const container = crossesRuntimeArchiveBoundary(input, `${candidate}/`)
+    ? undefined
+    : input.files.get(input.sourcePath)?.container_sha256;
+  return input.unanalyzedFiles?.hasDirectory(candidate, container) ?? false;
 };
 
 const htmlCandidate = (
@@ -1304,12 +1292,12 @@ const readPackageMetadata = (
 ): PackageMetadata => {
   const path = posix.join(directory, "package.json");
   const file = input.files.get(path);
-  const source = input.files.get(input.sourcePath);
   if (file === undefined) {
     const unavailable = input.unanalyzedFiles?.get(path);
     if (
-      source !== undefined &&
-      unavailable?.container_sha256 === source.container_sha256
+      unavailable !== undefined &&
+      (admitsRuntimeContainer(input, path, unavailable.container_sha256) ||
+        input.moduleKind !== undefined)
     )
       return {
         kind: "unavailable",
@@ -1319,8 +1307,13 @@ const readPackageMetadata = (
       };
     return { kind: "absent" };
   }
-  if (source !== undefined && file.container_sha256 !== source.container_sha256)
-    return { kind: "absent" };
+  if (!admitsRuntimeContainer(input, path, file.container_sha256))
+    return input.moduleKind === undefined
+      ? { kind: "absent" }
+      : {
+          kind: "unavailable",
+          limitation: `Inventoried package metadata ${path} crosses an artifact container boundary without an established runtime loader mapping.`,
+        };
   if (!file.text.included)
     return {
       kind: "unavailable",
@@ -1496,16 +1489,7 @@ const resolveNodePackageMain = (
       finalized.replace(/\/$/u, ""),
     ]);
     if (finalizedFile !== null) return finalizedFile;
-    const source = input.files.get(input.sourcePath);
-    if (
-      hasContainerDirectory(
-        input.files,
-        finalized,
-        source?.container_sha256,
-        input.directoryPaths,
-        input.unanalyzedFiles,
-      )
-    )
+    if (hasContainerDirectory(input, finalized))
       return {
         ...unresolvedCandidate("rejected", [
           `The selected legacy ESM package main finalizes to directory ${finalized}; directory imports are unsupported and no later main or index candidate was tried.`,
@@ -1548,19 +1532,17 @@ const resolveFileCandidates = (
   return null;
 };
 
-/** Own candidate presence and container identity independently of loader policy. */
-const findFileCandidate = (
+/** One archive-path admission rule serves files, directories and their metadata. */
+const crossesRuntimeArchiveBoundary = (
   input: ResolveArtifactPathInput,
   path: string,
-): CandidateResolution | null => {
-  const source = input.files.get(input.sourcePath);
-  const target = input.files.get(path);
+): boolean => {
   // Electron's archive filesystem normalizes a relative module path before
   // opening it, including entry into an inventoried archive occurrence and
   // escape from one, after the existing artifact-root confinement check.
   const sourceArchiveEnd = input.sourcePath.lastIndexOf(".asar/");
   const targetArchiveEnd = path.lastIndexOf(".asar/");
-  const crossesArchive =
+  return (
     input.context === "module-specifier" &&
     input.moduleKind !== undefined &&
     ((sourceArchiveEnd >= 0 &&
@@ -1570,14 +1552,34 @@ const findFileCandidate = (
       (targetArchiveEnd >= 0 &&
         !input.sourcePath.startsWith(
           path.slice(0, targetArchiveEnd + ".asar/".length),
-        )));
+        )))
+  );
+};
+
+const admitsRuntimeContainer = (
+  input: ResolveArtifactPathInput,
+  path: string,
+  containerSha256: string,
+): boolean => {
+  const source = input.files.get(input.sourcePath);
+  return (
+    crossesRuntimeArchiveBoundary(input, path) ||
+    (input.runtimePathKind === "application-file" &&
+      input.applicationRootIsProven === true) ||
+    source === undefined ||
+    containerSha256 === source.container_sha256
+  );
+};
+
+/** Own candidate presence and container identity independently of loader policy. */
+const findFileCandidate = (
+  input: ResolveArtifactPathInput,
+  path: string,
+): CandidateResolution | null => {
+  const target = input.files.get(path);
   if (
     target !== undefined &&
-    (crossesArchive ||
-      (input.runtimePathKind === "application-file" &&
-        input.applicationRootIsProven === true) ||
-      source === undefined ||
-      target.container_sha256 === source.container_sha256)
+    admitsRuntimeContainer(input, path, target.container_sha256)
   )
     return { resolvedPath: path, status: "resolved", limitations: [] };
   if (
@@ -1596,11 +1598,7 @@ const findFileCandidate = (
   const unanalyzed = input.unanalyzedFiles?.get(path);
   if (
     unanalyzed !== undefined &&
-    (crossesArchive ||
-      (input.runtimePathKind === "application-file" &&
-        input.applicationRootIsProven === true) ||
-      source === undefined ||
-      unanalyzed.container_sha256 === source.container_sha256)
+    admitsRuntimeContainer(input, path, unanalyzed.container_sha256)
   )
     return {
       resolvedPath: null,

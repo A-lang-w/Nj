@@ -17,8 +17,17 @@ export const inspectElectronStaticNode = (
   inspectElectronIpcNode(node, context);
   inspectElectronNativeNode(node, context);
   if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
-  const path = electronCalleePath(node.callee, context);
-  if (path?.length === 2 && path[0] === "app" && path[1] === "setAppPath")
+  const path =
+    electronCalleePath(node.callee, context) ??
+    context.electronInvocationPath?.(node);
+  if (
+    path !== undefined &&
+    path[0] === "app" &&
+    path[1] === "setAppPath" &&
+    path.slice(2).every((member) => ["call", "apply", "bind"].includes(member))
+  )
+    // A bound setter may escape this source before it changes the shared app
+    // path. Keep that possibility without asserting the delegate is unchanged.
     addLocatedFinding(context, {
       collection: context.accumulator.appPathChanges,
       key: "electron:app-path-change",

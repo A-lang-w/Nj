@@ -10,6 +10,48 @@ import { applicationNodeIdentitySchema } from "../../domain/javascript/javascrip
 import { analyzeJavaScriptStaticSource } from "../../domain/javascript/javascriptStaticAnalysis.js";
 
 describe("runtime host path classification", () => {
+  it.each([
+    "/shared%2Fwindow.mjs",
+    "/shared%5cwindow.mjs",
+    "/shared%00window.mjs",
+    "/shared%xxwindow.mjs",
+  ])(
+    "rejects invalid absolute ESM URL path syntax before host lookup: %s",
+    (declaredPath) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/main.mjs",
+          context: "module-specifier",
+          moduleKind: "import",
+          files: new Map(),
+        }),
+      ).toMatchObject({ resolution_status: "rejected", resolved_path: null });
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/main.cjs",
+          context: "module-specifier",
+          moduleKind: "require",
+          files: new Map(),
+        }),
+      ).toMatchObject({
+        resolution_status: "unavailable",
+        resolved_path: null,
+      });
+    },
+  );
+  it("keeps encoded query bytes outside ESM pathname admission", () => {
+    expect(
+      resolve({
+        declaredPath: "/shared/window.mjs?token=%2F#fragment",
+        sourcePath: "app/main.mjs",
+        context: "module-specifier",
+        moduleKind: "import",
+        files: new Map(),
+      }),
+    ).toMatchObject({ resolution_status: "unavailable", resolved_path: null });
+  });
   it.each(["exact-file", "application-file", "node-entrypoint"] as const)(
     "keeps POSIX and Windows absolute %s paths unavailable before canonical admission",
     (runtimePathKind) => {
@@ -267,10 +309,13 @@ describe("loader-specific module suffix lookup", () => {
         files,
         unanalyzedFiles: {
           ...unanalyzedFiles,
-          get: () => ({
-            ...opaque.get("app/core.jsc")!,
-            container_sha256: "b".repeat(64),
-          }),
+          get: (path: string) =>
+            path === "app/core.jsc"
+              ? {
+                  ...opaque.get(path)!,
+                  container_sha256: "b".repeat(64),
+                }
+              : undefined,
         },
       }),
     ).toMatchObject({ resolution_status: "not-found", resolved_path: null });
@@ -2266,10 +2311,10 @@ describe("package import alias refusals", () => {
       files,
     });
     expect(outcome).toMatchObject({
-      resolution_status: "external",
+      resolution_status: "unavailable",
       resolved_path: null,
     });
-    expect(outcome.limitations.join(" ")).toContain("package scopes");
+    expect(outcome.limitations.join(" ")).toContain("container boundary");
   });
 });
 
@@ -3438,3 +3483,89 @@ it.each(["sub\\main.cjs", ".\\main.cjs", "C:main.cjs"])(
     });
   },
 );
+
+describe("package metadata at archive module boundaries", () => {
+  it.each([
+    ["resources/app.asar/main.cjs", "../pkg", "resources/pkg"],
+    ["app/main.cjs", "../resources/code.asar/pkg", "resources/code.asar/pkg"],
+    [
+      "resources/app.asar/main.cjs",
+      "fixture",
+      "resources/node_modules/fixture",
+    ],
+  ])(
+    "uses the selected package main for %s loading %s",
+    (sourcePath, declaredPath, directory) => {
+      expect(
+        resolve({
+          sourcePath,
+          declaredPath,
+          context: "module-specifier",
+          moduleKind: "require",
+          files: fileMap([
+            file(sourcePath, "source"),
+            file(
+              `${directory}/package.json`,
+              "target",
+              '{"main":"actual.cjs"}',
+            ),
+            file(`${directory}/actual.cjs`, "target"),
+            file(`${directory}/index.js`, "target"),
+          ]),
+        }),
+      ).toMatchObject({
+        resolution_status: "resolved",
+        resolved_path: `${directory}/actual.cjs`,
+      });
+    },
+  );
+
+  it("keeps metadata-less ancestor package directories after an archive escape", () => {
+    expect(
+      resolve({
+        sourcePath: "resources/app.asar/main.cjs",
+        declaredPath: "fixture/parser",
+        context: "module-specifier",
+        moduleKind: "require",
+        files: fileMap([
+          file("resources/app.asar/main.cjs", "source"),
+          file("resources/node_modules/fixture/parser.js", "target"),
+        ]),
+      }),
+    ).toMatchObject({
+      resolution_status: "resolved",
+      resolved_path: "resources/node_modules/fixture/parser.js",
+    });
+  });
+
+  it.each(["resources/app.asar/main.cjs", "resources/main.cjs"])(
+    "keeps unread metadata blocking a decoy index for %s",
+    (sourcePath) => {
+      const path = "resources/pkg/package.json";
+      const target = file(path, "target", null);
+      const files = fileMap([
+        file(sourcePath, "source"),
+        file("resources/pkg/index.js", "source"),
+      ]);
+      for (const opaque of [false, true]) {
+        expect(
+          resolve({
+            sourcePath,
+            declaredPath: sourcePath.includes(".asar/") ? "../pkg" : "./pkg",
+            context: "module-specifier",
+            moduleKind: "require",
+            files: opaque ? files : fileMap([...files.values(), target]),
+            unanalyzedFiles: {
+              get: (requested) =>
+                opaque && requested === path ? target : undefined,
+              hasDirectory: () => false,
+            },
+          }),
+        ).toMatchObject({
+          resolution_status: "unavailable",
+          resolved_path: null,
+        });
+      }
+    },
+  );
+});

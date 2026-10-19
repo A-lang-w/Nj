@@ -15,7 +15,10 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
+import {
+  semanticPropertyPathKeyMatches,
+  type JavaScriptSemanticPropertyPath,
+} from "./javascriptSemanticPropertyPaths.js";
 import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 import {
   semanticEffectTiming,
@@ -24,6 +27,10 @@ import {
 } from "./javascriptSemanticMutationInitializers.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
+import {
+  semanticArrayPropertyReferences,
+  semanticObjectPropertyReferences,
+} from "./javascriptSemanticObjectReferences.js";
 
 export interface JavaScriptRequireOrigin {
   readonly origin: JavaScriptModuleOrigin;
@@ -270,51 +277,137 @@ const isCommonJsModuleObject = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
-  const pending = [node];
-  // Cache by source read, not binding: the same binding can have a different
-  // value before/after assignment. Shared diamonds and cycles visit each read
-  // once, without recursively copying paths or expanding alias histories.
-  const examined = new WeakSet<t.Node>();
-  for (let value = pending.pop(); value !== undefined; value = pending.pop()) {
-    value = unwrapJavaScriptExpression(value).node;
-    if (examined.has(value)) continue;
-    examined.add(value);
+  const pending: { node: t.Node; path: JavaScriptSemanticPropertyPath }[] = [
+    { node, path: [] },
+  ];
+  // Cache by source read and selection: the same binding may have different
+  // slots or values before/after assignment. Shared diamonds join here.
+  const examined = new WeakMap<
+    t.Node,
+    Map<string, JavaScriptSemanticPropertyPath>
+  >();
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    const value = unwrapJavaScriptExpression(next.node).node;
+    const path = next.path;
+    const selection = JSON.stringify(path);
+    const previous =
+      examined.get(value) ?? new Map<string, JavaScriptSemanticPropertyPath>();
+    if (previous.has(selection)) continue;
+    // A recursive alias can keep adding selectors without reaching an owned
+    // literal. Widen that unresolved receiver instead of expanding forever.
+    if (
+      t.isIdentifier(value) &&
+      [...previous.values()].some(
+        (prior) =>
+          prior.length < path.length &&
+          prior.every(
+            (key, index) =>
+              JSON.stringify(key) ===
+              JSON.stringify(path[path.length - prior.length + index]),
+          ),
+      )
+    )
+      return true;
+    previous.set(selection, path);
+    examined.set(value, previous);
+    if (t.isMemberExpression(value) || t.isOptionalMemberExpression(value)) {
+      pending.push({
+        node: value.object,
+        path: [
+          semanticStaticPropertyKey(value.property, value.computed),
+          ...path,
+        ],
+      });
+      continue;
+    }
+    if (
+      path.length > 0 &&
+      (t.isObjectExpression(value) || t.isArrayExpression(value))
+    ) {
+      pending.push(
+        ...(t.isObjectExpression(value)
+          ? semanticObjectPropertyReferences(value, path, state)
+          : semanticArrayPropertyReferences(value, path)),
+      );
+      continue;
+    }
+    if (t.isConditionalExpression(value) || t.isLogicalExpression(value)) {
+      pending.push(
+        {
+          node: t.isConditionalExpression(value)
+            ? value.consequent
+            : value.left,
+          path,
+        },
+        {
+          node: t.isConditionalExpression(value)
+            ? value.alternate
+            : value.right,
+          path,
+        },
+      );
+      continue;
+    }
     if (!t.isIdentifier(value)) continue;
     const binding = resolveSemanticBindingState(state, value, value.name);
     if (value.name === "module" && binding === undefined) {
-      if (!semanticResolutionBlocked(state, value, "module")) return true;
+      if (
+        path.length === 0 &&
+        !semanticResolutionBlocked(state, value, "module")
+      )
+        return true;
       continue;
     }
     if (binding === undefined) continue;
+    if (
+      path.length > 0 &&
+      [...binding.memberWrites, ...binding.escapedPaths].some(
+        (effect) =>
+          effect.path.length <= path.length &&
+          effect.path.every(
+            (key, index) =>
+              path[index] === null ||
+              typeof path[index] === "object" ||
+              semanticPropertyPathKeyMatches(key, String(path[index])),
+          ) &&
+          semanticEffectTiming(value, effect.node, state) !== "after",
+      )
+    )
+      return true;
     const read = semanticBindingAtRead(binding, value, state.parentsByNode);
     if (
       value.name === "module" &&
+      path.length === 0 &&
       commonJsWrapperBindingDeclaration(value, "module", state) !== undefined &&
       !read.hasDefiniteInitializer
     )
       return true;
-    // A possible direct module origin requires an ownership gap. Destructured
-    // members (such as module.exports) are separate object identities.
+    // Retain selected container slots. A property of the host module itself
+    // (such as module.exports) remains a separate object identity.
     for (const initializer of read.binding.initializers)
-      if (initializer.projection.length === 0) pending.push(initializer.node);
+      pending.push({
+        node: initializer.node,
+        path: [...initializer.projection, ...path],
+      });
     for (const initializer of read.binding.referenceInitializers)
       if (
-        initializer.projection.length === 0 &&
         initializer.copyKind === undefined &&
         !semanticReferenceSourcesInactive(initializer, state)
       )
-        pending.push(initializer.node);
+        pending.push({
+          node: initializer.node,
+          path: [...initializer.projection, ...path],
+        });
   }
   return false;
 };
 
-/** Recognize an unchecked module loader without asserting its current delegate. */
-export const semanticModuleRequireCallAt = (
+/** Select an unchecked member-loader receiver before its identity is examined. */
+export const semanticModuleRequireReceiver = (
   node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
-  state: JavaScriptSemanticAnalysisState,
-): boolean => {
+): t.Node | undefined => {
   let callee = unwrapJavaScriptExpression(node.callee).node;
-  if (
+  while (
     (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
     ["bind", "call", "apply"].includes(
       semanticStaticPropertyKey(callee.property, callee.computed) ?? "",
@@ -323,11 +416,20 @@ export const semanticModuleRequireCallAt = (
     // Capturing a bound delegate can load outside the visible module graph.
     // Keep that possibility without asserting bind/call/apply is unmodified.
     callee = unwrapJavaScriptExpression(callee.object).node;
-  return (
-    (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
-    semanticStaticPropertyKey(callee.property, callee.computed) === "require" &&
-    isCommonJsModuleObject(callee.object, state)
-  );
+  return (t.isMemberExpression(callee) ||
+    t.isOptionalMemberExpression(callee)) &&
+    semanticStaticPropertyKey(callee.property, callee.computed) === "require"
+    ? callee.object
+    : undefined;
+};
+
+/** Recognize an unchecked module loader without asserting its current delegate. */
+export const semanticModuleRequireCallAt = (
+  node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const receiver = semanticModuleRequireReceiver(node);
+  return receiver !== undefined && isCommonJsModuleObject(receiver, state);
 };
 
 const writesModuleRequire = (

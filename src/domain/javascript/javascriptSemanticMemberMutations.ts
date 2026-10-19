@@ -23,6 +23,7 @@ import {
 } from "./javascriptSemanticValues.js";
 import { semanticContainer } from "./javascriptSemanticSlots.js";
 import {
+  semanticArrayPropertyReferences,
   semanticClassCandidates,
   semanticClassPropertyReferences,
   semanticObjectPropertyReferences,
@@ -1004,7 +1005,7 @@ const referencedValues = (
     if (effect === "write" && path.length < 2) return [];
     return t.isObjectExpression(node)
       ? semanticObjectPropertyReferences(node, path, state)
-      : arrayReferencedValues(node, path);
+      : semanticArrayPropertyReferences(node, path);
   }
   if (t.isClass(node) || t.isNewExpression(node))
     return constructedReferenceValues(
@@ -1385,59 +1386,6 @@ const observableMutationPaths = (
     return result;
   };
   return { normalize, repeatsUnpruned };
-};
-
-const arrayReferencedValues = (
-  node: t.ArrayExpression,
-  path: PropertyPath,
-): readonly ReferencedValue[] => {
-  const [key, ...remaining] = path;
-  const selected = key ?? null;
-  const selectedIndex =
-    typeof selected === "object" ? null : semanticArrayIndex(selected);
-  if (typeof selected !== "object" && selectedIndex === null) return [];
-  const references: ReferencedValue[] = [];
-  let minimumIndex = 0;
-  let uncertainIndex = false;
-  for (const element of node.elements) {
-    if (t.isSpreadElement(element)) {
-      if (selectedIndex === null || selectedIndex >= minimumIndex) {
-        let sourceKey: PropertyPath[number] = null;
-        if (!uncertainIndex) {
-          if (selectedIndex !== null) sourceKey = selectedIndex - minimumIndex;
-          else if (selected !== null && typeof selected === "object")
-            sourceKey = {
-              excludedKeys: selected.excludedKeys.flatMap((name) => {
-                const index = semanticArrayIndex(name);
-                return index === null || index < minimumIndex
-                  ? []
-                  : [String(index - minimumIndex)];
-              }),
-              startIndex: Math.max(
-                0,
-                (selected.startIndex ?? 0) - minimumIndex,
-              ),
-            };
-        }
-        references.push({
-          node: element.argument,
-          path: [sourceKey, ...remaining],
-          iterableFallbackPath: [],
-        });
-      }
-      uncertainIndex = true;
-      continue;
-    }
-    if (
-      element !== null &&
-      (uncertainIndex
-        ? selectedIndex === null || selectedIndex >= minimumIndex
-        : semanticPropertyPathKeyMatches(selected, String(minimumIndex)))
-    )
-      references.push({ node: element, path: remaining });
-    minimumIndex++;
-  }
-  return references;
 };
 
 const copiedReferencePath = (

@@ -23,6 +23,7 @@ import {
   addReference,
   addSourceMapDirectives,
   finishPartialNetworkEndpoints,
+  finishModuleRequireCalls,
   finishSqliteStorageCalls,
   inspectCall,
   inspectRouteProperty,
@@ -98,10 +99,15 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     vitePreloadDependencyTable: indexVitePreloadDependencyTable(file.program),
     openReceiverFacts: receivers.openReceivers,
     electronBindings: electronIdentity.bindings,
+    electronInvocationPath: electronIdentity.invocationPath,
     rpcScan: createJavaScriptRpcScan(source, receivers.rpcClientRoots, index),
   };
   yield* traverseStaticSourceSteps(file, findings, bindings);
   yield* finishElectronBrowserWindowsSteps(findings, index);
+  if (accumulator.pendingModuleRequireCalls.length > 0) {
+    yield* index.indexMemberMutationFactsSteps();
+    finishModuleRequireCalls(findings, bindings);
+  }
   if (
     accumulator.pendingNetworkCalls.length > 0 ||
     accumulator.pendingSqliteCalls.length > 0

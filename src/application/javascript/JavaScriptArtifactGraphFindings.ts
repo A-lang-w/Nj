@@ -130,6 +130,9 @@ const changedApplicationRoots = (
     // A setter whose launching application is unknown cannot establish an
     // unchanged root for any package-based fallback.
     if (owners === undefined) return null;
+    // Owner sets stop at two distinct roots once uniqueness is disproven.
+    // They cannot enumerate every application affected by a shared setter.
+    if (owners.size >= 2) return null;
     for (const root of owners) roots.add(root);
   }
   return roots;

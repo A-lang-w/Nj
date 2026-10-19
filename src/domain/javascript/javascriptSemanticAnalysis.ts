@@ -794,6 +794,9 @@ export interface JavaScriptElectronIdentity {
   readonly bindings: ReadonlyMap<number, readonly string[]>;
   readonly intactExport: (path: readonly (string | null)[]) => boolean;
   readonly exportPath: (root: t.Node) => readonly string[] | undefined;
+  readonly invocationPath: (
+    node: t.CallExpression | t.OptionalCallExpression,
+  ) => readonly string[] | undefined;
 }
 
 export function* indexJavaScriptElectronIdentitySteps(
@@ -874,7 +877,30 @@ export function* indexJavaScriptElectronIdentitySteps(
         facts.set(root.start ?? -1, exported);
     },
   });
-  return { bindings: facts, intactExport, exportPath: rootExport };
+  const invocationPath = (
+    node: t.CallExpression | t.OptionalCallExpression,
+  ): readonly string[] | undefined => {
+    const invocation = interop.intrinsicInvocation(node, (callee) => {
+      const { root, members } = electronMemberPath(callee);
+      const exported = rootExport(root);
+      if (
+        exported !== undefined &&
+        members.every((member): member is string => member !== null) &&
+        intactExport(["electron", ...exported, ...members])
+      )
+        return ["electron", ...exported, ...members];
+      return interop.intrinsicPath(callee);
+    });
+    return invocation?.path[0] === "electron"
+      ? invocation.path.slice(1)
+      : undefined;
+  };
+  return {
+    bindings: facts,
+    intactExport,
+    exportPath: rootExport,
+    invocationPath,
+  };
 }
 
 // Read import and require origins directly; general value evaluation is

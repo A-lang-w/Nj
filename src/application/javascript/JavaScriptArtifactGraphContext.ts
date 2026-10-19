@@ -119,12 +119,9 @@ export const applicationRootPath = (
   context: JavaScriptArtifactGraphContext,
   source: JavaScriptArtifactFile,
 ): string | null => {
-  if (
-    context.applicationOwnershipUnknownContainers.has(
-      applicationContainerIdentity(context.fileSet, source),
-    )
-  )
-    return null;
+  // Unread launch metadata can name a main in another inventoried container.
+  // Archive occurrence identity does not prove isolation from the Node loader.
+  if (context.applicationOwnershipUnknownContainers.size > 0) return null;
   const entryRoots = context.applicationRootsBySource.get(source.path);
   const container = applicationContainerIdentity(context.fileSet, source);
   for (const root of context.applicationPossibleRootsByContainer.get(

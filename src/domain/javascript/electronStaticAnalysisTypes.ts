@@ -205,7 +205,7 @@ export interface ElectronStaticFindings {
   readonly call_paths?: readonly ElectronCallPath[];
 }
 
-/** A proven Electron app.setAppPath call, without asserting its runtime path. */
+/** An Electron application path setter invocation or bound delegate capture. */
 export interface ElectronAppPathChangeFinding {
   readonly module_key: string | null;
   readonly module_runtime?: string;

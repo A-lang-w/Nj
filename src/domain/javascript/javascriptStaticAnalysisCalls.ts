@@ -53,6 +53,7 @@ import {
   semanticFactoryRequireLoaderAt,
   semanticRequireLoaderAt,
   semanticModuleRequireCallAt,
+  semanticModuleRequireReceiver,
 } from "./javascriptSemanticRequireOrigin.js";
 
 type JavaScriptCallLike =
@@ -70,7 +71,12 @@ export const inspectCall = (
   const { accumulator } = context;
   const name = calleeName(node.callee);
   const first = stringValue(node.arguments[0]);
-  const requireCall = requireCallSpecifier(node, bindings, context);
+  const deferredModuleRequire =
+    semanticModuleRequireReceiver(node) !== undefined;
+  if (deferredModuleRequire) accumulator.pendingModuleRequireCalls.push(node);
+  const requireCall = deferredModuleRequire
+    ? null
+    : requireCallSpecifier(node, bindings, context);
   if (requireCall !== null)
     addReference(context, {
       node,
@@ -308,6 +314,26 @@ const requireCallSpecifier = (
     return { specifier: undefined };
   }
   return null;
+};
+
+/** Examine member-loader receivers only after shared alias mutation facts settle. */
+export const finishModuleRequireCalls = (
+  context: FindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
+): void => {
+  for (const node of context.accumulator.pendingModuleRequireCalls) {
+    const call = requireCallSpecifier(node, bindings, context);
+    if (call !== null)
+      addReference(context, {
+        node,
+        kind: "require",
+        specifier: call.specifier,
+      });
+  }
+  context.accumulator.pendingModuleRequireCalls.length = 0;
+  context.accumulator.references.sort(
+    (left, right) => left.offset - right.offset,
+  );
 };
 
 const chunkLoadSpecifier = (

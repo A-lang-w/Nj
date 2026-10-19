@@ -39,6 +39,11 @@ export interface LocatedJavaScriptFinding<Value> {
 
 /** Mutable collections used during one inert AST traversal. */
 export interface JavaScriptAnalysisAccumulator {
+  readonly pendingModuleRequireCalls: (
+    | t.CallExpression
+    | t.OptionalCallExpression
+    | t.NewExpression
+  )[];
   readonly appPathChanges: LocatedJavaScriptFinding<ElectronAppPathChangeFinding>[];
   electronCallPaths?: readonly ElectronCallPath[];
   electronCallPathLimitReached?: boolean;
@@ -89,6 +94,10 @@ export interface JavaScriptFindingContext {
   readonly openReceiverFacts?: ReadonlyMap<number, JavaScriptOpenReceiverFact>;
   /** Proven Electron export path segments by root offset. */
   readonly electronBindings?: ReadonlyMap<number, readonly string[]>;
+  /** Normalized invocation target from the shared Electron and intrinsic owners. */
+  readonly electronInvocationPath?: (
+    node: t.CallExpression | t.OptionalCallExpression,
+  ) => readonly string[] | undefined;
 }
 
 /** Candidate import, require, worker, or service-worker reference. */
@@ -122,6 +131,7 @@ export interface LocatedJavaScriptFindingInput<
 export const createJavaScriptAnalysisAccumulator = (
   sourceLength: number,
 ): JavaScriptAnalysisAccumulator => ({
+  pendingModuleRequireCalls: [],
   appPathChanges: [],
   references: [],
   endpoints: [],

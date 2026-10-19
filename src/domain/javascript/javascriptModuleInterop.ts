@@ -618,10 +618,13 @@ export const createSemanticModuleInterop = (
     origin,
     callOrigin,
     intrinsicPath,
-    intrinsicInvocation: (node: t.CallExpression | t.OptionalCallExpression) =>
+    intrinsicInvocation: (
+      node: t.CallExpression | t.OptionalCallExpression,
+      callablePath = intrinsicPath,
+    ) =>
       resolveJavaScriptIntrinsicInvocation(
         node,
-        intrinsicPath,
+        callablePath,
         boundIntrinsic,
         intrinsicReadChanged,
       ),
