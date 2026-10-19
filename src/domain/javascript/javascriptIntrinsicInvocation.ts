@@ -186,11 +186,13 @@ export const resolveJavaScriptIntrinsicInvocation = (
         );
         if (method === "call" || method === "apply") {
           const bound = boundIntrinsic(callee.object);
+          // Caller-selected native loaders share Function.prototype authority.
+          const callablePath = bound?.path ?? intrinsicPath(callee.object);
           if (
-            bound !== undefined &&
-            intrinsicReadChanged(callee, [...bound.path, method])
+            callablePath !== undefined &&
+            intrinsicReadChanged(callee, [...callablePath, method])
           )
-            return { kind: "opaque", path: bound.path, arguments: undefined };
+            return { kind: "opaque", path: callablePath, arguments: undefined };
           receiver = arguments_?.[0];
           explicitReceiver = true;
           callee = callee.object;

@@ -51,6 +51,18 @@ const cases = [
     possible: false,
   },
   {
+    name: "changed Function call retains loader argument uncertainty",
+    mainFile: "main.mjs",
+    load: 'import {createRequire as make} from "node:module";const load=make(import.meta.url);Function.prototype.call=()=>({});load.call(null,"./inert.cjs");',
+    possible: true,
+  },
+  {
+    name: "changed Function apply retains loader argument uncertainty",
+    mainFile: "main.mjs",
+    load: 'import {createRequire as make} from "node:module";const load=make(import.meta.url);Function.prototype.apply=()=>({});load.apply(null,["./inert.cjs"]);',
+    possible: true,
+  },
+  {
     name: "custom array iterator preserves loader ownership",
     load: 'Array.prototype[Symbol.iterator]=function*(){yield "../shared/window.cjs"};require(...["./inert.cjs"]);',
     possible: true,
