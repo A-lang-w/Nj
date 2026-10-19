@@ -285,6 +285,14 @@ REA establishes a main-frame origin boundary before enabling Runtime, Debugger, 
 
 ## Data minimization
 
+The Link projection parses repeated CDP header field lines independently and
+retains their declarations in order, including derived untrusted agent hints.
+Commas inside URI targets or quoted parameters remain part of those values.
+COOP and COEP projections retain the exact declared token after validating the
+complete Structured Field Item, including parameters such as `report-to`.
+These are declarations, not an assessment of the document's effective policy;
+absent, malformed or non-token items project as `null`.
+
 REA retains local observation data and removes only URL userinfo credentials, explicitly declared scenario secrets, and values from structured credential/storage fields:
 
 - URL observations preserve the complete local URL, including query values, fragments, duplicate parameters, and their order. Only username/password userinfo is removed; malformed original URL strings remain available with `origin: null`.
@@ -320,7 +328,7 @@ REA retains local observation data and removes only URL userinfo credentials, ex
   an omitted type leaves equality unknown rather than proving a modification.
 - Console observations with a stack source retain call type, argument types, timestamp, and source location. When console text capture is selected, already-delivered primitive values are retained verbatim; objects, getters, and remote properties are never expanded.
 - WebSocket observations retain direction, opcode, and payload byte length. When shape capture is selected, text frames are classified as text or complete value-free JSON shape; binary bytes, hashes, prefixes, and raw frames are never retained.
-- Storage observations always redact values. Key names, IndexedDB names, and cache names require `include_storage_keys`; stable content fingerprints require the additional `include_storage_fingerprints` selection. Cookie fingerprints cover cookies applicable to the current main-frame URL, including its path, rather than every cookie path on that origin. Other storage remains scoped to the origin. Cache bodies above 64 KiB and partial IndexedDB remote objects make fingerprint coverage incomplete, so identical observations remain `unknown`.
+- Storage observations always redact values. Key names, IndexedDB names, and cache names require `include_storage_keys`; stable content fingerprints require the additional `include_storage_fingerprints` selection. Cookie fingerprints cover cookies applicable to the current main-frame URL, including its path, rather than every cookie path on that origin. Other storage remains scoped to the origin. Cache fingerprints hash all decoded response bytes, including bodies above 64 KiB, subject to the [64 MiB per-message CDP limit](#request-boundary). Missing or undecodable cache bodies and partial IndexedDB remote objects make fingerprint coverage incomplete, so identical observations remain `unknown`.
 - Unavailable or malformed storage inventories mark `storage_keys` unavailable, even without fingerprints. Comparisons suppress inferred key additions and removals while preserving modifications proven by complete fingerprints on both sides. Previously exported captures are not retroactively corrected; recapture them to obtain these coverage markers.
 - Script metadata is included only when CDP supplies a URL on an allowed origin. Stable keys exclude transient CDP script IDs, and exact transient raw URLs are used only during script/resource reconciliation. URL-less scripts are excluded because their origin cannot be established. When CDP supplies an execution-context association, the accepted script retains its authorized frame ID for later attribution. Script metadata admission bounds retained identity and source-map strings to 8 MiB and 50,000 records. When a source-map URL cannot fit, the script identity remains and source-map coverage reports `resource_budget_exhausted`; rejected script observations are counted without retaining their IDs. Source content is omitted unless explicitly requested and is returned inline as a self-verifying artifact with its SHA-256 digest.
 
@@ -341,6 +349,40 @@ coverage. It reports excluded items and any values omitted or truncated by
 validation and resource bounds. Omitted script metadata makes its affected
 section explicitly truncated.
 Disallowed-origin entries are filtered before retention.
+
+Selected script-source collection shares a 32 MiB aggregate UTF-8 retention
+budget and a 20-second deadline across the capture. An oversized source is
+omitted while later smaller sources may still fit. When the deadline expires,
+remaining source reads are skipped. Script metadata, per-item omission reasons,
+and `script_sources` completeness remain available. A single CDP response can
+still be materialized up to the separate 64 MiB transport limit before source
+admission; the retention budget does not bound that transient allocation.
+
+Bundle parsing and semantic inspection run sequentially in an owned child,
+without executing captured code. `max_heap_mb` defaults to 1024 MiB V8
+old-space; `analysis_timeout_ms` defaults to 30000 per script, including startup
+and transfer. A failed or timed-out script becomes an explicit unknown while
+completed findings and later scripts remain available. `total_analysis_timeout_ms`
+defaults to 300000 across script analysis; expiry returns a typed timeout with
+partial Evidence and identifies unstarted scripts. These controls are also
+available as CLI flags with hyphenated names. Capture and optional source-map
+fetching have separate budgets.
+
+One web-bundle capture/analysis is admitted per REA process at a time. Completed
+script results share an 8 MiB serialized transfer budget, with host heap
+reservation checked before decoding and validating another result.
+Exhausted result capacity stops further script launches and returns a typed
+resource failure with completed facts and explicit unstarted-script unknowns.
+Worker control frames are limited to 64 KiB. Cleanup must confirm child termination
+before releasing its private files; failed cleanup retains its exact owner and
+blocks replacement until retry succeeds. Cancellation retains completed bundle
+facts, including cancellation during final cleanup.
+
+The worker heap setting is not a process-family RSS limit. Node enforces V8
+old-space flags; Bun ignores them. Windows Bun instead uses an owned process
+commit limit with a 512 MiB runtime reserve; other Bun hosts have no enforced
+memory limit. These bounds do not establish an aggregate host-memory limit
+across other REA operations or external processes.
 
 Resource-tree inventories distinguish a valid empty `resources` array from a
 missing or malformed collection. Invalid resource entries are omitted with

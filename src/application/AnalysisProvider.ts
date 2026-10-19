@@ -1,3 +1,4 @@
+import type { ProviderInspectionScope } from "../providers/ProviderInspectionScope.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { OfficialToolName } from "../contracts/officialToolContracts.js";
 import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
@@ -8,7 +9,16 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
+ docs/apk-signature-grammar-final
 import { createEvidence, type Evidence, type EvidenceLocation, type EvidenceSubjectTarget } from "../domain/evidence.js";
+
+import {
+  createEvidence,
+  type Evidence,
+  type EvidenceLocation,
+  type EvidenceSubjectTarget,
+} from "../domain/evidence.js";
+ main
 import { jsonObjectSchema, jsonValueSchema } from "../domain/jsonValue.js";
 import type { ProgressReporter } from "./ProgressReporter.js";
 import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
@@ -31,6 +41,9 @@ export type AnalysisOperation =
   | NativeToolName
   | ArtifactAnalysisOperation
   | ManagedToolName
+  // Provider aggregate and composed public overview have distinct Evidence and
+  // snapshot identities. This capability does not add a CLI/MCP tool.
+  | "read_binary_inventory_summary"
   | "health";
 
 export interface AnalysisExecution {
@@ -104,9 +117,15 @@ export const createAnalysisExecutionEvidence = (
   operation: string,
   input: unknown,
   execution: AnalysisExecution,
+ docs/apk-signature-grammar-final
   confidence: "observed" | "derived" = "observed",
 ): Evidence =>
     createEvidence(execution.subject ?? undefined, execution.provider, {
+
+  confidence: "observed" | "derived",
+): Evidence =>
+  createEvidence(execution.subject ?? undefined, execution.provider, {
+ main
     operation,
     parameters: jsonObjectSchema.parse(input),
     result: execution.result,
@@ -114,11 +133,17 @@ export const createAnalysisExecutionEvidence = (
     limitations: execution.limitations,
     locations: execution.locations,
     confidence,
+ docs/apk-signature-grammar-final
     ...(execution.analysisProfile !== undefined
       ? { analysisProfile: execution.analysisProfile }
       : {}),
   });
 
+
+  });
+
+/** Provider-neutral application capability for one analysis operation. */
+ main
 export interface AnalysisOperationPort {
   execute(
     operation: AnalysisOperation,
@@ -151,6 +176,12 @@ export interface AnalysisClient extends AnalysisOperationPort {
   ): Promise<Result<AnalysisExecution, AnalysisError> | undefined>;
   runtimeLineageSnapshots?(): readonly ProviderRuntimeLineageSnapshot[];
   requestActivitySnapshots?(): readonly ProviderRequestActivitySnapshot[];
+ docs/apk-signature-grammar-final
+
+  /** Local reuse admission is separate from observed native process health. */
+  reuseReadiness?(): "ready" | "blocked" | "unknown";
+  /** Current operational health for the active provider bridge. */
+ main
   operationHealthSnapshot?(): ProviderOperationHealth | undefined;
   close(
     options?: Pick<ExecutionOptions, "progress"> & {
@@ -164,7 +195,14 @@ export interface AnalysisClientContext {
 }
 
 export interface FileCloseResourceOwner {
-  retain(owner: { close(): Promise<void> }, resource: string): void;
+  retain(
+    owner: {
+      close(): Promise<void>;
+      /** Complete labels authored by this exact owner; the display label is only a fallback. */
+      readonly cleanupResources?: readonly string[] | undefined;
+    },
+    resource: string,
+  ): void;
   run<T>(operation: () => Promise<T>): Promise<T>;
 }
 
@@ -178,8 +216,17 @@ export interface AnalysisProfileResolution {
   readonly profile: AnalysisProfileCommitment | null;
 }
 
+ docs/apk-signature-grammar-final
 export interface AnalysisProfileResolutionOptions {
+
+/** Cancellation context for side-effect-free provider profile resolution. */
+export interface AnalysisProviderInspectionOptions {
+ main
   readonly signal?: AbortSignal;
+  readonly scope?: ProviderInspectionScope;
+}
+
+export interface AnalysisProfileResolutionOptions extends AnalysisProviderInspectionOptions {
   readonly fileCloseResources?: FileCloseResourceOwner;
 }
 
@@ -266,12 +313,25 @@ export interface AnalysisProviderReadinessSnapshot {
 }
 
 export interface AnalysisProviderCandidate extends AnalysisProvider {
+  /**
+   * Own inspection through final reads and cleanup. Observe the supplied owner
+   * signal cooperatively; resolve only after finalization settles, retaining any
+   * failed cleanup capability. Registry cancellation and shutdown join this
+   * completion rather than abandoning the promise.
+   */
   resolveAnalysisProfile(
     target: BinaryTarget,
     options?: AnalysisProfileResolutionOptions,
   ): Promise<Result<AnalysisProfileResolution, AnalysisError>>;
-  inspectAvailability(): ProviderAvailability;
-  inspectReadinessSnapshot?(): AnalysisProviderReadinessSnapshot;
+  /** Await prerequisite observations and finalization under the supplied owner signal. */
+  inspectAvailability(
+    options?: AnalysisProviderInspectionOptions,
+  ): ProviderAvailability | Promise<ProviderAvailability>;
+  inspectReadinessSnapshot?(
+    options?: AnalysisProviderInspectionOptions,
+  ):
+    | AnalysisProviderReadinessSnapshot
+    | Promise<AnalysisProviderReadinessSnapshot>;
   inspectTargetSupport(target: BinaryTarget): ProviderTargetSupport;
   hasPendingOwnedResources?(): boolean;
   closeOwnedResources?(): Promise<Result<null, AnalysisError>>;
