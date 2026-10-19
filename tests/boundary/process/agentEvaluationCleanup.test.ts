@@ -5,11 +5,14 @@ import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import {
   execFileOutput,
   execFileOutputFailure,
 } from "../../../src/process/ExecFileOutput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+const receiptSchema = z.object({ root: z.string(), codex: z.string() });
 
 // Permission denial needs an ordinary POSIX user. This exercises the actual
 // verifier entrypoint before authentication copying, setup or model requests.
@@ -46,6 +49,7 @@ process.exitCode = 1;
       { mode: 0o700 },
     );
     let run: { root: string; codex: string } | undefined;
+    let primaryError: unknown;
     try {
       let stderr: string;
       try {
@@ -81,13 +85,11 @@ process.exitCode = 1;
         expect(failure.code).toBe(1);
         stderr = failure.stderr;
       }
-      run = z
-        .object({ root: z.string(), codex: z.string() })
-        .parse(JSON.parse(await readFile(receipt, "utf8")));
       // Cleanup must preserve the original version diagnostic too.
-      expect
-        .soft(stderr)
-        .toContain("--version failed with 1: synthetic version failure");
+      expect(stderr).toContain(
+        "--version failed with 1: synthetic version failure",
+      );
+      run = receiptSchema.parse(JSON.parse(await readFile(receipt, "utf8")));
       if (denied) {
         expect.soft(stderr).toContain("Verifier cleanup failed");
         expect(stderr).toContain("EACCES");
@@ -108,14 +110,34 @@ process.exitCode = 1;
       }
       if (!denied && !keep)
         await expect(stat(run.root)).rejects.toMatchObject({ code: "ENOENT" });
+    } catch (cause) {
+      primaryError = cause;
+      throw cause;
     } finally {
       // Restore this test's deliberately denied subtree before fixture teardown.
-      if (denied) {
-        run ??= z
-          .object({ root: z.string(), codex: z.string() })
-          .parse(JSON.parse(await readFile(receipt, "utf8")));
-        await chmod(run.codex, 0o700);
-      }
+      if (denied)
+        await closeVerifierResources(
+          [
+            async () => {
+              try {
+                run ??= receiptSchema.parse(
+                  JSON.parse(await readFile(receipt, "utf8")),
+                );
+              } catch (cause) {
+                // Startup can fail before the executable creates its receipt.
+                if (
+                  cause instanceof Error &&
+                  "code" in cause &&
+                  cause.code === "ENOENT"
+                )
+                  return;
+                throw cause;
+              }
+              await chmod(run.codex, 0o700);
+            },
+          ],
+          primaryError,
+        );
     }
   },
 );
