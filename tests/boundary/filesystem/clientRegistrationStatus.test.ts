@@ -284,6 +284,7 @@ describe("commandcode registration status", () => {
           client: "commandcode",
           state: "invalid",
           command: [],
+          remediation: expect.stringContaining("transport: Must be stdio"),
         }),
       ]);
     },
