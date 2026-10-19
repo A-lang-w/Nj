@@ -17,6 +17,7 @@ import {
   ENVIRONMENT_CARD_PATH,
   ENVIRONMENT_RPC_PATH,
   environmentRoutes,
+  MAX_RPC_BATCH_MESSAGES,
   REPLAY_CATALOG_INSTRUCTIONS,
   serveEnvironment,
   type ServedEnvironment,
@@ -191,6 +192,52 @@ describe("environment routes", () => {
         code: -32000,
         message: `Request body must not exceed ${String(DEFAULT_MAX_REQUEST_BODY_SIZE)} bytes`,
       },
+    });
+  });
+});
+
+describe("environment data plane validation", () => {
+  it("refuses malformed JSON-RPC members and oversized batches as invalid requests", async () => {
+    const rpc = route("POST", ENVIRONMENT_RPC_PATH);
+    const post = (body: unknown) =>
+      rpc.handle(
+        new Request(`http://127.0.0.1${ENVIRONMENT_RPC_PATH}`, {
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+      );
+    // Every member is validated: an id is a string, number or null, and params are an object or array.
+    for (const invalid of [
+      { jsonrpc: "2.0", id: {}, method: "data/reset" },
+      { jsonrpc: "2.0", id: true, method: "data/reset" },
+      { jsonrpc: "2.0", method: "data/notify", params: 1 },
+    ]) {
+      const reply = await post(invalid);
+      expect(reply.status).toBe(400);
+      await expect(reply.json()).resolves.toEqual({
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32600, message: "invalid request" },
+      });
+    }
+    await expect(
+      (
+        await post({
+          jsonrpc: "2.0",
+          id: null,
+          method: "data/reset",
+          params: [],
+        })
+      ).json(),
+    ).resolves.toMatchObject({ id: null, error: { code: -32601 } });
+    // A batch is bounded before any reply is built for it.
+    const oversized = await post(
+      Array.from({ length: MAX_RPC_BATCH_MESSAGES + 1 }, () => 0),
+    );
+    expect(oversized.status).toBe(400);
+    await expect(oversized.json()).resolves.toMatchObject({
+      id: null,
+      error: { code: -32600 },
     });
   });
 });

@@ -36,7 +36,9 @@ later increment.
   contracts and digests.
 - Replay by selecting, among the tool's cited records, the one whose path
   segments at the parameter indexes match the most supplied values, then the
-  most supplied query values, keeping manifest order on ties; return `status`,
+  most of those segments equal to the value as written rather than only after
+  percent-decoding, then the most supplied query values, keeping manifest order
+  on ties; return `status`,
   `content_type`, `body` (parsed JSON for JSON-like content types that parse,
   else text; bodies over 256 KiB cut at a UTF-8 boundary with
   `truncated: true`) and `replay` with `record_ordinal`, `evidence_id`,

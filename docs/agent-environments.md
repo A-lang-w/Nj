@@ -71,6 +71,9 @@ where the answer came from:
 
 `exact_match` is true when every supplied path parameter and query value
 equals the recorded one; it says nothing about parameters the caller omitted.
+A path value matches a recorded segment as written or after percent-decoding;
+when both kinds of match are available, the record whose segment equals the
+value as written is chosen.
 When no record matches, the tool still answers from the tool's first cited
 record and reports `exact_match: false`. `body` is parsed JSON when the
 recorded content type is JSON-like (`application/json`, `application/*+json`,
@@ -130,8 +133,10 @@ can see that the method, not the transport, is unsupported. Its request body is
 read within the same 4 MiB bound the MCP endpoint applies: a larger body is
 answered `413` with a JSON-RPC `-32000` error before any of it is parsed, and a
 body that is not JSON is answered `400` with `-32700`. A notification (no `id`)
-gets `202` and no body, a batch gets one reply per request in it, an empty batch
-or a message that is not a JSON-RPC request gets `-32600 invalid request`.
+gets `202` and no body, a batch gets one reply per request in it, and an empty
+batch, a batch of more than 100 messages, or a message that is not a JSON-RPC
+request (including an `id` that is not a string, number or null, or `params`
+that are not an object or array) gets `-32600 invalid request`.
 
 ## The environment card
 
