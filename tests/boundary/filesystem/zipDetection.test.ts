@@ -1,5 +1,6 @@
 import { lstat, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createPackage } from "@electron/asar";
 
 import {
   TextReader,
@@ -60,14 +61,20 @@ describe("ZIP signature detection", () => {
   it("requires container magic for asar, pkg, and dmg suffixes", async () => {
     const root = await createTestTempDirectory("rea-container-magic-");
     const asar = join(root, "app.asar");
+    const truncatedAsar = join(root, "truncated.asar");
     const textAsar = join(root, "notes.asar");
     const pkg = join(root, "install.pkg");
     const textPkg = join(root, "notes.pkg");
     const dmg = join(root, "image.dmg");
     const textDmg = join(root, "notes.dmg");
+    const source = join(root, "source");
+    await mkdir(source);
+    await writeFile(join(source, "fixture.txt"), "ASAR member bytes\n");
+    await createPackage(source, asar);
+    // The old fixture declares 28 total header bytes but contains only 18.
     const headerSize = 20;
     await writeFile(
-      asar,
+      truncatedAsar,
       Buffer.from([
         4,
         0,
@@ -99,6 +106,18 @@ describe("ZIP signature detection", () => {
     expect(
       (await classifyAndHashRoot(asar, false, await lstat(asar))).format,
     ).toBe("asar");
+    expect(
+      artifactOccurrenceAt(await inventoryArtifact(asar), "fixture.txt"),
+    ).toMatchObject({ entry_kind: "file", hash_status: "verified" });
+    expect(
+      (
+        await classifyAndHashRoot(
+          truncatedAsar,
+          false,
+          await lstat(truncatedAsar),
+        )
+      ).format,
+    ).toBe("file");
     expect(
       (await classifyAndHashRoot(textAsar, false, await lstat(textAsar)))
         .format,
