@@ -13,3 +13,6 @@
 [submodule "third_party/wakaru"]
 	path = third_party/wakaru
 	url = https://github.com/pionxzh/wakaru.git
+[submodule "third_party/ecc"]
+	path = third_party/ecc
+	url = https://github.com/affaan-m/ECC.git
