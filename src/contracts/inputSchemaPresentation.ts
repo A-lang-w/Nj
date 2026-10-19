@@ -947,7 +947,8 @@ const normalizeReferencedTargets = (
       defs[name] = replacement;
       if (pathValue(advertised, defsPath) === undefined)
         assignAtPath(advertised, defsPath, defs);
-      reachedTargets.push([defsPath, resourceTokens]);
+      // Only the parked definition itself is executable; never walk the
+      // `$defs` map, whose entry names are definition names, not keywords.
       reachedTargets.push([[...defsPath, name], resourceTokens]);
     }
     return name;

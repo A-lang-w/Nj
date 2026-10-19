@@ -895,6 +895,34 @@ describe("advertised empty-string literals", () => {
     expect(advertised.properties.value).toEqual({ type: "string" });
   });
 
+  it("does not walk parked definitions maps as schemas", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        guard: {
+          not: {
+            allOf: [{ $id: "https://example.com/r", type: "object" }],
+            const: "",
+          },
+        },
+        a: { $ref: "#/properties/guard/not" },
+      },
+      $defs: {
+        items: { $ref: "#/properties/guard/not" },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    const defs = advertised.$defs as Record<string, unknown>;
+    // Definition-name entries keep their reference shape, retargeted at the
+    // parked schema rather than walked as schema keywords.
+    expect(defs.items).toEqual({
+      $ref: expect.stringMatching(/^#\/\$defs\/advertisedRelocated/),
+    });
+    expect(advertised.properties.a).toEqual({
+      $ref: expect.stringMatching(/^#\/\$defs\/advertisedRelocated/),
+    });
+  });
+
   it("parks cyclic removed reference groups", () => {
     const canonical = {
       type: "object",
