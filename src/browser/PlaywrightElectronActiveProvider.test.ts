@@ -11,11 +11,13 @@ import {
 } from "../../tests/fixtures/electron/fuseImage.js";
 
 import * as processOwnership from "../process/ProcessOwnership.js";
+import { ProcessOwnershipEvidenceOwner } from "../process/ProcessOwnershipEvidence.js";
 import * as ownershipObservation from "../process/ProcessOwnershipObservation.js";
 import * as electronActions from "./PlaywrightElectronActiveActions.js";
 import { electronActiveObservationInputSchema } from "../domain/javascript/electronActiveObservation.js";
 import type { OwnedProcessGroup } from "../process/ProcessOwnership.js";
 import type { ElectronFuseImage } from "../electron/ElectronFuseReader.js";
+import type { PersistentOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
   PlaywrightElectronActiveProvider,
   safeElectronEnvironment,
@@ -138,12 +140,17 @@ it("passes required Windows runtime variables without inheriting unrelated value
   });
 });
 
-const ownership = {
-  runId: "run",
-  leaderPid: 4242,
-  processGroupId: 4242,
-  expectedParentPid: 1,
-} satisfies OwnedProcessGroup;
+let ownership: PersistentOwnedProcessGroup;
+
+beforeEach(() => {
+  ownership = {
+    runId: "run",
+    leaderPid: 4242,
+    processGroupId: 4242,
+    expectedParentPid: 1,
+    evidenceOwner: new ProcessOwnershipEvidenceOwner(),
+  };
+});
 
 const emptyHookSnapshot = () => ({
   events: [],
@@ -761,8 +768,8 @@ it("cancels a completed capture when cancellation arrives during process cleanup
   stubCompletedCapture();
   const controller = new AbortController();
   const reason = new Error("SIGTERM during process cleanup");
-  // The POSIX path ends with the token sweep; Windows ends with tree termination.
-  vi.spyOn(processOwnership, "verifyNoTokenOwnedProcesses").mockImplementation(
+  // POSIX cleanup owns the final sweep; Windows uses tree termination.
+  vi.spyOn(processOwnership, "cleanupOwnedProcessGroup").mockImplementation(
     async () => {
       controller.abort(reason);
       return {
