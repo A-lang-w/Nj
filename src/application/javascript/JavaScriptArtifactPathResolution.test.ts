@@ -3415,3 +3415,26 @@ it("resolves Node runtime entrypoints without substituting emitted TypeScript so
       ...(candidatePath === undefined ? {} : { candidate_path: candidatePath }),
     });
 });
+
+it.each(["sub\\main.cjs", ".\\main.cjs", "C:main.cjs"])(
+  "retains unknown host semantics for the Windows-relative entrypoint %s",
+  (declaredPath) => {
+    expect(
+      resolve({
+        declaredPath,
+        sourcePath: "app/package.json",
+        context: "filesystem-expression",
+        runtimePathKind: "node-entrypoint",
+        files: fileMap([
+          file("app/package.json", "root"),
+          file("app/main.cjs", "root"),
+          file("app/sub/main.cjs", "root"),
+        ]),
+      }),
+    ).toMatchObject({
+      declared_path: declaredPath,
+      resolution_status: "unavailable",
+      resolved_path: null,
+    });
+  },
+);

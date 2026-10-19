@@ -10,6 +10,39 @@ const expressionWrappers = [
 ] as const;
 
 it.each([
+  ['const load = module.require.bind(module); load("./shared.cjs");', true],
+  [
+    'const api = module; const load = api.require.bind(api); load("./shared.cjs");',
+    true,
+  ],
+  [
+    'const load = module["require"][`bind`](module); load("./shared.cjs");',
+    true,
+  ],
+  ['module.require.call(module, "./shared.cjs");', true],
+  ['module.require.apply(module, ["./shared.cjs"]);', true],
+  [
+    'const module = { require() {} }; const load = module.require.bind(module); load("./shared.cjs");',
+    false,
+  ],
+  [
+    'const api = module.exports; const load = api.require.bind(api); load("./shared.cjs");',
+    false,
+  ],
+])(
+  "retains unchecked module delegate invocation and capture: %s",
+  (source, possibleModule) => {
+    const analysis = analyzeJavaScriptStaticSource(source);
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.references).toEqual(
+      possibleModule
+        ? [expect.objectContaining({ kind: "require", specifier: null })]
+        : [],
+    );
+  },
+);
+
+it.each([
   ["const { api = module } = options;", true],
   ["const { api = module } = {};", true],
   ["const { api = module } = { api: {} };", false],

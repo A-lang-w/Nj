@@ -313,7 +313,16 @@ export const semanticModuleRequireCallAt = (
   node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
-  const callee = unwrapJavaScriptExpression(node.callee).node;
+  let callee = unwrapJavaScriptExpression(node.callee).node;
+  if (
+    (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+    ["bind", "call", "apply"].includes(
+      semanticStaticPropertyKey(callee.property, callee.computed) ?? "",
+    )
+  )
+    // Capturing a bound delegate can load outside the visible module graph.
+    // Keep that possibility without asserting bind/call/apply is unmodified.
+    callee = unwrapJavaScriptExpression(callee.object).node;
   return (
     (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
     semanticStaticPropertyKey(callee.property, callee.computed) === "require" &&

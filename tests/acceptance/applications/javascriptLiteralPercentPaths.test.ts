@@ -28,6 +28,12 @@ const fixtureImports = (loader: string) => {
 };
 
 const unprovenLoaderSources: Readonly<Record<string, string>> = {
+  "bound module loader":
+    'const load = module.require.bind(module); load("../shared/window.cjs");',
+  "bound module alias loader":
+    'const current = module; const load = current.require.bind(current); load("../shared/window.cjs");',
+  "computed bound module loader":
+    'const load = module["require"].bind(module); load("../shared/window.cjs");',
   "fallback module alias":
     'const { loader = module } = options; loader.require("../shared/window.cjs");',
   "inactive fallback":
@@ -38,6 +44,35 @@ const unprovenLoaderSources: Readonly<Record<string, string>> = {
   "dynamic file URL": 'import("file:///shared/window.cjs");',
   "createRequire base":
     'import { createRequire } from "node:module"; const require = createRequire(new URL("../other/nested/main.cjs", import.meta.url)); require("../shared/window.cjs");',
+};
+
+const fixtureMainPath = (loader: string): string => {
+  switch (loader) {
+    case "absolute ESM":
+    case "absolute dynamic import":
+    case "absolute file URL":
+    case "dynamic file URL":
+    case "createRequire base":
+      return "main.mjs";
+    case "absolute main":
+      return "/opt/app/main.cjs";
+    case "Windows relative main":
+      return "sub\\main.cjs";
+    case "Windows drive-relative main":
+      return "C:main.cjs";
+    case "percent main":
+    case "single percent main":
+      return "main%2Fentry.cjs";
+    default:
+      return "main.cjs";
+  }
+};
+
+const fixtureMainInventoryPath = (loader: string, main: string): string => {
+  if (loader === "absolute main") return "opt/app/main.cjs";
+  if (loader === "Windows relative main") return "b/sub/main.cjs";
+  if (loader === "Windows drive-relative main") return "b/main.cjs";
+  return `b/${main}`;
 };
 
 const fixtureLoaderSource = (loader: string): string =>
@@ -82,6 +117,8 @@ cliTest.for(
       "earlier reassigned module alias",
       "conditional module alias",
       "absolute main",
+      "Windows relative main",
+      "Windows drive-relative main",
       "percent main",
       "pattern alias",
       "recursive alias",
@@ -104,7 +141,6 @@ cliTest.for(
   async ({ surface, loader }, { cli }) => {
     const root = await createTestTempDirectory("rea-loader-owner-");
     const single = loader === "single percent main";
-    const percent = single || loader === "percent main";
     const inert = [
       "builtin alias",
       "electron alias",
@@ -118,19 +154,7 @@ cliTest.for(
       "earlier reassigned module alias",
     ].includes(loader);
     const absolute = loader === "absolute main";
-    const main = [
-      "absolute ESM",
-      "absolute dynamic import",
-      "absolute file URL",
-      "dynamic file URL",
-      "createRequire base",
-    ].includes(loader)
-      ? "main.mjs"
-      : absolute
-        ? "/opt/app/main.cjs"
-        : percent
-          ? "main%2Fentry.cjs"
-          : "main.cjs";
+    const main = fixtureMainPath(loader);
     const imports = fixtureImports(loader);
     const load = fixtureLoaderSource(loader);
     await writeFixtureFiles(root, {
@@ -140,7 +164,7 @@ cliTest.for(
           ? "module.exports = 1;"
           : 'require("../shared/window.cjs");',
       "b/package.json": JSON.stringify({ main, imports }),
-      [absolute ? "opt/app/main.cjs" : `b/${main}`]: load,
+      [fixtureMainInventoryPath(loader, main)]: load,
       "b/proxy/window.cjs": 'require("../../shared/window.cjs");',
       "b/node_modules/fixture-window/package.json": JSON.stringify({
         main: "index.cjs",
@@ -155,6 +179,19 @@ cliTest.for(
       "index.html": "artifact-root decoy",
     });
     const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    if (loader.startsWith("Windows "))
+      expect(graph.edges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            relation: "loads",
+            properties: expect.objectContaining({
+              declared_path: main,
+              resolution_status: "unavailable",
+              resolved_path: null,
+            }),
+          }),
+        ]),
+      );
     if (
       ["absolute require", "absolute ESM", "absolute dynamic import"].includes(
         loader,
@@ -206,6 +243,9 @@ cliTest.for(
         "later reassigned module alias",
         "conditional module alias",
         "fallback module alias",
+        "bound module loader",
+        "bound module alias loader",
+        "computed bound module loader",
       ].includes(loader)
     )
       expect(graph.edges).toEqual(

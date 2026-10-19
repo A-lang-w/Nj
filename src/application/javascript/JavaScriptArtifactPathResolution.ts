@@ -414,6 +414,13 @@ const isRuntimePathDeclaration = (input: ResolveArtifactPathInput): boolean =>
 const resolveNodeRuntimeEntrypoint = (
   input: ResolveArtifactPathInput,
 ): CandidateResolution => {
+  if (
+    !input.declaredPath.includes("\0") &&
+    (input.declaredPath.includes("\\") || /^[a-z]:/iu.test(input.declaredPath))
+  )
+    return unresolvedCandidate("unavailable", [
+      "Windows-relative runtime paths require target-platform and drive context that the selected logical artifact inventory does not establish.",
+    ]);
   const { runtimePathKind: _runtimePathKind, ...sourceInput } = input;
   const runtimeInput = { ...sourceInput, moduleKind: "require" as const };
   if (!isRuntimePathDeclaration(runtimeInput)) return resolvePath(runtimeInput);
