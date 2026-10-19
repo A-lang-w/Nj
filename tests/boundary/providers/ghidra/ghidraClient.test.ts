@@ -1,7 +1,10 @@
 import { parseConfig } from "../../../../src/config/parseConfig.js";
 import { GhidraProvider } from "../../../../src/ghidra/GhidraProvider.js";
 import { fixtureDosLoadImage } from "../../../../src/ghidra/GhidraLoadImage.fixture.js";
-import { jsonValueSchema } from "../../../../src/domain/jsonValue.js";
+import {
+  jsonValueSchema,
+  type JsonValue,
+} from "../../../../src/domain/jsonValue.js";
 import { artifactFilePrimaryFailure } from "../../../../src/artifacts/ArtifactFileOperation.js";
 import { AnalysisCancelledError } from "../../../../src/domain/analysisErrorCore.js";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -2005,6 +2008,23 @@ const managedStore = (calls: unknown[]): GhidraProjectStore =>
     },
   }) as unknown as GhidraProjectStore;
 
+/** One request per mutating operation the bridge admits. */
+const MUTATION_REQUESTS: Readonly<Record<string, Record<string, JsonValue>>> = {
+  annotate_native_function: {
+    procedure: "0x1000",
+    name: "fixture_renamed",
+  },
+  set_address_name: {
+    document: null,
+    address: "0x1000",
+    name: "fixture_renamed",
+  },
+  set_addresses_names: {
+    document: null,
+    names: { "0x1000": "fixture_renamed" },
+  },
+};
+
 const managedPersistence = (
   calls: unknown[],
   overrides: Partial<GhidraProjectPersistence> = {},
@@ -2068,22 +2088,28 @@ describe("GhidraClient managed project publication", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("does not publish after a mutating operation", async () => {
-    const calls: unknown[] = [];
-    const client = clientFor(new FixtureLauncher("success"), {
-      projectPersistence: managedPersistence(calls),
-    });
-    await expect(client.start()).resolves.toMatchObject({ ok: true });
-    const [mutating] = [...GHIDRA_MUTATING_OPERATIONS];
-    if (mutating === undefined)
-      throw new Error("expected a mutating Ghidra operation");
-    await client.callTool(
-      mutating as Parameters<GhidraClient["callTool"]>[0],
-      {},
-    );
-    await expect(client.close()).resolves.toMatchObject({ ok: true });
-    expect(calls).toHaveLength(0);
-  });
+  it.each([...GHIDRA_MUTATING_OPERATIONS])(
+    "does not publish after the mutating operation %s",
+    async (mutating) => {
+      const calls: unknown[] = [];
+      const launcher = new FixtureLauncher("success");
+      const client = clientFor(launcher, {
+        projectPersistence: managedPersistence(calls),
+      });
+      await expect(client.start()).resolves.toMatchObject({ ok: true });
+      const result = await client.callTool(
+        mutating as Parameters<GhidraClient["callTool"]>[0],
+        MUTATION_REQUESTS[mutating] ?? {},
+      );
+      // The bridge answers the mutation, so the request settles instead of
+      // waiting for a reply that never arrives. A read-only transport refuses
+      // the mutation, exactly like the real bridge.
+      expect(result.ok).toBe(HOST_TRANSPORT === "unix-socket");
+      expect(launcher.requests).toContain(mutating);
+      await expect(client.close()).resolves.toMatchObject({ ok: true });
+      expect(calls).toHaveLength(0);
+    },
+  );
 });
 
 it("preserves failed startup and retained Ghidra cleanup capabilities until a verified retry", async () => {
