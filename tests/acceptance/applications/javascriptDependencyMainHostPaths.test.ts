@@ -10,6 +10,7 @@ cliTest.for(
     [
       { main: "/shared/window.cjs", status: "unavailable" },
       { main: "../../shared/window.cjs", status: "resolved" },
+      { main: "sub\\entry.cjs", status: "unavailable" },
     ].map((testCase) => ({ surface, ...testCase })),
   ),
 )(
@@ -26,6 +27,12 @@ cliTest.for(
         'throw new Error("Static fixture must never execute");require("../shared/window.cjs");',
       "b/index.html": "second application page",
       "node_modules/fixture/package.json": JSON.stringify({ main }),
+      ...(main.includes("\\")
+        ? {
+            "node_modules/fixture/sub/entry.cjs":
+              'throw new Error("Static fixture must never execute");require("../../../shared/window.cjs");',
+          }
+        : {}),
       "shared/window.cjs":
         'throw new Error("Static fixture must never execute");const {BrowserWindow}=require("electron");new BrowserWindow().loadFile("index.html");',
       "shared/index.html": "source-relative decoy",

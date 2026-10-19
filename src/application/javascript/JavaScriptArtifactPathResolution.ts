@@ -649,6 +649,18 @@ const contextualCandidate = (
       return bareModuleCandidate(input);
     if (input.moduleKind !== "require") {
       if (hasUrlPathSemantics) {
+        // URL normalization can leave and then re-enter the synthetic namespace.
+        // Preserve the shared URL owner's above-root markers before that loss.
+        if (
+          applyUrlReference(
+            urlDirectoryState(posix.dirname(input.sourcePath)),
+            stripQueryAndFragment(declared),
+            true,
+          ).escapes > 0
+        )
+          return unresolvedCandidate("rejected", [
+            "The module URL escapes the selected logical artifact root.",
+          ]);
         const sourceUrl = packageMetadataUrl(input.sourcePath, declared);
         const base = sourceUrl.ok
           ? sourceUrl.value
@@ -786,17 +798,19 @@ const urlDirectoryState = (directory: string): UrlPathState => ({
 const applyUrlReference = (
   base: UrlPathState,
   reference: string,
+  encodedDotSegments = false,
 ): UrlPathState => {
   const absolute = reference.startsWith("/");
   const segments = absolute ? [] : [...base.segments];
   let escapes = absolute ? 0 : base.escapes;
   const parts = (absolute ? reference.slice(1) : reference).split("/");
   for (const [index, part] of parts.entries()) {
-    if (part !== "." && part !== "..") {
+    const dot = encodedDotSegments ? part.replace(/%2e/giu, ".") : part;
+    if (dot !== "." && dot !== "..") {
       segments.push(part);
       continue;
     }
-    if (part === "..")
+    if (dot === "..")
       if (segments.length > 0) segments.pop();
       else escapes += 1;
     if (index === parts.length - 1) segments.push("");
@@ -1537,6 +1551,10 @@ const resolveDirectory = (
   };
   const hostPath = resolveRuntimeHostPath(entryInput);
   if (hostPath !== null) return hostPath;
+  if (entryInput.moduleKind !== undefined) {
+    const windowsPath = unknownWindowsRuntimePath(entry);
+    if (windowsPath !== null) return windowsPath;
+  }
   const candidate = contextualCandidate(entryInput);
   if (typeof candidate !== "string") return candidate;
   const confined = confineCandidate(candidate);

@@ -301,7 +301,7 @@ const isCreateRequireOrigin = (
 };
 
 /** Assignment expressions expose their RHS; short-circuit stores may keep the old value. */
-const assignmentValueSources = (
+export const assignmentValueSources = (
   node: t.AssignmentExpression,
 ): readonly t.Node[] =>
   node.operator === "="

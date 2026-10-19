@@ -51,6 +51,18 @@ const cases = [
     changed: false,
   },
   {
+    name: "assigned app",
+    setter: "let runtime;(runtime=app).setAppPath('/changed');",
+    owners: 1,
+    changed: true,
+  },
+  {
+    name: "assigned local app",
+    setter: "let runtime;(runtime={setAppPath(){}}).setAppPath('/changed');",
+    owners: 1,
+    changed: false,
+  },
+  {
     name: "shared returned app",
     setter: "const getApp=()=>app;getApp().setAppPath('./lib');",
     owners: 3,

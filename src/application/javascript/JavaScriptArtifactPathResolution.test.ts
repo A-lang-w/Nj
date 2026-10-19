@@ -3448,6 +3448,33 @@ describe("url-reference JavaScript artifact path resolution", () => {
 });
 
 describe("module-backed package main host paths", () => {
+  it.each([
+    ["sub\\entry.cjs", "unavailable", null],
+    ["sub/entry.cjs", "resolved", "app/node_modules/fixture/sub/entry.cjs"],
+  ] as const)(
+    "preserves dependency main host semantics for %s",
+    (main, status, expected) => {
+      expect(
+        resolve({
+          declaredPath: "fixture",
+          sourcePath: "app/main.cjs",
+          context: "module-specifier",
+          moduleKind: "require",
+          files: fileMap([
+            file("app/main.cjs", "root"),
+            file(
+              "app/node_modules/fixture/package.json",
+              "root",
+              JSON.stringify({ main }),
+            ),
+            file("app/node_modules/fixture/sub/entry.cjs", "root"),
+            file("app/node_modules/fixture/index.js", "root"),
+          ]),
+        }),
+      ).toMatchObject({ resolution_status: status, resolved_path: expected });
+    },
+  );
+
   it.each(
     [
       "/shared/window.cjs",
@@ -3619,7 +3646,7 @@ describe("exact HTML resource resolution", () => {
 });
 
 it.each(["require", "import"] as const)(
-  "rejects a literal trailing backslash package main before %s probing",
+  "retains unknown Windows trailing-backslash package main semantics before %s probing",
   (moduleKind) => {
     const files = fileMap([
       file("entry.js", "root"),
@@ -3638,7 +3665,7 @@ it.each(["require", "import"] as const)(
         moduleKind,
         files,
       }),
-    ).toMatchObject({ resolution_status: "rejected", resolved_path: null });
+    ).toMatchObject({ resolution_status: "unavailable", resolved_path: null });
   },
 );
 

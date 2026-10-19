@@ -26,6 +26,7 @@ import {
 } from "./javascriptSemanticState.js";
 import type { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
+import { assignmentValueSources } from "./javascriptSemanticRequireOrigin.js";
 
 interface Candidate {
   readonly node: t.Node;
@@ -252,6 +253,9 @@ export const createSemanticElectronAppPathChangeQuery = (
       } else if (t.isSequenceExpression(node)) {
         const last = node.expressions.at(-1);
         if (last !== undefined) enqueue({ ...current, node: last });
+      } else if (t.isAssignmentExpression(node)) {
+        for (const source of assignmentValueSources(node))
+          enqueue({ ...current, node: source });
       } else if (
         (t.isObjectExpression(node) || t.isArrayExpression(node)) &&
         (path === undefined || path.length > 0)

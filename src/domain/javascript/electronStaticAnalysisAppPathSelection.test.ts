@@ -6,6 +6,36 @@ import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 const prefix = "const {app,BrowserWindow}=require('electron');";
 const cases = [
   {
+    name: "assigned native app receiver",
+    body: "let runtime;(runtime=app).setAppPath('/changed');",
+    possible: true,
+    calls: [1],
+  },
+  {
+    name: "assigned local app receiver",
+    body: "let runtime;(runtime={setAppPath(){}}).setAppPath('/changed');",
+    possible: false,
+    calls: [0],
+  },
+  {
+    name: "logical-or assigned app receiver",
+    body: "let runtime=flag?{setAppPath(){}}:null;(runtime||=app).setAppPath('/changed');",
+    possible: true,
+    calls: [1, 0],
+  },
+  {
+    name: "logical-and assigned app receiver",
+    body: "let runtime=flag?app:null;(runtime&&=app)?.setAppPath('/changed');",
+    possible: true,
+    calls: [0, 1],
+  },
+  {
+    name: "nullish assigned app receiver",
+    body: "let runtime=flag?{setAppPath(){}}:null;(runtime??=app).setAppPath('/changed');",
+    possible: true,
+    calls: [1, 0],
+  },
+  {
     name: "definite local setter replacement",
     body: "app.setAppPath=()=>{};app.setAppPath('/changed');",
     possible: false,
