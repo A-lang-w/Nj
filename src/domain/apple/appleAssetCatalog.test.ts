@@ -103,4 +103,19 @@ describe("compiled Apple asset catalog projection", () => {
       }),
     );
   });
+
+  it("does not mark an empty catalog as truncated for a positive offset", () => {
+    const page = projectAppleAssetCatalogPage({
+      targetSha256: "c".repeat(64),
+      catalogs: [],
+      offset: 5,
+      limit: 10,
+    });
+
+    expect(page.total_records).toBe(0);
+    expect(page.records).toEqual([]);
+    expect(page.next_offset).toBeNull();
+    expect(page.truncated).toBe(false);
+  });
+
 });
