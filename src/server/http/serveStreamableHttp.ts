@@ -7,7 +7,7 @@ import {
   readRequestBody,
   WebStandardStreamableHTTPServerTransport,
   type McpServer,
-  type McpServerFactory,
+  type McpRequestContext,
   type Server,
 } from "@modelcontextprotocol/server";
 import { randomUUID } from "node:crypto";
@@ -26,6 +26,8 @@ import {
   writeWebResponse,
 } from "./nodeHttpBridge.js";
 import { StreamableHttpListenError } from "./streamableHttpListenError.js";
+import { RequestTrackingMcpServer } from "../RequestTrackingMcpServer.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 
 /** MCP endpoint path shared by `rea mcp --http` and agent environment servers. */
 export const MCP_HTTP_PATH = "/mcp";
@@ -41,7 +43,11 @@ export interface ServeStreamableHttpOptions {
   readonly host: string;
   readonly port: number;
   /** Called once; the instance serves every session in turn on a fresh transport. */
-  readonly createMcpServer: McpServerFactory;
+  readonly createMcpServer: (
+    context: McpRequestContext,
+  ) => RequestTrackingMcpServer | Promise<RequestTrackingMcpServer>;
+  /** Maximum time a handover or shutdown waits for cancelled tool handlers. */
+  readonly sessionDrainTimeoutMs?: number;
   readonly routes?: readonly StreamableHttpRoute[];
   readonly logger?: Logger;
   /** Reports listener failures after binding; request failures are logged instead. */
@@ -53,6 +59,8 @@ export interface ServeStreamableHttpOptions {
 export interface StreamableHttpServer {
   /** The bound MCP endpoint URL. */
   readonly url: string;
+  /** Stop incoming dispatch and drain handlers before shared provider owners close. */
+  readonly prepareShutdown: () => Promise<void>;
   readonly close: () => Promise<void>;
 }
 
@@ -111,6 +119,18 @@ const describe = (cause: unknown): string =>
 const NO_SHUTDOWN_HOOK = (): void => undefined;
 const SHUTTING_DOWN = (): Response =>
   jsonError(503, -32000, "Server shutting down");
+const DEFAULT_SESSION_DRAIN_TIMEOUT_MS = 10_000;
+
+class SessionDrainTimeoutError extends AnalysisResourceConstraintError {
+  constructor(timeoutMs: number) {
+    super(
+      "mcp_http_session",
+      "transport",
+      "Previous MCP session still has running tool calls; retry after they finish",
+      { drain_timeout_ms: timeoutMs },
+    );
+  }
+}
 
 /** Split a header field on `separator` outside quoted strings, honouring backslash escapes (RFC 9110). */
 const splitUnquoted = (value: string, separator: string): string[] => {
@@ -202,12 +222,15 @@ export class McpSessionSlot {
   #arming: Promise<WebStandardStreamableHTTPServerTransport> | undefined;
   #closed = false;
   #hookRan = false;
+  #draining = false;
+  #ending: Promise<void> | undefined;
   /** The instance's own close hook, captured once; it runs exactly once, when the listener closes. */
   readonly #shutdownHook: () => void;
 
   constructor(
-    private readonly instance: McpServer | Server,
+    private readonly instance: RequestTrackingMcpServer,
     private readonly logger: Logger | undefined,
+    private readonly drainTimeoutMs = DEFAULT_SESSION_DRAIN_TIMEOUT_MS,
   ) {
     const protocol = protocolOf(instance);
     const captured = protocol.onclose ?? NO_SHUTDOWN_HOOK;
@@ -228,6 +251,17 @@ export class McpSessionSlot {
 
   /** Route one MCP request; a new client's initialize replaces a session its predecessor left open. */
   async handle(request: Request): Promise<Response> {
+    try {
+      return await this.#handle(request);
+    } catch (cause: unknown) {
+      if (!(cause instanceof SessionDrainTimeoutError)) throw cause;
+      return jsonError(503, -32000, cause.message);
+    }
+  }
+
+  async #handle(request: Request): Promise<Response> {
+    if (this.#closed) return SHUTTING_DOWN();
+    if (this.#draining) await this.#live?.transport.close();
     if (this.#closed) return SHUTTING_DOWN();
     const open = this.#live;
     if (
@@ -252,7 +286,7 @@ export class McpSessionSlot {
     await this.#arming?.catch(() => undefined);
     const open = this.#live;
     // The session stays owned until its shutdown succeeds, so a retry can finish it.
-    await open?.shutdown();
+    await open?.transport.close();
     if (this.#live === open) this.#live = undefined;
     // Without a live transport nothing fires the instance's hook; run it here, once.
     this.#shutdownHook();
@@ -288,12 +322,29 @@ export class McpSessionSlot {
     transport: WebStandardStreamableHTTPServerTransport,
     shutdown: () => Promise<void>,
   ): Promise<void> {
+    if (this.#live?.transport !== transport) return;
+    if (this.#ending !== undefined) return this.#ending;
+    this.#draining = true;
+    const ending = this.#finishSession(transport, shutdown).finally(() => {
+      if (this.#ending === ending) this.#ending = undefined;
+    });
+    this.#ending = ending;
+    return ending;
+  }
+
+  async #finishSession(
+    transport: WebStandardStreamableHTTPServerTransport,
+    shutdown: () => Promise<void>,
+  ): Promise<void> {
     const protocol = protocolOf(this.instance);
     protocol.onclose = NO_SHUTDOWN_HOOK;
     try {
       await shutdown();
-      // Only a completed shutdown releases the session; a failed one stays live for a retry.
+      if (!(await this.instance.drainToolCalls(this.drainTimeoutMs)))
+        throw new SessionDrainTimeoutError(this.drainTimeoutMs);
+      // A timed-out handler remains owned and blocks reuse until a later drain succeeds.
       if (this.#live?.transport === transport) this.#live = undefined;
+      this.#draining = false;
     } finally {
       protocol.onclose = this.#shutdownHook;
     }
@@ -386,7 +437,7 @@ export const serveStreamableHttp = async (
   });
   // Bind failures already rejected the listening wait above; only later listener errors are reported.
   httpServer.on("error", (error) => options.onerror?.(error));
-  let instance: McpServer | Server;
+  let instance: RequestTrackingMcpServer;
   try {
     instance = await options.createMcpServer({ era: "legacy" });
   } catch (cause: unknown) {
@@ -396,7 +447,11 @@ export const serveStreamableHttp = async (
   }
   protocolOf(instance).onerror = (error) =>
     logger?.warn({ error: error.message }, "MCP HTTP request rejected");
-  const live = new McpSessionSlot(instance, logger);
+  const live = new McpSessionSlot(
+    instance,
+    logger,
+    options.sessionDrainTimeoutMs,
+  );
   slot = live;
   if (allowedHosts === undefined)
     logger?.warn(
@@ -407,12 +462,12 @@ export const serveStreamableHttp = async (
   logger
     ?.child({}, { level: "info" })
     .info({ transport: "streamable-http", url }, "MCP transport listening");
+  const prepareShutdown = stagedClose([closeListener, () => live.close()]);
   const close = stagedClose([
-    closeListener,
-    () => live.close(),
+    prepareShutdown,
     ...(closeInstance ? [() => instance.close()] : []),
   ]);
-  return { url, close };
+  return { url, prepareShutdown, close };
 };
 
 /** Stop accepting, drop open connections and release the port. */

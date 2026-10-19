@@ -58,10 +58,17 @@ const httpRuntimeDependencies = (
       // Loaded here so the default stdio entry never loads the HTTP listener.
       const { serveStreamableHttp } =
         await import("./server/http/serveStreamableHttp.js");
+      const { RequestTrackingMcpServer } =
+        await import("./server/RequestTrackingMcpServer.js");
       // The transport's factory owner closes every instance it created; the listener must not race it.
       return serveStreamableHttp({
         ...endpoint,
-        createMcpServer: factory,
+        createMcpServer: async (context) => {
+          const server = await factory(context);
+          if (!(server instanceof RequestTrackingMcpServer))
+            throw new TypeError("HTTP MCP servers must track tool completion");
+          return server;
+        },
         closeInstance: false,
         ...options,
       });

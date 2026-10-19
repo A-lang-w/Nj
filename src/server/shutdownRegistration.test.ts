@@ -156,6 +156,55 @@ it.each(shutdownEvents)(
   },
 );
 
+it("keeps shared provider owners open when the transport preparation barrier fails", async () => {
+  const events: string[] = [];
+  let attempts = 0;
+  const session = createManagedBinarySession();
+  const closeSession = session.close.bind(session);
+  session.close = async (...args) => {
+    events.push("session");
+    return closeSession(...args);
+  };
+  const lifecycle = createShutdown({
+    handle: {
+      prepareShutdown: async () => {
+        events.push("prepare");
+        attempts += 1;
+        if (attempts === 1) throw new Error("tool cleanup is still running");
+      },
+      close: async () => {
+        events.push("transport");
+      },
+    },
+    closeOptionalProviders: async () => {
+      events.push("provider");
+    },
+    session,
+    dependencies: {
+      env: {},
+      serve: () => {
+        throw new Error("unused transport");
+      },
+      writeStderr: () => undefined,
+      setExitCode: () => undefined,
+      registerShutdown: () => () => undefined,
+    },
+    serverLogger: pino({ enabled: false }),
+  });
+  await expect(lifecycle.shutdown()).rejects.toThrow(
+    "tool cleanup is still running",
+  );
+  expect(events).toEqual(["prepare"]);
+  await lifecycle.shutdown();
+  expect(events).toEqual([
+    "prepare",
+    "prepare",
+    "transport",
+    "provider",
+    "session",
+  ]);
+});
+
 it("joins concurrent shutdown events and retries only failed owners", async () => {
   const signals = new EventEmitter();
   const input = new EventEmitter();

@@ -2,10 +2,7 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import {
-  McpServer,
-  WebStandardStreamableHTTPServerTransport,
-} from "@modelcontextprotocol/server";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { Agent, request as httpRequest } from "node:http";
 import pino from "pino";
 import { afterEach, expect, it, vi } from "vitest";
@@ -22,6 +19,7 @@ import {
   type StreamableHttpServer,
 } from "./serveStreamableHttp.js";
 import { StreamableHttpListenError } from "./streamableHttpListenError.js";
+import { RequestTrackingMcpServer } from "../RequestTrackingMcpServer.js";
 
 const servers: StreamableHttpServer[] = [];
 
@@ -30,11 +28,14 @@ afterEach(async () => {
 });
 
 /** An echo server whose protocol onclose hook counts as a shutdown, as rea's provider cleanup does. */
-const createEchoServer = (onShutdown: () => void): McpServer => {
-  const server = new McpServer({ name: "echo-fixture", version: "1" });
+const createEchoServer = (onShutdown: () => void): RequestTrackingMcpServer => {
+  const server = new RequestTrackingMcpServer({
+    name: "echo-fixture",
+    version: "1",
+  });
   server.registerTool(
     "echo",
-    { description: "Echo text", inputSchema: { text: z.string() } },
+    { description: "Echo text", inputSchema: z.object({ text: z.string() }) },
     ({ text }) => ({ content: [{ type: "text", text }] }),
   );
   server.server.onclose = onShutdown;
@@ -840,4 +841,138 @@ it("does not let a zero-quality, quoted or SDK-refused Accept qualify a session 
   }
   expect(await echo(client, "kept")).toEqual([{ type: "text", text: "kept" }]);
   await client.close();
+});
+
+it.each(["replacement", "DELETE"])(
+  "waits for a cancelled tool's finally block before reusing the instance after %s",
+  async (ending) => {
+    let release!: () => void;
+    let entered!: () => void;
+    let cancelled!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const aborted = new Promise<void>((resolve) => {
+      cancelled = resolve;
+    });
+    let state = "initial";
+    let connections = 0;
+    const { served } = await start({
+      createMcpServer: () => {
+        const server = createEchoServer(() => undefined);
+        const connectServer = server.connect.bind(server);
+        server.connect = async (transport) => {
+          connections += 1;
+          await connectServer(transport);
+        };
+        server.registerTool(
+          "slow",
+          { inputSchema: z.object({}) },
+          async (_args, context) => {
+            context.mcpReq.signal.addEventListener("abort", cancelled, {
+              once: true,
+            });
+            entered();
+            try {
+              await gate;
+              return { content: [] };
+            } finally {
+              state = "old-finally";
+            }
+          },
+        );
+        return server;
+      },
+    });
+    const first = await connect(served.url);
+    let next: Awaited<ReturnType<typeof connect>> | undefined;
+    let replacement: ReturnType<typeof connect> | undefined;
+    try {
+      void first.client
+        .callTool({ name: "slow", arguments: {} })
+        .catch(() => undefined);
+      await started;
+      const deletion =
+        ending === "DELETE" ? first.transport.terminateSession() : undefined;
+      if (deletion !== undefined) await aborted;
+      let connected = false;
+      replacement = connect(served.url).then((value) => {
+        connected = true;
+        next = value;
+        return value;
+      });
+      await aborted;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(connections).toBe(1);
+      expect(connected).toBe(false);
+      expect(state).toBe("initial");
+      release();
+      await deletion;
+      const connectedNext = await replacement;
+      expect(state).toBe("old-finally");
+      await expect(echo(connectedNext.client, "new session")).resolves.toEqual([
+        { type: "text", text: "new session" },
+      ]);
+    } finally {
+      release();
+      await replacement?.catch(() => undefined);
+      await first.client.close();
+      await next?.client.close();
+    }
+  },
+);
+
+it("refuses reuse after a drain timeout and retries the retained handler before shutdown", async () => {
+  let release!: () => void;
+  let entered!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let shutdowns = 0;
+  const { served } = await start({
+    sessionDrainTimeoutMs: 0,
+    createMcpServer: () => {
+      const server = createEchoServer(() => {
+        shutdowns += 1;
+      });
+      server.registerTool("slow", { inputSchema: z.object({}) }, async () => {
+        entered();
+        await gate;
+        return { content: [] };
+      });
+      return server;
+    },
+  });
+  const first = await connect(served.url);
+  try {
+    void first.client
+      .callTool({ name: "slow", arguments: {} })
+      .catch(() => undefined);
+    await started;
+    const refused = await fetch(served.url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: await initializeRequest().text(),
+    });
+    expect(refused.status).toBe(503);
+    await expect(served.close()).rejects.toThrow(
+      "still has running tool calls",
+    );
+    expect(shutdowns).toBe(0);
+    release();
+    await expect(served.close()).resolves.toBeUndefined();
+    expect(shutdowns).toBe(1);
+  } finally {
+    release();
+    await first.client.close();
+  }
 });

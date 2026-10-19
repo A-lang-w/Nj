@@ -462,7 +462,14 @@ is acknowledged with `202`; responses arrive as JSON or SSE frames; `DELETE
 /mcp` with the session id ends the session with `200`. Ending a session is not
 a server shutdown: the process keeps listening, the instance keeps its providers
 and the shared active target, and the next client opens a fresh session against
-them. The newest client replaces an open session: an `initialize` that arrives
+them. Ending or replacing a session cancels its running tool calls and waits
+up to ten seconds for their handlers and cleanup to finish before reusing the
+server. A timeout returns `503`; the old calls remain owned, and later requests
+retry the drain rather than starting another session against those resources.
+Tool callbacks whose validation finishes after cancellation never start.
+HTTP factories use `RequestTrackingMcpServer` so completion is tracked even
+when cancellation suppresses the SDK's reply.
+The newest client replaces an open session: an `initialize` that arrives
 while a session is open ends that session instead of being refused, because a
 client that exits without `DELETE` must not wedge the listener; the replaced
 client's open streams are closed and its later requests are refused. Only an

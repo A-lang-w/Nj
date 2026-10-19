@@ -201,7 +201,11 @@ export const startMcpTransport = async (
   return {
     ok: true,
     handle: {
+      ...(handle.prepareShutdown === undefined
+        ? {}
+        : { prepareShutdown: handle.prepareShutdown }),
       close: async () => {
+        await handle.prepareShutdown?.();
         const results = await Promise.allSettled([
           handle.close(),
           closeServers(),
