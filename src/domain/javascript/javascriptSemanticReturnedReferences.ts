@@ -6,8 +6,19 @@ import {
 } from "./javascriptAstValues.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
-import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
-import { semanticProjectedSourcesAtRead } from "./javascriptSemanticProjectedSources.js";
+import {
+  semanticReferenceSourcesInactive,
+  semanticKnownArrayIteration,
+  semanticSelectedReferenceSlot,
+} from "./javascriptSemanticReferenceSources.js";
+import { semanticArrayPropertyReferences } from "./javascriptSemanticObjectReferences.js";
+import {
+  semanticNormalizeCapturedSelections,
+  semanticProjectedSourcesAtRead,
+  semanticShiftCapturedSelections,
+  type SemanticCapturedSelection,
+} from "./javascriptSemanticProjectedSources.js";
+import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
   semanticPropertyPathKeyMatches,
   type JavaScriptSemanticPropertyPath,
@@ -35,6 +46,9 @@ interface Candidate {
   readonly path: SemanticAliasSelectionPath | undefined;
   /** Member selection happens at its use, while a captured function keeps its read. */
   readonly readAt?: t.Node;
+  readonly capturedSelections?:
+    | readonly SemanticCapturedSelection[]
+    | undefined;
 }
 
 export interface SemanticReturnedReferenceResult {
@@ -106,6 +120,8 @@ export const createSemanticReturnedReferences = (
       Map<string, number | undefined>
     >();
     const expanded = new WeakMap<t.Node, Set<string>>();
+    let additionalCaptureStates = 0;
+    let captureContextsWidened = false;
     const result: {
       references: readonly SemanticReturnedReference[];
       precision: SemanticReturnedReferenceResult["precision"];
@@ -121,9 +137,10 @@ export const createSemanticReturnedReferences = (
       node: t.Node,
       path: Candidate["path"],
       readAt?: t.Node,
+      capturedSelections?: readonly SemanticCapturedSelection[],
     ): void => {
       const source = unwrapJavaScriptExpression(node).node;
-      const readKey = `${readAt?.start ?? -1}:${readAt?.end ?? -1}`;
+      const readKey = JSON.stringify([readAt?.start ?? -1, readAt?.end ?? -1]);
       const depths = projectionDepths.get(source) ?? new Map();
       projectionDepths.set(source, depths);
       if (!depths.has(readKey)) {
@@ -137,15 +154,48 @@ export const createSemanticReturnedReferences = (
         }
       }
       if (path !== undefined) path = selections.normalize(source, path);
-      const key = JSON.stringify([readKey, path ?? null]);
+      capturedSelections =
+        path === undefined
+          ? undefined
+          : semanticNormalizeCapturedSelections(
+              capturedSelections,
+              path.length,
+            );
+      const expansionKey = () =>
+        JSON.stringify([
+          readKey,
+          path ?? null,
+          capturedSelections?.map(({ at, depth }) => [at.start, at.end, depth]),
+        ]);
+      let key = expansionKey();
       const paths = expanded.get(source) ?? new Set<string>();
       if (paths.has(key)) return;
+      // Copy contexts are an additional selector dimension. Bound them by the
+      // same query budget, then visit the complete unknown-projection closure.
+      if (
+        !captureContextsWidened &&
+        capturedSelections !== undefined &&
+        paths.size > 0 &&
+        ++additionalCaptureStates > SEMANTIC_ALIAS_SELECTION_LIMIT
+      ) {
+        captureContextsWidened = true;
+        state.valueResourceLimits.add("alias-selections");
+        result.precision = "widened";
+      }
+      if (captureContextsWidened) {
+        path = undefined;
+        capturedSelections = undefined;
+        depths.set(readKey, undefined);
+        key = expansionKey();
+        if (paths.has(key)) return;
+      }
       paths.add(key);
       expanded.set(source, paths);
       work.push({
         node: source,
         path,
         ...(readAt === undefined ? {} : { readAt }),
+        ...(capturedSelections === undefined ? {} : { capturedSelections }),
       });
     };
     enqueue(callee, []);
@@ -164,23 +214,41 @@ export const createSemanticReturnedReferences = (
         if (current.path !== undefined) {
           const selectedSources = semanticProjectedSourcesAtRead(
             binding,
-            current.readAt ?? node,
+            node,
             current.path,
             state,
             false,
+            current.readAt ?? node,
+            current.capturedSelections,
           );
           if (selectedSources !== undefined) {
-            for (const source of selectedSources)
+            for (const source of selectedSources) {
+              const capturedSelections = [
+                ...(semanticShiftCapturedSelections(
+                  current.capturedSelections,
+                  source.path.length - current.path.length,
+                ) ?? []),
+                ...(source.capturedSelections ?? []),
+              ];
               pending.push({
                 ...source,
                 ...(current.path.length === 0
                   ? {}
                   : { readAt: current.readAt ?? node }),
+                ...(capturedSelections.length === 0
+                  ? {}
+                  : { capturedSelections }),
               });
+            }
             for (let index = pending.length - 1; index >= 0; index--) {
               const child = pending[index];
               if (child !== undefined)
-                enqueue(child.node, child.path, child.readAt);
+                enqueue(
+                  child.node,
+                  child.path,
+                  child.readAt,
+                  child.capturedSelections,
+                );
             }
             continue;
           }
@@ -188,7 +256,7 @@ export const createSemanticReturnedReferences = (
         }
         const selected = semanticBindingAtRead(
           binding,
-          current.readAt ?? node,
+          node,
           state.parentsByNode,
         ).binding;
         for (const initializer of [
@@ -205,6 +273,14 @@ export const createSemanticReturnedReferences = (
             ...(current.path?.length === 0
               ? {}
               : { readAt: current.readAt ?? node }),
+            ...(current.capturedSelections === undefined
+              ? {}
+              : {
+                  capturedSelections: semanticShiftCapturedSelections(
+                    current.capturedSelections,
+                    initializer.projection.length,
+                  ),
+                }),
           });
         }
         if (current.path === undefined)
@@ -231,6 +307,14 @@ export const createSemanticReturnedReferences = (
           ...current,
           node: receiver,
           readAt: current.readAt ?? node,
+          ...(current.capturedSelections === undefined
+            ? {}
+            : {
+                capturedSelections: semanticShiftCapturedSelections(
+                  current.capturedSelections,
+                  path.length,
+                ),
+              }),
           path:
             current.path === undefined
               ? undefined
@@ -262,6 +346,52 @@ export const createSemanticReturnedReferences = (
         selectObjectTargets(node, current, pending, objectTargets);
       else if (t.isArrayExpression(node)) {
         const [key, ...path] = current.path ?? [];
+        if (current.path !== undefined && key !== undefined) {
+          for (const choice of semanticAliasSelectionChoices(key))
+            for (const source of semanticArrayPropertyReferences(node, [
+              choice,
+            ])) {
+              let projection = source.path;
+              if (
+                source.capturedSelectionAt !== undefined &&
+                !semanticKnownArrayIteration(
+                  semanticSelectedReferenceSlot(
+                    { node: source.node, projection: [] },
+                    state,
+                    source.capturedSelectionAt,
+                  )?.value,
+                  state,
+                )
+              )
+                projection = [null, ...source.path.slice(1)];
+              const selectedPath = [...projection, ...path];
+              pending.push({
+                ...current,
+                node: source.node,
+                path: selectedPath,
+                capturedSelections: [
+                  ...(semanticShiftCapturedSelections(
+                    current.capturedSelections,
+                    selectedPath.length - current.path.length,
+                  ) ?? []),
+                  ...(source.capturedSelectionAt === undefined
+                    ? []
+                    : [{ at: source.capturedSelectionAt, depth: 1 }]),
+                ],
+              });
+            }
+          for (let index = pending.length - 1; index >= 0; index--) {
+            const child = pending[index];
+            if (child !== undefined)
+              enqueue(
+                child.node,
+                child.path,
+                child.readAt,
+                child.capturedSelections,
+              );
+          }
+          continue;
+        }
         let uncertainOffset = false;
         node.elements.forEach((element, offset) => {
           if (element === null) return;
@@ -271,6 +401,10 @@ export const createSemanticReturnedReferences = (
               ...current,
               node: element.argument,
               path: current.path === undefined ? undefined : [null, ...path],
+              capturedSelections: [
+                ...(current.capturedSelections ?? []),
+                { at: element.argument, depth: 1 },
+              ],
             });
           } else if (
             current.path === undefined ||
@@ -284,6 +418,11 @@ export const createSemanticReturnedReferences = (
               ...current,
               node: element,
               path: current.path === undefined ? undefined : path,
+              capturedSelections:
+                semanticShiftCapturedSelections(
+                  current.capturedSelections,
+                  -1,
+                ) ?? [],
             });
         });
       } else if (t.isNewExpression(node))
@@ -312,6 +451,10 @@ export const createSemanticReturnedReferences = (
                 ...current,
                 node: member,
                 path: current.path === undefined ? undefined : path,
+                capturedSelections: semanticShiftCapturedSelections(
+                  current.capturedSelections,
+                  -1,
+                ),
               });
           } else if (
             t.isClassProperty(member) &&
@@ -335,6 +478,10 @@ export const createSemanticReturnedReferences = (
               ...current,
               node: member.value,
               path: current.path === undefined ? undefined : path,
+              capturedSelections: semanticShiftCapturedSelections(
+                current.capturedSelections,
+                -1,
+              ),
             });
         }
         if (node.superClass !== null && node.superClass !== undefined)
@@ -342,7 +489,13 @@ export const createSemanticReturnedReferences = (
       }
       for (let index = pending.length - 1; index >= 0; index--) {
         const child = pending[index];
-        if (child !== undefined) enqueue(child.node, child.path, child.readAt);
+        if (child !== undefined)
+          enqueue(
+            child.node,
+            child.path,
+            child.readAt,
+            child.capturedSelections,
+          );
       }
     }
     const output = [...functions].flatMap((callable) => {
@@ -416,11 +569,20 @@ const selectObjectTargets = (
               ? unknown.value
               : unknown,
           ...(t.isSpreadElement(unknown) ? {} : { path: childPath }),
+          capturedSelections: t.isSpreadElement(unknown)
+            ? [
+                ...(item.capturedSelections ?? []),
+                { at: unknown.argument, depth: 1 },
+              ]
+            : (semanticShiftCapturedSelections(item.capturedSelections, -1) ??
+              []),
         });
       pending.push({
         ...item,
         node: t.isObjectProperty(property) ? property.value : property,
         path: childPath,
+        capturedSelections:
+          semanticShiftCapturedSelections(item.capturedSelections, -1) ?? [],
       });
       return;
     }
@@ -429,7 +591,14 @@ const selectObjectTargets = (
   for (const property of [...node.properties].reverse()) {
     if (replaced) break;
     if (t.isSpreadElement(property)) {
-      pending.push({ ...item, node: property.argument });
+      pending.push({
+        ...item,
+        node: property.argument,
+        capturedSelections: [
+          ...(item.capturedSelections ?? []),
+          { at: property.argument, depth: 1 },
+        ],
+      });
       continue;
     }
     const name = semanticStaticPropertyKey(property.key, property.computed);
@@ -441,8 +610,21 @@ const selectObjectTargets = (
     )
       continue;
     if (t.isObjectProperty(property))
-      pending.push({ ...item, node: property.value, path: childPath });
-    else pending.push({ ...item, node: property, path: childPath });
+      pending.push({
+        ...item,
+        node: property.value,
+        path: childPath,
+        capturedSelections:
+          semanticShiftCapturedSelections(item.capturedSelections, -1) ?? [],
+      });
+    else
+      pending.push({
+        ...item,
+        node: property,
+        path: childPath,
+        capturedSelections:
+          semanticShiftCapturedSelections(item.capturedSelections, -1) ?? [],
+      });
     if (
       key !== null &&
       key !== undefined &&

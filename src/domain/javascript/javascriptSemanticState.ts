@@ -38,6 +38,8 @@ export interface JavaScriptSemanticInitializer {
 
 /** Additional references from destructuring copies and possible defaults. */
 interface JavaScriptSemanticReferenceInitializer extends JavaScriptSemanticInitializer {
+  /** This source is a value replacement, rather than a declaration fallback. */
+  readonly assignment?: true;
   readonly copyKind?: "object-rest" | "array-rest";
   readonly copyProjectionOffset?: number;
   readonly copyExcludedKeys?: readonly string[];
@@ -52,6 +54,10 @@ export interface JavaScriptSemanticMemberEffect {
   readonly node: t.Node | undefined;
   /** Selected RHS values retained by the shared pattern-store owner. */
   readonly assignedSources?: readonly SemanticIterationSource[];
+  /** Binding values whose receiver identities were selected for this effect. */
+  readonly receiverInitializers?: readonly JavaScriptSemanticInitializer[];
+  /** Capture of this binding used while following an aliased effect receiver. */
+  readonly receiverAt?: t.Node;
 }
 
 export type JavaScriptSemanticEffectTiming = "before" | "after" | "unknown";

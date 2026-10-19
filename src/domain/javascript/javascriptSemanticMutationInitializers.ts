@@ -500,6 +500,11 @@ const computeReferenceInitializerPosition = (
     const direct = directInitializerPosition(current, parents);
     if (direct !== null) return direct;
     const parent = parents.get(current);
+    if (
+      t.isAssignmentExpression(parent, { operator: "=" }) &&
+      (t.isObjectPattern(parent.left) || t.isArrayPattern(parent.left))
+    )
+      return directMutationPosition(parent, parents);
     if (t.isFunction(parent))
       return t.isBlockStatement(parent.body)
         ? { body: parent.body.body, index: -1, declaratorIndex: -1 }

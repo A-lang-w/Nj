@@ -454,6 +454,16 @@ const evaluateBinding = (
     const reusable = readMemoizedEvaluation(retained, context);
     if (reusable !== undefined) return reusable;
   }
+  if (
+    binding.referenceInitializers.some(({ assignment }) => assignment) &&
+    (binding.initializers.length > 0 ||
+      (context.state.bindingsById.get(binding.bindingId)?.initializers.length ??
+        0) > 0)
+  )
+    return {
+      status: "ambiguous",
+      reason: `Binding ${binding.name} has value and projected-reference assignments.`,
+    };
   if (binding.initializers.length === 0)
     return {
       status: "unknown",

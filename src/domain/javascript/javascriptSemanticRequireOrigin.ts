@@ -1,4 +1,9 @@
-import { semanticProjectedSourcesAtRead as moduleObjectSourcesAtRead } from "./javascriptSemanticProjectedSources.js";
+import {
+  semanticProjectedSourcesAtRead as moduleObjectSourcesAtRead,
+  semanticNormalizeCapturedSelections,
+  semanticShiftCapturedSelections,
+  type SemanticCapturedSelection,
+} from "./javascriptSemanticProjectedSources.js";
 import * as t from "@babel/types";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 
@@ -346,6 +351,10 @@ const moduleReturnedReferences = new WeakMap<
 type ModuleObjectSource = {
   readonly node: t.Node;
   readonly path: SemanticAliasSelectionPath;
+  readonly readAt?: t.Node | undefined;
+  readonly capturedSelections?:
+    | readonly SemanticCapturedSelection[]
+    | undefined;
 };
 
 const isCommonJsModuleObject = (
@@ -396,7 +405,16 @@ const hasCommonJsModuleSource = (
     const byMode =
       contexts.get(value) ??
       new Map<string, { readonly identities: Map<string, object> }>();
-    const modeKey = JSON.stringify(awaitDepths);
+    const modeKey = JSON.stringify([
+      awaitDepths,
+      next.readAt?.start,
+      next.readAt?.end,
+      next.capturedSelections?.map(({ at, depth }) => [
+        at.start,
+        at.end,
+        depth,
+      ]),
+    ]);
     let context = byMode.get(modeKey);
     if (context === undefined) {
       context = { identities: new Map() };
@@ -433,7 +451,15 @@ const hasCommonJsModuleSource = (
     ) => {
       pending.push(
         ...sources.map((source) => ({
+          ...(next.readAt === undefined ? {} : { readAt: next.readAt }),
+          ...(next.capturedSelections === undefined
+            ? {}
+            : { capturedSelections: next.capturedSelections }),
           ...source,
+          capturedSelections: semanticNormalizeCapturedSelections(
+            source.capturedSelections ?? next.capturedSelections,
+            source.path.length,
+          ),
           ancestors,
           awaitDepths: depths,
         })),
@@ -454,6 +480,11 @@ const hasCommonJsModuleSource = (
     if (t.isMemberExpression(value) || t.isOptionalMemberExpression(value)) {
       enqueue({
         node: value.object,
+        readAt: next.readAt ?? value,
+        capturedSelections: semanticShiftCapturedSelections(
+          next.capturedSelections,
+          1,
+        ),
         path: [
           semanticStaticPropertyKey(value.property, value.computed),
           ...path,
@@ -477,6 +508,20 @@ const hasCommonJsModuleSource = (
             ).map((source) => ({
               node: source.node,
               path: [...source.path, ...remaining],
+              capturedSelections: [
+                ...(semanticShiftCapturedSelections(
+                  next.capturedSelections,
+                  source.path.length - 1,
+                ) ?? []),
+                ...(source.capturedSelectionAt === undefined
+                  ? []
+                  : [
+                      {
+                        at: source.capturedSelectionAt,
+                        depth: source.path.length,
+                      },
+                    ]),
+              ],
             })),
           );
       continue;
@@ -520,6 +565,10 @@ const hasCommonJsModuleSource = (
         ...returned(value.callee).references.map((source) => ({
           node: source.node,
           path: [...source.projection, ...path],
+          capturedSelections: semanticShiftCapturedSelections(
+            next.capturedSelections,
+            source.projection.length,
+          ),
         })),
       );
       continue;
@@ -561,9 +610,23 @@ const hasCommonJsModuleSource = (
       path,
       state,
       includeUnknown,
+      next.readAt ?? value,
+      next.capturedSelections,
     );
     if (sources === undefined) return true;
-    enqueue(...sources);
+    enqueue(
+      ...sources.map((source) => ({
+        ...source,
+        readAt: path.length === 0 ? undefined : (next.readAt ?? value),
+        capturedSelections: [
+          ...(semanticShiftCapturedSelections(
+            next.capturedSelections,
+            source.path.length - path.length,
+          ) ?? []),
+          ...(source.capturedSelections ?? []),
+        ],
+      })),
+    );
   }
   return false;
 };

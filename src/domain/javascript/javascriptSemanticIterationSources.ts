@@ -34,14 +34,17 @@ interface PatternSource extends IterationSourceValue {
 }
 
 /** Select an assigned slot while retaining fresh rest-copy identity and offsets. */
-export const semanticStoredSourceProjection = (
+export const semanticStoredSourceSelection = (
   source: SemanticIterationSource,
   selected: JavaScriptSemanticPropertyPath,
-): JavaScriptSemanticPropertyPath | null => {
+): {
+  readonly projection: JavaScriptSemanticPropertyPath;
+  readonly capturedSelectionDepth?: number;
+} | null => {
   const copy = source.projection.at(-1);
   if (copy === null || typeof copy !== "object")
-    return [...source.projection, ...selected];
-  return semanticCopiedReferencePath(
+    return { projection: [...source.projection, ...selected] };
+  const projection = semanticCopiedReferencePath(
     {
       projection: source.projection,
       copyProjectionOffset: source.projection.length - 1,
@@ -54,6 +57,9 @@ export const semanticStoredSourceProjection = (
     selected,
     "identity",
   );
+  return projection === null
+    ? null
+    : { projection, capturedSelectionDepth: source.projection.length };
 };
 
 interface SourceGuards {

@@ -186,6 +186,104 @@ const loaderCases = [
     unknownLoad: false,
   },
   {
+    name: "captured factory host",
+    source:
+      'let make=()=>module;const box={make};make=()=>({});box.make().require("../shared/window.cjs");',
+    unknownOwner: true,
+    unknownLoad: true,
+  },
+  {
+    name: "captured factory local",
+    source:
+      'let make=()=>({require(){}});const box={make};make=()=>module;box.make().require("../shared/window.cjs");',
+    unknownOwner: false,
+    unknownLoad: false,
+  },
+  {
+    name: "captured array factory",
+    source:
+      'let make=()=>module;const values=[make];make=()=>({});values[0]().require("../shared/window.cjs");',
+    unknownOwner: true,
+    unknownLoad: true,
+  },
+  {
+    name: "captured stored factory",
+    source:
+      'let make=()=>module;const box={};box.make=make;make=()=>({});box.make().require("../shared/window.cjs");',
+    unknownOwner: true,
+    unknownLoad: true,
+  },
+  {
+    name: "copied host factory",
+    source:
+      'const old={make:()=>module};const box={...old};old.make=()=>({});box.make().require("../shared/window.cjs");',
+    unknownOwner: true,
+    unknownLoad: true,
+  },
+  {
+    name: "copied local factory",
+    source:
+      'const old={make:()=>({require(){}})};const box={...old};old.make=()=>module;box.make().require("../shared/window.cjs");',
+    unknownOwner: false,
+    unknownLoad: false,
+  },
+  {
+    name: "twice copied host factory",
+    source:
+      'const old={make:()=>module};const middle={...old};old.make=()=>({});const box={...middle};middle.make=()=>({});box.make().require("../shared/window.cjs");',
+    unknownOwner: true,
+    unknownLoad: true,
+  },
+  {
+    name: "twice copied local factory",
+    source:
+      'const old={make:()=>({require(){}})};const middle={...old};old.make=()=>module;const box={...middle};middle.make=()=>module;box.make().require("../shared/window.cjs");',
+    unknownOwner: false,
+    unknownLoad: false,
+  },
+  {
+    name: "assigned rest captured module",
+    source:
+      'const holder={};const old={loader:module};({...holder.box}=old);old.loader={};holder.box.loader.require("../shared/window.cjs");',
+    unknownOwner: true,
+    unknownLoad: true,
+  },
+  {
+    name: "assigned rest captured local",
+    source:
+      'const holder={};const old={loader:{require(){}}};({...holder.box}=old);old.loader=module;holder.box.loader.require("../shared/window.cjs");',
+    unknownOwner: false,
+    unknownLoad: false,
+  },
+  {
+    name: "copied child later host factory",
+    source:
+      'const old={child:{make:()=>({})}};const box={...old};old.child.make=()=>module;box.child.make().require("../shared/window.cjs");',
+    unknownOwner: true,
+    unknownLoad: true,
+  },
+  {
+    name: "copied child later local factory",
+    source:
+      'const old={child:{make:()=>module}};const box={...old};old.child.make=()=>({require(){}});box.child.make().require("../shared/window.cjs");',
+    unknownOwner: false,
+    unknownLoad: false,
+  },
+  {
+    name: "captured child later module",
+    source:
+      'const inner={loader:{}};const box={inner};inner.loader=module;box.inner.loader.require("../shared/window.cjs");',
+    unknownOwner: true,
+    unknownLoad: true,
+  },
+  {
+    name: "captured child later local",
+    source:
+      'const inner={loader:module};const box={inner};inner.loader={require(){}};box.inner.loader.require("../shared/window.cjs");',
+    unknownOwner: false,
+    unknownLoad: false,
+  },
+  {
     name: "Windows relative require",
     source: `require(${JSON.stringify("..\\shared\\window.cjs")});`,
     unknownOwner: true,

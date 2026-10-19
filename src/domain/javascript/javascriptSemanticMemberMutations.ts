@@ -558,12 +558,27 @@ export function* collectSemanticMemberMutationsSteps(
                 mutation,
               );
           }
+          const receiverInitializers = [
+            ...origins.initializers,
+            ...origins.referenceInitializers,
+          ];
           if (effect === "escape")
-            binding.escapedPaths.push({ path, node: mutation });
+            binding.escapedPaths.push({
+              path,
+              node: mutation,
+              receiverInitializers,
+              ...(current.originAt === undefined
+                ? {}
+                : { receiverAt: current.originAt }),
+            });
           else
             binding.memberWrites.push({
               path,
               node: mutation,
+              receiverInitializers,
+              ...(current.originAt === undefined
+                ? {}
+                : { receiverAt: current.originAt }),
               ...(assignedSources === undefined ? {} : { assignedSources }),
             });
           clearSemanticValueCaches(state);

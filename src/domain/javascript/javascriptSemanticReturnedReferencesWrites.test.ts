@@ -89,6 +89,85 @@ it.each([
   },
 );
 
+it.each([
+  ["let make=()=>module;const box={make};make=()=>({});box.make()", true],
+  ["let make=()=>({});const box={make};make=()=>module;box.make()", false],
+  ["let make=()=>module;const box={make:make};make=()=>({});box.make()", true],
+  ["let make=()=>module;const box=[make];make=()=>({});box[0]()", true],
+  ["let make=()=>({});const box=[make];make=()=>module;box[0]()", false],
+  [
+    "let make=()=>module;const box={make};const saved=box.make;make=()=>({});saved()",
+    true,
+  ],
+  [
+    "let make=()=>module;const box={};box.make=make;make=()=>({});box.make()",
+    true,
+  ],
+  [
+    "let make=()=>({});const box={};box.make=make;make=()=>module;box.make()",
+    false,
+  ],
+  [
+    "let make=()=>module;const box={};[box.make]=[make];make=()=>({});box.make()",
+    true,
+  ],
+  [
+    "let make=()=>module;const old={make};const box={...old};make=()=>({});box.make()",
+    true,
+  ],
+  [
+    "const old={make:()=>module};const box={...old};old.make=()=>({});box.make()",
+    true,
+  ],
+  [
+    "const old={make:()=>({})};const box={...old};old.make=()=>module;box.make()",
+    false,
+  ],
+  [
+    "const old={make:()=>module};const {...box}=old;old.make=()=>({});box.make()",
+    true,
+  ],
+  [
+    "const old={make:()=>({})};const {...box}=old;old.make=()=>module;box.make()",
+    false,
+  ],
+  ["const old=[()=>module];const [...box]=old;old[0]=()=>({});box[0]()", true],
+  ["const old=[()=>({})];const [...box]=old;old[0]=()=>module;box[0]()", false],
+  [
+    "let make=()=>module;const {make:saved=make}={};make=()=>({});saved()",
+    true,
+  ],
+  [
+    "let inner={make:()=>module};const box={inner};inner={make:()=>({})};inner.make=()=>({});box.inner.make()",
+    true,
+  ],
+  [
+    "let inner={make:()=>({})};const box={inner};inner={make:()=>module};inner.make=()=>module;box.inner.make()",
+    false,
+  ],
+  [
+    "let inner={make:()=>({})};const box={inner};inner.make=()=>module;box.inner.make()",
+    true,
+  ],
+  [
+    "let inner={make:()=>({})};const saved=inner;const box={inner};inner={make:()=>({})};saved.make=()=>module;box.inner.make()",
+    true,
+  ],
+] as const)(
+  "retains captured values independently of later member reads: %s",
+  (expression, expected) => {
+    const analysis = analyzeJavaScriptStaticSource(
+      `${expression}.require('./shared.cjs');`,
+    );
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.references).toEqual(
+      expected
+        ? [expect.objectContaining({ kind: "require", specifier: null })]
+        : [],
+    );
+  },
+);
+
 it("refreshes cached returned targets after the shared member index settles", () => {
   const parsed = parseJavaScriptSource(
     "const box={make(){return {};}};box.make=()=>module;box.make();",

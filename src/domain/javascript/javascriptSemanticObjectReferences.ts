@@ -22,6 +22,8 @@ import { expandSemanticGetterResult } from "./javascriptSemanticGetterResults.js
 export interface JavaScriptSemanticObjectReference {
   readonly node: t.Node;
   readonly path: PropertyPath;
+  /** A shallow copy selects this prefix now while retaining its child identity. */
+  readonly capturedSelectionAt?: t.Node;
   readonly iterableFallbackPath?: PropertyPath;
   readonly escapes?: true;
   /** A retry omitted suffixes, so escaping constructed children must cover them. */
@@ -640,6 +642,7 @@ class ObjectReferenceWalk {
     this.#references.push({
       node: property.argument,
       path: [this.#spreadKey(), ...this.#remaining],
+      capturedSelectionAt: property.argument,
     });
     if (
       selected !== null &&
@@ -815,6 +818,7 @@ export const semanticArrayPropertyReferences = (
         references.push({
           node: element.argument,
           path: [sourceKey, ...remaining],
+          capturedSelectionAt: element.argument,
           iterableFallbackPath: [],
         });
       }

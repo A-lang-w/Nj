@@ -121,6 +121,7 @@ interface BindPatternInput {
   readonly kind?: JavaScriptSemanticDefinition["kind"];
   readonly projection?: readonly (string | number | null)[];
   readonly referenceOnly?: boolean;
+  readonly assignmentReference?: true;
   readonly copyKind?: "object-rest" | "array-rest";
   readonly copyProjectionOffset?: number;
   readonly copyExcludedKeys?: readonly string[];
@@ -1477,6 +1478,9 @@ const bindAssignment = (
 ): void => {
   if (t.isAssignmentExpression(node)) {
     const left = unwrapJavaScriptExpression(node.left).node;
+    const selectedPattern =
+      node.operator === "=" &&
+      (t.isObjectPattern(left) || t.isArrayPattern(left));
     if (t.isIdentifier(left))
       addAssignment(
         left,
@@ -1490,17 +1494,28 @@ const bindAssignment = (
         conditionallySkipped,
         node,
       );
-    else
+    else {
       for (const identifier of semanticWriteTargets(node.left))
         if (t.isIdentifier(identifier))
           addAssignment(
             identifier,
-            node,
+            selectedPattern ? null : node,
             scope,
             state,
             conditionallySkipped,
             node,
           );
+      if (selectedPattern)
+        bindPattern({
+          pattern: left,
+          initializer: node.right,
+          scope,
+          state,
+          mutable: true,
+          referenceOnly: true,
+          assignmentReference: true,
+        });
+    }
   } else if (t.isUpdateExpression(node)) {
     const argument = unwrapJavaScriptExpression(node.argument).node;
     if (t.isIdentifier(argument))
@@ -1721,6 +1736,7 @@ const bindPattern = (input: BindPatternInput): void => {
     kind = "variable",
     projection = [],
     referenceOnly = false,
+    assignmentReference,
     copyKind,
     copyProjectionOffset,
     copyExcludedKeys,
@@ -1744,6 +1760,7 @@ const bindPattern = (input: BindPatternInput): void => {
         binding.referenceInitializers.push({
           node: initializer,
           projection,
+          ...(assignmentReference === undefined ? {} : { assignment: true }),
           ...(copyKind === undefined ? {} : { copyKind }),
           ...(copyProjectionOffset === undefined
             ? {}
@@ -1800,6 +1817,7 @@ const bindPattern = (input: BindPatternInput): void => {
       initializer: pattern.right,
       projection: [],
       referenceOnly: true,
+      ...(assignmentReference === undefined ? {} : { assignmentReference }),
       fallbackSources: [
         ...(fallbackSources ?? []),
         ...(initializer === null
@@ -1955,12 +1973,14 @@ const createBinding = (
 
 const addAssignment = (
   identifier: t.Identifier,
-  initializer: t.Node,
+  initializer: t.Node | null,
   scope: JavaScriptSemanticScopeState,
   state: JavaScriptSemanticAnalysisState,
   conditionallySkipped: boolean,
   writeSite?: t.Node,
 ): void => {
+  const mutation = writeSite ?? initializer;
+  if (mutation === null) return;
   const lookup = semanticBindingLookupFromScope(scope, identifier.name, state);
   if (lookup.kind === "captured") return;
   const binding = "binding" in lookup ? lookup.binding : undefined;
@@ -1970,16 +1990,17 @@ const addAssignment = (
     // Unbound identifiers can denote host wrapper bindings (such as require),
     // which are separate from properties written through the global object.
     const writes = state.ambientBindingWrites.get(identifier.name) ?? [];
-    writes.push(writeSite ?? initializer);
+    writes.push(mutation);
     state.ambientBindingWrites.set(identifier.name, writes);
     return;
   }
   const writes = state.bindingWrites.get(binding.bindingId) ?? [];
-  writes.push(writeSite ?? initializer);
+  writes.push(mutation);
   state.bindingWrites.set(binding.bindingId, writes);
   binding.mutable = true;
   binding.definitions.push({ kind: "assignment", location: range(identifier) });
-  binding.initializers.push({ node: initializer, projection: [] });
+  if (initializer !== null)
+    binding.initializers.push({ node: initializer, projection: [] });
   if (conditionallySkipped)
-    state.conditionallySkippedExpressions.add(initializer);
+    state.conditionallySkippedExpressions.add(initializer ?? mutation);
 };
