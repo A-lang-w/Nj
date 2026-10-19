@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { performance } from "node:perf_hooks";
+import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 
 import {
@@ -179,6 +180,8 @@ export interface ProcessOwnershipHost {
   processIdentities?(
     processes: readonly ProcessTableEntry[],
     signal?: AbortSignal,
+    /** Linux UID enrichment is selective; omitted means UID remains unknown. */
+    effectiveUidPids?: ReadonlySet<number>,
   ): Promise<ReadonlyMap<number, ProcessIdentityObservation>>;
   /** Snapshot identities before launch, honoring startup cancellation. */
   captureBaseline?(signal?: AbortSignal): Promise<ProcessOwnershipBaseline>;
@@ -387,11 +390,8 @@ export const cleanupOwnedProcessGroup = async (
       while (!verification.cleaned) {
         const remaining = deadline - performance.now();
         if (remaining <= 0) break;
-        await new Promise<void>((resolve) =>
-          setTimeout(
-            resolve,
-            Math.min(PROCESS_CLEANUP_VERIFICATION_INTERVAL_MS, remaining),
-          ),
+        await delay(
+          Math.min(PROCESS_CLEANUP_VERIFICATION_INTERVAL_MS, remaining),
         );
         verification = await verifyNoTokenOwnedProcesses(
           ownership.runId,
@@ -965,6 +965,14 @@ const sanitizedTokenReadFailure = (diagnostic: string | undefined): string => {
   return "other_unavailable";
 };
 
+const processIdentityHasExited = (
+  identity: ProcessIdentityObservation,
+): boolean =>
+  identity.state === "absent" ||
+  (identity.state === "readable" &&
+    identity.lifecycle?.state === "observed" &&
+    identity.lifecycle.lifecycle === "zombie");
+
 const processOwnershipFailures = async (
   members: readonly ProcessTableEntry[],
   runId: string,
@@ -975,13 +983,7 @@ const processOwnershipFailures = async (
     const facts = await readProcessOwnershipFacts(members, host);
     const failures: ProcessOwnershipValidationFailure[] = [];
     for (const fact of facts) {
-      if (fact.identityAfter.state === "absent") continue;
-      if (
-        fact.identityAfter.state === "readable" &&
-        fact.identityAfter.lifecycle?.state === "observed" &&
-        fact.identityAfter.lifecycle.lifecycle === "zombie"
-      )
-        continue;
+      if (processIdentityHasExited(fact.identityAfter)) continue;
       const relation =
         fact.identityAfter.state === "readable" &&
         fact.identityAfter.relation?.state === "observed"
@@ -1085,9 +1087,7 @@ const recheckOwnershipFailures = async (
       );
       attempt += 1
     ) {
-      await new Promise<void>((resolve) =>
-        setTimeout(resolve, TOKEN_READ_RETRY_DELAY_MS),
-      );
+      await delay(TOKEN_READ_RETRY_DELAY_MS);
       processes = await host.listProcesses();
     }
     const live = new Set(liveProcesses(processes).map(({ pid }) => pid));
@@ -1289,14 +1289,17 @@ const scanWithOwnershipEvidence = async (
     observationRows,
     host,
   );
-  const baselineIdentityFailures: ProcessOwnershipValidationFailure[] = [];
+  const baselineIdentityFailures = new Map<
+    number,
+    ProcessOwnershipValidationFailure
+  >();
   const candidates = observationRows.filter((process) => {
     if (retainedPids.has(process.pid)) return true;
     if (!baseline.has(process.pid)) return true;
     const before = baseline.get(process.pid);
     const now = firstIdentities.get(process.pid);
     if (before === null || now?.state !== "readable") {
-      baselineIdentityFailures.push({
+      baselineIdentityFailures.set(process.pid, {
         pid: process.pid,
         reason: "process-identity-unavailable",
         diagnostic: "process identity was unavailable during token validation",
@@ -1320,21 +1323,16 @@ const scanWithOwnershipEvidence = async (
     },
   );
   let facts = initialFacts;
-  for (
-    let attempt = 0;
-    attempt < TOKEN_READ_RETRY_ATTEMPTS &&
-    facts.some(({ token }) => token.state === "unavailable");
-    attempt += 1
-  ) {
-    await new Promise<void>((resolve) =>
-      setTimeout(resolve, TOKEN_READ_RETRY_DELAY_MS),
-    );
-    const pendingPids = new Set(
-      facts
-        .filter(({ token }) => token.state === "unavailable")
-        .map(({ process }) => process.pid),
-    );
-    const retryRows = candidates.filter(({ pid }) => pendingPids.has(pid));
+  for (let attempt = 0; attempt < TOKEN_READ_RETRY_ATTEMPTS; attempt += 1) {
+    const retryRows = facts
+      .filter(
+        ({ token, identityAfter }) =>
+          token.state === "unavailable" &&
+          !processIdentityHasExited(identityAfter),
+      )
+      .map(({ process }) => process);
+    if (retryRows.length === 0) break;
+    await delay(TOKEN_READ_RETRY_DELAY_MS);
     const retries = await readProcessOwnershipFacts(retryRows, host);
     const retryByPid = new Map(retries.map((fact) => [fact.process.pid, fact]));
     facts = facts.map((fact) => retryByPid.get(fact.process.pid) ?? fact);
@@ -1356,24 +1354,26 @@ const scanWithOwnershipEvidence = async (
   const retainedByPid = new Map(
     retained.map((candidate) => [candidate.pid, candidate]),
   );
-  const failures: ProcessOwnershipValidationFailure[] = [
-    ...baselineIdentityFailures,
-  ];
+  const failures: ProcessOwnershipValidationFailure[] = [];
   const unverified: OwnershipSweepUnverifiedProcess[] = [];
   const owned: ProcessTableEntry[] = [];
   const identities = new Map<number, string | null>();
 
   for (const fact of facts) {
+    // The table row and baseline predate the final native observation. An
+    // exited candidate needs no ownership proof or signal, even when its
+    // token became unreadable while exiting. Unknown native state stays a
+    // cleanup failure; table omission alone is never proof of exit.
+    if (processIdentityHasExited(fact.identityAfter)) continue;
+    const baselineFailure = baselineIdentityFailures.get(fact.process.pid);
+    if (baselineFailure !== undefined) failures.push(baselineFailure);
     if (fact.state === "replaced")
       failures.push({
         pid: fact.process.pid,
         reason: "process-identity-unavailable",
         diagnostic: "process identity changed during token validation",
       });
-    else if (
-      fact.state === "unavailable" &&
-      fact.identityAfter.state !== "absent"
-    )
+    else if (fact.state === "unavailable")
       failures.push({
         pid: fact.process.pid,
         reason: "process-identity-unavailable",
@@ -1392,7 +1392,6 @@ const scanWithOwnershipEvidence = async (
         reason: "run-token-mismatch",
       });
     if (fact.token.state !== "unavailable") continue;
-    if (fact.identityAfter.state === "absent") continue;
     const relationBefore =
       fact.identityBefore.state === "readable"
         ? fact.identityBefore.relation
@@ -1504,9 +1503,7 @@ const settleUnreadableTokenCandidates = async (
     attempt < TOKEN_READ_RETRY_ATTEMPTS && remaining.length > 0;
     attempt += 1
   ) {
-    await new Promise<void>((resolve) =>
-      setTimeout(resolve, TOKEN_READ_RETRY_DELAY_MS),
-    );
+    await delay(TOKEN_READ_RETRY_DELAY_MS);
     let live: ReadonlySet<number> | undefined;
     try {
       live = new Set(
