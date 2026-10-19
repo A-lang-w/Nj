@@ -227,8 +227,9 @@ const normalizeAdvertisedSchema = (value: unknown): SchemaNormalization => {
     changed = true;
   }
   if (Array.isArray(node.enum) && node.enum.includes("")) {
+    const stringEnum = node.enum.every((item) => typeof item === "string");
     delete node.enum;
-    if (node.type === undefined) node.type = "string";
+    if (node.type === undefined && stringEnum) node.type = "string";
     changed = true;
   }
 

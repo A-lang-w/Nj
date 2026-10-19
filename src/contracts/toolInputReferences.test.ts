@@ -269,6 +269,7 @@ describe("empty-string literal presentation", () => {
             description: "A selected status.",
             default: "ready",
           },
+          mixed: { enum: ["", 5] },
           selector: {
             oneOf: [
               { type: "string", const: "" },
@@ -276,7 +277,7 @@ describe("empty-string literal presentation", () => {
             ],
           },
         },
-        required: ["literal", "choices", "selector"],
+        required: ["literal", "choices", "mixed", "selector"],
         additionalProperties: false,
       },
       () => undefined,
@@ -292,6 +293,7 @@ describe("empty-string literal presentation", () => {
       description: "A selected status.",
       default: "ready",
     });
+    expect(properties.mixed).toEqual({});
     expect(properties.selector).toEqual({
       anyOf: [{ type: "string" }, { type: "string", minLength: 1 }],
     });
