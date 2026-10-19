@@ -344,9 +344,20 @@ describe("replayEnvironmentTool bodies", () => {
         body_encoding: encoding,
       });
       expect(typeof result.body).toBe("string");
+      const body = result.body as string;
       expect(
-        Buffer.byteLength(result.body as string, "utf8"),
+        encoding === "base64"
+          ? Buffer.from(body, "base64").length
+          : Buffer.byteLength(body, "utf8"),
       ).toBeLessThanOrEqual(REPLAY_BODY_LIMIT_BYTES);
     }
+    // Under the limit in recorded bytes, even though its base64 spelling is longer.
+    const small = Buffer.alloc(200 * 1024, 0xff);
+    expect(
+      replay("get_users_by_id", { id: "2" }, base64Source(small)),
+    ).toMatchObject({
+      body: small.toString("base64"),
+      replay: { truncated: false, body_encoding: "base64" },
+    });
   });
 });
