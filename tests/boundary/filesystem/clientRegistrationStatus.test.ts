@@ -440,31 +440,60 @@ describe("Node-wrapped registration policy", () => {
     },
   );
 
-  registerClientToolPolicyTests();
+  registerCodexClientToolPolicyTests();
+  registerOtherClientToolPolicyTests();
 });
 
-function registerClientToolPolicyTests(): void {
-  it("accepts Codex per-tool approval settings under mcp_servers.rea.tools", async () => {
-    const home = await createTestTempDirectory("rea-codex-tool-settings-");
-    await mkdir(join(home, ".codex"));
-    const entry = resolve("scripts/rea.mjs");
-    await writeFile(
-      join(home, ".codex/config.toml"),
-      `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 450\n\n[mcp_servers.rea.tools.binary_session]\napproval_mode = "approve"\n`,
-    );
+function registerCodexClientToolPolicyTests(): void {
+  it.each(["approve", "prompt", "auto", "writes"] as const)(
+    "accepts Codex per-tool approval setting approval_mode = %s",
+    async (mode) => {
+      const home = await createTestTempDirectory("rea-codex-tool-settings-");
+      await mkdir(join(home, ".codex"));
+      const entry = resolve("scripts/rea.mjs");
+      await writeFile(
+        join(home, ".codex/config.toml"),
+        `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 450\n\n[mcp_servers.rea.tools.binary_session]\napproval_mode = "${mode}"\n`,
+      );
 
-    const statuses = await readClientRegistrationStatuses(home, entry, {
-      environment: {},
-    });
+      const statuses = await readClientRegistrationStatuses(home, entry, {
+        environment: {},
+      });
 
-    expect(statuses).toEqual([
-      expect.objectContaining({
-        client: "codex",
-        state: "aligned",
-        remediation: null,
-      }),
-    ]);
-  });
+      expect(statuses).toEqual([
+        expect.objectContaining({
+          client: "codex",
+          state: "aligned",
+          remediation: null,
+        }),
+      ]);
+    },
+  );
+
+  it.each(["approve", "prompt", "auto", "writes"] as const)(
+    "accepts Codex server-level default_tools_approval_mode = %s",
+    async (mode) => {
+      const home = await createTestTempDirectory("rea-codex-default-approval-");
+      await mkdir(join(home, ".codex"));
+      const entry = resolve("scripts/rea.mjs");
+      await writeFile(
+        join(home, ".codex/config.toml"),
+        `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 450\ndefault_tools_approval_mode = "${mode}"\n`,
+      );
+
+      const statuses = await readClientRegistrationStatuses(home, entry, {
+        environment: {},
+      });
+
+      expect(statuses).toEqual([
+        expect.objectContaining({
+          client: "codex",
+          state: "aligned",
+          remediation: null,
+        }),
+      ]);
+    },
+  );
 
   it.each([
     'tools = ["*"]',
@@ -476,6 +505,8 @@ function registerClientToolPolicyTests(): void {
     "[mcp_servers.rea.tools.binary_session]\noutput_token_limit = -10",
     "[mcp_servers.rea.tools.binary_session]\noutput_token_limit = 1.0",
     "[mcp_servers.rea.tools.binary_session]\noutput_token_limit = 1e3",
+    'default_tools_approval_mode = "unsupported"',
+    "default_tools_approval_mode = 12",
   ])(
     "reports malformed Codex tools setting %s as invalid",
     async (toolsFragment) => {
@@ -522,7 +553,9 @@ function registerClientToolPolicyTests(): void {
       }),
     ]);
   });
+}
 
+function registerOtherClientToolPolicyTests(): void {
   it("reports a non-array Copilot CLI tools setting as invalid", async () => {
     const home = await createTestTempDirectory("rea-copilot-invalid-tools-");
     await mkdir(join(home, ".copilot"));

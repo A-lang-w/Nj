@@ -506,6 +506,93 @@ describe("Codex per-tool field repair and empty tools table preservation", () =>
   });
 });
 
+describe("Codex default_tools_approval_mode and writes approval mode preservation", () => {
+  it.each(["approve", "writes"] as const)(
+    "preserves server-level default_tools_approval_mode = %s on refresh",
+    async (mode) => {
+      const home = await createTestTempDirectory("rea-codex-default-mode-");
+      roots.push(home);
+      const configPath = join(home, ".codex/config.toml");
+      await mkdir(dirname(configPath), { recursive: true });
+      const original = [
+        "[mcp_servers.rea]",
+        'command = "rea"',
+        'args = ["mcp"]',
+        "startup_timeout_sec = 30",
+        "tool_timeout_sec = 450",
+        `default_tools_approval_mode = "${mode}"`,
+        "",
+      ].join("\n");
+      await writeFile(configPath, original);
+
+      const client = { name: "codex", configPath, format: "toml" } as const;
+      expect(
+        await configureClientConfiguration(client, {}, ["rea", "mcp"]),
+      ).toMatchObject({ status: "unchanged" });
+
+      const configured = await readFile(configPath, "utf8");
+      expect(parseToml(configured)).toMatchObject({
+        mcp_servers: {
+          rea: {
+            command: "rea",
+            args: ["mcp"],
+            startup_timeout_sec: 30,
+            tool_timeout_sec: 450,
+            default_tools_approval_mode: mode,
+          },
+        },
+      });
+    },
+  );
+
+  it("repairs malformed default_tools_approval_mode during setup refresh", async () => {
+    const home = await createTestTempDirectory(
+      "rea-codex-repair-default-mode-",
+    );
+    roots.push(home);
+    const configPath = join(home, ".codex/config.toml");
+    await mkdir(dirname(configPath), { recursive: true });
+    const original = [
+      "[mcp_servers.rea]",
+      'command = "rea"',
+      'args = ["mcp"]',
+      "startup_timeout_sec = 30",
+      "tool_timeout_sec = 450",
+      'default_tools_approval_mode = "bad"',
+      "",
+      "[mcp_servers.rea.tools.binary_session]",
+      'approval_mode = "writes"',
+      "",
+    ].join("\n");
+    await writeFile(configPath, original);
+
+    const client = { name: "codex", configPath, format: "toml" } as const;
+    expect(
+      await configureClientConfiguration(client, {}, ["rea", "mcp"]),
+    ).toMatchObject({ status: "configured" });
+
+    const configured = await readFile(configPath, "utf8");
+    expect(parseToml(configured)).toMatchObject({
+      mcp_servers: {
+        rea: {
+          command: "rea",
+          args: ["mcp"],
+          startup_timeout_sec: 30,
+          tool_timeout_sec: 450,
+          tools: {
+            binary_session: {
+              approval_mode: "writes",
+            },
+          },
+        },
+      },
+    });
+    expect(parseToml(configured)).not.toHaveProperty(
+      "mcp_servers.rea.default_tools_approval_mode",
+    );
+  });
+});
+
 describe("client configuration filesystem lifecycle", () => {
   it("updates a symlink target without replacing the TOML config symlink", async () => {
     const home = await createTestTempDirectory("rea-toml-symlink-");

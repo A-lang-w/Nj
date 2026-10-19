@@ -12,6 +12,7 @@ import {
   clientConfigurationValuesEqual,
   clientServerListedDisabled,
   clientServerPath,
+  codexDefaultToolsApprovalModeSchema,
   codexToolApprovalModeSchema,
   codexToolOutputTokenLimitSchema,
   hasTomlFloatProperty,
@@ -778,6 +779,10 @@ const clientConfigurationDesired = (
   const previous = parsed?.servers[PRODUCT_IDENTITY.mcpServerKey];
   const previousCodexTools =
     client.name === "codex" ? codexTools(previous) : undefined;
+  const previousCodexDefaultToolsApprovalMode =
+    client.name === "codex"
+      ? codexDefaultToolsApprovalMode(previous)
+      : undefined;
   if (
     client.name === "kimi" &&
     typeof previous === "object" &&
@@ -801,6 +806,12 @@ const clientConfigurationDesired = (
           tool_timeout_sec:
             positiveTimeout(previous, "tool_timeout_sec") ??
             recommendedMcpToolTimeoutSeconds(validated.value.timeoutInputs),
+          ...(previousCodexDefaultToolsApprovalMode === undefined
+            ? {}
+            : {
+                default_tools_approval_mode:
+                  previousCodexDefaultToolsApprovalMode,
+              }),
           ...(previousCodexTools === undefined
             ? {}
             : { tools: previousCodexTools }),
@@ -878,6 +889,21 @@ const codexTools = (
     }
   }
   return Object.keys(validTools).length > 0 ? validTools : undefined;
+};
+
+const codexDefaultToolsApprovalMode = (
+  registration: unknown,
+): string | undefined => {
+  if (
+    typeof registration !== "object" ||
+    registration === null ||
+    !Object.hasOwn(registration, "default_tools_approval_mode")
+  )
+    return undefined;
+  const parsed = codexDefaultToolsApprovalModeSchema.safeParse(
+    Reflect.get(registration, "default_tools_approval_mode"),
+  );
+  return parsed.success ? parsed.data : undefined;
 };
 
 const positiveTimeout = (

@@ -58,11 +58,14 @@ export interface ClientConfigurationDocument {
   readonly legacyServers: Record<string, unknown>;
 }
 const objectSchema = z.record(z.string(), z.unknown());
-export const codexToolApprovalModeSchema = z.enum([
+export const codexApprovalModeSchema = z.enum([
   "approve",
   "prompt",
   "auto",
+  "writes",
 ]);
+export const codexToolApprovalModeSchema = codexApprovalModeSchema;
+export const codexDefaultToolsApprovalModeSchema = codexApprovalModeSchema;
 export const codexToolOutputTokenLimitSchema = z.union([
   z.number().int().positive(),
   z.bigint().positive(),

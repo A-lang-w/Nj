@@ -3,6 +3,7 @@ import { readEffectiveClientRegistrationConfiguration } from "./ClientConfigurat
 import {
   clientServerForcedEnabled,
   clientServerListedDisabled,
+  codexDefaultToolsApprovalModeSchema,
   codexServerToolsSchema,
   effectiveClientServer,
   type ClientConfigurationDocument,
@@ -99,6 +100,7 @@ const registrationSchema = z
     transport: z.string().optional(),
     serverName: z.string().optional(),
     tools: z.union([z.array(z.string()), codexServerToolsSchema]).optional(),
+    default_tools_approval_mode: codexDefaultToolsApprovalModeSchema.optional(),
     disabled: z.boolean().optional(),
     enabled: z.boolean().optional(),
   })
