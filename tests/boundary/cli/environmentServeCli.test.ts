@@ -104,7 +104,21 @@ cliTest(
   async ({ cli }) => {
     const records = environmentManifestCaptureFixture();
     const first = records.records[0]!;
-    first.reported.request.url = `https://example.test/api/users/2?${Array.from({ length: 10000 }, (_, index) => `q_${index}=x`).join("&")}`;
+    const reported = first.reported;
+    if (
+      typeof reported !== "object" ||
+      reported === null ||
+      Array.isArray(reported)
+    )
+      throw new Error("Fixture has no reported request");
+    const request = reported.request;
+    if (
+      typeof request !== "object" ||
+      request === null ||
+      Array.isArray(request)
+    )
+      throw new Error("Fixture has no request object");
+    request.url = `https://example.test/api/users/2?${Array.from({ length: 10000 }, (_, index) => `q_${index}=x`).join("&")}`;
     const capture = analysisViewCaptureEvidence(records);
     const manifest = inspectAnalysisView({
       source: { kind: "inline", evidence: capture },

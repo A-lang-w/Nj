@@ -93,11 +93,14 @@ export const parseRecordedTransportUrl = (
 /** WHATWG form decoding; native fallback preserves replacement behavior on malformed escapes/UTF-8. */
 const formComponent = (raw: string): string => {
   if (!/[%+\uD800-\uDFFF]/u.test(raw)) return raw;
-  try {
-    return decodeURIComponent(raw.replaceAll("+", " ")).toWellFormed();
-  } catch {
-    return new URLSearchParams(`value=${raw}`).get("value") ?? "";
+  if (!/[\uD800-\uDFFF]/u.test(raw)) {
+    try {
+      return decodeURIComponent(raw.replaceAll("+", " "));
+    } catch {
+      // Malformed escapes and UTF-8 use the native replacement semantics below.
+    }
   }
+  return new URLSearchParams(`value=${raw}`).get("value") ?? "";
 };
 
 /** Separator coordinates shared by name projection and selected-value matching. */
