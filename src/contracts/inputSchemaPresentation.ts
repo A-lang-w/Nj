@@ -466,6 +466,10 @@ const normalizeAdvertisedSchema = (
     delete node.if;
     delete node.then;
     delete node.else;
+    // The conditional no longer evaluates its branches, so any unevaluated
+    // guard would now reject inputs the branches used to cover.
+    delete node.unevaluatedProperties;
+    delete node.unevaluatedItems;
   } else {
     if (conditional !== undefined) node.if = conditional.schema;
     if (thenBranch !== undefined) {
@@ -659,7 +663,18 @@ const normalizeReferencedTargets = (
       source,
       new Set([reference]),
     );
-    if (result.changed) writes.push([resolved.tokens, result.schema]);
+    if (!result.changed) continue;
+    // Prefer the presented node at the same position so injected property
+    // descriptions survive the writeback.
+    const presented = resolvePointer(advertised, resolved.tokens);
+    const replacement = isObject(presented)
+      ? normalizeAdvertisedSchema(
+          presented,
+          source,
+          new Set([reference]),
+        ).schema
+      : result.schema;
+    writes.push([resolved.tokens, replacement]);
   }
   for (const [tokens, replacement] of writes)
     assignAtPath(advertised, tokens, replacement);

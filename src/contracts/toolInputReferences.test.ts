@@ -762,6 +762,43 @@ describe("advertised empty-string literals", () => {
     });
   });
 
+  it("relaxes unevaluated guards when discarding conditionals", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        kind: { type: "string" },
+        extra: { type: "integer" },
+      },
+      required: ["kind"],
+      if: { properties: { kind: { const: "" } }, required: ["kind"] },
+      then: { properties: { extra: true } },
+      unevaluatedProperties: false,
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.if).toBeUndefined();
+    expect(advertised.unevaluatedProperties).toBeUndefined();
+  });
+
+  it("preserves descriptions when replacing referenced targets", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        path: { type: "string", const: "" },
+        alias: { $ref: "#/properties/path" },
+      },
+      required: ["path"],
+    };
+    const advertised = presentInputJsonSchema(
+      canonical,
+      (property) => (property === "path" ? "The path." : undefined),
+    );
+    expect(advertised.properties.path).toEqual({
+      type: "string",
+      description: "The path.",
+    });
+    expect(advertised.properties.alias).toEqual({ $ref: "#/properties/path" });
+  });
+
   it("does not resolve references across nested resource boundaries", () => {
     const canonical = {
       $defs: { empty: { type: "string", const: "" } },
