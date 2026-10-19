@@ -186,7 +186,14 @@ const referencesChangingTarget = (
       node.$ref,
     );
     if (target === undefined) return false;
-    if (normalizeAdvertisedSchema(target, root).changed) return true;
+    if (
+      normalizeAdvertisedSchema(
+        target,
+        root,
+        new Set([...active, node.$ref]),
+      ).changed
+    )
+      return true;
     return referencesChangingTarget(
       target,
       root,
@@ -202,6 +209,7 @@ const referencesChangingTarget = (
 const normalizeAdvertisedSchema = (
   value: unknown,
   root: unknown = value,
+  active: ReadonlySet<string> = new Set(),
 ): SchemaNormalization => {
   if (!isObject(value)) return { schema: value, changed: false };
 
@@ -210,17 +218,17 @@ const normalizeAdvertisedSchema = (
   const normalizeMap = (map: Readonly<Record<string, unknown>>) =>
     Object.fromEntries(
       Object.entries(map).map(([name, child]) => {
-        const result = normalizeAdvertisedSchema(child, root);
+        const result = normalizeAdvertisedSchema(child, root, active);
         changed ||= result.changed;
         return [name, result.schema];
       }),
     );
   const normalizeList = (list: readonly unknown[]) =>
-    list.map((child) => {
-      const result = normalizeAdvertisedSchema(child, root);
-      changed ||= result.changed;
-      return result;
-    });
+      list.map((child) => {
+        const result = normalizeAdvertisedSchema(child, root, active);
+        changed ||= result.changed;
+        return result;
+      });
 
   for (const [key, child] of Object.entries(value)) {
     if (schemaMaps.has(key) && isObject(child)) {
@@ -241,7 +249,7 @@ const normalizeAdvertisedSchema = (
     ) {
       const results = Array.isArray(child)
         ? normalizeList(child)
-        : [normalizeAdvertisedSchema(child, root)];
+        : [normalizeAdvertisedSchema(child, root, active)];
       const nestedChanged = results.some((result) => result.changed);
       if (
         key === "contains" &&
@@ -302,9 +310,12 @@ const normalizeAdvertisedSchema = (
   }
 
   const negated = Object.hasOwn(value, "not")
-    ? normalizeAdvertisedSchema(value.not, root)
+    ? normalizeAdvertisedSchema(value.not, root, active)
     : undefined;
-  if (negated?.changed || referencesChangingTarget(value.not, root)) {
+  if (
+    negated?.changed ||
+    referencesChangingTarget(value.not, root, active)
+  ) {
     // Widening a predicate under `not` narrows the containing schema.
     changed = true;
     delete node.not;
@@ -313,15 +324,18 @@ const normalizeAdvertisedSchema = (
   }
 
   const conditional = Object.hasOwn(value, "if")
-    ? normalizeAdvertisedSchema(value.if, root)
+    ? normalizeAdvertisedSchema(value.if, root, active)
     : undefined;
   const thenBranch = Object.hasOwn(value, "then")
-    ? normalizeAdvertisedSchema(value.then, root)
+    ? normalizeAdvertisedSchema(value.then, root, active)
     : undefined;
   const elseBranch = Object.hasOwn(value, "else")
-    ? normalizeAdvertisedSchema(value.else, root)
+    ? normalizeAdvertisedSchema(value.else, root, active)
     : undefined;
-  if (conditional?.changed || referencesChangingTarget(value.if, root)) {
+  if (
+    conditional?.changed ||
+    referencesChangingTarget(value.if, root, active)
+  ) {
     // Changing the predicate can route canonical-valid inputs into a rejecting branch.
     changed = true;
     delete node.if;

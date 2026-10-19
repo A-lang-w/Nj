@@ -639,6 +639,20 @@ describe("advertised empty-string literals", () => {
     expect(advertised.$defs).toEqual({ empty: { type: "string" } });
   });
 
+  it("does not recurse forever when a referenced definition is recursive", () => {
+    const canonical = {
+      $defs: {
+        loop: {
+          type: "object",
+          properties: { value: { not: { $ref: "#/$defs/loop" } } },
+        },
+      },
+      type: "object",
+      properties: { guard: { not: { $ref: "#/$defs/loop" } } },
+    };
+    expect(() => presentInputJsonSchema(canonical, () => undefined)).not.toThrow();
+  });
+
   it("widens an affected oneOf to anyOf without losing branch guidance", () => {
     const canonical = {
       type: "object",
