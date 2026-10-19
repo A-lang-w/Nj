@@ -12,7 +12,10 @@ import { launcherIdentityFailure } from "./ProcessOwnershipIdentity.js";
 import { descendantsOf, liveProcesses } from "./ProcessOwnershipProcessTree.js";
 import { readProcessRunTokens } from "./ProcessRunTokenObservations.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
+import {
+  isExitedProcessOwnershipFact,
+  ProcessOwnershipEvidenceOwner,
+} from "./ProcessOwnershipEvidence.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -1364,16 +1367,14 @@ const scanWithOwnershipEvidence = async (
   const identities = new Map<number, string | null>();
 
   for (const fact of facts) {
+    if (isExitedProcessOwnershipFact(fact)) continue;
     if (fact.state === "replaced")
       failures.push({
         pid: fact.process.pid,
         reason: "process-identity-unavailable",
         diagnostic: "process identity changed during token validation",
       });
-    else if (
-      fact.state === "unavailable" &&
-      fact.identityAfter.state !== "absent"
-    )
+    else if (fact.state === "unavailable")
       failures.push({
         pid: fact.process.pid,
         reason: "process-identity-unavailable",
@@ -1392,7 +1393,6 @@ const scanWithOwnershipEvidence = async (
         reason: "run-token-mismatch",
       });
     if (fact.token.state !== "unavailable") continue;
-    if (fact.identityAfter.state === "absent") continue;
     const relationBefore =
       fact.identityBefore.state === "readable"
         ? fact.identityBefore.relation
