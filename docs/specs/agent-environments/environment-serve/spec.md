@@ -27,7 +27,9 @@ later increment.
 - Build an `McpServer` from the manifest alone: each tool's input schema lists
   every path parameter as a required string described by its segment index,
   rule and observed values, every observed query name as an optional string,
-  and an optional `body` object for `POST`, `PUT` and `PATCH`, closed with
+  and an optional `body` object for `POST`, `PUT` and `PATCH` (a query name
+  that collides with a path parameter becomes `query_<name>`, and the body
+  becomes `request_body` when a query parameter is named `body`), closed with
   `additionalProperties: false` so unknown arguments are refused; the
   description reads `METHOD template; replays retained records [ordinals];
   evidence ev_…`. The served catalog stays separate from REA's own tool
@@ -38,7 +40,9 @@ later increment.
   `content_type`, `body` (parsed JSON for JSON-like content types that parse,
   else text; bodies over 256 KiB cut at a UTF-8 boundary with
   `truncated: true`) and `replay` with `record_ordinal`, `evidence_id`,
-  `exact_match`, `recorded_path`, `recorded_query` and `truncated`, as both
+  `exact_match`, `recorded_path`, `recorded_query`, `body_recorded` (false
+  when the capture kept no response body, so a `null` body is not mistaken for
+  a recorded one) and `truncated`, as both
   structured content and text, with REA's existing target-content provenance
   marker in `_meta`.
 - Serve the card with exactly the echo example's keys and nesting: `name`

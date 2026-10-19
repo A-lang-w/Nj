@@ -68,6 +68,7 @@ describe("replayEnvironmentTool selection", () => {
         exact_match: true,
         recorded_path: "/api/users/2",
         recorded_query: null,
+        body_recorded: true,
         truncated: false,
       },
     });
@@ -163,7 +164,56 @@ describe("replayEnvironmentTool selection", () => {
   });
 });
 
+describe("replayEnvironmentTool argument names", () => {
+  it("matches a query value whose name collides with a path parameter under its renamed argument", () => {
+    const users = tool("get_users_by_id");
+    const exchange = (ordinal: number, query: string): RecordedExchange => ({
+      ordinal,
+      path: "/api/users/2",
+      query,
+      status: 200,
+      contentType: "application/json",
+      bodyText: JSON.stringify({ query }),
+    });
+    const colliding = {
+      ...users,
+      query_parameter_names: ["id"],
+      record_ordinals: [901, 902],
+    };
+    const from: EnvironmentSource = {
+      ...source,
+      exchanges: new Map([
+        [901, exchange(901, "id=3")],
+        [902, exchange(902, "id=4")],
+      ]),
+    };
+    const result = replayEnvironmentTool(from, colliding, {
+      id: "2",
+      query_id: "4",
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.replay).toMatchObject({
+      record_ordinal: 902,
+      recorded_query: "id=4",
+      exact_match: true,
+    });
+  });
+});
+
 describe("replayEnvironmentTool bodies", () => {
+  it("reports a response whose body the capture did not retain instead of passing off null as recorded", () => {
+    const result = replay(
+      "get_users_by_id",
+      { id: "2" },
+      singleExchangeSource(null, "application/json"),
+    );
+    expect(result.body).toBeNull();
+    expect(result.replay).toMatchObject({
+      body_recorded: false,
+      truncated: false,
+    });
+  });
+
   it("returns text for non-JSON content types and for JSON-like content that does not parse", () => {
     expect(
       replay(

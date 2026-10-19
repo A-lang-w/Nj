@@ -62,6 +62,7 @@ where the answer came from:
     "exact_match": true,
     "recorded_path": "/api/users/2",
     "recorded_query": null,
+    "body_recorded": true,
     "truncated": false
   }
 }
@@ -74,7 +75,9 @@ record and reports `exact_match: false`. `body` is parsed JSON when the
 recorded content type is JSON-like (`application/json`, `application/*+json`,
 `text/plain`, `text/markdown`) and the text parses; otherwise it is the
 recorded text. Bodies over 256 KiB are cut at a UTF-8 boundary and returned as
-text with `truncated: true`. Request bodies passed to `POST`, `PUT` and `PATCH`
+text with `truncated: true`. `body_recorded` is false when the capture kept the
+response's status and content type but no body; `body` is then `null`, which
+is not a recorded JSON `null`. Request bodies passed to `POST`, `PUT` and `PATCH`
 tools are accepted and ignored: nothing is written, and no call changes what a
 later call returns. Arguments the tool's input schema does not name are
 refused by the MCP server as invalid arguments, so a misspelled parameter never
@@ -163,7 +166,10 @@ connecting to `/mcp`:
 `tools/list` advertises over MCP. Path parameters are required strings whose
 description names the segment index, the templating rule and the observed
 values; query parameter names are optional strings; write methods accept an
-optional `body` object described by the recorded top-level key types. Every
+optional `body` object described by the recorded top-level key types. Each
+input keeps its own argument: a query name equal to a path parameter's name is
+advertised as `query_<name>`, and the write body as `request_body` when a query
+parameter is named `body`. Every
 schema closes with `additionalProperties: false`, a key the echo example's
 schema does not carry.
 `extensions`, `operations` and `children_environments` are fixed to `null`,
