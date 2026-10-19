@@ -122,6 +122,10 @@ const responseHeaders = (
 /** Resolve on the next `drain` or `close`, removing both listeners, so a long stream does not accumulate waiters. */
 const drainOrClose = (target: ServerResponse): Promise<void> =>
   new Promise((resolve) => {
+    if (target.destroyed) {
+      resolve();
+      return;
+    }
     const settle = (): void => {
       target.off("drain", settle);
       target.off("close", settle);
@@ -131,32 +135,55 @@ const drainOrClose = (target: ServerResponse): Promise<void> =>
     target.once("close", settle);
   });
 
-/** Copy a body into the reply chunk by chunk with backpressure. When the client has left, or leaves, the body is cancelled without waiting, since a teed body's cancellation settles only with its sibling; the cancel also ends a pending read. */
+export interface WebResponseOptions {
+  readonly closeConnection?: boolean;
+  /** Retain cleanup independently of request completion, including pending tee cancellation. */
+  readonly onBodyCleanup?: (cleanup: Promise<void>) => void;
+}
+
+const retainCleanup = (
+  cleanup: Promise<void>,
+  options: WebResponseOptions,
+): void => {
+  options.onBodyCleanup?.(cleanup);
+  // The owner receives the original outcome; standalone writers stay nonblocking.
+  void cleanup.catch(() => undefined);
+};
+
+/** Copy with backpressure; request completion does not wait on source cancellation. */
 const pumpBody = async (
   body: ReadableStream<Uint8Array>,
   target: ServerResponse,
+  options: WebResponseOptions,
 ): Promise<void> => {
-  const reader = body.getReader();
+  let reader: ReadableStreamDefaultReader<Uint8Array>;
+  try {
+    reader = body.getReader();
+  } catch (cause: unknown) {
+    retainCleanup(Promise.reject(cause), options);
+    throw cause;
+  }
   let left = false;
   const leave = (): void => {
+    if (left) return;
     left = true;
-    void reader.cancel().catch(() => undefined);
+    retainCleanup(reader.cancel(), options);
   };
-  // A route that resolved after its client disconnected finds the reply already closed.
-  if (target.destroyed) {
-    leave();
-    return;
-  }
   target.once("close", leave);
   try {
+    if (target.destroyed) {
+      leave();
+      return;
+    }
     for (
       let next = await reader.read();
       !next.done && !left;
       next = await reader.read()
     )
-      if (!target.write(next.value)) await drainOrClose(target);
+      if (!target.write(next.value) && !left) await drainOrClose(target);
   } finally {
     target.off("close", leave);
+    reader.releaseLock();
   }
   if (!left) target.end();
 };
@@ -165,8 +192,12 @@ const pumpBody = async (
 export const writeWebResponse = async (
   response: Response,
   target: ServerResponse,
-  options: { readonly closeConnection?: boolean } = {},
+  options: WebResponseOptions = {},
 ): Promise<void> => {
+  if (target.destroyed) {
+    if (response.body !== null) retainCleanup(response.body.cancel(), options);
+    return;
+  }
   target.writeHead(
     response.status,
     responseHeaders(response.headers, options.closeConnection ?? false),
@@ -175,8 +206,8 @@ export const writeWebResponse = async (
   if (response.body === null || target.req.method === "HEAD") {
     target.end();
     // Not awaited: cancelling one branch of a teed body settles only once its sibling is consumed or cancelled too.
-    void response.body?.cancel().catch(() => undefined);
+    if (response.body !== null) retainCleanup(response.body.cancel(), options);
     return;
   }
-  await pumpBody(response.body, target);
+  await pumpBody(response.body, target, options);
 };

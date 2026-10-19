@@ -26,6 +26,11 @@ import {
   writeWebResponse,
 } from "./nodeHttpBridge.js";
 import { StreamableHttpListenError } from "./streamableHttpListenError.js";
+import {
+  NodeHttpRequestOwner,
+  type HttpAdmissionLifetime,
+  type NodeHttpExchangeContext,
+} from "./NodeHttpRequestOwner.js";
 import { RequestTrackingMcpServer } from "../RequestTrackingMcpServer.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 
@@ -442,77 +447,13 @@ const endpointUrl = (
 };
 
 interface NodeRequestTarget {
-  readonly route: (request: Request) => Promise<Response>;
+  readonly route: (request: Request) => Promise<{
+    readonly response: Response;
+    readonly admissionLifetime: HttpAdmissionLifetime;
+  }>;
   readonly origin: () => string;
   readonly logger: Logger | undefined;
 }
-
-/** Own admission and route completion before a Web Request, body reader or initialize tee exists. */
-const createNodeRequestOwner = (
-  target: NodeRequestTarget,
-  capacity: number,
-) => {
-  if (!Number.isSafeInteger(capacity) || capacity < 1)
-    throw new RangeError(
-      "maxConcurrentDispatches must be a positive safe integer",
-    );
-  let active = 0;
-  const dispatches = new Set<Promise<Response>>();
-  const ownedTarget: NodeRequestTarget = {
-    ...target,
-    route: (webRequest) => {
-      const dispatch = Promise.resolve().then(() => target.route(webRequest));
-      dispatches.add(dispatch);
-      return dispatch.finally(() => dispatches.delete(dispatch));
-    },
-  };
-  const handle = async (
-    request: IncomingMessage,
-    response: ServerResponse,
-  ): Promise<void> => {
-    if (active >= capacity) {
-      try {
-        await writeWebResponse(
-          jsonError(
-            503,
-            -32000,
-            "HTTP request capacity is full; retry after pending dispatches finish",
-          ),
-          response,
-          { closeConnection: true },
-        );
-      } catch {
-        response.destroy();
-      }
-      return;
-    }
-    active += 1;
-    let reserved = true;
-    const release = (): void => {
-      if (!reserved) return;
-      reserved = false;
-      active -= 1;
-      request.off("end", release);
-      request.off("close", release);
-      response.off("close", release);
-    };
-    await serveNodeRequest(ownedTarget, request, response, (hasUnreadBody) => {
-      if (!hasUnreadBody || request.destroyed || response.destroyed) {
-        release();
-        return;
-      }
-      // Connection: close takes effect only after the response ends. Retain
-      // unread input even when that response is an indefinitely open stream.
-      request.once("end", release);
-      request.once("close", release);
-      response.once("close", release);
-    }).finally(release);
-  };
-  const drainDispatches = async (): Promise<void> => {
-    while (dispatches.size > 0) await Promise.allSettled([...dispatches]);
-  };
-  return { handle, drainDispatches };
-};
 
 /** Serve one MCP server, plus plain routes, over streamable HTTP until closed. */
 export const serveStreamableHttp = async (
@@ -530,32 +471,53 @@ export const serveStreamableHttp = async (
   let slot: McpSessionSlot | undefined;
   let origin = "";
   let stopped = false;
-  const route = async (request: Request): Promise<Response> => {
-    if (stopped) return jsonError(503, -32000, "Server shutting down");
+  const route: NodeRequestTarget["route"] = async (request) => {
+    const local = (response: Response) => ({
+      response,
+      admissionLifetime: "response" as const,
+    });
+    if (stopped) return local(jsonError(503, -32000, "Server shutting down"));
     // One loopback allowlist gates Host (DNS rebinding) and Origin (browser pages); a missing Origin passes.
     const refused =
       allowedHosts === undefined
         ? undefined
         : (hostHeaderValidationResponse(request, allowedHosts) ??
           originValidationResponse(request, allowedHosts));
-    if (refused !== undefined) return refused;
+    if (refused !== undefined) return local(refused);
+    if (slot === undefined)
+      return local(jsonError(503, -32000, "Server starting"));
     const { pathname } = new URL(request.url);
     if (pathname === MCP_HTTP_PATH)
-      return slot === undefined
-        ? jsonError(503, -32000, "Server starting")
-        : slot.handle(request);
+      return {
+        response: await slot.handle(request),
+        admissionLifetime: "dispatch",
+      };
     const match = routes.find(
       (candidate) =>
         candidate.path === pathname && candidate.method === request.method,
     );
-    return match === undefined
-      ? jsonError(404, -32601, `No route for ${request.method} ${pathname}`)
-      : match.handle(request);
+    return local(
+      match === undefined
+        ? jsonError(404, -32601, `No route for ${request.method} ${pathname}`)
+        : await match.handle(request),
+    );
   };
   const httpServer = createHttpServer();
-  const requests = createNodeRequestOwner(
-    { route, origin: () => origin, logger },
+  const target: NodeRequestTarget = { route, origin: () => origin, logger };
+  const requests = new NodeHttpRequestOwner(
     options.maxConcurrentDispatches ?? DEFAULT_MAX_CONCURRENT_DISPATCHES,
+    {
+      serve: (request, response, context) =>
+        serveNodeRequest(target, request, response, context),
+      refuse: (reason) =>
+        jsonError(
+          503,
+          -32000,
+          reason === "capacity"
+            ? "HTTP request capacity is full; retry after pending dispatches finish"
+            : "HTTP response cleanup failed; this server is not accepting new requests",
+        ),
+    },
   );
   const prepareTransportShutdown = stagedClose([
     async () => {
@@ -563,7 +525,7 @@ export const serveStreamableHttp = async (
       await closeHttpServer(httpServer);
     },
     () => slot?.prepareShutdown() ?? Promise.resolve(),
-    requests.drainDispatches,
+    () => requests.drain(),
   ]);
   try {
     httpServer.listen(port, host);
@@ -585,7 +547,13 @@ export const serveStreamableHttp = async (
     bound !== null && typeof bound === "object" ? bound.address : host,
   );
   httpServer.on("request", (request, response) => {
-    void requests.handle(request, response);
+    void requests.handle(request, response).catch((cause: unknown) => {
+      logger?.warn(
+        { error: describe(cause) },
+        "MCP HTTP request did not complete",
+      );
+      response.destroy();
+    });
   });
   // Bind failures already rejected the listening wait above; only later listener errors are reported.
   httpServer.on("error", (error) => options.onerror?.(error));
@@ -593,7 +561,7 @@ export const serveStreamableHttp = async (
   try {
     instance = await options.createMcpServer({ era: "legacy" });
   } catch (cause: unknown) {
-    // A route may have been admitted while the asynchronous factory was pending.
+    // Starting responses may still be in flight; application routes stay unavailable.
     await prepareTransportShutdown().catch(() => undefined);
     throw cause;
   }
@@ -644,7 +612,7 @@ const serveNodeRequest = async (
   target: NodeRequestTarget,
   request: IncomingMessage,
   response: ServerResponse,
-  onDispatchSettled: (hasUnreadBody: boolean) => void,
+  context: NodeHttpExchangeContext,
 ): Promise<void> => {
   const { route, origin, logger } = target;
   // A reply sent before an incoming body was fully consumed leaves the rest on the socket, which
@@ -656,6 +624,16 @@ const serveNodeRequest = async (
     request.headers["transfer-encoding"] !== undefined;
   let webRequest: Request | undefined;
   const unreadBody = (): boolean => declaresBody && !request.readableEnded;
+  let reported = false;
+  let admissionLifetime: HttpAdmissionLifetime = "response";
+  const settled = (): void => {
+    if (reported) return;
+    reported = true;
+    context.onDispatchSettled({
+      hasUnreadBody: unreadBody(),
+      admissionLifetime,
+    });
+  };
   try {
     try {
       webRequest = toWebRequest(request, response, origin());
@@ -672,18 +650,21 @@ const serveNodeRequest = async (
             : `Unsupported method ${request.method ?? ""}`,
         ),
         response,
-        { closeConnection: true },
+        { closeConnection: true, onBodyCleanup: context.onBodyCleanup },
       );
       return;
     }
     let webResponse: Response;
     try {
-      webResponse = await route(webRequest);
+      const routed = await route(webRequest);
+      webResponse = routed.response;
+      admissionLifetime = routed.admissionLifetime;
     } finally {
-      onDispatchSettled(unreadBody());
+      settled();
     }
     await writeWebResponse(webResponse, response, {
       closeConnection: unreadBody(),
+      onBodyCleanup: context.onBodyCleanup,
     });
   } catch (cause: unknown) {
     // A client that left mid-stream is routine; a failure before headers is not.
@@ -696,8 +677,10 @@ const serveNodeRequest = async (
       await writeWebResponse(
         jsonError(500, -32603, "Internal server error"),
         response,
-        { closeConnection: unreadBody() },
+        { closeConnection: unreadBody(), onBodyCleanup: context.onBodyCleanup },
       ).catch(() => undefined);
+  } finally {
+    settled();
   }
 };
 

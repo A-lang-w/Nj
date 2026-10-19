@@ -482,19 +482,30 @@ HTTP input/route dispatch is limited to eight concurrent requests by default,
 shared by MCP and plain routes. Excess requests receive `503` with a closing
 connection before their bodies are converted, read or cloned. An embedder can
 select `maxConcurrentDispatches`; the SDK's per-body size limit still applies.
-Responses with fully read or bodyless requests do not hold admission slots,
-so an idle MCP SSE stream does not prevent later calls. An unread upload retains
-its slot until input finishes or either side closes, even with a long response.
+MCP responses with fully read or bodyless requests do not hold admission slots,
+so an idle MCP SSE stream does not prevent later calls. Plain routes retain their
+slots through response delivery and response-source cancellation cleanup. An
+unread upload retains its slot until input finishes or either side closes,
+even with a long response. Sequential keep-alive is supported; a peer pipelining
+behind an unfinished response is disconnected before queued requests dispatch.
+Concurrent MCP requests use separate connections.
 This bounds concurrent input work, not total provider or process memory.
 Provider-backed prompt completions use the same request owner and drain, so a
 cancelled completion cannot keep using providers after handover or shutdown.
 HTTP factories enable `RequestTrackingMcpServer` tracking so completion is tracked
 even when cancellation suppresses the SDK's reply; stdio retains the SDK's
 original callback behavior. Full server shutdown stops the listener and waits
-for MCP work and plain-route handler finalizers to settle before running provider
-shutdown hooks or closing providers. It continues cleanup
+for MCP work, plain-route handlers and response-source cancellation to settle
+before running provider shutdown hooks or closing providers. Response producers
+must finish provider work before closing their stream and expose asynchronous
+disconnect cleanup through the stream's `cancel()` result. Cancellation does not
+delay delivery of a HEAD reply; a caller retaining a sibling of a teed response
+must consume or cancel that sibling before shutdown can finish. Failed response
+cleanup remains owned, blocks further admission and prevents provider teardown.
+The server continues cleanup
 automatically when they finish, including after a client handover timed out.
-Startup failure also joins any admitted route work before rejecting the factory.
+All routes return `503` until the server factory succeeds; startup failure closes
+the listener and joins its pending replies before rejecting the factory.
 The newest client replaces an open session: an `initialize` that arrives
 while a session is open ends that session instead of being refused, because a
 client that exits without `DELETE` must not wedge the listener; the replaced

@@ -4,6 +4,7 @@ import {
 } from "@modelcontextprotocol/client";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { Agent, request as httpRequest } from "node:http";
+import { connect as connectTcp } from "node:net";
 import pino from "pino";
 import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -22,6 +23,14 @@ import { StreamableHttpListenError } from "./streamableHttpListenError.js";
 import { RequestTrackingMcpServer } from "../RequestTrackingMcpServer.js";
 
 const servers: StreamableHttpServer[] = [];
+
+const createGate = () => {
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { promise, release };
+};
 
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => server.close()));
@@ -925,81 +934,345 @@ it.each(["replacement", "DELETE"])(
   },
 );
 
-it("joins admitted route cleanup before rejecting a failed server factory", async () => {
-  const reserved = await start();
-  const url = new URL(reserved.served.url);
-  await reserved.served.close();
-  let factoryEntered!: () => void;
-  let failFactory!: () => void;
-  let routeEntered!: () => void;
-  let finalizing!: () => void;
-  let release!: () => void;
-  const factoryStarted = new Promise<void>((resolve) => {
-    factoryEntered = resolve;
-  });
-  const factoryGate = new Promise<void>((resolve) => {
-    failFactory = resolve;
-  });
-  const routeStarted = new Promise<void>((resolve) => {
-    routeEntered = resolve;
-  });
-  const cleanupStarted = new Promise<void>((resolve) => {
-    finalizing = resolve;
-  });
-  const cleanupGate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const failure = new Error("provider unavailable");
-  let returned = false;
-  const starting = serveStreamableHttp({
-    host: "127.0.0.1",
-    port: Number(url.port),
-    createMcpServer: async () => {
-      factoryEntered();
-      await factoryGate;
-      throw failure;
-    },
-    routes: [
-      {
-        method: "GET",
-        path: "/pending",
-        handle: async (request) => {
-          routeEntered();
-          try {
-            await new Promise<void>((resolve) => {
-              request.signal.addEventListener("abort", () => resolve(), {
-                once: true,
-              });
-            });
-          } finally {
-            finalizing();
-            await cleanupGate;
-          }
-          return new Response("done");
-        },
+it.each(["ready", "failure"] as const)(
+  "keeps plain routes unavailable while the factory is pending before %s",
+  async (outcome) => {
+    const reserved = await start();
+    const url = new URL(reserved.served.url);
+    await reserved.served.close();
+    const factoryStarted = createGate();
+    const factoryGate = createGate();
+    const failure = new Error("provider unavailable");
+    const handled = vi.fn(() => new Response("ready"));
+    const starting = serveStreamableHttp({
+      host: "127.0.0.1",
+      port: Number(url.port),
+      createMcpServer: async () => {
+        factoryStarted.release();
+        await factoryGate.promise;
+        if (outcome === "failure") throw failure;
+        return createEchoServer(() => undefined);
       },
+      routes: [{ method: "GET", path: "/pending", handle: handled }],
+    });
+    const settled = starting.catch(() => undefined);
+    try {
+      await factoryStarted.promise;
+      expect((await fetch(new URL("/pending", url))).status).toBe(503);
+      expect(handled).not.toHaveBeenCalled();
+      factoryGate.release();
+      if (outcome === "failure") {
+        await expect(starting).rejects.toBe(failure);
+        await expect(rawHttpRequest(url)).rejects.toMatchObject({
+          code: "ECONNREFUSED",
+        });
+      } else {
+        await starting;
+        expect((await fetch(new URL("/pending", url))).status).toBe(200);
+        expect(handled).toHaveBeenCalledTimes(1);
+      }
+    } finally {
+      factoryGate.release();
+      await (await settled)?.close();
+    }
+  },
+);
+
+it.each(["open stream", "late response"])(
+  "joins response-body cancellation before provider hooks for %s",
+  async (timing) => {
+    const entered = createGate();
+    const cancelling = createGate();
+    const cleanup = createGate();
+    const { served, shutdownHooks } = await start({
+      routes: [
+        {
+          method: "GET",
+          path: "/stream",
+          handle: async (request) => {
+            entered.release();
+            if (timing === "late response")
+              await new Promise<void>((resolve) => {
+                request.signal.addEventListener("abort", () => resolve(), {
+                  once: true,
+                });
+              });
+            return new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(
+                    new TextEncoder().encode("data: ready\n\n"),
+                  );
+                },
+                async cancel() {
+                  cancelling.release();
+                  await cleanup.promise;
+                },
+              }),
+            );
+          },
+        },
+      ],
+    });
+    const response = fetch(new URL("/stream", served.url)).catch(
+      () => undefined,
+    );
+    await entered.promise;
+    if (timing === "open stream") await response;
+    let closed = false;
+    const closing = served.prepareShutdown().then(() => {
+      closed = true;
+    });
+    try {
+      await cancelling.promise;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(closed).toBe(false);
+      expect(shutdownHooks()).toBe(0);
+      cleanup.release();
+      await closing;
+      expect(shutdownHooks()).toBe(1);
+    } finally {
+      cleanup.release();
+      await closing;
+      await (await response)?.body?.cancel().catch(() => undefined);
+    }
+  },
+);
+
+it("keeps HEAD delivery prompt while joining a retained tee's cleanup on shutdown", async () => {
+  let sourceClosed = false;
+  const original = new Response(
+    new ReadableStream<Uint8Array>({
+      pull: () => new Promise(() => undefined),
+      cancel: () => {
+        sourceClosed = true;
+      },
+    }),
+  );
+  const { served, shutdownHooks } = await start({
+    routes: [
+      { method: "HEAD", path: "/cached", handle: () => original.clone() },
     ],
-  }).catch((cause: unknown) => {
-    returned = true;
-    return cause;
   });
-  await factoryStarted;
-  const response = fetch(new URL("/pending", url)).catch(() => undefined);
-  await routeStarted;
+  const response = await fetch(new URL("/cached", served.url), {
+    method: "HEAD",
+  });
+  expect(response.status).toBe(200);
+  let closed = false;
+  const closing = served.prepareShutdown().then(() => {
+    closed = true;
+  });
   try {
-    failFactory();
-    await cleanupStarted;
     await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(returned).toBe(false);
-    release();
-    expect(await starting).toBe(failure);
+    expect(closed).toBe(false);
+    expect(sourceClosed).toBe(false);
+    expect(shutdownHooks()).toBe(0);
+    await original.body?.cancel();
+    await closing;
+    expect(sourceClosed).toBe(true);
+    expect(shutdownHooks()).toBe(1);
   } finally {
-    failFactory();
-    release();
-    await starting;
-    await response;
+    await original.body?.cancel();
+    await closing;
   }
 });
+
+it("retains failed response cleanup and blocks provider teardown and further admission", async () => {
+  const failure = new Error("response finalizer failed");
+  const { served, shutdownHooks } = await start({
+    routes: [
+      { method: "GET", path: "/health", handle: () => new Response("ok") },
+      {
+        method: "GET",
+        path: "/failed",
+        handle: () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("ready"));
+              },
+              cancel: () => Promise.reject(failure),
+            }),
+          ),
+      },
+    ],
+  });
+  const response = await fetch(new URL("/failed", served.url));
+  try {
+    await response.body?.cancel();
+    await vi.waitFor(async () => {
+      expect((await fetch(new URL("/health", served.url))).status).toBe(503);
+    });
+    await expect(served.prepareShutdown()).rejects.toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      reportedLimits: { failed_cleanup_count: 1 },
+      cause: expect.any(AggregateError),
+    });
+    await expect(served.close()).rejects.toMatchObject({
+      reportedLimits: { failed_cleanup_count: 1 },
+    });
+    expect(shutdownHooks()).toBe(0);
+    await expect(rawHttpRequest(new URL(served.url))).rejects.toMatchObject({
+      code: "ECONNREFUSED",
+    });
+  } finally {
+    await served.close().catch(() => undefined);
+    // The deliberate finalizer failure is retained; this fixture owns no real provider.
+    servers.splice(servers.indexOf(served), 1);
+  }
+});
+
+it("retains plain-response admission until asynchronous cancellation settles", async () => {
+  const cancelling = createGate();
+  const cleanup = createGate();
+  const health = vi.fn(() => new Response("ok"));
+  const { served } = await start({
+    maxConcurrentDispatches: 1,
+    routes: [
+      { method: "GET", path: "/health", handle: health },
+      {
+        method: "GET",
+        path: "/stream",
+        handle: () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("ready"));
+              },
+              async cancel() {
+                cancelling.release();
+                await cleanup.promise;
+              },
+            }),
+          ),
+      },
+    ],
+  });
+  const response = await fetch(new URL("/stream", served.url));
+  try {
+    expect((await fetch(new URL("/health", served.url))).status).toBe(503);
+    await response.body?.cancel();
+    await cancelling.promise;
+    expect((await fetch(new URL("/health", served.url))).status).toBe(503);
+    expect(health).not.toHaveBeenCalled();
+    cleanup.release();
+    await vi.waitFor(async () => {
+      expect((await fetch(new URL("/health", served.url))).status).toBe(200);
+    });
+  } finally {
+    cleanup.release();
+    await response.body?.cancel();
+  }
+});
+
+it("supports sequential keep-alive requests on the same connection", async () => {
+  const { served } = await start({
+    routes: [
+      { method: "GET", path: "/health", handle: () => new Response("ok") },
+    ],
+  });
+  const agent = new Agent({ keepAlive: true, maxSockets: 1 });
+  const connections = new Set<unknown>();
+  agent.on("free", (socket: unknown) => connections.add(socket));
+  try {
+    for (let i = 0; i < 2; i += 1) {
+      const result = await keepAliveRequest(
+        agent,
+        new URL("/health", served.url),
+        { method: "GET" },
+      );
+      expect(result.status).toBe(200);
+      expect(result.socketClosed).toBe(false);
+      expect(connections.size).toBe(1);
+    }
+  } finally {
+    agent.destroy();
+  }
+});
+
+it.each(["pending handler", "open response"])(
+  "closes a peer pipelining behind a %s without queuing refusals",
+  async (mode) => {
+    const first = createGate();
+    const fallback = createGate();
+    let finalized = 0;
+    let secondCalled = 0;
+    const held = async (request: Request) => {
+      try {
+        await Promise.race([
+          fallback.promise,
+          new Promise<void>((resolve) => {
+            request.signal.addEventListener("abort", () => resolve(), {
+              once: true,
+            });
+          }),
+        ]);
+      } finally {
+        finalized += 1;
+      }
+      return new Response("done");
+    };
+    const health = vi.fn(() => new Response("ok"));
+    const { served } = await start({
+      maxConcurrentDispatches: 2,
+      routes: [
+        {
+          method: "GET",
+          path: "/first",
+          handle: (request) => {
+            first.release();
+            return mode === "pending handler"
+              ? held(request)
+              : new Response(
+                  new ReadableStream<Uint8Array>({
+                    start(controller) {
+                      controller.enqueue(
+                        new TextEncoder().encode("data: ready\n\n"),
+                      );
+                    },
+                  }),
+                );
+          },
+        },
+        {
+          method: "GET",
+          path: "/second",
+          handle: (request) => {
+            secondCalled += 1;
+            return held(request);
+          },
+        },
+        { method: "GET", path: "/health", handle: health },
+      ],
+    });
+    const url = new URL(served.url);
+    const socket = connectTcp(Number(url.port), url.hostname);
+    socket.on("error", () => undefined);
+    socket.on("data", () => undefined);
+    const request = (path: string) =>
+      `GET ${path} HTTP/1.1\r\nHost: ${url.host}\r\n\r\n`;
+    try {
+      await new Promise<void>((resolve) => {
+        socket.once("connect", resolve);
+      });
+      socket.write(request("/first"));
+      await first.promise;
+      socket.write(request("/second"));
+      socket.write(request("/health").repeat(32));
+      await vi.waitFor(() => {
+        expect(socket.destroyed).toBe(true);
+      });
+      await vi.waitFor(() => {
+        expect(finalized).toBe(mode === "pending handler" ? 1 : 0);
+      });
+      expect(secondCalled).toBe(0);
+      expect(health).not.toHaveBeenCalled();
+    } finally {
+      fallback.release();
+      socket.destroy();
+    }
+  },
+);
 
 it.each(["prepareShutdown", "close"] as const)(
   "waits for plain-route finalizers before provider hooks during %s",
