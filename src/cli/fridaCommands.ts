@@ -119,12 +119,7 @@ export const registerFridaCommands = (
         const result = await withProviderCleanup(() =>
           service.listDevices(remoteFrom(options)),
         );
-        return result.ok
-          ? {
-              devices: result.value.devices,
-              cleanup_error: result.value.cleanupError,
-            }
-          : projectAnalysisError(result.error);
+        return result.ok ? result.value : projectAnalysisError(result.error);
       }),
   });
   cli.command(CLI_COMMANDS.listFridaProcesses, {
@@ -157,13 +152,7 @@ export const registerFridaCommands = (
               : { remote },
           ),
         );
-        return result.ok
-          ? {
-              device_id: result.value.deviceId,
-              processes: result.value.processes,
-              cleanup_error: result.value.cleanupError,
-            }
-          : projectAnalysisError(result.error);
+        return result.ok ? result.value : projectAnalysisError(result.error);
       }),
   });
   cli.command(CLI_COMMANDS.instrumentWithFrida, {

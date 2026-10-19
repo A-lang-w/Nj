@@ -72,6 +72,7 @@ export const registerSqliteCommands = (
             service,
             "sqlite",
             "inspect_sqlite_database",
+            signal,
           ),
         ),
       ),
