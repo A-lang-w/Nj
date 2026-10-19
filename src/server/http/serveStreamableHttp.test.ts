@@ -734,6 +734,28 @@ it("keeps a network-path request target as a path and refuses absolute-form targ
   expect(seen).toEqual([`127.0.0.1:${url.port}`, `127.0.0.1:${url.port}`]);
 });
 
+it("refuses raw fragments without changing an encoded query value", async () => {
+  const handled = vi.fn((request: Request) =>
+    Response.json({
+      token: new URL(request.url).searchParams.get("token"),
+      url: request.url,
+    }),
+  );
+  const { served } = await start({
+    routes: [{ method: "GET", path: "/plain", handle: handled }],
+  });
+  const url = new URL(served.url);
+  for (const target of ["/plain?token=a#b", "/plain?token=a#"])
+    expect((await rawTargetRequest(url, target)).status).toBe(400);
+  expect(handled).not.toHaveBeenCalled();
+  const valid = await rawTargetRequest(url, "/plain?token=a%23b");
+  expect(valid.status).toBe(200);
+  expect(JSON.parse(valid.body)).toEqual({
+    token: "a#b",
+    url: `${url.origin}/plain?token=a%23b`,
+  });
+});
+
 it("lets only a lone initialize replace a session, not a batch that carries one", async () => {
   const { served } = await start();
   const { client } = await connect(served.url);
@@ -1035,6 +1057,73 @@ it.each(["open stream", "late response"])(
       cleanup.release();
       await closing;
       await (await response)?.body?.cancel().catch(() => undefined);
+    }
+  },
+);
+
+it.each(["chunk", "headers"])(
+  "joins response cleanup after an output failure in %s",
+  async (failure) => {
+    const cleanup = createGate();
+    let cancelled = 0;
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        // Node's Response accepts this malformed producer; the HTTP writer rejects it.
+        controller.enqueue(
+          failure === "chunk"
+            ? ({} as unknown as Uint8Array)
+            : new TextEncoder().encode("pending"),
+        );
+      },
+      async cancel() {
+        cancelled += 1;
+        await cleanup.promise;
+      },
+    });
+    const { served, shutdownHooks } = await start({
+      maxConcurrentDispatches: 1,
+      routes: [
+        { method: "GET", path: "/health", handle: () => new Response("ok") },
+        {
+          method: "GET",
+          path: "/broken",
+          handle: () =>
+            new Response(
+              source,
+              failure === "headers"
+                ? { headers: { "x-invalid": "\u0001" } }
+                : undefined,
+            ),
+        },
+      ],
+    });
+    const received = fetch(new URL("/broken", served.url))
+      .then(async (response) => {
+        await response.arrayBuffer();
+      })
+      .catch(() => undefined);
+    let closing: Promise<void> | undefined;
+    try {
+      await vi.waitFor(() => {
+        expect(cancelled).toBe(1);
+      });
+      expect((await fetch(new URL("/health", served.url))).status).toBe(503);
+      let closed = false;
+      closing = served.prepareShutdown().then(() => {
+        closed = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(closed).toBe(false);
+      expect(shutdownHooks()).toBe(0);
+      cleanup.release();
+      await closing;
+      expect(shutdownHooks()).toBe(1);
+      expect(cancelled).toBe(1);
+    } finally {
+      cleanup.release();
+      await source.cancel().catch(() => undefined);
+      await closing;
+      await received;
     }
   },
 );

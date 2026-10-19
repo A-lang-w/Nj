@@ -14,7 +14,8 @@ export class UnsupportedRequestTargetError extends Error {
 
 /** Join an origin-form target onto the listener's origin verbatim, so `//host/path` stays a path and a path that URL parsing would rewrite (dot segments) is refused rather than routed elsewhere. */
 const requestUrl = (target: string, origin: string): URL => {
-  if (!target.startsWith("/")) throw new UnsupportedRequestTargetError(target);
+  if (!target.startsWith("/") || target.includes("#"))
+    throw new UnsupportedRequestTargetError(target);
   const url = new URL(`${origin}${target}`);
   const rawPath = target.split("?")[0] ?? "";
   if (url.pathname !== rawPath) throw new UnsupportedRequestTargetError(target);
@@ -152,22 +153,15 @@ const retainCleanup = (
 
 /** Copy with backpressure; request completion does not wait on source cancellation. */
 const pumpBody = async (
-  body: ReadableStream<Uint8Array>,
+  reader: ReadableStreamDefaultReader<Uint8Array>,
   target: ServerResponse,
-  options: WebResponseOptions,
+  cancel: () => void,
 ): Promise<void> => {
-  let reader: ReadableStreamDefaultReader<Uint8Array>;
-  try {
-    reader = body.getReader();
-  } catch (cause: unknown) {
-    retainCleanup(Promise.reject(cause), options);
-    throw cause;
-  }
   let left = false;
   const leave = (): void => {
     if (left) return;
     left = true;
-    retainCleanup(reader.cancel(), options);
+    cancel();
   };
   target.once("close", leave);
   try {
@@ -183,7 +177,6 @@ const pumpBody = async (
       if (!target.write(next.value) && !left) await drainOrClose(target);
   } finally {
     target.off("close", leave);
-    reader.releaseLock();
   }
   if (!left) target.end();
 };
@@ -194,20 +187,42 @@ export const writeWebResponse = async (
   target: ServerResponse,
   options: WebResponseOptions = {},
 ): Promise<void> => {
-  if (target.destroyed) {
-    if (response.body !== null) retainCleanup(response.body.cancel(), options);
-    return;
+  // One owner spans headers, pumping and completion. The pump borrows its reader,
+  // so every output failure cancels the same source exactly once before release.
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  try {
+    reader = response.body?.getReader();
+  } catch (cause: unknown) {
+    retainCleanup(Promise.reject(cause), options);
+    throw cause;
   }
-  target.writeHead(
-    response.status,
-    responseHeaders(response.headers, options.closeConnection ?? false),
-  );
-  target.flushHeaders();
-  if (response.body === null || target.req.method === "HEAD") {
-    target.end();
-    // Not awaited: cancelling one branch of a teed body settles only once its sibling is consumed or cancelled too.
-    if (response.body !== null) retainCleanup(response.body.cancel(), options);
-    return;
+  let cancelled = false;
+  const cancel = (): void => {
+    if (cancelled || reader === undefined) return;
+    cancelled = true;
+    retainCleanup(reader.cancel(), options);
+  };
+  try {
+    if (target.destroyed) {
+      cancel();
+      return;
+    }
+    target.writeHead(
+      response.status,
+      responseHeaders(response.headers, options.closeConnection ?? false),
+    );
+    target.flushHeaders();
+    if (reader === undefined || target.req.method === "HEAD") {
+      target.end();
+      // A tee's sibling may remain caller-owned; delivery does not wait for its cleanup.
+      cancel();
+      return;
+    }
+    await pumpBody(reader, target, cancel);
+  } catch (cause: unknown) {
+    cancel();
+    throw cause;
+  } finally {
+    reader?.releaseLock();
   }
-  await pumpBody(response.body, target, options);
 };
