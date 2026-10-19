@@ -4,6 +4,7 @@ import { environmentServeSource } from "../../../tests/fixtures/environmentServe
 import type { EnvironmentManifestTool } from "./environmentSource.js";
 import {
   environmentCard,
+  environmentToolArguments,
   environmentToolDefinitions,
   environmentToolInputSchema,
   REPLAY_CATALOG_INSTRUCTIONS,
@@ -146,6 +147,23 @@ describe("environment catalog description budgets", () => {
       "… (full path in manifest Evidence)",
     );
     expect(definition?.tool.path_template).toBe(long.path_template);
+  });
+
+  it("advertises an oversized query name under a short, collision-safe alias", () => {
+    const longName = "n".repeat(100_000);
+    const search = {
+      ...tool("get_search"),
+      query_parameter_names: [longName, "query_1"],
+    };
+    const args = environmentToolArguments(search);
+    expect(args.query.get(longName)).toBe("query_1");
+    expect(args.query.get("query_1")).toBe("query_query_1");
+    const schema = environmentToolInputSchema(search);
+    expect(Buffer.byteLength(JSON.stringify(schema))).toBeLessThan(4096);
+    expect(schema.properties.query_1?.description).toContain(
+      "… (full name in manifest Evidence)",
+    );
+    expect(search.query_parameter_names[0]).toBe(longName);
   });
 
   it("reports an omitted oversized value instead of publishing an unbounded or partial observation", () => {

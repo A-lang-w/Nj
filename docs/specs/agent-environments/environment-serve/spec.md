@@ -28,7 +28,8 @@ later increment.
   every path parameter as a required string described by its segment index,
   rule and observed values, every observed query name as an optional string,
   and an optional `body` object for `POST`, `PUT` and `PATCH` (a query name
-  that collides with a path parameter becomes `query_<name>`, and the body
+  that collides with a path parameter becomes `query_<name>`, a query name
+  longer than 64 characters becomes `query_<n>`, and the body
   becomes `request_body` when a query parameter is named `body`), closed with
   `additionalProperties: false` so unknown arguments are refused; the
   description reads `METHOD template; replays retained records [ordinals];
@@ -48,7 +49,8 @@ later increment.
   `content_type`, `body` (parsed JSON for JSON-like content types that parse
   without changing a number, else text; bodies over 256 KiB cut at a UTF-8 boundary with
   `truncated: true`) and `replay` with `record_ordinal`, `evidence_id`,
-  `exact_match`, `recorded_path`, `recorded_query`, `body_recorded` (false
+  `exact_match`, `recorded_path` and `recorded_query` (each cut to 1 KiB, with
+  `recorded_line_truncated`; an explicit empty query is `?`), `body_recorded` (false
   when the capture kept no response body, so a `null` body is not mistaken for
   a recorded one), `body_encoding` (`base64` when the retained bytes are not
   UTF-8, so they are returned exactly rather than decoded lossily) and

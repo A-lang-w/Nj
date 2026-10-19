@@ -61,17 +61,20 @@ const describeList = <Value>(
     : `${listed}${sample.length === 0 ? "" : ", "}… (${String(sample.length)}/${String(values.length)} shown; full list in manifest Evidence)`;
 };
 
-/** The first DESCRIPTION_LIST_SAMPLE_BYTES of a captured path, cut on a character boundary, with a pointer to the rest. */
-const describePath = (path: string): string => {
+/** The first DESCRIPTION_LIST_SAMPLE_BYTES of captured text, cut on a character boundary, with a pointer to the rest. */
+const describeText = (text: string, what: string): string => {
   // encodeInto stops before the first character that does not fit, so `read` ends on a boundary.
   const { read } = new TextEncoder().encodeInto(
-    path,
+    text,
     new Uint8Array(DESCRIPTION_LIST_SAMPLE_BYTES),
   );
-  return read === path.length
-    ? path
-    : `${path.slice(0, read)}… (full path in manifest Evidence)`;
+  return read === text.length
+    ? text
+    : `${text.slice(0, read)}… (full ${what} in manifest Evidence)`;
 };
+
+/** Captured query names longer than this are advertised under a short alias; the manifest keeps the name. */
+export const MAX_QUERY_ARGUMENT_CHARS = 64;
 
 const bodyDescription = (tool: EnvironmentManifestTool): string =>
   tool.body_shape === null
@@ -107,8 +110,12 @@ export const environmentToolArguments = (
 ): EnvironmentToolArguments => {
   const taken = new Set(tool.params.map((param) => param.name));
   const query = new Map<string, string>();
-  for (const name of tool.query_parameter_names) {
-    const argument = freeName(taken, name, "query_");
+  for (const [index, name] of tool.query_parameter_names.entries()) {
+    const preferred =
+      name.length <= MAX_QUERY_ARGUMENT_CHARS
+        ? name
+        : `query_${String(index + 1)}`;
+    const argument = freeName(taken, preferred, "query_");
     taken.add(argument);
     query.set(name, argument);
   }
@@ -135,7 +142,7 @@ export const environmentToolInputSchema = (
   for (const [name, argument] of args.query)
     properties.set(argument, {
       type: "string",
-      description: `Query parameter ${name}; optional, matched against the recorded query on replay.`,
+      description: `Query parameter ${describeText(name, "name")}; optional, matched against the recorded query on replay.`,
     });
   if (args.body !== undefined)
     properties.set(args.body, {
@@ -157,7 +164,7 @@ export const environmentToolDefinitions = (
 ): readonly EnvironmentToolDefinition[] =>
   manifest.tools.map((tool) => ({
     name: tool.name,
-    description: `${REPLAY_CATALOG_INSTRUCTIONS} ${tool.method} ${describePath(tool.path_template)}; replays retained records [${describeList(tool.record_ordinals)}]; evidence ${evidenceId}`,
+    description: `${REPLAY_CATALOG_INSTRUCTIONS} ${tool.method} ${describeText(tool.path_template, "path")}; replays retained records [${describeList(tool.record_ordinals)}]; evidence ${evidenceId}`,
     inputSchema: environmentToolInputSchema(tool),
     tool,
   }));

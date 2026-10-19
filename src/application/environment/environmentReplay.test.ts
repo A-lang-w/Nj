@@ -180,6 +180,30 @@ describe("replayEnvironmentTool selection", () => {
     );
   });
 
+  it("replays an aliased query argument against the captured long name", () => {
+    const longName = "n".repeat(100);
+    const search = {
+      ...tool("get_search"),
+      query_parameter_names: [longName],
+      record_ordinals: [901, 902],
+    };
+    const exchange = (ordinal: number, value: string): RecordedExchange => ({
+      ordinal,
+      path: "/api/search",
+      query: `?${longName}=${value}`,
+      status: 200,
+      contentType: null,
+      bodyText: null,
+    });
+    const exchanges = new Map<number, RecordedExchange>([
+      [901, exchange(901, "a")],
+      [902, exchange(902, "b")],
+    ]);
+    expect(
+      selectReplayExchange(search, exchanges, { query_1: "b" }),
+    ).toMatchObject({ exchange: { ordinal: 902 }, exact: true });
+  });
+
   it("prefers path matches over query matches and keeps manifest order on ties", () => {
     const search = tool("get_search");
     const [first, second] = search.record_ordinals;
@@ -402,5 +426,40 @@ describe("replayEnvironmentTool bodies", () => {
       body: small.toString("base64"),
       replay: { truncated: false, body_encoding: "base64" },
     });
+  });
+});
+
+describe("replayEnvironmentTool reply metadata", () => {
+  it("cuts a long recorded path or query in the reply and flags it, while matching on the full line", () => {
+    const users = tool("get_users_by_id");
+    const ordinal = users.record_ordinals[0] ?? 0;
+    const long: EnvironmentSource = {
+      ...source,
+      exchanges: new Map([
+        [
+          ordinal,
+          {
+            ordinal,
+            path: `/api/users/2/${"p".repeat(4000)}`,
+            query: `?${"q".repeat(4000)}`,
+            status: 200,
+            contentType: null,
+            bodyText: null,
+          },
+        ],
+      ]),
+    };
+    const cut = replay("get_users_by_id", { id: "2" }, long).replay;
+    expect(cut).toMatchObject({
+      exact_match: true,
+      recorded_line_truncated: true,
+    });
+    expect(Buffer.byteLength(cut.recorded_path)).toBeLessThanOrEqual(1024);
+    expect(Buffer.byteLength(cut.recorded_query ?? "")).toBeLessThanOrEqual(
+      1024,
+    );
+    expect(
+      replay("get_users_by_id", { id: "2" }).replay.recorded_line_truncated,
+    ).toBe(false);
   });
 });

@@ -68,6 +68,7 @@ where the answer came from:
     "exact_match": true,
     "recorded_path": "/api/users/2",
     "recorded_query": null,
+    "recorded_line_truncated": false,
     "body_recorded": true,
     "body_encoding": "utf-8",
     "truncated": false
@@ -79,7 +80,9 @@ where the answer came from:
 equals the recorded one; it says nothing about parameters the caller omitted.
 A path value matches a recorded segment as written or after percent-decoding;
 when both kinds of match are available, the record whose segment equals the
-value as written is chosen.
+value as written is chosen. `recorded_query` keeps the `?` of an explicit empty
+query, and a recorded path or query longer than 1 KiB is cut in the reply with
+`recorded_line_truncated: true`; selection always uses the full recorded line.
 When no record matches, the tool still answers from the tool's first cited
 record and reports `exact_match: false`. `body` is parsed JSON when the
 recorded content type is JSON-like (`application/json`, `application/*+json`,
@@ -194,8 +197,9 @@ values (sampled within the list budget above; the manifest keeps them all);
 query parameter names are optional strings; write methods accept an
 optional `body` object described by the recorded top-level key types. Each
 input keeps its own argument: a query name equal to a path parameter's name is
-advertised as `query_<name>`, and the write body as `request_body` when a query
-parameter is named `body`. Every
+advertised as `query_<name>`, a query name longer than 64 characters as
+`query_<n>` (its position) with the captured name sampled in its description,
+and the write body as `request_body` when a query parameter is named `body`. Every
 schema closes with `additionalProperties: false`, a key the echo example's
 schema does not carry.
 `extensions`, `operations` and `children_environments` are fixed to `null`,
