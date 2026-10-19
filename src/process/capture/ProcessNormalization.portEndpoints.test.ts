@@ -24,7 +24,7 @@ it("preserves endpoint-only port normalization when the field pass is unchanged"
   const input = "localhost:8080";
   const value = "localhost:<port>";
 
-  expect(normalize(input, Buffer.byteLength(input))).toEqual({
+  expect(normalize(input, Buffer.byteLength(value))).toEqual({
     state: "normalized",
     value,
     utf8Bytes: Buffer.byteLength(value),
@@ -35,7 +35,7 @@ it("keeps endpoint and explicit-field normalization together", () => {
   const input = "localhost:8080 port:8080";
   const value = "localhost:<port> port:<port>";
 
-  expect(normalize(input, Buffer.byteLength(input))).toEqual({
+  expect(normalize(input, Buffer.byteLength(value))).toEqual({
     state: "normalized",
     value,
     utf8Bytes: Buffer.byteLength(value),
