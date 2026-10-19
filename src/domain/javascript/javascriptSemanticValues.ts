@@ -1055,6 +1055,29 @@ const provenanceForBindingValue = (
   binding: JavaScriptSemanticBindingState,
   context: EvaluationContext,
 ): JavaScriptBindingProvenance => {
+  const provenance = provenanceForBindingInitializers(binding, context);
+  if (!binding.referenceInitializers.some(({ assignment }) => assignment))
+    return provenance;
+  // Projected replacements are retained reference sources, not evidence of a
+  // local value or an unchanged earlier module. Apply this only to the selected
+  // read snapshot so a later replacement does not erase captured origins.
+  if (provenance.status === "local")
+    return semanticUnresolvedProvenance(
+      "unknown",
+      `Binding ${binding.name} has projected reference assignments whose module provenance is unresolved.`,
+    );
+  return provenance.status === "module"
+    ? semanticAmbiguousProvenance(
+        provenance.origins,
+        `Binding ${binding.name} has projected reference assignments that may replace its module origin.`,
+      )
+    : provenance;
+};
+
+const provenanceForBindingInitializers = (
+  binding: JavaScriptSemanticBindingState,
+  context: EvaluationContext,
+): JavaScriptBindingProvenance => {
   if (binding.kind === "parameter" || binding.kind === "catch")
     return semanticUnresolvedProvenance(
       "unknown",

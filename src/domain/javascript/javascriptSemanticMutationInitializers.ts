@@ -684,8 +684,15 @@ export const semanticBindingAtRead = (
   // can cover entry even when another write's order remains unknown.
   const hasDefiniteInitializer =
     position !== null &&
-    binding.initializers.some((initializer) => {
-      const source = initializerPosition(initializer, parents);
+    [
+      ...binding.initializers,
+      ...binding.referenceInitializers.filter(({ assignment }) => assignment),
+    ].some((initializer) => {
+      const source = initializerPosition(
+        initializer,
+        parents,
+        binding.referenceInitializers.includes(initializer),
+      );
       return (
         source !== null &&
         positionPrecedes(source, position) &&

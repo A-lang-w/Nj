@@ -1158,6 +1158,7 @@ type MutationObservableOrigin =
   | "ambient"
   | "array"
   | "array-prototype"
+  | "function"
   | "opaque";
 
 interface MutationObserverNode {
@@ -1282,6 +1283,10 @@ const observableMutationPaths = (
         const selected = pendingExpressions.pop();
         if (selected === undefined) break;
         const { expression, observer } = selected;
+        if (t.isFunction(expression))
+          // Keep own-member writes precise without replacing the existing
+          // links to references handed to a function's eventual caller.
+          (observer.origins ??= new Set()).add("function");
         // Keep class/getter projections distinct so cycle pruning does not
         // discard observable escapes through a shared getter result.
         if (

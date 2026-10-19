@@ -5,7 +5,11 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import { resolveJavaScriptSourceInvocation } from "./javascriptIntrinsicInvocation.js";
+import {
+  semanticBindingAtRead,
+  semanticEffectTiming,
+} from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticReferenceSourcesInactive,
   semanticKnownArrayIteration,
@@ -53,6 +57,8 @@ interface Candidate {
 
 export interface SemanticReturnedReferenceResult {
   readonly references: readonly SemanticReturnedReference[];
+  /** A visible invocation-method mutation prevents a source-local result proof. */
+  readonly unresolvedInvocation?: boolean;
   /** Both states close the supported source-local may-target graph. Widened joins projections without dropping represented targets; it does not claim runtime completeness. */
   readonly precision: "exact" | "widened";
 }
@@ -80,12 +86,17 @@ export const createSemanticReturnedReferences = (
     | "potential-reference"
     | "direct-call"
     | "awaited-call" = "potential-reference",
-): ((callee: t.Node) => SemanticReturnedReferenceResult) => {
+): ((
+  callee: t.Node,
+  invocation?: t.CallExpression | t.OptionalCallExpression,
+) => SemanticReturnedReferenceResult) => {
   const results = new WeakMap<
     t.Node,
     {
       readonly result: SemanticReturnedReferenceResult;
+      readonly invocation: t.Node | undefined;
       readonly iterationUnknown: boolean;
+      readonly ambientWrites: number;
       readonly dependencies: readonly {
         readonly binding: JavaScriptSemanticBindingState;
         readonly writes: number;
@@ -94,11 +105,13 @@ export const createSemanticReturnedReferences = (
     }
   >();
   const objectTargets = new WeakMap<t.ObjectExpression, ObjectTargetIndex>();
-  return (callee) => {
+  return (callee, invocation) => {
     const existing = results.get(callee);
     if (
       existing !== undefined &&
+      existing.invocation === invocation &&
       existing.iterationUnknown === state.arrayIterationUnknown &&
+      existing.ambientWrites === state.ambientWriteEffects.length &&
       existing.dependencies.every(
         ({ binding, writes, escapes }) =>
           binding.memberWrites.length === writes &&
@@ -125,7 +138,33 @@ export const createSemanticReturnedReferences = (
     const result: {
       references: readonly SemanticReturnedReference[];
       precision: SemanticReturnedReferenceResult["precision"];
+      unresolvedInvocation?: boolean;
     } = { references: [], precision: "exact" };
+    // The invocation owner retains the actual callable receiver. A bare alias
+    // of fn.call has lost that receiver and cannot execute fn by itself.
+    const sourceInvocation =
+      invocation === undefined
+        ? undefined
+        : resolveJavaScriptSourceInvocation(invocation);
+    const invocationTarget = sourceInvocation?.members.length
+      ? sourceInvocation.invocation?.callable
+      : undefined;
+    let inheritedInvocationChanged = false;
+    if (sourceInvocation?.members.length && invocation !== undefined) {
+      inheritedInvocationChanged = sourceInvocation.members.some((method) => {
+        const inheritedPath = ["global", "Function", "prototype", method];
+        return state.ambientWriteEffects.some(
+          (effect) =>
+            effect.path.length <= inheritedPath.length &&
+            effect.path.every(
+              (key, index) =>
+                key === null ||
+                semanticPropertyPathKeyMatches(key, inheritedPath[index] ?? ""),
+            ) &&
+            semanticEffectTiming(invocation, effect.node, state) !== "after",
+        );
+      });
+    }
     // Exact finite alternatives retain unrelated keys and cross-path
     // correlations. Growing/shrinking cycles still converge at any depth;
     // selector-budget widening retains the complete may-target closure.
@@ -206,12 +245,35 @@ export const createSemanticReturnedReferences = (
       const pending: Candidate[] = [];
       if (t.isIdentifier(node)) {
         const binding = resolveSemanticBindingState(state, node, node.name);
-        if (binding === undefined) continue;
+        if (binding === undefined) {
+          if (invocationTarget !== undefined && current.path?.length === 0)
+            result.unresolvedInvocation = true;
+          continue;
+        }
         dependencies.set(binding, {
           writes: binding.memberWrites.length,
           escapes: binding.escapedPaths.length,
         });
         if (current.path !== undefined) {
+          if (
+            invocationTarget !== undefined &&
+            semanticProjectedSourcesAtRead(
+              binding,
+              node,
+              current.path,
+              state,
+              true,
+              // The current invocation receives its callee before its own
+              // opaque effects; earlier captured member reads keep their site.
+              invocation !== undefined &&
+                current.readAt ===
+                  unwrapJavaScriptExpression(invocation.callee).node
+                ? invocation
+                : (current.readAt ?? node),
+              current.capturedSelections,
+            ) === undefined
+          )
+            result.unresolvedInvocation = true;
           const selectedSources = semanticProjectedSourcesAtRead(
             binding,
             node,
@@ -253,6 +315,8 @@ export const createSemanticReturnedReferences = (
             continue;
           }
           result.precision = "widened";
+          if (invocationTarget !== undefined)
+            result.unresolvedInvocation = true;
         }
         const selected = semanticBindingAtRead(
           binding,
@@ -337,12 +401,36 @@ export const createSemanticReturnedReferences = (
       } else if (t.isSequenceExpression(node)) {
         const last = node.expressions.at(-1);
         if (last !== undefined) pending.push({ ...current, node: last });
-      } else if (
-        t.isFunction(node) &&
-        (current.path === undefined || current.path.length === 0)
-      )
-        functions.add(node);
-      else if (t.isObjectExpression(node))
+      } else if (t.isFunction(node)) {
+        if (current.path === undefined || current.path.length === 0)
+          functions.add(node);
+        else if (
+          invocationTarget !== undefined &&
+          current.path.every((key) =>
+            semanticAliasSelectionChoices(key).every(
+              (choice) => choice === "call" || choice === "apply",
+            ),
+          )
+        ) {
+          // Own member writes have already selected their actual RHS above.
+          // Only a remaining inherited invocation member reaches this branch.
+          if (current.path.length === 1) functions.add(node);
+          else if (current.path.length === sourceInvocation?.members.length)
+            pending.push({ node: invocationTarget, path: [] });
+          else if (sourceInvocation?.invocation?.receiver !== undefined)
+            // A captured Function.call/apply is itself a generic callable.
+            // Its explicit receiver selects the function it eventually calls.
+            pending.push({
+              node: sourceInvocation.invocation.receiver,
+              path: [],
+            });
+          else
+            // A captured invocation method adds a receiver layer not present
+            // in the visible syntax. Keep its result unknown rather than drop it.
+            result.unresolvedInvocation = true;
+          if (inheritedInvocationChanged) result.unresolvedInvocation = true;
+        }
+      } else if (t.isObjectExpression(node))
         selectObjectTargets(node, current, pending, objectTargets);
       else if (t.isArrayExpression(node)) {
         const [key, ...path] = current.path ?? [];
@@ -519,7 +607,9 @@ export const createSemanticReturnedReferences = (
     result.references = output;
     results.set(callee, {
       result,
+      invocation,
       iterationUnknown: state.arrayIterationUnknown,
+      ambientWrites: state.ambientWriteEffects.length,
       dependencies: [...dependencies].map(([binding, counts]) => ({
         binding,
         ...counts,

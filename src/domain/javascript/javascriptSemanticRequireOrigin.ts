@@ -15,6 +15,7 @@ import {
   commonJsWrapperBindingDeclaration,
   semanticResolutionBlocked,
   semanticStableInitializer,
+  semanticBindingHasPriorValueWrite,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import {
@@ -139,14 +140,16 @@ export const semanticRequireLoaderAt = (
       : commonJsLoaderAt(node, state);
   }
   if (factoryBindingIds.has(binding.bindingId))
-    return binding.initializers.length === 0 ? "factory-loader" : "unknown";
+    return semanticBindingHasPriorValueWrite(node, binding, state)
+      ? "unknown"
+      : "factory-loader";
   if (
     binding.hostOrigin === "commonjs-wrapper" &&
     [...binding.declarationKinds].every((kind) => kind === "var")
   ) {
     if (binding.definitions.some(({ kind }) => kind === "function"))
       return "local";
-    return commonJsWrapperBindingHasPriorWrite(node, binding, state)
+    return semanticBindingHasPriorValueWrite(node, binding, state)
       ? "unknown"
       : commonJsLoaderAt(node, state);
   }
@@ -159,7 +162,7 @@ export const semanticRequireLoaderAt = (
   );
   if (
     wrapperBinding !== undefined &&
-    !commonJsWrapperBindingHasPriorWrite(node, wrapperBinding, state)
+    !semanticBindingHasPriorValueWrite(node, wrapperBinding, state)
   )
     return commonJsLoaderAt(node, state);
   if (isSemanticCreateRequireBinding(binding, state)) return "create-require";
@@ -177,42 +180,6 @@ export const semanticRequireLoaderAt = (
   )
     return "local";
   return "unknown";
-};
-
-const commonJsWrapperBindingHasPriorWrite = (
-  site: t.Node,
-  binding: NonNullable<ReturnType<typeof resolveSemanticBindingState>>,
-  state: JavaScriptSemanticAnalysisState,
-): boolean => {
-  const writes = state.bindingWrites.get(binding.bindingId) ?? [];
-  const declarationInitializers = binding.initializers
-    .map(({ node }) => node)
-    .filter(
-      (initializer) =>
-        !writes.some((write) => semanticNodeWithin(initializer, write, state)),
-    );
-  return (
-    writes.some(
-      (write) => semanticEffectTiming(site, write, state) !== "after",
-    ) ||
-    declarationInitializers.some(
-      (initializer) =>
-        semanticEffectTiming(site, initializer, state) !== "after",
-    )
-  );
-};
-
-const semanticNodeWithin = (
-  node: t.Node,
-  ancestor: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-): boolean => {
-  let current: t.Node | undefined = node;
-  while (current !== undefined) {
-    if (current === ancestor) return true;
-    current = state.parentsByNode.get(current);
-  }
-  return false;
 };
 
 /** Classify a call through an exact recovered factory-loader binding. */
@@ -254,7 +221,9 @@ export const semanticFactoryLoaderMemberAt = (
   const binding = resolveSemanticBindingState(state, loader, loader.name);
   if (binding === undefined || !bindingIds.has(binding.bindingId))
     return undefined;
-  return binding.initializers.length === 0 ? "factory-loader" : "unknown";
+  return semanticBindingHasPriorValueWrite(node, binding, state)
+    ? "unknown"
+    : "factory-loader";
 };
 
 const isSemanticCreateRequireBinding = (
@@ -561,8 +530,13 @@ const hasCommonJsModuleSource = (
         returned = createSemanticReturnedReferences(state, mode);
         factories.set(mode, returned);
       }
+      const returnedResult = returned(
+        value.callee,
+        t.isNewExpression(value) ? undefined : value,
+      );
+      if (returnedResult.unresolvedInvocation) return true;
       enqueue(
-        ...returned(value.callee).references.map((source) => ({
+        ...returnedResult.references.map((source) => ({
           node: source.node,
           path: [...source.projection, ...path],
           capturedSelections: semanticShiftCapturedSelections(

@@ -105,6 +105,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     openReceiverFacts: receivers.openReceivers,
     electronBindings: electronIdentity.bindings,
     electronInvocationPath: electronIdentity.invocationPath,
+    electronAppPathChangePossible: electronIdentity.mayChangeAppPath,
     rpcScan: createJavaScriptRpcScan(source, receivers.rpcClientRoots, index),
   };
   yield* traverseStaticSourceSteps(file, findings, bindings);

@@ -3,7 +3,16 @@ import type {
   JavaScriptSemanticAnalysisState,
   JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
+import {
+  semanticPropertyPathKeyMatches,
+  type JavaScriptSemanticPropertyPath,
+} from "./javascriptSemanticPropertyPaths.js";
+import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
+import {
+  semanticObjectPropertyReferences,
+  semanticArrayPropertyReferences,
+} from "./javascriptSemanticObjectReferences.js";
+import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
   semanticBindingAtRead,
   semanticDefiniteEffectPrecedesReference,
@@ -61,6 +70,61 @@ interface ProjectedSource {
   readonly capturedSelections?: readonly SemanticCapturedSelection[];
 }
 
+/** A fresh parent does not prove a descendant receiver is a fresh allocation. */
+const hasFreshProjectedReceiver = (
+  root: t.Node,
+  path: JavaScriptSemanticPropertyPath,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const pending = [{ node: root, path }];
+  const examined = new WeakMap<t.Node, Set<string>>();
+  let selections = 0;
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    const node = unwrapJavaScriptExpression(current.node).node;
+    const key = JSON.stringify(current.path);
+    const paths = examined.get(node) ?? new Set<string>();
+    if (paths.has(key)) return false;
+    paths.add(key);
+    examined.set(node, paths);
+    if (++selections > SEMANTIC_ALIAS_SELECTION_LIMIT) {
+      state.valueResourceLimits.add("alias-selections");
+      return false;
+    }
+    if (current.path.length === 0) {
+      if (
+        !t.isObjectExpression(node) &&
+        !t.isArrayExpression(node) &&
+        !t.isFunction(node) &&
+        !t.isClassExpression(node)
+      )
+        return false;
+      continue;
+    }
+    const [selected, ...remaining] = current.path;
+    const sources = t.isObjectExpression(node)
+      ? semanticObjectPropertyReferences(node, [selected!], state)
+      : t.isArrayExpression(node)
+        ? semanticArrayPropertyReferences(node, [selected!])
+        : [];
+    if (sources.length === 0) return false;
+    if (
+      selections + pending.length + sources.length >
+      SEMANTIC_ALIAS_SELECTION_LIMIT
+    ) {
+      state.valueResourceLimits.add("alias-selections");
+      return false;
+    }
+    pending.push(
+      ...sources.map((source) => ({
+        node: source.node,
+        path: [...source.path, ...remaining],
+      })),
+    );
+  }
+  return true;
+};
+
 /** Select retained assignment and copy sources at one projected member read. */
 export const semanticProjectedSourcesAtRead = (
   binding: JavaScriptSemanticBindingState,
@@ -108,11 +172,6 @@ export const semanticProjectedSourcesAtRead = (
         capture !== undefined &&
         receiverAt !== undefined &&
         t.isAssignmentExpression(replacement.node, { operator: "=" }) &&
-        (t.isObjectExpression(replacement.node.right) ||
-          t.isArrayExpression(replacement.node.right) ||
-          t.isFunctionExpression(replacement.node.right) ||
-          t.isArrowFunctionExpression(replacement.node.right) ||
-          t.isClassExpression(replacement.node.right)) &&
         samePrefix(replacement, effect) &&
         semanticTopLevelEffectFollowsCapture(
           capture,
@@ -123,6 +182,11 @@ export const semanticProjectedSourcesAtRead = (
           replacement.node,
           receiverAt,
           state.parentsByNode,
+        ) &&
+        hasFreshProjectedReceiver(
+          replacement.node.right,
+          effect.path.slice(replacement.path.length, -1),
+          state,
         )
       );
     });

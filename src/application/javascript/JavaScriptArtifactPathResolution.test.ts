@@ -3416,6 +3416,57 @@ describe("literal-percent runtime path resolution", () => {
 });
 
 describe("application-root Electron loadFile resolution", () => {
+  it.each([
+    "sub\\index.html",
+    ".\\index.html",
+    "C:index.html",
+    "C:sub\\index.html",
+  ])(
+    "retains unknown Windows loadFile host semantics for %s",
+    (declaredPath) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/main.cjs",
+          context: "filesystem-expression",
+          runtimePathKind: "application-file",
+          applicationRootPath: "app",
+          files: fileMap([
+            file("app/main.cjs", "root"),
+            file("app/sub/index.html", "root"),
+            file("app/index.html", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        declared_path: declaredPath,
+        resolution_status: "unavailable",
+        resolved_path: null,
+      });
+    },
+  );
+
+  it.each([
+    ["sub/index.html", "resolved", "app/sub/index.html"],
+    ["sub\\index\0.html", "rejected", null],
+  ] as const)(
+    "keeps loadFile admission controls for %s",
+    (declaredPath, status, path) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/main.cjs",
+          context: "filesystem-expression",
+          runtimePathKind: "application-file",
+          applicationRootPath: "app",
+          files: fileMap([
+            file("app/main.cjs", "root"),
+            file("app/sub/index.html", "root"),
+          ]),
+        }),
+      ).toMatchObject({ resolution_status: status, resolved_path: path });
+    },
+  );
+
   it("confines a sibling path after applying a nested application root", () => {
     expect(
       resolve({

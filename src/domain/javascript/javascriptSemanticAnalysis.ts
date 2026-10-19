@@ -108,6 +108,7 @@ import {
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import { indexCommonJsExportReceiversSteps } from "./javascriptCommonJsExportReceivers.js";
+import { createSemanticElectronAppPathChangeQuery } from "./javascriptElectronAppPathChanges.js";
 import type { JavaScriptModuleResolutionMode } from "./javascriptModuleResolutionMode.js";
 
 interface BindPatternInput {
@@ -822,6 +823,9 @@ export interface JavaScriptElectronIdentity {
   readonly invocationPath: (
     node: t.CallExpression | t.OptionalCallExpression,
   ) => readonly string[] | undefined;
+  readonly mayChangeAppPath: (
+    node: t.CallExpression | t.OptionalCallExpression,
+  ) => boolean;
 }
 
 export function* indexJavaScriptElectronIdentitySteps(
@@ -925,6 +929,11 @@ export function* indexJavaScriptElectronIdentitySteps(
     intactExport,
     exportPath: rootExport,
     invocationPath,
+    mayChangeAppPath: createSemanticElectronAppPathChangeQuery(
+      state,
+      rootExport,
+      interop,
+    ),
   };
 }
 

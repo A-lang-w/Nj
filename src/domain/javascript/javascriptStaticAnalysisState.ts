@@ -98,6 +98,10 @@ export interface JavaScriptFindingContext {
   readonly electronInvocationPath?: (
     node: t.CallExpression | t.OptionalCallExpression,
   ) => readonly string[] | undefined;
+  /** A possible shared-app mutation does not establish concrete API identity. */
+  readonly electronAppPathChangePossible?: (
+    node: t.CallExpression | t.OptionalCallExpression,
+  ) => boolean;
 }
 
 /** Candidate import, require, worker, or service-worker reference. */

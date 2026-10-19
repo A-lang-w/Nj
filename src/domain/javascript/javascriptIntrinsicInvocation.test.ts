@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import * as t from "@babel/types";
 
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import { resolveJavaScriptSourceInvocation } from "./javascriptIntrinsicInvocation.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
 import {
@@ -52,3 +53,28 @@ it("keeps a comma-expression intrinsic call unknown when its receiver is erased"
     }),
   ]);
 });
+
+it.each([
+  ["get.call(null)", "get"],
+  ["get.apply(null,[])", "get"],
+  ["get.call.call(other,null)", "other"],
+  ["get.apply.call(other,null,[])", "other"],
+  ["(0,get.call)(null)", undefined],
+])(
+  "retains the nominal source callable and receiver through %s",
+  (source, name) => {
+    const parsed = parseJavaScriptSource(source);
+    const statement = parsed?.program.body[0];
+    if (
+      !t.isExpressionStatement(statement) ||
+      !t.isCallExpression(statement.expression)
+    )
+      throw new Error("Expected source invocation fixture");
+    const result = resolveJavaScriptSourceInvocation(statement.expression);
+    expect(result.invocation?.callable).toEqual(
+      name === undefined
+        ? undefined
+        : expect.objectContaining({ type: "Identifier", name }),
+    );
+  },
+);

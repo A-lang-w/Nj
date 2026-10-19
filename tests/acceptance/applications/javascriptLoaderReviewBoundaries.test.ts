@@ -6,7 +6,10 @@ import type { JavaScriptApplicationGraph } from "../../../src/domain/javascript/
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
-import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
+import {
+  findSourceModule,
+  writeFixtureFiles,
+} from "../../support/javascriptApplicationFixture.js";
 
 const windowSource =
   'const { BrowserWindow } = require("electron"); new BrowserWindow().loadFile("index.html");';
@@ -49,6 +52,83 @@ const loaderCases = [
     name: "returned local",
     source:
       'const get=()=>({require(){}});get().require("../shared/window.cjs");',
+    unknownOwner: false,
+    unknownLoad: false,
+  },
+  {
+    name: "returned module call wrapper",
+    source:
+      'const get=()=>module;get.call(null).require("../shared/window.cjs");',
+    unknownOwner: true,
+    unknownLoad: true,
+    requiredUnknownExpression: 'get.call(null).require("../shared/window.cjs")',
+  },
+  {
+    name: "returned module apply wrapper",
+    source:
+      'const get=()=>module;get.apply(null,[]).require("../shared/window.cjs");',
+    unknownOwner: true,
+    unknownLoad: true,
+    requiredUnknownExpression:
+      'get.apply(null,[]).require("../shared/window.cjs")',
+  },
+  {
+    name: "local call wrapper override",
+    source:
+      'const get=()=>module;get.call=()=>({require(){}});get.call(null).require("../shared/window.cjs");',
+    unknownOwner: false,
+    unknownLoad: false,
+  },
+  {
+    name: "local apply wrapper override",
+    source:
+      'const get=()=>module;get.apply=()=>({require(){}});get.apply(null,[]).require("../shared/window.cjs");',
+    unknownOwner: false,
+    unknownLoad: false,
+  },
+  {
+    name: "lost call wrapper receiver",
+    source:
+      'const get=()=>module;(0,get.call)(null).require("../shared/window.cjs");',
+    unknownOwner: false,
+    unknownLoad: false,
+  },
+  {
+    name: "lost apply wrapper receiver",
+    source:
+      'const get=()=>module;(0,get.apply)(null,[]).require("../shared/window.cjs");',
+    unknownOwner: false,
+    unknownLoad: false,
+  },
+  {
+    name: "captured call wrapper host receiver",
+    source:
+      'const get=()=>module;const invoke=get.call;invoke.call(get,null).require("../shared/window.cjs");',
+    unknownOwner: true,
+    unknownLoad: true,
+    requiredUnknownExpression:
+      'invoke.call(get,null).require("../shared/window.cjs")',
+  },
+  {
+    name: "captured apply wrapper host receiver",
+    source:
+      'const get=()=>module;const invoke=get.apply;invoke.call(get,null,[]).require("../shared/window.cjs");',
+    unknownOwner: true,
+    unknownLoad: true,
+    requiredUnknownExpression:
+      'invoke.call(get,null,[]).require("../shared/window.cjs")',
+  },
+  {
+    name: "captured call wrapper local receiver",
+    source:
+      'const get=()=>module;const local=()=>({require(){}});const invoke=get.call;invoke.call(local,null).require("../shared/window.cjs");',
+    unknownOwner: false,
+    unknownLoad: false,
+  },
+  {
+    name: "captured apply wrapper local receiver",
+    source:
+      'const get=()=>module;const local=()=>({require(){}});const invoke=get.apply;invoke.call(local,null,[]).require("../shared/window.cjs");',
     unknownOwner: false,
     unknownLoad: false,
   },
@@ -228,6 +308,53 @@ const loaderCases = [
     unknownLoad: false,
   },
   {
+    name: "wrapper before pattern replacement",
+    source:
+      'var require;require("../shared/window.cjs");({require}={require:()=>({})});',
+    unknownOwner: true,
+    unknownLoad: false,
+  },
+  {
+    name: "wrapper after pattern replacement",
+    source:
+      'var require;({require}={require:()=>({})});require("../shared/window.cjs");',
+    unknownOwner: true,
+    unknownLoad: true,
+    noProvenLoad: true,
+  },
+  {
+    name: "shared deep child host write",
+    source:
+      'const old={child:{inner:{make:()=>({})}}};const box={...old};old.child={inner:box.child.inner};old.child.inner.make=()=>module;box.child.inner.make().require("../shared/window.cjs");',
+    unknownOwner: true,
+    unknownLoad: true,
+    requiredUnknownExpression:
+      'box.child.inner.make().require("../shared/window.cjs")',
+  },
+  {
+    name: "shared deep child local write",
+    source:
+      'const old={child:{inner:{make:()=>module}}};const box={...old};old.child={inner:box.child.inner};old.child.inner.make=()=>({require(){}});box.child.inner.make().require("../shared/window.cjs");',
+    unknownOwner: true,
+    unknownLoad: true,
+    absentUnknownExpression:
+      'box.child.inner.make().require("../shared/window.cjs")',
+  },
+  {
+    name: "fresh deep child local capture",
+    source:
+      'const old={child:{inner:{make:()=>({require(){}})}}};const box={...old};old.child={inner:{make:()=>module}};old.child.inner.make=()=>module;box.child.inner.make().require("../shared/window.cjs");',
+    unknownOwner: false,
+    unknownLoad: false,
+  },
+  {
+    name: "fresh deep child host capture",
+    source:
+      'const old={child:{inner:{make:()=>module}}};const box={...old};old.child={inner:{make:()=>({})}};old.child.inner.make=()=>({});box.child.inner.make().require("../shared/window.cjs");',
+    unknownOwner: true,
+    unknownLoad: true,
+  },
+  {
     name: "twice copied host factory",
     source:
       'const old={make:()=>module};const middle={...old};old.make=()=>({});const box={...middle};middle.make=()=>({});box.make().require("../shared/window.cjs");',
@@ -353,6 +480,33 @@ cliTest.for(
         relation === "imports" && properties.specifier === null,
     );
     expect(unknownLoads.length > 0).toBe(testCase.unknownLoad);
+    if ("requiredUnknownExpression" in testCase)
+      expect(unknownLoads).toContainEqual(
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            expression: testCase.requiredUnknownExpression,
+          }),
+        }),
+      );
+    if ("absentUnknownExpression" in testCase)
+      expect(
+        unknownLoads.filter(
+          ({ properties }) =>
+            properties.expression === testCase.absentUnknownExpression,
+        ),
+      ).toEqual([]);
+    if ("noProvenLoad" in testCase) {
+      const source = findSourceModule(graph, "b/main.cjs");
+      expect(source).toBeDefined();
+      expect(
+        graph.edges.filter(
+          ({ relation, source_node_id, properties }) =>
+            relation === "imports" &&
+            source_node_id === source?.node_id &&
+            properties.specifier === "../shared/window.cjs",
+        ),
+      ).toEqual([]);
+    }
     if (testCase.name === "Windows relative require")
       expect(graph.edges).toEqual(
         expect.arrayContaining([

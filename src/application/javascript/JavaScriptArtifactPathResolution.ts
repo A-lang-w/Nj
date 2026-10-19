@@ -429,13 +429,8 @@ const isRuntimePathDeclaration = (input: ResolveArtifactPathInput): boolean =>
 const resolveNodeRuntimeEntrypoint = (
   input: ResolveArtifactPathInput,
 ): CandidateResolution => {
-  if (
-    !input.declaredPath.includes("\0") &&
-    (input.declaredPath.includes("\\") || /^[a-z]:/iu.test(input.declaredPath))
-  )
-    return unresolvedCandidate("unavailable", [
-      "Windows-relative runtime paths require target-platform and drive context that the selected logical artifact inventory does not establish.",
-    ]);
+  const windowsPath = unknownWindowsRuntimePath(input.declaredPath);
+  if (windowsPath !== null) return windowsPath;
   const runtimeInput = { ...input, moduleKind: "require" as const };
   if (input.context === "package-entrypoint" && input.declaredPath === "")
     return resolveNodePackageMain(
@@ -474,6 +469,10 @@ const resolveNodeRuntimeEntrypoint = (
 const resolveRuntimeEntrypoint = (
   input: ResolveArtifactPathInput,
 ): CandidateResolution => {
+  if (input.runtimePathKind === "application-file") {
+    const windowsPath = unknownWindowsRuntimePath(input.declaredPath);
+    if (windowsPath !== null) return windowsPath;
+  }
   const rejected = rejectDeclaration(
     input.declaredPath,
     declaresLiteralPercent(input),
@@ -507,6 +506,17 @@ const resolveRuntimeEntrypoint = (
     }
   );
 };
+
+/** Host filesystem spellings need target-platform context before admission. */
+const unknownWindowsRuntimePath = (
+  declared: string,
+): CandidateResolution | null =>
+  !declared.includes("\0") &&
+  (declared.includes("\\") || /^[a-z]:/iu.test(declared))
+    ? unresolvedCandidate("unavailable", [
+        "Windows-relative runtime paths require target-platform and drive context that the selected logical artifact inventory does not establish.",
+      ])
+    : null;
 
 const resolveRuntimeSourceCandidates = (
   input: ResolveArtifactPathInput,
@@ -606,12 +616,11 @@ const contextualCandidate = (
     context === "module-specifier" &&
     input.moduleKind === "require" &&
     declared.includes("\\") &&
-    (!hasScheme(declared) || /^[a-z]:/iu.test(declared)) &&
-    !declared.includes("\0")
-  )
-    return unresolvedCandidate("unavailable", [
-      "Windows CommonJS request separators require target-platform path semantics that the selected logical artifact inventory does not establish.",
-    ]);
+    (!hasScheme(declared) || /^[a-z]:/iu.test(declared))
+  ) {
+    const windowsPath = unknownWindowsRuntimePath(declared);
+    if (windowsPath !== null) return windowsPath;
+  }
   const hasUrlPathSemantics =
     context === "module-specifier" && input.moduleKind === "import";
   if (hasUrlPathSemantics) declared = htmlUrlText(declared);

@@ -157,9 +157,46 @@ export const resolveJavaScriptIntrinsicInvocation = (
     }
     return {
       kind: "known",
+      callable: callee,
       path,
       arguments: arguments_,
       ...(receiver === undefined ? {} : { receiver }),
     };
   }
+};
+
+/**
+ * Select the nominal source callable through generic call/apply syntax. This
+ * does not prove inherited methods intact: source owners must first select
+ * visible own-member replacements and preserve prototype uncertainty.
+ */
+export const resolveJavaScriptSourceInvocation = (
+  node: t.CallExpression | t.OptionalCallExpression,
+): {
+  readonly invocation: JavaScriptIntrinsicInvocation | undefined;
+  readonly members: readonly string[];
+} => {
+  const nominalPath = (candidate: t.Node): readonly string[] => {
+    let current = unwrapJavaScriptExpression(candidate).node;
+    const members: string[] = [];
+    while (
+      t.isMemberExpression(current) ||
+      t.isOptionalMemberExpression(current)
+    ) {
+      const key = semanticStaticPropertyKey(current.property, current.computed);
+      if (key !== "call" && key !== "apply") break;
+      members.push(key);
+      current = unwrapJavaScriptExpression(current.object).node;
+    }
+    return ["source", "local", "callable", ...members.reverse()];
+  };
+  return {
+    invocation: resolveJavaScriptIntrinsicInvocation(
+      node,
+      nominalPath,
+      () => undefined,
+      () => false,
+    ),
+    members: nominalPath(node.callee).slice(3),
+  };
 };

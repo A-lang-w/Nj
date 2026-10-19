@@ -21,10 +21,13 @@ export const inspectElectronStaticNode = (
     electronCalleePath(node.callee, context) ??
     context.electronInvocationPath?.(node);
   if (
-    path !== undefined &&
-    path[0] === "app" &&
-    path[1] === "setAppPath" &&
-    path.slice(2).every((member) => ["call", "apply", "bind"].includes(member))
+    (path !== undefined &&
+      path[0] === "app" &&
+      path[1] === "setAppPath" &&
+      path
+        .slice(2)
+        .every((member) => ["call", "apply", "bind"].includes(member))) ||
+    context.electronAppPathChangePossible?.(node) === true
   )
     // A bound setter may escape this source before it changes the shared app
     // path. Keep that possibility without asserting the delegate is unchanged.

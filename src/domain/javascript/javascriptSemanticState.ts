@@ -5,6 +5,10 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import {
+  semanticBindingAtRead,
+  semanticEffectTiming,
+} from "./javascriptSemanticMutationInitializers.js";
 
 import type {
   JavaScriptSemanticPropertyPath,
@@ -551,7 +555,52 @@ export const isUnmodifiedCommonJsWrapperBinding = (
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
   const binding = commonJsWrapperBindingDeclaration(node, name, state);
-  return binding !== undefined && binding.initializers.length === 0;
+  return (
+    binding !== undefined &&
+    !semanticBindingHasPriorValueWrite(node, binding, state)
+  );
+};
+
+/** Retained value and pattern stores share one source-ordered write boundary. */
+export const semanticBindingHasPriorValueWrite = (
+  site: t.Node,
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (binding.definitions.some(({ kind }) => kind === "function")) return true;
+  const writes = state.bindingWrites.get(binding.bindingId) ?? [];
+  const read = semanticBindingAtRead(binding, site, state.parentsByNode);
+  const retained =
+    read.status === "ordered"
+      ? new Set([
+          ...read.binding.initializers,
+          ...read.binding.referenceInitializers,
+        ])
+      : undefined;
+  const representedWrites = new Set<t.Node>();
+  const retainedWrites = new Set<t.Node>();
+  for (const source of [
+    ...binding.initializers,
+    ...binding.referenceInitializers,
+  ]) {
+    let owner: t.Node | undefined = source.node;
+    while (owner !== undefined && !writes.includes(owner))
+      owner = state.parentsByNode.get(owner);
+    if (owner !== undefined) {
+      representedWrites.add(owner);
+      if (retained === undefined || retained.has(source))
+        retainedWrites.add(owner);
+    } else if (
+      (retained === undefined || retained.has(source)) &&
+      semanticEffectTiming(site, source.node, state) !== "after"
+    )
+      return true;
+  }
+  return writes.some(
+    (write) =>
+      (!representedWrites.has(write) || retainedWrites.has(write)) &&
+      semanticEffectTiming(site, write, state) !== "after",
+  );
 };
 
 /** Program `var` redeclarations retain wrapper identity until a source write. */
