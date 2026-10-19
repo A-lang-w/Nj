@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { semanticExpressionCannotThrow } from "./javascriptSemanticExpressionResults.js";
 import {
   semanticPatternSuspendsBeforeGeneratorRead,
   semanticPatternSuspendsBeforeTarget,
@@ -1258,6 +1259,10 @@ const webSocketConsumerAlwaysWaits = (
         ? node.arguments
         : [node.property];
     },
+    (node) =>
+      semanticExpressionCannotThrow(node, state, (read) =>
+        webSocketExecutionContexts(read, state),
+      ),
   );
 
 type WebSocketConsumerPhase =

@@ -239,11 +239,14 @@ export const semanticAssignmentTargetCompletion = (
     : "unknown";
 };
 
-const prefixCanComplete = (
+/** Nonthrowing reads require binding initialization, not merely a known value. */
+export const semanticExpressionCannotThrow = (
   rawNode: t.Node,
   state: JavaScriptSemanticAnalysisState,
   executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
+  depth = 0,
 ): boolean => {
+  if (depth >= 128) return false;
   const node = unwrapJavaScriptExpression(rawNode).node;
   if (syntaxEvaluationCannotThrow(node)) return true;
   if (t.isIdentifier(node)) {
@@ -253,6 +256,10 @@ const prefixCanComplete = (
       bindingInitializedBeforeRead(binding, node, state, executionFrames)
     );
   }
+  if (t.isConditionalExpression(node))
+    return [node.test, node.consequent, node.alternate].every((operand) =>
+      semanticExpressionCannotThrow(operand, state, executionFrames, depth + 1),
+    );
   return (
     t.isAssignmentExpression(node) &&
     node.operator === "=" &&
@@ -262,7 +269,7 @@ const prefixCanComplete = (
       state,
       executionFrames,
     ) === "completed" &&
-    prefixCanComplete(node.right, state, executionFrames)
+    semanticExpressionCannotThrow(node.right, state, executionFrames, depth + 1)
   );
 };
 
@@ -277,7 +284,9 @@ export const semanticExactResultOperand = (
     t.isSequenceExpression(selected) &&
     !selected.expressions
       .slice(0, -1)
-      .every((prefix) => prefixCanComplete(prefix, state, executionFrames))
+      .every((prefix) =>
+        semanticExpressionCannotThrow(prefix, state, executionFrames),
+      )
   )
     return undefined;
   return javaScriptExactResultOperand(

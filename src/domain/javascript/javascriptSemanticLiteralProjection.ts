@@ -4,7 +4,7 @@ import * as t from "@babel/types";
 import {
   semanticLiteralContainer,
   semanticLiteralProperty,
-  semanticFinalObjectMember,
+  semanticFinalObjectSlot,
   semanticStaticPropertyKey,
   readExactJavaScriptLiteral,
   unwrapJavaScriptExpression,
@@ -121,7 +121,9 @@ export const semanticLiteralProjectionSlot = (
   const value = semanticLiteralProperty(node, key, exactResult);
   if (value !== undefined) return { kind: "value", node: value };
   if (t.isObjectExpression(container)) {
-    const member = semanticFinalObjectMember(container, String(key));
+    const slot = semanticFinalObjectSlot(container, String(key));
+    if (slot.kind === "undefined") return { kind: "undefined" };
+    const member = slot.kind === "member" ? slot.node : undefined;
     // An ordinary method is an own data property: copying it cannot invoke its
     // body. That read proof does not resolve the copied function's exact value.
     if (t.isObjectMethod(member) && member.kind === "method")
@@ -139,7 +141,7 @@ export const semanticLiteralProjectionSlot = (
         t.isNullLiteral(unwrapJavaScriptExpression(property.value).node),
     );
     if (
-      member === undefined &&
+      slot.kind === "missing" &&
       nullPrototype &&
       container.properties.every(
         (property) =>

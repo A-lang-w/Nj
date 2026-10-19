@@ -682,6 +682,102 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "r53-0.js",
+    source:
+      '(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {set run(value){}};yield undefined;}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r53-1.js",
+    source:
+      '(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {set run(value){throw 0}};yield undefined;}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r53-2.js",
+    source:
+      "(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {set ['run'](value){}};yield undefined;}finally{new Socket(\"wss://example.test/review-latest\")}})()})();const Socket=globalThis.WebSocket;",
+    present: true,
+  },
+  {
+    file: "r53-3.js",
+    source:
+      '(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {run:1,set run(value){}};yield undefined;}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r53-4.js",
+    source:
+      '(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {get run(){throw 0},run:1,set run(value){}};yield undefined;}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r53-5.js",
+    source:
+      '(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {get run(){throw 0},set run(value){}};yield undefined;}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r53-6.js",
+    source:
+      '(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {set run(value){},get run(){throw 0}};yield undefined;}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r53-7.js",
+    source:
+      '(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {__proto__:{get run(){throw 0}},set run(value){}};yield undefined;}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r53-8.js",
+    source:
+      '(async()=>{const[{...rest},next=0]=(function*(){try{yield {set run(value){}};yield undefined;}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r53-9.js",
+    source:
+      '(async()=>{const[{run=await 0}]=(function*(){try{yield {set run(value){throw 0}}}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r53-10.js",
+    source:
+      'const fail=false;const consume=()=>{};(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{consume?.(fail?1:0,await 0)}catch{}}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r53-11.js",
+    source:
+      'let fail=true;const consume=()=>{};(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{consume?.(fail?1:0,await 0)}catch{}}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r53-12.js",
+    source:
+      'const fail=false;const consume=()=>{};(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{consume?.(fail?(fail?1:2):(fail?3:4),await 0)}catch{}}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r53-13.js",
+    source:
+      'const fail=true;const consume=()=>{};(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{consume?.(fail?null.value:0,await 0)}catch{}}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r53-14.js",
+    source:
+      'const consume=()=>{};(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{consume?.(fail?1:0,await 0)}catch{}}})();const Socket=globalThis.WebSocket;const fail=false;',
+    present: false,
+  },
+  {
+    file: "r53-15.js",
+    source:
+      'const fail=false;const consume=()=>{};(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{consume?.(fail?1:0,0)}catch{}}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
     file: "r52-0.js",
     source:
       '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{with(null.value){}}catch{await 0;continue;}break;}})();const Socket=globalThis.WebSocket;',

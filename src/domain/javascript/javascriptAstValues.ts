@@ -301,18 +301,24 @@ export const staticObjectProperty = (
   return lookup(object, 0);
 };
 
-/** Later properties own a key; an intervening dynamic write leaves it unknown. */
-export const semanticFinalObjectMember = (
+/** Accessor halves survive only until a data definition replaces the descriptor. */
+export const semanticFinalObjectSlot = (
   node: t.ObjectExpression,
   key: string,
   access: "get" | "set" = "get",
-): t.ObjectProperty | t.ObjectMethod | undefined => {
+):
+  | {
+      readonly kind: "member";
+      readonly node: t.ObjectProperty | t.ObjectMethod;
+    }
+  | { readonly kind: "undefined" | "missing" | "unknown" } => {
   let accessor = false;
   for (let index = node.properties.length - 1; index >= 0; index -= 1) {
     const property = node.properties[index];
-    if (property === undefined || t.isSpreadElement(property)) return undefined;
+    if (property === undefined || t.isSpreadElement(property))
+      return { kind: "unknown" };
     const name = semanticStaticPropertyKey(property.key, property.computed);
-    if (name === null) return undefined;
+    if (name === null) return { kind: "unknown" };
     if (name !== key) continue;
     if (
       t.isObjectMethod(property) &&
@@ -322,10 +328,20 @@ export const semanticFinalObjectMember = (
       continue;
     }
     return !accessor || (t.isObjectMethod(property) && property.kind === access)
-      ? property
-      : undefined;
+      ? { kind: "member", node: property }
+      : { kind: "undefined" };
   }
-  return undefined;
+  return { kind: accessor ? "undefined" : "missing" };
+};
+
+/** Node-only consumers must not substitute an absent accessor for an invocation. */
+export const semanticFinalObjectMember = (
+  node: t.ObjectExpression,
+  key: string,
+  access: "get" | "set" = "get",
+): t.ObjectProperty | t.ObjectMethod | undefined => {
+  const slot = semanticFinalObjectSlot(node, key, access);
+  return slot.kind === "member" ? slot.node : undefined;
 };
 
 /** Select a data value without substituting a getter or method for that value. */

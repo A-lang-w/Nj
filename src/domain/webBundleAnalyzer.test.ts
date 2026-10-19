@@ -4770,6 +4770,86 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "setter-only rest read reaches default wait",
+    "(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {set run(value){}};yield undefined;}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "setter body is not invoked by rest read",
+    "(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {set run(value){throw 0}};yield undefined;}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "computed setter-only rest read reaches wait",
+    "(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {set ['run'](value){}};yield undefined;}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "data replaced by setter has undefined read",
+    "(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {run:1,set run(value){}};yield undefined;}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "data reset removes earlier getter before setter",
+    "(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {get run(){throw 0},run:1,set run(value){}};yield undefined;}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "getter before setter remains a throwing read",
+    "(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {get run(){throw 0},set run(value){}};yield undefined;}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "getter after setter remains a throwing read",
+    "(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {set run(value){},get run(){throw 0}};yield undefined;}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "own setter masks inherited getter",
+    "(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {__proto__:{get run(){throw 0}},set run(value){}};yield undefined;}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "setter-only rest without wait remains eager",
+    "(async()=>{const[{...rest},next=0]=(function*(){try{yield {set run(value){}};yield undefined;}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "setter-only binding selects undefined default",
+    "(async()=>{const[{run=await 0}]=(function*(){try{yield {set run(value){throw 0}}}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "initialized ternary argument completes before caught wait",
+    "const fail=false;const consume=()=>{};(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{consume?.(fail?1:0,await 0)}catch{}}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "initialized ternary test does not require a constant",
+    "let fail=true;const consume=()=>{};(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{consume?.(fail?1:0,await 0)}catch{}}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "nested inert ternary argument completes before wait",
+    "const fail=false;const consume=()=>{};(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{consume?.(fail?(fail?1:2):(fail?3:4),await 0)}catch{}}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "throwing selected ternary branch bypasses caught wait",
+    "const fail=true;const consume=()=>{};(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{consume?.(fail?null.value:0,await 0)}catch{}}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "uninitialized ternary test cannot establish wait",
+    "const consume=()=>{};(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{consume?.(fail?1:0,await 0)}catch{}}})();const Socket=globalThis.WebSocket;const fail=false;",
+    false,
+  ],
+  [
+    "inert ternary without wait remains eager",
+    "const fail=false;const consume=()=>{};(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{consume?.(fail?1:0,0)}catch{}}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
     "with receiver throw reaches caught wait",
     "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{with(null.value){}}catch{await 0;continue;}break;}})();const Socket=globalThis.WebSocket;",
     true,

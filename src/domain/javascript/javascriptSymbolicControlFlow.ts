@@ -672,6 +672,9 @@ const syntaxCompletion = (
   depth: number,
   boundary?: (node: t.Node) => "suspension" | "throw" | undefined,
   orderedOperands?: (node: t.Node) => readonly t.Node[] | undefined,
+  evaluationCannotThrow: (
+    node: t.Node,
+  ) => boolean = syntaxEvaluationCannotThrow,
 ): SyntaxCompletion => {
   if (node == null) return normalCompletion;
   if (depth >= 128) return { normal: true, abrupt: [{ kind: "unknown" }] };
@@ -679,7 +682,13 @@ const syntaxCompletion = (
   if (stopped !== undefined)
     return { normal: false, abrupt: [{ kind: stopped }] };
   const complete = (child: t.Node | null | undefined) =>
-    syntaxCompletion(child, depth + 1, boundary, orderedOperands);
+    syntaxCompletion(
+      child,
+      depth + 1,
+      boundary,
+      orderedOperands,
+      evaluationCannotThrow,
+    );
   if (t.isReturnStatement(node) || t.isThrowStatement(node)) {
     const argument =
       boundary === undefined ? normalCompletion : complete(node.argument);
@@ -812,14 +821,14 @@ const syntaxCompletion = (
         normal: prefix.normal && !syntaxEvaluationAlwaysThrows(node),
         abrupt: [
           ...prefix.abrupt,
-          ...(prefix.normal && !syntaxEvaluationCannotThrow(node)
+          ...(prefix.normal && !evaluationCannotThrow(node)
             ? [{ kind: "throw" as const }]
             : []),
         ],
       };
     }
   }
-  return syntaxEvaluationCannotThrow(node)
+  return evaluationCannotThrow(node)
     ? normalCompletion
     : { normal: true, abrupt: [{ kind: "throw" }] };
 };
@@ -830,8 +839,15 @@ export const syntaxMayCompleteWithoutBoundary = (
   boundary: (node: t.Node) => "suspension" | "throw" | undefined,
   exits: "iteration" | "scope",
   orderedOperands?: (node: t.Node) => readonly t.Node[] | undefined,
+  evaluationCannotThrow?: (node: t.Node) => boolean,
 ): boolean => {
-  const completion = syntaxCompletion(node, 0, boundary, orderedOperands);
+  const completion = syntaxCompletion(
+    node,
+    0,
+    boundary,
+    orderedOperands,
+    evaluationCannotThrow,
+  );
   return (
     completion.normal ||
     completion.abrupt.some((exit) =>
