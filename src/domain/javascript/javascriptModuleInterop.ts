@@ -32,6 +32,7 @@ import {
   expandJavaScriptInvocationArguments,
   resolveJavaScriptIntrinsicInvocation,
   type JavaScriptBoundHelperRead,
+  type JavaScriptSpreadIntegrity,
 } from "./javascriptIntrinsicInvocation.js";
 import {
   semanticArrayIndex,
@@ -58,7 +59,7 @@ import {
   semanticGlobalBindingReadMayHaveChanged,
   semanticOpaqueBindingReadMayHaveChanged,
   type SemanticGlobalBindingFacts,
-  semanticArrayIterationMayBeReplaced,
+  semanticArrayIterationMayBeReplacedBefore,
 } from "./javascriptSemanticOpaqueEffects.js";
 
 // Match the complete Rolldown runtime operations, including its live getters.
@@ -391,9 +392,16 @@ export const createSemanticModuleInterop = (
     };
   };
   const intrinsicPath = options?.intrinsicPath ?? createIntrinsicPath();
-  // Literal array spreads expand to positions only while nothing in this
-  // source can have replaced array iteration; see the opaque-effects owner.
-  const expandSpreads = !semanticArrayIterationMayBeReplaced(state);
+  // A literal array spread expands to positions only when the mutation facts
+  // in force at that call prove array iteration intact at the spread.
+  const spreadIntactWith =
+    (facts?: SemanticGlobalBindingFacts): JavaScriptSpreadIntegrity =>
+    (spread) =>
+      !semanticArrayIterationMayBeReplacedBefore(
+        spread,
+        facts ?? options?.intrinsicWriteFacts,
+        state,
+      );
   // Nominal native candidates only add possible result aliases. They never
   // establish callable integrity, freshness, or an escape exclusion.
   const referenceIntrinsicPath = createIntrinsicPath(true);
@@ -841,7 +849,10 @@ export const createSemanticModuleInterop = (
       const { root, members } = electronMemberPath(current.callee);
       let bindTarget = root;
       let bindingArguments: JavaScriptIntrinsicInvocation["arguments"] =
-        expandJavaScriptInvocationArguments(current.arguments, expandSpreads);
+        expandJavaScriptInvocationArguments(
+          current.arguments,
+          spreadIntactWith(proofFacts),
+        );
       let capturedValue = captured(current.callee);
       const calleePath = capturedValue?.path ?? selectedPath(current.callee);
       let terminal = calleePath?.at(-1) === "bind";
@@ -867,7 +878,7 @@ export const createSemanticModuleInterop = (
           (node, path, bound) =>
             !references &&
             intrinsicReadChanged(node, path, bound, proofFacts, checkEscapes),
-          expandSpreads,
+          spreadIntactWith(proofFacts),
         );
         if (
           invocation?.kind !== "known" ||
@@ -1042,7 +1053,7 @@ export const createSemanticModuleInterop = (
           (node) => boundIntrinsic(node, facts, true),
           (node, path, bound) =>
             intrinsicReadChanged(node, path, bound, facts, true),
-          expandSpreads,
+          spreadIntactWith(facts),
         );
         const path = invocation?.path.join(".");
         return (
@@ -1233,7 +1244,7 @@ export const createSemanticModuleInterop = (
           referenceIntrinsicPath,
           (value) => boundIntrinsic(value, undefined, false, true),
           () => false,
-          expandSpreads,
+          spreadIntactWith(),
         ) ?? null;
       referenceInvocations.set(node, selected);
     }
@@ -1257,7 +1268,7 @@ export const createSemanticModuleInterop = (
         intrinsicPath,
         boundIntrinsic,
         intrinsicReadChanged,
-        expandSpreads,
+        spreadIntactWith(),
       );
       const resultInvocation = possibleReferenceInvocation(node);
       const resultShape =
@@ -1581,7 +1592,7 @@ export const createSemanticModuleInterop = (
       intrinsicPath,
       boundIntrinsic,
       intrinsicReadChanged,
-      expandSpreads,
+      spreadIntactWith(),
     );
     if (invocation?.kind !== "known" || invocation.arguments === undefined)
       return undefined;
@@ -1761,7 +1772,7 @@ export const createSemanticModuleInterop = (
         intrinsicPath,
         boundIntrinsic,
         intrinsicReadChanged,
-        expandSpreads,
+        spreadIntactWith(),
       );
       return (
         invocation?.kind === "known" &&
@@ -1794,7 +1805,22 @@ export const createSemanticModuleInterop = (
         (node, path, bound) =>
           (checkEscapes && proofFacts?.complete !== true) ||
           intrinsicReadChanged(node, path, bound, proofFacts, checkEscapes),
-        expandSpreads,
+        spreadIntactWith(proofFacts),
+      ),
+    /** The same invocation with every literal array spread expanded, for
+     * consumers that record both alternatives and let complete facts choose. */
+    expandedInvocation: (
+      node:
+        | t.CallExpression
+        | t.OptionalCallExpression
+        | t.TaggedTemplateExpression,
+    ) =>
+      resolveJavaScriptIntrinsicInvocation(
+        node,
+        intrinsicPath,
+        (node) => boundIntrinsic(node),
+        (node, path, bound) => intrinsicReadChanged(node, path, bound),
+        () => true,
       ),
     boundIntrinsic,
     nonEscapingBoundTarget,

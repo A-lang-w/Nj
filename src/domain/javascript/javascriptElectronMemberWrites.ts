@@ -73,6 +73,11 @@ export interface JavaScriptIntrinsicInvocation {
 export interface JavaScriptIntrinsicMutationRecipient {
   readonly invocation: JavaScriptIntrinsicInvocation;
   readonly target: t.Node | undefined;
+  /** One of two readings of a call with a literal array spread. The
+   * provisional reading keeps the spread as an unexamined recipient; the
+   * expanded reading has the literal's elements as positions. The refinement
+   * with complete mutation facts keeps exactly one of them. */
+  readonly alternative?: "provisional" | "expanded";
 }
 
 type JavaScriptIntrinsicMutation = (
@@ -179,6 +184,11 @@ export function* collectJavaScriptIdentityWritesSteps(
       | t.TaggedTemplateExpression,
     invocation: JavaScriptIntrinsicInvocation | undefined,
   ) => void,
+  /** The same call with literal spreads expanded. Its targets are recorded as
+   * a second reading so that complete mutation facts can select it. */
+  alternativeInvocation?: (
+    node: t.CallExpression | t.OptionalCallExpression,
+  ) => JavaScriptIntrinsicInvocation | undefined,
 ): Generator<void> {
   yield* traverseJavaScriptAstSteps(program, {
     enter: (node) => {
@@ -200,14 +210,24 @@ export function* collectJavaScriptIdentityWritesSteps(
             retain(node, scope);
           return;
         }
-        const mutation = semanticIntrinsicMutation(invocation);
-        if (mutation !== undefined) {
+        const unexaminedTarget = (target: t.Node | undefined) =>
+          target === undefined || t.isSpreadElement(target);
+        const recordMutation = (
+          selected: JavaScriptIntrinsicInvocation,
+          alternative?: JavaScriptIntrinsicMutationRecipient["alternative"],
+        ): void => {
+          const mutation = semanticIntrinsicMutation(selected);
+          if (mutation === undefined) return;
           const targets = semanticIntrinsicMutationTargets(
-            invocation!,
+            selected,
             freshObject,
           );
           for (const target of targets) {
-            const recipient = { invocation: invocation!, target };
+            const recipient: JavaScriptIntrinsicMutationRecipient = {
+              invocation: selected,
+              target,
+              ...(alternative === undefined ? {} : { alternative }),
+            };
             const valueOnly =
               mutation.kind === "set" || mutation.kind === "assign"
                 ? true
@@ -215,7 +235,7 @@ export function* collectJavaScriptIdentityWritesSteps(
             // A known mutator with an opaque argument list can overwrite any
             // captured intrinsic or ambient slot, including a spread or
             // missing recipient. Do not turn an unexamined target into proof.
-            if (target === undefined || t.isSpreadElement(target)) {
+            if (unexaminedTarget(target)) {
               for (const scope of origin(node, "opaque-recipient", node))
                 retain(node, scope, recipient);
             }
@@ -236,6 +256,26 @@ export function* collectJavaScriptIdentityWritesSteps(
               }
             }
           }
+        };
+        if (invocation !== undefined) {
+          // A literal array spread may expand to positions once complete
+          // facts prove array iteration intact at the call. Record both
+          // readings, each marked, so the refinement keeps exactly one.
+          const expanded =
+            semanticIntrinsicMutation(invocation) !== undefined &&
+            semanticIntrinsicMutationTargets(invocation, freshObject).some(
+              unexaminedTarget,
+            )
+              ? alternativeInvocation?.(node)
+              : undefined;
+          if (
+            expanded?.kind === "known" &&
+            expanded.arguments !== undefined &&
+            !expanded.arguments.some(t.isSpreadElement)
+          ) {
+            recordMutation(invocation, "provisional");
+            recordMutation(expanded, "expanded");
+          } else recordMutation(invocation);
         }
       }
       const target = semanticWriteSiteTarget(node);

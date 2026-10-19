@@ -1,5 +1,9 @@
 import * as t from "@babel/types";
-import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
+import {
+  semanticStaticPropertyKey,
+  unwrapJavaScriptExpression,
+} from "./javascriptAstValues.js";
+import { semanticReferenceRole } from "./javascriptSemanticProjection.js";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import type { createAmbientPathResolver } from "./javascriptSemanticAmbientWrites.js";
@@ -25,49 +29,112 @@ const blockFunctionNames = new WeakMap<
 /** Annex B may copy a block function into a same-named var without an indexed
  * assignment. Preserve the existing conservative source-wide name check until
  * those implicit writes have an explicit scope and timing owner. */
-const referencedNames = new WeakMap<
+const referencedBindings = new WeakMap<
   JavaScriptSemanticAnalysisState,
-  ReadonlySet<string>
+  {
+    readonly bindingIds: ReadonlySet<string>;
+    readonly globalMemberKeys: ReadonlySet<string | null>;
+  }
 >();
+
+const GLOBAL_OBJECT_NAMES = ["globalThis", "window", "self", "global"];
+
+/** Resolved uses of each binding, plus property keys read off the global
+ * object or a script-level `this`, which can name a script-level declaration. */
+const indexReferencedBindings = (
+  state: JavaScriptSemanticAnalysisState,
+): NonNullable<ReturnType<typeof referencedBindings.get>> => {
+  let index = referencedBindings.get(state);
+  if (index !== undefined) return index;
+  const bindingIds = new Set<string>();
+  const globalMemberKeys = new Set<string | null>();
+  traverseJavaScriptAst(state.program, {
+    enter(node, parent) {
+      if (
+        t.isIdentifier(node) &&
+        parent !== null &&
+        semanticReferenceRole(node, parent) !== null
+      ) {
+        const binding = resolveSemanticBindingState(state, node, node.name);
+        if (binding !== undefined) bindingIds.add(binding.bindingId);
+        return;
+      }
+      if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+        const object = unwrapJavaScriptExpression(node.object).node;
+        const global =
+          GLOBAL_OBJECT_NAMES.some((name) =>
+            isUnshadowedGlobal(object, state, name),
+          ) ||
+          (t.isThisExpression(object) &&
+            !semanticStrictContext(object, state) &&
+            t.isProgram(semanticLexicalFunctionOwner(object, state)));
+        if (global)
+          globalMemberKeys.add(
+            semanticStaticPropertyKey(node.property, node.computed),
+          );
+      }
+    },
+  });
+  index = { bindingIds, globalMemberKeys };
+  referencedBindings.set(state, index);
+  return index;
+};
+
+const semanticLexicalFunctionOwner = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): t.Node => {
+  let current: t.Node | undefined = node;
+  while (current !== undefined) {
+    if (t.isFunction(current) && !t.isArrowFunctionExpression(current))
+      return current;
+    if (t.isProgram(current)) return current;
+    current = state.parentsByNode.get(current);
+  }
+  return state.program;
+};
 
 /**
  * Whether code at `site` can execute at all. A function declaration whose
- * name appears nowhere else in this source and that is not exported cannot be
- * invoked by it. This source is the analysis boundary, as it is for every
- * other global fact; foreign code calling a script-level declaration is not
- * modeled. Any other callable may run. This is a reachability bound only; it
- * says nothing about arguments or order.
+ * binding has no resolved use other than its declaration cannot be invoked
+ * through its name. A script-level declaration is also a property of the
+ * global object, so a read of that key, or of an unknown key, off the global
+ * object or a script-level `this` keeps it reachable; so does any opaque
+ * effect site (direct eval, `with`) and an export. This is a reachability
+ * bound only; it says nothing about arguments or order.
  */
 export const semanticSiteMayExecute = (
   site: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
-  let names = referencedNames.get(state);
-  if (names === undefined) {
-    const collected = new Map<string, number>();
-    traverseJavaScriptAst(state.program, {
-      enter(node) {
-        if (t.isIdentifier(node))
-          collected.set(node.name, (collected.get(node.name) ?? 0) + 1);
-      },
-    });
-    // A declaration's own identifier is one occurrence; any other is a use.
-    names = new Set(
-      [...collected].flatMap(([name, count]) => (count > 1 ? [name] : [])),
-    );
-    referencedNames.set(state, names);
-  }
+  if (
+    state.opaqueEffects.byScope.size > 0 ||
+    state.opaqueEffects.globalSites.length > 0 ||
+    state.opaqueEffects.mayReferenceGlobalEval
+  )
+    return true;
+  const index = indexReferencedBindings(state);
   let current: t.Node | undefined = site;
   while (current !== undefined) {
-    if (
-      t.isFunctionDeclaration(current) &&
-      current.id != null &&
-      !names.has(current.id.name)
-    ) {
+    if (t.isFunctionDeclaration(current) && current.id != null) {
       const parent = state.parentsByNode.get(current);
+      const binding = resolveSemanticBindingState(
+        state,
+        current.id,
+        current.id.name,
+      );
+      const scriptGlobal =
+        t.isProgram(parent) &&
+        javaScriptRuntimeContext(state.program) === "unknown";
       if (
         !t.isExportNamedDeclaration(parent) &&
-        !t.isExportDefaultDeclaration(parent)
+        !t.isExportDefaultDeclaration(parent) &&
+        (binding === undefined || !index.bindingIds.has(binding.bindingId)) &&
+        !(
+          scriptGlobal &&
+          (index.globalMemberKeys.has(current.id.name) ||
+            index.globalMemberKeys.has(null))
+        )
       )
         return false;
     }
@@ -76,53 +143,40 @@ export const semanticSiteMayExecute = (
   return true;
 };
 
-const iterationIntegrity = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  boolean
->();
-
 /**
- * Whether spreading a literal array can be trusted to yield its syntactic
- * elements anywhere in this source. Spreading runs `Array.prototype
- * [Symbol.iterator]` and the shared array iterator's `next`, which a source
- * can replace through a computed write, a prototype mutator, prototype
- * reflection or opaque code. This is a whole-source syntactic bound: any
- * mention of `Symbol.iterator`, `__proto__`, `getPrototypeOf`,
- * `setPrototypeOf`, a `prototype` member, or an opaque effect site keeps every
- * spread opaque. It never proves a particular spread intact at runtime.
+ * Whether spreading a literal array at `site` can be trusted to yield its
+ * syntactic elements. Spreading runs `Array.prototype[Symbol.iterator]` and
+ * the shared array iterator, so the answer comes from the ambient mutation
+ * facts: the proof is refused while those facts are incomplete, after any
+ * opaque effect site, and after any write that may affect an `Array.prototype`
+ * slot (a computed key, a whole-prototype replacement, an unknown-identity
+ * write, or a write through prototype reflection all match). A spelling
+ * check can never provide this proof.
  */
-export const semanticArrayIterationMayBeReplaced = (
+export const semanticArrayIterationMayBeReplacedBefore = (
+  site: t.Node,
+  facts: SemanticGlobalBindingFacts | undefined,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
-  let replaced = iterationIntegrity.get(state);
-  if (replaced !== undefined) return replaced;
-  replaced =
-    state.opaqueEffects.byScope.size > 0 ||
-    state.opaqueEffects.globalSites.length > 0 ||
-    state.opaqueEffects.mayReferenceGlobalEval === true;
-  if (!replaced)
-    traverseJavaScriptAst(state.program, {
-      enter(node) {
-        if (replaced === true) return;
-        const name = t.isIdentifier(node)
-          ? node.name
-          : t.isStringLiteral(node)
-            ? node.value
-            : undefined;
-        if (
-          name === "iterator" ||
-          name === "prototype" ||
-          name === "__proto__" ||
-          name === "getPrototypeOf" ||
-          name === "setPrototypeOf" ||
-          name === "__defineGetter__" ||
-          name === "__lookupGetter__"
-        )
-          replaced = true;
-      },
-    });
-  iterationIntegrity.set(state, replaced);
-  return replaced;
+  if (facts === undefined || facts.complete !== true) return true;
+  const precedes = (effect: t.Node | undefined): boolean =>
+    effect === undefined ||
+    semanticEffectTiming(site, effect, state) !== "after";
+  if (
+    state.opaqueEffects.mayReferenceGlobalEval ||
+    (facts.opaqueGlobalSites ?? state.opaqueEffects.globalSites).some(
+      precedes,
+    ) ||
+    [...state.opaqueEffects.byScope.values()].some((sites) =>
+      sites.some(precedes),
+    )
+  )
+    return true;
+  return semanticAmbientWriteMayMatch(
+    facts,
+    ["global", "Array", "prototype", "values"],
+    ({ node }) => precedes(node),
+  );
 };
 
 export const semanticBindingMayHaveBlockFunctionWrite = (

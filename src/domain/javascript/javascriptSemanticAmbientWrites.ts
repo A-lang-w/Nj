@@ -483,6 +483,10 @@ export const createAmbientPathResolver = (
   facts?: AmbientReferenceFacts,
 ) => {
   const cached = new WeakMap<t.Node, readonly AmbientPath[]>();
+  // Set while a query resolves the object a member write goes to. Only such
+  // a query records an unattributed prototype as an unknown identity: reads
+  // of a prototype keep their modeled sources and nothing else.
+  let resolvingWriteTarget = false;
   const globalSourceGuards = new Set<SemanticIterationSource>();
   const functionReferences = createSemanticFunctionValueReferences(
     state,
@@ -953,6 +957,14 @@ export const createAmbientPathResolver = (
     };
     const shiftedOwnOnly = (slots: readonly number[], offset: number) =>
       slots.map((slot) => slot + offset).filter((slot) => slot >= 0);
+    /** The selection ends on the value's prototype itself: a write goes to
+     * that object, not to a member read off it. */
+    const selectsUnattributedPrototype = (
+      suffix: AmbientSelectionProjection,
+    ): boolean => {
+      const last = suffix?.at(-1);
+      return last === "__proto__" || last === SEMANTIC_PHYSICAL_PROTOTYPE;
+    };
     const followStores = (
       identity: SemanticStorageIdentity,
       suffix: AmbientSelectionProjection,
@@ -2747,6 +2759,17 @@ export const createAmbientPathResolver = (
             ? resolveSemanticBindingState(state, root, root.name)
             : undefined);
         if (binding === undefined) continue;
+        // The prototype of a parameter or catch value, which no call site
+        // supplies in this resolution, is a shared prototype without a name:
+        // the value's chain ends in the realm's intrinsics. Record an unknown
+        // identity rather than no write.
+        if (
+          resolvingWriteTarget &&
+          !escapedContents &&
+          (binding.kind === "parameter" || binding.kind === "catch") &&
+          selectsUnattributedPrototype(suffix)
+        )
+          retain([null]);
         const stable = semanticStableInitializer(binding, state);
         const readAt = current.readsAtSelf ? root : capture;
         const selected =
@@ -2973,9 +2996,11 @@ export const createAmbientPathResolver = (
         possibleWrites &&
         (t.isCallExpression(root) || t.isOptionalCallExpression(root))
       ) {
-        for (const source of replacement !== undefined
-          ? []
-          : intrinsics.callReferenceSources(root, suffix, escapedContents))
+        const callSources =
+          replacement !== undefined
+            ? []
+            : intrinsics.callReferenceSources(root, suffix, escapedContents);
+        for (const source of callSources)
           continueCaptured(source.node, source.projection, [
             ...(source.capturePrefix ?? []).map((read) =>
               boundCapture(
@@ -3078,6 +3103,23 @@ export const createAmbientPathResolver = (
         if (origin !== undefined)
           for (const path of builtinValuePaths(origin, suffix))
             retain(path, captures, current.copySelection);
+        // The prototype of a call result that no owner attributes (no
+        // reference source, bound allocation, builtin origin or returned
+        // reference) is a shared prototype without a name: every object's
+        // chain ends in the realm's intrinsics, so a write to that object can
+        // reach any of them, the array iterator's included. Record an unknown
+        // identity rather than no write. Members read off such a prototype
+        // stay unmodeled, like members of any unattributed value.
+        if (
+          resolvingWriteTarget &&
+          !escapedContents &&
+          origin === undefined &&
+          callSources.length === 0 &&
+          bound === undefined &&
+          selectsUnattributedPrototype(suffix) &&
+          returnedReferences(root.callee).references.length === 0
+        )
+          retain([null]);
       }
       if (
         possibleWrites &&
@@ -3398,6 +3440,21 @@ export const createAmbientPathResolver = (
         localStorageRead,
       ),
     {
+      /** Resolve the object a member write goes to. Unlike a read query, this
+       * records the prototype of an unattributed call result or parameter as
+       * an unknown identity, since that object is a shared prototype. */
+      writeTarget: (
+        node: t.Node,
+        capture: t.Node | undefined,
+        localIdentity?: AmbientLocalCallback,
+      ): readonly AmbientPath[] => {
+        resolvingWriteTarget = true;
+        try {
+          return resolve(node, capture, false, [], localIdentity);
+        } finally {
+          resolvingWriteTarget = false;
+        }
+      },
       /** Queries of one facts snapshot share each shared owner's escaped
        * contents. Use it for one pass whose facts do not change meanwhile. */
       snapshot: (): AmbientPathQuery => {
@@ -4325,6 +4382,8 @@ export function* indexJavaScriptAmbientWritesSteps(
         retainEscape(callee.object, browserMethod !== undefined);
       }
     },
+    // The expanded alternative of a spread call; complete facts select it.
+    (node) => interop.expandedInvocation(node),
   );
   // Build all possible references before accepting strong replacements. A
   // superseded alias can still carry an earlier escape that freezes its owner.
@@ -4476,7 +4535,7 @@ export function* indexJavaScriptAmbientWritesSteps(
   const resolveWeakTargets = () =>
     targets.map(({ node, capture }) => {
       const local = new Map<SemanticLocalIdentity, AmbientProjection>();
-      const paths = ambientWrites(node, capture, false, [], (root, path) => {
+      const paths = ambientWrites.writeTarget(node, capture, (root, path) => {
         local.set(
           root,
           local.has(root) ? joinAmbientProjection(local.get(root), path) : path,
@@ -4642,6 +4701,26 @@ export function* indexJavaScriptAmbientWritesSteps(
   });
   // Early recipient candidates remain in weak proof inputs. Refine the parsed
   // invocation once before publishing or interpreting its possible writes.
+  // A call recorded with two readings of a literal array spread keeps exactly
+  // one: the expanded reading when the completed facts prove every spread
+  // intact at that call, otherwise the provisional reading with its opaque
+  // recipient. The facts decide; no spelling does.
+  const expandedReadings = new WeakMap<t.Node, boolean>();
+  const selectsExpandedReading = (node: t.Node): boolean => {
+    let selected = expandedReadings.get(node);
+    if (selected === undefined) {
+      const refined =
+        t.isCallExpression(node) || t.isOptionalCallExpression(node)
+          ? proofInterop.intrinsicInvocation(node, bindingFacts)
+          : undefined;
+      selected =
+        refined?.kind === "known" &&
+        refined.arguments !== undefined &&
+        !refined.arguments.some(t.isSpreadElement);
+      expandedReadings.set(node, selected);
+    }
+    return selected;
+  };
   const selectedRecipients = new WeakMap<
     JavaScriptIntrinsicMutationRecipient["invocation"],
     ReadonlySet<t.Node | undefined>
@@ -4649,6 +4728,11 @@ export function* indexJavaScriptAmbientWritesSteps(
   const activeWrites = writes.filter(({ node, recipient }) => {
     if (inertShimNode(node)) return false;
     if (recipient === undefined) return true;
+    if (
+      recipient.alternative !== undefined &&
+      selectsExpandedReading(node) !== (recipient.alternative === "expanded")
+    )
+      return false;
     let selected = selectedRecipients.get(recipient.invocation);
     if (selected === undefined) {
       selected = new Set(

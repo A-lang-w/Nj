@@ -6,27 +6,31 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 
+/** Whether one spread element's array iteration is proven intact at that site. */
+export type JavaScriptSpreadIntegrity = (spread: t.SpreadElement) => boolean;
+
 /**
- * Expand literal array spreads into positional arguments only when the caller
- * has established that array iteration is intact for this source. Spreading
- * runs the array iterator, which earlier source may replace through
+ * Expand a literal array spread into positional arguments only when the
+ * caller's mutation facts prove array iteration intact at that spread.
+ * Spreading runs the array iterator, which earlier source may replace through
  * `Array.prototype[Symbol.iterator]` or the shared array iterator prototype,
  * so the syntactic elements are otherwise not proof of the values the call
  * receives. A remaining spread element is an unknown argument list.
  */
 export const expandJavaScriptInvocationArguments = (
   arguments_: readonly t.CallExpression["arguments"][number][],
-  expandSpreads: boolean,
+  spreadIntact: JavaScriptSpreadIntegrity | undefined,
 ): t.CallExpression["arguments"] => {
-  if (!expandSpreads) return [...arguments_];
+  if (spreadIntact === undefined) return [...arguments_];
   const expanded: t.CallExpression["arguments"] = [];
   const pending = [...arguments_].reverse();
   while (pending.length > 0) {
     const argument = pending.pop();
     if (argument === undefined) break;
-    const array = t.isSpreadElement(argument)
-      ? unwrapJavaScriptExpression(argument.argument).node
-      : undefined;
+    const array =
+      t.isSpreadElement(argument) && spreadIntact(argument)
+        ? unwrapJavaScriptExpression(argument.argument).node
+        : undefined;
     if (
       t.isArrayExpression(array) &&
       array.elements.every(
@@ -43,7 +47,10 @@ export const expandJavaScriptInvocationArguments = (
 };
 
 /** `apply` reads its array argument by index; holes and spreads stay unknown. */
-const arrayArguments = (node: t.Node | undefined, expandSpreads: boolean) => {
+const arrayArguments = (
+  node: t.Node | undefined,
+  spreadIntact: JavaScriptSpreadIntegrity | undefined,
+) => {
   const array =
     node === undefined ? undefined : unwrapJavaScriptExpression(node).node;
   if (
@@ -55,7 +62,7 @@ const arrayArguments = (node: t.Node | undefined, expandSpreads: boolean) => {
     array.elements.filter(
       (element): element is t.Expression | t.SpreadElement => element !== null,
     ),
-    expandSpreads,
+    spreadIntact,
   );
   return expanded.every((element) => t.isExpression(element))
     ? expanded.filter((element): element is t.Expression =>
@@ -67,12 +74,12 @@ const arrayArguments = (node: t.Node | undefined, expandSpreads: boolean) => {
 const invocationArguments = (
   method: "call" | "apply",
   arguments_: JavaScriptIntrinsicInvocation["arguments"],
-  expandSpreads: boolean,
+  spreadIntact: JavaScriptSpreadIntegrity | undefined,
 ) =>
   t.isSpreadElement(arguments_?.[0])
     ? undefined
     : method === "apply"
-      ? arrayArguments(arguments_?.[1], expandSpreads)
+      ? arrayArguments(arguments_?.[1], spreadIntact)
       : arguments_?.slice(1);
 
 /** A helper selection retains its physical bound owner and every member read. */
@@ -97,8 +104,8 @@ export const resolveJavaScriptIntrinsicInvocation = (
     path: readonly string[],
     boundHelper?: JavaScriptBoundHelperRead,
   ) => boolean,
-  /** Whether literal array spreads may be expanded; see the expansion helper. */
-  expandSpreads = false,
+  /** Proof that a spread's array iteration is intact; absent keeps spreads opaque. */
+  spreadIntact?: JavaScriptSpreadIntegrity,
 ): JavaScriptIntrinsicInvocation | undefined => {
   const visited = new Set<t.Node>();
   let callee: t.Node = t.isTaggedTemplateExpression(node)
@@ -109,7 +116,7 @@ export const resolveJavaScriptIntrinsicInvocation = (
     // Retain its callable/receiver without inventing positional argument facts.
     t.isTaggedTemplateExpression(node)
       ? undefined
-      : expandJavaScriptInvocationArguments(node.arguments, expandSpreads);
+      : expandJavaScriptInvocationArguments(node.arguments, spreadIntact);
   let receiver: t.Node | undefined;
   const callableReads: t.Node[] = [];
   let explicitReceiver = false;
@@ -202,7 +209,7 @@ export const resolveJavaScriptIntrinsicInvocation = (
       callee = callable;
       receiver = arguments_?.[0];
       explicitReceiver = true;
-      arguments_ = invocationArguments(method, arguments_, expandSpreads);
+      arguments_ = invocationArguments(method, arguments_, spreadIntact);
       continue;
     }
     if (path.join(".") === "intrinsic.Reflect.apply") {
@@ -211,7 +218,7 @@ export const resolveJavaScriptIntrinsicInvocation = (
       callee = callable;
       receiver = arguments_?.[1];
       explicitReceiver = true;
-      arguments_ = arrayArguments(arguments_?.[2], expandSpreads);
+      arguments_ = arrayArguments(arguments_?.[2], spreadIntact);
       continue;
     }
     const memberReceiver =

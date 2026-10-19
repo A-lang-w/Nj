@@ -1,16 +1,18 @@
-import { runInNewContext } from "node:vm";
+import { afterAll, describe, expect, it } from "vitest";
 
-import { describe, expect, it } from "vitest";
-
+import {
+  LoaderDelegateOracle,
+  type LoaderDelegateOutcome,
+} from "../../../tests/support/javascript/loaderDelegateOracle.js";
 import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
 /**
  * Differential corpus for the CommonJS loader delegate.
  *
- * Every case runs twice: once in an isolated Node realm with a real module
- * wrapper (only Electron is stubbed), and once through the production parser
- * and analyzer. The runtime says whether the original Electron API ran; the
+ * Every case runs twice: once through Node's real CommonJS loader in an
+ * isolated worker thread (only Electron is stubbed), and once through the
+ * production parser and analyzer. The runtime says whether the original Electron API ran; the
  * analyzer says whether it reports the window. The two must agree, with two
  * explicit exceptions that this file owns:
  *
@@ -28,43 +30,12 @@ import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 const SHIM = 'var Q=(e=>typeof require<"u"?require:e)(function(){});';
 const LOAD = 'new (Q("electron").BrowserWindow)({});';
 
-type Loads = "original" | "replacement" | "throws";
+const oracle = new LoaderDelegateOracle();
+afterAll(() => oracle.dispose());
 
-const runtimeLoads = (source: string): Loads => {
-  const outcome = runInNewContext(
-    `
-    const calls=[];
-    const electron={BrowserWindow:function(){calls.push('original')}};
-    function other(){return {BrowserWindow:function(){calls.push('replacement')}}}
-    class Module {
-      children=[];
-      require(id){
-        if(id==='/tmp/bundle.cjs'){this.children.push(this);return {}}
-        return electron;
-      }
-    }
-    const module=new Module;
-    const require=id=>module.require(id);
-    let failure='';
-    try {
-      (function(exports,require,module,__filename,__dirname){${source}})
-        ({},require,module,'/tmp/bundle.cjs','/tmp');
-    } catch (error) { failure=String(error); }
-    failure===''?calls.join():'throws:'+failure;
-  `,
-    {
-      unknownReceiver: undefined,
-      flag: true,
-      unknown: () => {},
-      external: () => () => {},
-    },
-    { timeout: 2000 },
-  ) as string;
-  if (outcome.startsWith("throws:")) return "throws";
-  if (outcome === "original") return "original";
-  if (outcome === "replacement") return "replacement";
-  throw new Error(`Unexpected runtime outcome ${JSON.stringify(outcome)}`);
-};
+/** Run the source through Node's real CommonJS loader with only Electron stubbed. */
+const runtimeLoads = (source: string): LoaderDelegateOutcome =>
+  oracle.loads(source);
 
 const analyzedWindows = (source: string): number => {
   const parsed = parseJavaScriptSource(source, "bundle.cjs");
@@ -90,6 +61,13 @@ const CORPUS = [
   "function copy(){Q=Q}copy();",
   "function change(){Q=other}change();",
   "function change(){Q=other}",
+  // --- shared loader writes, which only a real loader can confirm ---
+  "module.constructor._load=other;",
+  "module.constructor.prototype.require=other;",
+  "require('module')._load=other;",
+  "require('module').prototype.require=other;",
+  "Object.getPrototypeOf(module).require=other;",
+  "module.constructor._load=module.constructor._load;",
   // --- direct delegate writes ---
   "module.require=other;",
   "module.require=module.require;",
@@ -128,6 +106,8 @@ const CORPUS = [
   "function F(){Object.assign.apply(null,arguments)}F(module,{require:other});",
   "function F(){Object.assign.apply(null,arguments)}F({},{});",
   "function F(){Object.assign.apply(null,arguments)}",
+  "function change(){Reflect.set(...[module,'require',other])}globalThis.change=change;globalThis['change']();",
+  "function change(){Reflect.set(...[module,'require',other])}module.exports.change=change;",
   "function F(...args){Reflect.set(...args)}F(module,'require',other);",
   "function F(...args){Reflect.set(...args)}F({},'x',0);",
   "const F=(...a)=>Reflect.apply(Reflect.set,Reflect,a);F(module,'require',other);",
@@ -143,6 +123,12 @@ const CORPUS = [
   "const list={0:module,at(){return {}}};list.at(0).require=other;",
   "require(__filename);module.children.at(0).require=other;",
   "require(__filename);module.children.slice().require=other;",
+  // --- prototype reflection on values no owner attributes ---
+  "const values=[module,'require',other];let index=0;const next=function(){return index<values.length?{value:values[index++],done:false}:{done:true}};Object.getPrototypeOf([].values()).next=next;Reflect.set(...[{},'x',0]);",
+  "const values=[module,'require',other];let index=0;const next=function(){return index<values.length?{value:values[index++],done:false}:{done:true}};const p=[].values().__proto__;p.next=next;Reflect.set(...[{},'x',0]);",
+  "const values=[module,'require',other];let index=0;const next=function(){return index<values.length?{value:values[index++],done:false}:{done:true}};function proto(x){return Object.getPrototypeOf(x)}proto([].values()).next=next;Reflect.set(...[{},'x',0]);",
+  "const values=[module,'require',other];let index=0;const next=function(){return index<values.length?{value:values[index++],done:false}:{done:true}};function F(it){it.__proto__.next=next}F([].values());Reflect.set(...[{},'x',0]);",
+  "const o={};o.__proto__.x=1;Reflect.set(...[module,'require',module.require]);",
   // --- prototype and shared-slot stores ---
   "Object.prototype.require=other;",
   "Object.defineProperty(Object.prototype,'require',{get(){return other}});",
@@ -155,14 +141,17 @@ const CORPUS = [
 
 /** Runtime keeps the original API; the analyzer refuses to prove it. */
 const KNOWN_PRECISION_LIMITS = new Set<string>([
-  // A write inside a function counts whether or not the function runs.
+  // A write inside a function counts whether or not the function runs, and a
+  // helper handed to module.exports counts as reachable.
   "function change(){Q=other}",
+  "function change(){Reflect.set(...[module,'require',other])}module.exports.change=change;",
   "const alias=Q;Q=alias;",
   "var copy=Q;Q=copy;",
-  // A spread of a binding, unlike a literal array, stays an unknown list, and
-  // a literal spread stays opaque once the source touches any prototype.
+  // A same-value copy of the shared loader's `_load` through
+  // `module.constructor` is not recognized as a copy; `module.require` is.
+  "module.constructor._load=module.constructor._load;",
+  // A spread of a binding, unlike a literal array, stays an unknown list.
   "const args=[{},'x',0];Reflect.set(...args);",
-  "Object.prototype.extra=1;Reflect.set(...[{},'x',module.require]);",
   "function F(){Object.assign.apply(null,arguments)}F({},{});",
   "function F(...args){Reflect.set(...args)}F({},'x',0);",
   "[[{},'x',0]].forEach(args=>Reflect.set(...args));",

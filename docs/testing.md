@@ -1439,8 +1439,13 @@ Neither optional toolchain is a base-lane prerequisite. See
 
 `src/domain/javascript/loaderDelegateDifferential.test.ts` and
 `src/domain/javascript/loaderDelegateFuzz.test.ts` run CommonJS sources twice:
-in an isolated Node realm through a real module wrapper with only Electron
-stubbed, and through the production parser and analyzer. The corpus file
+through Node's real CommonJS loader in a fresh worker thread with only the
+`electron` package stubbed (`tests/support/javascript/loaderDelegateOracle.ts`
+writes the source as `bundle.cjs` beside a `node_modules/electron` stub and
+requires it from a worker, a separate isolate with its own loader, so
+`require`, `module.require`, `Module.prototype.require` and `Module._load`
+are genuine and one case's prototype mutations never reach the next), and
+through the production parser and analyzer. The corpus file
 asserts agreement for every listed case and owns two explicit exception
 lists: known precision limits, where the runtime keeps the original API and
 the analyzer stays conservative, and known false findings, where the runtime

@@ -124,6 +124,41 @@ describe("script receiver isolation and capture", () => {
   );
 });
 
+describe("script-level helper reachability", () => {
+  // A helper that spreads an unknown list into a known mutator can write any
+  // ambient slot once it runs. Whether it can run comes from resolved binding
+  // uses and from member keys read off the global object or a script-level
+  // `this`, which name a script declaration; no spelling check is consulted.
+  // The helper forwards its own arguments object, so nothing ambient escapes
+  // into it and only reachability decides.
+  const HELPER = "function change(){Reflect.set(...arguments)}";
+
+  it.each([
+    "change();",
+    "globalThis['change']();",
+    "const name='change';globalThis[name]();",
+    "window['change']();",
+    "this.change();",
+    "const run=change;run();",
+  ])("reaches a script declaration through %s", (call) => {
+    expect(analyze(`${SHIM}${HELPER}${call}${USE}`).electron.ipc).toEqual([]);
+  });
+
+  // A same-named key on a local object is not the global object, in a script
+  // or a module. (A member call on the global object itself is an opaque
+  // effect site, which makes every helper reachable; that is tested with the
+  // opaque-effects owner, not here.)
+  it.each([
+    ["bundle.js", ""],
+    ["bundle.js", "const box={change(){}};box['change']();"],
+    ["bundle.cjs", "const box={change(){}};box['change']();"],
+  ])("keeps a helper no use reaches inert in %s: %s", (path, setup) => {
+    expect(
+      analyze(`${SHIM}${HELPER}${setup}${USE}`, path).electron.ipc,
+    ).toMatchObject([{ channel: "kept" }]);
+  });
+});
+
 describe("source-visible function receivers", () => {
   it.each([
     "function set(){this.Q=other;}set();",

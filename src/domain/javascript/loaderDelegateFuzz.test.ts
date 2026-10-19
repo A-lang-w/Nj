@@ -1,7 +1,9 @@
-import { runInNewContext } from "node:vm";
+import { afterAll, describe, expect, it } from "vitest";
 
-import { describe, expect, it } from "vitest";
-
+import {
+  LoaderDelegateOracle,
+  type LoaderDelegateOutcome,
+} from "../../../tests/support/javascript/loaderDelegateOracle.js";
 import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
@@ -84,32 +86,12 @@ const FRAGMENTS = [
   "Object.defineProperty(Object.prototype,'extra',{value:1,configurable:true});",
 ] as const;
 
-type Loads = "original" | "replacement" | "throws";
+const oracle = new LoaderDelegateOracle();
+afterAll(() => oracle.dispose());
 
-const runtimeLoads = (source: string): Loads => {
-  const outcome = runInNewContext(
-    `
-    const calls=[];
-    const electron={BrowserWindow:function(){calls.push('original')}};
-    function other(){return {BrowserWindow:function(){calls.push('replacement')}}}
-    class Module { require(){ return electron } }
-    const module=new Module;
-    const require=id=>module.require(id);
-    let failure='';
-    try {
-      (function(exports,require,module,__filename,__dirname){${source}})
-        ({},require,module,'/tmp/bundle.cjs','/tmp');
-    } catch (error) { failure=String(error); }
-    failure===''?calls.join():'throws:'+failure;
-  `,
-    {},
-    { timeout: 2000 },
-  ) as string;
-  if (outcome.startsWith("throws:")) return "throws";
-  if (outcome === "original") return "original";
-  if (outcome === "replacement") return "replacement";
-  throw new Error(`Unexpected runtime outcome ${JSON.stringify(outcome)}`);
-};
+/** Run the source through Node's real CommonJS loader with only Electron stubbed. */
+const runtimeLoads = (source: string): LoaderDelegateOutcome =>
+  oracle.loads(source);
 
 const analyzedWindows = (source: string): number => {
   const parsed = parseJavaScriptSource(source, "bundle.cjs");

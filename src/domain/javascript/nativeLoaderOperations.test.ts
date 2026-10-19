@@ -205,10 +205,70 @@ const NATIVE_LOADER_CASES = [
     "const values=[module,'require',other];let index=0;Object.getPrototypeOf([][Symbol.iterator]()).next=function(){return index<values.length?{value:values[index++],done:false}:{done:true}};Reflect.set(...[{},'x',0]);",
     0,
   ],
-  // A literal array spread expands to positions only while nothing in the
-  // source can have replaced array iteration; these sources are inert.
+  // A literal array spread expands to positions only when the ambient
+  // mutation facts prove array iteration intact at the spread. A write to an
+  // unrelated Array.prototype slot keeps the proof; a computed or template
+  // key on Array.prototype does not. A helper that spreads into a loader
+  // write counts once it is reachable, here through a global property that
+  // a string key reads back.
   ["Reflect.set(...[module,'require',module.require]);", 1],
   ["Reflect.apply(Reflect.set,Reflect,[...[{},'x',0]]);", 1],
+  [
+    "Array.prototype.extra=1;Reflect.set(...[module,'require',module.require]);",
+    1,
+  ],
+  [
+    "Array[`prototype`][Symbol[`iterator`]]=function*(){yield module;yield 'require';yield other};Reflect.set(...[{},'x',0]);",
+    0,
+  ],
+  [
+    "const key=Symbol.iterator;Array.prototype[key]=function*(){yield module;yield 'require';yield other};Reflect.set(...[{},'x',0]);",
+    0,
+  ],
+  [
+    "function change(){Reflect.set(...[module,'require',other])}globalThis.change=change;globalThis['change']();",
+    0,
+  ],
+  [
+    "function change(){Reflect.set(...[module,'require',other])}globalThis.change=change;const name='change';globalThis[name]();",
+    0,
+  ],
+  // A prototype selected from a value no owner attributes (an array iterator
+  // here) is a shared prototype without a name, so a write through it may
+  // replace the iterator's `next`. A prototype the owner does attribute (a
+  // literal's or a created object's) keeps the proof.
+  [
+    "const values=[module,'require',other];let index=0;const next=function(){return index<values.length?{value:values[index++],done:false}:{done:true}};const p=Object.getPrototypeOf([].values());p.next=next;Reflect.set(...[{},'x',0]);",
+    0,
+  ],
+  [
+    "const values=[module,'require',other];let index=0;const next=function(){return index<values.length?{value:values[index++],done:false}:{done:true}};const it=[].values();const p=it.__proto__;p.next=next;Reflect.set(...[{},'x',0]);",
+    0,
+  ],
+  [
+    "const values=[module,'require',other];let index=0;const next=function(){return index<values.length?{value:values[index++],done:false}:{done:true}};const box={p:Object.getPrototypeOf([].values())};box.p.next=next;Reflect.set(...[{},'x',0]);",
+    0,
+  ],
+  [
+    "const values=[module,'require',other];let index=0;const next=function(){return index<values.length?{value:values[index++],done:false}:{done:true}};Reflect.getPrototypeOf([].keys()).next=next;Reflect.set(...[{},'x',0]);",
+    0,
+  ],
+  [
+    "const values=[module,'require',other];let index=0;const next=function(){return index<values.length?{value:values[index++],done:false}:{done:true}};Object.getPrototypeOf(Array.prototype.values.call([])).next=next;Reflect.set(...[{},'x',0]);",
+    0,
+  ],
+  [
+    "const o={};o.__proto__.x=1;Reflect.set(...[module,'require',module.require]);",
+    1,
+  ],
+  [
+    "const p={};const o=Object.create(p);Object.getPrototypeOf(o).x=1;Reflect.set(...[module,'require',module.require]);",
+    1,
+  ],
+  [
+    "function make(){return {}}Object.getPrototypeOf(make()).x=1;Reflect.set(...[module,'require',module.require]);",
+    1,
+  ],
 ] as const;
 
 describe("native operations on CommonJS loader owners", () => {
