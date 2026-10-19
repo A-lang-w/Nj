@@ -149,7 +149,7 @@ A record holds:
 - **Confidence/authority**: observed / derived / inferred; tool vs analyst (authority).
 - **Locations**: addresses, functions, source maps, JSON pointers.
 - **Limitations and unknowns.**
-- **Deterministic content-addressed `evidence_id`** — local paths don't affect identity; secrets and env values are excluded.
+- **Deterministic content-addressed `evidence_id`** — SHA-256 of the semantic projection in [Hashing and identity](#hashing-and-identity-sha-256). Subject `name` and `local_path` are display fields and are left out of that hash. Paths inside parameters, results, and locations are hashed. Records and exported bundles are not secret-free; see [Evidence Bundle](#evidence-bundle).
 
 Why: tool -> Evidence -> stored ledger/bundle -> query / page / compare / cite. Conclusions stay linked to proof, and unknowns get recorded instead of guessed.
 Features: retained/paged views, import/export/compare, snapshots, composition (higher-level results link back to source evidence, e.g. a view's `parent_evidence_id`), CLI/MCP parity.
@@ -274,16 +274,18 @@ Evidence records capture what was observed or inferred; residual unknowns captur
 #### How they relate to the rest of the model
 
 - They live in the Evidence Bundle alongside Evidence records.
-- Obligations list them in `residual_unknown_ids`; an unresolved unknown keeps the obligation from closing.
-- When new Evidence answers the question, the unknown moves to a new revision with status `resolved` and a resolution citing the resolving Evidence IDs.
+- Obligations list them in `residual_unknown_ids`. The ledger treats every listed ID as still blocking, including after the unknown is `resolved`, until that ID is removed and the ledger is rebuilt.
+- When new Evidence answers the question, the unknown moves to a new revision with status `resolved` and a resolution citing the resolving Evidence IDs. That revision stays in the bundle.
 - The revision chain is preserved, so you can see how the unknown evolved.
 
 In practice this keeps the trail honest: you can always see which questions were left open, which Evidence was considered, and whether a later observation closed them.
 
 ### Closing a residual unknown
 
-1. Obtain Evidence that answers the question.
-2. Update the unknown (`updateResidualUnknown` or its session equivalent) with `unknown_id`, the current revision as `expected_revision`, status `"resolved"`, and a resolution object:
+1. Obtain Evidence that answers the question. The resolving record must not be the mutation Evidence itself (`predicate_type` `rea.residual-unknown-mutation`).
+2. Replace the current head with `updateResidualUnknown` (session `update_unknown`). `updateUnknownInputSchema` is a full-state replacement, not a patch. The command requires every one of `unknown_id`, `expected_revision` (the current revision), `status`, `severity`, `supporting_evidence_ids`, `contradicting_evidence_ids`, `required_authority`, `required_confidence`, `required_environment`, `recommended_probes`, `relationships`, and `resolution`. Supplying only the identity, status, and resolution is rejected.
+3. For a verified resolution, set `status` to `"resolved"` and `resolution` to:
+
    ```json
    {
      "disposition": "verified",
@@ -291,17 +293,40 @@ In practice this keeps the trail honest: you can always see which questions were
      "evidence_ids": ["ev_new_resolving_record_..."]
    }
    ```
-3. REA creates the next revision, stores `previous_revision_digest`, and appends the mutation Evidence that recorded the update.
 
-Rules: only a resolved unknown may carry a non-null resolution; `unknown_id` stays stable; contradicting Evidence can move the status to `"contradicted"` instead; withdrawn or out-of-scope isn't verified closure. Once resolved, it stops blocking obligations that list it (if their other conditions are met).
+   `validateVerifiedResolution` accepts `disposition: "verified"` only when `contradicting_evidence_ids` is empty and at least one `resolution.evidence_ids` entry is also in `supporting_evidence_ids`, is present in the bundle, is not a residual-unknown mutation, and qualifies for the unknown: exact `required_authority` when one is set, confidence at least `required_confidence` (`inferred` < `derived` < `observed`), and, when `required_environment` is set, a non-null environment matching each non-null field. Putting the new ID only on the resolution is rejected.
 
-Agent tip: `list_unknowns`, gather evidence, resolve with the new IDs, then rebuild the ledger to check closure.
+4. REA creates the next revision, stores `previous_revision_digest`, and appends the mutation Evidence that recorded the update. Earlier revisions stay in the bundle.
+
+Rules: only a resolved unknown may carry a non-null resolution; `unknown_id` stays stable; contradicting Evidence can move the status to `"contradicted"` instead, and that status requires at least one contradicting ID; withdrawn or out-of-scope isn't verified closure.
+
+Resolving the unknown does not unblock an obligation that still lists its ID. Evaluation copies `residual_unknown_ids` unchanged and adds a `residual-unknown` diagnostic for every listed ID (`ReconstructionObligationLedgerEvaluation.ts`). It does not read the unknown's status. That diagnostic keeps an otherwise eligible obligation at `unknown`, so the steps above alone do not reach `verified`. Remove the ID from the obligation's `residual_unknown_ids` (for a reviewed obligation, edit that definition), leave the resolved unknown and its revision history in the bundle, and rebuild the ledger.
+
+Agent tip: `list_unknowns`, gather evidence, submit a complete replacement, drop the ID from the obligation's blocker list, then rebuild the ledger.
 
 ### Hashing and identity (SHA-256)
 
-SHA-256 over canonical JSON is the basis for content-addressed identity across Evidence, residual unknowns, application graphs, and ledgers: deterministic, path-independent, tamper-evident.
+SHA-256 over canonical JSON is the basis for content-addressed identity across Evidence, residual unknowns, application graphs, and ledgers: deterministic and tamper-evident.
 
-**Evidence IDs.** `ev_<64 lowercase hex chars of SHA-256>`, hashed over the record's _semantic projection_: subject identity (artifact SHA-256, format, architecture), provider (id, name, version), operation and parameters, raw and normalized results, confidence, authority, environment, limitations, locations, and relationship coverage when present. The ID itself and local paths are excluded, so moving or renaming a file doesn't change it. Import recomputes the ID and rejects any mismatch.
+**Evidence IDs.** `ev_` plus 64 lowercase hex characters of SHA-256. `semanticProjection` in `src/domain/evidence.ts` hashes exactly these fields, and it includes a field when the value is null:
+
+- `subject`: `digest`, `format`, and `architecture` only. A null subject stays null. `name` and `local_path` are display metadata and are omitted.
+- `provider` (`id`, `name`, `version`)
+- `analysis_profile`
+- `predicate_type`
+- `operation`
+- `parameters`
+- `raw_result`
+- `normalized_result`
+- `confidence`
+- `authority`
+- `environment`
+- `limitations`
+- `relationship_coverage`
+- `locations`
+- `evidence_links`
+
+The `evidence_id` field itself is not an input. Import recomputes the ID and rejects a mismatch. Rebinding `subject.name` and `subject.local_path` does not change the ID. Paths and other values inside `parameters`, `raw_result`, `normalized_result`, and `locations` are part of the projection, so changing them changes the ID.
 
 **Canonicalization.** Before hashing, the projection is serialized as canonical JSON: keys sorted recursively, array order preserved, no insignificant whitespace, UTF-8. REA uses the `canonicalize` library (confirmed present in the installed 6.7.0 package). The JavaScript Application Graph follows RFC 8785 (JSON Canonicalization Scheme) for its `jag_<sha256…>` IDs.
 
@@ -311,17 +336,17 @@ SHA-256 over canonical JSON is the basis for content-addressed identity across E
 
 **Higher-level digests.** The ledger's [`closure_digest`](#closure_digest) is SHA-256 over the canonical object `{schema: "ReconstructionObligationClosure", status, coverage, summary, reports, ownership_graph, dependency_graph, obligations, evidence_links, limitations}`. The `ledger_id` is `rol_` + SHA-256 over `{schema: "ReconstructionObligationLedger", evidence_ids (bundle record IDs), obligation_ids, closure_digest}` (source: `dist/application/ReconstructionObligationLedgerEvaluation.js`); Application Graph node and graph IDs hash their normalized semantic content; snapshots are identified by the content of the retained results.
 
-**Consequences.** Deduplication (identical observations share an ID and can be reused), tamper detection (any semantic change changes the ID), path independence, and reproducibility (same inputs, same IDs and `closure_digest`).
+**Consequences.** Deduplication (identical projections share an ID and can be reused), tamper detection (any change to a projected field changes the ID), and reproducibility of that ID from the same projection. `closure_digest` is a separate commitment; a new bundle record can change `ledger_id` without changing it. See [closure_digest](#closure_digest).
 
-**Not hashed.** Local filesystem paths, the ID field itself, transient session or transport metadata, and secrets or ambient environment variables (excluded from Evidence by design).
+**Not hashed into `evidence_id`.** The `evidence_id` field itself, and the subject display fields `name` and `local_path`. That exclusion does not drop filesystem paths stored in parameters, results, or locations, and it does not strip secrets or environment values from the record. Redaction limits are in [Evidence Bundle](#evidence-bundle).
 
 #### closure_digest
 
 What it is (source: `reconstructionObligationLedgerClosureDigest` in `dist/domain/reconstructionObligationLedgerIntegrity.js`, `digestCanonicalValue` in `dist/domain/canonicalDigest.js`):
 
-- **What is hashed.** It is SHA-256 (bare 64 hex characters, no prefix) over the canonical JSON of `{schema: "ReconstructionObligationClosure", status, coverage, summary, reports, ownership_graph, dependency_graph, obligations, evidence_links, limitations}`. Each obligation is hashed in full, including its `status`, `diagnostics`, `authority_references`, `residual_unknown_ids`, `unavailable_authority`, `required_next_evidence` and `binding`. Contradictions are covered through each obligation's `contradiction` diagnostics and the `reports` field.
+- **What is hashed.** It is SHA-256 (bare 64 hex characters, no prefix) over the canonical JSON of `{schema: "ReconstructionObligationClosure", status, coverage, summary, reports, ownership_graph, dependency_graph, obligations, evidence_links, limitations}`. Each obligation is hashed in full, including its `status`, `diagnostics`, `authority_references`, `residual_unknown_ids`, `unavailable_authority`, `required_next_evidence` and `binding`. The hash includes those unknown IDs, not the unknown records or their revision digests, and evaluation does not read registry status. Contradictions are covered through each obligation's `contradiction` diagnostics and the `reports` field.
 - **Canonical form.** Object keys are sorted in RFC 8785 UTF-16 code-unit order, and array order is preserved. Reordering obligations or Evidence links therefore changes the digest.
-- **`ledger_id` is not an input.** The relationship runs the other way: `ledger_id` = `rol_` + SHA-256 over `{schema, evidence_ids, obligation_ids, closure_digest}`, so it is derived from `closure_digest`.
+- **`ledger_id` includes the digest, and more than the digest.** `ledger_id` is `rol_` + SHA-256 over `{schema: "ReconstructionObligationLedger", evidence_ids, obligation_ids, closure_digest}`. `evidence_ids` are the bundle record IDs in bundle order, and `obligation_ids` are the evaluated obligation IDs. A change to `closure_digest` changes `ledger_id`. `ledger_id` can also change while `closure_digest` stays the same: the ID also commits to the bundle's Evidence IDs, which the closure projection does not. Adding mutation Evidence for an unknown revision changes `evidence_ids` even when the obligation's `residual_unknown_ids` list, and the rest of the closure projection, do not. `obligation_ids` are inside that projection as well as inside `ledger_id`, so an obligation-ID change changes the digest too.
 - **One per ledger.** There is no per-obligation digest. Rebuilding from the same bundle, reviewed obligations, and manifest gives the same value; a rerun matched.
 - **Validation.** The ledger schema recomputes the digest and rejects a mismatch ("Ledger closure digest does not match its contents"). The same check also recomputes `status`, `summary`, `coverage`, `reports` and both graphs. It runs when REA builds a ledger and wherever a ledger is accepted as input, for example `obligation_ledger` in reconstruction readiness. 6.7.0 has no standalone command that verifies a saved ledger file.
 - **What it doesn't do.** It commits to the result, including a ledger whose `status` is `failed`, but it never makes any obligation `verified`. Status rules live in [Closure semantics](#closure-semantics).
@@ -342,9 +367,9 @@ The portable, content-addressed container for the observational layer: what you 
 
 **Invariants**
 
-- IDs are content-addressed; local paths and the ID itself don't affect identity.
+- IDs are content-addressed. `evidence_id` omits subject `name` and `local_path`, and the ID field itself. Paths inside parameters, results, and locations stay in the hash.
 - Import recomputes IDs and rejects tampering or conflicting duplicates.
-- Secrets and arbitrary environment values are excluded.
+- A bundle is not secret-free. REA redacts transport authentication credentials and values the caller explicitly marks sensitive. A process-capture input event with `sensitive: true` is stored as `<redacted-input:N-bytes>` in the scenario commitment and in `interaction_events`, and the capture records a residual unknown that those values were redacted. REA does not infer secrecy from names or text, and it does not scan retained output for tokens. `capture_process_scenario` keeps the scenario commitment in `normalized_result.manifest.scenario`, including explicit environment overrides and caller inputs that are not marked sensitive, and it keeps terminal text in `frames[].data` (and `raw_data` when present) and in `rendered_frames[].lines`. A token the target prints can leave with the exported bundle. Ambient environment values are not recorded merely because the child inherits them: `comparison_contract.ambient_environment` is `"unknown"`, while `scenario.environment` keeps only the overrides the caller set. Evidence `parameters` for a capture are a separate, narrower projection (executable basename, counts, and normalization). Inspect captures before sharing a bundle.
 - Canonical export is deterministic JSON with stable key order.
 - Snapshots keep exact prior results when target bytes, operation, and parameters match.
 
@@ -369,7 +394,7 @@ The bundle is the source of truth for observations; it doesn't decide whether a 
 ### Overview
 
 - Built by `build_reconstruction_obligation_ledger` (MCP) or `rea build-reconstruction-obligation-ledger` (CLI).
-- Input: one JSON object with three required keys: `evidence_bundle`, `reviewed_obligations` (may be an empty array), and `manifest` (`bindings`, `contradictions`). REA does not generate the reviewed obligations or the manifest bindings; you write them.
+- Input: one JSON object with three required keys: `evidence_bundle`, `reviewed_obligations` (may be an empty array), and `manifest` (`bindings`, `contradictions`). Application-graph and process-capture records can generate candidate obligations. Manifest bindings are not generated. A reviewed obligation is for a claim that is not already a generated candidate; repeating a generated ID is a `duplicate-definition`.
 - Static graph facts create **candidate** obligations only; they don't prove runtime behavior. The ledger is conservative.
 
 The ledger is identified by a deterministic `ledger_id` (`rol_…`) + `closure_digest`. Closure conditions, input dispositions, and output statuses are defined in [Closure semantics](#closure-semantics).
@@ -379,7 +404,7 @@ Evidence Bundle (ev_ records | unk_ unknowns | captures/artifacts/providers)
         |
         v
 build_reconstruction_obligation_ledger
-  - static graph -> candidate obligations
+  - static graph and process captures -> candidate obligations
   - manifest supplies owners, fixtures, verifiers
   - unknowns/contradictions keep claims open
         |
@@ -387,27 +412,21 @@ build_reconstruction_obligation_ledger
 Obligation Ledger (obligations e.g. protocol.rpc.cancel; per-obligation status; ledger status; ledger_id rol_… + closure_digest)
 ```
 
-```mermaid
-flowchart TD
-  subgraph B[Evidence Bundle]
-    E[Evidence Records ev_...]
-    U[Residual Unknowns unk_...]
-    C[Captures / Artifacts / Providers]
-  end
-  E --> L
-  U --> L
-  C --> L
-  R["Reviewed obligations<br/>input disposition active/blocked/out-of-scope"] --> L
-  M["Manifest<br/>bindings, contradictions"] --> L
-  L["build_reconstruction_obligation_ledger<br/>static graph gives candidate obligations<br/>manifest supplies owners, fixtures, verifiers<br/>unknowns and contradictions keep claims open"]
-  L --> O["Obligation Ledger<br/>obligation e.g. protocol.rpc.cancel<br/>status unowned/characterized/implemented/verified/contradicted/blocked/out-of-scope/unknown<br/>ledger status ready/open/failed/unknown<br/>residual_unknown_ids, diagnostics, Evidence ID links<br/>ledger_id rol_… + closure_digest (deterministic)"]
-```
+The text diagram above is the flow. The image in [Layered architecture (image)](#layered-architecture-image) is the same model. VitePress does not render Mermaid.
+
+| Input                                                                                      | Role                                                                                                                                      |
+| ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Evidence records (`ev_…`), residual unknowns (`unk_…`), captures, artifacts, and providers | Evidence bundle                                                                                                                           |
+| Reviewed obligations                                                                       | Input disposition `active`, `blocked`, or `out-of-scope`, for claims the bundle does not already generate                                 |
+| Manifest                                                                                   | Bindings (owners, fixtures, verifiers) and contradictions                                                                                 |
+| `build_reconstruction_obligation_ledger`                                                   | Turns graph and process-capture facts into candidate obligations. Unknowns and contradictions keep claims open.                           |
+| Obligation ledger                                                                          | Per-obligation status, `residual_unknown_ids`, diagnostics, Evidence ID links, ledger status, `ledger_id` (`rol_…`), and `closure_digest` |
 
 #### Reading the diagram
 
 1. **Evidence bundle.** Holds the raw inputs: evidence records (`ev_…`, immutable observations with provenance, confidence, locations, and limitations), residual unknowns (`unk_…`, versioned open questions linked to supporting and contradicting Evidence), and supporting artifacts, captures, and provider metadata.
-2. **`build_reconstruction_obligation_ledger`.** Takes the bundle, the reviewed obligations (each with an input `disposition`), and a manifest, and turns static graph facts into _candidate_ obligations. Residual unknowns, missing authority, or contradictions keep claims from reaching `verified`.
-3. **Obligation ledger.** Lists reconstruction claims, each with a derived output `status` and `diagnostics`. An obligation reaches `verified` only when the manifest supplies a unique owner, the required fixtures, and a passing verifier of comparable authority. The ledger also gets an overall status and is identified by a stable `ledger_id` (`rol_…`) and `closure_digest`.
+2. **`build_reconstruction_obligation_ledger`.** Takes the bundle, the reviewed obligations (each with an input `disposition`), and a manifest. Application-graph and process-capture records become _candidate_ obligations. A listed residual-unknown ID, missing authority, or a contradiction keeps a claim from reaching `verified`. The ledger does not consult the unknown's status.
+3. **Obligation ledger.** Lists reconstruction claims, each with a derived output `status` and `diagnostics`. An obligation reaches `verified` only when one manifest binding supplies a unique owner, the required fixtures, and a passing verifier, and the fixture and verifier Evidence is observed `rea.reconstruction-proof` from `verify_reconstruction_obligations` ([Closure semantics](#closure-semantics)). The ledger also gets an overall status and is identified by `ledger_id` (`rol_…`) and `closure_digest`.
 
 This structure lets agents and humans tell apart "we observed this," "this remains unknown," and "this reconstruction claim is proven."
 
@@ -513,13 +532,13 @@ See [Closure semantics](#closure-semantics) for dispositions, statuses, and the 
 
 - Static Application Graph facts create _candidate_ obligations; they don't prove runtime or process behavior.
 - Every referenced `evidence_id` must exist in the input bundle.
-- Authority must be comparable: a unit test with `packaged-process` authority can't close a runtime obligation, and static-only evidence can't close a process claim.
+- Authority must be comparable: a `unit` fixture can't close a `packaged-process` obligation, and static-only evidence can't close a process claim.
 - The ledger is conservative: absence of Evidence never claims closure.
 - Export/import validates canonical form and rejects tampering or conflicting duplicates.
 
 ### Closure semantics
 
-An obligation closes (counts as verified) only when a single manifest binding supplies every required element with comparable authority. The ledger is conservative by design: static Application Graph facts can generate candidate obligations, but they don't prove runtime or process behavior.
+An obligation closes (counts as verified) only when a single manifest binding supplies every required element with comparable authority. The ledger is conservative by design: application-graph and process-capture facts can generate candidate obligations, but they don't prove the claim by themselves.
 
 #### What must be present to close an obligation
 
@@ -528,12 +547,12 @@ All of the following must appear in the manifest and exist in the Evidence bundl
 1. **Unique owner binding**: module path, symbol, and SHA-256 of the owner.
 2. **Parser / schema / domain type**: required only when `requires_parser_type` is true.
 3. **Original cases**: authenticated Evidence (`evidence_id`) for every value in `required_case_kinds` (positive, negative, malformed, cancellation, …), with authority comparable to `required_original_authority`.
-4. **Fixtures**: one per required case kind, each with its own `fixture_id`, `case_kind`, matching authority, and supporting Evidence IDs.
-5. **Passing verifier**: status `"pass"`, enumerates the obligation ID, authority matches `required_verifier_authority`, and `result_evidence_id` exists in the bundle. Nondeterminism must be declared when present.
+4. **Fixtures**: one per required case kind, each with its own `fixture_id`, `case_kind`, and Evidence IDs. At least one fixture for that case must declare an `authority` that satisfies `required_fixture_authority` (`proofAuthoritySatisfies`), and every Evidence ID on that fixture must pass `evidenceAuthoritySupportsProof` for that declared authority: `confidence` is `observed`, `predicate_type` is `rea.reconstruction-proof`, `operation` is `verify_reconstruction_obligations`, `normalized_result.passed` is `true`, and `obligation_ids`, `fixture_ids`, and `case_kinds` contain this obligation, fixture, and case. The Evidence `authority` must be one accepted for the fixture authority (the table in [Authority rules](#authority-rules)). An existing Evidence ID without that envelope is `weak-fixture-authority`.
+5. **Passing verifier**: the binding's `verifier` is present, `status` is `"pass"`, `enumerated_obligation_ids` includes the obligation, and the verifier's declared `authority` satisfies `required_verifier_authority`. `nondeterminism` is required on every verifier object, not only when behavior varies: `{ "mode": "total-order" | "partial-order" | "finite-traces", "specification": "…" }`, with a non-empty `specification`. `result_evidence_id` must be in the bundle and must be the same observed reconstruction-proof Evidence, with `passed: true` and `obligation_ids`, `verifier_ids`, and `claim_ids` containing this obligation, `verifier_id`, and `claim_id`. Otherwise evaluation reports `weak-verifier-authority`, `missing-verifier-result`, or `verifier-failed`.
 
 If any item is missing, contradictory, or under-authorized, the obligation does not reach `verified`; its status and `diagnostics` say why.
 
-**In practice (6.7.0 beta):** REA does not generate the reviewed obligation list or the manifest bindings. To reach `verified` you must hand-write the obligations and, for each one, a binding with the owning module, the test fixtures, and a verifier result whose Evidence is in the bundle. With an empty manifest every obligation stays `unowned` (or `blocked` / `out-of-scope` / `unknown`), as in a 6.7.0 run against a small C test program.
+**In practice (6.7.0):** Manifest bindings are hand-written. A generated candidate, including a packaged-process obligation from `capture_process_scenario`, can reach `verified` from a binding alone; the closure tests close one that way with `reviewed_obligations` left empty. Submitting that same ID again as a reviewed obligation raises `definitionCount` and reports `duplicate-definition`, which keeps the obligation `unknown`. Hand-write a reviewed obligation only for a claim the bundle does not already generate. In a 6.7.0 static run against a small C test program, an empty manifest left every active obligation `unowned`. That observation stays scoped to that run.
 
 #### What prevents closure
 
@@ -589,11 +608,24 @@ The whole ledger gets one `status`, checked top to bottom (source: `reconstructi
 
 #### Authority rules
 
-Authority must be comparable: a unit test with `packaged-process` authority can't close a runtime obligation, and static-only evidence can't close a process or runtime claim. The verifier's result Evidence must be in the input bundle. Absence of Evidence never silently becomes closure.
+Authority must be comparable: a unit-authority fixture can't close a packaged-process obligation, and static-only evidence can't close a process or runtime claim. Fixture and verifier Evidence must be observed `rea.reconstruction-proof` records from `verify_reconstruction_obligations`, with `passed: true` and identity arrays that match the binding, as in [What must be present to close an obligation](#what-must-be-present-to-close-an-obligation). `evidenceAuthoritySupportsProof` accepts these Evidence authorities for the binding's declared proof authority:
+
+| Declared proof authority | Evidence `authority` that can authenticate it |
+| ------------------------ | --------------------------------------------- |
+| `unit`                   | `shipped-artifact`, `controlled-replay`       |
+| `integration`            | `controlled-replay`                           |
+| `protocol`               | `controlled-replay`, `external-service`       |
+| `renderer`               | `controlled-replay`, `external-service`       |
+| `packaged-process`       | `controlled-replay`                           |
+| `native-abi`             | `shipped-artifact`, `controlled-replay`       |
+| `live-observation`       | `controlled-replay`, `external-service`       |
+| `external`               | `external-service`                            |
+
+Absence of that envelope never silently becomes closure.
 
 #### Ledger identity
 
-The full result (every obligation, its status and diagnostics, residual-unknown links, ownership and dependency graphs, Evidence references, and limitations) is identified by `ledger_id` (`rol_…`) + `closure_digest`. The same bundle, reviewed obligations, and manifest always produce the same digest (confirmed by a rerun); changing any disposition, residual unknown, or Evidence link changes it.
+The full result (every obligation, its status and diagnostics, residual-unknown ID list, ownership and dependency graphs, Evidence references, and limitations) is identified by `ledger_id` (`rol_…`) and `closure_digest`. The same bundle, reviewed obligations, and manifest always produce the same digest (confirmed by a rerun). Changing a disposition, an obligation's `residual_unknown_ids`, or an Evidence link that the closure projection includes changes `closure_digest`, and that digest change changes `ledger_id`. Revising a residual-unknown record does not, by itself, change `closure_digest`: the closure hash stores the ID list, not the record or its `revision_digest`, and evaluation does not read registry status. `ledger_id` still changes when that revision adds mutation Evidence, because `ledger_id` also hashes the bundle's Evidence IDs. A digest change always changes `ledger_id`; `ledger_id` can change without a digest change.
 
 `verified` is an explicit, auditable proof that the manifest supplied a unique owner, the required fixtures, and a passing verifier of comparable authority. Everything else stays visible and non-verified in the ledger.
 
@@ -783,7 +815,7 @@ Both are first-class input dispositions and output statuses. The ledger never dr
 - Related Evidence IDs (supporting, contradicting, or review Evidence)
 - The fact that the disposition does not count as verified
 
-These fields feed the ledger's `ledger_id` + `closure_digest`. Changing a disposition (for example `active` to `out-of-scope`), removing an obligation, or altering its residual unknowns changes the digest.
+These fields feed the ledger's `ledger_id` and `closure_digest`. Changing a disposition (for example `active` to `out-of-scope`), removing an obligation, or changing its `residual_unknown_ids` changes the digest, and that changes `ledger_id`. Revising the unknown record without changing that ID list does not change `closure_digest`. See [Ledger identity](#ledger-identity).
 
 | Requirement                  | Applies?                 | What it means                                                                                                                       |
 | ---------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
@@ -805,7 +837,7 @@ A few consistent patterns run through REA's Evidence model, MCP/CLI surface, and
 
 ### 1. Content-addressed, immutable Evidence
 
-Each observation is an immutable record whose `evidence_id` (`ev_…`) is a SHA-256 of the canonical semantic projection. Local paths and the ID itself don't affect identity; the same inputs always give the same ID, and import recomputes it and rejects tampering or conflicting duplicates. This gives deduplication and exact reuse (snapshots, comparisons), tamper-evident records, and stable citations. Residual unknowns follow a similar revisioned pattern (`unk_…` IDs with digest chains).
+Each observation is an immutable record whose `evidence_id` (`ev_…`) is a SHA-256 of the canonical semantic projection in [Hashing and identity](#hashing-and-identity-sha-256). Subject `name` and `local_path` are display fields and are not hashed; paths inside parameters, results, and locations are. The same projection always gives the same ID, and import recomputes it and rejects tampering or conflicting duplicates. This gives deduplication and exact reuse (snapshots, comparisons), tamper-evident records, and stable citations. Residual unknowns follow a similar revisioned pattern (`unk_…` IDs with digest chains).
 
 ### 2. Provider-neutral domain with adapter boundaries
 
@@ -898,5 +930,5 @@ A static-only beta against a known C test program (debug and stripped builds; Gh
 - `ev_`, `unk_`, `ledger_id`, and `closure_digest` were identical on rerun.
 - `analyze` and `function` opened no residual unknowns on their own; the one linked unknown was recorded explicitly.
 - Obligation statuses and ledger statuses are separate sets; there is no `closed` status and `failed` is ledger-level only.
-- With no manifest bindings, every active obligation came back `unowned`; reaching `verified` needs hand-written obligations and bindings.
+- In that static run, an empty manifest left every active obligation `unowned`. That result is scoped to the run. Bindings are hand-written. Hand-written obligations are only for claims the bundle does not already generate.
 - The XOR-obfuscated string was not recovered as plaintext; stripped-build function names were not recovered.
