@@ -81,8 +81,7 @@ text with `truncated: true`. `body_recorded` is false when the capture kept the
 response's status and content type but no body; `body` is then `null`, which
 is not a recorded JSON `null`. `body_encoding` is `base64` when the capture
 retained response bytes that are not valid UTF-8; `body` is then exactly those
-bytes in base64, never a lossy decoding. A retained base64 body is decoded only
-as far as the 256 KiB a reply can carry, and a leading byte-order mark is kept. Request bodies passed to `POST`, `PUT` and `PATCH`
+bytes in base64, never a lossy decoding. A retained base64 body is decoded only as far as the 256 KiB a reply can carry, and a leading byte-order mark is kept. For a `base64` body the limit applies to the recorded bytes, not their longer base64 spelling, and a cut keeps whole base64 groups. Request bodies passed to `POST`, `PUT` and `PATCH`
 tools are accepted and ignored: nothing is written, and no call changes what a
 later call returns. Arguments the tool's input schema does not name are
 refused by the MCP server as invalid arguments, so a misspelled parameter never
@@ -131,7 +130,9 @@ operations in this release; the error names the requested method so a caller
 can see that the method, not the transport, is unsupported. Its request body is
 read within the same 4 MiB bound the MCP endpoint applies: a larger body is
 answered `413` with a JSON-RPC `-32000` error before any of it is parsed, and a
-body that is not JSON is answered `400` with `-32700`.
+body that is not JSON is answered `400` with `-32700`. A notification (no `id`)
+gets `202` and no body, a batch gets one reply per request in it, an empty batch
+or a message that is not a JSON-RPC request gets `-32600 invalid request`.
 
 ## The environment card
 

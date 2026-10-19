@@ -128,10 +128,40 @@ describe("environment routes", () => {
         body: JSON.stringify({ jsonrpc: "2.0", id: "a" }),
       }),
     );
+    expect(noMethod.status).toBe(400);
     await expect(noMethod.json()).resolves.toMatchObject({
       id: "a",
-      error: { code: -32601, message: "method not found: " },
+      error: { code: -32600, message: "invalid request" },
     });
+    const post = (body: unknown) =>
+      rpc.handle(
+        new Request(`http://127.0.0.1${ENVIRONMENT_RPC_PATH}`, {
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+      );
+    // A notification gets no reply; a batch is answered per request, skipping notifications.
+    expect((await post({ jsonrpc: "2.0", method: "data/reset" })).status).toBe(
+      202,
+    );
+    const batch = await post([
+      { jsonrpc: "2.0", id: 7, method: "data/reset" },
+      { jsonrpc: "2.0", method: "data/notify" },
+      { id: 8 },
+    ]);
+    await expect(batch.json()).resolves.toEqual([
+      {
+        jsonrpc: "2.0",
+        id: 7,
+        error: { code: -32601, message: "method not found: data/reset" },
+      },
+      {
+        jsonrpc: "2.0",
+        id: 8,
+        error: { code: -32600, message: "invalid request" },
+      },
+    ]);
+    expect((await post([])).status).toBe(400);
     const malformed = await rpc.handle(
       new Request(`http://127.0.0.1${ENVIRONMENT_RPC_PATH}`, {
         method: "POST",

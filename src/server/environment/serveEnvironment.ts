@@ -40,6 +40,7 @@ export const ENVIRONMENT_CARD_PATH = "/.well-known/agent-env.json";
 export const ENVIRONMENT_RPC_PATH = "/agentenv";
 
 const METHOD_NOT_FOUND = -32601;
+const INVALID_REQUEST = -32600;
 const PARSE_ERROR = -32700;
 /** The SDK's code for a body over its bound, so `/agentenv` and `/mcp` refuse alike. */
 const PAYLOAD_TOO_LARGE = -32000;
@@ -101,6 +102,40 @@ export const createEnvironmentMcpServer = (
   return server;
 };
 
+interface RpcErrorReply {
+  readonly jsonrpc: "2.0";
+  readonly id: string | number | null;
+  readonly error: { readonly code: number; readonly message: string };
+}
+
+/** The reply to one JSON-RPC message: invalid request, method not found, or none for a notification. */
+const rpcReply = (message: unknown): RpcErrorReply | undefined => {
+  const id =
+    isRecord(message) &&
+    (typeof message.id === "string" || typeof message.id === "number")
+      ? message.id
+      : null;
+  if (
+    !isRecord(message) ||
+    message.jsonrpc !== "2.0" ||
+    typeof message.method !== "string"
+  )
+    return {
+      jsonrpc: "2.0",
+      id,
+      error: { code: INVALID_REQUEST, message: "invalid request" },
+    };
+  if (!("id" in message)) return undefined;
+  return {
+    jsonrpc: "2.0",
+    id,
+    error: {
+      code: METHOD_NOT_FOUND,
+      message: `method not found: ${message.method}`,
+    },
+  };
+};
+
 /** Answer the data plane with a JSON-RPC method-not-found error for every request within the body bound. */
 const answerRpc = async (request: Request): Promise<Response> => {
   const read = await readRequestBody(request, DEFAULT_MAX_REQUEST_BODY_SIZE);
@@ -112,14 +147,23 @@ const answerRpc = async (request: Request): Promise<Response> => {
     );
   const parsed = safeParseJson(read.text);
   if (!parsed.ok) return jsonRpcErrorResponse(400, PARSE_ERROR, "parse error");
-  const body = isRecord(parsed.value) ? parsed.value : {};
-  const method = typeof body.method === "string" ? body.method : "";
-  const id = body.id;
-  return Response.json({
-    jsonrpc: "2.0",
-    id: typeof id === "string" || typeof id === "number" ? id : null,
-    error: { code: METHOD_NOT_FOUND, message: `method not found: ${method}` },
-  });
+  // A batch is answered message by message; notifications get no reply at all.
+  if (Array.isArray(parsed.value)) {
+    if (parsed.value.length === 0)
+      return jsonRpcErrorResponse(400, INVALID_REQUEST, "invalid request");
+    const replies = parsed.value
+      .map(rpcReply)
+      .filter((reply) => reply !== undefined);
+    return replies.length === 0
+      ? new Response(null, { status: 202 })
+      : Response.json(replies);
+  }
+  const reply = rpcReply(parsed.value);
+  return reply === undefined
+    ? new Response(null, { status: 202 })
+    : Response.json(reply, {
+        status: reply.error.code === INVALID_REQUEST ? 400 : 200,
+      });
 };
 
 /** The plain routes an agent environment serves beside `/mcp`. */
