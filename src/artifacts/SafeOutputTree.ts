@@ -23,6 +23,7 @@ import { SafeOutputTreeCreationFailure } from "./SafeOutputTreeCreationFailure.j
 import { hashOutputFile } from "./SafeOutputTreeReadback.js";
 import { removeOwnedTree } from "./SafeOutputTreeCleanup.js";
 import {
+  assertExactTreeEntries,
   assertHandleIdentity,
   assertFilePathIdentity,
   assertPathIdentity,
@@ -66,6 +67,7 @@ export class SafeOutputTree {
   readonly #openFiles = new Map<string, OwnedFileHandle>();
   readonly #openHandles = new Set<OwnedFileHandle>();
   #published = false;
+  #createdRoot = true;
   #cleanup: SafeOutputCleanup = {
     status: "not-required",
   };
@@ -73,20 +75,23 @@ export class SafeOutputTree {
   private constructor(
     outputRoot: string,
     private readonly platform: NodeJS.Platform,
+    private readonly selectedRoot: string,
   ) {
     this.#outputRoot = outputRoot;
   }
 
   /**
-   * Exclusively create the absent destination as this operation's owned tree.
+   * Exclusively create the destination, or explicitly admit a caller-owned empty
+   * directory. Admission never grants authority to remove that existing root.
    *
-   * POSIX mode bits and directory `fchmod`/`fsync` have no Windows equivalent:
-   * `mkdir` already applies the requested mode, so the redundant handle
-   * `chmod` is skipped there to avoid an `EPERM` on the directory descriptor.
+   * Windows inherits ACLs: mode bits do not establish owner-only access there.
+   * Directory `fchmod`/`fsync` are skipped on Windows because those operations
+   * have no equivalent on the directory descriptor.
    */
   static async create(
     outputRoot: string,
     platform: NodeJS.Platform = process.platform,
+    options: { readonly acceptExistingEmpty?: boolean } = {},
   ): Promise<SafeOutputTree> {
     if (!isAbsolute(outputRoot))
       throw new ArtifactReaderFailure(
@@ -108,20 +113,30 @@ export class SafeOutputTree {
       },
     );
     const canonicalOutput = join(parent, name);
+    let created = true;
     await mkdir(canonicalOutput, { mode: 0o700 }).catch((cause: unknown) => {
-      if (isAlreadyExists(cause))
-        throw new ArtifactReaderFailure(
-          "path",
-          "Extraction output root already exists",
-          { cause },
-        );
-      throw cause;
+      if (!isAlreadyExists(cause)) throw cause;
+      if (options.acceptExistingEmpty) {
+        created = false;
+        return;
+      }
+      throw new ArtifactReaderFailure(
+        "path",
+        "Extraction output root already exists",
+        { cause },
+      );
     });
-    const tree = new SafeOutputTree(canonicalOutput, platform);
+    const tree = new SafeOutputTree(canonicalOutput, platform, requested);
+    tree.#createdRoot = created;
     try {
       const rootIdentity = await readDirectoryIdentity(canonicalOutput);
       tree.#rootIdentity = rootIdentity;
-      if (platform !== "win32") {
+      if (!created && (await readdir(canonicalOutput)).length > 0)
+        throw new ArtifactReaderFailure(
+          "path",
+          "Output directory is not empty",
+        );
+      if (created && platform !== "win32") {
         const stagingHandle = tree.#trackHandle(
           await open(
             canonicalOutput,
@@ -286,6 +301,7 @@ export class SafeOutputTree {
     this.#assertWritable();
     abortIfNeeded(signal);
     await this.#assertOwnedDirectories();
+    await this.#assertExactEntries();
     abortIfNeeded(signal);
     // Windows has no directory fsync; file contents are already synced in write().
     if (this.platform === "win32") {
@@ -319,6 +335,7 @@ export class SafeOutputTree {
       );
       await output.handle.sync();
       await parent.handle.sync();
+      await this.#assertExactEntries();
       abortIfNeeded(signal);
       this.#published = true;
     } catch (cause: unknown) {
@@ -366,7 +383,7 @@ export class SafeOutputTree {
   /** Remove only this operation's unsealed tree and verify absence. */
   async rollback(): Promise<SafeOutputCleanup> {
     if (this.#published) {
-      await this.#closePendingHandles();
+      await this.closeHandles();
       return structuredClone(this.#cleanup);
     }
     if (this.#cleanup.status === "complete")
@@ -378,26 +395,30 @@ export class SafeOutputTree {
     let removalFailure: unknown;
     try {
       await this.#admitPendingFiles();
-      await this.#closePendingHandles();
+      await this.closeHandles();
       await this.#assertOwnedDirectories();
       await removeOwnedTree({
         outputRoot: this.#outputRoot,
         rootIdentity: this.#requireRootIdentity(),
         directories: this.#nestedDirectories,
         files: this.#ownedFiles,
+        preserveRoot: !this.#createdRoot,
       });
+      if (!this.#createdRoot)
+        await assertPathIdentity(this.#outputRoot, this.#requireRootIdentity());
     } catch (cause: unknown) {
       removalFailure = cause;
     }
-    const absent =
-      removalFailure === undefined && (await isAbsent(this.#outputRoot));
-    this.#cleanup = absent
+    const complete =
+      removalFailure === undefined &&
+      (!this.#createdRoot || (await isAbsent(this.#outputRoot)));
+    this.#cleanup = complete
       ? { status: "complete", residualPaths: [] }
       : {
           status: "incomplete",
           residualPaths: [basename(this.#outputRoot)],
         };
-    if (!absent)
+    if (!complete)
       throw new ArtifactReaderFailure(
         "integrity",
         `Extraction output cleanup could not be verified${removalFailure === undefined ? "" : `: ${removalFailure instanceof Error ? removalFailure.message : String(removalFailure)}`}`,
@@ -474,6 +495,7 @@ export class SafeOutputTree {
   async #assertOwnedDirectories(): Promise<void> {
     const rootIdentity = this.#requireRootIdentity();
     await assertPathIdentity(this.#outputRoot, rootIdentity);
+    await assertPathIdentity(this.selectedRoot, rootIdentity);
     for (const [path, identity] of this.#nestedDirectories)
       await assertPathIdentity(path, identity);
     if (this.#unknownDirectories.size > 0)
@@ -481,6 +503,15 @@ export class SafeOutputTree {
         "path",
         `Extraction directory ownership is unknown: ${[...this.#unknownDirectories].join(", ")}`,
       );
+  }
+
+  async #assertExactEntries(): Promise<void> {
+    await assertExactTreeEntries(
+      this.#outputRoot,
+      this.#nestedDirectories,
+      this.#ownedFiles,
+    );
+    await this.#assertOwnedDirectories();
   }
 
   #requireRootIdentity(): DirectoryIdentity {
@@ -516,7 +547,8 @@ export class SafeOutputTree {
     this.#openHandles.delete(owner);
   }
 
-  async #closePendingHandles(): Promise<void> {
+  /** Release descriptors without deleting an inspectable partial output tree. */
+  async closeHandles(): Promise<void> {
     const failures: unknown[] = [];
     for (const owner of this.#openHandles) {
       try {

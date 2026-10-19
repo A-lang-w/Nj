@@ -811,6 +811,10 @@ it.each([
     { code: true, agentenv: true, runtime: true, package: false },
   ],
   [
+    "src/artifacts/SafeOutputTree.ts",
+    { code: true, agentenv: true, runtime: true },
+  ],
+  [
     "src/cliJsonInput.ts",
     { code: true, agentenv: true, runtime: true, package: false },
   ],

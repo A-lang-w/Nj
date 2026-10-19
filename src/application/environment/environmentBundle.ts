@@ -243,6 +243,10 @@ An agent environment exported by REA from one retained web network capture.
 Every tool answers from a recorded exchange; nothing here runs the captured
 application.
 
+The bundle contains captured application content. Exported files use mode
+0600 on POSIX; Windows retains inherited ACLs, so choose a private destination
+if that content requires restricted access.
+
 ## Provenance
 
 - Capture artifact SHA-256: \`${source.captureSha256 ?? "excluded from Evidence"}\`
