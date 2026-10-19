@@ -39,8 +39,6 @@ const observeArchive = async (order: readonly string[]) => {
   return { inventory, evidence };
 };
 
-const describePosix = describe.skipIf(process.platform === "win32");
-
 describe("content identity and occurrence facts", () => {
   it("retains all roles and permissions for identical bytes in either archive order", async () => {
     const left = await observeArchive(names);
@@ -187,7 +185,7 @@ describe("content identity and occurrence facts", () => {
   );
 });
 
-describePosix("directly selected executable formats", () => {
+describe("directly selected executable formats", () => {
   // A 64-bit little-endian arm64 MH_EXECUTE header.
   const executable = () => {
     const bytes = thinMach(0xcffaedfe, 0x0100000c);
@@ -233,7 +231,7 @@ describePosix("directly selected executable formats", () => {
         sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
         artifact_kind: "executable",
         artifact_format: "mach-o",
-        executable: mode === 0o755,
+        executable: process.platform === "win32" ? false : mode === 0o755,
       });
       expect(embedded).toEqual(direct);
     },

@@ -549,15 +549,23 @@ const assertSnapshotCleanupOutcome = async (
   expect(result).toMatchObject({
     error: { cleanupIncomplete: false, cleanupResources: [] },
   });
-  if (
-    !result.ok &&
-    mode === "snapshot-read-failure-late-abort" &&
-    process.platform !== "win32"
-  )
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisOutputError",
-      reason: expect.stringContaining("Authored snapshot read failure"),
-    });
+  if (!result.ok && mode === "snapshot-read-failure-late-abort") {
+    if (process.platform === "win32")
+      expect(result.error).toMatchObject({
+        diagnostics: {
+          primary_error: {
+            details: {
+              reason: expect.stringContaining("Authored snapshot read failure"),
+            },
+          },
+        },
+      });
+    else
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisOutputError",
+        reason: expect.stringContaining("Authored snapshot read failure"),
+      });
+  }
 };
 
 const runOwnedArtifactOutcome = async (

@@ -475,24 +475,24 @@ describe("direct Electron Framework binary selection", () => {
   });
 
   it.runIf(process.platform === "win32")(
-    "rejects a Windows backslash link target that leaves the framework",
+    "walks a backslash-separated Windows link target before accepting a file",
     async () => {
       const { app, framework } = await frameworkFixture(
-        "rea-electron-fuses-direct-escape-backslash-",
+        "rea-electron-fuses-nested-escape-backslash-",
       );
-      await mkdir(join(app, "Contents", "Other"), { recursive: true });
+      const versions = join(framework, "Versions");
+      await mkdir(join(app, "Contents", "Other", "subdir"), {
+        recursive: true,
+      });
       await writeFile(
-        join(app, "Contents", "Other", "Electron Framework"),
+        join(app, "Contents", "Other", "subdir", "Electron Framework"),
         elfFuseImage([ELECTRON_FUSE_STATE_BYTES.enabled]).bytes,
       );
-      await symlink(
-        "..\\..\\..\\Other",
-        join(framework, "Versions", "Current"),
-        "dir",
-      );
+      await symlinkDirectory("../../../Other", join(versions, "nested"));
+      await symlinkDirectory("nested\\subdir", join(versions, "Current"));
 
       const result = await provider.inspect({
-        path: join(framework, "Versions", "Current", "Electron Framework"),
+        path: join(versions, "Current", "Electron Framework"),
       });
       expect(result.ok).toBe(false);
       if (result.ok) return;

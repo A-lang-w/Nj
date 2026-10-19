@@ -78,18 +78,25 @@ const legacyMips: BinaryTarget = {
 };
 
 let installDir = "";
+let ownedInstallDir = "";
 beforeAll(async () => {
-  installDir = await mkdtemp(join(tmpdir(), "rea-ghidra-languages-"));
-  // The simulated Linux host needs a POSIX absolute path. A current-drive root
-  // path also reaches this real fixture on Windows without changing admission.
-  if (process.platform === "win32")
-    installDir = `/${relative(parse(installDir).root, installDir).replaceAll("\\", "/")}`;
+  const root =
+    process.platform === "win32" ? join(process.cwd(), "build") : tmpdir();
+  await mkdir(root, { recursive: true });
+  ownedInstallDir = await mkdtemp(join(root, "rea-ghidra-languages-"));
+  // The simulated Linux host needs a POSIX absolute path. Keep the owned
+  // native path for cleanup and derive the simulated path on the same drive.
+  installDir =
+    process.platform === "win32"
+      ? `/${relative(parse(ownedInstallDir).root, ownedInstallDir).replaceAll("\\", "/")}`
+      : ownedInstallDir;
   const languages = join(installDir, "Ghidra/Processors/x86/data/languages");
   await mkdir(languages, { recursive: true });
   await writeFile(join(languages, "x86.ldefs"), X86_LDEFS);
 });
 afterAll(async () => {
-  await rm(installDir, { recursive: true, force: true });
+  if (ownedInstallDir !== "")
+    await rm(ownedInstallDir, { recursive: true, force: true });
 });
 
 const provider = (environment: Record<string, string>) => {
