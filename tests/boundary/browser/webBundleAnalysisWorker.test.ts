@@ -1,4 +1,4 @@
-import { access } from "node:fs/promises";
+import { access, mkdir, rm } from "node:fs/promises";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -480,6 +480,111 @@ const request = (endpoint: string, allowedOrigin: string) =>
     target_id: "allowed-page",
     observation_ms: 0,
   });
+
+it.each([
+  { file: "script", failRoot: false },
+  { file: "facts", failRoot: false },
+  { file: "script", failRoot: true },
+  { file: "facts", failRoot: true },
+])(
+  "retains accepted findings when final $file removal fails (root retry: $failRoot)",
+  async ({ file, failRoot }) => {
+    const roots: string[] = [];
+    let rootBlocked = failRoot;
+    let finalRead = false;
+    let replaced = false;
+    const originalClose = OwnedFileHandle.prototype.close;
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        await originalClose.call(this);
+        if (!finalRead || replaced) return;
+        replaced = true;
+        // The actual file-removal boundary fails after the stable read finishes.
+        const path = join(roots[0] ?? "", `1.${file}.json`);
+        await rm(path);
+        await mkdir(path);
+      });
+    const owner = new WebBundleAnalysisOwner({
+      createRuntime: async () => {
+        const root = await PrivateRuntimeRoot.create({
+          prefix: "rea-wb-test-",
+        });
+        roots.push(root.path);
+        return {
+          path: root.path,
+          close: async () => {
+            if (rootBlocked) throw new Error("injected root release failure");
+            await root.close();
+          },
+        };
+      },
+      launcher: async (options) => {
+        const spawned = await spawnOwnedProviderProcess(options);
+        spawned.process.stdout?.on("data", (chunk: Buffer) => {
+          if (chunk.toString("utf8").includes('"kind":"done","index":1'))
+            finalRead = true;
+        });
+        return spawned;
+      },
+    });
+    try {
+      const result = await owner.analyze([small(0), small(1)]);
+      if (result.ok) throw new Error("Expected file cleanup failure");
+      expect(replaced).toBe(true);
+      expect(result.error.completed?.map(endpoints)).toEqual([
+        ["/api/kept-0"],
+        ["/api/kept-1"],
+      ]);
+      expect(
+        result.error.error.cleanupPrimary ?? result.error.error,
+      ).toBeInstanceOf(ProviderCleanupError);
+      expect(result.error.error.cleanupIncomplete).toBe(failRoot);
+      if (failRoot) {
+        await expect(owner.close()).rejects.toBeInstanceOf(
+          ProviderCleanupError,
+        );
+        await access(roots[0] ?? "");
+      }
+      rootBlocked = false;
+      await owner.close();
+      expect(result.error.error.cleanupIncomplete).toBe(false);
+      expect(result.error.error.cleanupResources).toEqual([]);
+      await released(roots);
+    } finally {
+      rootBlocked = false;
+      await owner.close();
+      close.mockRestore();
+    }
+  },
+  60_000,
+);
+
+it("preserves returned-reference widening through the real worker boundary", async () => {
+  const widened = script(
+    0,
+    `
+    function expose() { return Map.prototype; }
+    let cursor = { target: expose };
+    function walk(flag) {
+      while (flag) cursor = cursor.next;
+      patch(cursor.target());
+    }
+    new Map().get('/candidate');
+    fetch('/preserved');
+  `,
+  );
+  const result = await analyzeWebBundleScripts([widened, small(1)], {});
+  if (!result.ok) throw result.error.error;
+  expect(result.value).toMatchObject([
+    { status: "analyzed", facts: { returned_reference_widened: true } },
+    { status: "analyzed", facts: { returned_reference_widened: false } },
+  ]);
+  expect(result.value.map(endpoints)).toEqual([
+    ["/preserved"],
+    ["/api/kept-1"],
+  ]);
+}, 60_000);
 
 it.each([false, true])(
   "serializes acquisitions and preserves queue order when cancellation is %s",

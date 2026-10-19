@@ -13,6 +13,7 @@ const observations = webBundleAnalysisSchema.shape.observations.shape;
 export const webBundleScriptFactsSchema = z.strictObject({
   script_key: z.string(),
   parse: z.enum(["parsed", "recovered", "failed"]),
+  returned_reference_widened: z.boolean(),
   visited_ast_nodes: z.number().int().min(0),
   edges: observations.chunks.shape.edges,
   routes: observations.routes,

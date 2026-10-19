@@ -1,3 +1,4 @@
+import { RETURNED_REFERENCE_WIDENING_LIMITATION } from "./javascript/javascriptSemanticCoverage.js";
 import type { WebPageInspection } from "./browserObservationSchemas.js";
 import {
   webBundleAnalysisSchema,
@@ -40,6 +41,9 @@ export const buildWebBundleAnalysis = (
   const recoveredScripts = analyzed
     .filter(({ parse }) => parse === "recovered")
     .map(({ script_key }) => script_key);
+  const widenedScripts = analyzed
+    .filter(({ returned_reference_widened }) => returned_reference_widened)
+    .map(({ script_key }) => script_key);
   const resourceLimited = outcomes.flatMap((outcome) =>
     outcome.status === "resource_limited" ? [outcome] : [],
   );
@@ -57,6 +61,7 @@ export const buildWebBundleAnalysis = (
     failedScripts.length > 0 ||
     recoveredScripts.length > 0 ||
     resourceLimited.length > 0 ||
+    widenedScripts.length > 0 ||
     unavailable.length > 0 ||
     sourceMapIncomplete ||
     omittedScripts !== undefined ||
@@ -81,6 +86,7 @@ export const buildWebBundleAnalysis = (
       failedScripts,
       recoveredScripts,
       resourceLimited,
+      widenedScripts,
       sourceMaps,
       omittedScripts,
       omittedSourceMaps,
@@ -132,6 +138,7 @@ interface UnknownsInput {
     WebBundleScriptOutcome,
     { status: "resource_limited" }
   >[];
+  readonly widenedScripts: readonly string[];
   readonly sourceMaps: WebBundleAnalysis["observations"]["source_maps"];
   readonly omittedScripts: number | null | undefined;
   readonly omittedSourceMaps: number | null | undefined;
@@ -163,6 +170,15 @@ const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
           dimension: "javascript_ast" as const,
           reason: "One or more source artifacts could not be parsed",
           affected_script_keys: [...input.failedScripts],
+        },
+      ]),
+  ...(input.widenedScripts.length === 0
+    ? []
+    : [
+        {
+          dimension: "javascript_ast" as const,
+          reason: RETURNED_REFERENCE_WIDENING_LIMITATION,
+          affected_script_keys: [...input.widenedScripts],
         },
       ]),
   ...(input.recoveredScripts.length === 0

@@ -51,6 +51,7 @@ interface AnalysisAccumulator {
   readonly seen: Set<string>;
   visitedNodes: number;
   parse: WebBundleScriptFacts["parse"];
+  returnedReferenceWidened: boolean;
 }
 
 const analyzeScript = (
@@ -113,6 +114,8 @@ const analyzeScript = (
         node: endpoint.node,
         accumulator,
       });
+  accumulator.returnedReferenceWidened =
+    index.bindings.returnedReferenceWidenings.size > 0;
 };
 
 const inspectNode = (
@@ -465,6 +468,7 @@ export const analyzeWebBundleScript = (
   return {
     script_key: script.script_key,
     parse: accumulator.parse,
+    returned_reference_widened: accumulator.returnedReferenceWidened,
     visited_ast_nodes: accumulator.visitedNodes,
     edges: accumulator.edges,
     routes: accumulator.routes,
@@ -483,6 +487,7 @@ const emptyAccumulator = (): AnalysisAccumulator => ({
   seen: new Set(),
   visitedNodes: 0,
   parse: "parsed",
+  returnedReferenceWidened: false,
 });
 
 export const isIncludedScript = (

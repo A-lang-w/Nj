@@ -83,6 +83,8 @@ export class OwnedWebBundleWorker {
     readonly [key in keyof typeof WEB_BUNDLE_ANALYSIS_WORKER_LIMITS]: number;
   };
   readonly #memoryLimitBytes: number | null;
+  readonly #outcomes: WebBundleScriptOutcome[] = [];
+  #retirementFailure: ProviderCleanupError | undefined;
   #runtime: { readonly path: string; close(): Promise<void> } | undefined;
   readonly #artifacts = new ArtifactResourceScope();
   #supervisor: ProviderProcessSupervisor | undefined;
@@ -144,7 +146,7 @@ export class OwnedWebBundleWorker {
       this.dependencies.createRuntime ??
       (() => PrivateRuntimeRoot.create({ prefix: "rea-web-bundle-" }))
     )();
-    const outcomes: WebBundleScriptOutcome[] = [];
+    const outcomes = this.#outcomes;
     while (outcomes.length < this.scripts.length) {
       this.#check();
       await this.#spawn(outcomes.length);
@@ -153,6 +155,13 @@ export class OwnedWebBundleWorker {
     // Stopping a worker mid-exit can misread its ownership; let it finish first.
     await this.#supervisor?.waitForExit(NATURAL_EXIT_GRACE_MS);
     return outcomes;
+  }
+
+  /** Complete facts remain available if finalization throws after acceptance. */
+  get completed(): readonly WebBundleScriptOutcome[] | undefined {
+    return this.#outcomes.length === this.scripts.length
+      ? this.#outcomes
+      : undefined;
   }
 
   async #writePrivate(
@@ -181,11 +190,12 @@ export class OwnedWebBundleWorker {
           this.#analyzeScript(script, index, deadline),
         ),
       );
+      await this.#retireScriptFiles(index);
       if (this.#supervisor === undefined) return;
     }
   }
 
-  /** Stage, analyze and accept one script under one deadline; retire files before reuse. */
+  /** Stage, analyze and accept one script under one deadline. */
   async #analyzeScript(
     script: IncludedScript,
     index: number,
@@ -207,15 +217,27 @@ export class OwnedWebBundleWorker {
     this.#check();
     // Decoding/validation may block the event loop past the timer callback.
     if (deadline.interruption === "timeout") outcome = "timeout";
-    const completed =
-      typeof outcome === "string"
-        ? await this.#stopLimitedScript(script, index, outcome)
-        : outcome;
+    return typeof outcome === "string"
+      ? this.#stopLimitedScript(script, index, outcome)
+      : outcome;
+  }
+
+  /** Accepted outcomes outlive file retirement; failed files stay owned by the root. */
+  async #retireScriptFiles(index: number): Promise<void> {
     const root = this.#runtime;
     if (root === undefined) throw new TypeError("Runtime was released");
-    for (const name of Object.values(webBundleWorkerFileNames(index)))
-      await rm(join(root.path, name), { force: true });
-    return completed;
+    try {
+      for (const name of Object.values(webBundleWorkerFileNames(index)))
+        await rm(join(root.path, name), { force: true });
+    } catch (cause: unknown) {
+      this.#retirementFailure = new ProviderCleanupError(
+        PROVIDER,
+        this.cleanupResources,
+        { script_index: index, reason: message(cause) },
+        { operation: OPERATION, cause },
+      ).bindCleanupResourceOwner(this);
+      throw this.#retirementFailure;
+    }
   }
 
   /** Only this script's source is on disk while the worker awaits admission. */
@@ -531,6 +553,17 @@ export class OwnedWebBundleWorker {
   failure(cause: unknown): AnalysisError {
     const primary = this.#primaryFailure(cause);
     if (
+      cause instanceof ProviderCleanupError &&
+      cause === this.#retirementFailure
+    )
+      return primary === cause
+        ? primary
+        : analysisErrorWithCleanupFailure(
+            primary,
+            cause,
+            OPERATION,
+          ).bindCleanupDependencies([primary, cause]);
+    if (
       !(cause instanceof ArtifactReaderFailure) ||
       cause.cleanup === undefined
     )
@@ -594,7 +627,10 @@ export class OwnedWebBundleWorker {
         failures.push(cause);
       }
     }
-    if (failures.length === 0) return undefined;
+    if (failures.length === 0) {
+      this.#retirementFailure?.resolveCleanup();
+      return undefined;
+    }
     return new ProviderCleanupError(
       PROVIDER,
       this.cleanupResources,

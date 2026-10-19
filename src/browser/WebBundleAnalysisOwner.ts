@@ -143,9 +143,10 @@ export class WebBundleAnalysisOwner implements WebBundleScriptAnalyzer {
       result = err(record.worker.failure(cause));
     }
     const cleanup = await this.#release(record);
-    const completed = result.ok ? { completed: result.value } : {};
+    const accepted = record.worker.completed;
+    const completed = accepted === undefined ? {} : { completed: accepted };
     const outcome: ScriptResult = !result.ok
-      ? err({ error: result.error })
+      ? err({ error: result.error, ...completed })
       : signal.aborted
         ? err({
             error: new AnalysisCancelledError(OPERATION, {
