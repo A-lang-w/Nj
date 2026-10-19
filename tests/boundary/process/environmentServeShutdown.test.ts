@@ -10,9 +10,13 @@ import { processTest } from "../../support/process/processFixture.js";
 
 const SHUTDOWN_TIMEOUT_MS = 90_000;
 
+// Windows has no SIGTERM handler to run: Node's kill("SIGTERM") ends the child outright there.
+const [SIGNAL, STATUS]: readonly [NodeJS.Signals, number] =
+  process.platform === "win32" ? ["SIGINT", 130] : ["SIGTERM", 143];
+
 describe("rea environment-serve shutdown", () => {
   processTest(
-    "closes the listener on SIGTERM, prints one stopped document and exits 143",
+    `closes the listener on ${SIGNAL}, prints one stopped document and exits ${String(STATUS)}`,
     async ({ processes }) => {
       const root = await createTestTempDirectory("rea-environment-serve-stop-");
       const files = await writeEnvironmentServeFiles(root);
@@ -33,9 +37,9 @@ describe("rea environment-serve shutdown", () => {
         new URL("/.well-known/agent-env.json", started.url.origin),
       );
       expect(card.status).toBe(200);
-      started.child.kill("SIGTERM");
+      started.child.kill(SIGNAL);
       const [code, signalCode] = await once(started.child, "close");
-      expect(code).toBe(143);
+      expect(code).toBe(STATUS);
       expect(signalCode).toBeNull();
       expect(JSON.parse(stdout)).toMatchObject({
         status: "stopped",
