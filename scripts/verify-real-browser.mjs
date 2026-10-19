@@ -39,7 +39,7 @@ import {
   verifyScenarioFailureEvidence,
 } from "./lib/browser-scenario-verifier.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
-import { closeRuntimeFixtureResources } from "./lib/browser-runtime-fixture-lifecycle.mjs";
+import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import { requireOrdinaryWindowsVerifierCaller } from "./lib/windows-ordinary-user-verifier.mjs";
 import { verifyLargeScreenshotE2e } from "./lib/browser-screenshot-e2e.mjs";
 import { verifyPopupEventCoverage } from "./lib/browser-popup-e2e.mjs";
@@ -53,6 +53,7 @@ import { artifactCliEvidence, artifactMcpResult } from "./lib/artifact-e2e.mjs";
 import { verifyScenarioEnvironment } from "./lib/browser-scenario-environment-e2e.mjs";
 import { verifyScenarioStorage } from "./lib/browser-scenario-storage-e2e.mjs";
 import { verifyScenarioServiceWorkers } from "./lib/browser-scenario-service-workers-e2e.mjs";
+import { verifyBrowserUrlUserInfo } from "./lib/browser-url-userinfo-e2e.mjs";
 
 const SCENARIO_SECRET_VALUE = "rea-browser-verifier-secret";
 const SCENARIO_URL_SECRET_VALUE = "rea-browser-url-verifier-secret";
@@ -378,6 +379,7 @@ try {
   });
   const moduleTrace = await verifyBrowserModules(executable);
   const captureMetadata = await verifyBrowserCaptureMetadataBudget(endpoint);
+  const urlUserInfo = await verifyBrowserUrlUserInfo(endpoint, site.origin);
   report = {
     browser: observed.value.browser.product,
     endpoint,
@@ -405,6 +407,7 @@ try {
     scriptExport,
     moduleTrace,
     captureMetadata,
+    urlUserInfo,
     domDestinations,
     browserScenarioCli: true,
     browserScenarioAttachCleanup: "disconnected-external",
@@ -447,7 +450,7 @@ try {
         retryDelay: 100,
       }),
     );
-  await closeRuntimeFixtureResources(cleanup, verificationError);
+  await closeVerifierResources(cleanup, verificationError);
 }
 process.stdout.write(
   `${JSON.stringify({

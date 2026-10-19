@@ -1,3 +1,7 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { elf } from "../../domain/binaryTarget.fixture.js";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -15,6 +19,7 @@ import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { ProviderOperationHealth } from "../../domain/providerOperationHealth.js";
 import { err, ok } from "../../domain/result.js";
+import { buildCapabilityInventory } from "../CapabilityInventory.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import { BinarySession } from "./BinarySession.js";
@@ -36,6 +41,23 @@ import { SessionProviderRouter } from "./SessionProviderRouter.js";
  * recorded process exit.
  */
 describe("BinarySession open liveness", () => {
+  it("retires a locally blocked owner even when its native health is idle", async () => {
+    const { session, deep } = openSession();
+    try {
+      expect((await session.open(process.execPath)).ok).toBe(true);
+      expect((await session.execute("address_name", {})).ok).toBe(true);
+      const retained = deep.created[0];
+      if (retained === undefined) throw new Error("Expected an acquired child");
+      retained.reuseReadiness = () => "blocked";
+      expect(retained.operationHealthSnapshot?.()?.state).toBe("idle");
+      expect((await session.open(process.execPath)).ok).toBe(true);
+      expect(retained.closeCalled).toBe(true);
+      expect((await session.execute("address_name", {})).ok).toBe(true);
+      expect(deep.created).toHaveLength(2);
+    } finally {
+      await session.close();
+    }
+  });
   it("reuses the retained client while the child stays live", async () => {
     const { session, deep } = openSession();
     expect((await session.open(process.execPath)).ok).toBe(true);
@@ -186,8 +208,106 @@ describe("BinarySession open liveness", () => {
   });
 });
 
+it("clears retired runtime availability after cancelled-switch restoration", async () => {
+  let closeStarted!: () => void;
+  const closing = new Promise<void>((resolve) => {
+    closeStarted = resolve;
+  });
+  let releaseClose!: () => void;
+  const closeGate = new Promise<void>((resolve) => {
+    releaseClose = resolve;
+  });
+  const { session, deep } = openSession({
+    failOperationInitially: true,
+    beforeFirstClose: async () => {
+      closeStarted();
+      await closeGate;
+    },
+  });
+  expect((await session.open(process.execPath)).ok).toBe(true);
+  expect((await session.execute("address_name", {})).ok).toBe(false);
+  const availability = async () =>
+    buildCapabilityInventory(await session.status(), {
+      processCaptureEnabled: false,
+    }).find(({ name }) => name === "address_name");
+  const initialAvailability = await availability();
+  expect(initialAvailability).toMatchObject({
+    available: false,
+    reason: "provider_unavailable",
+  });
+  const originalTarget = session.activeTarget();
+  const initialRunId = sessionRunId(await session.status());
+
+  const controller = new AbortController();
+  const alternate = join(
+    await createTestTempDirectory("rea-liveness-switch-"),
+    "alternate.elf",
+  );
+  await writeFile(alternate, elf(2, 1, 62));
+  const switching = session.open(alternate, { signal: controller.signal });
+  await closing;
+  controller.abort();
+  releaseClose();
+
+  const cancelled = await switching;
+  expect(cancelled).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError" },
+  });
+  expect(session.activeTarget()).toEqual(originalTarget);
+  expect(deep.created).toHaveLength(1);
+  expect(deep.created[0]?.closeCalled).toBe(true);
+  const restoredStatus = await session.status();
+  expect(sessionRunId(restoredStatus)).not.toBe(initialRunId);
+  expect(await availability()).toMatchObject({
+    available: true,
+    reason: "available",
+    remediation: null,
+  });
+  // Cancellation remains the caller-visible outcome after cleanup and
+  // restoration, while the new restored client is healthy and usable.
+  expect((await session.execute("address_name", {})).ok).toBe(true);
+  expect(deep.created).toHaveLength(2);
+  expect(await availability()).toMatchObject({
+    available: true,
+    reason: "available",
+    remediation: null,
+  });
+  deep.created[1]?.setOperationFailure(true);
+  expect((await session.execute("address_name", {})).ok).toBe(false);
+  expect(await availability()).toMatchObject({
+    available: false,
+    reason: "provider_unavailable",
+  });
+  deep.created[1]?.setOperationFailure(false);
+  expect((await session.execute("address_name", {})).ok).toBe(true);
+  expect(await availability()).toMatchObject({
+    available: true,
+    reason: "available",
+    remediation: null,
+  });
+  await session.close();
+});
+
+const sessionRunId = (
+  status: Awaited<ReturnType<BinarySession["status"]>>,
+): string => {
+  if (typeof status !== "object" || status === null || Array.isArray(status))
+    throw new Error("Expected a binary session status object");
+  const analysisRun = status.analysis_run;
+  if (
+    typeof analysisRun !== "object" ||
+    analysisRun === null ||
+    Array.isArray(analysisRun) ||
+    typeof analysisRun.run_id !== "string"
+  )
+    throw new Error("Expected an active analysis run");
+  return analysisRun.run_id;
+};
+
 interface KillableChild extends AnalysisClient {
   kill(state?: "exited" | "unreachable" | "unknown" | "not_started"): void;
+  setOperationFailure(value: boolean): void;
   closeCalled: boolean;
   healthCalls: number;
 }
@@ -225,7 +345,11 @@ const capability = (
 });
 
 const openSession = (
-  options: { operationHealth?: boolean } = {},
+  options: {
+    operationHealth?: boolean;
+    failOperationInitially?: boolean;
+    beforeFirstClose?: () => Promise<void>;
+  } = {},
 ): {
   session: BinarySession;
   deep: { created: KillableChild[] };
@@ -257,6 +381,8 @@ const openSession = (
 
 const killableDeepProvider = (options: {
   operationHealth?: boolean;
+  failOperationInitially?: boolean;
+  beforeFirstClose?: () => Promise<void>;
 }): {
   provider: AnalysisProviderCandidate;
   created: KillableChild[];
@@ -290,7 +416,10 @@ const killableDeepProvider = (options: {
         }),
       ),
     createClient: (): KillableChild => {
+      const firstClient = created.length === 0;
       let alive = true;
+      let failOperation =
+        firstClient && options.failOperationInitially === true;
       let closeCalled = false;
       let healthCalls = 0;
       let deadState: "exited" | "unreachable" | "unknown" | "not_started" =
@@ -298,7 +427,7 @@ const killableDeepProvider = (options: {
       const client: KillableChild = {
         execute: (operation) => {
           if (operation === "health") healthCalls += 1;
-          return alive
+          return alive && !(operation !== "health" && failOperation)
             ? Promise.resolve(
                 ok(
                   createAnalysisExecution(
@@ -331,9 +460,11 @@ const killableDeepProvider = (options: {
               },
             }
           : {}),
-        close: () => {
+        close: async () => {
           closeCalled = true;
-          return Promise.resolve(ok(null));
+          if (firstClient && options.beforeFirstClose !== undefined)
+            await options.beforeFirstClose();
+          return ok(null);
         },
         get closeCalled() {
           return closeCalled;
@@ -350,6 +481,9 @@ const killableDeepProvider = (options: {
         ) => {
           alive = false;
           deadState = state;
+        },
+        setOperationFailure: (value: boolean) => {
+          failOperation = value;
         },
       };
       created.push(client);

@@ -29,6 +29,7 @@ it.each([
     const client = { name, format, configPath };
     const custom = {
       REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
       REA_MCP_MAX_RESPONSE_BYTES: "33554432",
       REA_BROWSER_EXECUTABLE: join(root, "custom-browser"),
       GHIDRA_INSTALL_DIR: join(root, "old-ghidra"),
@@ -38,7 +39,7 @@ it.each([
       REA_GHIDRA_COMPILER_SPEC_ID: "borlandcpp",
       CALLER_SETTING: "preserve exactly",
     };
-    const original = serializeClientConfiguration(
+    const serialized = serializeClientConfiguration(
       {
         [serversKey]: {
           rea: clientRegistrationEntry(format, ["rea-old", "mcp"], custom),
@@ -47,6 +48,8 @@ it.each([
       },
       format,
     );
+    if (!serialized.ok) throw new Error("fixture serialization failed");
+    const original = serialized.value;
     await writeFile(configPath, original);
     const providers = { GHIDRA_INSTALL_DIR: join(root, "new-ghidra") };
     const command = ["rea", "mcp"];
@@ -142,6 +145,16 @@ it.each([
     "invalid profile",
     { REA_MCP_INPUT_SCHEMA_PROFILE: "bogus" },
     "REA_MCP_INPUT_SCHEMA_PROFILE",
+  ],
+  [
+    "empty output profile",
+    { REA_MCP_OUTPUT_SCHEMA_PROFILE: "" },
+    "REA_MCP_OUTPUT_SCHEMA_PROFILE",
+  ],
+  [
+    "invalid output profile",
+    { REA_MCP_OUTPUT_SCHEMA_PROFILE: "bogus" },
+    "REA_MCP_OUTPUT_SCHEMA_PROFILE",
   ],
   [
     "invalid response budget",

@@ -11,7 +11,6 @@
     "scripts/verify/termux/browser.mjs",
     "scripts/verify-real-ghidra-noreturn.mjs",
     "scripts/verify-real-ghidra-warning-attribution.mjs",
-    "scripts/run-exact-tests.mjs",
     "tests/processOwnershipRunner.ts"
   ],
   "project": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs"],

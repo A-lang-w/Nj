@@ -9,11 +9,8 @@ import { projectNativeApiInspection } from "../dist/application/native/NativeApi
 import { functionDossierSchema } from "../dist/domain/hopperValues.js";
 import { nativeApiBoundarySchema } from "../dist/domain/native/nativeApiBoundary.js";
 import { parseGhidraFunctionResult } from "../dist/ghidra/GhidraFunctionValues.js";
-import {
-  ghidraJavaEnvironment,
-  inspectGhidraInstallation,
-} from "../dist/ghidra/GhidraInstallation.js";
-import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraInstallationPolicy.js";
+import { ghidraJavaEnvironment } from "../dist/ghidra/GhidraInstallation.js";
+import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraReleasePolicy.js";
 import { ghidraJavaLaunch } from "../dist/ghidra/GhidraJavaLaunch.js";
 import { cleanupOwnedProcessGroup } from "../dist/process/ProcessOwnership.js";
 import {
@@ -25,10 +22,11 @@ import {
   completeVerifierRun,
   createVerifierRun,
 } from "./lib/verifier-run.mjs";
+import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 
 assert.equal(process.argv.length, 2, "This verifier takes no arguments");
 assert.ok(["linux", "darwin"].includes(process.platform));
-const installation = inspectGhidraInstallation({
+const installation = await inspectVerifierGhidraInstallation({
   environment: process.env,
   installDir: process.env.GHIDRA_INSTALL_DIR,
   javaHome: process.env.JAVA_HOME,
