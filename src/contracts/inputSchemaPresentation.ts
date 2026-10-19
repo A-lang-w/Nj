@@ -26,7 +26,13 @@ const resolveReference = (
   if (!reference.startsWith("#/")) return undefined;
   let value: unknown = root;
   for (const token of reference.slice(2).split("/")) {
-    const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
+    let key: string;
+    try {
+      key = decodeURIComponent(token);
+    } catch {
+      return undefined;
+    }
+    key = key.replaceAll("~1", "/").replaceAll("~0", "~");
     if (Array.isArray(value)) {
       if (!/^(?:0|[1-9]\d*)$/u.test(key)) return undefined;
       const index = Number(key);
@@ -257,7 +263,10 @@ const normalizeAdvertisedSchema = (
       const results = Array.isArray(child)
         ? normalizeList(child)
         : [normalizeAdvertisedSchema(child, root, active)];
-      const nestedChanged = results.some((result) => result.changed);
+      const nestedChanged =
+        results.some((result) => result.changed) ||
+        (key === "contains" &&
+          referencesChangingTarget(child, root, active));
       if (
         key === "contains" &&
         nestedChanged &&

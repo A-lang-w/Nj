@@ -685,6 +685,39 @@ describe("advertised empty-string literals", () => {
     });
   });
 
+  it("drops an affected contains group that references a widened definition", () => {
+    const canonical = {
+      $defs: { empty: { type: "string", const: "" } },
+      type: "object",
+      properties: {
+        values: {
+          type: "array",
+          contains: { $ref: "#/$defs/empty" },
+          maxContains: 1,
+        },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    const canonicalValidate = new Ajv2020({ strict: false }).compile(canonical);
+    const advertisedValidate = new Ajv2020({ strict: false }).compile(
+      advertised,
+    );
+    expect(canonicalValidate({ values: ["", "a"] })).toBe(true);
+    expect(advertisedValidate({ values: ["", "a"] })).toBe(true);
+    expect(advertised.properties).toEqual({ values: { type: "array" } });
+  });
+
+  it("decodes URI fragment tokens in local references", () => {
+    const canonical = {
+      $defs: { "a b": { type: "string", const: "" } },
+      type: "object",
+      properties: { value: { not: { $ref: "#/$defs/a%20b" } } },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.properties).toEqual({ value: {} });
+    expect(advertised.$defs).toEqual({ "a b": { type: "string" } });
+  });
+
   it("widens an affected oneOf to anyOf without losing branch guidance", () => {
     const canonical = {
       type: "object",
