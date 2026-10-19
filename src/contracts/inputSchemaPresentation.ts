@@ -18,10 +18,74 @@ const literalSchemaType = (value: unknown): string | undefined => {
   return undefined;
 };
 
-const resolveReference = (
+const resolvePointer = (
+  root: Readonly<Record<string, unknown>>,
+  tokens: readonly string[],
+): unknown => {
+  let value: unknown = root;
+  for (const token of tokens) {
+    if (Array.isArray(value)) {
+      if (!/^(?:0|[1-9]\d*)$/u.test(token)) return undefined;
+      const index = Number(token);
+      if (index >= value.length) return undefined;
+      value = value[index];
+      continue;
+    }
+    if (!isObject(value) || !Object.hasOwn(value, token)) return undefined;
+    value = value[token];
+  }
+  return value;
+};
+
+const findSchemaAnchor = (
+  root: Readonly<Record<string, unknown>>,
+  name: string,
+): readonly string[] | undefined => {
+  const scan = (
+    node: unknown,
+    path: readonly string[],
+  ): readonly string[] | undefined => {
+    if (Array.isArray(node)) {
+      for (let index = 0; index < node.length; index += 1) {
+        const found = scan(node[index], [...path, String(index)]);
+        if (found !== undefined) return found;
+      }
+      return undefined;
+    }
+    if (!isObject(node)) return undefined;
+    if (node.$anchor === name) return path;
+    for (const [key, child] of Object.entries(node)) {
+      if (
+        !schemaMaps.has(key) &&
+        !schemaArrays.has(key) &&
+        !schemaChildren.has(key)
+      )
+        continue;
+      if (schemaMaps.has(key) && isObject(child)) {
+        for (const [childName, grandChild] of Object.entries(child)) {
+          const found = scan(grandChild, [...path, key, childName]);
+          if (found !== undefined) return found;
+        }
+      } else if (Array.isArray(child)) {
+        for (let index = 0; index < child.length; index += 1) {
+          const found = scan(child[index], [...path, key, String(index)]);
+          if (found !== undefined) return found;
+        }
+      } else {
+        const found = scan(child, [...path, key]);
+        if (found !== undefined) return found;
+      }
+    }
+    return undefined;
+  };
+  return scan(root, []);
+};
+
+/** Resolve a same-resource reference: `#`, pointer fragments, and anchors. */
+export const resolveLocalSchemaReference = (
   root: Readonly<Record<string, unknown>>,
   reference: string,
-): unknown => {
+): { readonly value: unknown; readonly tokens: readonly string[] } | undefined => {
   if (!reference.startsWith("#")) return undefined;
   // RFC 6901: percent-decode the whole fragment before splitting tokens, so
   // an encoded separator such as %2F still addresses a nested position.
@@ -31,22 +95,22 @@ const resolveReference = (
   } catch {
     return undefined;
   }
-  if (fragment === "") return root;
-  if (!fragment.startsWith("/")) return undefined;
-  let value: unknown = root;
-  for (const token of fragment.slice(1).split("/")) {
-    const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
-    if (Array.isArray(value)) {
-      if (!/^(?:0|[1-9]\d*)$/u.test(key)) return undefined;
-      const index = Number(key);
-      if (index >= value.length) return undefined;
-      value = value[index];
-      continue;
-    }
-    if (!isObject(value) || !Object.hasOwn(value, key)) return undefined;
-    value = value[key];
+  if (fragment === "") return { value: root, tokens: [] };
+  if (!fragment.startsWith("/")) {
+    // Draft 2020-12 plain-name fragments resolve to the matching $anchor.
+    const anchorPath = findSchemaAnchor(root, fragment);
+    if (anchorPath === undefined) return undefined;
+    const value = resolvePointer(root, anchorPath);
+    return value === undefined
+      ? undefined
+      : { value, tokens: anchorPath };
   }
-  return value;
+  const tokens = fragment
+    .slice(1)
+    .split("/")
+    .map((token) => token.replaceAll("~1", "/").replaceAll("~0", "~"));
+  const value = resolvePointer(root, tokens);
+  return value === undefined ? undefined : { value, tokens };
 };
 
 const referencedDescription = (
@@ -60,7 +124,7 @@ const referencedDescription = (
     if (typeof value.$ref !== "string" || active.has(value.$ref))
       return undefined;
     active.add(value.$ref);
-    value = resolveReference(root, value.$ref);
+    value = resolveLocalSchemaReference(root, value.$ref)?.value;
   }
   return undefined;
 };
@@ -122,7 +186,7 @@ const objectBranch = (
   const resolved =
     isObject(branch) && typeof branch.$ref === "string"
       ? Object.keys(branch).length === 1
-        ? resolveReference(root, branch.$ref)
+        ? resolveLocalSchemaReference(root, branch.$ref)?.value
         : undefined
       : branch;
   return isObject(resolved) &&
@@ -197,27 +261,23 @@ const referencesChangingTarget = (
     return node.some((child) => referencesChangingTarget(child, root, active));
   if (!isObject(node)) return false;
   if (typeof node.$ref === "string" && !active.has(node.$ref)) {
-    const target = resolveReference(
+    const nestedActive = new Set([...active, node.$ref]);
+    const target = resolveLocalSchemaReference(
       root as Readonly<Record<string, unknown>>,
       node.$ref,
-    );
-    if (target === undefined) return false;
-    if (
-      normalizeAdvertisedSchema(
-        target,
-        root,
-        new Set([...active, node.$ref]),
-      ).changed
-    )
-      return true;
-    return referencesChangingTarget(
-      target,
-      root,
-      new Set([...active, node.$ref]),
-    );
+    )?.value;
+    if (target !== undefined) {
+      if (
+        normalizeAdvertisedSchema(target, root, nestedActive).changed
+      )
+        return true;
+      if (referencesChangingTarget(target, root, nestedActive)) return true;
+    }
+    // Reference siblings evaluate alongside the target in 2020-12, so keep
+    // inspecting the remaining entries below.
   }
   return Object.entries(node).some(([key, child]) => {
-    if (key === "const" || key === "enum") return false;
+    if (key === "const" || key === "enum" || key === "$ref") return false;
     return referencesChangingTarget(child, root, active);
   });
 };
@@ -481,30 +541,79 @@ const flattenRootObjectUnion = (
   };
 };
 
-const collectLocalReferences = (
-  value: unknown,
-  seen: ReadonlySet<unknown>,
+// Collect references and anchors from schema positions only: literal
+// annotation data (examples, defaults) is not a schema, so any `$ref` inside
+// it must not influence advertised normalization.
+const collectSchemaReferences = (
+  node: unknown,
   refs: Set<string>,
+  path: readonly string[],
 ): void => {
-  if (seen.has(value)) return;
-  const next = new Set(seen);
-  next.add(value);
-  if (Array.isArray(value)) {
-    for (const child of value) collectLocalReferences(child, next, refs);
+  if (Array.isArray(node)) {
+    node.forEach((child, index) =>
+      collectSchemaReferences(child, refs, [...path, String(index)]),
+    );
     return;
   }
-  if (!isObject(value)) return;
-  if (typeof value.$ref === "string" && value.$ref.startsWith("#"))
-    refs.add(value.$ref);
-  for (const child of Object.values(value))
-    collectLocalReferences(child, next, refs);
+  if (!isObject(node)) return;
+  if (typeof node.$ref === "string" && node.$ref.startsWith("#"))
+    refs.add(node.$ref);
+  for (const [key, child] of Object.entries(node)) {
+    if (
+      !schemaMaps.has(key) &&
+      !schemaArrays.has(key) &&
+      !schemaChildren.has(key)
+    )
+      continue;
+    if (schemaMaps.has(key) && isObject(child)) {
+      for (const [name, grandChild] of Object.entries(child))
+        collectSchemaReferences(grandChild, refs, [...path, key, name]);
+    } else if (Array.isArray(child)) {
+      child.forEach((grandChild, index) =>
+        collectSchemaReferences(grandChild, refs, [...path, key, String(index)]),
+      );
+    } else {
+      collectSchemaReferences(child, refs, [...path, key]);
+    }
+  }
 };
 
-const pointerTokens = (fragment: string): readonly string[] =>
-  fragment
-    .slice(1)
-    .split("/")
-    .map((token) => token.replaceAll("~1", "/").replaceAll("~0", "~"));
+// Positive local references can address positions the structural walk never
+// visits (for example a root-level annotation), which would leave the target's
+// empty-string literal advertised. Normalize every referenced target too.
+// All change decisions are computed against the immutable source schema before
+// any writeback, so rewriting one target cannot mask another target's change.
+const normalizeReferencedTargets = (
+  advertised: Record<string, unknown>,
+  source: Readonly<Record<string, unknown>>,
+): void => {
+  const refs = new Set<string>();
+  collectSchemaReferences(source, refs, []);
+  const writes: Array<[readonly string[], unknown]> = [];
+  const processed = new Set<string>();
+  const queue = [...refs];
+  while (queue.length > 0) {
+    const reference = queue.shift();
+    if (reference === undefined || processed.has(reference)) continue;
+    processed.add(reference);
+    const resolved = resolveLocalSchemaReference(source, reference);
+    if (resolved === undefined || !isObject(resolved.value)) continue;
+    // Targets reached only through other unwalked targets need the same
+    // treatment as directly referenced ones.
+    const nested = new Set<string>();
+    collectSchemaReferences(resolved.value, nested, resolved.tokens);
+    for (const nestedRef of nested)
+      if (!processed.has(nestedRef)) queue.push(nestedRef);
+    const result = normalizeAdvertisedSchema(
+      resolved.value,
+      source,
+      new Set([reference]),
+    );
+    if (result.changed) writes.push([resolved.tokens, result.schema]);
+  }
+  for (const [tokens, replacement] of writes)
+    assignAtPath(advertised, tokens, replacement);
+};
 
 const assignAtPath = (
   container: Record<string, unknown> | unknown[],
@@ -546,35 +655,6 @@ const assignAtPath = (
   if (copy === undefined) return;
   container[head] = copy;
   assignAtPath(copy, rest, replacement);
-};
-
-// Positive local references can address positions the structural walk never
-// visits (for example a root-level annotation), which would leave the target's
-// empty-string literal advertised. Normalize every referenced target too.
-const normalizeReferencedTargets = (
-  advertised: Record<string, unknown>,
-  source: Readonly<Record<string, unknown>>,
-): void => {
-  const refs = new Set<string>();
-  collectLocalReferences(source, new Set(), refs);
-  for (const reference of refs) {
-    let fragment: string;
-    try {
-      fragment = decodeURIComponent(reference.slice(1));
-    } catch {
-      continue;
-    }
-    if (!fragment.startsWith("/")) continue;
-    const target = resolveReference(advertised, reference);
-    if (!isObject(target)) continue;
-    const result = normalizeAdvertisedSchema(
-      target,
-      advertised,
-      new Set([reference]),
-    );
-    if (!result.changed) continue;
-    assignAtPath(advertised, pointerTokens(fragment), result.schema);
-  }
 };
 
 const advertisedSchema = (

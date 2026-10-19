@@ -707,6 +707,61 @@ describe("advertised empty-string literals", () => {
     expect(advertised.properties).toEqual({ values: { type: "array" } });
   });
 
+  it("skips references inside literal metadata", () => {
+    const canonical = {
+      type: "object",
+      properties: { value: { $ref: "#/payload" } },
+      payload: { type: "string", const: "" },
+      default: { $ref: "#/default/payload", payload: { const: "" } },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.payload).toEqual({ type: "string" });
+    expect(advertised.default).toEqual(canonical.default);
+  });
+
+  it("inspects siblings after following a reference", () => {
+    const canonical = {
+      $defs: {
+        string: { type: "string" },
+        empty: { type: "string", const: "" },
+      },
+      type: "object",
+      properties: {
+        value: {
+          not: { $ref: "#/$defs/string", allOf: [{ $ref: "#/$defs/empty" }] },
+        },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.properties).toEqual({ value: {} });
+  });
+
+  it("computes reference changes before rewriting targets", () => {
+    const canonical = {
+      type: "object",
+      properties: { a: { $ref: "#/empty" }, b: { $ref: "#/wrapper" } },
+      empty: { type: "string", const: "" },
+      wrapper: { not: { $ref: "#/empty" } },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.empty).toEqual({ type: "string" });
+    expect(advertised.wrapper).toEqual({});
+    expect(canonical.wrapper).toEqual({ not: { $ref: "#/empty" } });
+  });
+
+  it("resolves same-resource anchor fragments", () => {
+    const canonical = {
+      $defs: { empty: { $anchor: "empty", type: "string", const: "" } },
+      type: "object",
+      properties: { value: { not: { $ref: "#empty" } } },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.properties).toEqual({ value: {} });
+    expect(advertised.$defs).toEqual({
+      empty: { $anchor: "empty", type: "string" },
+    });
+  });
+
   it("decodes pointer separators before splitting reference tokens", () => {
     const canonical = {
       $defs: { empty: { type: "string", const: "" } },
