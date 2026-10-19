@@ -7,7 +7,13 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 for (const version of ["1.1", "1.2"] as const) {
-  for (const style of ["entry", "child", "shadowed"] as const) {
+  for (const style of [
+    "entry",
+    "child",
+    "shadowed",
+    "key",
+    "external",
+  ] as const) {
     cliTest(
       `Hermes ${version} preserves ${style} anchor consumers through setup and uninstall`,
       async ({ cli }) => {
@@ -23,29 +29,34 @@ for (const version of ["1.1", "1.2"] as const) {
           enabled: false,
         };
         const directive = version === "1.2" ? "%YAML 1.2\n---\n" : "";
+        const hasDefaults = style === "shadowed" || style === "external";
         const entry =
           `    command: ${JSON.stringify(server.command)}\n` +
           `    args: ${JSON.stringify(server.args)}\n` +
           "    enabled: false\n" +
-          (style === "shadowed"
+          (hasDefaults
             ? "    env: *settings # Keep nested reference comment\n"
             : `    env: ${style === "child" ? "&settings " : ""}{KEEP: 'off'}\n`);
         const original =
           directive +
           "# Keep this user setting\nmodel: custom\n" +
-          (style === "shadowed" ? "defaults: &settings {KEEP: 'off'}\n" : "") +
-          `mcp_servers:\n  rea:${style === "child" ? "" : " &server"}\n` +
+          (hasDefaults ? "defaults: &settings {KEEP: 'off'}\n" : "") +
+          `mcp_servers:\n  ${style === "key" ? "&server_name " : ""}rea:${style === "child" || style === "key" ? "" : " &server"}\n` +
           entry +
           (style === "child"
             ? "  other:\n    command: other-server\n    env: *settings # Shared environment\n"
-            : "  other: *server # Independent server\n") +
+            : style === "key"
+              ? "  other: {command: other-server}\nobserver: *server_name # Registration name\n"
+              : "  other: *server # Independent server\n") +
           (style === "shadowed"
             ? "later: &settings {KEEP: later}\nobserver: *server\n"
             : "");
         const other =
           style === "child"
             ? { command: "other-server", env: { KEEP: "off" } }
-            : server;
+            : style === "key"
+              ? { command: "other-server" }
+              : server;
         await mkdir(profile);
         await writeFile(config, original);
         const run = (arguments_: readonly string[]) =>
@@ -71,18 +82,28 @@ for (const version of ["1.1", "1.2"] as const) {
         expect(applied.exitCode, JSON.stringify(applied)).toBe(0);
         expect(applied.json).toMatchObject({ status: "ready" });
         const configured = await readFile(config, "utf8");
-        expect(parse(configured, { version })).toMatchObject({
+        const configuredValues = parse(configured, { version });
+        expect(configuredValues).toMatchObject({
           model: "custom",
           mcp_servers: { rea: { enabled: true, env: { KEEP: "off" } }, other },
           ...(style === "shadowed"
             ? { observer: server, later: { KEEP: "later" } }
             : {}),
+          ...(style === "key" ? { observer: "rea" } : {}),
         });
+        if (hasDefaults)
+          expect(configuredValues.mcp_servers.other.env).toBe(
+            configuredValues.defaults,
+          );
         expect(configured).toContain("# Keep this user setting");
         expect(configured).toContain(
-          style === "child" ? "# Shared environment" : "# Independent server",
+          style === "child"
+            ? "# Shared environment"
+            : style === "key"
+              ? "# Registration name"
+              : "# Independent server",
         );
-        if (style === "shadowed")
+        if (hasDefaults)
           expect(configured).toContain("# Keep nested reference comment");
         expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
         const doctor = await run(["doctor", "--client", "hermes", "--json"]);
@@ -100,20 +121,28 @@ for (const version of ["1.1", "1.2"] as const) {
         expect(await readFile(config, "utf8")).toBe(configured);
         const removed = await run(["uninstall", "--json"]);
         expect(removed.exitCode, JSON.stringify(removed)).toBe(0);
-        expect(parse(await readFile(config, "utf8"), { version })).toEqual({
+        const removedValues = parse(await readFile(config, "utf8"), {
+          version,
+        });
+        expect(removedValues).toEqual({
           model: "custom",
           mcp_servers: { other },
+          ...(hasDefaults ? { defaults: { KEEP: "off" } } : {}),
           ...(style === "shadowed"
             ? {
-                defaults: { KEEP: "off" },
                 later: { KEEP: "later" },
                 observer: server,
               }
             : {}),
+          ...(style === "key" ? { observer: "rea" } : {}),
         });
+        if (hasDefaults)
+          expect(removedValues.mcp_servers.other.env).toBe(
+            removedValues.defaults,
+          );
         expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
         const remaining = await readFile(config, "utf8");
-        if (style === "shadowed")
+        if (hasDefaults)
           expect(remaining).toContain("# Keep nested reference comment");
         expect((await run(["uninstall", "--json"])).exitCode).toBe(0);
         expect(await readFile(config, "utf8")).toBe(remaining);

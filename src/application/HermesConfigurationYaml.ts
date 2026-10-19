@@ -375,7 +375,15 @@ export const editHermesConfigurationYaml = (
     document.contents = map;
   }
   const previous = document.getIn(path, true);
-  preserveHermesAliasValues(document, previous);
+  // Deletion removes the pair's key too; replacement retains that key node.
+  const parent =
+    value === undefined ? document.getIn(path.slice(0, -1), true) : undefined;
+  const removedKey = isMap(parent)
+    ? parent.items.find(
+        (pair) => isScalar(pair.key) && pair.key.value === path.at(-1),
+      )?.key
+    : undefined;
+  preserveHermesAliasValues(document, [previous, removedKey]);
   if (value === undefined) document.deleteIn(path);
   else {
     // setIn's implicit JS Map parents serialize as !!omap in YAML 1.1.

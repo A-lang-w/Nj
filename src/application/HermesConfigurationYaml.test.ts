@@ -23,7 +23,75 @@ it("refreshes an anchored entry without changing another server's resolved value
   expect(updated).toContain("# Independent server");
 });
 
+describe("Hermes surviving anchor definitions", () => {
+  for (const shadowed of [false, true]) {
+    it.each([undefined, { command: "rea" }])(
+      `retains surviving shared target identity with shadowed=${shadowed} when writing %j`,
+      (entry) => {
+        const source =
+          "defaults: &settings {MODE: 'off'}\nmcp_servers:\n  rea: &server\n    command: old\n    env: *settings\n" +
+          (shadowed ? "later: &settings {MODE: 'later'}\n" : "") +
+          "observer: *server\npeer: *settings\n";
+        const result = parse(
+          editHermesConfigurationYaml(source, ["mcp_servers", "rea"], entry),
+        );
+        expect(result.defaults).toEqual({ MODE: "off" });
+        expect(result.observer.env).toBe(result.defaults);
+        expect(result.peer).toBe(shadowed ? result.later : result.defaults);
+        if (shadowed) expect(result.peer).not.toBe(result.defaults);
+      },
+    );
+  }
+
+  it.each(["settings", "missing"])(
+    "still refuses a surviving %s dependency that cannot be retained",
+    (reference) => {
+      const source = `defaults: &settings {dependency: *${reference}}\nmcp_servers:\n  rea: &server {env: *settings}\nobserver: *server\n`;
+      expect(() =>
+        editHermesConfigurationYaml(source, ["mcp_servers", "rea"], undefined),
+      ).toThrow();
+    },
+  );
+});
+
 describe("Hermes anchored-entry consumers", () => {
+  it.each([undefined, { command: "rea" }])(
+    "preserves an anchored registration key when writing %j",
+    (entry) => {
+      const source =
+        "mcp_servers:\n  &server_name rea: {command: old}\nobserver: *server_name # Keep registration name\n";
+      const updated = editHermesConfigurationYaml(
+        source,
+        ["mcp_servers", "rea"],
+        entry,
+      );
+      expect(parseHermesConfigurationYaml(updated)).toEqual({
+        mcp_servers: entry === undefined ? {} : { rea: entry },
+        observer: "rea",
+      });
+      expect(updated).toContain("# Keep registration name");
+      if (entry !== undefined) {
+        expect(updated).toContain("&server_name rea:");
+        expect(updated).toContain("*server_name");
+      }
+    },
+  );
+
+  it("preserves both key and value consumers of a removed pair", () => {
+    const source =
+      "mcp_servers:\n  &server_name rea: &server {command: old}\n  other: *server\nobserver: *server_name\nlater: &server_name later\nlater_observer: *server_name\n";
+    expect(
+      parseHermesConfigurationYaml(
+        editHermesConfigurationYaml(source, ["mcp_servers", "rea"], undefined),
+      ),
+    ).toEqual({
+      mcp_servers: { other: { command: "old" } },
+      observer: "rea",
+      later: "later",
+      later_observer: "later",
+    });
+  });
+
   it.each([undefined, { command: "rea" }])(
     "preserves references to an anchored child when writing %j",
     (entry) => {
