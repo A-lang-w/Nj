@@ -5,6 +5,7 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -21,6 +22,8 @@ import {
 } from "../filesystem/OwnedRegularFile.js";
 import type { JadxSession } from "./JadxSession.js";
 import type { JadxMcpTransport } from "./JadxMcpTransport.js";
+import { jadxHeapExhausted } from "./JadxProtocol.js";
+import { JADX_HEAP_EXHAUSTION_REMEDIATION } from "./JadxRelease.js";
 
 interface FailureContext {
   readonly cause: unknown;
@@ -193,6 +196,26 @@ const presentDiagnosticFailure = (
   if (failure.kind === "output")
     return new AnalysisOutputError(failure.operation, failure.reason, options);
   if (failure.kind === "startup") {
+    // The launcher died before the protocol handshake, so its retained stderr
+    // is the only evidence of why. A heap shortage there is answered by a
+    // setting, which is a different reply from one for a launcher that never
+    // started; other start failures keep the configuration advice below.
+    if (jadxHeapExhausted(output?.stderr ?? ""))
+      return new AnalysisResourceConstraintError(
+        failure.operation,
+        "memory",
+        "The JADX worker JVM ran out of heap before REA's Android bridge answered",
+        {
+          // No runtime fact was observed: the bridge never reported the heap it
+          // had, so the limit stays unknown rather than measured.
+          observed_max_heap_bytes: null,
+        },
+        {
+          ...options,
+          retryable: false,
+          remediationAction: JADX_HEAP_EXHAUSTION_REMEDIATION,
+        },
+      );
     const reason = `Java could not start REA's Android bridge using ${failure.command}: ${failure.cause instanceof Error ? failure.cause.message : String(failure.cause)}. ${output === undefined || output.stderr.length === 0 ? "No launcher stderr was observed." : "Review the retained launcher diagnostics."}${output?.truncated === true ? " Diagnostics are incomplete." : ""} Review the selected Java/JADX configuration; for a JVM memory limit, review REA_JADX_HEAP_MIB and inherited JVM options such as JAVA_TOOL_OPTIONS.`;
     return new AnalysisCapabilityUnavailableError(
       "jadx",

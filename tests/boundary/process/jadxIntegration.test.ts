@@ -1220,3 +1220,40 @@ it("retains parsed native body absence without claiming an empty implementation"
   await provider.close();
   await verifyCleanup(launches);
 });
+
+it("classifies a heap shortage that stops the bridge before the handshake", async () => {
+  const { service, apk, launches, provider } = await setup(
+    "start-heap-exhausted",
+  );
+  const outcome = await service.execute("inspect_android_package", {
+    path: apk,
+  });
+  if (outcome.ok) throw new Error("Expected a heap-exhaustion failure");
+  const projected = projectAnalysisError(outcome.error);
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    category: "resource_constraint",
+    retryable: false,
+    remediation: {
+      action: expect.stringContaining("REA_JADX_HEAP_MIB"),
+    },
+    details: {
+      operation: "inspect_android_package",
+      resource: "memory",
+      reported_limits: {
+        // The bridge never answered, so nothing measured this run's heap.
+        observed_max_heap_bytes: null,
+      },
+      captured_output: {
+        stdout: "",
+        stderr: expect.stringContaining("OutOfMemoryError: Java heap space"),
+      },
+    },
+  });
+  expect(projected.message).toContain("out of heap");
+  // `_JAVA_OPTIONS` overrides the command-line -Xmx, so advice that named only
+  // the variables the command line wins against could change nothing.
+  expect(projected.remediation.action).toContain("_JAVA_OPTIONS");
+  await provider.close();
+  await verifyCleanup(launches);
+});

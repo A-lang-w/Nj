@@ -272,6 +272,37 @@ it.each([
     );
   },
 );
+it("keeps a provider's heap remediation instead of the generic memory advice", () => {
+  const remediation =
+    "Raise the JADX worker heap with REA_JADX_HEAP_MIB or JAVA_TOOL_OPTIONS.";
+  const projected = projectAnalysisError(
+    new AnalysisResourceConstraintError(
+      "inspect_android_package",
+      "memory",
+      "The JADX worker JVM ran out of heap before REA's Android bridge answered",
+      {
+        // The bridge never answered, so no runtime fact reported a heap.
+        observed_max_heap_bytes: null,
+      },
+      { remediationAction: remediation, retryable: false },
+    ),
+  );
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    category: "resource_constraint",
+    retryable: false,
+    details: {
+      resource: "memory",
+      reported_limits: { observed_max_heap_bytes: null },
+    },
+  });
+  expect(projected.message).toContain("out of heap");
+  // A declared remediation outranks the resource-kind fallback, so a provider
+  // that measured the constraint can name the setting this host must change.
+  expect(projected.remediation.action).toBe(remediation);
+  expect(projected.remediation.action).not.toContain("sufficient memory");
+  expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(true);
+});
 it.each([
   new AnalysisInputError("inspect", { capturedOutput: retainedOutput }),
   new AnalysisOutputError("inspect", "invalid reply", {

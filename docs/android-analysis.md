@@ -287,7 +287,11 @@ also dies or the host loses power before it finishes, private files can remain.
 If Java cannot start the bridge, REA reports the selected executable and retained
 startup diagnostics. Select a full JDK through `JAVA_HOME` or `PATH`, and use
 `java --list-modules` to confirm `jdk.compiler` is present. A runnable JRE alone
-cannot compile the bridge. Missing or ambiguous class and method selections are
+cannot compile the bridge. Before the bridge answers, the launcher's retained
+stderr is the only evidence of why it stopped: a JVM heap-exhaustion reason there
+(`Java heap space` or `GC overhead limit exceeded`) is reported as the resource
+limit described below, while every other launcher stop stays
+`capability_unavailable`. Missing or ambiguous class and method selections are
 input failures; discover names with `search_android_classes` and
 `inspect_android_class` before correcting the selected argument.
 
@@ -324,6 +328,15 @@ remain unknown. A healthy doctor configuration check does not establish that
 any particular APK fits. Failures before the bridge can report a typed result
 and upstream errors from other operations retain their existing diagnostics;
 error text alone does not establish memory exhaustion.
+
+A heap shortage that stops the launcher before the bridge answers has no
+structured failure to parse and no runtime fact, so
+`details.reported_limits.observed_max_heap_bytes` is `null` and the launcher's
+output stays in `details.captured_output`. `rea doctor --provider jadx` states
+the heap REA requests, or that REA asks for none and the heap comes from the
+launching environment, and it never fails the provider: it reads configuration
+without starting the engine, so it reports neither the effective heap nor
+whether one package fits.
 
 Independent REA instances have independent queues. Whole
 operations have a **120-second** execution deadline by default, starting after
