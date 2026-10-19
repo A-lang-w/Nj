@@ -232,7 +232,15 @@ registration file as the IDE, so the shared `mcpServers.rea` entry serves both
 surfaces. Global skills, however, load from the CLI's own
 `~/.gemini/antigravity-cli/skills` root, so setup installs a separate skill
 copy there (`antigravity_cli`). Uninstall removes the shared registration once
-and each surface's skill copy.
+and each surface's skill copy. When both are selected, setup discloses and
+executes a single shared-registration transaction, while retaining separate
+skill destinations and reporting the registration result for both clients.
+
+The shared MCP file alone does not identify an installed surface. Automatic
+selection uses `~/.gemini/antigravity-cli` for the CLI and the separate
+`~/.gemini/config/skills` root for the app/IDE. If only the shared configuration
+exists, select `--client antigravity` explicitly to install the app/IDE skill;
+REA does not infer an app/IDE installation from a CLI-created configuration.
 
 ## Gemini CLI
 

@@ -45,6 +45,7 @@ describe("Antigravity CLI configuration paths", () => {
       markerPath: join("/home/a", ".gemini", "antigravity-cli"),
       format: "json",
       evidencePath: join("/home/a", ".gemini", "antigravity-cli"),
+      registrationGroup: "antigravity",
     });
     expect(antigravityCliPath("/home/a")?.configPath).toBe(
       antigravityIdePath("/home/a")?.configPath,
@@ -188,6 +189,7 @@ describe("Antigravity CLI detection", () => {
       JSON.stringify({ mcpServers: { other: { command: "other-server" } } }),
     );
 
+    await mkdir(join(home, ".gemini", "config", "skills"), { recursive: true });
     await expect(statusFor(home)).resolves.toBeUndefined();
     expect(
       (
@@ -203,8 +205,20 @@ describe("Antigravity CLI detection", () => {
     const home = await createTestTempDirectory("rea-antigravity-cli-only-");
     await mkdir(join(home, ".gemini", "antigravity-cli"), { recursive: true });
 
+    const client = antigravityCliPath(home, process.platform);
+    if (client === undefined) throw new Error("missing CLI");
+    await mkdir(dirname(client.configPath), { recursive: true });
+    await configureClientConfiguration(client, {}, command);
+    expect(
+      (
+        await readClientRegistrationStatuses(home, undefined, {
+          platform: process.platform,
+          environment: {},
+        })
+      ).find(({ client }) => client === "antigravity"),
+    ).toBeUndefined();
     await expect(statusFor(home)).resolves.toMatchObject({
-      state: "missing",
+      state: "aligned",
     });
   });
 });

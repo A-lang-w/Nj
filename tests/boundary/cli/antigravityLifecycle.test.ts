@@ -2,7 +2,41 @@ import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, type CliResult } from "../../support/cli/cliFixture.js";
+
+const expectCliOnlySelection = async (
+  run: (arguments_: readonly string[]) => Promise<CliResult>,
+  ideSkill: string,
+): Promise<void> => {
+  for (const selection of [["--all-detected"], []]) {
+    const automatic = await run(["setup", ...selection, "--dry-run", "--json"]);
+    expect(automatic.exitCode, automatic.stdout + automatic.stderr).toBe(0);
+    expect(automatic.json).toMatchObject({
+      plannedActions: expect.not.arrayContaining([
+        expect.objectContaining({ id: "install_skill:antigravity" }),
+        expect.objectContaining({ id: "configure_client:antigravity" }),
+      ]),
+    });
+    await expect(access(ideSkill)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  }
+  const both = await run([
+    "setup",
+    "--client",
+    "antigravity",
+    "--client",
+    "antigravity_cli",
+    "--dry-run",
+    "--json",
+  ]);
+  expect(both.exitCode, both.stderr).toBe(0);
+  expect(both.json).toMatchObject({
+    plannedActions: expect.not.arrayContaining([
+      expect.objectContaining({ kind: "configure_client" }),
+    ]),
+  });
+};
 
 cliTest(
   "Antigravity surfaces share registration without sharing skill ownership",
@@ -41,7 +75,7 @@ cliTest(
     };
     await writeFile(config, JSON.stringify(unrelated));
 
-    // A shared MCP file proves an IDE surface, not a CLI installation.
+    // A shared MCP file alone proves neither surface is installed.
     const detected = await run([
       "setup",
       "--all-detected",
@@ -58,6 +92,23 @@ cliTest(
     await expect(access(cliRoot)).rejects.toMatchObject({ code: "ENOENT" });
     expect(JSON.parse(await readFile(config, "utf8"))).toEqual(unrelated);
 
+    const sharedPlan = await run([
+      "setup",
+      "--client",
+      "antigravity",
+      "--client",
+      "antigravity_cli",
+      "--dry-run",
+      "--json",
+    ]);
+    expect(sharedPlan.exitCode, sharedPlan.stderr).toBe(0);
+    const plan = sharedPlan.json as {
+      plannedActions: readonly { kind: string; target: string }[];
+    };
+    expect(
+      plan.plannedActions.filter(({ kind }) => kind === "configure_client"),
+    ).toEqual([expect.objectContaining({ target: config })]);
+
     for (const [client, skill] of [
       ["antigravity_cli", cliSkill],
       ["antigravity", ideSkill],
@@ -69,6 +120,8 @@ cliTest(
         "reverse-engineer-anything",
       );
       await writeFile(join(skill, "user-notes.txt"), client);
+      if (client === "antigravity_cli")
+        await expectCliOnlySelection(run, ideSkill);
       const doctor = await run([
         "doctor",
         "--client",
@@ -137,5 +190,5 @@ cliTest(
       });
     }
   },
-  120_000,
+  180_000,
 );
