@@ -43,11 +43,21 @@ serve command refuses a manifest whose parent is not the supplied `--evidence`
 file with an `invalid_request` error naming both identifiers, so a manifest can
 never be served from records it did not cite.
 
-The MCP catalog and environment card sample path observations, request-body key descriptions and cited-record
-lists within a 1 KiB UTF-8 budget per list. Oversized lists report how many
-whole values are shown and point to the complete list in the manifest Evidence;
-a captured path longer than 1 KiB is cut the same way in its tool description.
-This only limits descriptive context, not arguments, record selection or replay.
+The MCP catalog and environment card use a 1 KiB UTF-8 budget for each
+captured display sample. Observation, body-key and cited-record lists show
+whole values with omission counts; long method, path and query-name displays
+show a marked prefix. Complete values remain in manifest Evidence. Argument
+names longer than 64 characters use collision-safe `path_<n>` or `query_<n>` aliases; replay maps
+those aliases to the complete captured names.
+
+Discovery is admitted as a complete catalog under a 1 MiB serialization
+reservation before the listener binds. Reservation charges up to six bytes per
+UTF-16 code unit for JSON escaping/UTF-8 expansion, plus schema overhead;
+a catalog may therefore be refused even when its compact JSON is smaller.
+This was calibrated with 1500 query fields and eight concurrent SDK discovery
+requests (183,798-byte card, 507.27 MiB sampled process-family RSS). Over-capacity
+catalogs return `resource_constraint`, retain complete input Evidence, and require
+a smaller capture or manifest. Fields and tools are never silently omitted.
 
 ## What replay means and does not mean
 
@@ -79,17 +89,20 @@ where the answer came from:
 
 `exact_match` is true when every supplied path parameter and query value
 equals the recorded one; it says nothing about parameters the caller omitted.
+Recorded query parsing runs only when supplied query arguments affect selection.
 A path value matches a recorded segment as written or after percent-decoding;
 when both kinds of match are available, the record whose segment equals the
 value as written is chosen. `recorded_query` keeps the `?` of an explicit empty
 query, and a recorded path or query longer than 1 KiB is cut in the reply with
 `recorded_line_truncated: true`; selection always uses the full recorded line.
+`content_type` also has a 1 KiB display bound with `content_type_truncated`; body
+interpretation uses the full recorded media type.
 When no record matches, the tool still answers from the tool's first cited
 record and reports `exact_match: false`. `body` is parsed JSON when the
 recorded content type is JSON-like (`application/json`, `application/*+json`,
-`text/plain`, `text/markdown`) and the text parses without changing a number;
-otherwise it is the recorded text, so a body with an integer outside
-JavaScript's safe range (such as an id of `9007199254740993`) keeps its digits. Bodies over 256 KiB are cut at a UTF-8 boundary and returned as
+`text/plain`, `text/markdown`) and the text parses with safe numeric conversion; otherwise
+it is the recorded text. Large integer IDs and other numbers that would lose
+information stay in the original JSON text. Bodies over 256 KiB are cut at a UTF-8 boundary and returned as
 text with `truncated: true`. `body_recorded` is false when the capture kept the
 response's status and content type but no body; `body` is then `null`, which
 is not a recorded JSON `null`. `body_encoding` is `base64` when the capture
@@ -131,9 +144,11 @@ manifest's `name` is used, and a set but blank value is refused as
 listener serves one MCP client at a time with the same session, `Host` header
 and shutdown contract as [transports](mcp-contracts.md#transports) describes.
 It runs until SIGINT or SIGTERM, then closes the listener, prints one
-`{"status":"stopped", …}` document and exits `130` or `143`. A signal that
-arrives while the files load ends startup with a `cancelled` result, and the same
-exit status, before the listener binds.
+`{"status":"stopped", …}` document and exits `130` or `143`.
+Signals during input loading or DNS/bind cancel the owning reader/listener before
+a listening announcement;
+that path returns a structured `cancelled` result instead of a stopped-listener
+document, with the same signal exit status.
 
 Three routes are served:
 
@@ -142,6 +157,10 @@ Three routes are served:
 | `POST /mcp`                       | The MCP server: one tool per manifest tool, replaying retained records |
 | `GET /.well-known/agent-env.json` | The environment card                                                   |
 | `POST /agentenv`                  | JSON-RPC `-32601 method not found: <method>` for every method          |
+
+Numeric JSON-RPC IDs outside JavaScript's safe range or whose precision would
+be lost are refused as invalid requests with a null ID. They are never echoed
+as a different number.
 
 The data plane at `/agentenv` is advertised by the card but carries no
 operations in this release; the error names the requested method so a caller

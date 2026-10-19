@@ -5,12 +5,26 @@ import type { EnvironmentManifestTool } from "./environmentSource.js";
 import {
   environmentCard,
   environmentToolArguments,
-  environmentToolDefinitions,
-  environmentToolInputSchema,
+  environmentToolDefinitions as prepareDefinitions,
   REPLAY_CATALOG_INSTRUCTIONS,
 } from "./environmentTools.js";
 
 const source = environmentServeSource();
+const environmentToolDefinitions = (
+  ...args: Parameters<typeof prepareDefinitions>
+) => {
+  const result = prepareDefinitions(...args);
+  if (!result.ok) throw result.error;
+  return result.value;
+};
+const environmentToolInputSchema = (tool: EnvironmentManifestTool) => {
+  const [definition] = environmentToolDefinitions(
+    { ...source.manifest, tools: [tool] },
+    source.evidenceId,
+  );
+  if (definition === undefined) throw new Error("Missing tool definition");
+  return definition.inputSchema;
+};
 const definitions = environmentToolDefinitions(
   source.manifest,
   source.evidenceId,
@@ -95,6 +109,34 @@ describe("environmentToolDefinitions", () => {
 });
 
 describe("environment catalog description budgets", () => {
+  it("bounds captured scalar prose while preserving complete lookup identities", () => {
+    const query = "query-".repeat(1000);
+    const expanded = {
+      ...tool("get_users_by_id"),
+      method: "METHOD".repeat(1000),
+      path_template: `/${"😀".repeat(1000)}`,
+      query_parameter_names: [query],
+    };
+    const [definition] = environmentToolDefinitions(
+      { ...source.manifest, tools: [expanded] },
+      source.evidenceId,
+    );
+    expect(definition?.tool).toBe(expanded);
+    expect(Buffer.byteLength(definition?.description ?? "")).toBeLessThan(3500);
+    expect(definition?.description).toContain(
+      "path display truncated; full value in manifest Evidence",
+    );
+    expect(definition?.description).not.toContain("\uFFFD");
+    expect(
+      Object.hasOwn(definition?.inputSchema.properties ?? {}, "query_1"),
+    ).toBe(true);
+    expect(
+      Buffer.byteLength(
+        definition?.inputSchema.properties.query_1?.description ?? "",
+      ),
+    ).toBeLessThan(1400);
+  });
+
   it("bounds observation and record samples without changing the retained manifest", () => {
     const users = tool("get_users_by_id");
     const observations = Array.from(
@@ -144,9 +186,24 @@ describe("environment catalog description budgets", () => {
     );
     expect(Buffer.byteLength(definition?.description ?? "")).toBeLessThan(2048);
     expect(definition?.description).toContain(
-      "… (full path in manifest Evidence)",
+      "path display truncated; full value in manifest Evidence",
     );
     expect(definition?.tool.path_template).toBe(long.path_template);
+  });
+
+  it("advertises long path parameters with collision-safe aliases consistently", () => {
+    const users = tool("get_users_by_id");
+    const expanded = {
+      ...users,
+      params: [
+        { ...users.params[0]!, name: "long".repeat(1000) },
+        { ...users.params[0]!, name: "path_1", index: 3 },
+      ],
+    };
+    const schema = environmentToolInputSchema(expanded);
+    expect(schema.required).toEqual(["path_1", "path_path_1"]);
+    expect(Object.keys(schema.properties)).toEqual(schema.required);
+    expect(Buffer.byteLength(JSON.stringify(schema))).toBeLessThan(4096);
   });
 
   it("advertises an oversized query name under a short, collision-safe alias", () => {
@@ -161,7 +218,7 @@ describe("environment catalog description budgets", () => {
     const schema = environmentToolInputSchema(search);
     expect(Buffer.byteLength(JSON.stringify(schema))).toBeLessThan(4096);
     expect(schema.properties.query_1?.description).toContain(
-      "… (full name in manifest Evidence)",
+      "query name display truncated; full value in manifest Evidence",
     );
     expect(search.query_parameter_names[0]).toBe(longName);
   });
