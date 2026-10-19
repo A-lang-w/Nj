@@ -1,11 +1,9 @@
 import { win32 } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import {
-  resolveWindowsProviderExecutable,
-  WINDOWS_PATH_ENTRY_LIMIT,
-} from "../../src/composition/resolveWindowsProviderExecutable.js";
+import { resolveWindowsProviderExecutable } from "../../src/composition/resolveWindowsProviderExecutable.js";
+import { ReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 
 const windowsLookup = (cwd: string, files: readonly string[]) => {
@@ -19,12 +17,12 @@ const windowsLookup = (cwd: string, files: readonly string[]) => {
   };
 };
 
-describe("resolveWindowsProviderExecutable", () => {
-  it("resolves a bare name from quoted and relative Windows PATH entries", () => {
+describe("resolveWindowsProviderExecutable", async () => {
+  it("resolves a bare name from quoted and relative Windows PATH entries", async () => {
     const cwd = "C:\\work";
     const expected = "C:\\work\\Program Files\\REA Tools\\objdump.EXE";
     expect(
-      resolveWindowsProviderExecutable(
+      await resolveWindowsProviderExecutable(
         "objdump",
         {
           PATH: `.;".\\Program Files\\REA Tools";D:\\unused`,
@@ -35,9 +33,9 @@ describe("resolveWindowsProviderExecutable", () => {
     ).toBe(expected);
   });
 
-  it("resolves a relative configured path against the caller's Windows CWD", () => {
+  it("resolves a relative configured path against the caller's Windows CWD", async () => {
     expect(
-      resolveWindowsProviderExecutable(
+      await resolveWindowsProviderExecutable(
         ".\\tools\\objdump.exe",
         {},
         windowsLookup("D:\\analysis", []),
@@ -45,10 +43,10 @@ describe("resolveWindowsProviderExecutable", () => {
     ).toBe("D:\\analysis\\tools\\objdump.exe");
   });
 
-  it("resolves relative PATH hits to absolute drive paths", () => {
+  it("resolves relative PATH hits to absolute drive paths", async () => {
     const expected = "D:\\analysis\\bin\\rizin.EXE";
     expect(
-      resolveWindowsProviderExecutable(
+      await resolveWindowsProviderExecutable(
         "rizin",
         { PATH: ".\\bin", PATHEXT: ".EXE" },
         windowsLookup("D:\\analysis", [expected]),
@@ -56,18 +54,18 @@ describe("resolveWindowsProviderExecutable", () => {
     ).toBe(expected);
   });
 
-  it("skips script extensions and preserves a caller-selected absolute path", () => {
+  it("skips script extensions and preserves a caller-selected absolute path", async () => {
     const expected = "C:\\tools\\rizin.EXE";
     const selected = "C:\\tools\\rizin.exe";
     expect(
-      resolveWindowsProviderExecutable(
+      await resolveWindowsProviderExecutable(
         "rizin",
         { PATH: "C:\\tools", PATHEXT: ".CMD;.BAT;.EXE;.COM" },
         windowsLookup("C:\\work", ["C:\\tools\\rizin.CMD", expected]),
       ),
     ).toBe(expected);
     expect(
-      resolveWindowsProviderExecutable(
+      await resolveWindowsProviderExecutable(
         selected,
         {},
         windowsLookup("D:\\work", []),
@@ -75,9 +73,9 @@ describe("resolveWindowsProviderExecutable", () => {
     ).toBe(selected);
   });
 
-  it("keeps unresolved bare command names unchanged", () => {
+  it("keeps unresolved bare command names unchanged", async () => {
     expect(
-      resolveWindowsProviderExecutable(
+      await resolveWindowsProviderExecutable(
         "missing-tool",
         { PATH: ".\\tools", PATHEXT: ".EXE" },
         windowsLookup("C:\\work", []),
@@ -85,24 +83,24 @@ describe("resolveWindowsProviderExecutable", () => {
     ).toBe("missing-tool");
   });
 
-  it("preserves an absolute UNC selection verbatim instead of re-rooting it", () => {
+  it("preserves an absolute UNC selection verbatim instead of re-rooting it", async () => {
     // win32.resolve appends a separator to a share root and rewrites forward
     // separators, so a UNC selection must bypass the CWD-relative resolution.
     const shareRoot = "\\\\server\\share";
     const forwardSlashed = "//server/share/Program Files/objdump.exe";
     const lookup = windowsLookup("D:\\work", []);
-    expect(resolveWindowsProviderExecutable(shareRoot, {}, lookup)).toBe(
+    expect(await resolveWindowsProviderExecutable(shareRoot, {}, lookup)).toBe(
       shareRoot,
     );
-    expect(resolveWindowsProviderExecutable(forwardSlashed, {}, lookup)).toBe(
-      forwardSlashed,
-    );
+    expect(
+      await resolveWindowsProviderExecutable(forwardSlashed, {}, lookup),
+    ).toBe(forwardSlashed);
   });
 
-  it("resolves a bare name through a UNC PATH entry", () => {
+  it("resolves a bare name through a UNC PATH entry", async () => {
     const expected = "\\\\server\\share\\bin\\objdump.EXE";
     expect(
-      resolveWindowsProviderExecutable(
+      await resolveWindowsProviderExecutable(
         "objdump",
         { PATH: "\\\\server\\share\\bin;D:\\unused", PATHEXT: ".EXE" },
         windowsLookup("D:\\work", [expected]),
@@ -110,9 +108,9 @@ describe("resolveWindowsProviderExecutable", () => {
     ).toBe(expected);
   });
 
-  it("keeps an unresolved bare name unchanged when PATH entries are UNC", () => {
+  it("keeps an unresolved bare name unchanged when PATH entries are UNC", async () => {
     expect(
-      resolveWindowsProviderExecutable(
+      await resolveWindowsProviderExecutable(
         "missing-tool",
         { PATH: "\\\\server\\share\\empty", PATHEXT: ".EXE" },
         windowsLookup("D:\\work", []),
@@ -120,39 +118,130 @@ describe("resolveWindowsProviderExecutable", () => {
     ).toBe("missing-tool");
   });
 
-  it("caps PATH probing at the stated entry limit", () => {
-    // Entry `WINDOWS_PATH_ENTRY_LIMIT` (the 65th) is beyond the cap and is
-    // never probed, while the entry at `WINDOWS_PATH_ENTRY_LIMIT - 1` still is.
-    const withinCap = `D:\\entry${WINDOWS_PATH_ENTRY_LIMIT - 1}\\objdump.EXE`;
-    const beyondCap = `D:\\entry${WINDOWS_PATH_ENTRY_LIMIT}\\objdump.EXE`;
+  it("finds installed providers beyond the former 64-entry cutoff", async () => {
+    const expected = "D:\\entry128\\objdump.EXE";
     const path = Array.from(
-      { length: WINDOWS_PATH_ENTRY_LIMIT + 1 },
-      (_unused, index) => `D:\\entry${index}`,
+      { length: 129 },
+      (_, index) => `D:\\entry${index}`,
     ).join(";");
-    const environment = { PATH: path, PATHEXT: ".EXE" };
     expect(
-      resolveWindowsProviderExecutable(
+      await resolveWindowsProviderExecutable(
         "objdump",
-        environment,
-        windowsLookup("D:\\work", [beyondCap]),
+        { PATH: path, PATHEXT: ".EXE" },
+        windowsLookup("D:\\work", [expected]),
       ),
-    ).toBe("objdump");
-    expect(
-      resolveWindowsProviderExecutable(
-        "objdump",
-        environment,
-        windowsLookup("D:\\work", [withinCap]),
-      ),
-    ).toBe(withinCap);
+    ).toBe(expected);
   });
 
-  it("passes an absolute selected command through provider composition", () => {
+  it.each(["abort", "deadline"])(
+    "bounds a stalled network PATH probe on %s",
+    async (mode) => {
+      vi.useFakeTimers();
+      const controller = new AbortController();
+      const isFile = vi.fn(() => new Promise<boolean>(() => {}));
+      try {
+        const result = resolveWindowsProviderExecutable(
+          "objdump",
+          { PATH: "\\\\unreachable\\share;D:\\tools" },
+          {
+            cwd: "D:\\work",
+            isFile,
+            signal: controller.signal,
+            timeoutMs: 100,
+          },
+        );
+        const rejected = expect(result).rejects.toMatchObject(
+          mode === "abort" ? { name: "AbortError" } : { code: "ETIMEDOUT" },
+        );
+        if (mode === "abort") controller.abort();
+        else await vi.advanceTimersByTimeAsync(100);
+        await rejected;
+        expect(isFile).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+});
+
+describe("admitted Windows provider lookup", () => {
+  it.each(["cancel", "close", "deadline"])(
+    "settles admitted lookup on %s without launching a provider",
+    async (mode) => {
+      vi.useFakeTimers();
+      const controller = new AbortController();
+      let rejectProbe!: (cause: unknown) => void;
+      let started!: () => void;
+      const probing = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const isFile = vi.fn(() => {
+        started();
+        return new Promise<boolean>((_resolve, reject) => {
+          rejectProbe = reject;
+        });
+      });
+      const run = vi.fn(async () => ({ stdout: "", stderr: "" }));
+      const commands = createReverseEngineeringCommandPort({});
+      const service = new ReverseEngineeringService({
+        commands: {
+          ...commands,
+          objdump: async (input, options) => ({
+            ...(await commands.objdump(input)),
+            executable: await resolveWindowsProviderExecutable(
+              "objdump",
+              { PATH: "D:\\unreachable;D:\\tools" },
+              {
+                cwd: "D:\\work",
+                isFile,
+                ...(options?.signal === undefined
+                  ? {}
+                  : { signal: options.signal }),
+                timeoutMs: 100,
+              },
+            ),
+          }),
+        },
+        run,
+      });
+      try {
+        const result = service.inspectWithObjdump(
+          { operation: "architectures" },
+          { signal: controller.signal },
+        );
+        await probing;
+        let closing: Promise<void> | undefined;
+        if (mode === "close") closing = service.close();
+        else if (mode === "cancel") controller.abort();
+        else await vi.advanceTimersByTimeAsync(100);
+        expect(await result).toMatchObject({
+          ok: false,
+          error: {
+            _tag:
+              mode === "deadline"
+                ? "AnalysisTimeoutError"
+                : "AnalysisCancelledError",
+          },
+        });
+        await closing;
+        rejectProbe(new Error("late network failure"));
+        await Promise.resolve();
+        expect(isFile).toHaveBeenCalledTimes(1);
+        expect(run).not.toHaveBeenCalled();
+      } finally {
+        await service.close();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("passes an absolute selected command through provider composition", async () => {
     const commands = createReverseEngineeringCommandPort(
       { REA_OBJDUMP_COMMAND: "C:\\tools\\objdump.exe" },
       "win32",
     );
     expect(
-      commands.objdump({ path: "artifact", operation: "file_headers" })
+      (await commands.objdump({ path: "artifact", operation: "file_headers" }))
         .executable,
     ).toBe("C:\\tools\\objdump.exe");
   });

@@ -1,22 +1,18 @@
-import { existsSync, statSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { win32 } from "node:path";
+
+import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
+import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
 
 export interface WindowsExecutableLookup {
   /** Windows-formatted working directory; defaults to the process CWD. */
   readonly cwd?: string;
   /** Test seam for Windows paths when running on a non-Windows host. */
-  readonly isFile?: (path: string) => boolean;
+  readonly isFile?: (path: string) => boolean | Promise<boolean>;
+  readonly signal?: AbortSignal;
+  /** Total startup lookup budget, including stalled network filesystem probes. */
+  readonly timeoutMs?: number;
 }
-
-/**
- * Bound on the PATH entries one lookup examines, and on the total candidate
- * probes those entries produce. A real Windows PATH is far shorter than the
- * entry bound, so this leaves every ordinary lookup untouched while keeping a
- * hostile or accidental environment from turning one lookup into an unbounded
- * filesystem walk before dispatch.
- */
-export const WINDOWS_PATH_ENTRY_LIMIT = 64;
-export const WINDOWS_PATH_PROBE_LIMIT = 128;
 
 /**
  * `\\server\share\...` and `//server/share/...` are UNC roots. A single
@@ -44,28 +40,21 @@ const splitWindowsPath = (value: string): readonly string[] => {
   });
 };
 
-const isRegularFile = (path: string): boolean => {
+const isRegularFile = async (path: string): Promise<boolean> => {
   try {
-    return existsSync(path) && statSync(path).isFile();
+    return (await stat(path)).isFile();
   } catch {
     return false;
   }
 };
 
-/**
- * Resolve Windows bare command names against the captured child environment.
- *
- * The probe is synchronous because the command-port contract it feeds is
- * synchronous (`ReverseEngineeringCommandPort` returns `executable: string`).
- * Its cost is bounded by `WINDOWS_PATH_ENTRY_LIMIT`/`WINDOWS_PATH_PROBE_LIMIT`;
- * a non-blocking probe would need an asynchronous port contract, which this
- * boundary does not own.
- */
-export const resolveWindowsProviderExecutable = (
+/** Resolve against every selected PATH entry within a cancellable startup budget. */
+export const resolveWindowsProviderExecutable = async (
   executable: string,
   environment: Readonly<NodeJS.ProcessEnv>,
   lookup: WindowsExecutableLookup = {},
-): string => {
+): Promise<string> => {
+  lookup.signal?.throwIfAborted();
   const cwd = lookup.cwd ?? process.cwd();
   const absolute = (...paths: string[]): string => win32.resolve(cwd, ...paths);
   // A UNC selection is already absolute. Return it verbatim instead of
@@ -95,21 +84,39 @@ export const resolveWindowsProviderExecutable = (
           );
 
   const isFile = lookup.isFile ?? isRegularFile;
-  let entryCount = 0;
-  let probeCount = 0;
-  for (const entry of pathEntries) {
-    if (entry.length === 0) continue;
-    if (entryCount >= WINDOWS_PATH_ENTRY_LIMIT) break;
-    entryCount += 1;
-    for (const extension of extensions) {
-      if (probeCount >= WINDOWS_PATH_PROBE_LIMIT) return executable;
-      probeCount += 1;
-      // A UNC PATH entry owns its root, so join without the process drive CWD.
-      const candidate = isUncPath(entry)
-        ? win32.join(entry, `${executable}${extension}`)
-        : absolute(entry, `${executable}${extension}`);
-      if (isFile(candidate)) return candidate;
+  const deadline = new ProviderStartupDeadline(
+    lookup.timeoutMs ?? 120_000,
+    lookup.signal,
+  );
+  try {
+    for (const entry of pathEntries) {
+      if (entry.length === 0) continue;
+      for (const extension of extensions) {
+        deadline.signal.throwIfAborted();
+        const candidate = isUncPath(entry)
+          ? win32.join(entry, `${executable}${extension}`)
+          : absolute(entry, `${executable}${extension}`);
+        // Keep a handler on a late filesystem rejection after cancellation.
+        const found = await waitForAbortable(
+          Promise.resolve(isFile(candidate)),
+          deadline.signal,
+        );
+        if (found === ABORTED) deadline.signal.throwIfAborted();
+        if (found) return candidate;
+      }
     }
+    return executable;
+  } catch (cause) {
+    if (deadline.interruption === "timeout")
+      throw Object.assign(
+        new Error(
+          "Provider PATH lookup timed out; set an absolute REA_OBJDUMP_COMMAND or REA_RIZIN_COMMAND path.",
+          { cause },
+        ),
+        { code: "ETIMEDOUT" },
+      );
+    throw cause;
+  } finally {
+    deadline.dispose();
   }
-  return executable;
 };

@@ -224,8 +224,11 @@ export const spawnOwnedProviderProcess = async (
     ? systemProcessOwnershipHost.captureBaseline
     : undefined;
   if (requiresTokenSweep && captureOwnershipBaseline === undefined)
-    throw new Error(
-      "Token-owned process cleanup requires a host ownership baseline; use a supported Linux or macOS host (or Windows Job Objects).",
+    throw Object.assign(
+      new Error(
+        "Token-owned process cleanup requires a host ownership baseline; use a supported Linux or macOS host (or Windows Job Objects).",
+      ),
+      { code: "ERR_PROCESS_OWNERSHIP_UNAVAILABLE" },
     );
   let captureBaseline: ProcessOwnershipBaseline | undefined;
   if (captureOwnershipBaseline !== undefined) {

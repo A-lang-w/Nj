@@ -209,11 +209,11 @@ export class ReverseEngineeringService {
     const bound =
       input.operation === "architectures"
         ? input
-        : { ...input, path: resolve(input.path) };
-    const command = this.#commands.objdump(bound);
+        : { ...input, path: absoluteCallerPath(input.path) };
     return this.#observe(
       "inspect_with_objdump",
-      command,
+      (signal) =>
+        this.#commands.objdump(bound, (signal === undefined ? {} : { signal })),
       bound.operation === "architectures" ? undefined : bound.path,
       input,
       options.signal,
@@ -230,11 +230,14 @@ export class ReverseEngineeringService {
         err(new AnalysisInputError("execute_rizin_command")),
       );
     const input = parsed.data;
-    const absolutePath = resolve(input.path);
-    const command = this.#commands.rizin({ ...input, path: absolutePath });
+    const absolutePath = absoluteCallerPath(input.path);
     return this.#observe(
       "execute_rizin_command",
-      command,
+      (signal) =>
+        this.#commands.rizin(
+          { ...input, path: absolutePath },
+          (signal === undefined ? {} : { signal }),
+        ),
       absolutePath,
       input,
       options.signal,
@@ -243,7 +246,11 @@ export class ReverseEngineeringService {
 
   #observe(
     operation: ReverseEngineeringOperation,
-    profile: ReverseEngineeringProviderCommand,
+    prepare: (
+      signal?: AbortSignal,
+    ) =>
+      | ReverseEngineeringProviderCommand
+      | Promise<ReverseEngineeringProviderCommand>,
     path: string | undefined,
     parameters: Readonly<Record<string, JsonValue>>,
     signal?: AbortSignal,
@@ -289,7 +296,7 @@ export class ReverseEngineeringService {
         : signal;
     const running = this.#observeProvider(
       operation,
-      profile,
+      prepare,
       path,
       parameters,
       operationSignal,
@@ -304,15 +311,38 @@ export class ReverseEngineeringService {
 
   async #observeProvider(
     operation: ReverseEngineeringOperation,
-    profile: ReverseEngineeringProviderCommand,
+    prepare: (
+      signal?: AbortSignal,
+    ) =>
+      | ReverseEngineeringProviderCommand
+      | Promise<ReverseEngineeringProviderCommand>,
     path: string | undefined,
     parameters: Readonly<Record<string, JsonValue>>,
     signal?: AbortSignal,
   ): Promise<Result<Evidence, AnalysisError>> {
-    const { executable: command, arguments: args } = profile;
     if (signal?.aborted) return err(new AnalysisCancelledError(operation));
     const cleanup = await this.retryCleanup(operation);
     if (!cleanup.ok) return cleanup;
+    let profile: ReverseEngineeringProviderCommand;
+    try {
+      profile = await prepare(signal);
+    } catch (cause) {
+      if (signal?.aborted)
+        return err(new AnalysisCancelledError(operation, { cause }));
+      if (cause instanceof Error && Reflect.get(cause, "code") === "ETIMEDOUT")
+        return err(
+          new AnalysisTimeoutError(operation, DEFAULT_TIMEOUT_MS, { cause }),
+        );
+      return err(
+        new AnalysisOutputError(
+          operation,
+          "Provider command resolution failed.",
+          { cause },
+        ),
+      );
+    }
+    if (signal?.aborted) return err(new AnalysisCancelledError(operation));
+    const { executable: command, arguments: args } = profile;
     const absolutePath =
       path === undefined ? undefined : absoluteCallerPath(path);
     let digest: string | undefined;
@@ -456,7 +486,10 @@ export class ReverseEngineeringService {
           earlyFailure = new AnalysisCapabilityUnavailableError(
             operation === "inspect_with_objdump" ? "objdump" : "rizin",
             operation,
-            `Unable to run configured command (${String(code ?? "unknown error")})`,
+            code === "ERR_PROCESS_OWNERSHIP_UNAVAILABLE" &&
+              cause instanceof Error
+              ? cause.message
+              : `Unable to run configured command (${String(code ?? "unknown error")})`,
             { cause, ...ownedCleanupOptions(cause) },
           );
       }

@@ -25,6 +25,33 @@ import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseE
 registerSharedReverseEngineeringEdgeCaseTests();
 registerOwnedRizinCommandEvidenceTests({ sweepTokenOwnedProcesses: true });
 
+it("preserves guidance when the host cannot enforce requested descendant ownership", async () => {
+  const service = new CoreReverseEngineeringService({
+    commands: createReverseEngineeringCommandPort({}),
+    runOwned: async () => {
+      throw Object.assign(
+        new Error(
+          "Token-owned process cleanup requires a host ownership baseline; use Linux or macOS.",
+        ),
+        { code: "ERR_PROCESS_OWNERSHIP_UNAVAILABLE" },
+      );
+    },
+  });
+  try {
+    expect(
+      await service.inspectWithObjdump({ operation: "architectures" }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCapabilityUnavailableError",
+        reason: expect.stringContaining("host ownership baseline"),
+      },
+    });
+  } finally {
+    await service.close();
+  }
+});
+
 it("records pathless objdump architecture support as provider capability evidence", async () => {
   const { directory, path } = await createArtifact();
   expect(objdumpCommand({ operation: "architectures" })).toEqual(["-i"]);
@@ -263,20 +290,19 @@ it("cancels an artifact stream when cancellation races with its listener registr
 
 it("cancels before stream listeners when the signal changes after stat", async () => {
   const { directory, path } = await createArtifact();
-  let abortedReads = 0;
-  const signal = {
-    get aborted() {
-      abortedReads += 1;
-      return abortedReads >= 5;
-    },
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    dispatchEvent: () => true,
-    onabort: null,
-    reason: undefined,
-    throwIfAborted: () => {},
-  } as AbortSignal;
-  const stat = vi.fn(async () => ({ isFile: () => true }) as unknown as Stats);
+  // Tie cancellation to the metadata boundary instead of counting unrelated
+  // reads of signal.aborted in admission and provider resolution.
+  const controller = new AbortController();
+  const signal = controller.signal;
+  const stat = vi.fn(
+    async () =>
+      ({
+        isFile: () => {
+          controller.abort();
+          return true;
+        },
+      }) as unknown as Stats,
+  );
   const run = vi.fn(async () => ({ stdout: "", stderr: "" }));
   const service = new ReverseEngineeringService({ stat, run });
 
@@ -290,8 +316,6 @@ it("cancels before stream listeners when the signal changes after stat", async (
       ok: false,
       error: { _tag: "AnalysisCancelledError" },
     });
-    // Cancellation checks may be repeated by the digest cleanup path.
-    expect(abortedReads).toBeGreaterThanOrEqual(5);
     expect(stat).toHaveBeenCalledTimes(1);
     expect(run).not.toHaveBeenCalled();
   } finally {

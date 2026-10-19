@@ -85,3 +85,16 @@ as opaque metadata, without inferring cleanup ownership from it.
 The optional `REA_OBJDUMP_COMMAND`, `REA_GDB_COMMAND`, and `REA_RIZIN_COMMAND` values select executable names or paths; otherwise REA searches `PATH`. Values are passed directly to process spawning, not expanded as shell command lines. Provider versions and capabilities remain unknown until observed from the installed tool and verified in the corresponding real-provider lane.
 
 Provider capture limits are separate from the MCP response budget. A result that fits the provider limit may still exceed the default 10 MiB MCP response budget and return a transport `resource_constraint`. Configure `REA_MCP_MAX_RESPONSE_BYTES` to match a larger client receive buffer when that client supports one; otherwise use retained Evidence/export or complete CLI JSON output. See [MCP response limits](./mcp-contracts.md#tool-results).
+
+One-shot objdump and Rizin commands require token-based descendant ownership on
+Linux and macOS, or Windows Job Object ownership. Hosts without the required
+ownership baseline (including Android/Termux) refuse these commands before launch
+rather than omit descendant cleanup. After incomplete cleanup, another command on
+the same CLI instance retries the retained owner before it can launch a provider.
+Closing an analysis session cannot acknowledge a writer owned by another service;
+that service must confirm cleanup before a new analysis session can open.
+
+On Windows, provider lookup examines the caller-selected `PATH` asynchronously
+under a 120-second startup deadline, observing request cancellation and server
+shutdown. A timed-out lookup reports a failure; select an absolute
+`REA_OBJDUMP_COMMAND` or `REA_RIZIN_COMMAND` to avoid a slow network `PATH` probe.
