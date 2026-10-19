@@ -32,8 +32,22 @@ export interface EnvironmentToolDefinition {
   readonly tool: EnvironmentManifestTool;
 }
 
-/** Agent-context budget for each list sample, excluding its omission/provenance notice. */
-const DESCRIPTION_LIST_SAMPLE_BYTES = 1024;
+/** Agent-context budget for each captured display sample, excluding its provenance notice. */
+const DESCRIPTION_SAMPLE_BYTES = 1024;
+
+/** A display prefix is explicitly separate from the complete identity held by the manifest. */
+const describeText = (text: string, label: string): string => {
+  if (
+    text.length <= DESCRIPTION_SAMPLE_BYTES &&
+    Buffer.byteLength(text, "utf8") <= DESCRIPTION_SAMPLE_BYTES
+  )
+    return text;
+  const { read } = new TextEncoder().encodeInto(
+    text,
+    new Uint8Array(DESCRIPTION_SAMPLE_BYTES),
+  );
+  return `${text.slice(0, read)}… (${label} display truncated; full value in manifest Evidence)`;
+};
 
 /** Sample whole values before joining; keep full lists in the manifest that owns them. */
 const describeList = <Value>(
@@ -46,7 +60,7 @@ const describeList = <Value>(
   for (const value of values) {
     const text = display(value);
     const remaining =
-      DESCRIPTION_LIST_SAMPLE_BYTES - bytes - (sample.length === 0 ? 0 : 2);
+      DESCRIPTION_SAMPLE_BYTES - bytes - (sample.length === 0 ? 0 : 2);
     // UTF-8 takes at least as many bytes as JS code units. Reject long values
     // without encoding or scanning their entire contents just to size a sample.
     if (text.length > remaining) break;
@@ -123,7 +137,7 @@ export const environmentToolInputSchema = (
   for (const [name, argument] of args.query)
     properties.set(argument, {
       type: "string",
-      description: `Query parameter ${name}; optional, matched against the recorded query on replay.`,
+      description: `Query parameter ${describeText(name, "query name")}; optional, matched against the recorded query on replay.`,
     });
   if (args.body !== undefined)
     properties.set(args.body, {
@@ -145,7 +159,7 @@ export const environmentToolDefinitions = (
 ): readonly EnvironmentToolDefinition[] =>
   manifest.tools.map((tool) => ({
     name: tool.name,
-    description: `${REPLAY_CATALOG_INSTRUCTIONS} ${tool.method} ${tool.path_template}; replays retained records [${describeList(tool.record_ordinals)}]; evidence ${evidenceId}`,
+    description: `${REPLAY_CATALOG_INSTRUCTIONS} ${describeText(tool.method, "method")} ${describeText(tool.path_template, "path")}; replays retained records [${describeList(tool.record_ordinals)}]; evidence ${evidenceId}`,
     inputSchema: environmentToolInputSchema(tool),
     tool,
   }));

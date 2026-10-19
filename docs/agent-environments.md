@@ -42,10 +42,11 @@ serve command refuses a manifest whose parent is not the supplied `--evidence`
 file with an `invalid_request` error naming both identifiers, so a manifest can
 never be served from records it did not cite.
 
-The MCP catalog and environment card sample path observations, request-body key descriptions and cited-record
-lists within a 1 KiB UTF-8 budget per list. Oversized lists report how many
-whole values are shown and point to the complete list in the manifest Evidence;
-this only limits descriptive context, not arguments, record selection or replay.
+The MCP catalog and environment card use a 1 KiB UTF-8 budget for each
+captured display sample. Observation, body-key and cited-record lists show
+whole values with omission counts; long method, path and query-name displays
+show a marked prefix. Complete values remain in manifest Evidence. Argument
+names and replay selection keep their original identities.
 
 ## What replay means and does not mean
 
@@ -82,8 +83,9 @@ value as written is chosen.
 When no record matches, the tool still answers from the tool's first cited
 record and reports `exact_match: false`. `body` is parsed JSON when the
 recorded content type is JSON-like (`application/json`, `application/*+json`,
-`text/plain`, `text/markdown`) and the text parses; otherwise it is the
-recorded text. Bodies over 256 KiB are cut at a UTF-8 boundary and returned as
+`text/plain`, `text/markdown`) and the text parses with safe numeric conversion; otherwise
+it is the recorded text. Large integer IDs and other numbers that would lose
+information stay in the original JSON text. Bodies over 256 KiB are cut at a UTF-8 boundary and returned as
 text with `truncated: true`. `body_recorded` is false when the capture kept the
 response's status and content type but no body; `body` is then `null`, which
 is not a recorded JSON `null`. `body_encoding` is `base64` when the capture
@@ -126,6 +128,9 @@ listener serves one MCP client at a time with the same session, `Host` header
 and shutdown contract as [transports](mcp-contracts.md#transports) describes.
 It runs until SIGINT or SIGTERM, then closes the listener, prints one
 `{"status":"stopped", …}` document and exits `130` or `143`.
+Signals during input loading cancel the readers and stop startup before binding;
+that path returns a structured `cancelled` result instead of a stopped-listener
+document, with the same signal exit status.
 
 Three routes are served:
 

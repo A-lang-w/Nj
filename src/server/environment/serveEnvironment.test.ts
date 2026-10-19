@@ -71,6 +71,52 @@ const start = async (environmentName?: string): Promise<ServedEnvironment> => {
   return entry;
 };
 
+describe("replay value fidelity over MCP", () => {
+  it("preserves unsafe numeric text and prototype-named fields through the SDK", async () => {
+    const users = source.manifest.tools.find(
+      (tool) => tool.name === "get_users_by_id",
+    );
+    const first = source.exchanges.get(users?.record_ordinals[0] ?? -1);
+    const second = source.exchanges.get(users?.record_ordinals[1] ?? -1);
+    if (first === undefined || second === undefined)
+      throw new Error("Missing user exchanges");
+    const unsafe = '{"id":9007199254740993}';
+    const proto = '{"__proto__":{"retained":true},"id":3}';
+    const exchanges = new Map(source.exchanges);
+    exchanges.set(first.ordinal, { ...first, bodyText: unsafe });
+    exchanges.set(second.ordinal, { ...second, bodyText: proto });
+    const entry = await serveEnvironment({
+      source: { ...source, exchanges },
+      host: "127.0.0.1",
+      port: 0,
+    });
+    served.push(entry);
+    const client = new Client({ name: "exact-replay", version: "1" });
+    const transport = new StreamableHTTPClientTransport(new URL(entry.url));
+    await client.connect(transport);
+    try {
+      const largeId = await client.callTool({
+        name: "get_users_by_id",
+        arguments: { id: "2" },
+      });
+      expect(largeId.structuredContent).toMatchObject({
+        body: unsafe,
+        replay: { truncated: false },
+      });
+      const ownKeys = await client.callTool({
+        name: "get_users_by_id",
+        arguments: { id: "3" },
+      });
+      expect(JSON.stringify(ownKeys.structuredContent)).toContain(
+        '"__proto__":{"retained":true}',
+      );
+    } finally {
+      await transport.terminateSession();
+      await client.close();
+    }
+  });
+});
+
 describe("environment routes", () => {
   it("serves the card byte-identical to the echo card shape with the manifest tools", async () => {
     const response = await route("GET", ENVIRONMENT_CARD_PATH).handle(

@@ -1,3 +1,5 @@
+import { isSafeNumber } from "lossless-json";
+
 import { isJsonLike } from "../../domain/analysisView/EnvironmentManifestAccumulator.js";
 import { mediaTypeEssence } from "../../domain/analysisView/webNetworkRouteTemplates.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -160,7 +162,20 @@ const replayBody = (
     exchange.contentType !== null &&
     isJsonLike(mediaTypeEssence(exchange.contentType))
   ) {
-    const parsed = safeParseJson(text);
+    const parsed = safeParseJson(text, (_key, value, context) => {
+      // The native parser supplies each primitive's original spelling. Share
+      // HAR's exact-number policy rather than accepting an already-rounded ID.
+      if (
+        typeof value === "number" &&
+        (context?.source === undefined ||
+          !isSafeNumber(context.source) ||
+          Object.is(value, -0))
+      )
+        throw new RangeError(
+          "JSON numeric conversion would lose recorded data",
+        );
+      return value;
+    });
     const value = parsed.ok
       ? jsonValueSchema.safeParse(parsed.value)
       : undefined;

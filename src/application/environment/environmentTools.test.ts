@@ -94,6 +94,34 @@ describe("environmentToolDefinitions", () => {
 });
 
 describe("environment catalog description budgets", () => {
+  it("bounds captured scalar prose while preserving complete lookup identities", () => {
+    const query = "query-".repeat(1000);
+    const expanded = {
+      ...tool("get_users_by_id"),
+      method: "METHOD".repeat(1000),
+      path_template: `/${"😀".repeat(1000)}`,
+      query_parameter_names: [query],
+    };
+    const [definition] = environmentToolDefinitions(
+      { ...source.manifest, tools: [expanded] },
+      source.evidenceId,
+    );
+    expect(definition?.tool).toBe(expanded);
+    expect(Buffer.byteLength(definition?.description ?? "")).toBeLessThan(3500);
+    expect(definition?.description).toContain(
+      "path display truncated; full value in manifest Evidence",
+    );
+    expect(definition?.description).not.toContain("\uFFFD");
+    expect(Object.hasOwn(definition?.inputSchema.properties ?? {}, query)).toBe(
+      true,
+    );
+    expect(
+      Buffer.byteLength(
+        definition?.inputSchema.properties[query]?.description ?? "",
+      ),
+    ).toBeLessThan(1400);
+  });
+
   it("bounds observation and record samples without changing the retained manifest", () => {
     const users = tool("get_users_by_id");
     const observations = Array.from(

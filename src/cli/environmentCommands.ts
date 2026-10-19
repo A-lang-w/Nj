@@ -1,10 +1,6 @@
 import { z } from "incur";
 import type { Logger } from "pino";
 
-import {
-  ENVIRONMENT_SERVE_OPERATION,
-  loadEnvironmentSource,
-} from "../application/environment/environmentSource.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
@@ -14,7 +10,10 @@ import {
   type McpHttpEndpoint,
 } from "../config/mcpHttpEndpoint.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisResourceConstraintError,
+} from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { createLogger } from "../logger.js";
@@ -52,7 +51,7 @@ const transportError = (
   cause: Error,
 ): AnalysisResourceConstraintError =>
   new AnalysisResourceConstraintError(
-    ENVIRONMENT_SERVE_OPERATION,
+    CLI_COMMANDS.environmentServe,
     "transport",
     cause.message,
     { host: endpoint.host, port: endpoint.port },
@@ -78,6 +77,9 @@ const serveEnvironmentCommand = async (
   logger: Logger,
   signal: AbortSignal,
 ): Promise<JsonValue> => {
+  const cancelled = (): JsonValue =>
+    cliError(new AnalysisCancelledError(CLI_COMMANDS.environmentServe));
+  if (signal.aborted) return cancelled();
   const endpoint = parseMcpHttpEndpoint(environment, {
     ...(input.host === undefined ? {} : { host: input.host }),
     ...(input.port === undefined ? {} : { port: input.port }),
@@ -87,21 +89,28 @@ const serveEnvironmentCommand = async (
   if (!environmentName.ok) return cliError(environmentName.error);
   const manifest = await parseCliJsonInput(
     input.manifest,
-    ENVIRONMENT_SERVE_OPERATION,
+    CLI_COMMANDS.environmentServe,
+    signal,
   );
   if (!manifest.ok) return manifest.error;
   const evidence = await parseCliJsonInput(
     input.evidence,
-    ENVIRONMENT_SERVE_OPERATION,
+    CLI_COMMANDS.environmentServe,
+    signal,
   );
   if (!evidence.ok) return evidence.error;
+  const { loadEnvironmentSource } =
+    await import("../application/environment/environmentSource.js");
+  if (signal.aborted) return cancelled();
   const source = loadEnvironmentSource(manifest.value, evidence.value);
   if (!source.ok) return cliError(source.error);
+  if (signal.aborted) return cancelled();
   // Loaded here so registering the command catalog never loads the HTTP listener.
   const { serveEnvironment } =
     await import("../server/environment/serveEnvironment.js");
   const { StreamableHttpListenError } =
     await import("../server/http/streamableHttpListenError.js");
+  if (signal.aborted) return cancelled();
   // A listener that fails after binding ends the command instead of serving nothing.
   let failListener: (error: Error) => void = () => undefined;
   const listenerFailed = new Promise<Error>((resolve) => {

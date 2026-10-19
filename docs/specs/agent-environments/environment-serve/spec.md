@@ -21,6 +21,9 @@ later increment.
   require `inspect_analysis_view` Evidence of kind `environment-manifest` and
   complete `inspect_web_network_capture` Evidence; refuse any other pair with an
   `invalid_request` whose issue path names the offending file.
+- Forward caller cancellation to file reads and check startup boundaries before
+  authentication/listener work; an already observed abort must not bind or
+  announce a listener.
 - Refuse a manifest whose `parent_evidence_id` differs from the evidence file's
   `evidence_id` before binding any port; Evidence authentication covers the
   capture's records, so no further record-coverage refusal is defined.
@@ -39,12 +42,15 @@ later increment.
 - Bound each path-observation, body-key and cited-ordinal description sample to 1 KiB
   of UTF-8 whole values before joining them, with a separate omitted-count and
   manifest-Evidence notice. Keep complete arrays and replay semantics unchanged.
+- Bound captured method, path and query-name prose to UTF-8-safe display prefixes
+  under the same budget, with an explicit full-value Evidence notice. Preserve
+  complete lookup values and argument names.
 - Replay by selecting, among the tool's cited records, the one whose path
   segments at the parameter indexes match the most supplied values, then the
   most of those segments equal to the value as written rather than only after
   percent-decoding, then the most supplied query values, keeping manifest order
   on ties; return `status`,
-  `content_type`, `body` (parsed JSON for JSON-like content types that parse,
+  `content_type`, `body` (parsed JSON for JSON-like content types with safe numeric conversion,
   else text; bodies over 256 KiB cut at a UTF-8 boundary with
   `truncated: true`) and `replay` with `record_ordinal`, `evidence_id`,
   `exact_match`, `recorded_path`, `recorded_query`, `body_recorded` (false
