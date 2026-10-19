@@ -125,6 +125,8 @@ it.each([
   "function C(){this.constructor.assign.call.call=other}C.prototype=null;new C();",
   "function N(){}class C{field=(N.prototype={extra:Function.prototype.call});later=(this.extra.call=other)}unknown(C);Reflect.construct(C,[],N);",
   "function N(){}class C{field=(N.prototype={extra:Function.prototype.call});later=(this.extra.call=other)}unknown({C});Reflect.construct(C,[],N);",
+  "function N(){}class B{field=(N.prototype={extra:Function.prototype.call});later=(this.extra.call=other)}class C extends B{}unknown(C);Reflect.construct(C,[],N);",
+  "function N(){}class B{field=(N.prototype={extra:Function.prototype.call});later=(this.extra.call=other)}class C extends B{}unknown({C});Reflect.construct(C,[],N);",
   "function C(){this.constructor.call.call=other}function N(){}Object.defineProperty(N,'prototype',{writable:false});N.prototype={constructor:{call:{}}};Reflect.construct(C,[],N);",
   "function C(){Object.getPrototypeOf(this).constructor.call.call=other}new C();",
   "class C{['__proto__']={constructor:{call:{}}};field=(Object.getPrototypeOf(this).constructor.call.call=other)}new C();",

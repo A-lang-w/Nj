@@ -724,26 +724,20 @@ export const createSemanticClassConstructionStages = (
   );
   return (node: t.Class, allocation?: t.Node) => {
     let fresh = true;
-    const declared = classLineage(node, state, lineages);
-    // Unlike the instance prototype chain, super() follows the constructor's
-    // current [[Prototype]]. A changed edge invalidates every declared stage
-    // above it. Keep an unknown receiver until actual parent identity is known.
-    // Before the mutation snapshot exists, retain the provisional source graph;
-    // completed receiver queries reselect these edges at each allocation.
-    // Without an allocation, callers are collecting possible activation owners
-    // for escaped construction; retain every declared stage in that union.
-    const changedParent =
+    const lineage = classLineage(node, state, lineages);
+    // A possibly changed constructor parent preserves its declared stages as
+    // alternatives. Inject the other parent receiver at that edge, after the
+    // old base's own initialization; it never becomes the old base's `this`.
+    // Unknown activation discovery has no capture and retains the source graph.
+    const changedParents = new Set(
       allocation !== undefined && semanticAmbientOwnSlotFactsReady(state)
-        ? declared.classes.findIndex(
+        ? lineage.classes.filter(
             (owner) =>
               owner.superClass != null &&
               !semanticAmbientPrototypeUnchanged(state, owner, allocation),
           )
-        : -1;
-    const lineage: ClassLineage =
-      changedParent < 0
-        ? declared
-        : { classes: declared.classes.slice(0, changedParent + 1) };
+        : [],
+    );
     const stages: {
       constructor: t.Function | undefined;
       fields: readonly ClassTargetMember[];
@@ -757,9 +751,8 @@ export const createSemanticClassConstructionStages = (
     const candidates = base === undefined ? [] : references(base);
     const candidate = candidates.length === 1 ? candidates[0] : undefined;
     let unknownReceiver =
-      changedParent >= 0 ||
-      (base !== undefined &&
-        !t.isNullLiteral(unwrapJavaScriptExpression(base).node));
+      base !== undefined &&
+      !t.isNullLiteral(unwrapJavaScriptExpression(base).node);
     if (
       base !== undefined &&
       candidate?.projection.length === 0 &&
@@ -770,7 +763,7 @@ export const createSemanticClassConstructionStages = (
         constructor: candidate.node,
         fields: [],
         fresh,
-        local: true,
+        local: changedParents.size === 0,
         keepsReceiver: true,
         unknownReceiver: false,
         unknownResult: false,
@@ -786,20 +779,30 @@ export const createSemanticClassConstructionStages = (
       stages.push(stage);
     }
     const locals = new Map<t.Class, boolean>();
+    const optionalStages = new Set<t.Class>();
     let local = true;
+    let optional = false;
     for (const owner of lineage.classes) {
       locals.set(owner, local);
+      if (optional) optionalStages.add(owner);
+      optional ||= changedParents.has(owner);
       if (owner.superClass != null && !isFreshObject(owner.superClass))
         local = false;
     }
     for (const owner of [...lineage.classes].reverse()) {
       const index = classTargetIndex(owner, indexes);
+      if (changedParents.has(owner)) {
+        // The other parent may keep the new allocation or return any object.
+        // An optional old ancestor's return cannot exclude either alternative.
+        fresh = true;
+        unknownReceiver = true;
+      }
       unknownReceiver ||= locals.get(owner) !== true;
       const stage = {
         constructor: index.constructorMethod,
         fields: index.fields,
         fresh,
-        local: locals.get(owner) === true,
+        local: locals.get(owner) === true && !optionalStages.has(owner),
         keepsReceiver: true,
         unknownReceiver,
         unknownResult: false,

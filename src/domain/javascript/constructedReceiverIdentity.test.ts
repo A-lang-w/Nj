@@ -30,6 +30,43 @@ const analyze = (setup: string) => {
 };
 
 describe("changed constructor parents", () => {
+  it.each(["class B{constructor(){return {}}}", "function B(){return {}}"])(
+    "keeps a changed parent's result alternative despite %s",
+    (base) => {
+      expect(
+        analyze(
+          `${base}class G{constructor(){return globalThis}}class C extends B{field=(this.Q=other)}Object.setPrototypeOf(C,G);new C();`,
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  it.each([
+    "class B{field=(this.Q=other)}",
+    // Register the ordinary function's constructed use independently of the
+    // inherited-call fallback, which currently retains unknown callers.
+    "function B(){this.Q=other}new B();",
+    "class A{}class B extends A{field=(this.Q=other)}",
+  ])("keeps optional declared stages' own receiver local: %s", (base) => {
+    expect(
+      analyze(
+        `${base}class G{constructor(){return globalThis}}class C extends B{constructor(){super();return {}}}Object.setPrototypeOf(C,G);new C();`,
+      ),
+    ).toMatchObject([{ channel: "kept" }]);
+  });
+
+  it.each([
+    "class B{}class C extends B{field=(this.Q=other);constructor(){super();return {}}}Object.setPrototypeOf(C,G);new C();",
+    "class A{}class B extends A{field=(this.Q=other)}class C extends B{constructor(){super();return {}}}Object.setPrototypeOf(B,G);Object.setPrototypeOf(C,flag?B:G);new C();",
+  ])(
+    "retains receiver uncertainty at each changed derived edge: %s",
+    (construction) => {
+      expect(
+        analyze(`class G{constructor(){return globalThis}}${construction}`),
+      ).toEqual([]);
+    },
+  );
+
   it("drops a BrowserWindow identity after changed-parent initialization", () => {
     const source = `${SHIM}class B{}class G{constructor(){return globalThis}}class C extends B{field=(this.Q=other)}Object.setPrototypeOf(C,G);new C();new(Q("electron").BrowserWindow)({});`;
     const parsed = parseJavaScriptSource(source, "bundle.js");
