@@ -332,7 +332,7 @@ class ReaJadxBridge {
   }
 
   private record ResourceRequest(String requested, String pkg, String type, String name,
-      boolean framework, List<Integer> ids) {}
+      boolean framework, List<Integer> ids, boolean foreign) {}
 
   private static Map<String, List<Integer>> byName(Map<Integer, String> names) {
     Map<String, List<Integer>> result = new HashMap<>();
@@ -351,6 +351,11 @@ class ReaJadxBridge {
     site.put("raw_class_name", cls.getRawName());
     site.put("top_class", cls.getTopParentClass().getFullName());
     site.put("method_name", method.getAlias());
+    // Same selector inspect_android_method uses: position among same-alias methods.
+    List<MethodNode> sameName = new ArrayList<>();
+    for (MethodNode candidate : cls.getMethods())
+      if (candidate.getAlias().equals(method.getAlias())) sameName.add(candidate);
+    site.put("overload_index", sameName.indexOf(method));
     site.put("raw_method_id", method.getMethodInfo().getRawFullId());
     site.put("dex_entry", method.getInputFileName());
     site.put("dex_code_unit_offset", offset);
@@ -374,6 +379,7 @@ class ReaJadxBridge {
     Map<String, List<Integer>> app = root == null ? Map.of()
         : byName(root.getConstValues().getResourcesNames());
     Map<String, List<Integer>> framework = byName(AndroidResourcesMap.getMap());
+    String appPackage = root == null ? null : root.getAppPackage();
     List<ResourceRequest> requests = new ArrayList<>();
     for (JsonElement element : listed.getAsJsonArray()) {
       if (!element.isJsonPrimitive() || !element.getAsJsonPrimitive().isString())
@@ -388,8 +394,11 @@ class ReaJadxBridge {
       String type = rest.substring(0, slash);
       String name = rest.substring(slash + 1);
       boolean isFramework = "android".equals(pkg);
-      List<Integer> ids = (isFramework ? framework : app).getOrDefault(type + "/" + name, List.of());
-      requests.add(new ResourceRequest(requested, pkg, type, name, isFramework, ids));
+      // A qualifier naming another app is unresolved here: its ids and R fields are not this APK's.
+      boolean foreign = pkg != null && !isFramework && !pkg.equals(appPackage);
+      List<Integer> ids = foreign ? List.of()
+          : (isFramework ? framework : app).getOrDefault(type + "/" + name, List.of());
+      requests.add(new ResourceRequest(requested, pkg, type, name, isFramework, ids, foreign));
     }
     Map<Long, List<Integer>> literals = new HashMap<>();
     Map<String, List<Integer>> fieldReads = new HashMap<>();
@@ -401,8 +410,9 @@ class ReaJadxBridge {
       ResourceRequest request = requests.get(index);
       for (int id : request.ids())
         literals.computeIfAbsent((long) id, ignored -> new ArrayList<>()).add(index);
-      fieldReads.computeIfAbsent(request.type() + "/" + request.name(), ignored -> new ArrayList<>())
-          .add(index);
+      if (!request.foreign())
+        fieldReads.computeIfAbsent(request.type() + "/" + request.name(), ignored -> new ArrayList<>())
+            .add(index);
       sites.add(new ArrayList<>());
       declarations.add(new ArrayList<>());
     }
@@ -635,8 +645,16 @@ class ReaJadxBridge {
         new ToolSchema(null, new kotlinx.serialization.json.JsonObject(Map.of()), List.of(), null),
         "Observed worker JVM and metadata scope", null, null, null, null, null, null);
     server.addTool(diagnostics, (connection, request, continuation) -> bridge.handle("rea_jvm_status", request.getArguments()));
+    Map<String, kotlinx.serialization.json.JsonElement> resourceProperties = new LinkedHashMap<>();
+    resourceProperties.put("resources", new kotlinx.serialization.json.JsonObject(Map.of(
+        "type", kotlinx.serialization.json.JsonElementKt.JsonPrimitive("array"),
+        "items", new kotlinx.serialization.json.JsonObject(Map.of(
+            "type", kotlinx.serialization.json.JsonElementKt.JsonPrimitive("string"))))));
+    resourceProperties.put("max_sites", new kotlinx.serialization.json.JsonObject(Map.of(
+        "type", kotlinx.serialization.json.JsonElementKt.JsonPrimitive("integer"))));
     Tool resources = new Tool("rea_resource_references",
-        new ToolSchema(null, new kotlinx.serialization.json.JsonObject(Map.of()), List.of(), null),
+        new ToolSchema(null, new kotlinx.serialization.json.JsonObject(resourceProperties),
+            List.of("resources"), null),
         "Resolve [package:]type/name resources to IDs and list raw DEX constant, switch, and R-field uses",
         null, null, null, null, null, null);
     server.addTool(resources, (connection, request, continuation) -> {

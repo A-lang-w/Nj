@@ -161,6 +161,7 @@ export const jadxResourceReferencesSchema = z.object({
           raw_class_name: z.string(),
           top_class: z.string(),
           method_name: z.string(),
+          overload_index: z.number().int().nonnegative(),
           raw_method_id: z.string(),
           dex_entry: z.string(),
           dex_code_unit_offset: count,

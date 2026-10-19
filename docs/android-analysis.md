@@ -182,7 +182,7 @@ framework map for the `android` package, to its integer `ids`. One pass over
 every method's raw DEX instructions then reports `sites`: `const_literal` loads
 (for example `findViewById`), `switch_case` keys (click dispatch on
 `getId()`), and `r_field_read` reads of non-final library `R` fields. Open a site
-with `inspect_android_method` using its `class_name` (the lookup name, which JADX may alias; `raw_class_name` keeps the DEX name) and `method_name`.
+with `inspect_android_method` using its `class_name` (the lookup name, which JADX may alias; `raw_class_name` keeps the DEX name), `method_name` and `overload_index`.
 
 - `resolution: "unresolved"` means the table has no such name; it is not
   evidence that the view is unused.

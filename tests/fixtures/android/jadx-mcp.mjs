@@ -237,6 +237,7 @@ register("rea_resource_references", ({ resources, max_sites }) =>
           raw_class_name: "fixture.Target",
           top_class: "fixture.Target",
           method_name: "onCreate",
+          overload_index: 0,
           raw_method_id: "Lfixture/Target;->onCreate(Landroid/os/Bundle;)V",
           dex_entry: "classes.dex",
           dex_code_unit_offset: 0,

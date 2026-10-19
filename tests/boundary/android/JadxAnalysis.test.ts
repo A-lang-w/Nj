@@ -506,15 +506,6 @@ it.each([
   },
 );
 
-const fixtureApp = {
-  package: "fixture",
-  version_name: "1",
-  version_code: "1",
-  min_sdk: "26",
-  target_sdk: "33",
-  permissions: [],
-};
-
 it("maps UI resource ids to unsigned IDs and bounded code sites", async () => {
   const calls: unknown[] = [];
   const site = {
@@ -523,6 +514,7 @@ it("maps UI resource ids to unsigned IDs and bounded code sites", async () => {
     raw_class_name: "fixture.Home",
     top_class: "fixture.Home",
     method_name: "initSearch",
+    overload_index: 0,
     raw_method_id: "Lfixture/Home;->initSearch()V",
     dex_entry: "classes.dex",
     dex_code_unit_offset: 4,
@@ -570,11 +562,11 @@ it("maps UI resource ids to unsigned IDs and bounded code sites", async () => {
         type: "id",
         name: "search",
         table: "app",
-        ids: [0x7f0c0523],
-        total_r_fields: 1,
+        ids: [],
+        total_r_fields: 0,
         r_fields: [],
-        total_sites: 2,
-        sites: [site],
+        total_sites: 0,
+        sites: [],
       },
       {
         requested: "id/missing",
@@ -593,7 +585,7 @@ it("maps UI resource ids to unsigned IDs and bounded code sites", async () => {
   const tools: JadxToolPort = {
     json: (name, input) => {
       calls.push([name, input]);
-      return Promise.resolve(name === "get_app_info" ? fixtureApp : scan);
+      return Promise.resolve(scan);
     },
     text: () => Promise.reject(new Error("unexpected text call")),
   };
@@ -624,7 +616,6 @@ it("maps UI resource ids to unsigned IDs and bounded code sites", async () => {
         max_sites: 1,
       },
     ],
-    ["get_app_info", {}],
   ]);
   expect(result).toMatchObject({
     scan_unit: "dex_instruction",
