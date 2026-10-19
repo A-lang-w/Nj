@@ -83,8 +83,9 @@ const nativePromiseAwaitIdentityIntact = (
       [...binding.memberWrites, ...binding.escapedPaths].every(
         ({ path, node: effect }) =>
           !promiseLookupMayChange(path, "constructor") ||
-          semanticEffectTiming(capture, effect, state) === "after" ||
-          semanticEffectTiming(read, effect, state) === "after",
+          // Copying a promise reference does not snapshot its properties.
+          // Every alias shares lookup validity at the actual await/adoption site.
+          semanticEffectTiming(capture, effect, state) === "after",
       )
     );
   });

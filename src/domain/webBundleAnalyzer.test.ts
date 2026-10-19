@@ -4770,6 +4770,46 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "copied promise observes later constructor and then writes",
+    'export {};const pending=import("ws");const alias=pending;pending.constructor={};pending.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await alias;new Socket(URL);',
+    false,
+  ],
+  [
+    "nested promise copies share later constructor changes",
+    'export {};const pending=import("ws");const alias=pending;const copied=alias;pending.constructor={};pending.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await copied;new Socket(URL);',
+    false,
+  ],
+  [
+    "promise copy observes writes through a sibling alias",
+    'export {};const pending=import("ws");const alias=pending;const writer=pending;writer.constructor={};writer.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await alias;new Socket(URL);',
+    false,
+  ],
+  [
+    "promise copy observes later prototype replacement",
+    'export {};const pending=import("ws");const alias=pending;pending.__proto__={constructor:{},then(resolve){resolve({WebSocket:class{}})}};const{WebSocket:Socket}=await alias;new Socket(URL);',
+    false,
+  ],
+  [
+    "promise copy observes escaped reference changes",
+    'export {};const pending=import("ws");const alias=pending;function change(value){value.constructor={};value.then=resolve=>resolve({WebSocket:class{}})}change(pending);const{WebSocket:Socket}=await alias;new Socket(URL);',
+    false,
+  ],
+  [
+    "copied native promise still bypasses own then",
+    'export {};const pending=import("ws");const alias=pending;pending.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await alias;new Socket(URL);',
+    true,
+  ],
+  [
+    "promise copy ignores unrelated promise constructor changes",
+    'export {};const pending=import("ws");const alias=pending;const other=import("ws");other.constructor={};other.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await alias;new Socket(URL);',
+    true,
+  ],
+  [
+    "completed copy wait preserves captured constructor",
+    'export {};const pending=import("ws");const alias=pending;const{WebSocket:Socket}=await alias;pending.constructor={};pending.then=resolve=>resolve({WebSocket:class{}});new Socket(URL);',
+    true,
+  ],
+  [
     "setter-only rest read reaches default wait",
     "(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {set run(value){}};yield undefined;}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
     true,

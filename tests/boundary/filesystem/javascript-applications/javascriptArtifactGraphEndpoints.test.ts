@@ -682,6 +682,54 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "r54-0.js",
+    source:
+      'export {};const pending=import("ws");const alias=pending;pending.constructor={};pending.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await alias;new Socket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "r54-1.js",
+    source:
+      'export {};const pending=import("ws");const alias=pending;const copied=alias;pending.constructor={};pending.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await copied;new Socket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "r54-2.js",
+    source:
+      'export {};const pending=import("ws");const alias=pending;const writer=pending;writer.constructor={};writer.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await alias;new Socket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "r54-3.js",
+    source:
+      'export {};const pending=import("ws");const alias=pending;pending.__proto__={constructor:{},then(resolve){resolve({WebSocket:class{}})}};const{WebSocket:Socket}=await alias;new Socket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "r54-4.js",
+    source:
+      'export {};const pending=import("ws");const alias=pending;function change(value){value.constructor={};value.then=resolve=>resolve({WebSocket:class{}})}change(pending);const{WebSocket:Socket}=await alias;new Socket("wss://example.test/review-latest");',
+    present: false,
+  },
+  {
+    file: "r54-5.js",
+    source:
+      'export {};const pending=import("ws");const alias=pending;pending.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await alias;new Socket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "r54-6.js",
+    source:
+      'export {};const pending=import("ws");const alias=pending;const other=import("ws");other.constructor={};other.then=resolve=>resolve({WebSocket:class{}});const{WebSocket:Socket}=await alias;new Socket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
+    file: "r54-7.js",
+    source:
+      'export {};const pending=import("ws");const alias=pending;const{WebSocket:Socket}=await alias;pending.constructor={};pending.then=resolve=>resolve({WebSocket:class{}});new Socket("wss://example.test/review-latest");',
+    present: true,
+  },
+  {
     file: "r53-0.js",
     source:
       '(async()=>{const[{...rest},next=await 0]=(function*(){try{yield {set run(value){}};yield undefined;}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
