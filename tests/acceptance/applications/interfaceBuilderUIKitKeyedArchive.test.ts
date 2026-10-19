@@ -98,15 +98,24 @@ cliTest(
   "classifies UIKit keyed-archive objects by their declared superclasses through CLI",
   async ({ cli }) => {
     // Class name and its archived `$classes` chain, with the expected kind.
-    // The constraint declares no UIKit base, so its name still classifies it.
+    // Neutral names classify only through their declared bases; controls also
+    // declare their view base. The constraint declares no framework base, so
+    // its name still classifies it.
     const cases = [
       ["UINavigationController", ["UIViewController"], "view_controller"],
       ["UITabBarController", ["UIViewController"], "view_controller"],
       ["UISearchController", ["UIViewController"], "view_controller"],
       ["UIViewController", [], "view_controller"],
       ["SettingsScreen", ["UIViewController"], "view_controller"],
+      ["InspectorPane", ["NSViewController"], "view_controller"],
+      ["DocumentShell", ["NSWindowController"], "view_controller"],
       ["UIButton", ["UIControl", "UIView"], "control"],
+      ["RatingPicker", ["UIControl", "UIView"], "control"],
+      ["LevelGauge", ["NSControl", "NSView"], "control"],
       ["UIImageView", ["UIView"], "view"],
+      ["CanvasSurface", ["NSView"], "view"],
+      ["AppShell", ["UIWindow", "UIView"], "view"],
+      ["Palette", ["NSWindow"], "view"],
       ["NSLayoutConstraint", [], "constraint"],
     ] as const;
     const uid = (value: number) => ({ CF$UID: value });
