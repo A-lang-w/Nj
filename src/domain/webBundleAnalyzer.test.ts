@@ -4770,6 +4770,66 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "with receiver throw reaches caught wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{with(null.value){}}catch{await 0;continue;}break;}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "with null coercion reaches caught wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{with(null){}}catch{await 0;continue;}break;}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "with undefined coercion reaches caught wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{with(void 0){}}catch{await 0;continue;}break;}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "with receiver wait precedes failed object coercion",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{with(void(await 0)){}}catch{continue;}break;}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "with nonnull object cannot invent caught wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{with({}){}}catch{await 0;continue;}break;}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "with primitive boxing cannot invent caught wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{with(0){}}catch{await 0;continue;}break;}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "with function receiver cannot invent caught wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{with((function(){})){}}catch{await 0;continue;}break;}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "with class receiver cannot invent caught wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{with((class{})){}}catch{await 0;continue;}break;}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "with throwing receiver cannot reach body wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{with(null.value){await 0;continue;}}catch{}break;}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "with failed coercion cannot reach body wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{with(null){await 0;continue;}}catch{}break;}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "with valid receiver reaches owned body wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{with({}){await 0;continue;}}catch{}break;}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "with caught receiver error without wait retains eager resume",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{with(null.value){}}catch{continue;}break;}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
     "prototype replacement invalidates native import promise",
     'export {};const pending=import("ws");pending.__proto__={constructor:{},then(resolve){resolve({WebSocket:class{}})}};const{WebSocket:Socket}=await pending;new Socket(URL);',
     false,

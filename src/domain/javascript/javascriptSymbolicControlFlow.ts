@@ -166,6 +166,7 @@ export const syntaxEvaluationOperands = (
   if (t.isDecorator(node)) return [node.expression];
   if (t.isSwitchCase(node)) return node.consequent;
   if (t.isExpressionStatement(node)) return [node.expression];
+  if (t.isWithStatement(node)) return [node.object, node.body];
   // Abrupt statements evaluate their argument before completing. Their block
   // owner still decides whether any following statement can be reached.
   if (t.isReturnStatement(node) || t.isThrowStatement(node))
@@ -352,6 +353,48 @@ interface SyntaxCompletion {
 
 const normalCompletion: SyntaxCompletion = { normal: true, abrupt: [] };
 type CompleteSyntax = (node: t.Node | null | undefined) => SyntaxCompletion;
+
+/** ToObject happens after receiver evaluation and before entering the with body. */
+const syntaxWithObjectCoercion = (
+  raw: t.Node,
+): "completed" | "failed" | "unknown" => {
+  const node = syntaxExactResultNode(raw);
+  if (t.isUnaryExpression(node, { operator: "void" })) return "failed";
+  const value = readExactJavaScriptNormalResult(
+    node,
+    syntaxEvaluationCannotThrow,
+  );
+  if (value.found) return value.value == null ? "failed" : "completed";
+  return t.isObjectExpression(node) ||
+    t.isArrayExpression(node) ||
+    t.isFunction(node) ||
+    t.isClassExpression(node) ||
+    t.isNewExpression(node) ||
+    t.isRegExpLiteral(node) ||
+    t.isBigIntLiteral(node)
+    ? "completed"
+    : "unknown";
+};
+
+const syntaxWithCompletion = (
+  node: t.WithStatement,
+  complete: CompleteSyntax,
+): SyntaxCompletion => {
+  const receiver = complete(node.object);
+  if (!receiver.normal) return receiver;
+  const coercion = syntaxWithObjectCoercion(node.object);
+  if (syntaxEvaluationAlwaysThrows(node.object) || coercion === "failed")
+    return { normal: false, abrupt: [...receiver.abrupt, { kind: "throw" }] };
+  const body = complete(node.body);
+  return {
+    normal: body.normal,
+    abrupt: [
+      ...receiver.abrupt,
+      ...(coercion === "unknown" ? [{ kind: "throw" as const }] : []),
+      ...body.abrupt,
+    ],
+  };
+};
 
 const syntaxSequenceCompletion = (
   statements: readonly t.Node[],
@@ -757,7 +800,7 @@ const syntaxCompletion = (
   if (t.isSwitchStatement(node)) return syntaxSwitchCompletion(node, complete);
   if (t.isLabeledStatement(node))
     return syntaxLabeledCompletion(node, complete);
-  if (t.isWithStatement(node)) return complete(node.body);
+  if (t.isWithStatement(node)) return syntaxWithCompletion(node, complete);
   if (boundary !== undefined) {
     const operands =
       orderedOperands?.(node) ??
@@ -926,6 +969,9 @@ export const syntaxOperandAlwaysThrows = (
   operand: t.Node,
 ): boolean =>
   syntaxSpreadAcquisitionAlwaysFails(owner, operand) ||
+  (t.isWithStatement(owner) &&
+    owner.object === operand &&
+    syntaxWithObjectCoercion(operand) === "failed") ||
   syntaxEvaluationAlwaysThrows(operand);
 
 /** Definite abrupt expression completion, not merely a possibly throwing read. */
@@ -943,6 +989,8 @@ export const syntaxEvaluationAlwaysThrows = (raw: t.Node): boolean => {
         : undefined;
     if (
       t.isThrowStatement(node) ||
+      (t.isWithStatement(node) &&
+        syntaxWithObjectCoercion(node.object) === "failed") ||
       javaScriptUnaryAlwaysThrows(node) ||
       syntaxCallOnPrimitiveAlwaysFails(node) ||
       ((t.isNullLiteral(object) ||
@@ -984,6 +1032,9 @@ export const syntaxBeforeDefiniteThrow = (raw: t.Node): readonly t.Node[] => {
     let throwing: t.Node | undefined;
     for (const operand of operands) {
       if (syntaxOperandAlwaysThrows(node, operand)) {
+        // An owning operation can fail after its operand completed (ToObject
+        // or iterator acquisition). Retain work done inside that operand.
+        if (!syntaxEvaluationAlwaysThrows(operand)) prefix.push(operand);
         throwing = operand;
         break;
       }
@@ -1066,6 +1117,11 @@ export const syntaxEvaluationCannotThrow = (node: t.Node): boolean => {
     ["void", "!", "typeof"].includes(node.operator)
   )
     result = syntaxEvaluationCannotThrow(node.argument);
+  if (t.isWithStatement(node))
+    result =
+      syntaxWithObjectCoercion(node.object) === "completed" &&
+      syntaxEvaluationCannotThrow(node.object) &&
+      syntaxEvaluationCannotThrow(node.body);
   if (
     !result &&
     (t.isExpressionStatement(node) ||
