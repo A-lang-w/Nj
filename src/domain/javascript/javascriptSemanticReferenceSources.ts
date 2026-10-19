@@ -20,8 +20,14 @@ import {
   semanticContainer,
   semanticSlotAtPath,
 } from "./javascriptSemanticSlots.js";
-import { semanticExpressionEvaluationOrder } from "./javascriptSemanticMutationInitializers.js";
-import { semanticSourceFunctionOwnPropertyDefined } from "./javascriptSemanticFunctionValues.js";
+import {
+  semanticExpressionEvaluationOrder,
+  semanticCapturePrecedesUserCode,
+} from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticSourceFunctionOwnPropertyDefined,
+  semanticInitialBuiltinPrototypeDataProperty,
+} from "./javascriptSemanticFunctionValues.js";
 import {
   childNodes,
   traverseJavaScriptAst,
@@ -52,7 +58,7 @@ export const semanticReferenceSourcesInactive = (
   reference.fallbackSources?.some(
     (source) =>
       referenceSelectionStable(source, state) &&
-      syntaxReferenceSourceDefined(source),
+      syntaxReferenceSourceDefined(source, state),
   ) === true ||
   (mode === "effects" &&
     (reference.requiredSources?.some(
@@ -623,7 +629,18 @@ type SyntaxDataValue =
   | "defined"
   | "undefined"
   | "effectful-read"
+  | { readonly initialPrototype: true }
   | { readonly prototypeOf: t.Function | t.ClassExpression };
+
+const initialPrototypeDataProperty = (
+  owner: "Object" | "Array",
+  key: string,
+): SyntaxDataValue | undefined =>
+  semanticInitialBuiltinPrototypeDataProperty(owner, key)
+    ? { initialPrototype: true }
+    : owner === "Array"
+      ? initialPrototypeDataProperty("Object", key)
+      : undefined;
 
 const literalClassSlots = new WeakMap<
   t.ClassExpression,
@@ -665,6 +682,9 @@ const syntaxDataProperty = (
   key: string,
 ): SyntaxDataValue | undefined => {
   if (typeof root === "string") return undefined;
+  // Presence of an inherited data value does not certify further reads from
+  // that shared callable, whose own properties and prototype may have changed.
+  if ("initialPrototype" in root) return "effectful-read";
   if ("prototypeOf" in root) {
     const owner = root.prototypeOf;
     if (t.isClassExpression(owner))
@@ -681,13 +701,16 @@ const syntaxDataProperty = (
     const source = semanticLiteralObjectReferenceSources(node);
     const property = source.properties.get(key);
     if (property !== undefined) return property;
-    if (source.prototype === undefined) return undefined;
+    if (source.prototype === undefined)
+      return initialPrototypeDataProperty("Object", key);
     node = unwrapJavaScriptExpression(source.prototype).node;
   }
   if (t.isArrayExpression(node)) {
     if (key === "length") return "defined";
     const index = semanticArrayIndex(key);
-    return index === null ? undefined : (node.elements[index] ?? undefined);
+    return index === null
+      ? initialPrototypeDataProperty("Array", key)
+      : (node.elements[index] ?? undefined);
   }
   // Literal allocation creates this own data slot with value zero, regardless
   // of RegExp.prototype. The source-selection gate owns intervening effects.
@@ -722,9 +745,13 @@ const syntaxDataProperty = (
     )
       return "effectful-read";
   }
-  // Primitive prototype initializers are ignored at runtime, and neither they
-  // nor an unmodeled intrinsic prototype establish a selected data value.
-  return undefined;
+  // Non-null primitive prototype initializers leave the default prototype in
+  // place. Its data slots still require the separate initial-capture proof.
+  return node !== receiver &&
+    readExactJavaScriptLiteral(node).found &&
+    !t.isNullLiteral(node)
+    ? initialPrototypeDataProperty("Object", key)
+    : undefined;
 };
 
 /** Keep unknown prototype reads tied to their selected receiver, rather than
@@ -763,6 +790,7 @@ const syntaxArrayIterationSource = (
     value !== undefined &&
     typeof value !== "string" &&
     !("prototypeOf" in value) &&
+    !("initialPrototype" in value) &&
     t.isArrayExpression(unwrapJavaScriptExpression(value).node)
   );
 };
@@ -770,6 +798,7 @@ const syntaxArrayIterationSource = (
 /** Reuse literal data slots without consulting potentially stale bindings. */
 const syntaxReferenceSourceDefined = (
   source: JavaScriptSemanticReferenceSource,
+  state?: JavaScriptSemanticAnalysisState,
 ): boolean => {
   if (!syntaxDataSource(source.node)) return false;
   let value: SyntaxDataValue | undefined = unwrapJavaScriptExpression(
@@ -787,6 +816,12 @@ const syntaxReferenceSourceDefined = (
   )
     return false;
   if (value === "defined" || "prototypeOf" in value) return true;
+  if ("initialPrototype" in value)
+    return (
+      state !== undefined &&
+      state.prototypeEnumerationMayAffect === false &&
+      semanticCapturePrecedesUserCode(source.node, state)
+    );
   const node = unwrapJavaScriptExpression(value).node;
   return (
     readExactJavaScriptLiteral(node).found ||

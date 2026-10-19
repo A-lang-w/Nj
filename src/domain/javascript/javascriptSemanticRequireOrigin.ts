@@ -6,6 +6,7 @@ import {
   semanticRequireShimValueSource,
 } from "./javascriptRequireShimOrigin.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { semanticExpressionValueDiscarded } from "./javascriptSemanticExpressionUsage.js";
 import { semanticOwnReferenceCandidates } from "./javascriptSemanticObjectReferences.js";
 import {
   createSemanticModuleStorageQuery,
@@ -386,7 +387,7 @@ interface ModuleDelegateWrite extends ModuleDelegateOwner {
   /** Copy identity and capture points are separate from prior-effect validity. */
   readonly delegateCopy?: {
     readonly target: t.Node;
-    readonly targetKind: "module" | "delegate";
+    readonly targetKind: "module" | "delegate" | "prototype";
     readonly values: readonly t.Node[];
   };
 }
@@ -676,9 +677,12 @@ const writesModuleRequire = (
     if (
       write.delegate === "require" &&
       copy !== undefined &&
-      (copy.targetKind === "module"
-        ? hostLoaderPath(copy.target, state, true)?.join(".") === HOST_MODULE
-        : isInitialDelegate(copy.target)) &&
+      (copy.targetKind === "delegate"
+        ? isInitialDelegate(copy.target)
+        : hostLoaderPath(copy.target, state, true)?.join(".") ===
+          (copy.targetKind === "module"
+            ? HOST_MODULE
+            : HOST_MODULE_PROTOTYPE)) &&
       copy.values.every(isInitialDelegate)
     )
       copiesInitialDelegate.add(write);
@@ -990,15 +994,17 @@ export const semanticInitialModuleDelegateDataProperty = (
     : undefined;
 };
 
-/** A metadata descriptor cannot replace an existing value. Own-slot and
- * prototype proofs also exclude inherited value/accessor fields and callbacks. */
-const preservesDescriptorValue = (
+/** Retain explicit captured values separately from omitted descriptor fields.
+ * Own-slot and prototype proofs exclude inherited fields and callbacks. */
+const initialDelegateDescriptor = (
   input: t.Node | undefined,
   projection: readonly string[],
   read: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): boolean => {
-  if (input === undefined) return false;
+):
+  | { readonly values: readonly t.Node[]; readonly omitsValue: boolean }
+  | undefined => {
+  if (input === undefined) return undefined;
   const ownSlotUnchanged = (owner: t.Node, key: string, capture: t.Node) =>
     semanticAmbientOwnSlotUnchanged(state, owner, key, capture);
   const references = semanticOwnReferenceCandidates(
@@ -1013,9 +1019,11 @@ const preservesDescriptorValue = (
     references.absent ||
     references.nodes.length === 0
   )
-    return false;
+    return undefined;
   const escapeEffects = semanticAmbientEscapeEffects(state);
-  return references.nodes.every((descriptor) => {
+  const values: t.Node[] = [];
+  let omitsValue = false;
+  const complete = references.nodes.every((descriptor) => {
     if (
       !t.isObjectExpression(descriptor) ||
       !semanticAmbientPrototypeUnchanged(state, descriptor, read)
@@ -1038,9 +1046,14 @@ const preservesDescriptorValue = (
         !ownSlotUnchanged(descriptor, key, read) ||
         own.status === "dynamic" ||
         (own.status === "explicit" && !t.isObjectProperty(own.property)) ||
-        (own.status !== "missing" && ["value", "get", "set"].includes(key))
+        (own.status !== "missing" && ["get", "set"].includes(key))
       )
         return false;
+      if (key === "value") {
+        if (own.status === "explicit" && t.isObjectProperty(own.property))
+          values.push(own.property.value);
+        else omitsValue = true;
+      }
     }
     return (
       prototype !== undefined ||
@@ -1069,7 +1082,24 @@ const preservesDescriptorValue = (
         ))
     );
   });
+  return complete ? { values, omitsValue } : undefined;
 };
+
+/** Suppressing a native write requires completed helper and owner integrity. */
+const completedNativeInvocation = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  interop: ReturnType<typeof createSemanticModuleInterop>,
+  state: JavaScriptSemanticAnalysisState,
+) =>
+  interop.intrinsicInvocation(
+    node,
+    {
+      ambientWrites: state.ambientWrites,
+      ambientWriteEffects: state.ambientWriteEffects,
+      complete: semanticFreshObjectFactsReady(state),
+    },
+    true,
+  );
 
 /** Classify a canonical write; initial absence still needs prior-effect proof. */
 export const semanticModuleDelegateWriteOwner = (
@@ -1114,15 +1144,7 @@ export const semanticModuleDelegateWriteOwner = (
       const native =
         values === undefined
           ? undefined
-          : interop.intrinsicInvocation(
-              node,
-              {
-                ambientWrites: state.ambientWrites,
-                ambientWriteEffects: state.ambientWriteEffects,
-                complete: semanticFreshObjectFactsReady(state),
-              },
-              true,
-            );
+          : completedNativeInvocation(node, interop, state);
       return native?.kind === "known" &&
         native.path.join(".") === "intrinsic.Object.assign" &&
         values !== undefined &&
@@ -1138,15 +1160,34 @@ export const semanticModuleDelegateWriteOwner = (
         : owner;
     }
     if (
-      owner.shared &&
-      invocation?.kind === "known" &&
-      ((mutation?.kind === "define-property" &&
-        mutation.receiver !== true &&
-        preservesDescriptorValue(args?.[2], [], node, state)) ||
-        (mutation?.kind === "define-properties" &&
-          preservesDescriptorValue(args?.[1], [delegate], node, state)))
-    )
-      return { ...owner, preservesInitialDataValue: true };
+      (mutation?.kind === "define-property" && mutation.receiver !== true) ||
+      mutation?.kind === "define-properties"
+    ) {
+      const native = completedNativeInvocation(node, interop, state);
+      const descriptor =
+        native?.kind !== "known"
+          ? undefined
+          : mutation.kind === "define-property"
+            ? initialDelegateDescriptor(args?.[2], [], node, state)
+            : initialDelegateDescriptor(args?.[1], [delegate], node, state);
+      if (descriptor !== undefined) {
+        if (owner.shared && descriptor.values.length === 0)
+          return { ...owner, preservesInitialDataValue: true };
+        if (
+          delegate === "require" &&
+          args?.[0] !== undefined &&
+          (owner.shared || !descriptor.omitsValue)
+        )
+          return {
+            ...owner,
+            delegateCopy: {
+              target: args[0],
+              targetKind: owner.shared ? "prototype" : "module",
+              values: descriptor.values,
+            },
+          };
+      }
+    }
     if (mutation?.kind === "define-properties")
       return objectMayDefineDelegate(args?.[1], state, false, delegate)
         ? owner
@@ -1503,11 +1544,11 @@ const semanticWrapperArgumentsExposedBefore = (
         semanticStaticPropertyKey(member.property, member.computed) ?? "",
       )
     ) {
-      const use = state.parentsByNode.get(member);
       if (
-        t.isUnaryExpression(use) &&
-        use.argument === member &&
-        ["void", "typeof", "!"].includes(use.operator)
+        semanticExpressionValueDiscarded(
+          member,
+          state.parentsByNode.get(member),
+        )
       )
         return false;
     }
@@ -1566,6 +1607,7 @@ const semanticHostRequireBindingIntact = (
 };
 
 const HOST_MODULE = "node-wrapper-module";
+const HOST_MODULE_PROTOTYPE = "node-module-prototype";
 const HOST_LOADER = "node-host-loader";
 const HOST_LOADER_IDENTITIES: Readonly<Record<string, readonly string[]>> = {
   wrapper: ["global", "require"],
@@ -1720,6 +1762,39 @@ const hostLoaderPath = (
         )
       ) {
         if (selected.length === 0) return [HOST_MODULE];
+        if (
+          initialModuleDelegate &&
+          (selected.map(({ key }) => key).join(".") === "__proto__" ||
+            selected.map(({ key }) => key).join(".") ===
+              "constructor.prototype")
+        ) {
+          const path = [
+            "commonjs-module",
+            ...selected.map(({ key }) => String(key)),
+          ];
+          const escapes = semanticAmbientEscapeEffects(state);
+          const intact =
+            escapes !== undefined &&
+            semanticFunctionValueReadDependencies(path).every((dependency) => {
+              const capture =
+                selected[Math.max(0, dependency.offset - 1)]?.capture ?? root;
+              return (
+                untouched(dependency.path, [capture], dependency.ownFrom) &&
+                !semanticAmbientWriteMayMatch(
+                  { ambientWriteEffects: escapes },
+                  dependency.path,
+                  (effect) =>
+                    effect.path.length > dependency.ownFrom &&
+                    !semanticEffectFollowsInitialCapture(
+                      capture,
+                      effect.node,
+                      state,
+                    ),
+                )
+              );
+            });
+          if (intact) return [HOST_MODULE_PROTOTYPE];
+        }
         const [property, ...suffix] = selected;
         return property?.key === "require" &&
           (initialModuleDelegate ||

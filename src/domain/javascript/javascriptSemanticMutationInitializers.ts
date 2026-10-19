@@ -8,6 +8,7 @@ import {
 
 import {
   semanticStaticPropertyKey,
+  readExactJavaScriptLiteral,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -505,6 +506,32 @@ const initialCapturePrefix = (
       completed.add(node);
       continue;
     }
+    if (t.isObjectExpression(node)) {
+      // Allocation and exact primitive keys do not invoke user code. Spreads
+      // and key coercion can, so they cannot extend the initial capture prefix.
+      if (
+        node.properties.some(
+          (property) =>
+            t.isSpreadElement(property) ||
+            (property.computed &&
+              !readExactJavaScriptLiteral(property.key).found) ||
+            ("decorators" in property && property.decorators?.length),
+        )
+      )
+        break;
+      pending.push({ kind: "complete", node });
+      for (const property of node.properties.toReversed())
+        if (t.isObjectProperty(property))
+          pending.push({ kind: "visit", node: property.value });
+      continue;
+    }
+    if (t.isArrayExpression(node)) {
+      if (node.elements.some(t.isSpreadElement)) break;
+      pending.push({ kind: "complete", node });
+      for (const element of node.elements.toReversed())
+        if (element !== null) pending.push({ kind: "visit", node: element });
+      continue;
+    }
     if (t.isVariableDeclaration(node)) {
       if (!["var", "let", "const"].includes(node.kind)) break;
       for (const declaration of node.declarations.toReversed())
@@ -526,6 +553,16 @@ const initialCapturePrefix = (
   }
   return completed;
 };
+
+/** Complete capture before any source operation could invoke user code.
+ * This certificate includes operand evaluation, not the effects of a call. */
+export const semanticCapturePrecedesUserCode = (
+  capture: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  !t.isCallExpression(capture) &&
+  !t.isOptionalCallExpression(capture) &&
+  initialCapturePrefix(state).has(capture);
 
 /** Extend ordinary order only for captures before local code can first run.
  * This does not infer invocation order from a function declaration's position. */

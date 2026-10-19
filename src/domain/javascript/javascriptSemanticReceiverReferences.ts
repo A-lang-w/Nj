@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { semanticExpressionValueDiscarded } from "./javascriptSemanticExpressionUsage.js";
 
 import {
   semanticStaticPropertyKey,
@@ -948,23 +949,7 @@ export const createSemanticReceiverReferences = (
         // own evaluated sites; only target leaves belong to the write index.
         const write = writes.get(current);
         if (write !== undefined && !semanticWriteSiteReadsFirst(write)) return;
-        if (
-          (t.isSequenceExpression(parent) &&
-            parent.expressions.at(-1) !== current) ||
-          (t.isConditionalExpression(parent) && parent.test === current) ||
-          (t.isExpressionStatement(parent) && parent.expression === current) ||
-          (t.isUnaryExpression(parent) &&
-            ["void", "typeof", "!"].includes(parent.operator)) ||
-          ((t.isIfStatement(parent) ||
-            t.isWhileStatement(parent) ||
-            t.isDoWhileStatement(parent)) &&
-            parent.test === current) ||
-          (t.isForStatement(parent) &&
-            (parent.init === current ||
-              parent.test === current ||
-              parent.update === current))
-        )
-          return;
+        if (semanticExpressionValueDiscarded(current, parent)) return;
         if (
           parent === null ||
           !(

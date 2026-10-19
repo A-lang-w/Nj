@@ -186,6 +186,69 @@ const NUMBER_CONSTANTS: Readonly<Record<string, readonly string[]>> = {
   ],
 };
 
+const OBJECT_PROTOTYPE_DATA_METHODS = [
+  "hasOwnProperty",
+  "isPrototypeOf",
+  "propertyIsEnumerable",
+  "toLocaleString",
+  "toString",
+  "valueOf",
+] as const;
+
+const ARRAY_PROTOTYPE_DATA_METHODS = [
+  "at",
+  "concat",
+  "copyWithin",
+  "entries",
+  "every",
+  "fill",
+  "filter",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+  "flat",
+  "flatMap",
+  "forEach",
+  "includes",
+  "indexOf",
+  "join",
+  "keys",
+  "lastIndexOf",
+  "map",
+  "pop",
+  "push",
+  "reduce",
+  "reduceRight",
+  "reverse",
+  "shift",
+  "slice",
+  "some",
+  "sort",
+  "splice",
+  "toLocaleString",
+  "toReversed",
+  "toSorted",
+  "toSpliced",
+  "toString",
+  "unshift",
+  "values",
+  "with",
+] as const;
+
+/** Required initial data slots only; optional legacy accessors/methods are not
+ * presence proofs. Callers still own prototype identity and mutation checks. */
+export const semanticInitialBuiltinPrototypeDataProperty = (
+  owner: "Object" | "Array",
+  key: string,
+): boolean =>
+  key === "constructor" ||
+  (owner === "Array" && key === "length") ||
+  (owner === "Array"
+    ? ARRAY_PROTOTYPE_DATA_METHODS
+    : OBJECT_PROTOTYPE_DATA_METHODS
+  ).some((name) => name === key);
+
 // These are value facts, not permissions to invoke an intrinsic. Read proofs
 // still establish binding and property integrity at each capture separately.
 const FUNCTION_MEMBERS: Readonly<Record<string, readonly string[]>> = {
@@ -219,13 +282,9 @@ const FUNCTION_MEMBERS: Readonly<Record<string, readonly string[]>> = {
     "__defineSetter__",
     "__lookupGetter__",
     "__lookupSetter__",
-    "hasOwnProperty",
-    "isPrototypeOf",
-    "propertyIsEnumerable",
-    "toLocaleString",
-    "toString",
-    "valueOf",
+    ...OBJECT_PROTOTYPE_DATA_METHODS,
   ],
+  "global.Array.prototype": ARRAY_PROTOTYPE_DATA_METHODS,
   "global.Function.prototype": ["toString"],
   "global.Reflect": [
     "apply",
