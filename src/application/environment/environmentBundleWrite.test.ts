@@ -23,6 +23,53 @@ import {
   readEnvironmentExportInputs,
 } from "./environmentExport.js";
 
+it("retains the admitted tarball descriptor and refuses a pathname replacement during output", async () => {
+  const root = await createTestTempDirectory("rea-tarball-instance-");
+  const files = await writeEnvironmentServeFiles(root);
+  const inputs = await readEnvironmentExportInputs(
+    files.manifestPath,
+    files.capturePath,
+  );
+  if (!inputs.ok) throw inputs.error;
+  const tarball = join(root, "package.tgz");
+  const originalBytes = Buffer.from("original admitted package");
+  await writeFile(tarball, originalBytes);
+  const directory = join(root, "bundle");
+  const original = SafeOutputTree.prototype.write;
+  let replaced = false;
+  const writer = vi
+    .spyOn(SafeOutputTree.prototype, "write")
+    .mockImplementation(async function (
+      this: SafeOutputTree,
+      ...args: Parameters<SafeOutputTree["write"]>
+    ) {
+      const result = await original.apply(this, args);
+      if (!replaced) {
+        replaced = true;
+        await rename(tarball, join(root, "admitted.tgz"));
+        await writeFile(tarball, "replacement package");
+      }
+      return result;
+    });
+  try {
+    const result = await exportEnvironmentBundle({
+      ...inputs.value,
+      source: environmentServeSource(),
+      directory,
+      packageTarball: tarball,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisArtifactChangedError", path: tarball },
+    });
+    expect(
+      await readFile(join(directory, "envs/grafana-example/rea-agents.tgz")),
+    ).toEqual(originalBytes);
+  } finally {
+    writer.mockRestore();
+  }
+});
+
 it("uses confirmed publication after the output owner's descriptor cleanup completes", async () => {
   const root = await createTestTempDirectory("rea-bundle-published-");
   const files = await writeEnvironmentServeFiles(root);

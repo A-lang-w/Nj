@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect } from "vitest";
@@ -25,6 +25,43 @@ const BUNDLE_FILES = [
 ];
 
 describe("rea environment-export", () => {
+  cliTest.skipIf(process.platform === "win32")(
+    "produces readable private files independently of an owner-read-masking umask",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-export-umask-");
+      const files = await writeEnvironmentServeFiles(root);
+      const preload = join(root, "umask.mjs");
+      await writeFile(preload, "process.umask(0o400);\n");
+      const directory = join(root, "bundle");
+      const result = await cli.run({
+        arguments: [
+          "environment-export",
+          files.manifestPath,
+          "--evidence",
+          files.capturePath,
+          directory,
+          "--json",
+        ],
+        environment: {
+          NODE_OPTIONS: `--import=${preload} --max-old-space-size=768`,
+          NODE_DISABLE_COMPILE_CACHE: "1",
+        },
+        timeoutMs: 30_000,
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      for (const relative of BUNDLE_FILES) {
+        expect((await stat(join(directory, relative))).mode & 0o777).toBe(
+          0o600,
+        );
+        expect(
+          (await readFile(join(directory, relative))).length,
+        ).toBeGreaterThan(0);
+      }
+      expect(
+        await readFile(join(directory, "envs/grafana-example/evidence.json")),
+      ).toEqual(await readFile(files.capturePath));
+    },
+  );
   cliTest(
     "writes the bundle folder from the fixture pair and prints the written files with sizes",
     async ({ cli }) => {

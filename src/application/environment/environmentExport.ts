@@ -1,7 +1,6 @@
-import { stat } from "node:fs/promises";
 import { getHeapStatistics } from "node:v8";
 
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -117,41 +116,6 @@ const accessDeniedError = (
 /** Host permission failures retain their typed cause; unexpected failures propagate. */
 const rethrowUnlessDenied = (cause: unknown, path: string): never => {
   throw accessDeniedError(cause, path) ?? cause;
-};
-
-/** The tarball must be a regular file; its bytes are copied, never inspected. */
-const checkTarball = async (
-  path: string,
-): Promise<Result<EnvironmentPackageSource, AnalysisError>> => {
-  try {
-    const info = await stat(path);
-    if (!info.isFile())
-      return err(
-        inputError(
-          {
-            path: ["package_tarball"],
-            reason: "invalid_value",
-            message: "The package tarball must be a regular file.",
-          },
-          `${path} is not a regular file.`,
-        ),
-      );
-  } catch (cause: unknown) {
-    const code = systemCode(cause);
-    if (code === "ENOENT" || code === "ENOTDIR" || code === "ENAMETOOLONG")
-      return err(
-        inputError(
-          {
-            path: ["package_tarball"],
-            reason: "invalid_value",
-            message: "The package tarball path must name an existing file.",
-          },
-          `${path} does not exist.`,
-        ),
-      );
-    return rethrowUnlessDenied(cause, path);
-  }
-  return ok({ kind: "tarball", path });
 };
 
 /** A path that is not a readable regular file, including inline JSON text offered as one. */
@@ -277,20 +241,20 @@ const packageSourceValue = (source: EnvironmentPackageSource): JsonValue =>
 export const exportEnvironmentBundle = async (
   input: EnvironmentExportInput,
 ): Promise<Result<EnvironmentExportResult, AnalysisError>> => {
-  const packageSource =
+  const packageSource: EnvironmentPackageSource =
     input.packageTarball === undefined
-      ? ok<EnvironmentPackageSource>(registryPackageSource())
-      : await checkTarball(input.packageTarball);
-  if (!packageSource.ok) return packageSource;
+      ? registryPackageSource()
+      : { kind: "tarball", path: input.packageTarball };
   const plan = planEnvironmentBundle(input.source, {
     name: input.name,
-    packageSource: packageSource.value,
+    packageSource,
   });
   if (!plan.ok) return plan;
   let files: readonly WrittenBundleFile[];
   try {
     files = await writeEnvironmentBundle(input, plan.value);
   } catch (cause: unknown) {
+    if (cause instanceof AnalysisError) return err(cause);
     const denied = accessDeniedError(cause, input.directory);
     if (denied !== undefined) return err(denied);
     if (cause instanceof RegularFileChangedError)

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import {
+  chmod,
   mkdir,
   open,
   readdir,
@@ -136,44 +137,8 @@ export class SafeOutputTree {
           "path",
           "Output directory is not empty",
         );
-      if (created && platform !== "win32") {
-        const stagingHandle = tree.#trackHandle(
-          await open(
-            canonicalOutput,
-            constants.O_RDONLY | constants.O_DIRECTORY,
-          ),
-        );
-        let setup:
-          | { readonly kind: "ready" }
-          | {
-              readonly kind: "failed";
-              readonly cause: unknown;
-            } = { kind: "ready" };
-        try {
-          await assertHandleIdentity(
-            stagingHandle.handle,
-            rootIdentity,
-            canonicalOutput,
-          );
-          await stagingHandle.handle.chmod(0o700);
-        } catch (cause: unknown) {
-          setup = { kind: "failed", cause };
-        }
-        try {
-          await tree.#closeHandle(stagingHandle);
-        } catch (closeCause: unknown) {
-          if (setup.kind === "failed")
-            throw ArtifactReaderFailure.withCleanup(
-              setup.cause,
-              ArtifactReaderFailure.cleanupObservation(
-                closeCause,
-                canonicalOutput,
-              ),
-            );
-          throw closeCause;
-        }
-        if (setup.kind === "failed") throw setup.cause;
-      }
+      if (created)
+        await tree.#secureCreatedDirectory(canonicalOutput, rootIdentity);
       await assertPathIdentity(canonicalOutput, rootIdentity);
       return tree;
     } catch (cause: unknown) {
@@ -238,6 +203,14 @@ export class SafeOutputTree {
       );
       await assertFilePathIdentity(destination, fileIdentity);
       this.#ownedFiles.set(destination, fileIdentity);
+      if (this.platform !== "win32") {
+        await ownedHandle.handle.chmod(0o600);
+        if (((await ownedHandle.handle.stat()).mode & 0o777) !== 0o600)
+          throw new ArtifactReaderFailure(
+            "path",
+            "Could not establish private output file permissions",
+          );
+      }
       const hash = createHash("sha256");
       let bytes = 0;
       await this.#assertLineage(lineage);
@@ -436,6 +409,59 @@ export class SafeOutputTree {
     return structuredClone(this.#cleanup);
   }
 
+  async #secureCreatedDirectory(
+    path: string,
+    identity: DirectoryIdentity,
+  ): Promise<void> {
+    if (this.platform === "win32") return;
+    const stagingHandle = this.#trackHandle(
+      await open(path, constants.O_RDONLY | constants.O_DIRECTORY).catch(
+        async (cause: unknown) => {
+          if (
+            !(cause instanceof Error) ||
+            !("code" in cause) ||
+            cause.code !== "EACCES"
+          )
+            throw cause;
+          // Owner-read can be masked at mkdir; repair only the proven created
+          // directory under the same portable pathname-race boundary.
+          await assertPathIdentity(path, identity);
+          await chmod(path, 0o700);
+          await assertPathIdentity(path, identity);
+          return open(path, constants.O_RDONLY | constants.O_DIRECTORY);
+        },
+      ),
+    );
+    let setup:
+      | { readonly kind: "ready" }
+      | {
+          readonly kind: "failed";
+          readonly cause: unknown;
+        } = { kind: "ready" };
+    try {
+      await assertHandleIdentity(stagingHandle.handle, identity, path);
+      await stagingHandle.handle.chmod(0o700);
+      if (((await stagingHandle.handle.stat()).mode & 0o777) !== 0o700)
+        throw new ArtifactReaderFailure(
+          "path",
+          "Could not establish owner access to output directory",
+        );
+    } catch (cause: unknown) {
+      setup = { kind: "failed", cause };
+    }
+    try {
+      await this.#closeHandle(stagingHandle);
+    } catch (closeCause: unknown) {
+      if (setup.kind === "failed")
+        throw ArtifactReaderFailure.withCleanup(
+          setup.cause,
+          ArtifactReaderFailure.cleanupObservation(closeCause, path),
+        );
+      throw closeCause;
+    }
+    if (setup.kind === "failed") throw setup.cause;
+  }
+
   async #prepareParent(
     relativePath: string,
   ): Promise<readonly DirectoryLineageEntry[]> {
@@ -467,13 +493,14 @@ export class SafeOutputTree {
         if (identity === undefined) throw replacedDirectory(current);
         await assertPathIdentity(current, identity);
       } else {
-        try {
-          const identity = await readDirectoryIdentity(current);
-          this.#nestedDirectories.set(current, identity);
-        } catch (cause: unknown) {
-          this.#unknownDirectories.add(current);
-          throw cause;
-        }
+        const identity = await readDirectoryIdentity(current).catch(
+          (cause: unknown) => {
+            this.#unknownDirectories.add(current);
+            throw cause;
+          },
+        );
+        this.#nestedDirectories.set(current, identity);
+        await this.#secureCreatedDirectory(current, identity);
       }
       await assertPathIdentity(parent.path, parent.identity);
       const identity = this.#nestedDirectories.get(current);
