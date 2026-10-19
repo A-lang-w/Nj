@@ -1086,6 +1086,7 @@ type MutationObservableOrigin =
   | "array"
   | "array-prototype"
   | "typed-array"
+  | "typed-array-element"
   | "opaque";
 
 interface MutationObserverNode {
@@ -1296,19 +1297,23 @@ const observableMutationPaths = (
           // Dynamic keys and copied-slot masks retain their original paths.
           // Enumerating their exclusion combinations would recreate the growth
           // that the mutation collector's selection union already prevents.
-          if (
-            [...(source.origins ?? [])].some(
-              (origin) => origin !== "typed-array" || !numericIndex,
-            )
-          )
-            add("opaque");
+          for (const origin of source.origins ?? [])
+            add(
+              origin === "typed-array" && numericIndex
+                ? "typed-array-element"
+                : "opaque",
+            );
         } else
           for (const origin of source.origins ?? []) {
             if (typeof origin === "string") {
               if (origin === "typed-array") {
                 // Custom properties can hold references; only canonical numeric
                 // indices have the native Number/BigInt/undefined result contract.
-                if (!numericIndex) add("opaque");
+                add(numericIndex ? "typed-array-element" : "opaque");
+              } else if (origin === "typed-array-element") {
+                // Number/BigInt property reads can expose constructors, methods
+                // or objects returned by prototype getters after boxing.
+                add("opaque");
               } else if (origin === "array-prototype" || origin === "opaque")
                 add(origin);
               else if (
@@ -1361,7 +1366,12 @@ const observableMutationPaths = (
     if (effect === "escape") {
       observer = project(observer, path);
       settle();
-      return (observer.origins?.size ?? 0) === 0 ? null : path;
+      const origins = observer.origins;
+      return origins === undefined ||
+        origins.size === 0 ||
+        (origins.size === 1 && origins.has("typed-array-element"))
+        ? null
+        : path;
     }
     if ((observer.origins?.size ?? 0) === 0)
       return path.length === 0 ? path : [null];

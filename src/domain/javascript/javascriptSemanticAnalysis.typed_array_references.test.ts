@@ -116,6 +116,52 @@ describe("integer-indexed values in reference propagation", () => {
   });
 });
 
+describe("references reached through typed-array element properties", () => {
+  it.each([
+    ["Int32Array", "0", "constructor"],
+    ["BigInt64Array", "0", "constructor"],
+    ["Int32Array", "index >> 2", "toString"],
+    ["BigInt64Array", "index >> 2", "toString"],
+    ["Int32Array", "0", "customReference"],
+    ["BigInt64Array", "0", "customReference"],
+  ])("retains %s[%s].%s references", (constructor, key, property) => {
+    expect(
+      escapes(`
+        const heap = new ${constructor}(16);
+        const value = heap[${key}];
+        consume(value.${property});
+      `).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it.each(["Int32Array", "BigInt64Array"])(
+    "retains unknown property reads from %s elements",
+    (constructor) => {
+      expect(
+        escapes(`
+          const heap = new ${constructor}(16);
+          const value = heap[index >> 2];
+          consume(value[property]);
+        `).length,
+      ).toBeGreaterThan(0);
+    },
+  );
+
+  it.each(["Int32Array", "BigInt64Array"])(
+    "retains nested property reads through %s element aliases",
+    (constructor) => {
+      expect(
+        escapes(`
+          const heap = new ${constructor}(16);
+          const element = heap[index >> 2];
+          const value = element;
+          consume(value.constructor.prototype);
+        `).length,
+      ).toBeGreaterThan(0);
+    },
+  );
+});
+
 describe("typed-array reference dependencies", () => {
   it("propagates numeric-element facts through aliases and buffer replacement", () => {
     expect(
