@@ -4,6 +4,7 @@ import type {
   AnalysisClient,
   ExecutionOptions,
 } from "../../../src/application/AnalysisProvider.js";
+import type { OptionalProviderLoadResult } from "../../../src/application/OptionalObservationProviders.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -99,28 +100,36 @@ it("closes the session when a signal arrives during the initial open, joining a 
   expect(await session.status()).toMatchObject({ open: false });
 });
 
-it("keeps handlers until a transport attached after a shutdown request closes", async () => {
+it("starts no transport after a shutdown request during provider loading and keeps handlers until the loaded providers close", async () => {
   const providersLoading = createDeferred<void>();
   const releaseProviders = createDeferred<void>();
-  const handleCloseStarted = createDeferred<void>();
-  const releaseHandleClose = createDeferred<void>();
+  const providerCloseStarted = createDeferred<void>();
+  const releaseProviderClose = createDeferred<void>();
   const requests: Array<() => void> = [];
   const unregistrations: string[] = [];
   const output: string[] = [];
-  let handleCloses = 0;
+  let serveCalls = 0;
+  let providerCloses = 0;
   const running = run(
     runtime({
-      serve: () => ({
-        close: async () => {
-          handleCloses += 1;
-          handleCloseStarted.resolve();
-          await releaseHandleClose.promise;
-        },
-      }),
+      serve: () => {
+        serveCalls += 1;
+        throw new Error("Transport must not start");
+      },
       loadOptionalProviders: async () => {
         providersLoading.resolve();
         await releaseProviders.promise;
-        return {};
+        return {
+          browserObservation: {
+            close: async () => {
+              providerCloses += 1;
+              providerCloseStarted.resolve();
+              await releaseProviderClose.promise;
+            },
+          } as unknown as NonNullable<
+            OptionalProviderLoadResult["browserObservation"]
+          >,
+        };
       },
       requests,
       unregistrations,
@@ -131,19 +140,54 @@ it("keeps handlers until a transport attached after a shutdown request closes", 
   await providersLoading.promise;
   requests[0]?.();
   releaseProviders.resolve();
-  // The session attempt has settled before the late transport closes.
-  await handleCloseStarted.promise;
+  // The session attempt has settled before the late provider owner closes.
+  await providerCloseStarted.promise;
   expect(unregistrations).toEqual([]);
   requests[0]?.();
-  releaseHandleClose.resolve();
+  releaseProviderClose.resolve();
+
+  await expect(running).resolves.toBe(0);
+  expect(serveCalls).toBe(0);
+  expect(providerCloses).toBe(1);
+  expect(unregistrations).toEqual(["shutdown"]);
+  expect(output).toEqual([]);
+  requests[0]?.();
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(providerCloses).toBe(1);
+});
+
+it("closes a transport whose start raced a shutdown request", async () => {
+  const serveStarted = createDeferred<void>();
+  const releaseServe = createDeferred<void>();
+  const requests: Array<() => void> = [];
+  const unregistrations: string[] = [];
+  const output: string[] = [];
+  let handleCloses = 0;
+  const running = run(
+    runtime({
+      serve: async () => {
+        serveStarted.resolve();
+        await releaseServe.promise;
+        return {
+          close: async () => {
+            handleCloses += 1;
+          },
+        };
+      },
+      requests,
+      unregistrations,
+      output,
+    }),
+  );
+
+  await serveStarted.promise;
+  requests[0]?.();
+  releaseServe.resolve();
 
   await expect(running).resolves.toBe(0);
   expect(handleCloses).toBe(1);
   expect(unregistrations).toEqual(["shutdown"]);
   expect(output).toEqual([]);
-  requests[0]?.();
-  await new Promise((resolve) => setImmediate(resolve));
-  expect(handleCloses).toBe(1);
 });
 
 it("reports a failed startup shutdown once and retains its handler for a retry", async () => {

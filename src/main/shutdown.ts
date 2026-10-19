@@ -12,9 +12,12 @@ interface ShutdownCleanupOwner {
   attempted: boolean;
 }
 
-/** Resources the started MCP transport adds to process shutdown. */
+/**
+ * Resources transport startup adds to process shutdown. The handle is absent
+ * when a shutdown request stopped startup before the transport started.
+ */
 export interface McpTransportOwners {
-  readonly handle: McpServerHandle;
+  readonly handle?: McpServerHandle;
   readonly closeAndroid?: () => Promise<void>;
   readonly closeOptionalProviders?: () => Promise<void>;
 }
@@ -96,10 +99,11 @@ export const createShutdown = (input: {
     attachTransport: (owners) => {
       // A transport attached after a request is closed by `finish`.
       if (!requested.signal.aborted) startupSettled = true;
-      prepareShutdown = owners.handle.prepareShutdown;
+      const { handle } = owners;
+      prepareShutdown = handle?.prepareShutdown;
       cleanupOwners.unshift(
         ...[
-          () => owners.handle.close(),
+          handle === undefined ? undefined : () => handle.close(),
           owners.closeAndroid,
           owners.closeOptionalProviders,
         ].flatMap((close) =>

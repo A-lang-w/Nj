@@ -139,8 +139,13 @@ export const run = async (
           loadOptionalObservationProviders(
             createOptionalObservationFactories(environment),
           )),
+      signal: lifecycle.signal,
     });
     if (!transport.ok) {
+      if ("cancelled" in transport) {
+        lifecycle.attachTransport(transport);
+        return lifecycle.finish();
+      }
       await lifecycle.release();
       return 1;
     }
