@@ -35,6 +35,8 @@ export interface ExecutionOptions {
    * supplied it.
    */
   readonly selectorOrigin?: "provider";
+  /** Route to one registered target slot; absent addresses the current slot. */
+  readonly targetId?: string;
 }
 
 /** Closed operations accepted by provider-backed analysis sessions. */

@@ -1,10 +1,10 @@
-import type { BinarySession } from "../application/binary/BinarySession.js";
+import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import type { AppConfig } from "../config/types.js";
 import type { Logger } from "pino";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 
 export const openInitialTarget = async (
-  session: BinarySession,
+  session: BinarySessionPort,
   config: AppConfig,
   serverLogger: Logger,
   writeStderr: (text: string) => void,
@@ -31,3 +31,4 @@ export const openInitialTarget = async (
     writeStderr(`${projectAnalysisError(closed.error).message}\n`);
   return { ok: false, exitCode: 1 };
 };
+

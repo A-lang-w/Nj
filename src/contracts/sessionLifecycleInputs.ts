@@ -19,6 +19,14 @@ const snapshotPathSchema = localPathStringSchema
     "Absolute local filesystem path for the analysis snapshot; relative paths are rejected.",
   );
 
+/** Opaque handle for one open target; never a path or digest. */
+const binaryTargetIdSchema = z
+  .string()
+  .min(1)
+  .describe(
+    "Opaque target handle returned by open_binary. Omit to address the current target.",
+  );
+
 /** Caller-supplied analysis target path; must name the target absolutely. */
 const binaryTargetPathSchema = localPathStringSchema
   .refine(isAbsolute, {
@@ -50,6 +58,12 @@ export const openBinaryInputSchema = z
       ),
     provider_id: analysisProviderSelectorSchema.optional(),
     snapshot_path: snapshotPathSchema.optional(),
+    keep_others_open: z
+      .boolean()
+      .default(false)
+      .describe(
+        "Keep existing open targets and add this one instead of replacing the current target. Default false preserves single-target replacement.",
+      ),
   })
   .superRefine((value, context) => {
     const pairing = rawBinarySelectionError({
@@ -80,4 +94,5 @@ export const openBinaryInputSchema = z
 export const closeBinaryInputSchema = z.strictObject({
   snapshot_path: snapshotPathSchema.optional(),
   overwrite: z.boolean().default(false),
+  target_id: binaryTargetIdSchema.optional(),
 });

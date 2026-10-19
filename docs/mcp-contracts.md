@@ -348,10 +348,28 @@ parent for another invocation.
 ## Identity and discovery
 
 `binary_session` reports the active package, server, SDK, and negotiated
-protocol details. `rea doctor` separately inspects supported JSON/TOML client
-registrations, reports their command vectors as aligned, stale, missing, or
-invalid, and keeps live-server state `unknown` unless the active connection
-supplies identity.
+protocol details. It also reports `target_id` for the addressed target and
+`open_target_ids` for every open target. `rea doctor` separately inspects
+supported JSON/TOML client registrations, reports their command vectors as
+aligned, stale, missing, or invalid, and keeps live-server state `unknown` unless
+the active connection supplies identity.
+
+### Multiple open targets
+
+`open_binary` returns an opaque `target_id`. The default replace behaviour is
+unchanged: opening another target closes the current one. Pass
+`keep_others_open: true` to add a target instead. `REA_MAX_OPEN_TARGETS`
+(default 4) bounds the open slots and refused opens use the `capacity` resource
+constraint. `REA_MAX_CONCURRENT_ANALYSES` (default 2) bounds simultaneous
+starts; additional starts wait in FIFO order.
+
+Every official analysis tool accepts an optional `target_id`. Omit it to address
+the current target, which keeps single-target transcripts compatible. An unknown
+or closed handle returns `target_unavailable` with the open ids, never target
+paths. Each slot keeps its own provider process, lifecycle lock, cancellation
+scope, and analysis snapshot; Evidence records remain session-wide and stay
+bound to each target's digest. `close_binary` accepts `target_id`; without one it
+closes the current target.
 
 `tools/list` returns the complete canonical tool inventory, including tools that
 are currently unavailable. Opening or closing a target or observing a provider
