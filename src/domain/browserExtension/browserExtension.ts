@@ -11,6 +11,8 @@ export const MAX_BROWSER_EXTENSION_FILE_BYTES = 536870912;
 export const MAX_BROWSER_EXTENSION_MANIFEST_BYTES = 8388608;
 /** Hard ceiling on central-directory entries examined before reading the manifest. */
 export const MAX_BROWSER_EXTENSION_ENTRIES = 100000;
+/** Maximum distinct unresolved locale placeholders returned in one manifest. */
+export const MAX_BROWSER_EXTENSION_MESSAGE_KEYS = 64;
 
 /**
  * Read one local browser-extension package without loading it.
@@ -134,7 +136,9 @@ export const browserExtensionSchema = z.strictObject({
     version: z.string().max(128).nullable(),
     description: z.string().max(8192).nullable(),
     default_locale: z.string().max(64).nullable(),
-    message_keys: z.array(z.string().max(256)).max(64),
+    message_keys: z
+      .array(z.string().max(256))
+      .max(MAX_BROWSER_EXTENSION_MESSAGE_KEYS),
     permissions: stringList,
     optional_permissions: stringList,
     host_permissions: stringList,

@@ -346,6 +346,46 @@ describe("parseBrowserExtension", () => {
 });
 
 describe("parseBrowserExtension message placeholders", () => {
+  it.each(["action", "browser_action", "page_action"])(
+    "still validates %s titles after collecting placeholders generically",
+    async (key) => {
+      const raw = manifest({
+        manifest_version: 3,
+        [key]: { default_title: 42 },
+      });
+      await expect(inspect(raw, "/work/manifest.json")).rejects.toMatchObject({
+        code: "format",
+        message: `${key}.default_title is not a string.`,
+      });
+    },
+  );
+
+  it.each([64, 65])(
+    "bounds distinct keys across nested strings at %i",
+    async (count) => {
+      const keys = Array.from(
+        { length: count },
+        (_, index) => `k${String(index)}`,
+      );
+      const raw = manifest({
+        manifest_version: 3,
+        custom_key: keys.map((key) => ({
+          value: `__MSG_${key}__ __MSG_${key}__`,
+        })),
+      });
+      const result = inspect(raw, "/work/manifest.json");
+      if (count === 64)
+        expect((await result).manifest.message_keys).toEqual(keys);
+      else
+        await expect(result).rejects.toMatchObject({
+          code: "limit",
+          resource: "capacity",
+          limit: "fixed",
+          limits: { max_items: 64, observed_items: 65 },
+        });
+    },
+  );
+
   it("collects placeholders from every manifest string", async () => {
     const report = await inspect(
       storedZip(

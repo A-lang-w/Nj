@@ -68,7 +68,9 @@ Observed fields:
 - top-level keys that this projection does not interpret
 
 `__MSG_*__` placeholders in any manifest string are listed in `message_keys` and
-left unresolved. Locale catalogs are not opened.
+left unresolved. Repeated keys count once. More than 64 distinct keys fails the
+inspection with a capacity error rather than returning a partial list. Locale
+catalogs are not opened.
 
 ## Workflow
 

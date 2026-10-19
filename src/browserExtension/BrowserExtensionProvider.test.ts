@@ -117,6 +117,32 @@ describe("BrowserExtensionProvider", () => {
     }
   });
 
+  it("inspects repeated placeholders within the manifest byte budget", async () => {
+    const root = await createTestTempDirectory("rea-browser-extension-repeat-");
+    const path = join(root, "manifest.json");
+    const bytes = Buffer.from(
+      JSON.stringify({
+        manifest_version: 3,
+        custom_key: "__MSG_A__ ".repeat(200000),
+      }),
+    );
+    expect(bytes.length).toBeLessThan(2097152);
+    await writeFile(path, bytes);
+    const service = new BrowserExtensionService(new BrowserExtensionProvider());
+    try {
+      const result = await service.inspect({ path });
+      if (!result.ok) throw result.error;
+      expect(result.value.operation).toBe("inspect_browser_extension");
+      expect(result.value.normalized_result).toMatchObject({
+        format: "unpacked",
+        manifest: { message_keys: ["A"] },
+      });
+      expect(result.value.limitations.join(" ")).toContain("left unresolved");
+    } finally {
+      await service.close();
+    }
+  });
+
   it("reports a truncated ZIP as a format failure, not a file-access failure", async () => {
     const root = await createTestTempDirectory("rea-browser-extension-badzip-");
     const path = join(root, "broken.zip");

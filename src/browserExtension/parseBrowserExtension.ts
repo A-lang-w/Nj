@@ -12,6 +12,7 @@ import { zipArchiveFaultKind } from "../artifacts/ZipArtifactReader.js";
 
 import {
   browserExtensionSchema,
+  MAX_BROWSER_EXTENSION_MESSAGE_KEYS,
   type BrowserExtensionReport,
   type InspectBrowserExtensionInput,
 } from "../domain/browserExtension/browserExtension.js";
@@ -154,27 +155,31 @@ const stringArray = (value: unknown, label: string): string[] => {
   });
 };
 
-const messageKeysIn = (value: string | null): string[] => {
-  if (value === null) return [];
-  return [...value.matchAll(MESSAGE_KEY)].map((match) => match[1] ?? "");
-};
-
-const unique = (values: readonly string[]): string[] => [
-  ...new Set(values.filter((value) => value !== "")),
-];
-
 /**
  * Collect `__MSG_*__` placeholders from every string in the admitted manifest.
- * The manifest byte budget already bounds this walk; iteration avoids recursion
- * limits on deeply nested values and preserves document order for stable output.
+ * The manifest byte budget bounds the iterative walk. Keep only distinct keys
+ * and enforce their contract limit during collection, before allocating a report.
  */
 const messageKeysInManifest = (manifest: Record<string, unknown>): string[] => {
-  const keys: string[] = [];
+  const keys = new Set<string>();
   const queue: unknown[] = Object.values(manifest);
   for (let index = 0; index < queue.length; index += 1) {
     const value = queue[index];
     if (typeof value === "string") {
-      keys.push(...messageKeysIn(value));
+      for (const match of value.matchAll(MESSAGE_KEY)) {
+        const key = match[1];
+        if (key === undefined) continue;
+        keys.add(key);
+        if (keys.size > MAX_BROWSER_EXTENSION_MESSAGE_KEYS)
+          throw limitError(
+            "capacity",
+            `message keys exceeds ${String(MAX_BROWSER_EXTENSION_MESSAGE_KEYS)} entries.`,
+            {
+              max_items: MAX_BROWSER_EXTENSION_MESSAGE_KEYS,
+              observed_items: keys.size,
+            },
+          );
+      }
       continue;
     }
     if (Array.isArray(value)) {
@@ -184,7 +189,7 @@ const messageKeysInManifest = (manifest: Record<string, unknown>): string[] => {
     if (value !== null && typeof value === "object")
       for (const item of Object.values(value)) queue.push(item);
   }
-  return keys;
+  return [...keys];
 };
 
 const boundedList = (
@@ -524,8 +529,9 @@ const actionKeys = (
 ): Array<"action" | "browser_action" | "page_action"> => {
   const keys: Array<"action" | "browser_action" | "page_action"> = [];
   for (const key of ["action", "browser_action", "page_action"] as const) {
-    if (manifest[key] !== undefined) {
-      objectField(manifest[key], key);
+    const record = objectField(manifest[key], key);
+    if (record !== null) {
+      stringField(record.default_title, `${key}.default_title`);
       keys.push(key);
     }
   }
@@ -574,11 +580,7 @@ const projectManifest = (
     version: stringField(manifest.version, "version"),
     description,
     default_locale: stringField(manifest.default_locale, "default_locale"),
-    message_keys: boundedList(
-      unique(messageKeysInManifest(manifest)),
-      64,
-      "message keys",
-    ),
+    message_keys: messageKeysInManifest(manifest),
     permissions: stringArray(manifest.permissions, "permissions"),
     optional_permissions: stringArray(
       manifest.optional_permissions,
