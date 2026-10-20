@@ -13,6 +13,7 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
   inspectKunaInstallation,
   kunaInstallationCancellation,
+  kunaInstallationFailureDiagnostics,
   type KunaReadinessFailure,
 } from "./KunaInstallation.js";
 import {
@@ -73,7 +74,10 @@ export const inspectKunaProvider = async (
           detail: `Kuna installation inspection could not confirm file cleanup: ${cause instanceof Error ? cause.message : String(cause)}`,
           remediation: null,
           classification: "config_drift",
-          details: { cleanup_incomplete: true },
+          details: {
+            cleanup_incomplete: true,
+            ...kunaInstallationFailureDiagnostics(cause),
+          },
         },
       ],
     };
