@@ -148,12 +148,23 @@ mapped architecture as well as path, digest and format, including `null` for
 unrecognized report names. All 213 focused tests pass, including authenticated
 inline/file conflicts and known-alias/unknown-architecture cases.
 
-CI also exposes two existing baseline failures. On unmodified `c374c2fe7`,
+Initial CI also exposed two existing baseline failures. On unmodified `c374c2fe7`,
 `src/cliJsonPaths.test.ts` has the same three URL-message assertion failures.
 The duplication gate is already above its 3.5% threshold: 31,737 / 899,602 lines
 (3.52789%) on baseline versus 31,748 / 900,474 (3.52570%) on the initial PR head.
 These were reproduced separately with the pinned toolchain, bounded resources
 and verified cleanup; this PR leaves those unrelated failures unchanged.
+
+Final qualification rebased onto main `cf5194f68`, preserving its new IL2CPP
+view contract alongside the Go additions. All 258 tests in 12 files pass,
+including 32 IL2CPP view tests and the now-fixed CLI path assertions. Full
+`npm run check`, `npm run docs:check` plus five README tests, and the real SDK
+selected query/full export pass again. Complete parent identity and all 165
+dependencies remain exact. Duplication now passes: baseline 31,644 / 904,778
+lines (3.49743%), PR 31,612 / 905,740 (3.49018%), against 3.5%.
+One latest-main build was guard-stopped during a host-memory dip; its owned
+scope was verified inactive with zero OOM events, then the unchanged guard's
+retry passed. These results qualify the rebased source, not new task timings.
 
 The broader metadata audit also read three real Rust binaries. Alpine ripgrep
 14.1.1-r0's original `.dep-v0` matches native `readelf` coordinates and independent

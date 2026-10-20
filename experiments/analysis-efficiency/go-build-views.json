@@ -1124,5 +1124,40 @@
       "real_sdk_selected_query_full_export": "passed after architecture validation; original parent identity and all165 dependencies preserved",
       "unknown_architecture": "only an unknown/null subject agrees with an unrecognized report architecture"
     }
+  },
+  "latest_main_qualification": {
+    "base": "cf5194f68",
+    "tested_commit": "3b2c7ad410df211a6c3a9574ad5daeafa64a435f",
+    "tested_source_tree": "800c13094784948be29e327e708378b708a6438a",
+    "identity_metadata_rewrite": "Author and committer are gensokyo-dev; source tree verified identical to 20eea6c8e tested tree. No co-author trailers.",
+    "focused_tests": 258,
+    "test_files": 12,
+    "il2cpp_view_tests_included": 32,
+    "readme_consistency_tests": 5,
+    "full_check": "passed",
+    "docs_check": "passed",
+    "real_sdk_selected_query_and_full_export": "passed; original parent identity, complete normalized result and all165 dependencies unchanged",
+    "jscpd_base": {
+      "duplicated_lines": 31644,
+      "lines": 904778,
+      "percentage": 3.49743251935834
+    },
+    "jscpd_pr": {
+      "duplicated_lines": 31612,
+      "lines": 905740,
+      "percentage": 3.4901848212511313
+    },
+    "jscpd_threshold": 3.5,
+    "completed_payloads_and_cleanup_verified": true,
+    "no_observed_oom": true,
+    "failed_build_attempt": {
+      "abort": "host_available_memory_early_stop",
+      "completed": false,
+      "payload_observation_available": false,
+      "owned_scope_verified_inactive_after_stop": true,
+      "observed_oom_events": 0,
+      "unchanged_guard_retry": "passed"
+    },
+    "measurement_scope": "Separate qualification; frozen matched task performance cohorts remain unchanged."
   }
 }
