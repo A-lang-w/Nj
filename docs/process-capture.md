@@ -470,7 +470,9 @@ readable foreign token is not signaled. An unreadable row that has exited by
 the confirmation read does not hide a new row in that confirmation table, and a
 group proven while revalidating another owned group is signaled in the same
 cleanup. A matched row that changes parent or group on the confirmation read
-is token-checked again, and lineage publishes one row for each PID. Confirmation reads are bounded; a table that keeps producing unreadable
+is token-checked again. A PID whose first token was foreign is read again
+on that table, because the PID alone does not identify the process. Lineage
+publishes one row for each PID. Confirmation reads are bounded; a table that keeps producing unreadable
 replacements stays unresolved. That refresh does not retain a ledger
 for a later attempt that never observes the launcher. Lineage reads a row again
 when its parent, group, or launcher-tree membership changes, and it reads a

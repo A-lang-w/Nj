@@ -651,6 +651,53 @@ describe("identityless exit refresh follows a helper that changes groups", () =>
   });
 });
 
+describe("identityless exit refresh re-reads a reused foreign PID", () => {
+  it("token-checks a PID again after a foreign row exits into an owned replacement", async () => {
+    const reused = {
+      ...launcher,
+      pid: 102,
+      parentPid: 1,
+      processGroupId: 102,
+      command: "reused-pid",
+    };
+    const unreadable = {
+      ...launcher,
+      pid: 104,
+      parentPid: 1,
+      processGroupId: 104,
+      command: "unreadable",
+    };
+    let reads = 0;
+    const signalGroup = vi.fn();
+    const environment = vi.fn((pid: number) => {
+      if (pid === 104)
+        return Promise.reject(new Error("environment unavailable"));
+      if (pid !== 102)
+        return Promise.resolve({ REA_PROCESS_RUN_ID: ownership.runId });
+      reads += 1;
+      return Promise.resolve({
+        REA_PROCESS_RUN_ID: reads === 1 ? "other-run" : ownership.runId,
+      });
+    });
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([
+        { ...launcher, command: "[MainThread]" },
+        { ...launcher, pid: 101, parentPid: 100 },
+      ])
+      .mockResolvedValueOnce([reused, unreadable])
+      .mockResolvedValue([reused]);
+    await expect(
+      cleanupOwnedProcessGroup(
+        { ...ownership, expectedCommand: "fixture" },
+        { listProcesses, environment, signalGroup },
+      ),
+    ).resolves.toEqual({ cleaned: true, signaled: true });
+    expect(reads).toBeGreaterThan(1);
+    expect(signalGroup.mock.calls).toEqual([[102, "SIGKILL"]]);
+  });
+});
+
 describe("identityless cleanup revalidates a group that reappears", () => {
   const leader = (pid: number, command = "fixture"): ProcessTableEntry => ({
     ...launcher,

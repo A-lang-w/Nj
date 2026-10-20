@@ -690,32 +690,15 @@ const classifyUnlinkedExitRows = async (
         reason:
           "process ownership could not be revalidated: exit refresh confirmation limit exceeded",
       };
-    // The confirmation read is its own table. A replacement born there is
-    // still unexamined; the exited unreadable row must not hide it. A matched
-    // row that changed parent or group is read again against that table.
+    // The confirmation read is its own table. A PID classified on the previous
+    // table, including a readable foreign token, does not identify the process
+    // now using that PID. Read every newcomer on this table again.
     current = liveRows;
-    const currentByPid = new Map(
-      current.map((process) => [process.pid, process]),
-    );
-    const retained: ProcessTableEntry[] = [];
-    for (const process of matched) {
-      const latest = currentByPid.get(process.pid);
-      if (latest === undefined) continue;
-      if (
-        latest.parentPid !== process.parentPid ||
-        latest.processGroupId !== process.processGroupId
-      ) {
-        inspected.delete(process.pid);
-        continue;
-      }
-      retained.push(latest);
-    }
+    inspected.clear();
     matched.length = 0;
-    matched.push(...retained);
     pending = current.filter(
       (process) =>
         !priorPids.has(process.pid) &&
-        !inspected.has(process.pid) &&
         process.processGroupId !== ownership.processGroupId,
     );
   }
