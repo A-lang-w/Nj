@@ -10,11 +10,14 @@ import type { McpInputSchemaProfile } from "./mcpInputSchemaProfile.js";
 export interface AppConfig {
   readonly mcpMaxResponseBytes?: number;
   readonly mcpInputSchemaProfile?: McpInputSchemaProfile;
+  readonly maxOpenTargets: number;
+  readonly maxConcurrentAnalyses: number;
   readonly analysisProvider: AnalysisProviderSelector;
   readonly idaMcpConfigPath?: string;
   readonly ghidraInstallDir: string | undefined;
   readonly ghidraJavaHome: string | undefined;
   readonly ghidraStartupTimeoutMs: number;
+  readonly ghidraAutoBackgroundAfterMs: number;
   readonly ghidraLanguageOverride?: GhidraLanguageOverride;
   readonly ghidraDisabledAnalyzers?: readonly string[];
   readonly ghidraSeedFile?: string;

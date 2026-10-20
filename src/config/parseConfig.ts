@@ -149,6 +149,8 @@ export const parseConfig = (
     ...(env.REA_MCP_INPUT_SCHEMA_PROFILE === undefined
       ? {}
       : { mcpInputSchemaProfile: env.REA_MCP_INPUT_SCHEMA_PROFILE }),
+    maxOpenTargets: env.REA_MAX_OPEN_TARGETS,
+    maxConcurrentAnalyses: env.REA_MAX_CONCURRENT_ANALYSES,
     analysisProvider: env.REA_ANALYSIS_PROVIDER,
     ...(env.REA_IDA_MCP_CONFIG === undefined
       ? {}
@@ -156,6 +158,7 @@ export const parseConfig = (
     ghidraInstallDir: env.GHIDRA_INSTALL_DIR,
     ghidraJavaHome: env.JAVA_HOME,
     ghidraStartupTimeoutMs: env.REA_GHIDRA_STARTUP_TIMEOUT_MS,
+    ghidraAutoBackgroundAfterMs: env.REA_GHIDRA_AUTO_BACKGROUND_AFTER_MS,
     ...(env.REA_GHIDRA_LANGUAGE_ID === undefined
       ? {}
       : {

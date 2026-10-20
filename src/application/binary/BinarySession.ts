@@ -131,7 +131,7 @@ export class BinarySession
   }
 
   /** Identify the provider producing evidence for this session. */
-  providerIdentity(operation?: AnalysisOperation): ProviderIdentity {
+  providerIdentity(operation?: AnalysisOperation, _targetId?: string): ProviderIdentity {
     const route = this.#currentRoute();
     let selected = route.binding?.identity ?? route.identity;
     if (operation !== undefined) {
@@ -155,7 +155,10 @@ export class BinarySession
   }
 
   /** External live state cannot be replayed by a direct or composed CLI workflow. */
-  allowsSnapshotReplay(operation: AnalysisOperation): boolean {
+  allowsSnapshotReplay(
+    operation: AnalysisOperation,
+    _targetId?: string,
+  ): boolean {
     const capabilities = this.#active?.route.capabilities;
     const descriptor = capabilities?.get(operation);
     if (descriptor !== undefined) return descriptor.cachePolicy !== "live";
@@ -164,13 +167,14 @@ export class BinarySession
     );
   }
 
-  invalidateSnapshotForExternalMutation(): void {
+  invalidateSnapshotForExternalMutation(_targetId?: string): void {
     this.invalidateSnapshot();
   }
 
   /** Return the selected immutable profile, optionally scoped to an operation. */
   analysisProfile(
     operation?: AnalysisOperation,
+    _targetId?: string,
   ): AnalysisProfileCommitment | undefined {
     const profile = this.#active?.profile;
     if (profile === null || profile === undefined) return undefined;
@@ -444,11 +448,33 @@ export class BinarySession
   close(
     options: Pick<ExecutionOptions, "progress"> & {
       readonly retainProviderDocuments?: boolean;
+      readonly targetId?: string;
     } = {},
+  ): Promise<Result<null, AnalysisError>> {
+    return this.closeAsSlot(options, {
+      clearRecords: true,
+      closeOwnedProviderResources: true,
+    });
+  }
+
+  /** Close this slot on behalf of the multi-target registry. */
+  closeAsSlot(
+    options: Pick<ExecutionOptions, "progress"> & {
+      readonly retainProviderDocuments?: boolean;
+      readonly targetId?: string;
+    },
+    behavior: {
+      readonly clearRecords: boolean;
+      readonly closeOwnedProviderResources: boolean;
+    },
   ): Promise<Result<null, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
       await this.#drainCalls(admittedThrough);
-      return this.#closeActive(options);
+      return this.#closeActive(
+        options,
+        behavior.clearRecords,
+        behavior.closeOwnedProviderResources,
+      );
     });
   }
 
@@ -456,7 +482,27 @@ export class BinarySession
   closeWithSnapshot(
     path: string,
     overwrite: boolean,
-    options: Pick<ExecutionOptions, "progress"> = {},
+    options: Pick<ExecutionOptions, "progress"> & {
+      readonly targetId?: string;
+    } = {},
+  ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>> {
+    return this.closeWithSnapshotAsSlot(path, overwrite, options, {
+      clearRecords: true,
+      closeOwnedProviderResources: true,
+    });
+  }
+
+  /** Save a snapshot and close this slot on behalf of the multi-target registry. */
+  closeWithSnapshotAsSlot(
+    path: string,
+    overwrite: boolean,
+    options: Pick<ExecutionOptions, "progress"> & {
+      readonly targetId?: string;
+    },
+    behavior: {
+      readonly clearRecords: boolean;
+      readonly closeOwnedProviderResources: boolean;
+    },
   ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
       await this.#drainCalls(admittedThrough);
@@ -468,7 +514,11 @@ export class BinarySession
         overwrite,
       );
       if (!written.ok) return written;
-      const closed = await this.#closeActive(options);
+      const closed = await this.#closeActive(
+        options,
+        behavior.clearRecords,
+        behavior.closeOwnedProviderResources,
+      );
       return closed.ok
         ? ok({
             ...written.value,
@@ -485,6 +535,7 @@ export class BinarySession
       readonly retainProviderDocuments?: boolean;
     },
     clearRecords = true,
+    closeOwnedProviderResources = true,
   ): Promise<Result<null, AnalysisError>> {
     const previous = this.#active;
     this.#active = undefined;
@@ -505,7 +556,9 @@ export class BinarySession
     if (clearRecords) this.clearSessionRecords();
     this.#clearRuntimeAvailability();
     const fileResources = await this.closeWriteResources();
-    const candidateResources = await this.#providerRouter.closeOwnedResources();
+    const candidateResources = closeOwnedProviderResources
+      ? await this.#providerRouter.closeOwnedResources()
+      : ok(null);
     const resourceFailures = [
       ...(fileResources.ok ? [] : [fileResources.error]),
       ...(candidateResources.ok ? [] : [candidateResources.error]),
@@ -591,7 +644,10 @@ export class BinarySession
   }
 
   /** Describe the active binary session. */
-  status(options: { readonly signal?: AbortSignal } = {}): Promise<JsonValue> {
+  status(options: {
+    readonly signal?: AbortSignal;
+    readonly targetId?: string;
+  } = {}): Promise<JsonValue> {
     const run = this.#active ?? this.#pendingCleanup?.run;
     const client = run?.client;
     return binarySessionStatus({
@@ -612,7 +668,7 @@ export class BinarySession
   }
 
   /** Return the immutable artifact identity captured before its provider started. */
-  activeTarget(): BinaryTarget | undefined {
+  activeTarget(_targetId?: string): BinaryTarget | undefined {
     return this.#active === undefined
       ? undefined
       : structuredClone(this.#active.target);
@@ -642,7 +698,7 @@ export class BinarySession
   executeIfProviderReady(
     name: Parameters<AnalysisOperationPort["execute"]>[0],
     arguments_: Readonly<Record<string, JsonValue>>,
-    options?: Pick<ExecutionOptions, "signal" | "selectorOrigin">,
+    options?: Pick<ExecutionOptions, "signal" | "selectorOrigin" | "targetId">,
   ): Promise<Result<AnalysisExecution, AnalysisError> | undefined> {
     const active = this.#active;
     if (
@@ -675,6 +731,8 @@ export class BinarySession
     operationName: string,
     signal: AbortSignal | undefined,
     operation: (analysis: AnalysisOperationPort) => Promise<Value>,
+    _targetId?: string,
+    _waitMs?: number,
   ): Promise<Result<Value, AnalysisError>> {
     const generation = this.#transitionGeneration;
     const transition = this.#transition;

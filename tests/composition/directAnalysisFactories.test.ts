@@ -8,7 +8,7 @@ import {
 } from "../../src/application/DirectAnalysis.js";
 import type { DirectAnalysisDependencies } from "../../src/application/DirectAnalysisDependencies.js";
 import type { NativeToolName } from "../../src/contracts/native/nativeToolContracts.js";
-import type { BinarySession } from "../../src/application/binary/BinarySession.js";
+import type { BinarySessionPort } from "../../src/application/binary/BinarySessionPort.js";
 import { observed } from "../fixtures/analysisExecution.js";
 import {
   createBinarySessionTargets,
@@ -16,7 +16,7 @@ import {
 } from "../fixtures/binarySession.js";
 
 const recordingFactories = (failure?: Error) => {
-  const sessions: BinarySession[] = [];
+  const sessions: BinarySessionPort[] = [];
   let clientsClosed = 0;
   const createSession = () => {
     const session = createTestBinarySession(() => ({
@@ -197,3 +197,5 @@ describe("one-shot analysis factory boundary", () => {
     },
   );
 });
+
+

@@ -2,7 +2,7 @@ import type { ExecutableFormatHint } from "../domain/dosCom.js";
 import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { DirectAnalysisDependencies } from "./DirectAnalysisDependencies.js";
-import type { BinarySession } from "./binary/BinarySession.js";
+import type { BinarySessionPort } from "./binary/BinarySessionPort.js";
 import type { SessionProviderRoute } from "./binary/SessionProviderRouter.js";
 import type { ResolvedSessionOpen } from "./binary/BinarySessionOpen.js";
 import { silentLogger } from "../logger.js";
@@ -234,7 +234,7 @@ const runAnalysis = async (
     readonly logger: Logger;
     readonly snapshotPath: string | undefined;
     readonly signal: AbortSignal;
-    readonly createSession?: () => BinarySession | Promise<BinarySession>;
+    readonly createSession?: () => BinarySessionPort | Promise<BinarySessionPort>;
     readonly providerId?: AnalysisProviderSelector;
     readonly formatHint?: ExecutableFormatHint;
     readonly architecture?: BinaryArchitecture;
@@ -242,7 +242,7 @@ const runAnalysis = async (
   },
 ): Promise<JsonValue> => {
   const { logger, signal, snapshotPath } = options;
-  let session: BinarySession;
+  let session: BinarySessionPort;
   if (options.createSession !== undefined) {
     session = await options.createSession();
   } else {
@@ -407,7 +407,7 @@ const runAnalysis = async (
 };
 
 const executeAnalysisTool = async (input: {
-  readonly session: BinarySession;
+  readonly session: BinarySessionPort;
   readonly openedTarget: BinaryTarget;
   readonly tool:
     | NativeToolName
@@ -602,7 +602,7 @@ const analysisProfileForRoute = (
   return provider.id === profile.provider.id ? profile : undefined;
 };
 
-/** Mirror BinarySession.providerIdentity for a route not opened yet. */
+/** Mirror BinarySessionPort.providerIdentity for a route not opened yet. */
 const providerIdentityForRoute = (
   route: SessionProviderRoute,
   operation: string,
@@ -610,7 +610,7 @@ const providerIdentityForRoute = (
   route.capabilities?.get(operation)?.provider ?? route.identity;
 
 const analysisProfileForEvidence = (
-  session: BinarySession,
+  session: BinarySessionPort,
   tool:
     | NativeToolName
     | ArtifactAnalysisOperation
@@ -655,3 +655,4 @@ const cliError = (error: AnalysisError): JsonValue => ({
   error: "Analysis failed",
   ...projectAnalysisError(error),
 });
+

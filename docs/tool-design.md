@@ -48,6 +48,12 @@ satisfy. A plan without execution does not establish runtime behavior.
 - Use strict inputs with explicit target identity and required fields. Preserve
   meaningful target, action, capture, and output choices; remove ignored options
   and repeated permission declarations.
+- When one server can hold several targets, return an opaque `target_id` from
+  the open call and accept it only as an optional selector on target-bound
+  tools. Omit means the current target so existing callers stay valid. Validate
+  the handle once at admission, keep it out of provider parameters and display
+  identity, and never expose paths in an unknown-handle error. Evidence remains
+  bound to the target digest, not the routing handle.
 - Return the requested facts inline with artifact/provider identity, source
   locations, Evidence references, coverage, and relevant confidence and
   limitations. Use supported selection, summaries or views when they answer

@@ -22,7 +22,7 @@ import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 /** Optional session services used by direct tool registration. */
 export interface OfficialToolRegistration {
   readonly logger: Logger;
-  readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
+  readonly activeTarget: ((targetId?: string) => BinaryTarget | undefined) | undefined;
   readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
   readonly withAdmittedAnalysis: WithAdmittedAnalysis;
 }
@@ -47,7 +47,7 @@ const registerOfficialTool = (
   contract: (typeof OFFICIAL_TOOL_CONTRACTS)[number],
   registration: {
     readonly logger: Logger;
-    readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
+    readonly activeTarget: ((targetId?: string) => BinaryTarget | undefined) | undefined;
     readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
     readonly withAdmittedAnalysis: WithAdmittedAnalysis;
   },
@@ -56,13 +56,26 @@ const registerOfficialTool = (
     contract.name,
     toolRegistrationOptions(contract),
     async (input: unknown, context: ServerContext) => {
+      const parsedInput = jsonObjectSchema.parse(
+        contract.inputSchema.parse(input),
+      );
+      const targetId =
+        typeof parsedInput.target_id === "string"
+          ? parsedInput.target_id
+          : undefined;
+      const waitMs =
+        typeof parsedInput.wait_ms === "number"
+          ? parsedInput.wait_ms
+          : undefined;
+      const {
+        target_id: _targetId,
+        wait_ms: _waitMs,
+        ...arguments_
+      } = parsedInput;
       const admitted = await registration.withAdmittedAnalysis(
         contract.name,
         context.mcpReq.signal,
         async (admittedAnalysis) => {
-          const arguments_ = jsonObjectSchema.parse(
-            contract.inputSchema.parse(input),
-          );
           const progress = mcpProgressReporter(context);
           const result = await runOfficialOperation(
             admittedAnalysis,
@@ -78,7 +91,10 @@ const registerOfficialTool = (
             return server.delivery.toCallToolResult(result, contract);
           }
           const evidence = createEvidence(
-            result.value.subject ?? registration.activeTarget?.(),
+            result.value.subject ??
+              (targetId === undefined
+                ? registration.activeTarget?.()
+                : registration.activeTarget?.(targetId)),
             result.value.provider,
             {
               operation: contract.name,
@@ -104,6 +120,8 @@ const registerOfficialTool = (
             recorded,
           );
         },
+        targetId,
+        waitMs,
       );
       return admitted.ok
         ? admitted.value
@@ -143,3 +161,4 @@ const runOfficialOperation = async (
   });
   return result;
 };
+
