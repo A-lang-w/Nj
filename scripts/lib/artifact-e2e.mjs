@@ -59,7 +59,11 @@ export async function artifactCliEvidence(
 }
 
 /** Run a real stdio MCP subprocess, owning and closing its transport. */
-export async function withArtifactMcp(target, verify) {
+export async function withArtifactMcp(
+  target,
+  verify,
+  { bundleResources = false } = {},
+) {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [fileURLToPath(new URL("../rea.mjs", import.meta.url)), "mcp"],
@@ -70,7 +74,7 @@ export async function withArtifactMcp(target, verify) {
   try {
     await client.connect(transport);
     const opened = await client.callTool({
-      name: "open_binary",
+      name: bundleResources ? "open_bundle_resources" : "open_binary",
       arguments: { path: target },
     });
     assert.notEqual(opened.isError, true, JSON.stringify(opened));
