@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ProcessOwnershipHost } from "./ProcessOwnership.js";
+import type {
+  ProcessOwnershipHost,
+  ProcessTableEntry,
+} from "./ProcessOwnership.js";
 import { observeOwnedProcessLineage } from "./ProcessOwnershipObservation.js";
 const ownership = {
   runId: "run-token",
@@ -133,7 +136,9 @@ describe("identityless lineage refresh keeps replacement rows", () => {
     };
     const environment = vi.fn((pid: number) => {
       if (pid === 101)
-        return Promise.reject(new Error("process exited during environment read"));
+        return Promise.reject(
+          new Error("process exited during environment read"),
+        );
       return Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" });
     });
     const listProcesses = vi
@@ -185,7 +190,9 @@ describe("identityless lineage refresh keeps replacement rows", () => {
         listProcesses,
         environment: (pid) =>
           pid === 101
-            ? Promise.reject(new Error("process exited during environment read"))
+            ? Promise.reject(
+                new Error("process exited during environment read"),
+              )
             : Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" }),
         signalGroup: vi.fn(),
       }),
@@ -195,6 +202,81 @@ describe("identityless lineage refresh keeps replacement rows", () => {
         descendants: [{ pid: 102, parentPid: 100, processGroupId: 102 }],
       },
     });
+  });
+});
+
+describe("identityless lineage refresh ignores the prior process table", () => {
+  const row = (
+    pid: number,
+    parentPid: number,
+    processGroupId = pid,
+  ): ProcessTableEntry => ({
+    pid,
+    parentPid,
+    processGroupId,
+    state: "S",
+    command: `pid-${String(pid)}`,
+  });
+
+  it("does not token-read a pre-existing row when a descendant exits", async () => {
+    const environment = vi.fn((pid: number) =>
+      pid === 101
+        ? Promise.reject(new Error("process exited during environment read"))
+        : pid === 50
+          ? Promise.reject(new Error("unreadable pre-existing process"))
+          : Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" }),
+    );
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([row(100, 1, 100), row(101, 100, 100), row(50, 1)])
+      .mockResolvedValue([row(100, 1, 100), row(50, 1)]);
+    await expect(
+      observeOwnedProcessLineage(ownership, {
+        listProcesses,
+        environment,
+        signalGroup: vi.fn(),
+      }),
+    ).resolves.toMatchObject({
+      status: "verified",
+      lineage: { descendants: [] },
+    });
+    expect(environment.mock.calls.map(([pid]) => pid)).not.toContain(50);
+  });
+
+  it("re-reads a refresh row after it moves under the launcher", async () => {
+    let replacementReads = 0;
+    const environment = vi.fn((pid: number) => {
+      if (pid === 101 || pid === 103)
+        return Promise.reject(
+          new Error("process exited during environment read"),
+        );
+      if (pid !== 102)
+        return Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" });
+      replacementReads += 1;
+      return Promise.resolve(
+        replacementReads === 1 ? {} : { REA_PROCESS_RUN_ID: "run-token" },
+      );
+    });
+    const outside = row(102, 1, 102);
+    const joined = row(102, 100, 102);
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([row(100, 1, 100), row(101, 100), row(103, 100)])
+      .mockResolvedValueOnce([row(100, 1, 100), row(103, 100), outside])
+      .mockResolvedValue([row(100, 1, 100), joined]);
+    await expect(
+      observeOwnedProcessLineage(ownership, {
+        listProcesses,
+        environment,
+        signalGroup: vi.fn(),
+      }),
+    ).resolves.toMatchObject({
+      status: "verified",
+      lineage: {
+        descendants: [{ pid: 102, parentPid: 100, processGroupId: 102 }],
+      },
+    });
+    expect(replacementReads).toBe(2);
   });
 });
 

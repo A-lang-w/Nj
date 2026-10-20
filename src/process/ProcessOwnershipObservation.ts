@@ -239,11 +239,11 @@ export const observeOwnedProcessLineage = async (
     return unavailableLineage(ownership, identityFailure);
   const descendants = descendantsOf([launcher.pid], processes);
   const verifiedDescendants: ProcessTableEntry[] = [];
-  const originalPids = new Set([
-    launcher.pid,
-    ...descendants.map(({ pid }) => pid),
-  ]);
-  const examinedRefreshPids = new Set<number>();
+  // Every initial row is already accounted for. Only PIDs absent from that
+  // snapshot are refresh newcomers; a later parent or group change is re-read.
+  const originalPids = new Set(processes.map(({ pid }) => pid));
+  const examinedRefresh = new Map<number, ExaminedLineageRefresh>();
+  let refreshDescendants: readonly ProcessTableEntry[] = [];
   for await (const { process: member, observation } of readProcessRunTokens(
     host,
     [launcher, ...descendants],
@@ -282,11 +282,11 @@ export const observeOwnedProcessLineage = async (
         originalPids,
         refreshed,
         host,
-        examinedRefreshPids,
+        examinedRefresh,
       );
       if (classified.status === "unavailable")
         return unavailableLineage(ownership, classified.reason);
-      verifiedDescendants.push(...classified.descendants);
+      refreshDescendants = classified.descendants;
     }
   }
   return {
@@ -297,7 +297,7 @@ export const observeOwnedProcessLineage = async (
       launcherPid: launcher.pid,
       launcherParentPid: launcher.parentPid,
       processGroupId: launcher.processGroupId,
-      descendants: verifiedDescendants
+      descendants: [...verifiedDescendants, ...refreshDescendants]
         .sort((left, right) => left.pid - right.pid)
         .map(({ pid, parentPid, processGroupId }) => ({
           pid,
@@ -455,11 +455,19 @@ const observeNativeOwnedProcessLineage = async (
   };
 };
 
+/** Relation already classified for one refresh-only PID. */
+interface ExaminedLineageRefresh {
+  readonly parentPid: number;
+  readonly processGroupId: number;
+  readonly descendant: ProcessTableEntry | undefined;
+}
+
 /**
  * A liveness refresh is a process table, not a boolean. New rows still under
  * the launcher join the published lineage after a matching token. A matching
  * token outside that tree, or an unreadable live row, blocks a verified result.
- * A readable foreign token outside the tree is not part of this run.
+ * A readable foreign token outside the tree is not part of this run. A row is
+ * read again when its parent or process group changes.
  */
 const classifyIdentitylessLineageRefresh = async (
   ownership: OwnedProcessGroup,
@@ -467,7 +475,7 @@ const classifyIdentitylessLineageRefresh = async (
   originalPids: ReadonlySet<number>,
   refreshed: readonly ProcessTableEntry[],
   host: ProcessOwnershipHost,
-  examined: Set<number>,
+  examined: Map<number, ExaminedLineageRefresh>,
 ): Promise<
   | {
       readonly status: "classified";
@@ -475,45 +483,64 @@ const classifyIdentitylessLineageRefresh = async (
     }
   | { readonly status: "unavailable"; readonly reason: string }
 > => {
-  const newcomers = refreshed.filter(
-    (process) => !originalPids.has(process.pid) && !examined.has(process.pid),
-  );
-  for (const process of newcomers) examined.add(process.pid);
-  if (newcomers.length === 0)
-    return { status: "classified", descendants: [] };
-  const inTree = new Set(
-    descendantsOf([launcherPid], refreshed).map(({ pid }) => pid),
-  );
-  const included: ProcessTableEntry[] = [];
-  const ownedOutside: number[] = [];
-  for await (const { process, observation } of readProcessRunTokens(
-    host,
-    newcomers,
-  )) {
-    if (observation.state !== "readable")
-      return {
-        status: "unavailable",
-        reason: `process ownership could not be revalidated for PID ${String(process.pid)}: ${observation.reason}`,
-      };
-    if (observation.runId !== ownership.runId) {
-      if (inTree.has(process.pid))
+  const due = refreshed.filter((process) => {
+    if (originalPids.has(process.pid)) return false;
+    const previous = examined.get(process.pid);
+    return (
+      previous === undefined ||
+      previous.parentPid !== process.parentPid ||
+      previous.processGroupId !== process.processGroupId
+    );
+  });
+  if (due.length > 0) {
+    const inTree = new Set(
+      descendantsOf([launcherPid], refreshed).map(({ pid }) => pid),
+    );
+    const included = new Map<number, ProcessTableEntry>();
+    const ownedOutside: number[] = [];
+    for await (const { process, observation } of readProcessRunTokens(
+      host,
+      due,
+    )) {
+      if (observation.state !== "readable")
         return {
           status: "unavailable",
-          reason: "process lineage contains an unowned or PID-reused process",
+          reason: `process ownership could not be revalidated for PID ${String(process.pid)}: ${observation.reason}`,
         };
-      continue;
+      if (observation.runId !== ownership.runId) {
+        if (inTree.has(process.pid))
+          return {
+            status: "unavailable",
+            reason: "process lineage contains an unowned or PID-reused process",
+          };
+        continue;
+      }
+      if (inTree.has(process.pid)) included.set(process.pid, process);
+      else ownedOutside.push(process.pid);
     }
-    if (inTree.has(process.pid)) included.push(process);
-    else ownedOutside.push(process.pid);
+    if (ownedOutside.length > 0)
+      return {
+        status: "unavailable",
+        reason: `process lineage refresh contained owned PID(s) outside the observed descendants: ${ownedOutside
+          .sort((left, right) => left - right)
+          .join(", ")}`,
+      };
+    for (const process of due)
+      examined.set(process.pid, {
+        parentPid: process.parentPid,
+        processGroupId: process.processGroupId,
+        descendant: included.get(process.pid),
+      });
   }
-  if (ownedOutside.length > 0)
-    return {
-      status: "unavailable",
-      reason: `process lineage refresh contained owned PID(s) outside the observed descendants: ${ownedOutside
-        .sort((left, right) => left - right)
-        .join(", ")}`,
-    };
-  return { status: "classified", descendants: included };
+  const livePids = new Set(refreshed.map(({ pid }) => pid));
+  for (const pid of examined.keys())
+    if (!livePids.has(pid)) examined.delete(pid);
+  return {
+    status: "classified",
+    descendants: [...examined.values()].flatMap((entry) =>
+      entry.descendant === undefined ? [] : [entry.descendant],
+    ),
+  };
 };
 
 const processWithNativeRelation = (
