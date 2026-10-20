@@ -100,16 +100,8 @@ try {
       });
       if (expectedError) {
         assert.equal(reply.isError, true, mcpTextValue(reply));
-        let schemaRejected = false;
-        try {
-          value = JSON.parse(mcpTextValue(reply));
-        } catch {
-          assert.equal(validate.validate(inputSchema, input), false);
-          assert.match(mcpTextValue(reply), /^Input validation\b/u);
-          schemaRejected = true;
-          value = { validation_error: mcpTextValue(reply) };
-        }
-        if (!schemaRejected) assertTypedFailure(value.error, expectedCategory);
+        value = JSON.parse(mcpTextValue(reply));
+        assertTypedFailure(value.error, expectedCategory);
         cases++;
         return value;
       }
@@ -765,7 +757,12 @@ try {
     arguments: invalidRawInput,
   });
   assert.equal(rawRejection.isError, true);
-  assert.match(mcpTextValue(rawRejection), /^Input validation\b/u);
+  const rawFailure = JSON.parse(mcpTextValue(rawRejection)).error;
+  assertTypedFailure(rawFailure, "invalid_input");
+  assert.deepEqual(rawFailure.recovery, {
+    kind: "inspect_input_contract",
+    operation: "inspect_evm_interface",
+  });
   cases++;
   const summary = await inspect("mcp", linkedPath, "solc-json", {
     selection,

@@ -1,4 +1,10 @@
 import {
+  projectNativeFunctionMatchingView,
+  nativeFunctionMatchingViewRequestSchema,
+  nativeFunctionMatchingViewItemsSchema,
+  nativeFunctionMatchingViewContextSchema,
+} from "./nativeFunctionMatchingView.js";
+import {
   protobufViewRequestSchema,
   protobufViewItemsSchema,
   protobufViewContextSchema,
@@ -14,9 +20,8 @@ import {
   NATIVE_INVENTORY_OPERATIONS,
   nativeInventoryOperationSchema,
 } from "../native/nativeInventory.js";
-import { isAbsolute } from "node:path";
 
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { z } from "zod";
 import {
   desktopViewRequestSchema,
@@ -243,6 +248,7 @@ const nativeViewSchema = z.strictObject({
 
 /** Caller-selected projection of already completed analysis Evidence. */
 export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
+  nativeFunctionMatchingViewRequestSchema,
   summaryViewSchema,
   desktopViewRequestSchema,
   facetViewSchema,
@@ -290,14 +296,9 @@ export const analysisViewSourceSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({
     kind: z.literal("evidence-file"),
-    path: localPathStringSchema
-      .refine(isAbsolute, {
-        message:
-          "path must be an absolute local filesystem path (for example /tmp/capture.json or C:\\rea\\capture.json)",
-      })
-      .describe(
-        "Absolute local path of one completed Evidence JSON file. REA reads and authenticates it, then projects it like retained Evidence, so large captures are not charged as inline input.",
-      ),
+    path: absoluteLocalPathStringSchema.describe(
+      "Absolute local path of one completed Evidence JSON file. REA reads and authenticates it, then projects it like retained Evidence, so large captures are not charged as inline input.",
+    ),
   }),
 ]);
 
@@ -386,6 +387,7 @@ const viewResultBase = {
     "inspect_dart_aot",
     "inspect_il2cpp_metadata",
     ...NATIVE_INVENTORY_OPERATIONS,
+    "match_native_functions",
   ]),
   parent_digest: digestSchema,
   view_digest: digestSchema,
@@ -533,8 +535,25 @@ export const nativeInventorySummaryViewResultSchema = z.strictObject({
   summary: nativeInventorySummarySchema,
 });
 
+/** Compact native matching discovery retains the complete matching report. */
+export const nativeFunctionMatchingSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  artifact: z.null(),
+  parent_operation: z.literal("match_native_functions"),
+  summary: nativeFunctionMatchingViewContextSchema,
+});
+
 /** Projected facts for one selected view of retained analysis Evidence. */
 export const analysisViewResultSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    ...viewResultBase,
+    ...nativeFunctionMatchingViewContextSchema.shape,
+    kind: z.literal("function-matches"),
+    artifact: z.null(),
+    view: nativeFunctionMatchingViewRequestSchema,
+    items: nativeFunctionMatchingViewItemsSchema,
+    parent_operation: z.literal("match_native_functions"),
+  }),
   z.strictObject({
     ...viewResultBase,
     ...apiSurfaceFields,
@@ -583,6 +602,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     dartAotSummaryViewResultSchema,
     il2cppMetadataSummaryViewResultSchema,
     nativeInventorySummaryViewResultSchema,
+    nativeFunctionMatchingSummaryViewResultSchema,
   ]),
   z.strictObject({
     ...viewResultBase,
@@ -853,6 +873,7 @@ const retainedViewProjectors = new Map<string, typeof projectWasmArtifactView>([
   ["inspect_android_package", projectAndroidPackageView],
   ["inspect_dart_aot", projectDartAotView],
   ["inspect_il2cpp_metadata", projectIl2cppMetadataView],
+  ["match_native_functions", projectNativeFunctionMatchingView],
   ["inspect_artifact", projectArtifactInventoryView],
   ["inventory_artifact", projectArtifactInventoryView],
 ]);
