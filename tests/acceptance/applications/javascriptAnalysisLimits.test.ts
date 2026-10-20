@@ -53,6 +53,7 @@ cliTest.for(cases)(
     expect(response.exitCode, response.stdout + response.stderr).toBe(0);
     const evidence = parseEvidence(response.json);
     expect(evidence.parameters).toEqual({
+      input_path: root,
       format: "auto",
       integrity_policy: "fail",
       ...controls,
@@ -81,6 +82,7 @@ it("preserves MCP analysis limits in retained Evidence and an exported bundle ro
       })
       .parse(response.structuredContent).normalized_result;
     expected.set(parent_evidence_id, {
+      input_path: root,
       format: "auto",
       integrity_policy: "fail",
       ...controls,
@@ -162,13 +164,25 @@ cliTest(
       },
     });
     expect(parseMcpToolError(response)).toMatchObject({
-      error: { code: "provider_timeout" },
+      error: {
+        code: "provider_timeout",
+        message: expect.stringContaining("server/provider deadline"),
+        remediation: {
+          action: expect.stringContaining("MCP client"),
+        },
+        recovery: {
+          kind: "inspect_timeout_state",
+          operation: "analyze_javascript_application",
+          timeout_ms: 1,
+        },
+      },
     });
     const bundle = await getBundle(client);
     const partial = bundle.records.find(
       (record) => record.operation === "analyze_javascript_application",
     );
     expect(partial?.parameters).toEqual({
+      input_path: root,
       format: "auto",
       integrity_policy: "fail",
       max_heap_mb: 128,
