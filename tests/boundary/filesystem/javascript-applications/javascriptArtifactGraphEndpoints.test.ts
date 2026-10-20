@@ -682,6 +682,96 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "r64-0.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");try{new connect()}catch{}const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r64-1.js",
+    source:
+      'async function connect(){new Socket("wss://example.test/review-latest")}try{new connect()}catch{}const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r64-2.js",
+    source:
+      'function* connect(){new Socket("wss://example.test/review-latest")}try{new connect()}catch{}const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r64-3.js",
+    source:
+      'function connect(){new Socket("wss://example.test/review-latest")}try{new connect()}catch{}const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r64-4.js",
+    source:
+      'const connect=(()=>new Socket("wss://example.test/review-latest")).bind(null);try{new connect()}catch{}const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r64-5.js",
+    source:
+      'const connect=(function(){new Socket("wss://example.test/review-latest")}).bind(null);try{new connect()}catch{}const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r64-6.js",
+    source:
+      'function connect(){new Socket("wss://example.test/review-latest")}try{new connect.call(null)}catch{}const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r64-7.js",
+    source:
+      'function connect(){new Socket("wss://example.test/review-latest")}try{new connect.apply(null,[])}catch{}const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r64-8.js",
+    source:
+      'try{new (()=>new Socket("wss://example.test/review-latest"))()}catch{}const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r64-9.js",
+    source:
+      'try{new (function(){new Socket("wss://example.test/review-latest")}).call(null)}catch{}const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r64-10.js",
+    source:
+      'const invoke=run=>{try{new run()}catch{}};invoke(()=>new Socket("wss://example.test/review-latest"));const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r64-11.js",
+    source:
+      "export {};Object.prototype.with=null;const{WebSocket:Socket}=await import('ws',{set with(value){}});new Socket(\"wss://example.test/review-latest\");",
+    present: true,
+  },
+  {
+    file: "r64-12.js",
+    source:
+      "export {};Object.prototype.with=null;const options={with:null,set with(value){}};const{WebSocket:Socket}=await import('ws',options);new Socket(\"wss://example.test/review-latest\");",
+    present: true,
+  },
+  {
+    file: "r64-13.js",
+    source:
+      "export {};const{WebSocket:Socket}=await import('ws',{get with(){return null},set with(value){}});new Socket(\"wss://example.test/review-latest\");",
+    present: false,
+  },
+  {
+    file: "r64-14.js",
+    source:
+      "export {};const{WebSocket:Socket}=await import('ws',{set with(value){},with:null});new Socket(\"wss://example.test/review-latest\");",
+    present: false,
+  },
+  {
     file: "r63-extra-0.js",
     source:
       'const connect=()=>new Socket("wss://example.test/review-latest");try{connect(...null)}catch{}const Socket=globalThis.WebSocket;connect();',

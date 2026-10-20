@@ -5,7 +5,7 @@ import { semanticMemberChain } from "./javascriptSemanticRequireOrigin.js";
 import {
   unwrapJavaScriptExpression,
   readExactJavaScriptNormalResult,
-  semanticFinalObjectMember,
+  semanticFinalObjectSlot,
   semanticStaticPropertyKey,
   semanticDirectFunctionResult,
 } from "./javascriptAstValues.js";
@@ -121,9 +121,13 @@ const importOptionsCanComplete = (
     !importOptionOwnKeysStable(node, capture, state)
   )
     return false;
-  const attributes = t.isObjectExpression(node)
-    ? semanticFinalObjectMember(node, "with")
+  const slot = t.isObjectExpression(node)
+    ? semanticFinalObjectSlot(node, "with")
     : undefined;
+  // A setter-only own descriptor reads as undefined and shadows prototypes.
+  if (slot?.kind === "undefined") return true;
+  if (slot?.kind === "unknown") return false;
+  const attributes = slot?.kind === "member" ? slot.node : undefined;
   if (attributes !== undefined) {
     // Get(options, "with") invokes an own getter before validating attributes.
     // Only a direct normal result is evidence; arbitrary getter bodies stay unknown.

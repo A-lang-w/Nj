@@ -4770,6 +4770,81 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "arrow cannot be constructed",
+    "const connect=()=>new Socket(URL);try{new connect()}catch{}const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "async function cannot be constructed",
+    "async function connect(){new Socket(URL)}try{new connect()}catch{}const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "generator cannot be constructed",
+    "function* connect(){new Socket(URL)}try{new connect()}catch{}const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "ordinary function construction enters body",
+    "function connect(){new Socket(URL)}try{new connect()}catch{}const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "bound arrow cannot be constructed",
+    "const connect=(()=>new Socket(URL)).bind(null);try{new connect()}catch{}const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "bound ordinary function construction enters body",
+    "const connect=(function(){new Socket(URL)}).bind(null);try{new connect()}catch{}const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "call helper cannot be constructed",
+    "function connect(){new Socket(URL)}try{new connect.call(null)}catch{}const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "apply helper cannot be constructed",
+    "function connect(){new Socket(URL)}try{new connect.apply(null,[])}catch{}const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "literal arrow cannot be constructed",
+    "try{new (()=>new Socket(URL))()}catch{}const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "literal call helper cannot be constructed",
+    "try{new (function(){new Socket(URL)}).call(null)}catch{}const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "callback parameter arrow cannot be constructed",
+    "const invoke=run=>{try{new run()}catch{}};invoke(()=>new Socket(URL));const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "setter-only import option shadows inherited value",
+    "export {};Object.prototype.with=null;const{WebSocket:Socket}=await import('ws',{set with(value){}});new Socket(URL);",
+    true,
+  ],
+  [
+    "setter-only alias import option shadows inherited value",
+    "export {};Object.prototype.with=null;const options={with:null,set with(value){}};const{WebSocket:Socket}=await import('ws',options);new Socket(URL);",
+    true,
+  ],
+  [
+    "paired getter remains effective",
+    "export {};const{WebSocket:Socket}=await import('ws',{get with(){return null},set with(value){}});new Socket(URL);",
+    false,
+  ],
+  [
+    "later data replaces setter-only option",
+    "export {};const{WebSocket:Socket}=await import('ws',{set with(value){},with:null});new Socket(URL);",
+    false,
+  ],
+  [
     "failed argument spread does not activate stored body",
     "const connect=()=>new Socket(URL);try{connect(...null)}catch{}const Socket=globalThis.WebSocket;connect();",
     true,

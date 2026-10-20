@@ -20,6 +20,7 @@ import {
   semanticFinalClassMember,
   semanticStaticPropertyKey,
   javaScriptClassField,
+  javaScriptFunctionCanConstruct,
   semanticDirectFunctionReturn,
   semanticValueIsRead,
   semanticValueWriteSite,
@@ -356,6 +357,8 @@ const webSocketStoredCallTarget = (
     );
     if (method === "bind") return undefined;
     if (method === "call" || method === "apply") {
+      // A constructor selection of the built-in helper never enters its receiver.
+      if (t.isNewExpression(capture)) return undefined;
       if (
         !webSocketInvocationHelperIntact(
           current.object,
@@ -402,7 +405,11 @@ const webSocketStoredCallTarget = (
         continue;
       }
     }
-    return value;
+    return t.isNewExpression(capture) &&
+      (t.isFunction(value) || t.isClass(value)) &&
+      !javaScriptFunctionCanConstruct(value)
+      ? undefined
+      : value;
   }
   return undefined;
 };
@@ -533,6 +540,8 @@ const webSocketStoredCalls = (
             ? (parameters.get(binding.bindingId) ?? [])
             : [];
       for (const fn of new Set(functions)) {
+        if (t.isNewExpression(call) && !javaScriptFunctionCanConstruct(fn))
+          continue;
         calls.set(fn, [...(calls.get(fn) ?? []), call]);
         candidates.push({ fn, call });
       }
@@ -615,6 +624,7 @@ const webSocketImmediateInvocation = (
       binds = member === "bind";
       callee = webSocketOuterExpression(invocation, state);
       invocation = state.parentsByNode.get(callee);
+      if (t.isNewExpression(invocation)) return undefined;
       if (
         t.isFunction(node) &&
         (t.isCallExpression(invocation) ||
@@ -643,7 +653,9 @@ const webSocketImmediateInvocation = (
       const stored = webSocketStoredCalls(node, state);
       return stored.length === 1 ? stored[0] : undefined;
     }
-    if (!binds || t.isNewExpression(invocation))
+    if (t.isNewExpression(invocation) && !javaScriptFunctionCanConstruct(node))
+      return undefined;
+    if (!binds)
       return syntaxEvaluationAlwaysThrows(invocation) ? undefined : invocation;
     callee = webSocketOuterExpression(invocation, state);
   }

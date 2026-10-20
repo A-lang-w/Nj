@@ -11,6 +11,15 @@ export const javaScriptClassField = (
   t.isClassPrivateProperty(node) ||
   t.isClassAccessorProperty(node);
 
+/** Only ordinary functions and classes have a syntactic [[Construct]] body. */
+export const javaScriptFunctionCanConstruct = (
+  node: t.Function | t.Class,
+): boolean =>
+  t.isClass(node) ||
+  ((t.isFunctionDeclaration(node) || t.isFunctionExpression(node)) &&
+    !node.async &&
+    !node.generator);
+
 /** TypeScript receiver annotations occupy no positional runtime parameter slot. */
 export const runtimeFunctionParameters = (
   node: t.Function,
