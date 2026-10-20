@@ -1,8 +1,15 @@
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import type { PeResourcesPort } from "../../application/binaryDiagnostics/PeResourcesPort.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
-import type { InspectPeResourcesInput } from "../../domain/native/peResources.js";
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  MAX_INSPECT_PE_DIRECTORY_ENTRIES,
+  MAX_INSPECT_PE_FILE_BYTES,
+  type InspectPeResourcesInput,
+} from "../../domain/native/peResources.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok } from "../../domain/result.js";
 import { PE_RESOURCES_PROVIDER } from "../../application/InvestigationProviders.js";
 import { stableFileFailure } from "../stableFileFailure.js";
@@ -13,33 +20,49 @@ export class PeResourcesProvider implements PeResourcesPort {
   readonly identity = PE_RESOURCES_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  close(): Promise<void> {
-    return this.#resources.close();
+  async close(): Promise<void> {
+    try {
+      await this.#resources.close();
+    } catch (cause: unknown) {
+      if (
+        !(cause instanceof ArtifactReaderFailure) ||
+        cause.cleanup === undefined
+      )
+        throw cause;
+      const error = new ProviderCleanupError(
+        PE_RESOURCES_PROVIDER.id,
+        cause.cleanup.resources,
+        { reason: cause.cleanup.reason },
+        { cause, operation: "inspect_pe_resources" },
+      );
+      bindArtifactFileCleanup(cause, error);
+      throw error;
+    }
   }
 
   async inspect(input: InspectPeResourcesInput, options?: ExecutionOptions) {
     try {
-      const snapshot = await this.#resources.run(() =>
-        readStableArtifact(
+      return await this.#resources.run(async () => {
+        const snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
           undefined,
           this.#resources,
-        ),
-      );
-      return ok(
-        await parsePeResources(
-          snapshot.bytes,
-          {
-            path: input.path,
-            sha256: snapshot.sha256,
-            bytes: snapshot.bytes.length,
-          },
-          input,
-          options?.signal,
-        ),
-      );
+        );
+        return ok(
+          await parsePeResources(
+            snapshot.bytes,
+            {
+              path: input.path,
+              sha256: snapshot.sha256,
+              bytes: snapshot.bytes.length,
+            },
+            input,
+            options?.signal,
+          ),
+        );
+      });
     } catch (cause) {
       return err(
         stableFileFailure(
@@ -53,6 +76,8 @@ export class PeResourcesProvider implements PeResourcesPort {
               max_entries: input.max_entries,
             },
             subject: "PE image",
+            budgetRemediation: (boundary) =>
+              inputBudgetRemediation(boundary, input),
           },
           options?.signal,
         ),
@@ -60,3 +85,20 @@ export class PeResourcesProvider implements PeResourcesPort {
     }
   }
 }
+
+/**
+ * Remediation for a caller-selected budget refusal. At the schema ceiling
+ * there is no value left to raise the bound to, so the advice names the
+ * ceiling instead of an impossible raise.
+ */
+export const inputBudgetRemediation = (
+  boundary: "file-size" | "capacity",
+  input: InspectPeResourcesInput,
+): string =>
+  boundary === "file-size"
+    ? input.max_file_bytes >= MAX_INSPECT_PE_FILE_BYTES
+      ? `The image exceeds the ${String(MAX_INSPECT_PE_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
+      : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`
+    : input.max_entries >= MAX_INSPECT_PE_DIRECTORY_ENTRIES
+      ? `The image exceeds the ${String(MAX_INSPECT_PE_DIRECTORY_ENTRIES)}-entry resource-directory ceiling this operation accepts; select a smaller artifact.`
+      : `Raise max_entries above ${String(input.max_entries)} or select a smaller artifact; the limit is the caller-selected resource directory entry budget.`;

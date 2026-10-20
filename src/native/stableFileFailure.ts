@@ -1,4 +1,9 @@
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  ArtifactFileCleanupFailure,
+  artifactFileCancellationCause,
+  bindArtifactFileCleanup,
+} from "../artifacts/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import {
@@ -19,12 +24,16 @@ export interface StableFileOperation {
   readonly limits: Readonly<Record<string, number>>;
   /** Format noun used in read failures, for example "PE image". */
   readonly subject: string;
+  /**
+   * Remediation for a deterministic caller-selected budget refusal
+   * (file-size or capacity). Such refusals are reported as non-retryable.
+   */
+  readonly budgetRemediation?: (boundary: "file-size" | "capacity") => string;
 }
 
 const stableFileFailurePrimary = (
   cause: unknown,
   target: StableFileOperation,
-  signal: AbortSignal | undefined,
 ): AnalysisError => {
   const { operation } = target;
   if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
@@ -35,18 +44,35 @@ const stableFileFailurePrimary = (
       { cause },
     );
   if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-    return new AnalysisCancelledError(operation, { cause });
-  if (signal?.aborted) return new AnalysisCancelledError(operation, { cause });
+    return new AnalysisCancelledError(operation, {
+      cause: artifactFileCancellationCause(cause),
+    });
 
   if (cause instanceof ArtifactReaderFailure) {
-    if (cause.reason === "limit")
+    // An input byte budget is a file-size bound, not a memory constraint, and
+    // an entry budget is a capacity bound. Report what was actually exceeded.
+    if (cause.reason === "limit") {
+      const boundary = cause.boundary;
       return new AnalysisResourceConstraintError(
         operation,
-        "memory",
+        boundary ?? "memory",
         cause.message,
         target.limits,
-        { cause },
+        {
+          cause,
+          // Caller-selected bounds are deterministic for the same input, so
+          // waiting for an active analysis cannot help.
+          ...(boundary === undefined || boundary === "memory"
+            ? {}
+            : {
+                retryable: false,
+                ...(target.budgetRemediation === undefined
+                  ? {}
+                  : { remediationAction: target.budgetRemediation(boundary) }),
+              }),
+        },
       );
+    }
     if (cause.reason === "path" || cause.reason === "format")
       return new AnalysisInputError(operation, { cause }, [
         {
@@ -89,7 +115,15 @@ export const stableFileFailure = (
   target: StableFileOperation,
   signal: AbortSignal | undefined,
 ): AnalysisError => {
-  const primary = stableFileFailurePrimary(cause, target, signal);
+  const primary =
+    cause instanceof ArtifactFileCleanupFailure &&
+    cause.fileCleanupFailure.outcome.kind === "failed"
+      ? stableFileFailurePrimary(cause.fileCleanupFailure.outcome.cause, target)
+      : cause instanceof ArtifactFileCleanupFailure && signal?.aborted
+        ? new AnalysisCancelledError(target.operation, {
+            cause: signal.reason,
+          })
+        : stableFileFailurePrimary(cause, target);
   if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
     return primary;
   const cleanup = new ProviderCleanupError(
@@ -98,5 +132,11 @@ export const stableFileFailure = (
     { reason: cause.cleanup.reason },
     { operation: target.operation, cause },
   );
-  return analysisErrorWithCleanupFailure(primary, cleanup, target.operation);
+  const error = analysisErrorWithCleanupFailure(
+    primary,
+    cleanup,
+    target.operation,
+  );
+  bindArtifactFileCleanup(cause, error);
+  return error;
 };
