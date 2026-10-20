@@ -385,7 +385,7 @@ const selectedInputResolutionMessage = (
 ): string =>
   code === "ENAMETOOLONG"
     ? `Selected input path exceeds the host filename length limit (ENAMETOOLONG): ${inputPath}`
-    : `Selected input path contains a symbolic-link loop (ELOOP): ${inputPath}`;
+    : `Selected input path could not be resolved because symbolic-link traversal looped or exceeded the host limit (ELOOP): ${inputPath}`;
 
 /** The selected input's kind, checked against the caller's requested format. */
 const resolveFormat = async (
