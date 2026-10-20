@@ -100,6 +100,10 @@ explicit path or endpoint and do not need it.
   than extra calls and schemas. Runtime options are metadata, not files.
   Compact delivery still inventories and hashes members. See the
   [Python packaged applications guide](https://github.com/morluto/rea/blob/main/docs/python-packaged-applications.md).
+- Apple app plist, Interface Builder, asset catalog, or keyed archive resources:
+  `open_bundle_resources`, then the selected resource tool. This does not
+  require `CFBundleExecutable` or a deep provider. Resource sessions have no
+  executable digest or binary snapshot; use `open_binary` for native code.
 - Android APK code, classes, methods, or incoming references:
   `inspect_android_package`, then focused Android tools when advertised.
   Archive member inventory still uses the archive route above.
