@@ -111,7 +111,10 @@ export const readCArchiveToc = async (
     return err(
       pyInstallerFailure("format", "CArchive table of contents is truncated"),
     );
-  return parseCArchiveToc(bytes.subarray(0, read.bytesRead));
+  const parsed = parseCArchiveToc(bytes.subarray(0, read.bytesRead));
+  if (!parsed.ok) return parsed;
+  const valid = validateCArchiveMembers(parsed.value, cookie.tocOffset);
+  return valid.ok ? parsed : valid;
 };
 
 /** Parse TOC bytes. Each entry is a big-endian header plus a NUL-padded name. */
@@ -297,3 +300,64 @@ const safeSum = (left: number, middle: number, right: number): boolean =>
   middle >= 0 &&
   right >= 0 &&
   left + middle + right <= Number.MAX_SAFE_INTEGER;
+
+/** Source directory semantics are validated once before any consumer projects paths. */
+const validateCArchiveMembers = (
+  entries: readonly CArchiveEntry[],
+  tocOffset: number,
+): Result<null, PyInstallerFailure> => {
+  const names = new Set<string>();
+  for (const entry of entries) {
+    if (entry.typeCode !== "o") {
+      if (names.has(entry.name))
+        return err(
+          pyInstallerFailure(
+            "integrity",
+            `Duplicate CArchive member name: ${entry.name}`,
+          ),
+        );
+      names.add(entry.name);
+    }
+    if (
+      entry.compressionFlag === 0 &&
+      entry.compressedSize !== entry.uncompressedSize
+    )
+      return err(
+        pyInstallerFailure(
+          "integrity",
+          `Stored CArchive member size disagrees with its table entry: ${entry.name}`,
+        ),
+      );
+    if (entry.offset > tocOffset)
+      return err(
+        pyInstallerFailure(
+          "format",
+          `CArchive member offset is outside the archive: ${entry.name}`,
+        ),
+      );
+  }
+  const ranges = entries
+    .filter((entry) => entry.compressedSize > 0)
+    .map((entry) => ({
+      name: entry.name,
+      start: entry.offset,
+      end: entry.offset + entry.compressedSize,
+    }))
+    .sort((left, right) => left.start - right.start);
+  let occupied = 0;
+  for (const range of ranges) {
+    if (
+      !Number.isSafeInteger(range.end) ||
+      range.end > tocOffset ||
+      range.start < occupied
+    )
+      return err(
+        pyInstallerFailure(
+          "integrity",
+          `CArchive member extends outside the archive or overlaps another member: ${range.name}`,
+        ),
+      );
+    occupied = range.end;
+  }
+  return ok(null);
+};

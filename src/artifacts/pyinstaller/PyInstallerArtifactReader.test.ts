@@ -11,10 +11,7 @@ import { materializeArtifactInventory } from "../../../tests/fixtures/artifactIn
 import { scanCanonicalArtifactInventory } from "../../../tests/fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
-import {
-  RECONSTRUCTED_PYTHON_HEADER_LIMITATION,
-  reconstructedPycHeader,
-} from "./PythonBytecode.js";
+import { reconstructedPycHeader } from "./PythonBytecode.js";
 import {
   PYTHON_39_MAGIC,
   cArchiveExecutable,

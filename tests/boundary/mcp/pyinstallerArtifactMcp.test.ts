@@ -105,8 +105,10 @@ it("inventories a PyInstaller executable through inspect_artifact", async () => 
     );
     expect(definition?.outputSchema).toBeDefined();
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
-    const input = ajv.compile(definition!.inputSchema);
-    const output = ajv.compile(definition!.outputSchema!);
+    const inputSchema: Record<string, unknown> = definition!.inputSchema;
+    const outputSchema: Record<string, unknown> = definition!.outputSchema!;
+    const input = ajv.compile(inputSchema);
+    const output = ajv.compile(outputSchema);
     const ids: string[] = [];
     for (const offset of [0, 1, 2]) {
       const args = {
@@ -143,7 +145,10 @@ it("inventories a PyInstaller executable through inspect_artifact", async () => 
           format_metadata: { source_name: "pyi-contents-directory _internal" },
         });
         expect(view.items[0]).not.toHaveProperty("logical_path");
-        ids.push(String(view.items[0]?.occurrence_id));
+        const row = view.items[0];
+        if (row === undefined || !("occurrence_id" in row))
+          throw new Error("Expected occurrence identity");
+        ids.push(row.occurrence_id);
       } else expect(view.items).toEqual([]);
     }
     expect(new Set(ids).size).toBe(2);

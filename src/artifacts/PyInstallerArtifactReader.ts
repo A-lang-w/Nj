@@ -284,8 +284,6 @@ export class PyInstallerArtifactReader implements ArtifactReader {
       this.#charge(entry.uncompressedSize);
       this.#reserveMetadata({ ...entry }, false);
     }
-    assertMemberRanges(toc, cookie.tocOffset);
-    assertUniqueMemberNames(toc);
     const images = await this.#pyzImages(handle, cookie, toc, signal);
     const magic = scriptPythonMagic(
       cookie,
@@ -513,61 +511,6 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     this.#charged += bytes;
   }
 }
-
-const assertUniqueMemberNames = (entries: readonly CArchiveEntry[]): void => {
-  const names = new Set<string>();
-  for (const entry of entries) {
-    if (entry.typeCode === "o") continue;
-    if (names.has(entry.name))
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `Duplicate CArchive member name: ${entry.name}`,
-      );
-    names.add(entry.name);
-  }
-};
-
-const assertMemberRanges = (
-  entries: readonly CArchiveEntry[],
-  tocOffset: number,
-): void => {
-  for (const entry of entries)
-    if (
-      entry.compressionFlag === 0 &&
-      entry.compressedSize !== entry.uncompressedSize
-    )
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `Stored CArchive member size disagrees with its table entry: ${entry.name}`,
-      );
-  const ranges = entries
-    .filter((entry) => entry.compressedSize > 0)
-    .map((entry) => ({
-      name: entry.name,
-      start: entry.offset,
-      end: entry.offset + entry.compressedSize,
-    }))
-    .sort((left, right) => left.start - right.start);
-  let occupied = 0;
-  for (const range of ranges) {
-    if (
-      !Number.isSafeInteger(range.end) ||
-      range.end > tocOffset ||
-      range.start < occupied
-    )
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `CArchive member extends outside the archive or overlaps another member: ${range.name}`,
-      );
-    occupied = range.end;
-  }
-  for (const entry of entries)
-    if (entry.offset > tocOffset)
-      throw new ArtifactReaderFailure(
-        "format",
-        `CArchive member offset is outside the archive: ${entry.name}`,
-      );
-};
 
 const failure = (error: PyInstallerFailure): ArtifactReaderFailure =>
   new ArtifactReaderFailure(error.reason, error.message);
