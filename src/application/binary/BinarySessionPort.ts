@@ -71,8 +71,10 @@ export interface BinarySessionPort
       failure: AnalysisError | undefined,
     ) => Promise<Result<null, AnalysisError>>,
     mutationStart?: "admission" | "provider-dispatch",
+    /** Explicit cleanup/disposition of the currently retained external owner. */
+    ownerCleanup?: boolean,
   ): Promise<Result<Result<Value, AnalysisError>, AnalysisError>>;
-  /** Keep target lifecycle transitions blocked while an external writer runs. */
+  /** Keep rebinding blocked while allowing the external writer's cleanup to run. */
   retainExternalMutationOwner?(completion: Promise<unknown>): void;
   open(
     path: string,

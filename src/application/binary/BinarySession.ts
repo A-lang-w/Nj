@@ -274,20 +274,35 @@ export class BinarySession
     ) => Promise<Result<ResolvedSessionOpen, AnalysisError>>,
     options: BinarySessionOpenOptions,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
-    return this.#serialize(async (admittedThrough) => {
-      const owner = await this.#waitForExternalMutationOwner(
-        "open_binary",
-        options.signal,
-      );
-      if (!owner.ok) return owner;
-      const admitted = await this.#withLoadedSnapshot(options);
-      if (!admitted.ok) return admitted;
-      return this.#openWithinTransition(
-        admittedThrough,
-        () => resolve(admitted.value),
-        admitted.value,
-      );
-    });
+    return (async () => {
+      for (;;) {
+        const opened = await this.#serialize(async (admittedThrough) => {
+          if (isAborted(options.signal))
+            return err(new AnalysisCancelledError("open_binary"));
+          // Do not hold the lifecycle queue while an external writer is still
+          // active. Its owner may need this queue to interrupt or dispose the
+          // target before the open can continue.
+          if (this.#externalMutationOwnerPending) return undefined;
+          const admitted = await this.#withLoadedSnapshot(options);
+          if (!admitted.ok) return admitted;
+          return this.#openWithinTransition(
+            admittedThrough,
+            () => resolve(admitted.value),
+            admitted.value,
+          );
+        });
+        if (opened !== undefined) return opened;
+
+        // Wait outside the serialized transition, then retry admission. A new
+        // owner may have arrived while this open was queued, so the check must
+        // happen again inside the queue before reading or changing targets.
+        const owner = await this.#waitForExternalMutationOwner(
+          "open_binary",
+          options.signal,
+        );
+        if (!owner.ok) return owner;
+      }
+    })();
   }
 
   /** Read the staged snapshot only after earlier lifecycle transitions have settled. */
@@ -432,10 +447,13 @@ export class BinarySession
       failure: AnalysisError | undefined,
     ) => Promise<Result<null, AnalysisError>>,
     mutationStart: "admission" | "provider-dispatch" = "admission",
+    ownerCleanup = false,
   ): Promise<Result<Result<Value, AnalysisError>, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
       if (isAborted(signal))
         return err(new AnalysisCancelledError(operationName));
+      if (this.#externalMutationOwnerPending && !ownerCleanup)
+        return err(this.#externalMutationStillActive(operationName));
       await this.#drainCalls(admittedThrough);
       if (isAborted(signal))
         return err(new AnalysisCancelledError(operationName));
@@ -512,12 +530,12 @@ export class BinarySession
     return new AnalysisResourceConstraintError(
       operation,
       "capacity",
-      "A debugger inferior still owns the target. Stop or close its debugger session, then retry closing the binary session.",
+      "A debugger inferior still owns the target. Stop or dispose its debugger session, then retry this operation.",
       null,
       {
         retryable: true,
         remediationAction:
-          "Use gdb_console with an interrupt or target-disposition command, or close_gdb_session, then retry close_binary.",
+          "Use gdb_console with its session_id to interrupt, detach, or terminate each remaining inferior, or close_gdb_session, then retry this operation.",
       },
     );
   }

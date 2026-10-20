@@ -298,6 +298,59 @@ it("returns a retryable close refusal while a debugger still owns the target", a
   expect(session.activeTarget()).toBeUndefined();
 });
 
+it("lets target disposition enter while open waits for a debugger owner", async () => {
+  const [target, replacement] = await createBinarySessionTargets();
+  const session = createTestBinarySession(createCacheProvider([]));
+  expect((await session.open(target)).ok).toBe(true);
+  const externalCompletion = createDeferred<void>();
+  session.retainExternalMutationOwner(externalCompletion.promise);
+
+  const opening = session.open(replacement);
+  const unrelatedMutation = vi.fn(async () => resultOk("must not run"));
+  const blockedMutation = await session.withAdmittedExternalMutation(
+    undefined,
+    undefined,
+    unrelatedMutation,
+    (_value, error) => error,
+    "execute_rizin_command",
+  );
+  expect(blockedMutation).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisResourceConstraintError", retryable: true },
+  });
+  expect(unrelatedMutation).not.toHaveBeenCalled();
+
+  let dispositionStarted = false;
+  const disposition = session.withAdmittedExternalMutation(
+    undefined,
+    undefined,
+    async () => {
+      dispositionStarted = true;
+      externalCompletion.resolve();
+      return resultOk("detached");
+    },
+    (_value, error) => error,
+    "gdb_console",
+    undefined,
+    "admission",
+    true,
+  );
+
+  // Observe progress before releasing the owner ourselves. The disposition
+  // command is the operation that must be able to release it.
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const progressedBeforeRelease = dispositionStarted;
+  externalCompletion.resolve();
+  await expect(disposition).resolves.toMatchObject({
+    ok: true,
+    value: { ok: true, value: "detached" },
+  });
+  await expect(opening).resolves.toMatchObject({ ok: true });
+  expect(progressedBeforeRelease).toBe(true);
+  expect(session.activeTarget()?.path).toBe(replacement);
+  await session.close();
+});
+
 it.each([false, true])(
   "close retains an external writer until its owner settles (active: %s)",
   async (active) => {

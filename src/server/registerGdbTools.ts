@@ -3,6 +3,7 @@ import type { Logger } from "pino";
 
 import {
   isGdbInterruptCommand,
+  isGdbTargetDispositionCommand,
   type GdbSessionManager,
 } from "../gdb/GdbSessionManager.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
@@ -115,6 +116,8 @@ export const registerGdbTools = (
             execute,
             (value) => value.evidence,
             () => manager.retryCleanupFailures(),
+            undefined,
+            isGdbTargetDispositionCommand(input.command),
           );
       const result = !executed.ok
         ? executed
