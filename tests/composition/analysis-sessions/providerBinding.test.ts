@@ -53,7 +53,7 @@ describe("target-bound provider routing", () => {
     expect(alpha.profileResolutions).toBe(1);
     expect(beta.profileResolutions).toBe(1);
     expect(session.activeTarget()?.path).toBe(target);
-    expect(bindingStatus(session)).toMatchObject({
+    expect(await bindingStatus(session)).toMatchObject({
       analysis_provider_selection_state: "selection_required",
       analysis_provider_binding: null,
       analysis_provider_candidates: [
@@ -90,7 +90,7 @@ describe("target-bound provider routing", () => {
     expect((await session.open(target)).ok).toBe(true);
 
     expect((await session.open(target, { providerId: "alpha" })).ok).toBe(true);
-    expect(bindingStatus(session)).toMatchObject({
+    expect(await bindingStatus(session)).toMatchObject({
       analysis_provider_selection_state: "bound",
       analysis_provider_binding: {
         provider: { id: "alpha", version: "1" },
@@ -143,7 +143,7 @@ describe("target-bound provider routing", () => {
     // eligible, and an unknown choice never disturbs the active binding.
     alpha.available = false;
     expect((await session.open(target)).ok).toBe(true);
-    expect(bindingStatus(session)).toMatchObject({
+    expect(await bindingStatus(session)).toMatchObject({
       analysis_provider_binding: { provider: { id: "alpha" } },
     });
 
@@ -151,7 +151,7 @@ describe("target-bound provider routing", () => {
     expect(unknown.ok).toBe(false);
     if (!unknown.ok)
       expect(unknown.error).toMatchObject({ reason: "unknown_provider" });
-    expect(bindingStatus(session)).toMatchObject({
+    expect(await bindingStatus(session)).toMatchObject({
       analysis_provider_binding: { provider: { id: "alpha" } },
     });
 
@@ -163,7 +163,37 @@ describe("target-bound provider routing", () => {
     expect(failed.ok).toBe(false);
     if (!failed.ok) expect(failed.error._tag).toBe("ProviderAdapterError");
     expect(alpha.clients).toHaveLength(0);
-    expect(bindingStatus(session)).toMatchObject({
+    expect(await bindingStatus(session)).toMatchObject({
+      analysis_provider_binding: { provider: { id: "beta" } },
+    });
+
+    await session.close();
+    expect(beta.clients[0]?.closed).toBe(true);
+  });
+
+  it("never falls back to a provider that already ran after a runtime failure", async () => {
+    const target = await databaseTarget();
+    const alpha = deepProvider("alpha");
+    const beta = deepProvider("beta");
+    const session = selectableSession([beta.provider, alpha.provider]);
+
+    // The first provider actually runs, so a fallback would be observable here.
+    expect((await session.open(target, { providerId: "alpha" })).ok).toBe(true);
+    expect((await session.execute("address_name", { address: "0x1" })).ok).toBe(
+      true,
+    );
+    expect(alpha.clients[0]?.calls).toEqual(["address_name"]);
+
+    expect((await session.open(target, { providerId: "beta" })).ok).toBe(true);
+    expect(alpha.clients[0]?.closed).toBe(true);
+    beta.fail = true;
+    const failed = await session.execute("address_name", { address: "0x2" });
+    expect(failed.ok).toBe(false);
+    if (!failed.ok) expect(failed.error._tag).toBe("ProviderAdapterError");
+    // The failure stays with the selected provider: the retired provider is not
+    // restarted and no provider is silently substituted.
+    expect(alpha.clients[0]?.calls).toEqual(["address_name"]);
+    expect(await bindingStatus(session)).toMatchObject({
       analysis_provider_binding: { provider: { id: "beta" } },
     });
 
@@ -224,7 +254,7 @@ describe("target-bound provider routing transitions", () => {
     });
     expect(alpha.clients[0]?.closed).toBe(false);
     expect(beta.clients).toHaveLength(0);
-    expect(bindingStatus(session)).toMatchObject({
+    expect(await bindingStatus(session)).toMatchObject({
       analysis_provider_binding: { provider: { id: "alpha" } },
     });
 
@@ -272,7 +302,7 @@ describe("selection-required session lifecycle", () => {
     // so the equivalent decision is not recorded again.
     expect((await session.open(target)).ok).toBe(true);
     expect(selectionRecords(session)).toHaveLength(1);
-    expect(bindingStatus(session)).toMatchObject({
+    expect(await bindingStatus(session)).toMatchObject({
       analysis_provider_selection_state: "selection_required",
     });
     expect(alpha.clients).toHaveLength(0);
@@ -327,7 +357,7 @@ describe("selection-required session lifecycle", () => {
 
     const auxiliary = await session.execute("inspect_macho", {});
     expect(auxiliary.ok && auxiliary.value.provider.id).toBe("auxiliary");
-    expect(bindingStatus(session)).toMatchObject({
+    expect(await bindingStatus(session)).toMatchObject({
       analysis_provider_selection_state: "selection_required",
       analysis_provider_binding: null,
     });
@@ -346,7 +376,7 @@ describe("automatic re-selection on an unchanged target", () => {
     const session = selectableSession([alpha.provider, beta.provider]);
 
     expect((await session.open(target)).ok).toBe(true);
-    expect(bindingStatus(session)).toMatchObject({
+    expect(await bindingStatus(session)).toMatchObject({
       analysis_provider_selection_state: "bound",
       analysis_provider_binding: {
         provider: { id: "alpha" },
@@ -364,7 +394,7 @@ describe("automatic re-selection on an unchanged target", () => {
     // binding, its client, and its snapshot are not torn down for a tie.
     beta.available = true;
     expect((await session.open(target, { providerId: "auto" })).ok).toBe(true);
-    expect(bindingStatus(session)).toMatchObject({
+    expect(await bindingStatus(session)).toMatchObject({
       analysis_provider_selection_state: "bound",
       analysis_provider_binding: { provider: { id: "alpha" } },
     });
@@ -380,7 +410,7 @@ describe("automatic re-selection on an unchanged target", () => {
     expect((await session.open(target)).ok).toBe(true);
 
     expect((await session.open(target, { providerId: "auto" })).ok).toBe(true);
-    expect(bindingStatus(session)).toMatchObject({
+    expect(await bindingStatus(session)).toMatchObject({
       analysis_provider_selection_state: "selection_required",
       analysis_provider_binding: null,
     });
@@ -400,7 +430,7 @@ describe("automatic re-selection on an unchanged target", () => {
 
     // Automatic selection binds the only eligible provider and records it.
     expect((await session.open(target)).ok).toBe(true);
-    expect(bindingStatus(session)).toMatchObject({
+    expect(await bindingStatus(session)).toMatchObject({
       analysis_provider_binding: {
         provider: { id: "alpha", version: "1" },
         selection_source: "auto-single-candidate",
@@ -424,7 +454,7 @@ describe("automatic re-selection on an unchanged target", () => {
     expect(alpha.clients[0]?.closed).toBe(false);
     expect(alpha.clients[0]?.calls).toEqual(callsAfterAnalysis);
     expect(beta.clients).toHaveLength(0);
-    expect(bindingStatus(session)).toMatchObject({
+    expect(await bindingStatus(session)).toMatchObject({
       analysis_provider_selection_state: "bound",
       analysis_provider_binding: {
         provider: { id: "alpha", version: "1" },
@@ -468,7 +498,7 @@ describe("automatic re-selection on an unchanged target", () => {
     // The caller explicitly leaves a concrete binding for automatic selection,
     // so REA re-resolves and reports the tie instead of keeping that binding.
     expect((await session.open(target, { providerId: "auto" })).ok).toBe(true);
-    expect(bindingStatus(session)).toMatchObject({
+    expect(await bindingStatus(session)).toMatchObject({
       analysis_provider_selection_state: "selection_required",
       analysis_provider_binding: null,
     });
@@ -486,7 +516,7 @@ describe("selected provider capability provenance", () => {
 
     expect((await session.open(target, { providerId: "alpha" })).ok).toBe(true);
     const resolved = { id: "alpha", name: "alpha provider", version: "1" };
-    const status = bindingStatus(session);
+    const status = await bindingStatus(session);
     expect(status).toMatchObject({
       analysis_provider_binding: { provider: resolved },
       analysis_provider_candidates: [
@@ -694,7 +724,7 @@ const databaseTarget = async (): Promise<string> => {
   return path;
 };
 
-const bindingStatus = (session: BinarySession) =>
+const bindingStatus = async (session: BinarySession) =>
   z
     .object({
       analysis_provider_selection_state: z.unknown(),
@@ -702,7 +732,7 @@ const bindingStatus = (session: BinarySession) =>
       analysis_provider_candidates: z.array(z.unknown()),
     })
     .passthrough()
-    .parse(session.status());
+    .parse(await session.status());
 
 /** Session-owned records for deterministic selection decisions only. */
 const selectionRecords = (session: BinarySession) =>

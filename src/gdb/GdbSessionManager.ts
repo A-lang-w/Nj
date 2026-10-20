@@ -30,7 +30,7 @@ import {
   type ProcessStartTimeReader,
   verifyOwnedInferiorsEnded,
 } from "../process/ownedDebuggerSession.js";
-import { parseLinuxProcessStartTime } from "../process/ProcessOwnershipObservation.js";
+import { parseLinuxProcessStat } from "../process/LinuxProcessStat.js";
 
 const STARTUP_TIMEOUT_MS = 10_000;
 const COMMAND_TIMEOUT_MS = 120_000;
@@ -387,7 +387,10 @@ const verifyGdbInferiorOutputSink = async (
       "GDB cannot confirm live inferior output descriptors outside Linux /proc.",
     );
   const statPath = `/proc/${pid}/stat`;
-  const before = parseLinuxProcessStartTime(await readFile(statPath, "utf8"));
+  const expectedPid = Number(pid);
+  const beforeStat = parseLinuxProcessStat(await readFile(statPath, "utf8"));
+  const before =
+    beforeStat?.pid === expectedPid ? beforeStat.startTime : undefined;
   if (before === undefined)
     throw new Error("GDB could not establish the live inferior identity.");
   const ttyPath = await realpath(selectedTty);
@@ -408,7 +411,9 @@ const verifyGdbInferiorOutputSink = async (
         `GDB inferior descriptor ${descriptor} no longer points to the selected TTY.`,
       );
   }
-  const after = parseLinuxProcessStartTime(await readFile(statPath, "utf8"));
+  const afterStat = parseLinuxProcessStat(await readFile(statPath, "utf8"));
+  const after =
+    afterStat?.pid === expectedPid ? afterStat.startTime : undefined;
   if (after !== before)
     throw new Error(
       "The GDB inferior identity changed during descriptor readback.",
@@ -1316,14 +1321,18 @@ export class GdbSessionManager {
               );
             if (groupCount > 0 && !session.inferiorTtyVerified)
               return err(
-                new AnalysisInputError("close_gdb_session", undefined, [
+                new AnalysisCapabilityUnavailableError(
+                  GDB_PROVIDER_IDENTITY.id,
+                  "close_gdb_session",
+                  "Live GDB inferiors require an explicit disposition because no durable inferior TTY is verified.",
                   {
-                    path: ["session_id"],
-                    reason: "invalid_value",
-                    message:
-                      "Live GDB thread groups remain and no verified durable inferior TTY is configured. Select a safe disposition through the GDB console or restart with inferior_tty before closing.",
+                    retryable: true,
+                    userMessage:
+                      "Close requires an explicit inferior disposition.",
+                    remediationAction:
+                      "Use gdb_console with this session_id to explicitly detach or terminate each remaining inferior, then retry close_gdb_session.",
                   },
-                ]),
+                ),
               );
             if (groupCount === 0) {
               session.noInferiorVerified = true;

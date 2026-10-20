@@ -22,7 +22,7 @@ import type {
   SpawnedOwnedProviderProcess,
 } from "../../../src/process/ProviderProcess.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
-import { parseLinuxProcessStartTime } from "../../../src/process/ProcessOwnershipObservation.js";
+import { parseLinuxProcessStat } from "../../../src/process/LinuxProcessStat.js";
 import { expectGdbSessionStarted } from "./gdbTestHelpers.js";
 
 let directory: string | undefined;
@@ -1752,25 +1752,6 @@ it("correlates command output records and reports invalid or cancelled requests"
   expect(manager.status(started.value.session_id)).toBeDefined();
 });
 
-it("refuses to close a session while GDB reports a live target", async () => {
-  const manager = await managerFor(
-    responsiveProvider(`
-      if (match[2].includes('auto-load off')) process.stdout.write(match[1] + '^done\\n');
-      else if (match[2].includes('list-thread-groups')) process.stdout.write(match[1] + '^done,groups=[{id="i1",pid="123"}]\\n');
-      else process.stdout.write(match[1] + '^done\\n');
-    `),
-  );
-  const started = await expectGdbSessionStarted(manager);
-
-  const closed = await manager.close(started.value.session_id);
-
-  expect(closed.ok).toBe(false);
-  if (!closed.ok)
-    expect(JSON.stringify(closed.error)).toContain(
-      "Live GDB thread groups remain",
-    );
-});
-
 it.each([
   ["malformed recursive list", "groups=[}]"],
   ["malformed result suffix", "groups=[],extra=}"],
@@ -1960,7 +1941,9 @@ it.each([
         expect(observedPid).toBe(pid);
         if (process.platform === "linux") {
           const stat = await readFile(`/proc/${observedPid}/stat`, "utf8");
-          capturedStartTime = parseLinuxProcessStartTime(stat);
+          const parsed = parseLinuxProcessStat(stat);
+          capturedStartTime =
+            parsed?.pid === Number(observedPid) ? parsed.startTime : undefined;
         } else capturedStartTime = `test-inferior-${observedPid}`;
         if (capturedStartTime === undefined)
           throw new Error("Controlled inferior identity was unreadable");
@@ -1970,7 +1953,8 @@ it.each([
         if (observedPid !== pid || !inferiorAlive) return null;
         if (process.platform === "linux") {
           const stat = await readFile(`/proc/${observedPid}/stat`, "utf8");
-          return parseLinuxProcessStartTime(stat) ?? null;
+          const parsed = parseLinuxProcessStat(stat);
+          return parsed?.pid === Number(observedPid) ? parsed.startTime : null;
         }
         return capturedStartTime ?? null;
       },

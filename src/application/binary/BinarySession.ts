@@ -46,7 +46,7 @@ import {
   commitExecutionProfile,
   prepareSessionExecution,
 } from "./BinarySessionExecution.js";
-import { closeAnalysisClient } from "./AnalysisClientCleanup.js";
+import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
 import { createProviderSelectionEvidence } from "./ProviderSelectionEvidence.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 const OFFICIAL_OPERATIONS: ReadonlySet<string> = new Set(
@@ -220,12 +220,15 @@ export class BinarySession
       current: this.#active,
       target,
       options,
-      fileCloseResources: this.fileCloseResourceOwner,
       stagedSnapshotMatches: (target, profile) =>
         this.matchesSnapshot(target, profile),
     }).then((resolved) =>
-      isAborted(options.signal)
-        ? err(new AnalysisCancelledError("open_binary"))
+      resolved.ok && isAborted(options.signal)
+        ? err(
+            new AnalysisCancelledError("open_binary", {
+              cause: options.signal?.reason,
+            }),
+          )
         : resolved,
     );
   }
@@ -245,7 +248,6 @@ export class BinarySession
           current: this.#active,
           path,
           options: admitted,
-          fileCloseResources: this.fileCloseResourceOwner,
           stagedSnapshotMatches: (target, profile) =>
             this.matchesSnapshot(target, profile),
         }),
@@ -553,11 +555,9 @@ export class BinarySession
     if (clearRecords) this.clearSessionRecords();
     this.#clearRuntimeAvailability();
     const fileResources = await this.closeWriteResources();
-    const hashResources = await this.closeFailedFileCloses();
     const candidateResources = await this.#providerRouter.closeOwnedResources();
     const resourceFailures = [
       ...(fileResources.ok ? [] : [fileResources.error]),
-      ...(hashResources.ok ? [] : [hashResources.error]),
       ...(candidateResources.ok ? [] : [candidateResources.error]),
     ];
     let resourceFailure = resourceFailures[0];
@@ -641,10 +641,11 @@ export class BinarySession
   }
 
   /** Describe the active binary session. */
-  status(): JsonValue {
+  status(options: { readonly signal?: AbortSignal } = {}): Promise<JsonValue> {
     const run = this.#active ?? this.#pendingCleanup?.run;
     const client = run?.client;
     return binarySessionStatus({
+      ...options,
       target: this.#active?.target,
       route: this.#currentRoute(),
       router: this.#providerRouter,
@@ -976,6 +977,7 @@ export class BinarySession
     client: AnalysisClient,
     options: Pick<BinarySessionOpenOptions, "signal">,
   ): Promise<boolean> {
+    if (client.reuseReadiness?.() === "blocked") return false;
     const snapshot = client.operationHealthSnapshot?.();
     if (snapshot !== undefined)
       return snapshot.state === "idle" || snapshot.state === "busy";

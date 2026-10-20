@@ -11,7 +11,7 @@ import {
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { expect, vi } from "vitest";
+import { expect, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { itWithCaptureCapability } from "./processCaptureCapability.js";
 
@@ -30,6 +30,7 @@ import {
 } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { parseProcessScenario } from "../../../src/domain/process/processScenario.js";
 import { emptyProcessCapture } from "../../../src/domain/process/processCapture.fixture.js";
+import { processSourceTruncated } from "../../../src/domain/process/processCaptureCoverage.js";
 import type { ProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
 
 const processFixture = fileURLToPath(
@@ -175,14 +176,21 @@ itWithCaptureCapability(
 itWithCaptureCapability(
   "keeps the process deadline bounded when the wall clock moves backward",
   async () => {
-    const wallStart = Date.now();
-    let wallReads = 0;
-    const now = vi.spyOn(Date, "now").mockImplementation(() => {
-      wallReads += 1;
-      return wallReads === 1 ? wallStart : wallStart - 60_000 + wallReads;
-    });
+    let wallNow = Date.now();
+    const now = vi.spyOn(Date, "now").mockImplementation(() => wallNow);
     const controller = new AbortController();
-    const fallback = setTimeout(() => controller.abort(), 1_500);
+    let fallback: ReturnType<typeof setTimeout> | undefined;
+    let reachedRunning = false;
+    let fallbackFired = false;
+    const clearFallback = () => {
+      clearTimeout(fallback);
+      fallback = undefined;
+    };
+    onTestFinished(() => {
+      controller.abort();
+      clearFallback();
+      now.mockRestore();
+    });
     try {
       const result = await captureProcessScenario(
         parseProcessScenario({
@@ -193,12 +201,39 @@ itWithCaptureCapability(
           idle_timeout_ms: 5_000,
         }),
         controller.signal,
+        process.platform,
+        process.env,
+        undefined,
+        undefined,
+        {
+          async report(update) {
+            if (update.phase === "running" && !reachedRunning) {
+              reachedRunning = true;
+              wallNow -= 60_000;
+              // The deadline starts after native ownership preparation and
+              // executable inspection. Bound only the same running interval.
+              fallback = setTimeout(() => {
+                fallbackFired = true;
+                controller.abort();
+              }, 1_500);
+            } else if (
+              update.phase === "settling" ||
+              update.phase === "cleanup"
+            )
+              clearFallback();
+          },
+        },
       );
-      expect(result.ok).toBe(true);
-      if (!result.ok) throw result.error;
-      expect(result.value.exit.reason).toBe("timeout");
+      expect(reachedRunning).toBe(true);
+      expect(
+        fallbackFired,
+        "the monotonic deadline precedes the caller safety abort",
+      ).toBe(false);
+      const { capture } = captureObservations(result);
+      expect(capture.exit.reason).toBe("timeout");
     } finally {
-      clearTimeout(fallback);
+      controller.abort();
+      clearFallback();
       now.mockRestore();
     }
   },
@@ -353,10 +388,6 @@ itWithCaptureCapability(
     const cleanupHost: ProcessCaptureCleanupHost = {
       platform: process.platform,
       cleanupProcessGroup: async () => ({
-        cleaned: false,
-        reason: "fixture cleanup could not be verified",
-      }),
-      verifyTokenOwnedProcesses: async () => ({
         cleaned: false,
         reason: "fixture cleanup could not be verified",
       }),
@@ -542,7 +573,7 @@ itWithCaptureCapability(
         file.path.endsWith(":escape"),
       );
       expect(escaped?.symlink_target).toBe("/etc/passwd");
-      expect(capture.truncated).toBe(false);
+      expect(processSourceTruncated(capture, "filesystem")).toBe(false);
       expect(JSON.stringify(capture.files_after)).not.toContain(root);
       expect(
         capture.files_after.some((file) => file.path.includes("passwd")),
@@ -583,7 +614,7 @@ itWithCaptureCapability(
     }
 
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 50);
+    let reachedRunning = false;
     const cancelled = await captureProcessScenario(
       parseProcessScenario({
         executable: process.execPath,
@@ -593,9 +624,43 @@ itWithCaptureCapability(
         idle_timeout_ms: 5_000,
       }),
       controller.signal,
+      process.platform,
+      process.env,
+      undefined,
+      undefined,
+      {
+        async report(update) {
+          if (update.phase === "running") {
+            reachedRunning = true;
+            controller.abort();
+          }
+        },
+      },
     );
     if (cancelled.ok) throw new Error("expected cancellation");
-    expect(cancelled.error.message).toContain("cancelled");
+    expect(reachedRunning).toBe(true);
+    if (!(cancelled.error instanceof ProcessCaptureError))
+      throw cancelled.error;
+    if (cancelled.error.cleanupIncomplete)
+      expectUnverifiedHostCleanup(cancelled.error);
+    else
+      expect(cancelled.error.cleanupReport).toMatchObject({
+        owned_process_group: { state: "cleaned" },
+        terminal_renderer: { state: "cleaned" },
+        temporary_root: { state: "cleaned" },
+      });
+    const cancellation = cancelled.error.cleanupIncomplete
+      ? cancelled.error.cause
+      : cancelled.error;
+    expect(cancellation, cancelled.error.message).toMatchObject({
+      reason: "cancelled",
+      userCategory: "cancelled",
+    });
+    expect(cancelled.error.partialObservation).toMatchObject({
+      observations: {
+        exit: { state: "available", value: { reason: "cancelled" } },
+      },
+    });
   },
 );
 

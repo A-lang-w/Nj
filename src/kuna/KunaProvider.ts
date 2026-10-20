@@ -28,6 +28,7 @@ import {
 import {
   createKunaFileCloseScope,
   inspectKunaInstallation,
+  kunaInstallationCancellation,
 } from "./KunaInstallation.js";
 import { KunaProjectCache } from "./KunaProjectCache.js";
 import {
@@ -168,7 +169,11 @@ export class KunaProvider implements AnalysisProviderCandidate {
     options?: AnalysisProfileResolutionOptions,
   ) {
     if (options?.signal?.aborted === true)
-      return err(new AnalysisCancelledError("kuna:profile"));
+      return err(
+        new AnalysisCancelledError("kuna:profile", {
+          cause: options.signal.reason,
+        }),
+      );
     let installation: Awaited<ReturnType<typeof inspectKunaInstallation>>;
     const fileCloseResources = options?.fileCloseResources;
     if (fileCloseResources === undefined)
@@ -186,12 +191,19 @@ export class KunaProvider implements AnalysisProviderCandidate {
         fileCloseResources: fileCloseScope.owner,
       });
     } catch (cause: unknown) {
+      const cancellation = kunaInstallationCancellation(cause);
+      if (
+        !(cause instanceof RegularFileCleanupFailure) &&
+        cancellation !== undefined
+      )
+        return err(
+          new AnalysisCancelledError("kuna:profile", {
+            cause: cancellation.reason,
+            diagnostics: cancellation.diagnostics,
+          }),
+        );
       if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
-      const error = kunaFileCleanupError(
-        cause,
-        "kuna:profile",
-        options?.signal,
-      );
+      const error = kunaFileCleanupError(cause, "kuna:profile");
       fileCloseScope.bindFailure(cause, error);
       return err(error);
     }

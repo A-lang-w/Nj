@@ -20,6 +20,9 @@ interface JavaScriptPackageValues {
   readonly name: string | null;
   readonly version: string | null;
   readonly main: string | null;
+  readonly main_status: "default" | "declared" | "invalid";
+  /** Node launch declaration; an empty string requests the package index fallback. */
+  readonly main_entrypoint: string;
   readonly renderer: string | null;
 }
 
@@ -35,6 +38,8 @@ export type JavaScriptPackageObservation = JavaScriptStructuredObservation &
         readonly name: null;
         readonly version: null;
         readonly main: null;
+        readonly main_status: "unavailable";
+        readonly main_entrypoint: null;
         readonly renderer: null;
         readonly limitation: string;
       }
@@ -169,6 +174,22 @@ export interface AnalyzedJavaScriptArtifactFile<
     readonly limits: Readonly<Record<string, JsonValue>> | null;
   };
 }
+
+/**
+ * A JavaScript source selected for analysis whose worker produced no facts.
+ * The analysis failure carries the reason; the null parse status alone reads
+ * as "nothing there" instead of "not analyzed".
+ */
+export const isSkippedJavaScriptAnalysis = (
+  entry: Pick<
+    AnalyzedJavaScriptArtifactFile,
+    "file" | "javascript" | "analysis_failure"
+  >,
+): boolean =>
+  entry.file.kind === "javascript" &&
+  entry.file.text.included &&
+  entry.javascript === null &&
+  entry.analysis_failure !== undefined;
 
 /** Complete static-analysis projection before graph construction. */
 export interface JavaScriptArtifactAnalysis<
