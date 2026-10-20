@@ -34,13 +34,19 @@ export interface AndroidManifestComponent {
    * name unchanged when the resolved-name byte budget was exhausted.
    */
   readonly name: string;
-  /** Declared android:exported, or null when the attribute is absent. */
+  /**
+   * Declared android:exported, or null when the attribute is absent or set
+   * to a value other than the literals true or false, whose effective state
+   * the parser cannot resolve.
+   */
   readonly exported: boolean | null;
   /**
    * Android's default export state when android:exported is absent: the
    * intent-filter rule for activities, services, receivers and aliases, and
    * the target-SDK rule for providers. Null when the provider rule cannot be
-   * evaluated because the target SDK is unknown.
+   * evaluated because the target SDK is unknown, or when the attribute is
+   * present but not a literal boolean, since the default does not govern a
+   * declared value.
    */
   readonly exported_default: boolean | null;
   readonly permission: string | null;
@@ -99,13 +105,6 @@ const androidAttribute = (
     if (node.namespaceURI === null && node.prefix === "android")
       return node.nodeValue;
   }
-  return null;
-};
-
-const booleanAttribute = (element: Element, name: string): boolean | null => {
-  const value = androidAttribute(element, name);
-  if (value === "true") return true;
-  if (value === "false") return false;
   return null;
 };
 
@@ -231,6 +230,7 @@ export const parseAndroidManifestComponents = (
   let applicationSeen = false;
   let unnamed = 0;
   let providerDefaultsUnknown = 0;
+  let nonliteralExported = 0;
   let unresolvedNames = 0;
   let nameBudget = ANDROID_MANIFEST_LIMITS.resolvedNameBytes;
   for (const node of childNodes(root)) {
@@ -281,20 +281,31 @@ export const parseAndroidManifestComponents = (
         component.nodeName === "provider"
           ? providerExportedDefault(targetSdk)
           : null;
+      const declaredExported = androidAttribute(component, "exported");
+      const exportedLiteral =
+        declaredExported === "true"
+          ? true
+          : declaredExported === "false"
+            ? false
+            : null;
+      const exportedNonliteral =
+        declaredExported !== null && exportedLiteral === null;
       // The default only matters when android:exported is absent.
       if (
         component.nodeName === "provider" &&
         providerDefault === null &&
-        booleanAttribute(component, "exported") === null
+        declaredExported === null
       )
         providerDefaultsUnknown += 1;
+      if (exportedNonliteral) nonliteralExported += 1;
       items.push({
         kind: component.nodeName,
         declared_name: declared,
         name,
-        exported: booleanAttribute(component, "exported"),
-        exported_default:
-          component.nodeName === "provider"
+        exported: exportedLiteral,
+        exported_default: exportedNonliteral
+          ? null
+          : component.nodeName === "provider"
             ? providerDefault
             : filters.length > 0,
         permission: trimmed(component, "permission"),
@@ -327,6 +338,10 @@ export const parseAndroidManifestComponents = (
   if (providerDefaultsUnknown > 0)
     limitations.push(
       `${String(providerDefaultsUnknown)} provider(s) omit android:exported and the target SDK is unknown, so Android's export default for them is not established.`,
+    );
+  if (nonliteralExported > 0)
+    limitations.push(
+      `${String(nonliteralExported)} component declaration(s) set android:exported to a value other than the literals true or false (for example a resource reference), so their effective export state is unknown and the Android default does not apply.`,
     );
   if (unresolvedNames > 0) {
     limitations.push(

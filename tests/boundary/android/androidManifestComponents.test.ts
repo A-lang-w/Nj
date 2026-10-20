@@ -286,3 +286,49 @@ it("counts unnamed declarations against the component bound", () => {
     `${String(ANDROID_MANIFEST_LIMITS.components)} component`,
   );
 });
+
+it("distinguishes nonliteral android:exported values from omission", () => {
+  const inventory = parseAndroidManifestComponents(
+    `<?xml version="1.0" encoding="utf-8"?><manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.app"><application><provider android:name=".Resource" android:exported="@bool/exported" /><provider android:name=".Omitted" /><provider android:name=".Empty" android:exported="" /><activity android:name=".True" android:exported="True"><intent-filter><action android:name="com.example.app.OPEN" /></intent-filter></activity></application></manifest>`,
+    "complete",
+    null,
+  );
+  const resource = inventory.items.find(({ name }) =>
+    name.endsWith(".Resource"),
+  );
+  expect(resource).toMatchObject({ exported: null, exported_default: null });
+  const empty = inventory.items.find(({ name }) => name.endsWith(".Empty"));
+  expect(empty).toMatchObject({ exported: null, exported_default: null });
+  const trueCase = inventory.items.find(({ name }) => name.endsWith(".True"));
+  expect(trueCase).toMatchObject({ exported: null, exported_default: null });
+  const joined = inventory.limitations.join(" ");
+  expect(joined).toContain("1 provider(s) omit");
+  expect(joined).toContain(
+    "3 component declaration(s) set android:exported to a value other than the literals true or false",
+  );
+  expect(inventory.status).toBe("complete");
+});
+
+it("keeps a known SDK default from governing a nonliteral exported value", () => {
+  const legacy = parseAndroidManifestComponents(
+    `<?xml version="1.0" encoding="utf-8"?><manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.app"><application><provider android:name=".Resource" android:exported="@bool/exported" /></application></manifest>`,
+    "complete",
+    "16",
+  );
+  expect(legacy.items[0]).toMatchObject({
+    exported: null,
+    exported_default: null,
+  });
+  const modern = parseAndroidManifestComponents(
+    `<?xml version="1.0" encoding="utf-8"?><manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.app"><application><activity android:name=".Resource" android:exported="@bool/exported"><intent-filter><action android:name="com.example.app.OPEN" /></intent-filter></activity></application></manifest>`,
+    "complete",
+    "33",
+  );
+  expect(modern.items[0]).toMatchObject({
+    exported: null,
+    exported_default: null,
+  });
+  expect(modern.limitations.join(" ")).toContain(
+    "1 component declaration(s) set android:exported",
+  );
+});
