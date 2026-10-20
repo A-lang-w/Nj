@@ -298,9 +298,28 @@ const projectZipEntry = (
         : [
             `ZIP member name ${JSON.stringify(sourcePath)} has a leading current-directory prefix omitted from its logical path.`,
           ]),
+      ...legacyNameLimitations(entry),
     ],
     adapterKey: `zip-entry:${index}`,
   };
+};
+
+/**
+ * CP437 is the APPNOTE reading of an unflagged name, but archivers on other
+ * locales write their own code page there. Report the raw bytes so callers do
+ * not treat a high-byte CP437 reading as a confident name.
+ */
+const legacyNameLimitations = (entry: Entry): readonly string[] => {
+  if (entry.filenameUTF8 || entry.extraFieldUnicodePath?.valid === true)
+    return [];
+  const bytes = entry.rawFilename;
+  if (!bytes.some((byte) => byte >= 0x80)) return [];
+  const hex = Array.from(bytes, (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join(" ");
+  return [
+    `ZIP member name bytes ${hex} are not flagged as UTF-8 and were read as CP437; the archiver may have written them in another legacy code page.`,
+  ];
 };
 
 const decodeZipEntryText = (
