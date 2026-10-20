@@ -1,156 +1,127 @@
 import assert from "node:assert/strict";
 
-const quoted = '"(?:[^"\\\\]|\\\\.)*"';
-const executionPattern = new RegExp(`^execve\\((${quoted}), `, "u");
+const ownershipPsArguments =
+  '["ps", "-axo", "pid=,ppid=,pgid=,uid=,stat=,command="]';
 
-/** Decode complete strace exec arguments; truncated or non-string argv fails closed. */
-export const traceExecution = (line) => {
-  const match = executionPattern.exec(line);
-  if (match === null) return undefined;
-  const start = match[0].length;
-  if (line[start] !== "[") return undefined;
-  let quotedString = false;
-  let escaped = false;
-  let end = start + 1;
-  for (; end < line.length; end++) {
-    const character = line[end];
-    if (escaped) escaped = false;
-    else if (quotedString && character === "\\") escaped = true;
-    else if (character === '"') quotedString = !quotedString;
-    else if (!quotedString && character === "]") break;
-  }
-  try {
-    const executable = JSON.parse(match[1]);
-    const arguments_ = JSON.parse(line.slice(start, end + 1));
-    if (
-      !Array.isArray(arguments_) ||
-      !arguments_.every((value) => typeof value === "string")
-    )
-      return undefined;
-    return {
-      executable,
-      arguments: arguments_,
-      successful: / = 0$/u.test(line),
-    };
-  } catch {
-    return undefined;
-  }
-};
-
-const completeLines = (text) => {
-  const completed = [];
-  let unfinished;
-  for (const line of text.split("\n")) {
-    const start = /^(\w+)\((.*)<unfinished \.\.\.>$/u.exec(line);
-    if (start !== null) {
-      assert.equal(
-        unfinished,
-        undefined,
-        "Overlapping unfinished trace syscalls",
-      );
-      unfinished = { name: start[1], prefix: `${start[1]}(${start[2]}` };
-      continue;
+/** Parse execution/thread facts once; only an observed Node ps caller owns inventory reads. */
+export const collectOwnershipTraceFacts = ({
+  traces,
+  nodeExecutable,
+  psExecutables,
+}) => {
+  const processGroups = new Map();
+  const findGroup = (pid) => {
+    const parent = processGroups.get(pid);
+    if (parent === undefined) {
+      processGroups.set(pid, pid);
+      return pid;
     }
-    const resumed = /^<\.\.\. (\w+) resumed>(.*)$/u.exec(line);
-    if (resumed !== null) {
-      assert.equal(
-        unfinished?.name,
-        resumed[1],
-        "Unmatched resumed trace syscall",
+    if (parent === pid) return pid;
+    const root = findGroup(parent);
+    processGroups.set(pid, root);
+    return root;
+  };
+  const joinThreadGroup = (left, right) => {
+    const leftRoot = findGroup(left);
+    const rightRoot = findGroup(right);
+    if (leftRoot !== rightRoot) processGroups.set(rightRoot, leftRoot);
+  };
+
+  const cloneEvents = [];
+  for (const trace of traces) {
+    let unfinished;
+    for (const rawLine of trace.text.split("\n")) {
+      const line = rawLine.trimStart();
+      const start = /^(clone3?|fork|vfork)\((.*)<unfinished \.\.\.>$/u.exec(
+        line,
       );
-      completed.push(`${unfinished.prefix}${resumed[2]}`);
-      unfinished = undefined;
-    } else completed.push(line);
+      if (start !== null) {
+        unfinished = { name: start[1], text: start[2] };
+        continue;
+      }
+      const resumed = /^<\.\.\. (clone3?|fork|vfork) resumed>(.*)$/u.exec(line);
+      if (resumed !== null && resumed[1] === unfinished?.name) {
+        cloneEvents.push({
+          parentPid: trace.pid,
+          text: `${unfinished.text}${resumed[2]}`,
+        });
+        unfinished = undefined;
+        continue;
+      }
+      const complete =
+        /^(clone3?|fork|vfork)\((.*\)) = (\d+)(?:<[^>]*>)?$/u.exec(line);
+      if (complete !== null)
+        cloneEvents.push({
+          parentPid: trace.pid,
+          childPid: Number(complete[3]),
+          text: complete[2],
+        });
+    }
   }
-  assert.equal(unfinished, undefined, "Incomplete traced ownership syscall");
-  return completed;
-};
 
-const observerRole = (
-  execution,
-  { psPaths, identityExecutable, identityHelper },
-) => {
-  if (!execution?.successful) return undefined;
-  if (
-    ["/bin/ps", "/usr/bin/ps"].includes(execution.executable) &&
-    psPaths.has(execution.executable) &&
-    JSON.stringify(execution.arguments) ===
-      JSON.stringify(["ps", "-axo", "pid=,ppid=,pgid=,uid=,stat=,command="])
-  )
-    return { kind: "process-table" };
-  if (
-    execution.executable !== identityExecutable ||
-    JSON.stringify(execution.arguments) !==
-      JSON.stringify([
-        identityExecutable,
-        identityHelper,
-        "--global-identities",
-      ])
-  )
-    return undefined;
-  return { kind: "native-identities" };
-};
+  for (const event of cloneEvents) {
+    const childPid =
+      event.childPid ?? /\) = (\d+)(?:<[^>]*>)?$/u.exec(event.text)?.[1];
+    if (childPid === undefined) continue;
+    const observedChild = Number(childPid);
+    // A child-side clone return of zero is not a parent-to-child edge.
+    if (!Number.isSafeInteger(observedChild) || observedChild <= 0) continue;
+    event.childPid = observedChild;
+    if (/\bCLONE_THREAD\b/u.test(event.text))
+      joinThreadGroup(event.parentPid, event.childPid);
+  }
 
-const readOnlyOpen = (line) =>
-  /^open(?:at|at2)?\(/u.test(line) &&
-  /\bO_RDONLY\b/u.test(line) &&
-  !/\bO_(?:WRONLY|RDWR|CREAT|TRUNC|APPEND|TMPFILE)\b/u.test(line);
-
-/** Attribute sentinel reads only to successful fixed global observers. */
-export const verifyHistoricalPidReads = (traces, options) => {
-  const byPid = new Map(
-    traces.map((trace) => [
-      trace.pid,
-      { ...trace, lines: completeLines(trace.text) },
-    ]),
-  );
-  assert.equal(byPid.size, traces.length, "Duplicate trace actor identity");
-  const ownershipReads = [];
-  for (const [pid, trace] of byPid) {
-    let role;
-    const procDirectoryDescriptors = new Set();
-    let globalEnumerationObserved = false;
-    for (const line of trace.lines) {
-      if (/^execve(?:at)?\(/u.test(line)) {
-        role = observerRole(traceExecution(line), options);
-        procDirectoryDescriptors.clear();
-        globalEnumerationObserved = false;
-      }
-      if (role?.kind === "native-identities") {
-        if (
-          readOnlyOpen(line) &&
-          /"\/proc",/u.test(line) &&
-          /\bO_DIRECTORY\b/u.test(line)
-        ) {
-          const descriptor = / = (\d+)$/u.exec(line)?.[1];
-          if (descriptor !== undefined)
-            procDirectoryDescriptors.add(descriptor);
-        }
-        const directoryRead = /^getdents64\((\d+),.* = ([1-9]\d*)$/u.exec(line);
-        if (
-          directoryRead !== null &&
-          procDirectoryDescriptors.has(directoryRead[1])
-        )
-          globalEnumerationObserved = true;
-      }
-      if (!line.includes(`/proc/${options.sentinelPid}/`)) continue;
-      const path = new RegExp(
-        `"/proc/${options.sentinelPid}/([^"\\\\]+)"`,
-        "u",
-      ).exec(line)?.[1];
-      const allowed =
-        role?.kind === "process-table"
-          ? ["stat", "status", "cmdline", "wchan", "environ"].includes(path)
-          : role?.kind === "native-identities" &&
-            globalEnumerationObserved &&
-            path === "stat" &&
-            readOnlyOpen(line);
+  const executions = [];
+  for (const trace of traces) {
+    for (const line of trace.text.split("\n")) {
+      if (!/execve(?:at)?\(/u.test(line)) continue;
+      const match = /^execve\("([^"]+)"/u.exec(line);
+      assert.notEqual(match, null, `Unresolved executable identity: ${line}`);
       assert.ok(
-        allowed,
-        `Historical PID caused a provider lookup in ${trace.file}: ${line}`,
+        / = (?:0|-1 [A-Z]+)/u.test(line),
+        `Incomplete execution observation: ${line}`,
       );
-      ownershipReads.push({ actor: pid, observer: role.kind, syscall: line });
+      executions.push({
+        pid: trace.pid,
+        path: match[1],
+        line,
+        succeeded: line.endsWith(" = 0"),
+        ownershipInventory:
+          psExecutables.has(match[1]) && line.includes(ownershipPsArguments),
+      });
     }
   }
-  return ownershipReads;
+  const psProcesses = new Set(
+    executions
+      .filter(
+        ({ succeeded, ownershipInventory }) => succeeded && ownershipInventory,
+      )
+      .map(({ pid }) => pid),
+  );
+  const psParentGroups = new Set(
+    cloneEvents
+      .filter(({ childPid }) => psProcesses.has(childPid))
+      .map(({ parentPid }) => findGroup(parentPid)),
+  );
+  const nodeGroups = new Set(
+    executions
+      .filter(({ path, succeeded }) => succeeded && path === nodeExecutable)
+      .map(({ pid }) => findGroup(pid)),
+  );
+  const replaced = new Set(
+    executions
+      .filter(({ path, succeeded }) => succeeded && path !== nodeExecutable)
+      .map(({ pid }) => pid),
+  );
+  const ownershipThreads = new Set(
+    traces
+      .filter(
+        ({ pid }) =>
+          nodeGroups.has(findGroup(pid)) &&
+          psParentGroups.has(findGroup(pid)) &&
+          !replaced.has(pid),
+      )
+      .map(({ pid }) => pid),
+  );
+  return { ownershipThreads, psProcesses, executions };
 };

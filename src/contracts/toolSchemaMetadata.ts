@@ -3,7 +3,6 @@ import { z } from "zod";
 import type { ToolContract } from "./toolContractTypes.js";
 import { advertisedInputExamples } from "./advertisedInputExamples.js";
 import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
-import { portableBase64Schema } from "./portableBase64Schema.js";
 import {
   schemaArrays,
   schemaChildren,
@@ -284,9 +283,7 @@ const withAdvertisedJsonSchema = <Schema extends z.ZodType>(
       ...standard,
       jsonSchema: {
         ...standard.jsonSchema,
-        [io]: memoizeByTarget(
-          advertise((options) => portableBase64Schema(project(options))),
-        ),
+        [io]: memoizeByTarget(advertise(project)),
       },
     },
   });

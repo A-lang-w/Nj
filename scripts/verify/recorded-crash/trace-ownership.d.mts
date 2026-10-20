@@ -1,29 +1,17 @@
-export interface OwnershipTrace {
+export interface OwnershipTraceExecution {
   readonly pid: number;
-  readonly file: string;
-  readonly text: string;
+  readonly path: string;
+  readonly line: string;
+  readonly succeeded: boolean;
+  readonly ownershipInventory: boolean;
 }
-
-export interface OwnershipTraceOptions {
-  readonly sentinelPid: number;
-  readonly psPaths: ReadonlySet<string>;
-  readonly identityExecutable: string;
-  readonly identityHelper: string;
-}
-
-export function traceExecution(line: string):
-  | {
-      readonly executable: string;
-      readonly arguments: readonly string[];
-      readonly successful: boolean;
-    }
-  | undefined;
-
-export function verifyHistoricalPidReads(
-  traces: readonly OwnershipTrace[],
-  options: OwnershipTraceOptions,
-): readonly {
-  readonly actor: number;
-  readonly observer: "process-table" | "native-identities";
-  readonly syscall: string;
-}[];
+/** Parsed topology and execution facts for one complete strace observation. */
+export function collectOwnershipTraceFacts(options: {
+  readonly traces: readonly { readonly pid: number; readonly text: string }[];
+  readonly nodeExecutable: string;
+  readonly psExecutables: ReadonlySet<string>;
+}): {
+  readonly ownershipThreads: ReadonlySet<number>;
+  readonly psProcesses: ReadonlySet<number>;
+  readonly executions: readonly OwnershipTraceExecution[];
+};
