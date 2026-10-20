@@ -291,10 +291,19 @@ it.each([
       if (result.ok) return;
       expect(result.error.cause).toBe(code === "ABORT_ERR" ? reason : failure);
       if (captured && code === "ABORT_ERR") {
-        expect(result.error.capturedOutput).toBeUndefined();
+        expect(result.error.capturedOutput).toMatchObject({
+          stdout: "partial stdout",
+          stderr: "partial stderr",
+          stdout_bytes: 14,
+          stderr_bytes: 14,
+          exit_code: null,
+        });
         expect(result.error.partialObservation).toMatchObject({
           raw_result: { stdout: "partial stdout" },
         });
+        expect(result.error.partialObservation).not.toHaveProperty(
+          "normalized_result.stdout",
+        );
       }
     } finally {
       await service.close();
