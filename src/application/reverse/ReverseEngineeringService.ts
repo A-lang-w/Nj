@@ -23,6 +23,7 @@ import {
   type AnalysisCleanupObservation,
 } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -432,7 +433,7 @@ export class ReverseEngineeringService {
         );
     } catch (cause) {
       if (cause instanceof AnalysisError) return err(cause);
-      const code = (cause as NodeJS.ErrnoException).code;
+      const code = commandFailureCode(cause);
       if (signal?.aborted)
         return err(new AnalysisCancelledError(operation, { cause }));
       if (code === "EACCES" || code === "EPERM") {
@@ -447,7 +448,48 @@ export class ReverseEngineeringService {
         return err(
           new AnalysisTimeoutError(operation, DEFAULT_TIMEOUT_MS, { cause }),
         );
-      return err(new AnalysisInputError(operation, { cause }));
+      if (
+        code !== "ENOENT" &&
+        code !== "ENOTDIR" &&
+        code !== "EINVAL" &&
+        code !== "ELOOP" &&
+        code !== "ENAMETOOLONG"
+      ) {
+        if (cause instanceof AnalysisError) return err(cause);
+        return err(
+          new ProviderAdapterError(profile.identity.id, operation, {
+            cause,
+            diagnostics: {
+              phase: "target_preflight",
+              ...(code === undefined ? {} : { system_code: code }),
+            },
+          }),
+        );
+      }
+      const targetReason =
+        code === "EINVAL"
+          ? "The selected target is not a regular file."
+          : code === "ELOOP"
+            ? "The selected target path contains a symbolic-link loop."
+            : code === "ENAMETOOLONG"
+              ? "The selected target path is too long."
+              : "The selected target was not found.";
+      return err(
+        new AnalysisInputError(
+          operation,
+          {
+            cause,
+            userMessage: `${targetReason} Selected path: ${absolutePath}. Check the path and choose a readable regular file before retrying.`,
+          },
+          [
+            {
+              path: ["path"],
+              reason: "invalid_value",
+              message: `${targetReason}${code === undefined ? "" : ` (host error ${code})`}`,
+            },
+          ],
+        ),
+      );
     }
     let stdout = "";
     let stderr = "";
@@ -524,8 +566,7 @@ export class ReverseEngineeringService {
           },
         );
       const capture = execFileOutputFailure(cause);
-      const code =
-        capture?.code ?? (cause as NodeJS.ErrnoException).code ?? undefined;
+      const code = capture?.code ?? commandFailureCode(cause);
       if (earlyFailure === undefined && code === "E2BIG")
         earlyFailure = new AnalysisResourceConstraintError(
           operation,
@@ -1199,6 +1240,14 @@ const digestFile = async (
   return outcome.value;
 };
 
+const commandFailureCode = (cause: unknown): string | number | undefined => {
+  if (typeof cause !== "object" || cause === null) return undefined;
+  const code: unknown = Reflect.get(cause, "code");
+  return typeof code === "string" || typeof code === "number"
+    ? code
+    : undefined;
+};
+
 const statWithDeadline = (
   path: string,
   signal: AbortSignal | undefined,
@@ -1208,22 +1257,24 @@ const statWithDeadline = (
     return Promise.reject(new AnalysisCancelledError("artifact_digest"));
   return new Promise<Stats>((resolveStat, rejectStat) => {
     let settled = false;
-    const finish = (cause?: unknown, value?: Stats): void => {
+    const finish = (outcome: Result<Stats, unknown>): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       signal?.removeEventListener("abort", abort);
-      if (cause !== undefined) rejectStat(cause);
-      else resolveStat(value!);
+      if (outcome.ok) resolveStat(outcome.value);
+      else rejectStat(outcome.error);
     };
     const abort = (): void =>
-      finish(new AnalysisCancelledError("artifact_digest"));
+      finish(err(new AnalysisCancelledError("artifact_digest")));
     const timer = setTimeout(
       () =>
         finish(
-          Object.assign(new Error("Artifact stat timed out"), {
-            code: "ETIMEDOUT",
-          }),
+          err(
+            Object.assign(new Error("Artifact stat timed out"), {
+              code: "ETIMEDOUT",
+            }),
+          ),
         ),
       DEFAULT_TIMEOUT_MS,
     );
@@ -1236,11 +1287,11 @@ const statWithDeadline = (
     // stat rejection is observed and cannot become an unhandled rejection.
     try {
       void stat(path).then(
-        (info) => finish(undefined, info),
-        (cause: unknown) => finish(cause),
+        (info) => finish(ok(info)),
+        (cause: unknown) => finish(err(cause)),
       );
     } catch (cause) {
-      finish(cause);
+      finish(err(cause));
     }
   });
 };
