@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { expect } from "vitest";
+import { expect, it } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   modelArtifactSchema,
@@ -11,13 +11,123 @@ import {
   modelArtifactSummaryViewResultSchema,
   analysisViewResultSchema,
 } from "../../src/domain/analysisView/analysisView.js";
-import { parseEvidence } from "../../src/domain/evidence.js";
+import { createEvidence, parseEvidence } from "../../src/domain/evidence.js";
 import { readEvidenceBundle } from "../../src/application/EvidenceBundleFiles.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { ggufFixture, safetensorsFixture } from "../fixtures/model/model.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+
+it("rejects noncanonical imported model indexes and duplicate identities through public MCP", async () => {
+  const root = await createTestTempDirectory("rea-model-import-");
+  const path = join(root, "model");
+  await writeFile(path, ggufFixture().bytes);
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("inspect_model_artifact", {
+    path,
+    detail: "complete",
+  });
+  const complete = parseEvidence(response.structuredContent);
+  const report = modelArtifactSchema.parse(complete.normalized_result);
+  const corruptions: ((value: ModelArtifact) => void)[] = [
+    (value) => {
+      value.tensors[0]!.index = 7;
+    },
+    (value) => {
+      value.metadata[0]!.index = 7;
+    },
+    (value) => {
+      value.tensors[1]!.name = value.tensors[0]!.name;
+    },
+    (value) => {
+      value.metadata[1]!.key = value.metadata[0]!.key;
+    },
+    (value) => {
+      value.totals.by_type[1]!.type = value.totals.by_type[0]!.type;
+    },
+  ];
+  for (const corrupt of corruptions) {
+    const result = structuredClone(report);
+    corrupt(result);
+    const evidence = createEvidence(undefined, complete.provider, {
+      operation: "inspect_model_artifact",
+      parameters: complete.parameters,
+      result,
+    });
+    const failure = parseMcpToolError(
+      await call("inspect_analysis_view", {
+        source: { kind: "inline", evidence },
+        view: {
+          kind: "model-artifact",
+          collection: "tensors",
+          names: ["weight"],
+        },
+      }),
+    );
+    expect(failure.error).toMatchObject({ code: "invalid_request" });
+  }
+  await assertHistoricalModelPages(call, complete.evidence_id, report);
+});
+
+it("bounds compact model warnings and omits unselected long labels while retaining complete Evidence", async () => {
+  const root = await createTestTempDirectory("rea-model-long-labels-");
+  const path = join(root, "model");
+  const name = "tensor".repeat(4000);
+  const type = "FUTURE".repeat(4000);
+  const key = "metadata".repeat(3000);
+  await writeFile(
+    path,
+    safetensorsFixture(
+      JSON.stringify({
+        __metadata__: { [key]: "kept" },
+        [name]: { dtype: type, shape: [0], data_offsets: [0, 0] },
+      }),
+      Buffer.alloc(0),
+    ).bytes,
+  );
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("inspect_model_artifact", { path });
+  expect(response.isError, JSON.stringify(response)).not.toBe(true);
+  expect(JSON.stringify(response).length).toBeLessThan(16_000);
+  const summary = modelArtifactSummaryViewResultSchema.parse(
+    parseEvidence(response.structuredContent).normalized_result,
+  );
+  expect(summary.summary.coverage.storage_sizes).toBe("partial");
+  expect(summary.summary.limitations.join(" ")).toContain(
+    summary.parent_evidence_id,
+  );
+  const source = {
+    kind: "retained-evidence",
+    evidence_id: summary.parent_evidence_id,
+  };
+  for (const collection of ["tensors", "metadata", "types"] as const) {
+    const page = await call("inspect_analysis_view", {
+      source,
+      view: { kind: "model-artifact", collection, fields: [], limit: 1 },
+    });
+    expect(page.isError, JSON.stringify(page)).not.toBe(true);
+    expect(JSON.stringify(page).length).toBeLessThan(16_000);
+    const view = analysisViewResultSchema.parse(
+      parseEvidence(page.structuredContent).normalized_result,
+    );
+    if (view.kind !== "model-artifact") throw new Error("Incorrect view");
+    expect(view.items).toEqual([{ index: 0 }]);
+    expect(view.source_coverage.storage_sizes).toBe("partial");
+    expect(view.limitations.join(" ")).toContain(summary.parent_evidence_id);
+  }
+  const full = await call("inspect_model_artifact", {
+    path,
+    detail: "complete",
+  });
+  expect(full.isError, JSON.stringify(full)).not.toBe(true);
+  const report = modelArtifactSchema.parse(
+    parseEvidence(full.structuredContent).normalized_result,
+  );
+  expect(report.tensors[0]).toMatchObject({ name, type });
+  expect(report.metadata[0]).toMatchObject({ key, value: "kept" });
+  expect(report.limitations.join(" ")).toContain(type);
+});
 
 const assertHistoricalModelPages = async (
   call: Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"],
@@ -36,7 +146,7 @@ const assertHistoricalModelPages = async (
         collection: "tensors",
         offset,
         limit: 1,
-        fields: ["type", "shape", "file_offset"],
+        fields: ["name", "type", "shape", "file_offset"],
       },
     });
     expect(page.isError, JSON.stringify(page)).not.toBe(true);
@@ -77,7 +187,7 @@ const assertHistoricalModelPages = async (
   expect(selectedView.items).toEqual(
     report.tensors
       .filter((row) => row.name === "weight")
-      .map(({ index, name }) => ({ index, name })),
+      .map(({ index }) => ({ index })),
   );
   const empty = await call("inspect_analysis_view", {
     source: {
@@ -105,7 +215,7 @@ const assertHistoricalModelPages = async (
       kind: "model-artifact",
       collection: "tensors",
       storage_validation: ["unknown"],
-      fields: ["storage_validation", "byte_length"],
+      fields: ["name", "storage_validation", "byte_length"],
     },
   });
   expect(unverified.isError, JSON.stringify(unverified)).not.toBe(true);
@@ -133,7 +243,7 @@ const assertHistoricalModelPages = async (
       kind: "model-artifact",
       collection: "types",
       types: ["F32"],
-      fields: ["tensors", "parameter_count", "bytes"],
+      fields: ["type", "tensors", "parameter_count", "bytes"],
     },
   });
   expect(histogram.isError, JSON.stringify(histogram)).not.toBe(true);
@@ -212,7 +322,7 @@ cliTest(
         view: {
           collection: "tensors",
           names: ["weight"],
-          fields: ["type", "shape", "file_offset"],
+          fields: ["name", "type", "shape", "file_offset"],
         },
       });
       expect(direct.isError, JSON.stringify(direct)).not.toBe(true);
@@ -263,7 +373,7 @@ cliTest(
         JSON.stringify({
           collection: "metadata",
           keys: ["tokenizer.chat_template"],
-          fields: ["value"],
+          fields: ["key", "value"],
         }),
         "--evidence_output",
         output,
@@ -297,7 +407,7 @@ cliTest(
         kind: "model-artifact",
         collection: "metadata",
         keys: ["tokenizer.chat_template", "custom.exact"],
-        fields: ["type", "value", "source_offset", "source_length"],
+        fields: ["key", "type", "value", "source_offset", "source_length"],
       },
     });
     expect(page.isError, JSON.stringify(page)).not.toBe(true);

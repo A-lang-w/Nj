@@ -6,6 +6,7 @@ export { modelArtifactViewRequestSchema } from "../model/modelArtifactQuery.js";
 import { z } from "zod";
 import {
   modelArtifactSchema,
+  modelArtifactObjectSchema,
   modelMetadataSchema,
   modelTensorSchema,
   modelSourceSchema,
@@ -24,13 +25,14 @@ import type {
 } from "./analysisView.js";
 import {
   completeWithinViewCoverage,
+  boundedViewMessages,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 
-export const modelArtifactSummarySchema = modelArtifactSchema
+export const modelArtifactSummarySchema = modelArtifactObjectSchema
   .omit({ metadata: true, tensors: true, totals: true })
   .extend({
-    totals: modelArtifactSchema.shape.totals.omit({ by_type: true }),
+    totals: modelArtifactObjectSchema.shape.totals.omit({ by_type: true }),
     counts: z.strictObject({
       metadata: z.number().int().nonnegative(),
       tensors: z.number().int().nonnegative(),
@@ -102,14 +104,14 @@ const modelContextSchema = modelArtifactSummarySchema.omit({
 });
 
 export const modelArtifactViewItemsSchema = z.union([
-  z.array(modelTypeRowSchema.partial().required({ index: true, type: true })),
-  z.array(modelTensorSchema.partial().required({ index: true, name: true })),
-  z.array(modelMetadataSchema.partial().required({ index: true, key: true })),
+  z.array(modelTypeRowSchema.partial().required({ index: true })),
+  z.array(modelTensorSchema.partial().required({ index: true })),
+  z.array(modelMetadataSchema.partial().required({ index: true })),
 ]);
 export const modelArtifactViewContextSchema = z.strictObject({
   source: modelSourceSchema,
   model: modelContextSchema,
-  source_coverage: modelArtifactSchema.shape.coverage,
+  source_coverage: modelArtifactObjectSchema.shape.coverage,
 });
 
 type Checked = {
@@ -203,7 +205,11 @@ export const projectModelArtifactView = (
     parent_operation: "inspect_model_artifact" as const,
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
-    limitations: [...parent.limitations],
+    limitations: boundedViewMessages(
+      parent.limitations,
+      parent.evidenceId,
+      "limitations",
+    ),
     unknowns: [
       "Tensor values, runtime execution and inference quality were not inspected.",
       ...(report.artifact.sha256 === null
@@ -218,7 +224,14 @@ export const projectModelArtifactView = (
       kind: "summary",
       view,
       ...shared,
-      summary,
+      summary: {
+        ...summary,
+        limitations: boundedViewMessages(
+          summary.limitations,
+          parent.evidenceId,
+          "limitations",
+        ),
+      },
       coverage: completeWithinViewCoverage(1, 1),
     });
   const rows =
@@ -295,14 +308,7 @@ export const projectModelArtifactView = (
     view.fields === undefined ? undefined : new Set<string>(view.fields);
   const items = pageIndices.map((index) => {
     const row = rows[index]!;
-    const result: Record<string, JsonValue> = {
-      index,
-      ...("name" in row
-        ? { name: row.name }
-        : "key" in row
-          ? { key: row.key }
-          : { type: row.type }),
-    };
+    const result: Record<string, JsonValue> = { index };
     for (const [name, value] of Object.entries(row))
       if (fields === undefined || fields.has(name)) result[name] = value;
     return result;

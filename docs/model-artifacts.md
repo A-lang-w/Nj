@@ -82,7 +82,7 @@ remain in complete Evidence. Use the returned `parent_evidence_id`:
     "kind": "model-artifact",
     "collection": "tensors",
     "names": ["token_embd.weight", "output.weight"],
-    "fields": ["type", "shape", "file_offset", "byte_length"],
+    "fields": ["name", "type", "shape", "file_offset", "byte_length"],
     "offset": 0,
     "limit": 32
   }
@@ -103,7 +103,10 @@ exact `keys`, indices, fields and paging; use it for `tokenizer.chat_template`
 or tokenizer array previews. `collection: "types"` pages derived storage and
 parameter totals and accepts exact `types`. Tensor pages also accept `types`.
 Filters intersect; omitted filters mean all recorded rows and empty arrays mean
-none. Requested fields preserve row identity. Page offsets count filtered
+none. Every row retains its source-scoped index. Names, keys and type labels
+follow field selection; `fields: []` returns only indices. Omitted fields return
+all recorded columns. Compact warnings use the shared bounded view budget and
+link to complete parent Evidence when messages are omitted. Page offsets count filtered
 matches, while row indices retain their original scope. Each page carries source
 identity, header coverage, array omissions, unknowns and parent Evidence links.
 
@@ -115,6 +118,8 @@ CLI Evidence bundles contain a `records` array; import the bundle with
 record as a standalone Evidence file. A bundle is not a single Evidence record.
 The session owns validated indexes until that Evidence is released; there is no
 live-file result cache or automatic freshness claim.
+Imported reports must retain positional indices and unique names, keys and
+type identities; malformed reports return a typed input error before indexing.
 
 ## Bounds and unsupported inputs
 

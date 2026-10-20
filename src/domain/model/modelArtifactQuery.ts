@@ -1,13 +1,13 @@
 import { z } from "zod";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import {
-  modelArtifactSchema,
+  modelArtifactObjectSchema,
   modelMetadataSchema,
   modelTensorSchema,
 } from "./modelArtifact.js";
 
 export const modelTypeRowSchema =
-  modelArtifactSchema.shape.totals.shape.by_type.element.extend({
+  modelArtifactObjectSchema.shape.totals.shape.by_type.element.extend({
     index: z.number().int().nonnegative(),
   });
 

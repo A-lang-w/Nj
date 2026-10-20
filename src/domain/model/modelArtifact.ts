@@ -49,7 +49,7 @@ export const modelTensorSchema = z.strictObject({
   ...location,
 });
 
-export const modelArtifactSchema = z.strictObject({
+export const modelArtifactObjectSchema = z.strictObject({
   artifact: modelSourceSchema,
   format: z.enum(["gguf", "safetensors"]),
   version: count.nullable(),
@@ -80,6 +80,47 @@ export const modelArtifactSchema = z.strictObject({
   }),
   limitations: z.array(z.string()),
 });
+
+/** Lookup indexes are safe only after positional identities and uniqueness are proven. */
+export const modelArtifactSchema = modelArtifactObjectSchema.superRefine(
+  (report, context) => {
+    const collections = [
+      { name: "metadata", rows: report.metadata, identity: "key" },
+      { name: "tensors", rows: report.tensors, identity: "name" },
+      { name: "totals.by_type", rows: report.totals.by_type, identity: "type" },
+    ] as const;
+    for (const { name, rows, identity } of collections) {
+      const seen = new Set<string>();
+      const prefix = name.split(".");
+      for (let index = 0; index < rows.length; index++) {
+        const row = rows[index]!;
+        if ("index" in row && row.index !== index) {
+          context.addIssue({
+            code: "custom",
+            path: [...prefix, index, "index"],
+            message: "Model row index must equal its source position",
+          });
+          return;
+        }
+        const value =
+          identity === "key" && "key" in row
+            ? row.key
+            : identity === "name" && "name" in row
+              ? row.name
+              : row.type;
+        if (seen.has(value)) {
+          context.addIssue({
+            code: "custom",
+            path: [...prefix, index, identity],
+            message: "Model collection identities must be unique",
+          });
+          return;
+        }
+        seen.add(value);
+      }
+    }
+  },
+);
 
 export type ModelArtifact = z.infer<typeof modelArtifactSchema>;
 export type ModelTensor = z.infer<typeof modelTensorSchema>;
