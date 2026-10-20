@@ -2,8 +2,9 @@ import {
   assertRegularFileActive,
   RegularFileOperationCancelled,
 } from "../filesystem/RegularFile.js";
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { access, realpath, stat } from "node:fs/promises";
+import { access, readFile, realpath, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
@@ -210,25 +211,15 @@ export const inspectKunaInstallation = async (
 
   assertRegularFileActive(options.signal);
 
-  let preProbeHash: { readonly sha256: string; readonly bytes: number };
+  let preProbeHash: string;
   try {
-    preProbeHash = await options.fileCloseResources.run(async () =>
-      hashStableFile(executable, {
-        ...(options.signal === undefined ? {} : { signal: options.signal }),
-        retainFailedClose: (owner) =>
-          options.fileCloseResources.retain(owner, executable),
-      }),
-    );
+    preProbeHash = createHash("sha256")
+      .update(await readFile(executable))
+      .digest("hex");
   } catch (cause: unknown) {
-    if (
-      cause instanceof Error &&
-      (cause instanceof RegularFileCleanupFailure ||
-        regularFileCancellation(cause) !== undefined)
-    )
-      throw cause;
     return failure(
       "executable_missing",
-      `Cannot fingerprint ${executable}: ${message(stableFileHashCause(cause))}`,
+      `Cannot fingerprint ${executable}: ${message(cause)}`,
       { command, executable },
     );
   }
@@ -345,7 +336,7 @@ export const inspectKunaInstallation = async (
     );
   }
 
-  if (fingerprint.sha256 !== preProbeHash.sha256)
+  if (fingerprint.sha256 !== preProbeHash)
     return failure(
       "version_unresolved",
       `${executable} was replaced during the version probe; the digest does not match the probed bytes. Re-inspect to obtain a consistent version and fingerprint.`,
@@ -353,7 +344,7 @@ export const inspectKunaInstallation = async (
         command,
         executable,
         version,
-        pre_probe_sha256: preProbeHash.sha256,
+        pre_probe_sha256: preProbeHash,
         post_probe_sha256: fingerprint.sha256,
       },
     );
