@@ -979,6 +979,9 @@ export class GdbSessionManager {
       };
       const stopped = await this.#stopDebuggerOnly(session);
       if (stopped.status === "incomplete") {
+        // Retain this owner for cleanup only: startup never completed, so the ID
+        // must not report ready or accept console commands.
+        session.ready = false;
         this.#sessions.set(id, session);
         releaseReservation();
         const cleanup = { reason: stopped.reason, resources: [session.id] };
