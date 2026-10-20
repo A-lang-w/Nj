@@ -59,3 +59,11 @@ smoke task passed and twelve generated retrieval tasks scored 12/12 with
 `openai/gpt-oss-120b` and 12/12 with `zai-org/GLM-5.3-Flash`, with no provider
 errors. The 446-tool manifest had scored 0/12 and 8/12 on its own generated
 tasks, the 0 being the provider's tool limit rather than the model.
+
+Review then found that the rule as run here also merged one id's
+sub-resources (`/users/alice/followers`, `/users/bob/following` and
+`/users/carol/starred` became one tool), and a pair now qualifies only when a
+literal follows it. The Gitea capture above predates that guard and has not
+been projected with it: whether any of the 63 tools merged sub-resources this
+way, and the tool count with bare `/repos/{owner}/{repo}` routes kept one per
+pair, are not established here.
