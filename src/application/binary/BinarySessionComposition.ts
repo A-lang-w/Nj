@@ -1,7 +1,10 @@
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import type { AnalysisProvider } from "../AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
-import { BinaryTargetRegistry, type BinaryTargetLimits } from "./BinaryTargetRegistry.js";
+import {
+  BinaryTargetRegistry,
+  type BinaryTargetLimits,
+} from "./BinaryTargetRegistry.js";
 import { SessionProviderRouter } from "./SessionProviderRouter.js";
 
 /**

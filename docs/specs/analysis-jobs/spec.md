@@ -44,11 +44,14 @@ which provides the per-target slot these jobs run in.
 ## Implementation status
 
 This draft implements background and auto modes at the target registry. The job
-owns the provider start signal, `binary_session` and official analysis tools
-accept `wait_ms`, and `close_binary` aborts the job. The existing close-time
-cache publish gate is unchanged. The CLI does not expose `analysis_mode`, so no
-one-shot background mode exists to refuse. No real-provider measurement has been
-run.
+owns the provider start signal, `binary_session` and the target-bound analysis
+tools accept `wait_ms`, and `close_binary` aborts the job and waits for the
+interrupted start to unwind. The existing close-time cache publish gate is
+unchanged. The one-shot CLI accepts `--analysis-mode` and refuses `background`
+with `capability_unavailable`; `auto` runs in the foreground there. Progress is
+limited to elapsed time: no provider streams a phase line into the application
+layer, so the contract reports no progress value. No real-provider measurement
+has been run.
 
 ## Non-goals (v1)
 
@@ -73,29 +76,35 @@ the result is the same as foreground, which covers cache hits. Otherwise the
 open returns `analysis_started` and the job continues.
 
 D3. **Background is MCP-server only.** The CLI process exits when the command
-does, so a CLI background job would die with it. The one-shot CLI has no
-`analysis_mode` input and remains foreground; a future CLI flag must fail with
-`capability_unavailable` rather than start a short-lived job.
+does, so a CLI background job would die with it. The one-shot CLI accepts
+`--analysis-mode`; `background` fails with `capability_unavailable` and the
+message names the MCP alternative, while `auto` behaves as foreground with the
+same budget as any other foreground CLI analysis.
 
 D4. **Job lifetime equals server lifetime in v1.** Server exit cancels the job
 without publishing. Open question O3 covers a REA-owned detached supervisor,
 which is the change that would make a one-hour analysis survive a client
 restart.
 
-D5. **Wait budget.** `binary_session` and analysis tools accept `wait_ms`.
-Default 180 000, maximum 290 000, so a single call stays under the shortest
-reported cache TTL (5 minutes). A tool call that finds the target still starting
-waits up to the budget, then fails with `analysis_in_progress`, which is
-retryable and includes progress.
+D5. **Wait budget.** `binary_session` and the target-bound analysis tools
+accept `wait_ms`. Default 180 000, maximum 290 000, so a single call stays
+under the shortest reported cache TTL (5 minutes). A tool call that finds the
+target still starting waits up to the budget, then fails with
+`analysis_in_progress`, which is retryable and includes the elapsed time. The
+live-session navigation tools observe the provider session rather than the
+analysed program, so they declare no wait budget; a tool that declares no wait
+budget never consumes one.
 
 D6. **Cancellation.** `close_binary` cancels a running job. It uses the existing
 forced stop, so cleanup is owned and no cache entry is written. v1 adds no new
 cancel tool, following the tool-design rule to reuse existing contracts.
 
 D7. **Progress is honest.** Progress comes from launcher output and, once merged,
-from #4439's streamed progress. Until then the state reports elapsed time and
-any phase line Ghidra prints. No percentage is invented. The bridge serves
-nothing before analysis completes, so progress cannot come from bridge requests.
+from #4439's streamed progress. Until then the state reports elapsed time
+only, and the contract declares no progress value: no provider streams a phase
+line into the application layer, so reporting one would invent it. The bridge
+serves nothing before analysis completes, so progress cannot come from bridge
+requests. A finished job stops counting elapsed time at its completion.
 
 D8. **Caching is unchanged in rule; the close gate still owns the publish.**
 A background job keeps the provider alive after analysis, so a later explicit
@@ -120,8 +129,10 @@ ready -> closing -> idle
 `binary_session` reports it:
 
 ```
-analysis: { state, mode, started_at, elapsed_ms, progress?, error? }
+analysis: { state, mode, started_at, elapsed_ms, error? }
 ```
+
+A finished job reports the elapsed time it took and stops counting.
 
 ### Ownership and lifetime
 
@@ -134,16 +145,22 @@ analysis: { state, mode, started_at, elapsed_ms, progress?, error? }
   supervision. No new process-cleanup logic is added, per AGENTS.md.
 - A job whose cleanup fails keeps ownership of the retained resource and reports
   `cleanup_incomplete`, as foreground sessions already do.
+- A background start takes the same concurrency permit as a foreground open, so
+  the cap and the FIFO queue apply to both. A queued start is cancelled through
+  the job's own signal, and a cancelled queued start consumes no permit.
+- `close_binary` aborts the job and waits, bounded, for the interrupted start to
+  unwind before it retires the slot, so the interrupted start and the close do
+  not interleave over the same client.
 
 ### Wait semantics
 
-| Call | Behaviour |
-|---|---|
-| `open_binary` foreground | Unchanged. Blocks until ready or failure. |
-| `open_binary` background | Registers the job and returns `analysis_started` at once. |
-| `open_binary` auto | Waits up to `auto_background_after_ms`, then returns `analysis_started` if still starting. |
-| `binary_session` with `wait_ms` | Waits up to the budget for ready or failure, then returns the current state. |
-| Analysis tool while starting | Waits up to `wait_ms`, then returns `analysis_in_progress`. |
+| Call                            | Behaviour                                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------------------ |
+| `open_binary` foreground        | Unchanged. Blocks until ready or failure.                                                  |
+| `open_binary` background        | Registers the job and returns `analysis_started` at once.                                  |
+| `open_binary` auto              | Waits up to `auto_background_after_ms`, then returns `analysis_started` if still starting. |
+| `binary_session` with `wait_ms` | Waits up to the budget for ready or failure, then returns the current state.               |
+| Analysis tool while starting    | Waits up to `wait_ms`, then returns `analysis_in_progress`.                                |
 
 Phase 2, optional and off by default: when the cache manifest or the Activity
 Journal (#4161) has a recorded foreground duration for the same cache key that
@@ -159,15 +176,19 @@ New codes and states:
   original provider error and records it in the `analysis` state.
 - `analysis_cancelled`: `close_binary` aborts the job through the existing close
   path; callers see the existing cancellation outcome.
-- `capability_unavailable`: reserved for a future CLI `background` request; the
-  CLI has no such input today.
+- `capability_unavailable`: a CLI `background` request. Implemented.
+- `cancelled`: a cancelled wait answers the same way on the first open and on a
+  re-open of the same running job. The job keeps running.
 
 ### Contracts and docs
 
 - `sessionToolContracts.ts`: `open_binary` gains `analysis_mode`,
   `auto_background_after_ms`; `binary_session` gains `wait_ms` and `analysis`.
 - Analysis tool contracts: only the new `analysis_in_progress` error and optional
-  `wait_ms`. Target routing is in the multi-target spec.
+  `wait_ms`. The wait budget belongs to the target-bound analysis tools; the
+  live-session navigation tools declare none, and the adapter consumes a
+  `wait_ms` only when the tool's own schema declares one. Target routing is in
+  the multi-target spec.
 - `toolEffects.ts`: background opens are long-lived process owners.
 - Regenerate the catalog. Update `docs/mcp-contracts.md`,
   `docs/installation.md` (startup timeout guidance), and the packaged

@@ -234,7 +234,9 @@ const runAnalysis = async (
     readonly logger: Logger;
     readonly snapshotPath: string | undefined;
     readonly signal: AbortSignal;
-    readonly createSession?: () => BinarySessionPort | Promise<BinarySessionPort>;
+    readonly createSession?: () =>
+      | BinarySessionPort
+      | Promise<BinarySessionPort>;
     readonly providerId?: AnalysisProviderSelector;
     readonly formatHint?: ExecutableFormatHint;
     readonly architecture?: BinaryArchitecture;
@@ -655,4 +657,3 @@ const cliError = (error: AnalysisError): JsonValue => ({
   error: "Analysis failed",
   ...projectAnalysisError(error),
 });
-

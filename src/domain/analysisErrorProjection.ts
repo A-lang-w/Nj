@@ -301,7 +301,6 @@ const requestErrorDetails = (
       operation: error.operation,
       target_id: error.targetId,
       elapsed_ms: error.elapsedMs,
-      ...(error.progress === undefined ? {} : { progress: error.progress }),
     };
   if (error instanceof AnalysisArtifactChangedError)
     return {
@@ -637,4 +636,3 @@ export interface AnalysisErrorProjection extends Readonly<
   }>;
   readonly details?: Readonly<Record<string, JsonValue>>;
 }
-

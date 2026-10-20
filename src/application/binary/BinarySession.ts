@@ -10,6 +10,7 @@ import {
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { createEvidence } from "../../domain/evidence.js";
@@ -59,6 +60,8 @@ interface SessionRun {
   readonly client: AnalysisClient;
   readonly route: SessionProviderRoute;
   readonly runId: string;
+  /** Set once a forced close released this client, so it is never closed twice. */
+  released: boolean;
 }
 
 interface SessionBinding extends SessionRun {
@@ -86,6 +89,10 @@ export class BinarySession
         readonly retainDocument: boolean;
       }
     | undefined;
+  /** The client of an open that has not settled yet. */
+  #pendingStart: SessionRun | undefined;
+  /** Advanced when a forced close retires the slot under an unsettled open. */
+  #lifecycleGeneration = 0;
   #transition: Promise<void> = Promise.resolve();
   #transitionGeneration = 0;
   #transitionPending = 0;
@@ -131,7 +138,10 @@ export class BinarySession
   }
 
   /** Identify the provider producing evidence for this session. */
-  providerIdentity(operation?: AnalysisOperation, _targetId?: string): ProviderIdentity {
+  providerIdentity(
+    operation?: AnalysisOperation,
+    _targetId?: string,
+  ): ProviderIdentity {
     const route = this.#currentRoute();
     let selected = route.binding?.identity ?? route.identity;
     if (operation !== undefined) {
@@ -242,7 +252,10 @@ export class BinarySession
   /** Open a previewed target without repeating parsing or provider profile discovery. */
   openResolvedTarget(
     resolved: Pick<ResolvedSessionOpen, "target" | "route">,
-    options: Pick<BinarySessionOpenOptions, "signal" | "snapshot"> = {},
+    options: Pick<
+      BinarySessionOpenOptions,
+      "signal" | "snapshot" | "loadSnapshot"
+    > = {},
   ): Promise<Result<BinaryTarget, AnalysisError>> {
     return this.#open(
       () =>
@@ -294,6 +307,7 @@ export class BinarySession
     resolve: () => Promise<Result<ResolvedSessionOpen, AnalysisError>>,
     options: Pick<BinarySessionOpenOptions, "signal" | "snapshot">,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
+    const generation = this.#lifecycleGeneration;
     if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true)
       return err(this.#externalMutationCleanupFailure);
     if (isAborted(options.signal))
@@ -348,8 +362,32 @@ export class BinarySession
     const client = route.createClient(target, {
       runId,
     });
-    const run: SessionRun = { client, route, runId };
-    const started = await client.execute("health", {}, options);
+    const run: SessionRun = { client, route, runId, released: false };
+    this.#pendingStart = run;
+    // A provider start that rejects instead of returning an error must still
+    // release its client. The rejection would otherwise skip the failure path
+    // that owns the cleanup and leave the provider process running.
+    const started = await client
+      .execute("health", {}, options)
+      .catch((cause: unknown) =>
+        err(
+          new ProviderAdapterError(route.identity.id, "health", {
+            cause,
+            diagnostics: {
+              reason:
+                "the provider start rejected instead of returning an error",
+            },
+          }),
+        ),
+      );
+    if (this.#pendingStart === run) this.#pendingStart = undefined;
+    if (generation !== this.#lifecycleGeneration) {
+      // A forced close retired this slot while the start was in flight. The
+      // client is already released, and the open must not restore a target
+      // into a slot the caller closed.
+      await this.#releaseRun(run);
+      return err(new AnalysisCancelledError("open_binary"));
+    }
     if (!started.ok) {
       return err(await this.#failedOpen(run, previous, started.error));
     }
@@ -478,6 +516,40 @@ export class BinarySession
     });
   }
 
+  /**
+   * Release a start that ignored its abort.
+   *
+   * A provider start that never unwinds must not hold the slot's cleanup: the
+   * ordinary close serializes behind the open that holds the transition, so a
+   * wedged start would wedge every later close and the server shutdown. This
+   * path does not wait for that transition. It releases the pending client
+   * through the same client close that owns provider cleanup, invalidates the
+   * unsettled open so it cannot restore a target into the closed slot, and
+   * releases the slot's records and owned resources as the caller asked.
+   */
+  async closeWithoutTransition(
+    options: Pick<ExecutionOptions, "progress"> & {
+      readonly retainProviderDocuments?: boolean;
+      readonly targetId?: string;
+    },
+    behavior: {
+      readonly clearRecords: boolean;
+      readonly closeOwnedProviderResources: boolean;
+    },
+  ): Promise<Result<null, AnalysisError>> {
+    this.#lifecycleGeneration += 1;
+    const pending = this.#pendingStart;
+    this.#pendingStart = undefined;
+    const released =
+      pending === undefined ? ok(null) : await this.#releaseRun(pending);
+    if (!released.ok) return released;
+    return this.#closeActive(
+      options,
+      behavior.clearRecords,
+      behavior.closeOwnedProviderResources,
+    );
+  }
+
   /** Drain earlier requests, save an immutable snapshot, and close under one lifecycle lock. */
   closeWithSnapshot(
     path: string,
@@ -589,11 +661,20 @@ export class BinarySession
       readonly retainDocument?: boolean;
     } = {},
   ): Promise<Result<null, AnalysisError>> {
+    // A forced close already released this client; it owns no cleanup.
+    if (run.released) return ok(null);
     this.#pendingCleanup = {
       run,
       retainDocument: options.retainDocument === true,
     };
     return this.#retryPendingCleanup(options.progress);
+  }
+
+  /** Release one provider client once, through the owner of provider cleanup. */
+  async #releaseRun(run: SessionRun): Promise<Result<null, AnalysisError>> {
+    if (run.released) return ok(null);
+    run.released = true;
+    return closeAnalysisClient(run.client, run.route.identity.id, {});
   }
 
   async #retryPendingCleanup(
@@ -644,10 +725,12 @@ export class BinarySession
   }
 
   /** Describe the active binary session. */
-  status(options: {
-    readonly signal?: AbortSignal;
-    readonly targetId?: string;
-  } = {}): Promise<JsonValue> {
+  status(
+    options: {
+      readonly signal?: AbortSignal;
+      readonly targetId?: string;
+    } = {},
+  ): Promise<JsonValue> {
     const run = this.#active ?? this.#pendingCleanup?.run;
     const client = run?.client;
     return binarySessionStatus({
@@ -1004,7 +1087,12 @@ export class BinarySession
     const client = previous.route.createClient(previous.target, {
       runId,
     });
-    const run: SessionRun = { client, route: previous.route, runId };
+    const run: SessionRun = {
+      client,
+      route: previous.route,
+      runId,
+      released: false,
+    };
     const started = await client.execute("health", {});
     if (started.ok) {
       this.#active = {

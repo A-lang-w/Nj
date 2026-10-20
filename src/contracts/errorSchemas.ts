@@ -65,6 +65,8 @@ export const analysisErrorProjectionSchema = z.discriminatedUnion("code", [
   generic("revision_conflict"),
   generic("configuration_invalid"),
   generic("target_unavailable"),
+  generic("target_not_open"),
+  generic("analysis_in_progress"),
   generic("execution_failure"),
 ]);
 

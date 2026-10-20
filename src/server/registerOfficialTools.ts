@@ -8,6 +8,7 @@ import type {
 } from "../application/AnalysisProvider.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
+import { declaresWaitBudget as contractDeclaresWaitBudget } from "../contracts/officialToolContracts.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createEvidence } from "../domain/evidence.js";
@@ -22,7 +23,9 @@ import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 /** Optional session services used by direct tool registration. */
 export interface OfficialToolRegistration {
   readonly logger: Logger;
-  readonly activeTarget: ((targetId?: string) => BinaryTarget | undefined) | undefined;
+  readonly activeTarget:
+    | ((targetId?: string) => BinaryTarget | undefined)
+    | undefined;
   readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
   readonly withAdmittedAnalysis: WithAdmittedAnalysis;
 }
@@ -47,7 +50,9 @@ const registerOfficialTool = (
   contract: (typeof OFFICIAL_TOOL_CONTRACTS)[number],
   registration: {
     readonly logger: Logger;
-    readonly activeTarget: ((targetId?: string) => BinaryTarget | undefined) | undefined;
+    readonly activeTarget:
+      | ((targetId?: string) => BinaryTarget | undefined)
+      | undefined;
     readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
     readonly withAdmittedAnalysis: WithAdmittedAnalysis;
   },
@@ -63,15 +68,25 @@ const registerOfficialTool = (
         typeof parsedInput.target_id === "string"
           ? parsedInput.target_id
           : undefined;
-      const waitMs =
-        typeof parsedInput.wait_ms === "number"
+      // The wait budget belongs to the tools whose schema declares it. An
+      // adapter never consumes an argument its own contract does not accept.
+      // A tool that declares no budget is told not to wait, so a call on a
+      // starting target reports its state at once instead of blocking for the
+      // default budget.
+      const declaresWaitBudget = contractDeclaresWaitBudget(
+        contract.inputSchema.shape,
+      );
+      const waitMs = declaresWaitBudget
+        ? typeof parsedInput.wait_ms === "number"
           ? parsedInput.wait_ms
-          : undefined;
-      const {
-        target_id: _targetId,
-        wait_ms: _waitMs,
-        ...arguments_
-      } = parsedInput;
+          : undefined
+        : 0;
+      const { target_id: _targetId, ...arguments_ } = parsedInput;
+      const toolArguments = declaresWaitBudget
+        ? Object.fromEntries(
+            Object.entries(arguments_).filter(([key]) => key !== "wait_ms"),
+          )
+        : arguments_;
       const admitted = await registration.withAdmittedAnalysis(
         contract.name,
         context.mcpReq.signal,
@@ -80,7 +95,7 @@ const registerOfficialTool = (
           const result = await runOfficialOperation(
             admittedAnalysis,
             contract,
-            arguments_,
+            toolArguments,
             {
               logger: registration.logger,
               signal: context.mcpReq.signal,
@@ -98,7 +113,7 @@ const registerOfficialTool = (
             result.value.provider,
             {
               operation: contract.name,
-              parameters: arguments_,
+              parameters: toolArguments,
               result: result.value.result,
               ...(result.value.analysisProfile === undefined
                 ? {}
@@ -161,4 +176,3 @@ const runOfficialOperation = async (
   });
   return result;
 };
-

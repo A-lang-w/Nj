@@ -242,7 +242,7 @@ const STATIC_ERROR_CATEGORIES: Readonly<
   AnalysisTimeoutError: "timeout",
   AnalysisResourceConstraintError: "resource_constraint",
   AnalysisTargetNotOpenError: "unavailable",
-  AnalysisInProgressError: "resource_constraint",
+  AnalysisInProgressError: "timeout",
   HopperTimeoutError: "timeout",
   NoBinaryOpenError: "unavailable",
   BinaryTargetError: "unavailable",
@@ -515,4 +515,3 @@ export const assertKnownAnalysisErrorTag = (tag: AnalysisErrorTag): void => {
   if (KNOWN_ERROR_TAGS[tag] !== true)
     throw new TypeError("Unknown analysis error tag");
 };
-

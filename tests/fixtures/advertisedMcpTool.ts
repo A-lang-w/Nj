@@ -50,4 +50,3 @@ export const assertRecordedMcpEvidence = (
   expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
   return evidence;
 };
-

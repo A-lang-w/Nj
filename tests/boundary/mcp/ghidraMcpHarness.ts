@@ -307,4 +307,3 @@ const stringItem = (address: string, value: string): JsonValue => ({
     byte_length: value.length + 1,
   },
 });
-
