@@ -185,8 +185,9 @@ install name in a linkedit payload rather than in the load command itself.
 Its flag and chain-start image offsets must lie in the slice VM range, which
 is dyld's one-page floor extended by every segment except `__LINKEDIT`,
 measured from the `__TEXT` vmaddr. Payload strings must start after the 24-byte
-header. Distinct payload bytes and string scans are each limited to 16 MiB per
-image; a repeated file range or string is validated once.
+header. Distinct payload bytes, string scans, and payload-range lookups are
+each limited to 16 MiB per image; a repeated file range or string is validated
+once.
 Nothing is executed and no Apple tool is required, so the tool also works off
 macOS.
 

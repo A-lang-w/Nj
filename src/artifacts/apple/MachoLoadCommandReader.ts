@@ -495,14 +495,22 @@ interface LazyPayloadWork {
   readonly strings: Map<number, CachedLazyString>;
   payloadBytes: number;
   stringBytes: number;
+  rangeChecks: number;
 }
 
 const containedPayload = (
   reads: readonly { fileOffset: number; bytes: Uint8Array }[],
   fileOffset: number,
   size: number,
+  work: LazyPayloadWork,
 ): Uint8Array | undefined => {
   for (const read of reads) {
+    work.rangeChecks += 1;
+    if (work.rangeChecks > MAX_LOAD_COMMAND_BYTES)
+      throw new MachoFormatIssue(
+        "unsupported",
+        `LC_LAZY_LOAD_DYLIB_INFO payload range lookup exceeds the ${MAX_LOAD_COMMAND_BYTES}-check limit`,
+      );
     const start = fileOffset - read.fileOffset;
     if (
       start >= 0 &&
@@ -531,6 +539,7 @@ const appendDependencies = async (
     strings: new Map(),
     payloadBytes: 0,
     stringBytes: 0,
+    rangeChecks: 0,
   };
   for (const dependency of dependencies) {
     if (dependency.kind === "parsed") {
@@ -658,7 +667,7 @@ const readLazyPayloadBytes = async (
   index: number,
   work: LazyPayloadWork,
 ): Promise<Uint8Array> => {
-  const covered = containedPayload(work.reads, fileOffset, size);
+  const covered = containedPayload(work.reads, fileOffset, size, work);
   if (covered !== undefined) return covered;
   work.payloadBytes += size;
   if (work.payloadBytes > MAX_LOAD_COMMAND_BYTES)

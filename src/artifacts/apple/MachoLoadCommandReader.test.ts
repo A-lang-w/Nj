@@ -655,6 +655,27 @@ describe("LC_LAZY_LOAD_DYLIB_INFO payload budget", () => {
       ],
     });
   });
+
+  it("stops walking earlier payload ranges once lookup work exceeds the limit", async () => {
+    const count = 6000;
+    const payloadSize = 25;
+    const payload = new Uint8Array(payloadSize);
+    new DataView(payload.buffer).setUint32(0, 24, true);
+    new DataView(payload.buffer).setUint32(20, 24, true);
+    const dataOffset = 32 + 16 + count * 16;
+    const commands = Array.from({ length: count }, (_, index) =>
+      lazyLoadDylibInfoCommand(dataOffset + index * payloadSize, payloadSize),
+    );
+    const image = machoImage({ commands });
+    const bytes = new Uint8Array(image.length + count * payloadSize);
+    bytes.set(image);
+    for (let index = 0; index < count; index += 1)
+      bytes.set(payload, image.length + index * payloadSize);
+    expect(await read(bytes)).toMatchObject({
+      status: "unsupported",
+      reason: expect.stringContaining("range lookup"),
+    });
+  });
 });
 
 describe("LC_LAZY_LOAD_DYLIB_INFO string bounds", () => {
