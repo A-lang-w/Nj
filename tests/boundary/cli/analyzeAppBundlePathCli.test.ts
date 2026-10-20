@@ -90,7 +90,8 @@ describe("analyze app bundle path spellings", () => {
       expect(result.exitCode).toBe(0);
       expect(result.json).toMatchObject({
         normalized_result: {
-          summary: {
+          format: "directory",
+          statistics: {
             relevant_files: 2,
           },
         },
