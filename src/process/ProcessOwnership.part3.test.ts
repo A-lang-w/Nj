@@ -507,6 +507,35 @@ describe("identityless lineage refresh rechecks the launcher relation", () => {
         "owned launcher command identity did not match (observed=replacement; expected=root)",
     });
   });
+
+  it("rejects a same-token launcher whose parent changed", async () => {
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([
+        row(100, 1, 100, "root"),
+        row(102, 100),
+        row(101, 100),
+      ])
+      .mockResolvedValue([row(100, 7, 100, "root"), row(102, 100)]);
+    await expect(
+      observeOwnedProcessLineage(
+        { ...ownership, expectedParentPid: 1, expectedCommand: "root" },
+        {
+          listProcesses,
+          environment: (pid) =>
+            pid === 101
+              ? Promise.reject(
+                  new Error("process exited during environment read"),
+                )
+              : Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" }),
+          signalGroup: vi.fn(),
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: "unavailable",
+      reason: "owned launcher parent identity did not match",
+    });
+  });
 });
 
 describe("identityless lineage refresh rechecks the launcher", () => {

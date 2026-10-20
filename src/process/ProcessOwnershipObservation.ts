@@ -504,7 +504,8 @@ interface ExaminedLineageRefresh {
  * changes. A row whose token was already read is read again on every later
  * refresh, because those fields do not identify a process generation.
  * Unchanged rows from the initial snapshot are not read again. The launcher
- * is read on every refresh; a missing or unowned launcher PID is unavailable.
+ * is read on every refresh; a missing, unowned, or relation-mismatched
+ * launcher PID is unavailable.
  */
 const classifyIdentitylessLineageRefresh = async (
   ownership: OwnedProcessGroup,
