@@ -26,6 +26,7 @@ import { ghidraProjectCacheKey } from "./GhidraProjectCacheKey.js";
 import {
   ensureGhidraProjectCacheRoot,
   type GhidraProjectCacheRootHost,
+  type GhidraProjectCacheRootPreparation,
 } from "./GhidraProjectCacheRoot.js";
 import {
   admitGhidraProjectDirectory,
@@ -64,6 +65,12 @@ export interface GhidraProjectReservation {
   readonly programSha256?: string;
   /** An existing entry was present but not reused; a miss was served instead. */
   readonly rejectedEntry?: GhidraProjectRejection;
+  /**
+   * What preparing the cache root did. A rebuilt root is reported so the
+   * caller can state that the cache was repaired rather than silently
+   * disabled.
+   */
+  readonly rootPreparation: GhidraProjectCacheRootPreparation;
 }
 
 /**
@@ -162,19 +169,19 @@ export class GhidraProjectStore {
     const key = ghidraProjectCacheKey(input.identity);
     const entryPath = this.#entryPath(key);
     try {
-      await ensureGhidraProjectCacheRoot(this.#root, {
+      const rootPreparation = await ensureGhidraProjectCacheRoot(this.#root, {
         platform: this.#platform,
         ...(this.#rootHost === undefined ? {} : { host: this.#rootHost }),
       });
       input.signal?.throwIfAborted();
       const existing = await lstat(entryPath).catch(() => undefined);
       if (existing === undefined)
-        return ok(this.#miss(key, entryPath, input.mode));
+        return ok(this.#miss(key, entryPath, input.mode, rootPreparation));
       const admitted = await admitGhidraProjectDirectory(entryPath);
       if (!admitted.ok) {
         await this.#discard(entryPath);
         return ok({
-          ...this.#miss(key, entryPath, input.mode),
+          ...this.#miss(key, entryPath, input.mode, rootPreparation),
           rejectedEntry: { error: admitted.error, discarded: true },
         });
       }
@@ -182,7 +189,7 @@ export class GhidraProjectStore {
       if (!entry.ok) {
         await this.#discard(entryPath);
         return ok({
-          ...this.#miss(key, entryPath, input.mode),
+          ...this.#miss(key, entryPath, input.mode, rootPreparation),
           rejectedEntry: { error: entry.error, discarded: true },
         });
       }
@@ -193,7 +200,7 @@ export class GhidraProjectStore {
         const retained = await this.#isLeased(key);
         if (!retained) await this.#discard(entryPath);
         return ok({
-          ...this.#miss(key, entryPath, input.mode),
+          ...this.#miss(key, entryPath, input.mode, rootPreparation),
           rejectedEntry: {
             error: new GhidraProjectCacheError(
               "expired",
@@ -211,6 +218,7 @@ export class GhidraProjectStore {
         entryPath,
         programName: entry.value.manifest.program_name,
         programSha256: entry.value.manifest.program_sha256,
+        rootPreparation,
       });
     } catch (cause: unknown) {
       if (input.signal?.aborted === true) throw cause;
@@ -581,12 +589,14 @@ export class GhidraProjectStore {
     key: string,
     entryPath: string,
     mode: GhidraProjectCacheMode,
+    rootPreparation: GhidraProjectCacheRootPreparation,
   ): GhidraProjectReservation {
     return {
       key,
       hit: false,
       entryPath,
       ...(mode === "on" ? { stagingPath: this.#stagingPath() } : {}),
+      rootPreparation,
     };
   }
 

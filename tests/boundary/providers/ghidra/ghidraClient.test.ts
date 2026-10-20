@@ -2035,6 +2035,7 @@ const managedPersistence = (
     hit: false,
     entryPath: "/tmp/rea-cache-entry",
     stagingPath: "/tmp/rea-cache-staging",
+    rootPreparation: { status: "ready" },
   } satisfies GhidraProjectReservation,
   identity: {
     providerId: "ghidra",

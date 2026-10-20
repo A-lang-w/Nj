@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import {
   access,
@@ -7,6 +6,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   symlink,
   writeFile,
@@ -16,7 +16,10 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ensureGhidraProjectCacheRoot } from "./GhidraProjectCacheRoot.js";
+import {
+  ensureGhidraProjectCacheRoot,
+  type GhidraProjectCacheRootHost,
+} from "./GhidraProjectCacheRoot.js";
 
 const roots: string[] = [];
 const tempRoot = async (): Promise<string> => {
@@ -31,11 +34,27 @@ afterEach(async () => {
   );
 });
 
+/** A native host that creates the durable root directly and always verifies. */
+const privateRootHost = (
+  overrides: Partial<GhidraProjectCacheRootHost> = {},
+): GhidraProjectCacheRootHost => ({
+  async createPrivateDirectory(root) {
+    await mkdir(root, { recursive: true });
+    return root;
+  },
+  verifyPrivateDirectory() {
+    return { privateDacl: true };
+  },
+  ...overrides,
+});
+
 describe("POSIX cache root", () => {
   it("creates a directory before a project is stored", async () => {
     const parent = await tempRoot();
     const root = join(parent, "nested", "cache");
-    await ensureGhidraProjectCacheRoot(root, { platform: "linux" });
+    await expect(
+      ensureGhidraProjectCacheRoot(root, { platform: "linux" }),
+    ).resolves.toEqual({ status: "ready" });
     await expect(
       lstat(root).then((stats) => stats.isDirectory()),
     ).resolves.toBe(true);
@@ -68,68 +87,147 @@ describe("Windows cache root", () => {
   it("creates the leaf through the native private-DACL boundary", async () => {
     const parent = await tempRoot();
     const root = join(parent, "cache");
+    const created: string[] = [];
     const verified: string[] = [];
     await ensureGhidraProjectCacheRoot(root, {
       platform: "win32",
-      host: {
-        createPrivateDirectory(directory) {
-          const created = join(directory, `private-${randomUUID()}`);
-          mkdirSync(created, { recursive: true });
-          return created;
+      host: privateRootHost({
+        async createPrivateDirectory(path) {
+          created.push(path);
+          await mkdir(path, { recursive: true });
+          return path;
         },
         verifyPrivateDirectory(path) {
           verified.push(path);
           return { privateDacl: true };
         },
-      },
+      }),
     });
     await expect(
       lstat(root).then((stats) => stats.isDirectory()),
     ).resolves.toBe(true);
+    expect(created).toEqual([root]);
     expect(verified).toEqual([root]);
   });
 
   it("accepts an existing root only after native verification", async () => {
-    const root = await tempRoot();
+    const parent = await tempRoot();
+    const root = join(parent, "cache");
+    await mkdir(root);
     await writeFile(join(root, "entry"), "private");
     const verified: string[] = [];
     await ensureGhidraProjectCacheRoot(root, {
       platform: "win32",
-      host: {
-        createPrivateDirectory() {
+      host: privateRootHost({
+        async createPrivateDirectory() {
           throw new Error("an existing root must not be recreated");
         },
         verifyPrivateDirectory(path) {
           verified.push(path);
           return { privateDacl: true };
         },
-      },
+      }),
     });
     expect(verified).toEqual([root]);
     await expect(readFile(join(root, "entry"), "utf8")).resolves.toBe(
       "private",
     );
   });
+});
 
-  it("rejects an existing root that is not owner-only", async () => {
-    const root = await tempRoot();
+describe("Windows cache root repair", () => {
+  it("rebuilds an existing root that is not owner-only", async () => {
+    const parent = await tempRoot();
+    const root = join(parent, "cache");
+    await mkdir(root);
+    await writeFile(join(root, "entry"), "stored");
+    const created: string[] = [];
+    const verified: string[] = [];
+    // Only the root that was already there is not owner-only; the rebuilt one
+    // passes the same native verification.
+    let inspected = false;
+    const outcome = await ensureGhidraProjectCacheRoot(root, {
+      platform: "win32",
+      host: privateRootHost({
+        async createPrivateDirectory(path) {
+          created.push(path);
+          await mkdir(path, { recursive: true });
+          return path;
+        },
+        verifyPrivateDirectory(path) {
+          verified.push(path);
+          if (!inspected) {
+            inspected = true;
+            throw new Error("Private object owner is not the current user");
+          }
+          return { privateDacl: true };
+        },
+      }),
+    });
+    expect(outcome).toEqual({ status: "repaired", preservedEntries: 1 });
+    // The stored project survives the rebuild.
+    await expect(readFile(join(root, "entry"), "utf8")).resolves.toBe("stored");
+    expect(created).toEqual([root]);
+    expect(verified).toEqual([root, root]);
+    // The set-aside root is removed after the replacement is in place.
+    await expect(readdir(parent)).resolves.toEqual(["cache"]);
+  });
+
+  it("restores the previous root when the rebuild cannot start", async () => {
+    const parent = await tempRoot();
+    const root = join(parent, "cache");
+    await mkdir(root);
+    await writeFile(join(root, "entry"), "stored");
     await expect(
       ensureGhidraProjectCacheRoot(root, {
         platform: "win32",
-        host: {
-          createPrivateDirectory() {
-            throw new Error("an existing root must not be recreated");
+        host: privateRootHost({
+          async createPrivateDirectory() {
+            throw new Error("the native boundary is unavailable");
           },
           verifyPrivateDirectory() {
-            throw new Error("unexpected trustee");
+            throw new Error("Private object owner is not the current user");
           },
-        },
+        }),
       }),
     ).rejects.toMatchObject({
       reason: "io",
       path: root,
-      message: expect.stringContaining("not an owner-only directory"),
+      message: expect.stringContaining(
+        "could not be rebuilt as a private directory",
+      ),
     });
+    // The previous root keeps the stored project and its name.
+    await expect(readFile(join(root, "entry"), "utf8")).resolves.toBe("stored");
+    await expect(readdir(parent)).resolves.toEqual(["cache"]);
+  });
+
+  it("keeps the stored project when the rebuilt root is not owner-only", async () => {
+    const parent = await tempRoot();
+    const root = join(parent, "cache");
+    await mkdir(root);
+    await writeFile(join(root, "entry"), "stored");
+    await expect(
+      ensureGhidraProjectCacheRoot(root, {
+        platform: "win32",
+        host: privateRootHost({
+          async createPrivateDirectory(path) {
+            await mkdir(path, { recursive: true });
+            return path;
+          },
+          verifyPrivateDirectory() {
+            throw new Error("Private DACL contains unexpected trustees");
+          },
+        }),
+      }),
+    ).rejects.toMatchObject({
+      reason: "io",
+      path: root,
+      message: expect.stringContaining("could not be verified as owner-only"),
+    });
+    // The stored project is in the rebuilt root; it is never discarded.
+    await expect(readFile(join(root, "entry"), "utf8")).resolves.toBe("stored");
+    await expect(readdir(parent)).resolves.toEqual(["cache"]);
   });
 
   it("rejects a linked root before verification", async () => {
@@ -142,15 +240,15 @@ describe("Windows cache root", () => {
     await expect(
       ensureGhidraProjectCacheRoot(root, {
         platform: "win32",
-        host: {
-          createPrivateDirectory() {
+        host: privateRootHost({
+          async createPrivateDirectory() {
             throw new Error("a linked root must not be recreated");
           },
           verifyPrivateDirectory() {
             verified = true;
             return { privateDacl: true };
           },
-        },
+        }),
       }),
     ).rejects.toMatchObject({ reason: "io", path: root });
     expect(verified).toBe(false);
@@ -165,14 +263,14 @@ describe("Windows cache root admission", () => {
     await expect(
       ensureGhidraProjectCacheRoot(root, {
         platform: "win32",
-        host: {
-          createPrivateDirectory() {
+        host: privateRootHost({
+          async createPrivateDirectory() {
             throw new Error("a file root must not be recreated");
           },
           verifyPrivateDirectory() {
             throw new Error("a file root must not be verified");
           },
-        },
+        }),
       }),
     ).rejects.toMatchObject({
       reason: "io",
@@ -181,24 +279,24 @@ describe("Windows cache root admission", () => {
     });
   });
 
-  it("reports a private leaf that could not become the root", async () => {
+  it("reports a root that could not be created privately", async () => {
     const parent = await tempRoot();
     const root = join(parent, "cache");
     const created: string[] = [];
     await expect(
       ensureGhidraProjectCacheRoot(root, {
         platform: "win32",
-        host: {
-          createPrivateDirectory(directory) {
-            // The native leaf is reported but never created, so the rename fails.
-            const path = join(directory, `private-${randomUUID()}`);
+        host: privateRootHost({
+          async createPrivateDirectory(path) {
+            // The native leaf is reported but never created, so the rename
+            // fails and no root appears.
             created.push(path);
-            return path;
+            throw new Error("the native boundary is unavailable");
           },
           verifyPrivateDirectory() {
             throw new Error("an unverified root must not be accepted");
           },
-        },
+        }),
       }),
     ).rejects.toMatchObject({
       reason: "io",
@@ -206,9 +304,7 @@ describe("Windows cache root admission", () => {
       message: expect.stringContaining("could not be created privately"),
     });
     expect(created).toHaveLength(1);
-    await expect(access(created[0]!)).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+    await expect(access(root)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("rejects a created root that native verification does not confirm", async () => {
@@ -217,16 +313,15 @@ describe("Windows cache root admission", () => {
     await expect(
       ensureGhidraProjectCacheRoot(root, {
         platform: "win32",
-        host: {
-          createPrivateDirectory(directory) {
-            const path = join(directory, `private-${randomUUID()}`);
-            mkdirSync(path, { recursive: true });
+        host: privateRootHost({
+          async createPrivateDirectory(path) {
+            await mkdir(path, { recursive: true });
             return path;
           },
           verifyPrivateDirectory() {
             throw new Error("unexpected trustee");
           },
-        },
+        }),
       }),
     ).rejects.toMatchObject({
       reason: "io",
@@ -244,31 +339,24 @@ describe("Windows cache root concurrency", () => {
     const verified: string[] = [];
     await ensureGhidraProjectCacheRoot(root, {
       platform: "win32",
-      host: {
-        createPrivateDirectory(directory) {
-          const path = join(directory, `private-${randomUUID()}`);
-          mkdirSync(path, { recursive: true });
+      host: privateRootHost({
+        async createPrivateDirectory(path) {
           created.push(path);
-          // The concurrent initializer wins the name after the initial lookup
-          // and holds a populated directory, so the private leaf cannot be
-          // renamed over it.
+          // The concurrent initializer wins the name and holds a populated
+          // directory, so the durable root cannot be renamed over it.
           mkdirSync(root, { recursive: true });
           writeFileSync(join(root, "entry"), "private");
-          return path;
+          throw new Error("the name was taken by a concurrent initializer");
         },
         verifyPrivateDirectory(path) {
           verified.push(path);
           return { privateDacl: true };
         },
-      },
+      }),
     });
-    // A private leaf was created, so the rename was attempted and lost.
+    // A durable root was attempted, so the rename was tried and lost.
     expect(created).toHaveLength(1);
     expect(verified).toEqual([root]);
-    // The private leaf that could not be renamed never becomes a cache root.
-    await expect(access(created[0]!)).rejects.toMatchObject({
-      code: "ENOENT",
-    });
     // The root the concurrent initializer owns is kept, not replaced.
     await expect(readFile(join(root, "entry"), "utf8")).resolves.toBe(
       "private",
@@ -282,31 +370,25 @@ describe("Windows cache root concurrency", () => {
     await expect(
       ensureGhidraProjectCacheRoot(root, {
         platform: "win32",
-        host: {
-          createPrivateDirectory(directory) {
-            const path = join(directory, `private-${randomUUID()}`);
-            mkdirSync(path, { recursive: true });
+        host: privateRootHost({
+          async createPrivateDirectory(path) {
             created.push(path);
             // The concurrent initializer wins the name with a shared directory.
             mkdirSync(root, { recursive: true });
             writeFileSync(join(root, "entry"), "shared");
-            return path;
+            throw new Error("the name was taken by a concurrent initializer");
           },
           verifyPrivateDirectory() {
             throw new Error("unexpected trustee");
           },
-        },
+        }),
       }),
     ).rejects.toMatchObject({
       reason: "io",
       path: root,
       message: expect.stringContaining("could not be verified as owner-only"),
     });
-    // The private leaf that could not be renamed is discarded.
     expect(created).toHaveLength(1);
-    await expect(access(created[0]!)).rejects.toMatchObject({
-      code: "ENOENT",
-    });
   });
 
   it("rejects a linked root a concurrent initializer created", async () => {
@@ -318,33 +400,27 @@ describe("Windows cache root concurrency", () => {
     await expect(
       ensureGhidraProjectCacheRoot(root, {
         platform: "win32",
-        host: {
-          createPrivateDirectory(directory) {
-            const path = join(directory, `private-${randomUUID()}`);
-            mkdirSync(path, { recursive: true });
+        host: privateRootHost({
+          async createPrivateDirectory(path) {
             created.push(path);
             // The concurrent initializer wins the name with a link.
             mkdirSync(target);
             symlinkSync(target, root, "dir");
-            return path;
+            throw new Error("the name was taken by a concurrent initializer");
           },
           verifyPrivateDirectory(path) {
             verified.push(path);
             return { privateDacl: true };
           },
-        },
+        }),
       }),
     ).rejects.toMatchObject({
       reason: "io",
       path: root,
       message: expect.stringContaining("must be a directory"),
     });
-    // A link is refused before native verification, and the private leaf that
-    // could not be renamed is discarded.
+    // A link is refused before native verification.
     expect(verified).toEqual([]);
     expect(created).toHaveLength(1);
-    await expect(access(created[0]!)).rejects.toMatchObject({
-      code: "ENOENT",
-    });
   });
 });

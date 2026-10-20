@@ -170,7 +170,13 @@ describe("GhidraProjectStore", () => {
     const stagingPath = join(root, "staging", randomUUID());
     await mkdir(stagingPath, { recursive: true });
     const result = await store.publish({
-      reservation: { key, hit: false, entryPath: join(root, key), stagingPath },
+      reservation: {
+        key,
+        hit: false,
+        entryPath: join(root, key),
+        stagingPath,
+        rootPreparation: { status: "ready" },
+      },
       identity: identity(),
       target,
       sourceProjectDirectory: source,
@@ -218,6 +224,44 @@ describe("GhidraProjectStore", () => {
       expect(miss.ok && miss.value?.hit === false).toBe(true);
     },
   );
+});
+
+describe("GhidraProjectStore root repair", () => {
+  it("reports a rebuilt Windows root so the caller can state the repair", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "rea-ghidra-cache-win-"));
+    const cacheRoot = join(parent, "cache");
+    await mkdir(cacheRoot);
+    await mkdir(join(cacheRoot, "stored"));
+    // Only the root that was already there is not owner-only; the rebuilt one
+    // passes the same native verification.
+    let inspected = false;
+    const store = new GhidraProjectStore({
+      root: cacheRoot,
+      maxBytes: 1_000_000,
+      platform: "win32",
+      rootHost: {
+        async createPrivateDirectory(path) {
+          await mkdir(path, { recursive: true });
+          return path;
+        },
+        verifyPrivateDirectory() {
+          if (!inspected) {
+            inspected = true;
+            throw new Error("Private object owner is not the current user");
+          }
+          return { privateDacl: true };
+        },
+      },
+    });
+    const prepared = await store.prepare({ identity: identity(), mode: "on" });
+    expect(prepared.ok && prepared.value?.rootPreparation).toEqual({
+      status: "repaired",
+      preservedEntries: 1,
+    });
+    // The stored project survived the rebuild.
+    await expect(stat(join(cacheRoot, "stored"))).resolves.toBeTruthy();
+    await rm(parent, { recursive: true, force: true });
+  });
 });
 
 describe("GhidraProjectStore maintenance", () => {

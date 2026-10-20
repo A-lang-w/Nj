@@ -85,6 +85,7 @@ import { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
 import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
 import type { NativeAotPeResult } from "../domain/native/nativeAotPe.js";
 import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
+import type { GhidraProjectCacheRootPreparation } from "./projectCache/GhidraProjectCacheRoot.js";
 import {
   GHIDRA_PROVIDER_IDENTITY,
   healthLimitations,
@@ -513,6 +514,13 @@ export const createGhidraProviderClient = (input: {
     ...(projectPersistence?.rejectedEntry === undefined
       ? []
       : [rejectedProjectLimitation(projectPersistence.rejectedEntry)]),
+    ...(projectPersistence?.reservation.rootPreparation.status === "repaired"
+      ? [
+          repairedProjectRootLimitation(
+            projectPersistence.reservation.rootPreparation,
+          ),
+        ]
+      : []),
     ...(psp ? GHIDRA_PSP_LIMITATIONS : []),
     ...softFloatLimitations,
     ...ghidraExtensionLimitations(extensions),
@@ -1159,6 +1167,15 @@ const rejectedProjectLimitation = (
     ? `A stored Ghidra project was discarded (${rejected.reason}${where}); this session rebuilt it with a fresh import.`
     : `A stored Ghidra project was not reused (${rejected.reason}${where}) because another session is still using it; this session rebuilt it with a fresh import.`;
 };
+
+/** Explain that the cache root was rebuilt as a private directory. */
+const repairedProjectRootLimitation = (
+  preparation: Extract<
+    GhidraProjectCacheRootPreparation,
+    { readonly status: "repaired" }
+  >,
+): string =>
+  `The Ghidra project cache root was not owner-only and was rebuilt as a private directory; ${preparation.preservedEntries} stored item(s) were preserved.`;
 
 /** A provider already observed as running can be restarted by reopening. */
 const exitedProviderMessage = (

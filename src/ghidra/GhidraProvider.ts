@@ -758,6 +758,12 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       return undefined;
     }
     if (prepared.value === null) return undefined;
+    const preparation = prepared.value.rootPreparation;
+    if (preparation.status === "repaired")
+      this.logger.warn(
+        { preserved_entries: preparation.preservedEntries },
+        "Rebuilt the Ghidra project cache root as an owner-only directory",
+      );
     const rejected = prepared.value.rejectedEntry;
     if (rejected !== undefined)
       this.logger.warn(

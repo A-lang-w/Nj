@@ -51,8 +51,12 @@ replays in the later session.
 
 - The cache root is owner-only. A POSIX root is created `0700` (or tightened
   before use); on Windows the root is created through REA's native
-  protected-DACL boundary, and an existing root that does not pass that
-  verification is rejected before any project is read or written.
+  protected-DACL boundary. An existing Windows root that does not pass that
+  verification is rebuilt as a private directory that keeps the stored
+  projects, because a root that other principals can read is unusable for the
+  store. The rebuild keeps the previous root until the replacement is in
+  place, and a rebuild that cannot complete leaves the stored projects where
+  they were.
 - **Miss** imports writable into a private runtime project; when the session
   closes after a clean, complete, mutation-free analysis the saved project is
   copied into the cache and published by an atomic rename under a per-key lock.
