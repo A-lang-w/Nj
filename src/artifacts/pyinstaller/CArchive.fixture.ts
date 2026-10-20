@@ -24,6 +24,7 @@ export interface CArchiveFixtureMember {
   readonly typeCode: string;
   readonly payload: Buffer;
   readonly compress: boolean;
+  readonly compressedSuffix?: Buffer;
   readonly declaredUncompressedSize?: number;
 }
 
@@ -41,7 +42,10 @@ export const cArchiveExecutable = (input: {
   let dataLength = 0;
   for (const member of input.members) {
     const stored = member.compress
-      ? deflateSync(member.payload)
+      ? Buffer.concat([
+          deflateSync(member.payload),
+          member.compressedSuffix ?? Buffer.alloc(0),
+        ])
       : member.payload;
     entries.push(
       tocEntry({
@@ -96,7 +100,12 @@ export const pyzArchive = (input: {
   let offset = 12;
   for (const module of input.modules) {
     const compressed =
-      module.typeCode === 3 ? Buffer.alloc(0) : deflateSync(module.body);
+      module.typeCode === 3
+        ? Buffer.alloc(0)
+        : Buffer.concat([
+            deflateSync(module.body),
+            module.compressedSuffix ?? Buffer.alloc(0),
+          ]);
     entries.push(
       marshalPair(
         module.name,
@@ -123,6 +132,7 @@ export const pyzArchive = (input: {
 
 /** One PYZ table row. Type 3 is a namespace package and stores no body. */
 export interface PyzFixtureModule {
+  readonly compressedSuffix?: Buffer;
   readonly name: string;
   readonly typeCode: number;
   readonly body: Buffer;

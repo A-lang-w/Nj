@@ -5,6 +5,7 @@ import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
 
 interface MemberStreamOptions {
+  readonly sourceBytes: number;
   readonly compressed: boolean;
   readonly header: Buffer | undefined;
   readonly expectedBytes: number | undefined;
@@ -46,6 +47,14 @@ export const pyInstallerMemberStream = (
     flush(callback) {
       void (async () => {
         abortIfNeeded(options.signal);
+        if (
+          inflate !== undefined &&
+          inflate.bytesWritten !== options.sourceBytes
+        )
+          throw new ArtifactReaderFailure(
+            "integrity",
+            "Compressed PyInstaller member did not consume its complete declared source span",
+          );
         if (
           options.expectedBytes !== undefined &&
           bytes !== options.expectedBytes

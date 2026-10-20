@@ -41,6 +41,7 @@ export const pyInstallerMetadataSchema = z.strictObject({
   toc_size: offset,
   entry_count: offset,
   runtime_option_count: offset,
+  external_dependency_count: offset,
   python_version_raw: uint32,
   python_major: uint32.nullable(),
   python_minor: uint32.nullable(),
@@ -78,6 +79,11 @@ export const pyInstallerEntryMetadataSchema = z.strictObject({
   pyz_python_version: z.string().nullable(),
   pyz_entry_count: offset.nullable(),
   encryption_source: z.literal("carchive-marker").nullable(),
+  dependency_status: z
+    .enum(["unresolved", "invalid-reference"])
+    .exactOptional(),
+  dependency_archive: z.string().nullable().exactOptional(),
+  dependency_member: z.string().nullable().exactOptional(),
 });
 export type PyInstallerEntryMetadata = z.infer<
   typeof pyInstallerEntryMetadataSchema

@@ -1,6 +1,6 @@
+import { withPyInstallerReader } from "../../../tests/fixtures/pyinstallerReader.js";
 import { createHash } from "node:crypto";
-import { open, writeFile, type FileHandle } from "node:fs/promises";
-import { join } from "node:path";
+import { writeFile, type FileHandle } from "node:fs/promises";
 import { buffer } from "node:stream/consumers";
 import { deflateSync } from "node:zlib";
 import { setImmediate } from "node:timers/promises";
@@ -17,7 +17,6 @@ import {
   pyzArchive,
   PYTHON_39_MAGIC,
 } from "./CArchive.fixture.js";
-import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
 const hash = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
@@ -27,32 +26,6 @@ const archive = (body: Buffer) =>
     pythonVersion: 309,
     members: [{ name: "data", typeCode: "x", payload: body, compress: false }],
   });
-const withReader = async (
-  bytes: Buffer,
-  run: (
-    reader: PyInstallerArtifactReader,
-    handle: FileHandle,
-    path: string,
-  ) => Promise<void>,
-) => {
-  const root = await createTestTempDirectory("rea-pyi-boundary-");
-  const path = join(root, "app");
-  await writeFile(path, bytes);
-  const handle = await open(path, "r");
-  const reader = new PyInstallerArtifactReader(path, {
-    handle,
-    initial: await handle.stat(),
-  });
-  try {
-    await run(reader, handle, path);
-  } finally {
-    try {
-      await reader.close();
-    } finally {
-      await handle.close();
-    }
-  }
-};
 const members = async (reader: PyInstallerArtifactReader) => {
   const entries: ArtifactEntry[] = [];
   for await (const entry of reader.entries()) entries.push(entry);
@@ -68,7 +41,7 @@ const deferred = () => {
 
 it("binds materialization to the inventoried digest and checks cached carrier freshness", async () => {
   const bytes = archive(Buffer.from("first"));
-  await withReader(bytes, async (reader, _handle, path) => {
+  await withPyInstallerReader(bytes, async (reader, _handle, path) => {
     await expect(reader.prepareContainer("0".repeat(64))).rejects.toMatchObject(
       { reason: "integrity" },
     );
@@ -83,7 +56,7 @@ it("binds materialization to the inventoried digest and checks cached carrier fr
 
 it("bounds descriptor reads while hashing a selected stored member", async () => {
   const payload = Buffer.alloc(2 * 1024 * 1024, 0x61);
-  await withReader(archive(payload), async (reader, handle) => {
+  await withPyInstallerReader(archive(payload), async (reader, handle) => {
     const entry = (await members(reader))[0]!;
     const read = handle.read.bind(handle);
     let maximum = 0;
@@ -108,7 +81,7 @@ it("bounds descriptor reads while hashing a selected stored member", async () =>
 it.each([false, true])(
   "joins pending native reads during cancellation/close (I/O failure: %s)",
   async (fail) => {
-    await withReader(
+    await withPyInstallerReader(
       archive(Buffer.alloc(256 * 1024, 0x61)),
       async (reader, handle) => {
         const entry = (await members(reader))[0]!;
@@ -192,7 +165,7 @@ it("preserves BOM characters in length-delimited UTF-8 fields", async () => {
       },
     ],
   });
-  await withReader(bytes, async (reader) => {
+  await withPyInstallerReader(bytes, async (reader) => {
     const entries = await members(reader);
     expect(reader.formatMetadata()).toMatchObject({
       python_library: "\ufefflibpython.so",
@@ -210,7 +183,7 @@ it("preserves BOM characters in length-delimited UTF-8 fields", async () => {
 
 it("keeps runtime options as declarations with literal names and distinct source indices", async () => {
   const option = "pyi-runtime-tmpdir /tmp/../chosen";
-  await withReader(
+  await withPyInstallerReader(
     cArchiveExecutable({
       layout: "2.1",
       pythonVersion: 309,
@@ -266,7 +239,7 @@ it("rejects metadata expansion before retaining every repeated long container pa
       body: Buffer.from("x"),
     })),
   });
-  await withReader(
+  await withPyInstallerReader(
     cArchiveExecutable({
       layout: "2.1",
       pythonVersion: 309,
@@ -314,7 +287,7 @@ it.each([false, true])(
     });
     if (truncated)
       bytes.writeUInt32BE(encoded.length - 2, 64 + encoded.length + 8);
-    await withReader(bytes, async (reader) => {
+    await withPyInstallerReader(bytes, async (reader) => {
       const entry = (await members(reader))[0]!;
       await expect(buffer(await reader.open(entry))).rejects.toMatchObject({
         reason: truncated ? "format" : "limit",
@@ -336,7 +309,7 @@ it("joins a late private-file close and retries its failed owner after cancellat
       },
     ],
   });
-  await withReader(bytes, async (reader, borrowed) => {
+  await withPyInstallerReader(bytes, async (reader, borrowed) => {
     const entered = deferred(),
       release = deferred();
     const nativeClose = OwnedFileHandle.prototype.close;
@@ -402,7 +375,7 @@ it("preserves a private-image read failure when its descriptor close also fails"
       },
     ],
   });
-  await withReader(bytes, async (reader, borrowed) => {
+  await withPyInstallerReader(bytes, async (reader, borrowed) => {
     const entry = (await members(reader)).find((item) =>
       item.path.endsWith("app.pyc"),
     )!;
@@ -447,68 +420,71 @@ it.each([false, true])(
   "shares owned carrier admission across callers and joins late admission (owner closes: %s)",
   async (ownerCloses) => {
     const bytes = archive(Buffer.from("shared admission"));
-    await withReader(bytes, async (_borrowedReader, borrowed, path) => {
-      const reader = new PyInstallerArtifactReader(path);
-      const entered = deferred(),
-        release = deferred();
-      const handles = new Set<FileHandle>();
-      const stat = borrowed.stat;
-      const spy = vi
-        .spyOn(Object.getPrototypeOf(borrowed), "stat")
-        .mockImplementation(async function (
-          this: FileHandle,
-          ...args: unknown[]
-        ) {
-          if (this !== borrowed) {
-            handles.add(this);
-            entered.resolve();
-            await release.promise;
-          }
-          return Reflect.apply(stat, this, args);
-        });
-      const caller = new AbortController(),
-        reason = new Error("one admission waiter leaves");
-      const first = reader
-        .prepareContainer(hash(bytes), caller.signal)
-        .catch((cause: unknown) => cause);
-      const peer = reader
-        .prepareContainer(hash(bytes))
-        .catch((cause: unknown) => cause);
-      let closing: Promise<void> | undefined;
-      try {
-        await entered.promise;
-        await setImmediate();
-        expect(handles.size).toBe(1);
-        caller.abort(reason);
-        if (ownerCloses) {
-          let closed = false;
-          closing = reader.close().then(() => {
-            closed = true;
+    await withPyInstallerReader(
+      bytes,
+      async (_borrowedReader, borrowed, path) => {
+        const reader = new PyInstallerArtifactReader(path);
+        const entered = deferred(),
+          release = deferred();
+        const handles = new Set<FileHandle>();
+        const stat = borrowed.stat;
+        const spy = vi
+          .spyOn(Object.getPrototypeOf(borrowed), "stat")
+          .mockImplementation(async function (
+            this: FileHandle,
+            ...args: unknown[]
+          ) {
+            if (this !== borrowed) {
+              handles.add(this);
+              entered.resolve();
+              await release.promise;
+            }
+            return Reflect.apply(stat, this, args);
           });
+        const caller = new AbortController(),
+          reason = new Error("one admission waiter leaves");
+        const first = reader
+          .prepareContainer(hash(bytes), caller.signal)
+          .catch((cause: unknown) => cause);
+        const peer = reader
+          .prepareContainer(hash(bytes))
+          .catch((cause: unknown) => cause);
+        let closing: Promise<void> | undefined;
+        try {
+          await entered.promise;
           await setImmediate();
-          expect(closed).toBe(false);
-        }
-        release.resolve();
-        expect(await first).toMatchObject({
-          reason: "cancelled",
-          cause: reason,
-        });
-        if (ownerCloses) {
-          expect(await peer).toMatchObject({ reason: "cancelled" });
+          expect(handles.size).toBe(1);
+          caller.abort(reason);
+          if (ownerCloses) {
+            let closed = false;
+            closing = reader.close().then(() => {
+              closed = true;
+            });
+            await setImmediate();
+            expect(closed).toBe(false);
+          }
+          release.resolve();
+          expect(await first).toMatchObject({
+            reason: "cancelled",
+            cause: reason,
+          });
+          if (ownerCloses) {
+            expect(await peer).toMatchObject({ reason: "cancelled" });
+            await closing;
+          } else expect(await peer).toBeUndefined();
+          await reader.close();
+          for (const handle of handles) expect(handle.fd).toBe(-1);
+        } finally {
+          release.resolve();
+          await Promise.allSettled([first, peer]);
+          spy.mockRestore();
+          await reader.close();
           await closing;
-        } else expect(await peer).toBeUndefined();
-        await reader.close();
-        for (const handle of handles) expect(handle.fd).toBe(-1);
-      } finally {
-        release.resolve();
-        await Promise.allSettled([first, peer]);
-        spy.mockRestore();
-        await reader.close();
-        await closing;
-        for (const handle of handles) {
-          await handle.close();
+          for (const handle of handles) {
+            await handle.close();
+          }
         }
-      }
-    });
+      },
+    );
   },
 );

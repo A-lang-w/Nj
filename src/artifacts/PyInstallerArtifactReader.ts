@@ -53,6 +53,9 @@ import type { PyInstallerFailure } from "./pyinstaller/PyInstallerFailure.js";
 const MAX_PARSED_FACT_BYTES = 32 * 1024 * 1024;
 const MAX_RETAINED_ENTRY_BYTES = 64 * 1024 * 1024;
 const RECORD_OWNERSHIP_RESERVATION = 256;
+// Conservative allowance for registry/case trie nodes, maps and traversal state.
+// Repeated prefixes are charged again rather than underestimating retained work.
+const PATH_COMPONENT_RESERVATION = 1024;
 
 interface PyzImage {
   readonly archive: PyzArchive;
@@ -191,6 +194,8 @@ export class PyInstallerArtifactReader implements ArtifactReader {
         abortIfNeeded(active);
       }
       const stream = pyInstallerMemberStream(parts.source, {
+        sourceBytes:
+          read.kind === "carchive" ? read.source.compressedSize : read.length,
         compressed: read.kind === "pyz" || read.source.compressionFlag === 1,
         header: read.header,
         expectedBytes:
@@ -278,9 +283,9 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     const handle = await this.#openHandle(signal);
     await this.#verifySource();
     const size = (await handle.stat()).size;
-    const cookie = await this.#cookie(handle, size);
+    const cookie = await this.#cookie(handle, size, signal);
     this.#budget = artifactExpansionBudgetBytes(cookie.packageLength);
-    const toc = await this.#toc(handle, cookie);
+    const toc = await this.#toc(handle, cookie, signal);
     for (const entry of toc) {
       this.#charge(entry.uncompressedSize);
       this.#reserveMetadata({ ...entry }, false);
@@ -303,12 +308,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
       if (member.read?.kind === "carchive")
         this.#charge(member.read.header?.length ?? 0);
     await this.#verifySource();
-    this.#metadata = cookieMetadata(
-      cookie,
-      toc.length,
-      toc.filter((entry) => entry.typeCode === "o").length,
-      encrypted,
-    );
+    this.#metadata = cookieMetadata(cookie, toc, encrypted);
     return { members };
   }
 
@@ -359,8 +359,12 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     }
   }
 
-  async #cookie(handle: FileHandle, size: number): Promise<PyInstallerCookie> {
-    const found = await findPyInstallerCookie(handle, size);
+  async #cookie(
+    handle: FileHandle,
+    size: number,
+    signal?: AbortSignal,
+  ): Promise<PyInstallerCookie> {
+    const found = await findPyInstallerCookie(handle, size, signal);
     if (found === undefined)
       throw new ArtifactReaderFailure(
         "format",
@@ -373,8 +377,9 @@ export class PyInstallerArtifactReader implements ArtifactReader {
   async #toc(
     handle: FileHandle,
     cookie: PyInstallerCookie,
+    signal?: AbortSignal,
   ): Promise<readonly CArchiveEntry[]> {
-    const toc = await readCArchiveToc(handle, cookie);
+    const toc = await readCArchiveToc(handle, cookie, signal);
     if (!toc.ok) throw failure(toc.error);
     return toc.value;
   }
@@ -432,6 +437,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
   ): Promise<PyInstallerMember[]> {
     const members: PyInstallerMember[] = [];
     const append = (member: PyInstallerMember): void => {
+      this.#reservePathComponents(member.entry.path);
       const entry = {
         ...member.entry,
         path: normalizeArtifactPath(member.entry.path),
@@ -508,6 +514,28 @@ export class PyInstallerArtifactReader implements ArtifactReader {
       );
   }
 
+  #reservePathComponents(path: string): void {
+    const remaining = MAX_RETAINED_ENTRY_BYTES - this.#retainedEntryBytes;
+    // Case annotations can carry the path and two prefixes at every component.
+    // Reserve escaped text growth as well as registry/case trie nodes and maps.
+    const componentCost =
+      PATH_COMPONENT_RESERVATION + 6 * jsonValueByteLength(path);
+    let reservation = componentCost;
+    for (
+      let index = 0;
+      index < path.length && reservation <= remaining;
+      index++
+    )
+      if (path.charCodeAt(index) === 47) reservation += componentCost;
+    if (reservation > remaining)
+      throw new ArtifactReaderFailure(
+        "limit",
+        "PyInstaller paths exceed their retained namespace budget",
+        { boundary: "memory" },
+      );
+    this.#retainedEntryBytes += reservation;
+  }
+
   #reserveMetadata(value: JsonValue, projected: boolean): void {
     const used = projected ? this.#retainedEntryBytes : this.#parsedFactBytes;
     const limit = projected ? MAX_RETAINED_ENTRY_BYTES : MAX_PARSED_FACT_BYTES;
@@ -516,7 +544,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     if (remaining < 0 || bytes > remaining)
       throw new ArtifactReaderFailure(
         "limit",
-        "PyInstaller directory facts exceed their serialized metadata budget",
+        "PyInstaller directory facts exceed their retained metadata budget",
         { boundary: "memory" },
       );
     if (projected)

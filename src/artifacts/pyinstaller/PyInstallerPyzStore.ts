@@ -57,6 +57,7 @@ export class PyInstallerPyzStore {
       signal,
     });
     const stream = pyInstallerMemberStream(source, {
+      sourceBytes: entry.compressedSize,
       compressed: true,
       header: undefined,
       expectedBytes: entry.uncompressedSize,

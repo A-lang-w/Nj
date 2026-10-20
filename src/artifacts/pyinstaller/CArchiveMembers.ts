@@ -43,15 +43,20 @@ export const projectStoredMember = (
   archiveStart: number,
   pythonMagic: Buffer | undefined,
 ): PyInstallerMember => {
-  if (entry.typeCode === "o")
+  if (entry.typeCode === "o" || entry.typeCode === "d")
     return {
       entry: fileEntry({
-        path: `__pyinstaller__/runtime-options/${String(entry.index)}`,
+        path: `__pyinstaller__/${entry.typeCode === "o" ? "runtime-options" : "dependencies"}/${String(entry.index)}`,
         kind: "metadata",
         declaredSize: entry.uncompressedSize,
         compressedSize: entry.compressedSize,
         byteOffset: null,
-        limitations: [],
+        limitations:
+          entry.typeCode === "d"
+            ? [
+                "Multipackage dependency bytes belong to another executable and remain unresolved.",
+              ]
+            : [],
         adapterKey: `carchive:${String(entry.index)}:${entry.name}`,
         formatMetadata: cArchiveEntryMetadata(entry),
       }),

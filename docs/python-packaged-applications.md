@@ -25,6 +25,15 @@ with no content artifact or extractable file. Their query paths are
 `format_metadata.source_name`. Repeated declarations retain distinct occurrence
 identities. These paths do not claim output filesystem names.
 
+Type `d` entries are multipackage dependencies. They are also metadata, under
+`__pyinstaller__/dependencies/<table index>`, and never materialize an empty file.
+The reader preserves the raw reference and splits its first colon into
+`dependency_archive` and `dependency_member`. `dependency_status` remains
+`unresolved`, or `invalid-reference` with unknown parts for malformed references.
+`external_dependency_count` summarizes these declarations. REA does not open
+another executable or claim its contents are available. A real file with the
+same logical path as metadata remains independently extractable.
+
 Request `detail: "summary"` for a compact inspection, then query retained
 Evidence with `inspect_analysis_view`. An inventory view can select
 `collection: "occurrences"`, `entry_kinds: ["metadata"]`, exact logical paths or
@@ -50,10 +59,16 @@ the selected carrier to its inventoried digest and checks source identity and
 state before and after reading. It does not retain expanded module bodies.
 
 Only the PYZ header and marshal directory are loaded for listing. PYZ tables
-have a 16 MiB budget; CArchive tables have a 32 MiB budget. Parsed facts and
-projected entry metadata have separate 32 MiB and 64 MiB serialized budgets,
-including per-record bookkeeping reservations. Plaintext expansion has an
-aggregate archive-derived budget. Exceeding a budget returns a resource failure.
+have a 16 MiB budget; CArchive tables have a 32 MiB budget. Parsed facts have a
+32 MiB serialized budget. Projected entries share a 64 MiB retained budget,
+including metadata, bookkeeping and conservative reservations for namespace
+objects and possible case-collision annotations at each path component. These
+reservations happen before normalization or trie allocation.
+Only a zero-byte read establishes EOF; short successful descriptor reads fill
+the bounded range. Compressed members must consume their complete declared
+input span; trailing junk and concatenated streams are refused.
+Plaintext expansion has an aggregate archive-derived budget. Exceeding a budget
+returns a resource failure.
 
 Supported final Python bytecode magic values cover Python 3.7 through 3.14.
 Supported marshal directory values are lists, tuples, strings, integers and

@@ -317,14 +317,15 @@ const writeSelectedEntries = async ({
   for await (const entry of reader.entries(signal)) {
     const path = normalizeArtifactPath(entry.path);
     registry.add(path, entry.kind);
+    // Logical declarations may share a query path with a real file. They do
+    // not consume that file's selection or participate in materialization.
+    if (entry.kind !== "file" && entry.kind !== "slice") continue;
     const selectedItem = byPath.get(path);
     if (selectedItem === undefined) {
-      if (entry.kind === "file" || entry.kind === "slice")
-        throw new ArtifactReaderFailure(
-          "integrity",
-          `Regular artifact entry is missing from inventory: ${path}`,
-        );
-      continue;
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `Regular artifact entry is missing from inventory: ${path}`,
+      );
     }
     preflight(entry);
     const stream = await reader.open(entry, signal);
@@ -452,7 +453,7 @@ const requireExtractableFormat = async (
         if (await locateGodotPck(handle, size, signal)) return true;
         if (format !== "elf" && format !== "pe") return false;
         abortIfNeeded(signal);
-        const packaged = await containsPyInstallerArchive(handle, size);
+        const packaged = await containsPyInstallerArchive(handle, size, signal);
         abortIfNeeded(signal);
         return packaged;
       },

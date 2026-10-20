@@ -15,8 +15,7 @@ const pythonVersion = (value: number) =>
 
 export const cookieMetadata = (
   cookie: PyInstallerCookie,
-  entries: number,
-  runtimeOptions: number,
+  entries: readonly CArchiveEntry[],
   encryptionMarker: boolean,
 ): PyInstallerMetadata => {
   const version = pythonVersion(cookie.pythonVersion);
@@ -28,8 +27,11 @@ export const cookieMetadata = (
     cookie_offset: cookie.cookieOffset,
     toc_offset: cookie.tocOffset,
     toc_size: cookie.tocLength,
-    entry_count: entries,
-    runtime_option_count: runtimeOptions,
+    entry_count: entries.length,
+    runtime_option_count: entries.filter((entry) => entry.typeCode === "o")
+      .length,
+    external_dependency_count: entries.filter((entry) => entry.typeCode === "d")
+      .length,
     python_version_raw: cookie.pythonVersion,
     python_major: version?.major ?? null,
     python_minor: version?.minor ?? null,
@@ -111,6 +113,7 @@ export const cArchiveEntryMetadata = (
     ["s", "m", "M"].includes(entry.typeCode),
     header,
   ),
+  ...(entry.typeCode === "d" ? dependencyMetadata(entry.name) : {}),
   pyz_status:
     archive?.kind === "entries"
       ? "decoded"
@@ -129,6 +132,22 @@ export const cArchiveEntryMetadata = (
   encryption_source:
     archive !== undefined && encryptionMarker ? "carchive-marker" : null,
 });
+
+/** The bootloader splits at the first colon; neither part is a local read grant. */
+const dependencyMetadata = (
+  source: string,
+): Pick<
+  PyInstallerEntryMetadata,
+  "dependency_status" | "dependency_archive" | "dependency_member"
+> => {
+  const colon = source.indexOf(":");
+  const valid = colon > 0 && colon < source.length - 1;
+  return {
+    dependency_status: valid ? "unresolved" : "invalid-reference",
+    dependency_archive: valid ? source.slice(0, colon) : null,
+    dependency_member: valid ? source.slice(colon + 1) : null,
+  };
+};
 
 export const pyzEntryMetadata = (
   container: CArchiveEntry,

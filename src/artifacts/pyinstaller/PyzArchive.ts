@@ -1,5 +1,7 @@
 import type { FileHandle } from "node:fs/promises";
 import { hashReadable } from "../ArtifactHash.js";
+import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
+import { readPyInstallerBytes } from "./PyInstallerBytes.js";
 
 import { err, ok, type Result } from "../../domain/result.js";
 import { readMarshalSubset, type MarshalValue } from "./MarshalSubset.js";
@@ -52,12 +54,14 @@ export const readPyzArchive = async (
     return err(
       pyInstallerFailure("format", "PYZ archive magic does not match"),
     );
-  const header = Buffer.alloc(Math.min(size, PYZ_HEADER_BYTES));
-  const headerRead = await handle.read(header, 0, header.length, start);
-  if (headerRead.bytesRead !== header.length)
-    return err(
-      pyInstallerFailure("format", "PYZ header extends outside the file"),
-    );
+  const headerRead = await readPyInstallerBytes(handle, {
+    position: start,
+    length: PYZ_HEADER_BYTES,
+    label: "PYZ header",
+    signal,
+  });
+  if (!headerRead.ok) return headerRead;
+  const header = headerRead.value;
   const tocOffset =
     header.length === PYZ_HEADER_BYTES ? header.readUInt32BE(8) : size;
   const validOffset = tocOffset >= PYZ_HEADER_BYTES && tocOffset <= size;
@@ -70,17 +74,18 @@ export const readPyzArchive = async (
         "PYZ table exceeds the 16 MiB in-memory table budget",
       ),
     );
-  const table = Buffer.alloc(tableSize);
-  const read = await handle.read(table, 0, tableSize, start + tocOffset);
-  if (read.bytesRead !== tableSize)
-    return err(
-      pyInstallerFailure("format", "PYZ table extends outside the file"),
-    );
+  const read = await readPyInstallerBytes(handle, {
+    position: start + tocOffset,
+    length: tableSize,
+    label: "PYZ table",
+    signal,
+  });
+  if (!read.ok) return read;
+  const table = read.value;
   const digest = await hashReadable(
-    handle.createReadStream({
+    readArtifactFileChunks(handle, {
       start,
       end: start + size - 1,
-      autoClose: false,
       ...(signal === undefined ? {} : { signal }),
     }),
     signal,

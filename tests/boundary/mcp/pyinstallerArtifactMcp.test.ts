@@ -12,10 +12,75 @@ import {
   pyzArchive,
 } from "../../../src/artifacts/pyinstaller/CArchive.fixture.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
-import { parseEvidence } from "../../../src/domain/evidence.js";
+import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+const assertMetadataQueries = async (
+  client: Client,
+  parent: Evidence,
+): Promise<void> => {
+  const definition = (await client.listTools()).tools.find(
+    (tool) => tool.name === "inspect_analysis_view",
+  );
+  expect(definition?.outputSchema).toBeDefined();
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const inputSchema: Record<string, unknown> = definition!.inputSchema;
+  const outputSchema: Record<string, unknown> = definition!.outputSchema!;
+  const input = ajv.compile(inputSchema);
+  const output = ajv.compile(outputSchema);
+  const ids: string[] = [];
+  for (const offset of [0, 1, 2, 3]) {
+    const args = {
+      source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+      view: {
+        kind: "inventory",
+        collection: "occurrences",
+        entry_kinds: ["metadata"],
+        fields: ["format_metadata"],
+        offset,
+        limit: 1,
+      },
+    };
+    expect(input(args), JSON.stringify(input.errors)).toBe(true);
+    const reply = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: args,
+    });
+    expect(reply.isError).not.toBe(true);
+    expect(output(reply.structuredContent), JSON.stringify(output.errors)).toBe(
+      true,
+    );
+    const evidence = parseEvidence(reply.structuredContent);
+    const view = analysisViewResultSchema.parse(evidence.normalized_result);
+    if (view.kind !== "inventory") throw new Error("Expected inventory page");
+    expect(view.parent_evidence_id).toBe(parent.evidence_id);
+    expect(evidence.evidence_links).toContain(parent.evidence_id);
+    expect(view.coverage.total).toBe(3);
+    if (offset < 3) {
+      expect(view.items).toHaveLength(1);
+      expect(view.items[0]).toMatchObject({
+        artifact_id: null,
+        format_metadata:
+          offset < 2
+            ? { source_name: "pyi-contents-directory _internal" }
+            : {
+                source_name: "../shared/app:assets/data.bin",
+                dependency_status: "unresolved",
+                dependency_archive: "../shared/app",
+                dependency_member: "assets/data.bin",
+              },
+      });
+      expect(view.items[0]).not.toHaveProperty("logical_path");
+      const row = view.items[0];
+      if (row === undefined || !("occurrence_id" in row))
+        throw new Error("Expected occurrence identity");
+      ids.push(row.occurrence_id);
+    } else expect(view.items).toEqual([]);
+  }
+  expect(new Set(ids).size).toBe(3);
+};
 
 it("inventories a PyInstaller executable through inspect_artifact", async () => {
   const directory = await createTestTempDirectory("rea-pyinstaller-mcp-");
@@ -43,6 +108,12 @@ it("inventories a PyInstaller executable through inspect_artifact", async () => 
           name: "hello",
           typeCode: "s",
           payload: Buffer.from("print('hi')"),
+          compress: false,
+        },
+        {
+          name: "../shared/app:assets/data.bin",
+          typeCode: "d",
+          payload: Buffer.alloc(0),
           compress: false,
         },
         {
@@ -95,63 +166,16 @@ it("inventories a PyInstaller executable through inspect_artifact", async () => 
     expect(summary).toMatchObject({
       kind: "summary",
       summary: {
-        root_format_metadata: { kind: "pyinstaller", python_version_raw: 312 },
-        observed_entry_kind_counts: { metadata: 2 },
+        root_format_metadata: {
+          kind: "pyinstaller",
+          python_version_raw: 312,
+          external_dependency_count: 1,
+        },
+        observed_entry_kind_counts: { metadata: 3 },
         source_coverage: { status: "complete" },
       },
     });
-    const definition = (await client.listTools()).tools.find(
-      (tool) => tool.name === "inspect_analysis_view",
-    );
-    expect(definition?.outputSchema).toBeDefined();
-    const ajv = new Ajv2020({ strict: false, validateFormats: false });
-    const inputSchema: Record<string, unknown> = definition!.inputSchema;
-    const outputSchema: Record<string, unknown> = definition!.outputSchema!;
-    const input = ajv.compile(inputSchema);
-    const output = ajv.compile(outputSchema);
-    const ids: string[] = [];
-    for (const offset of [0, 1, 2]) {
-      const args = {
-        source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
-        view: {
-          kind: "inventory",
-          collection: "occurrences",
-          entry_kinds: ["metadata"],
-          fields: ["format_metadata"],
-          offset,
-          limit: 1,
-        },
-      };
-      expect(input(args), JSON.stringify(input.errors)).toBe(true);
-      const reply = await client.callTool({
-        name: "inspect_analysis_view",
-        arguments: args,
-      });
-      expect(reply.isError).not.toBe(true);
-      expect(
-        output(reply.structuredContent),
-        JSON.stringify(output.errors),
-      ).toBe(true);
-      const evidence = parseEvidence(reply.structuredContent);
-      const view = analysisViewResultSchema.parse(evidence.normalized_result);
-      if (view.kind !== "inventory") throw new Error("Expected inventory page");
-      expect(view.parent_evidence_id).toBe(parent.evidence_id);
-      expect(evidence.evidence_links).toContain(parent.evidence_id);
-      expect(view.coverage.total).toBe(2);
-      if (offset < 2) {
-        expect(view.items).toHaveLength(1);
-        expect(view.items[0]).toMatchObject({
-          artifact_id: null,
-          format_metadata: { source_name: "pyi-contents-directory _internal" },
-        });
-        expect(view.items[0]).not.toHaveProperty("logical_path");
-        const row = view.items[0];
-        if (row === undefined || !("occurrence_id" in row))
-          throw new Error("Expected occurrence identity");
-        ids.push(row.occurrence_id);
-      } else expect(view.items).toEqual([]);
-    }
-    expect(new Set(ids).size).toBe(2);
+    await assertMetadataQueries(client, parent);
   } finally {
     await client.close();
     await server.close();

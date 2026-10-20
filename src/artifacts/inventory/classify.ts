@@ -189,7 +189,11 @@ const classifyRootFormat = async (
     archiveBytes,
   ).format;
   if (["elf", "pe", "mach-o", "mach-o-universal"].includes(format)) {
-    const packaged = await containsPyInstallerArchive(handle, archiveBytes);
+    const packaged = await containsPyInstallerArchive(
+      handle,
+      archiveBytes,
+      signal,
+    );
     abortIfNeeded(signal);
     if (packaged) return "pyinstaller";
   }

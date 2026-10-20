@@ -37,6 +37,12 @@ const onefile = async (): Promise<string> => {
           compress: false,
         },
         {
+          name: "../shared/app:assets/data.bin",
+          typeCode: "d",
+          payload: Buffer.alloc(0),
+          compress: false,
+        },
+        {
           name: "hello",
           typeCode: "s",
           payload: Buffer.from("print('hi')"),
@@ -83,6 +89,7 @@ it("lists CArchive members and the Python version through inspect-artifact", asy
     python_major: 3,
     python_minor: 14,
     runtime_option_count: 1,
+    external_dependency_count: 1,
   });
   expect(
     inventory?.occurrences.find((item) => item.entry_kind === "metadata"),
@@ -96,6 +103,21 @@ it("lists CArchive members and the Python version through inspect-artifact", asy
   expect(
     inventory?.occurrences.map((occurrence) => occurrence.logical_path),
   ).toEqual(expect.arrayContaining(["hello", "PYZ.pyz", "PYZ.pyz/app.pyc"]));
+  expect(
+    inventory?.occurrences.find(
+      (row) =>
+        row.format_metadata?.kind === "pyinstaller-entry" &&
+        row.format_metadata.type_code === "d",
+    ),
+  ).toMatchObject({
+    entry_kind: "metadata",
+    artifact_id: null,
+    format_metadata: {
+      dependency_archive: "../shared/app",
+      dependency_member: "assets/data.bin",
+      dependency_status: "unresolved",
+    },
+  });
 });
 
 it("extracts CArchive members through extract-artifact", async () => {

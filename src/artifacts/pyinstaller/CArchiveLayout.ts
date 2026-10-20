@@ -1,4 +1,5 @@
 import type { FileHandle } from "node:fs/promises";
+import { readPyInstallerBytes } from "./PyInstallerBytes.js";
 
 import { err, ok, type Result } from "../../domain/result.js";
 import {
@@ -55,8 +56,9 @@ export interface CArchiveEntry {
 export const containsPyInstallerArchive = async (
   handle: FileHandle,
   fileSize: number,
+  signal?: AbortSignal,
 ): Promise<boolean> => {
-  const found = await findPyInstallerCookie(handle, fileSize);
+  const found = await findPyInstallerCookie(handle, fileSize, signal);
   return found?.ok === true;
 };
 
@@ -64,6 +66,7 @@ export const containsPyInstallerArchive = async (
 export const findPyInstallerCookie = async (
   handle: FileHandle,
   fileSize: number,
+  signal?: AbortSignal,
 ): Promise<Result<PyInstallerCookie, PyInstallerFailure> | undefined> => {
   if (
     !Number.isSafeInteger(fileSize) ||
@@ -71,11 +74,14 @@ export const findPyInstallerCookie = async (
   )
     return undefined;
   const tailSize = Math.min(fileSize, PYINSTALLER_COOKIE_SEARCH_BYTES);
-  const tail = Buffer.alloc(tailSize);
-  const read = await handle.read(tail, 0, tail.length, fileSize - tailSize);
-  if (read.bytesRead !== tail.length)
-    return err(pyInstallerFailure("format", "CArchive tail could not be read"));
-  const observed = tail.subarray(0, read.bytesRead);
+  const read = await readPyInstallerBytes(handle, {
+    position: fileSize - tailSize,
+    length: tailSize,
+    label: "CArchive tail",
+    signal,
+  });
+  if (!read.ok) return read;
+  const observed = read.value;
   let failure: PyInstallerFailure | undefined;
   let from = observed.length;
   while (from >= PYINSTALLER_COOKIE_MAGIC.length) {
@@ -96,6 +102,7 @@ export const findPyInstallerCookie = async (
 export const readCArchiveToc = async (
   handle: FileHandle,
   cookie: PyInstallerCookie,
+  signal?: AbortSignal,
 ): Promise<Result<readonly CArchiveEntry[], PyInstallerFailure>> => {
   if (cookie.tocLength > MAX_TOC_BYTES)
     return err(
@@ -104,14 +111,15 @@ export const readCArchiveToc = async (
         "CArchive table of contents exceeds its bound",
       ),
     );
-  const bytes = Buffer.alloc(cookie.tocLength);
   const position = cookie.archiveStart + cookie.tocOffset;
-  const read = await handle.read(bytes, 0, bytes.length, position);
-  if (read.bytesRead !== bytes.length)
-    return err(
-      pyInstallerFailure("format", "CArchive table of contents is truncated"),
-    );
-  const parsed = parseCArchiveToc(bytes.subarray(0, read.bytesRead));
+  const read = await readPyInstallerBytes(handle, {
+    position,
+    length: cookie.tocLength,
+    label: "CArchive table of contents",
+    signal,
+  });
+  if (!read.ok) return read;
+  const parsed = parseCArchiveToc(read.value);
   if (!parsed.ok) return parsed;
   const valid = validateCArchiveMembers(parsed.value, cookie.tocOffset);
   return valid.ok ? parsed : valid;
@@ -308,7 +316,7 @@ const validateCArchiveMembers = (
 ): Result<null, PyInstallerFailure> => {
   const names = new Set<string>();
   for (const entry of entries) {
-    if (entry.typeCode !== "o") {
+    if (entry.typeCode !== "o" && entry.typeCode !== "d") {
       if (names.has(entry.name))
         return err(
           pyInstallerFailure(
