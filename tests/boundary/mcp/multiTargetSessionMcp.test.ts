@@ -243,7 +243,9 @@ describe("multi-target MCP session", () => {
       expect(JSON.stringify(documents?.inputSchema)).not.toContain("wait_ms");
       expect(JSON.stringify(address?.inputSchema)).toContain("wait_ms");
 
-      // A tool that declares no wait budget does not consume one.
+      // A tool that declares no wait budget does not accept one: the strict
+      // schema rejects it before the adapter runs. The adapter's own behaviour
+      // is covered by the next test.
       const refused = await harness.client.callTool({
         name: "list_documents",
         arguments: { wait_ms: 10 },

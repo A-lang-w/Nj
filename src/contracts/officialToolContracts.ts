@@ -21,6 +21,17 @@ import { HOPPER_MEMORY_TOOL_DEFINITIONS } from "./hopperMemoryContracts.js";
 import { analysisSearchInput } from "./analysisSearchContract.js";
 
 /**
+ * Default wait budget for a tool that declares the shared budget.
+ *
+ * The budget is declared by the tool, so the default belongs with the tool.
+ * A call that declares no budget waits for nothing.
+ */
+export const DEFAULT_WAIT_BUDGET_MS = 180_000;
+
+/** Highest wait budget a caller may ask for. */
+export const MAX_WAIT_BUDGET_MS = 290_000;
+
+/**
  * Bounded wait a target-bound analysis tool offers while a target starts.
  *
  * The metadata marks this argument as the shared wait budget. An adapter that
@@ -31,10 +42,10 @@ const waitBudget = z
   .number()
   .int()
   .min(1)
-  .max(290_000)
+  .max(MAX_WAIT_BUDGET_MS)
   .optional()
   .describe(
-    "Maximum milliseconds to wait for a starting target before returning analysis_in_progress. Default 180000; maximum 290000.",
+    `Maximum milliseconds to wait for a starting target before returning analysis_in_progress. Default ${DEFAULT_WAIT_BUDGET_MS}; maximum ${MAX_WAIT_BUDGET_MS}.`,
   )
   .meta({ reaWaitBudget: true });
 

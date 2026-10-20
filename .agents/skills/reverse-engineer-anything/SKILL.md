@@ -293,10 +293,12 @@ falls back to another target. `REA_MAX_OPEN_TARGETS` bounds how many targets
 stay open and `REA_MAX_CONCURRENT_ANALYSES` bounds how many starts overlap;
 a start beyond the second limit is queued, not refused.
 
-`close_binary` cancels a running job. A job that is still starting is aborted
-and its provider released, so a cancelled analysis leaves no cache entry behind.
-A completed analysis is published to the project cache when the target closes
-normally.
+`close_binary` cancels a running job. A job that is still starting is aborted;
+the provider is released once the close gives up waiting for the start to
+unwind, so a cancelled analysis leaves no cache entry behind. A completed
+analysis is published to the project cache when the target closes normally. A
+close that cannot release its provider keeps ownership of it: the handle is
+reported as `retained_target_ids`, and closing it again retries the cleanup.
 
 The one-shot CLI cannot host a background job: it exits with the command. A
 CLI request for `analysis_mode: "background"` fails with

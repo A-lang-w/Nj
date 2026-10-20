@@ -287,9 +287,11 @@ export class BinaryTargetRegistry implements BinarySessionPort {
         : { providerId: options.providerId }),
     });
     if (!preview.ok) {
-      // The slot never became usable, so it is dropped rather than left
-      // registered against a target it never opened.
-      this.#removeSlot(slot.value, "primary");
+      // The new target never became usable, so the slot it would have used is
+      // dropped. The primary is never dropped here: it may already own a live
+      // open target, and unregistering it would make that target invisible
+      // and unclosable.
+      if (slot.value !== this.#primary) this.#removeSlot(slot.value, "primary");
       return preview;
     }
     return this.#startJob(
@@ -643,6 +645,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       if (!closed.ok) {
         failure ??= closed.error;
         this.#retainedSlots.add(slot.id);
+        this.#jobs.delete(slot.id);
         continue;
       }
       this.#retainedSlots.delete(slot.id);
@@ -655,6 +658,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     if (!final.ok) {
       failure ??= final.error;
       this.#retainedSlots.add(this.#primary.id);
+      this.#jobs.delete(this.#primary.id);
     } else {
       this.#retainedSlots.delete(this.#primary.id);
       this.#removeSlot(this.#primary, "first-open");
@@ -720,18 +724,27 @@ export class BinaryTargetRegistry implements BinarySessionPort {
           options,
           behavior,
         ),
-      () =>
-        Promise.resolve(
-          err(
-            new AnalysisCancelledError("close_binary", {
-              diagnostics: {
-                reason:
-                  "the provider start did not unwind within the settle bound, so no analysis snapshot was taken",
-                settle_bound_ms: this.#limits.jobSettleTimeoutMs,
-              },
-            }),
-          ),
-        ),
+      // A wedged start cannot be snapshotted, but the provider still has to be
+      // released. The escalation closes the slot the same way the plain close
+      // does, and the snapshot is reported as not taken.
+      async (slot, behavior) => {
+        const closed = await this.#closeSlotWithoutTransition(
+          slot,
+          options,
+          behavior,
+        );
+        return closed.ok
+          ? err(
+              new AnalysisCancelledError("close_binary", {
+                diagnostics: {
+                  reason:
+                    "the provider start did not unwind within the settle bound, so no analysis snapshot was taken",
+                  settle_bound_ms: this.#limits.jobSettleTimeoutMs,
+                },
+              }),
+            )
+          : closed;
+      },
     );
   }
 
@@ -769,9 +782,11 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       this.#retainedSlots.delete(slot.value.id);
       this.#removeSlot(slot.value, "first-open");
     } else {
-      // The slot keeps its registration and its retained resource. Its
-      // handle stays reported so a later close can retry the cleanup.
+      // The slot keeps its registration and its retained resource, so a later
+      // close can retry the cleanup. It is no longer an open target: the
+      // closed target must not stay listed or routable.
       this.#retainedSlots.add(slot.value.id);
+      this.#jobs.delete(slot.value.id);
     }
     return closed;
   }
@@ -1122,18 +1137,12 @@ export class BinaryTargetRegistry implements BinarySessionPort {
    * Drop one slot from the registry.
    *
    * `fallback` names the target a call without an explicit handle addresses
-   * once the removed slot was current: a failed open falls back to the
-   * primary slot, while a closed slot falls back to the first remaining open
+   * once the removed slot was current. `primary` is the fallback for a slot
+   * that never became usable, so the server keeps addressing the slot every
+   * request addresses by default. `first-open` is the fallback for a slot that
+   * was closed, so the server keeps addressing a slot that still holds an open
    * target. Only a successful close or a failed open removes a slot; a failed
-   * close keeps the slot, its job entry, and the resource it still owns.
-   */
-  /**
-   * Remove a slot that no longer owns a target.
-   *
-   * `primary` is the fallback for a slot that never became usable, so the
-   * server keeps addressing the slot every request addresses by default.
-   * `first-open` is the fallback for a slot that was closed, so the server
-   * keeps addressing a slot that still holds an open target.
+   * close keeps the slot, its registration, and the resource it still owns.
    */
   #removeSlot(slot: TargetSlot, fallback: "primary" | "first-open"): void {
     this.#jobs.get(slot.id)?.controller.abort();
@@ -1212,13 +1221,14 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       return err(new AnalysisCancelledError(operation));
     if (isAborted(options?.signal))
       return err(new AnalysisCancelledError(operation));
-    // A caller that declares no wait budget passes zero, and a call that
-    // declares none must not block for the default budget. A budget that is
-    // not a finite number is not a budget; it falls back to the default.
-    const requested = options?.waitMs ?? DEFAULT_WAIT_MS;
+    // The wait budget belongs to the tool that declares it. A call that
+    // declares no budget waits for nothing; a call that declares one passes
+    // its own budget. A budget that is not a finite number is not a budget; it
+    // falls back to no wait.
+    const requested = options?.waitMs ?? 0;
     const waitMs = Number.isFinite(requested)
       ? Math.min(MAX_WAIT_MS, Math.max(0, requested))
-      : DEFAULT_WAIT_MS;
+      : 0;
     if (waitMs === 0)
       return err(
         new AnalysisInProgressError(
@@ -1352,7 +1362,15 @@ export class BinaryTargetRegistry implements BinarySessionPort {
           closeOwnedProviderResources: false,
         },
       );
-      if (!closed.ok) return closed;
+      if (!closed.ok) {
+        // The slot keeps its registration and its retained resource, and its
+        // handle stays reported so a later close can retry the cleanup. It is
+        // no longer an open target.
+        this.#retainedSlots.add(slot.id);
+        this.#jobs.delete(slot.id);
+        return closed;
+      }
+      this.#retainedSlots.delete(slot.id);
       this.#removeSlot(slot, "first-open");
     }
     return ok(null);

@@ -521,11 +521,12 @@ export class BinarySession
    *
    * A provider start that never unwinds must not hold the slot's cleanup: the
    * ordinary close serializes behind the open that holds the transition, so a
-   * wedged start would wedge every later close and the server shutdown. This
-   * path does not wait for that transition. It releases the pending client
-   * through the same client close that owns provider cleanup, invalidates the
-   * unsettled open so it cannot restore a target into the closed slot, and
-   * releases the slot's records and owned resources as the caller asked.
+   * wedged start would wedge every later close, every later open and the server
+   * shutdown. This path does not wait for that transition. It releases the
+   * pending client through the same client close that owns provider cleanup,
+   * invalidates the unsettled open so it cannot restore a target into the
+   * closed slot, releases the slot's records and owned resources as the caller
+   * asked, and releases the transition chain so the slot stays usable.
    */
   async closeWithoutTransition(
     options: Pick<ExecutionOptions, "progress"> & {
@@ -542,6 +543,13 @@ export class BinarySession
     this.#pendingStart = undefined;
     const released =
       pending === undefined ? ok(null) : await this.#releaseRun(pending);
+    // The wedged open still holds the transition chain. Releasing the pending
+    // client does not settle it, and every later close, open and the server
+    // shutdown serialize behind it. The chain is replaced so the slot stays
+    // usable; the unsettled open is invalidated by the lifecycle generation
+    // above, so it cannot restore a target into the closed slot when it
+    // eventually unwinds.
+    this.#transition = Promise.resolve();
     if (!released.ok) return released;
     return this.#closeActive(
       options,
@@ -673,6 +681,10 @@ export class BinarySession
   /** Release one provider client once, through the owner of provider cleanup. */
   async #releaseRun(run: SessionRun): Promise<Result<null, AnalysisError>> {
     if (run.released) return ok(null);
+    // A run whose cleanup is already pending owns its own close, and a failed
+    // cleanup keeps that ownership for a retry. Releasing it here would close
+    // the client a second time.
+    if (this.#pendingCleanup?.run === run) return this.#retryPendingCleanup();
     run.released = true;
     return closeAnalysisClient(run.client, run.route.identity.id, {});
   }
