@@ -360,6 +360,39 @@ describe("identityless lineage refresh follows tree membership", () => {
       1,
     );
   });
+
+  it("re-reads a cached descendant when its relation is unchanged", async () => {
+    let replacementReads = 0;
+    const environment = vi.fn((pid: number) => {
+      if (pid === 101 || pid === 103)
+        return Promise.reject(
+          new Error("process exited during environment read"),
+        );
+      if (pid !== 102)
+        return Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" });
+      replacementReads += 1;
+      return Promise.resolve(
+        replacementReads === 1 ? { REA_PROCESS_RUN_ID: "run-token" } : {},
+      );
+    });
+    const descendant = row(102, 100, 102);
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([row(100, 1, 100), row(101, 100), row(103, 100)])
+      .mockResolvedValueOnce([row(100, 1, 100), row(103, 100), descendant])
+      .mockResolvedValue([row(100, 1, 100), descendant]);
+    await expect(
+      observeOwnedProcessLineage(ownership, {
+        listProcesses,
+        environment,
+        signalGroup: vi.fn(),
+      }),
+    ).resolves.toMatchObject({
+      status: "unavailable",
+      reason: "process lineage contains an unowned or PID-reused process",
+    });
+    expect(replacementReads).toBe(2);
+  });
 });
 
 describe("owned process-group cleanup discovery", () => {

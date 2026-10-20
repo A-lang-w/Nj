@@ -240,7 +240,8 @@ export const observeOwnedProcessLineage = async (
   const descendants = descendantsOf([launcher.pid], processes);
   const verifiedDescendants: ProcessTableEntry[] = [];
   // Seed every initial row. A later refresh reads a row again when its parent,
-  // group, or launcher-tree membership changes, including when an ancestor moves.
+  // group, or launcher-tree membership changes. A row whose token was read is
+  // read again on every later refresh: parent and group are not a generation.
   const initialTree = new Set(descendants.map(({ pid }) => pid));
   const initialRelations = new Map<number, ExaminedLineageRefresh>();
   const examinedRefresh = new Map<number, ExaminedLineageRefresh>();
@@ -250,6 +251,7 @@ export const observeOwnedProcessLineage = async (
       parentPid: process.parentPid,
       processGroupId: process.processGroupId,
       inTree: initialTree.has(process.pid),
+      tokenChecked: false,
       descendant: undefined,
     };
     initialRelations.set(process.pid, relation);
@@ -480,6 +482,8 @@ interface ExaminedLineageRefresh {
   readonly processGroupId: number;
   /** True when this row was a launcher descendant at this classification. */
   readonly inTree: boolean;
+  /** True after this refresh has read the row's run token. */
+  readonly tokenChecked: boolean;
   readonly descendant: ProcessTableEntry | undefined;
 }
 
@@ -489,7 +493,9 @@ interface ExaminedLineageRefresh {
  * token outside that tree, or an unreadable live row, blocks a verified result.
  * A readable foreign token outside the tree is not part of this run. A row is
  * read again when its parent, process group, or launcher-tree membership
- * changes. Unchanged rows from the initial snapshot are not read again.
+ * changes. A row whose token was already read is read again on every later
+ * refresh, because those fields do not identify a process generation.
+ * Unchanged rows from the initial snapshot are not read again.
  */
 const classifyIdentitylessLineageRefresh = async (
   ownership: OwnedProcessGroup,
@@ -514,6 +520,7 @@ const classifyIdentitylessLineageRefresh = async (
     const previous = examined.get(process.pid);
     return (
       previous === undefined ||
+      previous.tokenChecked ||
       previous.parentPid !== process.parentPid ||
       previous.processGroupId !== process.processGroupId ||
       previous.inTree !== inTree.has(process.pid)
@@ -554,6 +561,7 @@ const classifyIdentitylessLineageRefresh = async (
         parentPid: process.parentPid,
         processGroupId: process.processGroupId,
         inTree: inTree.has(process.pid),
+        tokenChecked: true,
         descendant: included.get(process.pid),
       });
   }
