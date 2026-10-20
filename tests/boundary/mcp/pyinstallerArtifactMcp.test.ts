@@ -31,6 +31,7 @@ const assertMetadataQueries = async (
   const input = ajv.compile(inputSchema);
   const output = ajv.compile(outputSchema);
   const ids: string[] = [];
+  const selected: unknown[] = [];
   for (const offset of [0, 1, 2, 3]) {
     const args = {
       source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
@@ -62,24 +63,39 @@ const assertMetadataQueries = async (
       expect(view.items).toHaveLength(1);
       expect(view.items[0]).toMatchObject({
         artifact_id: null,
-        format_metadata:
-          offset < 2
-            ? { source_name: "pyi-contents-directory _internal" }
-            : {
-                source_name: "../shared/app:assets/data.bin",
-                dependency_status: "unresolved",
-                dependency_archive: "../shared/app",
-                dependency_member: "assets/data.bin",
-              },
+        format_metadata: { kind: "pyinstaller-entry" },
       });
       expect(view.items[0]).not.toHaveProperty("logical_path");
       const row = view.items[0];
       if (row === undefined || !("occurrence_id" in row))
         throw new Error("Expected occurrence identity");
       ids.push(row.occurrence_id);
+      selected.push(row);
     } else expect(view.items).toEqual([]);
   }
   expect(new Set(ids).size).toBe(3);
+  expect(selected).toEqual(
+    expect.arrayContaining([
+      ...[0, 1].map((index) =>
+        expect.objectContaining({
+          format_metadata: expect.objectContaining({
+            index,
+            type_code: "o",
+            source_name: "pyi-contents-directory _internal",
+          }),
+        }),
+      ),
+      expect.objectContaining({
+        format_metadata: expect.objectContaining({
+          type_code: "d",
+          source_name: "../shared/app:assets/data.bin",
+          dependency_status: "unresolved",
+          dependency_archive: "../shared/app",
+          dependency_member: "assets/data.bin",
+        }),
+      }),
+    ]),
+  );
 };
 
 it("inventories a PyInstaller executable through inspect_artifact", async () => {

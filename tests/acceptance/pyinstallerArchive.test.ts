@@ -92,7 +92,12 @@ it("lists CArchive members and the Python version through inspect-artifact", asy
     external_dependency_count: 1,
   });
   expect(
-    inventory?.occurrences.find((item) => item.entry_kind === "metadata"),
+    inventory?.occurrences.find(
+      (item) =>
+        item.entry_kind === "metadata" &&
+        item.format_metadata?.kind === "pyinstaller-entry" &&
+        item.format_metadata.type_code === "o",
+    ),
   ).toMatchObject({
     artifact_id: null,
     format_metadata: {
