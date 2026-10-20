@@ -97,18 +97,19 @@ setTimeout(() => process.exit(99), 20000);
       const observed = z
         .strictObject({
           pid: z.number().int().positive(),
-          runId: z.string().uuid().optional(),
+          runId: z.string().min(1).optional(),
         })
         .parse(JSON.parse(await readFile(ready, "utf8")));
       if (provider === "jadx") {
         if (observed.runId === undefined)
           throw new Error("Missing JADX run token");
+        const runId = z.string().uuid().parse(observed.runId);
         ownership = {
           leaderPid: observed.pid,
           processGroupId: observed.pid,
-          runId: observed.runId,
+          runId,
         };
-      }
+      } else expect(observed.runId).toMatch(/^rea-kuna-version-/);
       child.kill(signal);
       await expect
         .poll(() => child.exitCode, { timeout: 10_000 })
