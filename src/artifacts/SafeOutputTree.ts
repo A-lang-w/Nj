@@ -283,8 +283,17 @@ export class SafeOutputTree {
       const secondaryFailures = [...sourceFailures].filter(
         (failure) => failure !== cause,
       );
-      if (secondaryFailures.length > 0)
-        throw new SafeOutputSourceFailure(cause, secondaryFailures);
+      const primaryIsSource = sourceFailures.has(cause);
+      if (
+        secondaryFailures.length > 0 ||
+        (primaryIsSource &&
+          ArtifactReaderFailure.from(cause).cleanup !== undefined)
+      )
+        throw new SafeOutputSourceFailure(
+          cause,
+          secondaryFailures,
+          primaryIsSource,
+        );
       throw cause;
     } finally {
       source.off("error", observeSourceFailure);

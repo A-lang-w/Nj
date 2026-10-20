@@ -7,7 +7,12 @@ import {
 export class SafeOutputSourceFailure extends ArtifactReaderFailure {
   readonly sourceFailures: readonly unknown[];
 
-  constructor(primary: unknown, sourceFailures: readonly unknown[]) {
+  constructor(
+    primary: unknown,
+    sourceFailures: readonly unknown[],
+    /** The write owner observed this primary on the input stream. */
+    readonly primaryIsSource = false,
+  ) {
     const normalizedPrimary = ArtifactReaderFailure.from(primary);
     const cleanupFailures = sourceFailures
       .map((failure) => ArtifactReaderFailure.from(failure))

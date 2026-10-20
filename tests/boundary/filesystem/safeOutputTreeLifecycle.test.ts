@@ -209,7 +209,12 @@ it.each([false, true])(
       },
     });
     try {
-      await expect(tree.write("file", source, expected)).rejects.toBe(failure);
+      await expect(tree.write("file", source, expected)).rejects.toMatchObject({
+        cause: failure,
+        reason: failure.reason,
+        cleanupLeases: [lease],
+        primaryIsSource: true,
+      });
       expect(source.closed).toBe(true);
       expect((await handle.stat()).size).toBe(5);
       const translated = translateArtifactFailure("extract_artifact", failure);
