@@ -34,9 +34,16 @@ export interface PyInstallerMember {
     | undefined;
 }
 
-export const archiveUsesEncryption = (
+/** The producer's key is an importable, nonempty Python module, not a data filename. */
+export const hasEncryptionMarker = (
   entries: readonly CArchiveEntry[],
-): boolean => entries.some((entry) => entry.name === CRYPTO_KEY_NAME);
+): boolean =>
+  entries.some(
+    (entry) =>
+      entry.name === CRYPTO_KEY_NAME &&
+      (entry.typeCode === "m" || entry.typeCode === "M") &&
+      entry.uncompressedSize > 0,
+  );
 
 export const projectStoredMember = (
   entry: CArchiveEntry,
@@ -190,13 +197,15 @@ export const projectPyzMember = (
         path: path,
         kind: "directory",
         declaredSize: 0,
-        compressedSize: 0,
+        compressedSize: item.length,
         executable: false,
         encrypted: false,
         byteOffset: null,
         declaredIntegrity: null,
         unpacked: false,
-        limitations: ["Namespace package has no bytecode."],
+        limitations: [
+          "Namespace package has no importable bytecode; its declared payload is not materialized.",
+        ],
         adapterKey: `pyz:${String(container.index)}:${String(item.index)}:${path}`,
         formatMetadata: pyzEntryMetadata(container, item, undefined, encrypted),
       },

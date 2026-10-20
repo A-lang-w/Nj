@@ -40,7 +40,7 @@ import {
   type PyInstallerCookie,
 } from "./pyinstaller/CArchiveLayout.js";
 import {
-  archiveUsesEncryption,
+  hasEncryptionMarker,
   projectPyzContainer,
   projectPyzMember,
   projectStoredMember,
@@ -295,7 +295,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
       cookie,
       [...images.values()].map((image) => image.archive),
     );
-    const encrypted = archiveUsesEncryption(toc);
+    const encrypted = hasEncryptionMarker(toc);
     const members = await this.#project(
       toc,
       cookie,

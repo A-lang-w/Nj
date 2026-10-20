@@ -16,6 +16,157 @@ import {
 import { readPyzArchive } from "./PyzArchive.js";
 import type { ArtifactEntry } from "../ArtifactReader.js";
 
+it.each(["x", "s", "empty-module"])(
+  "does not treat a same-named %s as a crypto-key module",
+  async (kind) => {
+    await withPyInstallerReader(
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 309,
+        members: [
+          {
+            name: "pyimod00_crypto_key",
+            typeCode: kind === "empty-module" ? "m" : kind,
+            payload:
+              kind === "empty-module"
+                ? Buffer.alloc(0)
+                : Buffer.from("ordinary content"),
+            compress: false,
+          },
+          {
+            name: "PYZ.pyz",
+            typeCode: "z",
+            compress: false,
+            payload: pyzArchive({
+              magic: PYTHON_39_MAGIC,
+              modules: [
+                {
+                  name: "app",
+                  typeCode: 0,
+                  body: Buffer.from("readable module"),
+                },
+              ],
+            }),
+          },
+        ],
+      }),
+      async (_reader, _handle, path) => {
+        const inventory = await scanCanonicalArtifactInventory(path);
+        expect(
+          inventory.occurrences.find((row) => row.logical_path === ".")
+            ?.format_metadata,
+        ).toMatchObject({ encryption_marker_present: false });
+        expect(
+          inventory.occurrences.find(
+            (row) => row.logical_path === "PYZ.pyz/app.pyc",
+          ),
+        ).toMatchObject({
+          encrypted: false,
+          hash_status: "verified",
+          format_metadata: { encryption_source: null },
+        });
+        const output = join(dirname(path), "extracted");
+        await materializeArtifactInventory(
+          {
+            inputPath: path,
+            inputFormat: "elf",
+            outputRoot: output,
+            environment: process.env,
+            integrityPolicy: "fail",
+          },
+          path,
+          inventory,
+        );
+        expect(
+          (await readFile(join(output, "PYZ.pyz/app.pyc"))).subarray(16),
+        ).toEqual(Buffer.from("readable module"));
+      },
+    );
+  },
+);
+
+it.each([
+  "module-in-toc",
+  "module-crossing-toc",
+  "namespace-in-toc",
+  "namespace-past-image",
+])("rejects PYZ positions outside the payload region (%s)", async (kind) => {
+  const image = pyzArchive({
+    magic: PYTHON_39_MAGIC,
+    modules: [
+      {
+        name: "app",
+        typeCode: kind.startsWith("namespace") ? 3 : 0,
+        body: Buffer.from("payload"),
+      },
+    ],
+  });
+  const toc = image.readUInt32BE(8);
+  if (kind === "module-crossing-toc")
+    image.writeInt32LE(toc - 12 + 1, image.length - 4);
+  else
+    image.writeInt32LE(
+      kind === "namespace-past-image" ? image.length + 1 : toc + 1,
+      image.length - 9,
+    );
+  await withPyInstallerReader(image, async (_reader, handle) => {
+    await expect(
+      readPyzArchive(handle, 0, image.length),
+    ).resolves.toMatchObject({ ok: false, error: { reason: "integrity" } });
+  });
+});
+
+it("retains legacy namespace payload extents without materializing them", async () => {
+  const image = pyzArchive({
+    magic: PYTHON_39_MAGIC,
+    modules: [
+      {
+        name: "ns",
+        typeCode: 0,
+        body: Buffer.from("legacy namespace code object"),
+      },
+    ],
+  });
+  image.writeInt32LE(3, image.length - 14);
+  const length = image.readInt32LE(image.length - 4);
+  expect(length).toBeGreaterThan(0);
+  await withPyInstallerReader(
+    cArchiveExecutable({
+      layout: "2.1",
+      pythonVersion: 309,
+      members: [
+        { name: "PYZ.pyz", typeCode: "z", compress: false, payload: image },
+      ],
+    }),
+    async (_reader, _handle, path) => {
+      const inventory = await scanCanonicalArtifactInventory(path);
+      expect(
+        inventory.occurrences.find((row) => row.logical_path === "PYZ.pyz/ns"),
+      ).toMatchObject({
+        entry_kind: "directory",
+        declared_size: 0,
+        compressed_size: length,
+        format_metadata: { relative_offset: 12, type_code: 3 },
+        limitations: expect.arrayContaining([
+          expect.stringContaining("not materialized"),
+        ]),
+      });
+      const result = await materializeArtifactInventory(
+        {
+          inputPath: path,
+          inputFormat: "elf",
+          outputRoot: join(dirname(path), "out"),
+          environment: process.env,
+          integrityPolicy: "fail",
+        },
+        path,
+        inventory,
+      );
+      expect(result.artifacts).toEqual([]);
+    },
+  );
+});
+
 it.each([
   ["sequence", Buffer.from("5ba1860100", "hex")],
   ["string", Buffer.from("7501000100", "hex")],
@@ -62,7 +213,7 @@ it.each([
 );
 
 it.each([1, 2])(
-  "rejects a namespace row with offset 12 and length %s",
+  "rejects namespace data extending into the table (length %s)",
   async (length) => {
     const image = pyzArchive({
       magic: PYTHON_39_MAGIC,
@@ -84,7 +235,7 @@ it.each([1, 2])(
           scanCanonicalArtifactInventory(path),
         ).rejects.toMatchObject({
           reason: "integrity",
-          message: expect.stringContaining("namespace"),
+          message: expect.stringContaining("payload region"),
         });
       },
     );

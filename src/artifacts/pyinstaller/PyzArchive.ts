@@ -137,7 +137,7 @@ const parsePyzParts = (
       limitation: `PYZ table of contents could not be parsed (${marshalled.error.message}); the member was left opaque.`,
     });
   }
-  const entries = pyzEntries(marshalled.value, size, table.length);
+  const entries = pyzEntries(marshalled.value, tocOffset, table.length);
   if (!entries.ok)
     return entries.error.reason === "format"
       ? ok({
@@ -163,7 +163,7 @@ const parsePyzParts = (
  */
 const pyzEntries = (
   value: MarshalValue,
-  archiveBytes: number,
+  payloadEnd: number,
   tableBytes: number,
 ): Result<readonly PyzEntry[], PyInstallerFailure> => {
   if (!Array.isArray(value))
@@ -173,7 +173,7 @@ const pyzEntries = (
   const entries: PyzEntry[] = [];
   let nameBytes = 0;
   for (const item of value) {
-    const entry = onePyzEntry(item, archiveBytes, entries.length);
+    const entry = onePyzEntry(item, payloadEnd, entries.length);
     if (!entry.ok) return entry;
     nameBytes += Buffer.byteLength(entry.value.name, "utf8");
     if (nameBytes > tableBytes)
@@ -190,7 +190,7 @@ const pyzEntries = (
 
 const onePyzEntry = (
   item: MarshalValue,
-  archiveBytes: number,
+  payloadEnd: number,
   index: number,
 ): Result<PyzEntry, PyInstallerFailure> => {
   if (!Array.isArray(item) || item.length !== 2)
@@ -231,14 +231,6 @@ const onePyzEntry = (
         `PYZ table entry type ${String(typeCode)} is not a known module, package, data, or namespace code`,
       ),
     );
-  // The producer retains its current file offset for an empty namespace blob.
-  if (typeCode === 3 && length !== 0)
-    return err(
-      pyInstallerFailure(
-        "integrity",
-        `PYZ namespace entry ${name} declares a nonzero source length`,
-      ),
-    );
   if (typeCode !== 3 && length === 0)
     return err(
       pyInstallerFailure("format", `PYZ entry ${name} has no compressed bytes`),
@@ -246,13 +238,14 @@ const onePyzEntry = (
   if (
     length < 0 ||
     offset < 0 ||
-    (length > 0 &&
-      (offset < PYZ_HEADER_BYTES || offset + length > archiveBytes))
+    offset > payloadEnd ||
+    length > payloadEnd - offset ||
+    (length > 0 && offset < PYZ_HEADER_BYTES)
   )
     return err(
       pyInstallerFailure(
         "integrity",
-        `PYZ entry ${name} extends outside the archive`,
+        `PYZ entry ${name} extends outside the archive payload region`,
       ),
     );
   return ok({

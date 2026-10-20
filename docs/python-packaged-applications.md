@@ -19,6 +19,11 @@ the decoded PYZ image for PYZ rows. A CArchive directory record starts at
 `archive_start + toc_offset + directory_record_offset`; its size is
 `directory_record_size`. PYZ row directory extents remain unknown.
 
+Namespace packages remain directories. Their `relative_offset` and
+`compressed_size` preserve any payload declared by older producers, while
+`declared_size` is zero because no bytecode is materialized for a namespace.
+Every declared span must end before the PYZ table of contents.
+
 CArchive type `o` entries are runtime options. They are metadata occurrences,
 with no content artifact or extractable file. Their query paths are
 `__pyinstaller__/runtime-options/<table index>`; the option text is
@@ -84,7 +89,8 @@ and `bytecode_header: "unknown"`. `bytecode_magic` and graph derivation edges
 identify synthesized headers; member digests cover the resulting derived files.
 These headers do not establish successful execution or decompilation.
 
-The module `pyimod00_crypto_key` is recorded as an encryption marker. Affected
+The nonempty CArchive Python module `pyimod00_crypto_key` (`m`/`M`) is recorded
+as an encryption marker; a same-named data file or script is not. Affected
 PYZ blobs are reported without decoding; extraction refuses encrypted entries.
 
 Detection searches the last 16 MiB for a cookie, allowing a trailing macOS code
