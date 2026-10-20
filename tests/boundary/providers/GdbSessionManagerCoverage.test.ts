@@ -1045,6 +1045,34 @@ it("does not release target ownership when kill covers only one known inferior",
   await owner;
 }, 10_000);
 
+it("does not release target ownership when a thread group has no captured PID", async () => {
+  const fake = createFakeSpawner((_child, token) => {
+    fake.children[0]?.stdout.write(`${token}^done\n`);
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess);
+  const started = await expectGdbSessionStarted(manager);
+  fake.children[0]?.stdout.write(
+    '=thread-group-started,id="i1",pid="424253"\n=thread-group-started,id="i2"\n*running,thread-id="all"\n',
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  expect((await manager.execute(started.value.session_id, "kill")).ok).toBe(
+    true,
+  );
+  const owner = manager.waitForInferiorStop(started.value.session_id);
+  let settled = false;
+  void owner.then(() => {
+    settled = true;
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(settled).toBe(false);
+
+  fake.children[0]?.stdout.write(
+    '*stopped,reason="exited",stopped-threads="all"\n',
+  );
+  await owner;
+}, 10_000);
+
 it("fails closed when target disposition races unresolved inferior identities", async () => {
   let finishIdentityReads!: () => void;
   const identityReads = new Promise<void>((resolve) => {

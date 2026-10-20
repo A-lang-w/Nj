@@ -479,6 +479,7 @@ interface GdbSession {
   readonly detachInferior: () => Promise<OwnedDebuggerDetachResult>;
   readonly inferiorStateUnknown: () => boolean;
   readonly verifyInferiorsEndedAfterExit: () => Promise<boolean>;
+  readonly knownInferiorGroupIds: Set<string>;
   readonly knownInferiorIdentities: Map<string, OwnedInferiorIdentity>;
   readonly inferiorIdentityCaptureGenerations: Map<string, number>;
   readonly inferiorIdentityCaptures: Set<Promise<void>>;
@@ -839,6 +840,7 @@ export class GdbSessionManager {
         return ended;
       },
       knownInferiorIdentities: new Map(),
+      knownInferiorGroupIds: new Set(),
       inferiorIdentityCaptureGenerations: new Map(),
       inferiorIdentityCaptures: new Set(),
       nextInferiorIdentityCaptureGeneration: 0,
@@ -1303,6 +1305,7 @@ export class GdbSessionManager {
               session.inferiorIdentityCaptures.size === 0 &&
               !session.inferiorIdentityCaptureFailed &&
               !session.inferiorIdentityCaptureUntrusted &&
+              session.knownInferiorGroupIds.size <= 1 &&
               session.knownInferiorIdentities.size <= 1
             ) {
               session.inferiorDispositionConfirmed = true;
@@ -1849,9 +1852,20 @@ export class GdbSessionManager {
         session.inferiorDispositionConfirmed = false;
       }
       const startedInferior =
-        /^=thread-group-started,id="[^"]+",pid="(\d+)"(?:,|$)/u.exec(line);
-      if (startedInferior !== null)
-        this.#captureInferiorIdentity(session, startedInferior[1] ?? "");
+        /^=thread-group-started,id="([^"]+)"(?:,pid="(\d+)")?(?:,|$)/u.exec(
+          line,
+        );
+      if (startedInferior !== null) {
+        session.knownInferiorGroupIds.add(startedInferior[1] ?? "");
+        if (startedInferior[2] !== undefined)
+          this.#captureInferiorIdentity(session, startedInferior[2]);
+        else session.inferiorIdentityCaptureFailed = true;
+      }
+      const exitedInferior = /^=thread-group-exited,id="([^"]+)"(?:,|$)/u.exec(
+        line,
+      );
+      if (exitedInferior !== null)
+        session.knownInferiorGroupIds.delete(exitedInferior[1] ?? "");
       if (line.startsWith("*stopped")) {
         const stoppedThreads =
           /(?:^|,)stopped-threads=("all"|\[[^\]]*\])(?:,|$)/u.exec(line)?.[1];
@@ -2010,6 +2024,7 @@ export class GdbSessionManager {
 
   #clearInferiorIdentities(session: GdbSession): void {
     session.knownInferiorIdentities.clear();
+    session.knownInferiorGroupIds.clear();
     session.inferiorIdentityCaptureGenerations.clear();
   }
 
