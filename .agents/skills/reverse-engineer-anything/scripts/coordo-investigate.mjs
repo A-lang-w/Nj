@@ -72,9 +72,14 @@ function singleLine(value, label) {
     !value ||
     value.trim() !== value ||
     value.length > 1000 ||
+    // JSON escapes can produce lone surrogates after UTF-8 decoding; argv
+    // encoding would silently replace them with U+FFFD.
+    !value.isWellFormed() ||
     /[\x00-\x1f\x7f]/u.test(value)
   )
-    fail(`${label} must be a nonempty single line of at most 1000 characters`);
+    fail(
+      `${label} must be a nonempty single line of well-formed Unicode of at most 1000 characters`,
+    );
   return value;
 }
 
