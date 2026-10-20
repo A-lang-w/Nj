@@ -13,7 +13,9 @@ import {
 } from "../../fixtures/analysisView.js";
 import {
   environmentServeSource,
+  environmentStateServeFixture,
   writeEnvironmentServeFiles,
+  writeEnvironmentStateServeFiles,
 } from "../../fixtures/environmentServe.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -98,6 +100,78 @@ describe("rea environment-serve refusals", () => {
         input_path: join(root, "missing.json"),
         input_reason: "read-failed",
         details: { operation: "environment-serve" },
+      });
+    },
+  );
+});
+
+describe("rea environment-serve --state refusals", () => {
+  cliTest(
+    "refuses a state extracted from another capture before binding",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-environment-state-cli-");
+      const fixture = environmentStateServeFixture();
+      const other = environmentStateServeFixture(
+        analysisViewCaptureEvidence(environmentManifestCaptureFixture()),
+      );
+      const files = await writeEnvironmentStateServeFiles(root, {
+        ...fixture,
+        state: other.state,
+      });
+      const result = await cli.run({
+        arguments: [
+          "environment-serve",
+          files.manifestPath,
+          "--evidence",
+          files.capturePath,
+          "--state",
+          files.statePath,
+          "--port",
+          "0",
+          "--json",
+        ],
+        timeoutMs: 30_000,
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        error: "Application workflow failed",
+        code: "invalid_request",
+        details: {
+          operation: "environment-serve",
+          issues: [
+            {
+              path: ["state", "normalized_result", "parent_evidence_id"],
+              expected: fixture.capture.evidence_id,
+            },
+          ],
+        },
+      });
+      expect(result.stderr).not.toContain("MCP transport listening");
+    },
+  );
+
+  cliTest(
+    "refuses an unreadable state path before binding",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-environment-state-path-");
+      const files = await writeEnvironmentStateServeFiles(root);
+      const result = await cli.run({
+        arguments: [
+          "environment-serve",
+          files.manifestPath,
+          "--evidence",
+          files.capturePath,
+          "--state",
+          join(root, "missing-state.json"),
+          "--json",
+        ],
+        timeoutMs: 30_000,
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        input_path: join(root, "missing-state.json"),
+        input_reason: "read-failed",
       });
     },
   );

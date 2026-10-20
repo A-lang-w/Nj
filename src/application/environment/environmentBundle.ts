@@ -303,7 +303,7 @@ export const planEnvironmentBundle = (
     source.manifest,
     source.evidenceId,
     name,
-    ENVIRONMENT_EXPORT_OPERATION,
+    { operation: ENVIRONMENT_EXPORT_OPERATION },
   );
   if (!catalog.ok) return catalog;
   const toolCount = source.manifest.tools.length;

@@ -83,3 +83,6 @@ extract the data those reads observed instead: entity types and identity
 fields, entities with recorded values, documents, and per-tool render plans
 checked against the recordings. The state comes only from reads before the
 first related write; types, identity and list membership are inferences.
+`rea environment-serve manifest.json --evidence capture.json --state state.json`
+then answers read tools from that state and serves `data/reset`, `data/add` and
+`data/get` on `/agentenv`; write tools are not served.

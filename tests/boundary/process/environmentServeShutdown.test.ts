@@ -4,7 +4,10 @@ import { join } from "node:path";
 
 import { describe, expect } from "vitest";
 
-import { writeEnvironmentServeFiles } from "../../fixtures/environmentServe.js";
+import {
+  writeEnvironmentServeFiles,
+  writeEnvironmentStateServeFiles,
+} from "../../fixtures/environmentServe.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { rawHttpRequest } from "../../support/http/rawRequest.js";
 import { startListeningProcess } from "../../support/mcp/streamableHttpProcess.js";
@@ -15,43 +18,60 @@ const SHUTDOWN_TIMEOUT_MS = 90_000;
 describe("rea environment-serve shutdown", () => {
   // On Windows, Node's child.kill() terminates the child outright for SIGTERM and SIGINT alike,
   // so no signal handler runs and there is no graceful shutdown to observe.
-  processTest.skipIf(process.platform === "win32")(
-    "closes the listener on SIGTERM, prints one stopped document and exits 143",
-    async ({ processes }) => {
-      const root = await createTestTempDirectory("rea-environment-serve-stop-");
-      const files = await writeEnvironmentServeFiles(root);
-      const started = await startListeningProcess(processes, [
-        "environment-serve",
-        files.manifestPath,
-        "--evidence",
-        files.capturePath,
-        "--port",
-        "0",
-        "--json",
-      ]);
-      let stdout = "";
-      started.child.stdout.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString("utf8");
-      });
-      const card = await rawHttpRequest(
-        new URL("/.well-known/agent-env.json", started.url.origin),
-      );
-      expect(card.status).toBe(200);
-      started.child.kill("SIGTERM");
-      const [code, signalCode] = await once(started.child, "close");
-      expect(code).toBe(143);
-      expect(signalCode).toBeNull();
-      expect(JSON.parse(stdout)).toMatchObject({
-        status: "stopped",
-        url: started.url.href,
-        environment: "grafana-example",
-      });
-      await expect(rawHttpRequest(started.url)).rejects.toMatchObject({
-        code: "ECONNREFUSED",
-      });
-    },
-    SHUTDOWN_TIMEOUT_MS,
-  );
+  for (const fromState of [false, true])
+    processTest.skipIf(process.platform === "win32")(
+      `closes the listener on SIGTERM, prints one stopped document and exits 143${fromState ? " when serving from a state" : ""}`,
+      async ({ processes }) => {
+        const root = await createTestTempDirectory(
+          "rea-environment-serve-stop-",
+        );
+        const files = fromState
+          ? await writeEnvironmentStateServeFiles(root)
+          : {
+              ...(await writeEnvironmentServeFiles(root)),
+              statePath: undefined,
+            };
+        const started = await startListeningProcess(processes, [
+          "environment-serve",
+          files.manifestPath,
+          "--evidence",
+          files.capturePath,
+          ...(files.statePath === undefined
+            ? []
+            : ["--state", files.statePath]),
+          "--port",
+          "0",
+          "--json",
+        ]);
+        let stdout = "";
+        started.child.stdout.on("data", (chunk: Buffer) => {
+          stdout += chunk.toString("utf8");
+        });
+        const card = await rawHttpRequest(
+          new URL("/.well-known/agent-env.json", started.url.origin),
+        );
+        expect(card.status).toBe(200);
+        started.child.kill("SIGTERM");
+        const [code, signalCode] = await once(started.child, "close");
+        expect(code).toBe(143);
+        expect(signalCode).toBeNull();
+        const stopped: unknown = JSON.parse(stdout);
+        expect(stopped).toMatchObject({
+          status: "stopped",
+          url: started.url.href,
+          environment: "grafana-example",
+        });
+        if (fromState)
+          expect(stopped).toMatchObject({
+            state_evidence_id: expect.stringMatching(/^ev_/u),
+          });
+        else expect(stopped).not.toHaveProperty("state_evidence_id");
+        await expect(rawHttpRequest(started.url)).rejects.toMatchObject({
+          code: "ECONNREFUSED",
+        });
+      },
+      SHUTDOWN_TIMEOUT_MS,
+    );
 });
 
 describe.skipIf(process.platform === "win32")(

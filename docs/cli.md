@@ -356,14 +356,21 @@ entry keep stdio.
 
 ## Serve an environment manifest
 
-`rea environment-serve <manifest.json> --evidence <capture.json> [--host H]
-[--port N]` serves an environment manifest projected by `inspect-analysis-view`
-as an agent environment: an MCP server at `/mcp` with one tool per manifest
-tool, each replaying the retained capture records it cites, the environment
-card at `/.well-known/agent-env.json`, and a `/agentenv` data plane that
-answers every method with JSON-RPC `-32601`. The manifest's
-`parent_evidence_id` must equal the evidence file's `evidence_id`; otherwise
-the command refuses with `invalid_request` before binding.
+`rea environment-serve <manifest.json> --evidence <capture.json>
+[--state <state.json>] [--host H] [--port N]` serves an environment manifest
+projected by `inspect-analysis-view` as an agent environment: an MCP server at
+`/mcp` with one tool per manifest tool, each replaying the retained capture
+records it cites, the environment card at `/.well-known/agent-env.json`, and a
+`/agentenv` data plane that answers every method with JSON-RPC `-32601`. The
+manifest's `parent_evidence_id` must equal the evidence file's `evidence_id`;
+otherwise the command refuses with `invalid_request` before binding.
+`--state` adds the `environment-state` view Evidence of the same capture,
+projected with the manifest's `template_rules`: read tools whose views are
+state-backed answer from a live state, write tools are not served, `/agentenv`
+serves `data/reset`, `data/add` and `data/get`, and the stopped document adds
+`state_evidence_id`. A state from another capture or with other rules is
+refused with `invalid_request` before binding; see
+[serve from the state](agent-environments.md#serve-from-the-state).
 
 ```sh
 rea environment-serve manifest.json --evidence capture.json --port 8765
@@ -449,8 +456,8 @@ SIGTERM, closes the listener, then prints one structured
 `{"status":"stopped", …}` document naming the URL, environment and tool count
 and exits `130` or `143` through the shared cancellation handler below.
 Refusals before binding (unreadable files, non-Evidence JSON, capture Evidence
-in a format other than HAR, a manifest whose parent is not the supplied
-evidence, an unbindable port) print a structured
+in a format other than HAR, a manifest or state whose parent is not the
+supplied evidence, an unbindable port) print a structured
 error and exit `1`, as does a listener that fails after binding.
 `rea environment-export` is one-shot: it prints the written files and exits
 `0`, or prints a structured `invalid_request` error and exits `1` for the same
