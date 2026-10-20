@@ -481,7 +481,7 @@ describe("headless IDA procedure lookup failures", () => {
         );
         expect(
           projected.retryable,
-          "the unchanged deterministic request should not be retried",
+          "an unchanged deterministic invalid request is not retryable",
         ).toBe(false);
         expect(
           projected.details,
