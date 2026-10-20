@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
 import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   ModelFormatFailure,
   MODEL_HEADER_BYTES,
@@ -61,7 +62,11 @@ export class ModelHeaderReader {
           next.length - offset,
           this.position + offset,
         );
-        if (result.bytesRead === 0) rejectModel("Truncated model header");
+        if (result.bytesRead === 0)
+          throw new ArtifactReaderFailure(
+            "integrity",
+            "Model header ended before its admitted file extent",
+          );
         this.#hash.update(next.subarray(offset, offset + result.bytesRead));
         offset += result.bytesRead;
       }
@@ -107,7 +112,10 @@ export class ModelHeaderReader {
         position,
       );
       if (bytesRead === 0)
-        rejectModel("Model changed during full-file hashing");
+        throw new ArtifactReaderFailure(
+          "integrity",
+          "Model ended before its admitted extent during full-file hashing",
+        );
       this.#hash.update(buffer.subarray(0, bytesRead));
       position += bytesRead;
     }

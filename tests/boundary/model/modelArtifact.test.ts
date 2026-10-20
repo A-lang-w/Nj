@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { open, writeFile, symlink } from "node:fs/promises";
+import { open, writeFile, symlink, truncate } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { ModelArtifactProvider } from "../../../src/model/ModelArtifactProvider.js";
@@ -389,6 +389,22 @@ it("reads only the exact header, even when it ends in the middle of a normal buf
     fixture.header.length,
   );
 });
+
+it.each(["header", "full"] as const)(
+  "classifies real truncation after admission during %s reading as an identity change",
+  async (mode) => {
+    const fixture = ggufFixture();
+    const { path } = await providerAt(fixture.bytes);
+    const file = await open(path, "r");
+    onTestFinished(() => file.close());
+    const admitted = await file.stat();
+    const reader = new ModelHeaderReader(file, admitted.size);
+    if (mode === "full") await reader.take(fixture.header.length);
+    await truncate(path, mode === "header" ? 0 : fixture.header.length);
+    const reading = mode === "header" ? reader.take(4) : reader.finish(true);
+    await expect(reading).rejects.toMatchObject({ reason: "integrity" });
+  },
+);
 
 it("keeps GGUF read-ahead inside the directory and hashes precisely that prefix", async () => {
   const fixture = ggufFixture();
