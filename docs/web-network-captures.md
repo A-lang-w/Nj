@@ -617,16 +617,20 @@ minutes of the request in its recorded format, a `sequence` one past the
 largest value of its collection or type, a `unique` UUID, or a `template` around
 a generated value; other fields keep the observed value. An update's members
 echo when stored as sent; a member stored differently is accepted only with its
-recorded value (`body.fixed`), and a field it changed without sending must be a
+recorded value (`body.fixed`) and stores the value the call that showed it
+recorded (the `value` of its `constant` rule), and a field it changed without sending must be a
 clock, an increment or a slug, or the plan is `unexplained-change`. Every
 member the first call sent is required, except by `PATCH` and `POST` updates.
 
 The view then replays the timeline on a copy of the initial state. Modelled
-writes apply their effect; any other write leaves the entity below whose item
+writes apply their effect; only a `2xx` write is modelled or an example, and
+any other write (a redirect, an unanswered or unmodelled one) leaves the entity below whose item
 path it wrote unknown until a read shows it again (a whole collection when the
 path names no held entity), and taints what it wrote at or above. A read the
-served environment would answer from the state is compared with its recording
-as the read plans are, a 400, 404 or 410 (or a `null` body) agreeing with an
+served environment would answer from the state is compared, as the whole
+response it would serve (the entity or list rendered into the envelope of the
+item view's or the line's base recording, with the members the state still
+holds), with its recording as the read plans are, a 400, 404 or 410 (or a `null` body) agreeing with an
 entity the copy does not hold. A match confirms the writes that changed its
 entity or collection since it was last read; a mismatch contradicts them, or,
 when an unmodelled write came after them, is checked only on the members they

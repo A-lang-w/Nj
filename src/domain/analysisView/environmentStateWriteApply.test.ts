@@ -242,7 +242,7 @@ const UPDATE_PLAN: Plan = {
   rules: [
     { field: "title", rule: "echo" },
     { field: "notes", rule: "echo" },
-    { field: "status", rule: "constant" },
+    { field: "status", rule: "constant", value: "closed" },
     { field: "slug", rule: "slug", from: "title" },
     { field: "version", rule: "increment" },
     { field: "revision", rule: "increment" },

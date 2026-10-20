@@ -191,7 +191,7 @@ export const createdFields = (
   return ok(written);
 };
 
-/** The fields of an updated entity: sent echoed members, constants from the recorded update, generated and derived changes. */
+/** The fields of an updated entity: sent echoed members, the constants the plan recorded, generated and derived changes. */
 export const updatedFields = (
   plan: Pick<StateWritePlan, "rules" | "body">,
   entity: { readonly before: JsonObject; readonly observed: JsonObject },
@@ -218,7 +218,7 @@ export const updatedFields = (
     if (rule.rule === "echo" || rule.rule === "constant") {
       if (!Object.hasOwn(sent, rule.field)) continue;
       written[rule.field] =
-        rule.rule === "echo" ? sent[rule.field]! : observed[rule.field]!;
+        rule.rule === "echo" ? sent[rule.field]! : rule.value;
     } else if (rule.rule === "increment") {
       const was = integerOf(before[rule.field]);
       if (was !== undefined)

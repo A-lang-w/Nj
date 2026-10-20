@@ -287,7 +287,12 @@ export const explainUpdate = (
     if (same(evidence.after[member], sent)) {
       echoed.add(member);
       rules.push({ field: member, rule: "echo" });
-    } else rules.push({ field: member, rule: "constant" });
+    } else
+      rules.push({
+        field: member,
+        rule: "constant",
+        value: evidence.after[member]!,
+      });
   }
   const unexplained: string[] = [];
   for (const field of Object.keys(evidence.after)) {

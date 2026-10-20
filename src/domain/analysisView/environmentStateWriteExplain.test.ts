@@ -266,7 +266,7 @@ it("explains an update's sent members as echoes, constants or the identity", () 
   expect(result).toEqual({
     rules: [
       { field: "title", rule: "echo" },
-      { field: "status", rule: "constant" },
+      { field: "status", rule: "constant", value: "closed" },
     ],
     body: {
       accepted: ["title"],
@@ -335,7 +335,9 @@ it("leaves a slug of a transformed member, an untimed clock and a jump unexplain
       { startMs: undefined },
     ),
   );
-  expect(result.rules).toEqual([{ field: "title", rule: "constant" }]);
+  expect(result.rules).toEqual([
+    { field: "title", rule: "constant", value: "new title" },
+  ]);
   expect(result.unexplained).toEqual(["slug", "at", "n"]);
 });
 

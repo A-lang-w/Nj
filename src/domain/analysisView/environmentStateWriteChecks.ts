@@ -8,6 +8,7 @@ import {
   listItems,
   renderStateEntity,
   renderStateList,
+  replaceAt,
   same,
   scalarText,
   type JsonObject,
@@ -95,26 +96,44 @@ export class SimulatedState {
 export const isAbsence = (status: number | null): boolean =>
   status === 400 || status === 404 || status === 410;
 
-const succeeded = (record: StateRecordFacts): boolean =>
+/** A 2xx record: the only status whose response shows what a request did. */
+export const succeeded = (record: StateRecordFacts): boolean =>
   record.status !== null && record.status >= 200 && record.status < 300;
+
+/** Hand a base recording's body and a read's body to `use` together, parsing a recording once when both are the same. */
+export const withBodies = <T>(
+  withBody: <U>(ordinal: number, use: (body: JsonValue | undefined) => U) => U,
+  ordinals: { readonly base: number; readonly read: number },
+  use: (base: JsonValue | undefined, body: JsonValue | undefined) => T,
+): T => {
+  const { base, read } = ordinals;
+  return base === read
+    ? withBody(read, (body) => use(body, body))
+    : withBody(base, (served) => withBody(read, (body) => use(served, body)));
+};
 
 /** A check's outcome and the targets it covered. */
 export interface CheckOutcome {
   readonly pass: boolean;
   readonly targets: readonly string[];
-  /** Entities the recording lists that the state does not hold, by target. */
+  /** Entities the recording, or the served base of a recorded-membership list, lists that the state does not hold, by target. */
   readonly unheld: readonly string[];
 }
 
-/** An item read: the recorded entity object must render from the held entity; a recorded 404 or 410 agrees with none held. */
+/** What a check compares: the read's recorded body and the served base recording it would answer on. */
+interface ReadBodies {
+  readonly body: JsonValue | undefined;
+  /** The recording whose envelope the served answer keeps: an item view's envelope, a list line's latest init recording. */
+  readonly base: JsonValue | undefined;
+  readonly volatile: ReadonlySet<string>;
+}
+
+/** An item read: the answer the held entity renders into the served envelope must equal the recording; a recorded 404 or 410 agrees with none held. */
 export const checkItemRead = (
   state: SimulatedState,
   view: StateItemView,
   record: StateRecordFacts,
-  check: {
-    readonly body: JsonValue | undefined;
-    readonly volatile: ReadonlySet<string>;
-  },
+  check: ReadBodies,
 ): CheckOutcome | undefined => {
   const collection = collectionPathOf(record, true);
   const id = lastSegmentValue(record.path);
@@ -122,17 +141,42 @@ export const checkItemRead = (
   const targets = [entityTarget(view.type, collection, id)];
   if (isAbsence(record.status) || (succeeded(record) && check.body === null))
     return { pass: entity === undefined, targets, unheld: [] };
-  if (record.status === null || record.status < 200 || record.status >= 300)
-    return undefined;
+  if (!succeeded(record) || check.base === undefined) return undefined;
   const object =
     check.body === undefined ? undefined : at(check.body, view.pointer);
   if (!isObject(object)) return undefined;
   if (entity === undefined) return { pass: false, targets, unheld: targets };
+  const shown = renderStateEntity(entity, view, check.volatile, object);
   return {
-    pass: same(renderStateEntity(entity, view, check.volatile, object), object),
+    pass: same(replaceAt(check.base, view.pointer, shown), check.body),
     targets,
     unheld: [],
   };
+};
+
+/** A list read's bodies with the listed items of the read and of its served base. */
+interface ListBodies {
+  readonly body: JsonValue;
+  readonly base: JsonValue;
+  readonly items: readonly JsonObject[];
+  readonly baseItems: readonly JsonObject[];
+  readonly idField: string;
+  readonly volatile: ReadonlySet<string>;
+}
+
+/** The served list rendered from the base with `members`, compared with the read; volatile fields take the read's values. */
+const listCheck = (
+  view: StateListView,
+  check: ListBodies,
+  members: readonly StateEntity[],
+): boolean => {
+  const observed = new Map(
+    check.items.map((item) => [scalarText(item[check.idField]) ?? "", item]),
+  );
+  const rendered = members.map((entity) =>
+    renderStateEntity(entity, view, check.volatile, observed.get(entity.id)),
+  );
+  return same(renderStateList(view, check.base, rendered), check.body);
 };
 
 /** A list read of every entity of a collection: membership, order, fields and counters must render from the state. */
@@ -140,85 +184,72 @@ const checkAllList = (
   state: SimulatedState,
   view: StateListView,
   record: StateRecordFacts,
-  check: {
-    readonly body: JsonValue;
-    readonly items: readonly JsonObject[];
-    readonly idField: string;
-    readonly volatile: ReadonlySet<string>;
-  },
+  check: ListBodies,
 ): CheckOutcome => {
   const collection = collectionPathOf(record, false);
   const members = state.members(view.type, collection);
-  const observed = new Map(
-    check.items.map((item) => [scalarText(item[check.idField]) ?? "", item]),
-  );
-  const rendered = members.map((entity) =>
-    renderStateEntity(entity, view, check.volatile, observed.get(entity.id)),
-  );
   const held = new Set(members.map((entity) => entity.id));
   return {
-    pass: same(renderStateList(view, check.body, rendered), check.body),
+    pass: listCheck(view, check, members),
     targets: [
       collectionTarget(view.type, collection),
       ...members.map((entity) =>
         entityTarget(view.type, collection, entity.id),
       ),
     ],
-    unheld: [...observed.keys()]
+    unheld: check.items
+      .map((item) => scalarText(item[check.idField]) ?? "")
       .filter((id) => !held.has(id))
       .map((id) => entityTarget(view.type, collection, id)),
   };
 };
 
-/** A list read of recorded members: every listed entity the state holds must render; others are not compared. */
+/** A list read of recorded members: the served list holds the base's members the state still holds, so a member it dropped or never listed fails. */
 const checkRecordedList = (
   state: SimulatedState,
   view: StateListView,
   record: StateRecordFacts,
-  check: {
-    readonly items: readonly JsonObject[];
-    readonly idField: string;
-    readonly volatile: ReadonlySet<string>;
-  },
+  check: ListBodies,
 ): CheckOutcome => {
   const collection = collectionPathOf(record, false);
+  const idOf = (item: JsonObject) => scalarText(item[check.idField]) ?? "";
+  const members = check.baseItems.flatMap((item) => {
+    const entity = state.entity(view.type, collection, idOf(item));
+    return entity === undefined ? [] : [entity];
+  });
   const targets: string[] = [];
   const unheld: string[] = [];
-  let pass = true;
-  for (const item of check.items) {
-    const id = scalarText(item[check.idField]) ?? "";
-    const target = entityTarget(view.type, collection, id);
-    const entity = state.entity(view.type, collection, id);
-    if (entity === undefined) {
-      unheld.push(target);
-      continue;
-    }
-    targets.push(target);
-    if (!same(renderStateEntity(entity, view, check.volatile, item), item))
-      pass = false;
-  }
-  return { pass, targets, unheld };
+  for (const id of new Set([...check.baseItems, ...check.items].map(idOf)))
+    (state.entity(view.type, collection, id) === undefined
+      ? unheld
+      : targets
+    ).push(entityTarget(view.type, collection, id));
+  return { pass: listCheck(view, check, members), targets, unheld };
 };
 
-/** A list read on a checked line, compared as the served environment answers it. */
+/** A list read on a checked line, compared with the answer the served environment renders on that line's base recording. */
 export const checkListRead = (
   state: SimulatedState,
   view: StateListView,
   record: StateRecordFacts,
-  check: {
-    readonly body: JsonValue | undefined;
-    readonly idField: string;
-    readonly volatile: ReadonlySet<string>;
-  },
+  check: ReadBodies & { readonly idField: string },
 ): CheckOutcome | undefined => {
-  if (record.status === null || record.status < 200 || record.status >= 300)
+  if (!succeeded(record)) return undefined;
+  const { body, base } = check;
+  const items = body === undefined ? undefined : listItems(body, view.pointer);
+  const baseItems =
+    base === undefined ? undefined : listItems(base, view.pointer);
+  if (
+    body === undefined ||
+    base === undefined ||
+    items === undefined ||
+    baseItems === undefined
+  )
     return undefined;
-  const items =
-    check.body === undefined ? undefined : listItems(check.body, view.pointer);
-  if (check.body === undefined || items === undefined) return undefined;
+  const bodies = { ...check, body, base, items, baseItems };
   return view.membership === "all"
-    ? checkAllList(state, view, record, { ...check, body: check.body, items })
-    : checkRecordedList(state, view, record, { ...check, items });
+    ? checkAllList(state, view, record, bodies)
+    : checkRecordedList(state, view, record, bodies);
 };
 
 /** A document read on its checked line must equal the held document. */
@@ -228,8 +259,7 @@ export const checkDocumentRead = (
   record: StateRecordFacts,
   body: JsonValue | undefined,
 ): CheckOutcome | undefined => {
-  if (record.status === null || record.status < 200 || record.status >= 300)
-    return undefined;
+  if (!succeeded(record)) return undefined;
   const value = state.document(tool);
   if (body === undefined || value === undefined) return undefined;
   return {

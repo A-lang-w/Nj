@@ -50,7 +50,12 @@ export type FieldRule =
   | { readonly field: string; readonly rule: "slug"; readonly from: string }
   | { readonly field: string; readonly rule: "template"; readonly from: string }
   | { readonly field: string; readonly rule: "increment" }
-  | { readonly field: string; readonly rule: "constant" };
+  /** An update stores `value` whenever the call sends the member, as the call that showed it did. */
+  | {
+      readonly field: string;
+      readonly rule: "constant";
+      readonly value: JsonValue;
+    };
 
 /** Where a create places its entity in its collection's order. */
 export type InsertRule =

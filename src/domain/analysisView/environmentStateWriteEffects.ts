@@ -322,9 +322,10 @@ export const applyUpdate = (
     return recorded();
   }
   buildUpdate(context, draft, step, { after, explained, idField });
+  // Serving reads the plan's observation, so the gate does too; generated values are this call's.
   const written = updatedFields(
     draft.plan,
-    { before: entity.fields, observed: after.object },
+    { before: entity.fields, observed: draft.observed! },
     { ...call, id },
     (rule) => after.object[rule.field] ?? null,
   );

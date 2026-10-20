@@ -18,8 +18,11 @@ import {
   checkDocumentRead,
   checkItemRead,
   checkListRead,
+  collectionTarget,
   entityTarget,
   isAbsence,
+  succeeded,
+  withBodies,
   writtenFieldChecks,
   SimulatedState,
   type CheckOutcome,
@@ -78,7 +81,8 @@ export class EnvironmentStateWriteSimulation {
   readonly #drafts = new Map<string, WriteDraft>();
   readonly #toolOf = new Map<number, StateToolFacts>();
   readonly #types = new Map<string, StateType>();
-  readonly #checkedLines = new Map<string, ReadonlySet<string>>();
+  /** Each list or document view's checked request lines, with the recording a call of the line is answered on. */
+  readonly #checkedLines = new Map<string, ReadonlyMap<string, number>>();
   readonly #observations = new Set<number>();
   readonly #taint: WriteTaint;
   /** Modelled writes per target since its last check, with the fields each wrote (null: all). */
@@ -111,10 +115,12 @@ export class EnvironmentStateWriteSimulation {
       if (view.shape !== "recorded" && view.shape !== "item")
         this.#checkedLines.set(
           view.tool,
-          new Set(
+          new Map(
             view.checked_record_ordinals.flatMap((ordinal) => {
               const record = byOrdinal.get(ordinal);
-              return record === undefined ? [] : [requestLine(record)];
+              return record === undefined
+                ? []
+                : [[requestLine(record), ordinal] as const];
             }),
           ),
         );
@@ -158,7 +164,10 @@ export class EnvironmentStateWriteSimulation {
 
   #step(record: StateRecordFacts, index: number): void {
     const tool = this.#toolOf.get(record.ordinal);
-    if (isStateWrite(record)) this.#write(record, index, tool);
+    // A redirected or unanswered write may have changed state, but only a 2xx one shows its effect.
+    if (isStateWrite(record) && !succeeded(record))
+      this.#unmodelled(record.path, index);
+    else if (isStateWrite(record)) this.#write(record, index, tool);
     else if (tool?.method === "GET" && !this.#observations.has(record.ordinal))
       this.#read(record, index, tool);
   }
@@ -303,32 +312,37 @@ export class EnvironmentStateWriteSimulation {
 
   #check(view: StateView, record: StateRecordFacts): CheckOutcome | undefined {
     if (view.shape === "recorded") return undefined;
-    if (
-      view.shape !== "item" &&
-      !this.#checkedLines.get(view.tool)?.has(requestLine(record))
-    )
-      return undefined;
-    if (
-      (view.shape === "item" || view.shape === "list") &&
-      this.#taint.under(collectionPathOf(record, view.shape === "item"))
-    )
-      return undefined;
-    if (view.shape === "list") {
-      const collection = collectionPathOf(record, false);
+    const line = this.#checkedLines.get(view.tool)?.get(requestLine(record));
+    if (view.shape !== "item" && line === undefined) return undefined;
+    if (view.shape === "document")
+      return this.#input.io.withBody(record.ordinal, (body) =>
+        checkDocumentRead(this.#state, view.tool, record, body),
+      );
+    const item = view.shape === "item";
+    const collection = collectionPathOf(record, item);
+    if (this.#taint.under(collection)) return undefined;
+    if (!item) {
       const ids = this.#state
         .members(view.type, collection)
         .map((entity) => entity.id);
-      if (this.#taint.blocksList(view.type, collection, ids)) return undefined;
+      // A recorded-membership list covers no collection target, so a write at the collection is checked here.
+      if (
+        this.#taint.tainted(collectionTarget(view.type, collection)) ||
+        this.#taint.blocksList(view.type, collection, ids)
+      )
+        return undefined;
     }
-    return this.#input.io.withBody(record.ordinal, (body) => {
-      if (view.shape === "document")
-        return checkDocumentRead(this.#state, view.tool, record, body);
+    // The served answer keeps the envelope of the item view's or the line's base recording.
+    const base = item ? view.envelope_ordinal : line!;
+    const ordinals = { base, read: record.ordinal };
+    return withBodies(this.#input.io.withBody, ordinals, (served, body) => {
       const check = {
         body,
+        base: served,
         idField: this.#types.get(view.type)?.id_field ?? "",
         volatile: this.#input.volatileOf(view.type),
       };
-      return view.shape === "item"
+      return item
         ? checkItemRead(this.#state, view, record, check)
         : checkListRead(this.#state, view, record, check);
     });

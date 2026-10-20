@@ -120,7 +120,11 @@ const fieldRuleSchema = z.discriminatedUnion("rule", [
   z.strictObject({ ...ruled, rule: z.literal("slug"), from: z.string() }),
   z.strictObject({ ...ruled, rule: z.literal("template"), from: z.string() }),
   z.strictObject({ ...ruled, rule: z.literal("increment") }),
-  z.strictObject({ ...ruled, rule: z.literal("constant") }),
+  z.strictObject({
+    ...ruled,
+    rule: z.literal("constant"),
+    value: jsonValueSchema,
+  }),
 ]);
 const insertRuleSchema = z.union([
   z.strictObject({ rule: z.enum(["first", "last"]) }),
