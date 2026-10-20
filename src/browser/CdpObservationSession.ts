@@ -43,6 +43,7 @@ interface TimelineEntryOptions {
   readonly type: TimelineEvent["type"];
   readonly params: UnknownRecord;
   readonly rawUrl?: string | null;
+  readonly destinationScope?: TimelineEvent["destination_scope"];
   readonly requestId?: string | null;
   readonly detail?: string | null;
 }
@@ -251,22 +252,25 @@ class TimelineCapture {
     const observation = observeCdpFrameUrl(frame);
     const rawUrl =
       observation.kind === "observed" ? observation.url : undefined;
-    const destination = scopedUrl(rawUrl, this.allowedOrigins);
+    const scopeUrl =
+      observation.kind === "invalid_fragment" ? observation.scopeUrl : rawUrl;
+    const destination = scopedUrl(scopeUrl, this.allowedOrigins);
     this.#add({
       type: this.#pendingReload ? "same_origin_reload" : "navigation_committed",
       params: { ...params, frameId: frame?.id, loaderId: frame?.loaderId },
       rawUrl: rawUrl ?? null,
+      destinationScope:
+        observation.kind === "missing" ? null : destination.scope,
       requestId: null,
       detail: safeDetail(frame?.transitionType),
     });
     this.#pendingReload = false;
-    if (
-      observation.kind === "invalid_fragment" &&
-      allowedSanitizedUrl(observation.scopeUrl, this.allowedOrigins) ===
-        undefined
-    ) {
-      this.excludeTargetScope("out_of_target_scope");
-      this.end("target_left_scope");
+    if (observation.kind === "invalid_fragment") {
+      this.invalidateFinalUrl();
+      if (destination.scope !== "approved") {
+        this.excludeTargetScope("out_of_target_scope");
+        this.end("target_left_scope");
+      }
       return;
     }
     if (!this.#hasObservedUrl(rawUrl)) return;
@@ -375,7 +379,7 @@ class TimelineCapture {
       loader_id: boundedId(params.loaderId),
       request_id: requestId ?? null,
       url: destination?.scope === "approved" ? destination.url : null,
-      destination_scope: destination?.scope ?? null,
+      destination_scope: options.destinationScope ?? destination?.scope ?? null,
       detail,
     });
   }

@@ -112,6 +112,68 @@ it.each([
   if (kind === "normal")
     expect(result.value.window.end_reason).toBe("window_elapsed");
 });
+it.each(
+  [false, true].flatMap((foreign) =>
+    [7, "bad-fragment"].map((urlFragment) => ({ foreign, urlFragment })),
+  ),
+)(
+  "retains malformed committed identity and known scope: $foreign/$urlFragment",
+  async ({ foreign, urlFragment }) => {
+    const browser = await startFakeCdpBrowser({
+      eventsBeforeReply: ["Page.setLifecycleEventsEnabled"],
+      commandEvents: ({ method, sessionId }, origin) =>
+        method === "Page.setLifecycleEventsEnabled"
+          ? [
+              {
+                method: "Page.frameNavigated",
+                ...(sessionId === undefined ? {} : { sessionId }),
+                params: {
+                  frame: {
+                    id: "frame-main",
+                    url: foreign ? "https://foreign.test/" : `${origin}/app`,
+                    urlFragment,
+                  },
+                },
+              },
+            ]
+          : undefined,
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().observeSession(
+      observeWebSessionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 1,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.completeness.excluded).toContainEqual({
+      section: "timeline",
+      reason: "invalid_protocol_value",
+      count: 1,
+    });
+    expect(
+      result.value.timeline.find(({ type }) => type === "navigation_committed"),
+    ).toMatchObject({
+      url: null,
+      destination_scope: foreign ? "outside_policy" : "approved",
+    });
+    expect(result.value.window.end_reason).toBe(
+      foreign ? "target_left_scope" : "window_elapsed",
+    );
+    if (foreign) {
+      expect(result.value.target.final_url).toBeNull();
+      expect(result.value.completeness.excluded).toContainEqual({
+        section: "timeline",
+        reason: "out_of_target_scope",
+        count: 1,
+      });
+    } else
+      expect(result.value.completeness.policy_filtered_sections).toEqual([]);
+  },
+);
+
 describe("CdpBrowserProvider navigation timeline", () => {
   it.each(["outside_policy", "target_detached"] as const)(
     "settles and releases a long wait after %s",
