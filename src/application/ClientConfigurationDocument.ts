@@ -75,6 +75,17 @@ const tomlFloatProperties = new WeakMap<object, ReadonlySet<string>>();
 export const hasTomlFloatProperty = (value: object, key: string): boolean =>
   tomlFloatProperties.get(value)?.has(key) === true;
 
+/** Transfer recorded TOML float property kinds from a source table to a repaired table. */
+export const copyTomlFloatProperties = (from: object, to: object): void => {
+  const source = tomlFloatProperties.get(from);
+  if (source === undefined || source.size === 0) return;
+  const target = new Set<string>();
+  for (const key of Object.keys(to)) {
+    if (source.has(key)) target.add(key);
+  }
+  if (target.size > 0) tomlFloatProperties.set(to, target);
+};
+
 export type CodexToolParseResult =
   | { status: "valid"; value: unknown }
   | { status: "repairable"; repaired: unknown }
@@ -82,7 +93,7 @@ export type CodexToolParseResult =
 
 /** Parse and validate a Codex per-tool setting at the document boundary. */
 export const parseCodexToolEntry = (value: unknown): CodexToolParseResult => {
-  if (typeof value !== "object" || value === null) {
+  if (typeof value !== "object" || value === null || value instanceof Date) {
     return { status: "invalid" };
   }
   if (Array.isArray(value)) {
@@ -123,7 +134,7 @@ export const parseCodexToolEntry = (value: unknown): CodexToolParseResult => {
     return { status: "valid", value };
   }
   let hasRepair = false;
-  const repaired: Record<string, unknown> = {};
+  const repaired: Record<string, unknown> = Object.create(null);
   for (const [key, prop] of rawEntries) {
     if (key === "approval_mode") {
       const parsedApproval = codexApprovalModeSchema.safeParse(prop);
@@ -148,9 +159,9 @@ export const parseCodexToolEntry = (value: unknown): CodexToolParseResult => {
     }
   }
   if (hasRepair) {
-    return Object.keys(repaired).length > 0
-      ? { status: "repairable", repaired }
-      : { status: "invalid" };
+    if (Object.keys(repaired).length === 0) return { status: "invalid" };
+    copyTomlFloatProperties(value, repaired);
+    return { status: "repairable", repaired };
   }
   return { status: "valid", value };
 };
@@ -1109,6 +1120,51 @@ const withoutTrailingLineFeeds = (text: string): string => {
 };
 
 /**
+ * Format TOML properties whose parsed kind was a float literal with `.0` when
+ * stringified as integer literals.
+ */
+const formatTomlFloats = (
+  text: string,
+  root: Record<string, unknown>,
+): string => {
+  const lines = text.split("\n");
+  let tablePath: readonly string[] = [];
+  const result: string[] = [];
+  for (const physical of lines) {
+    const line = physical.endsWith("\r") ? physical.slice(0, -1) : physical;
+    const header = parseTomlTableHeader(line);
+    if (header !== undefined) {
+      tablePath = header.path;
+      result.push(physical);
+      continue;
+    }
+    const assignment = parseAssignment(line);
+    if (assignment !== undefined) {
+      const targetTable = valueAt(root, tablePath);
+      if (
+        typeof targetTable === "object" &&
+        targetTable !== null &&
+        assignment.segments.length === 1
+      ) {
+        const propName = assignment.segments[0] ?? "";
+        if (hasTomlFloatProperty(targetTable, propName)) {
+          const beforeEquals = physical.slice(0, assignment.equals + 1);
+          const afterEquals = physical.slice(assignment.equals + 1);
+          const match = afterEquals.match(/^(\s*)([-+]?\d+)(\s*(?:#.*)?)$/);
+          if (match !== null) {
+            const [, wsBefore, num, wsAfter] = match;
+            result.push(`${beforeEquals}${wsBefore}${num}.0${wsAfter}`);
+            continue;
+          }
+        }
+      }
+    }
+    result.push(physical);
+  }
+  return result.join("\n");
+};
+
+/**
  * Replace REA's TOML server tables and assignments. Comments that introduce a
  * following table stay. Codex also retains comments around REA's own table.
  * Text inside strings is not treated as a header. Only Grok Build reads the
@@ -1285,8 +1341,9 @@ const upsertTomlServerSection = (
   // The last kept CRLF line has no following LF from the join.
   if (body.endsWith("\r")) body += "\n";
   if (entry !== undefined && !inlineServerTable) {
+    const serverDocument = { mcp_servers: { [serverKey]: entry } };
     let fragment = withoutTrailingLineFeeds(
-      stringifyToml({ mcp_servers: { [serverKey]: entry } }),
+      formatTomlFloats(stringifyToml(serverDocument), serverDocument),
     );
     if (crlf) fragment = fragment.replaceAll("\n", "\r\n");
     const nl = crlf ? "\r\n" : "\n";
@@ -1400,7 +1457,7 @@ const serializeCodexConfiguration = (
     originalText === undefined ||
     isEmptyClientConfigurationText(originalText)
   )
-    return stringifyToml(document);
+    return formatTomlFloats(stringifyToml(document), document);
   const upserted = upsertTomlServerSection(
     originalText,
     PRODUCT_IDENTITY.mcpServerKey,
@@ -1412,7 +1469,9 @@ const serializeCodexConfiguration = (
     originalText.endsWith("\n") && !upserted.endsWith("\n")
       ? `${upserted}${originalText.endsWith("\r\n") ? "\r\n" : "\n"}`
       : upserted;
-  return tomlTextHolds(edited, document) ? edited : stringifyToml(document);
+  return tomlTextHolds(edited, document)
+    ? edited
+    : formatTomlFloats(stringifyToml(document), document);
 };
 
 const tomlTextHolds = (

@@ -21,6 +21,10 @@ import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 
+import {
+  hasTomlFloatProperty,
+  parseClientConfiguration,
+} from "../../../src/application/ClientConfigurationDocument.js";
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
 import { readConfigurationFile } from "../../../src/application/ClientConfigurationFiles.js";
@@ -715,6 +719,100 @@ describe("Codex sequence-form tool settings preservation and repair", () => {
         },
       },
     });
+  });
+});
+
+describe("Codex per-tool date rejection and prototype safety", () => {
+  it("drops invalid Date tool settings during refresh", async () => {
+    const home = await createTestTempDirectory("rea-codex-date-tool-");
+    roots.push(home);
+    const configPath = join(home, ".codex/config.toml");
+    await mkdir(dirname(configPath), { recursive: true });
+    const original = [
+      "[mcp_servers.rea]",
+      'command = "old-rea"',
+      'args = ["mcp"]',
+      "",
+      "[mcp_servers.rea.tools]",
+      "invalid_date = 2026-10-20T00:00:00Z",
+      "",
+    ].join("\n");
+    await writeFile(configPath, original);
+
+    const client = { name: "codex", configPath, format: "toml" } as const;
+    expect(
+      await configureClientConfiguration(client, {}, ["rea", "mcp"]),
+    ).toMatchObject({ status: "configured" });
+
+    const configured = await readFile(configPath, "utf8");
+    expect(parseToml(configured)).not.toHaveProperty(
+      "mcp_servers.rea.tools.invalid_date",
+    );
+  });
+
+  it("preserves a per-tool setting named __proto__ without prototype side effects", async () => {
+    const home = await createTestTempDirectory("rea-codex-proto-tool-");
+    roots.push(home);
+    const configPath = join(home, ".codex/config.toml");
+    await mkdir(dirname(configPath), { recursive: true });
+    const original = [
+      "[mcp_servers.rea]",
+      'command = "old-rea"',
+      'args = ["mcp"]',
+      "",
+      '[mcp_servers.rea.tools."__proto__"]',
+      'approval_mode = "approve"',
+      "",
+    ].join("\n");
+    await writeFile(configPath, original);
+
+    const client = { name: "codex", configPath, format: "toml" } as const;
+    expect(
+      await configureClientConfiguration(client, {}, ["rea", "mcp"]),
+    ).toMatchObject({ status: "configured" });
+
+    const configured = await readFile(configPath, "utf8");
+    const parsed = parseToml(configured) as Record<string, unknown>;
+    const tools = (
+      (parsed.mcp_servers as Record<string, unknown>).rea as Record<
+        string,
+        unknown
+      >
+    ).tools as object;
+    expect(Object.hasOwn(tools, "__proto__")).toBe(true);
+  });
+
+  it("preserves TOML float kind for unknown passthrough settings during refresh", async () => {
+    const home = await createTestTempDirectory("rea-codex-float-passthrough-");
+    roots.push(home);
+    const configPath = join(home, ".codex/config.toml");
+    await mkdir(dirname(configPath), { recursive: true });
+    const original = [
+      "[mcp_servers.rea]",
+      'command = "old-rea"',
+      'args = ["mcp"]',
+      "",
+      "[mcp_servers.rea.tools.binary_session]",
+      'approval_mode = "invalid_mode"',
+      "output_token_limit = 32000",
+      "custom_future_ratio = 1.0",
+      "",
+    ].join("\n");
+    await writeFile(configPath, original);
+
+    const client = { name: "codex", configPath, format: "toml" } as const;
+    expect(
+      await configureClientConfiguration(client, {}, ["rea", "mcp"]),
+    ).toMatchObject({ status: "configured" });
+
+    const configured = await readFile(configPath, "utf8");
+    expect(configured).toContain("custom_future_ratio = 1.0");
+    const doc = parseClientConfiguration(configured, "toml");
+    const reaServer = (doc.document.mcp_servers as Record<string, unknown>)
+      .rea as Record<string, unknown>;
+    const sessionTool = (reaServer.tools as Record<string, unknown>)
+      .binary_session as object;
+    expect(hasTomlFloatProperty(sessionTool, "custom_future_ratio")).toBe(true);
   });
 });
 

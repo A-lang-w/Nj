@@ -483,7 +483,10 @@ const parseRegistration = (
         Reflect.get(registration, "default_tools_approval_mode"),
       );
     }
-    if (Array.isArray(registration.tools)) {
+    if (
+      Array.isArray(registration.tools) ||
+      registration.tools instanceof Date
+    ) {
       throw new TypeError(
         "Expected Codex tools to be a table of per-tool settings",
       );

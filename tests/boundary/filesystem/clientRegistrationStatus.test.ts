@@ -516,6 +516,8 @@ function registerCodexClientToolPolicyTests(): void {
     '[mcp_servers.rea.tools]\nbinary_session = ["approve", -10]',
     '[mcp_servers.rea.tools]\nbinary_session = ["approve", 1.0]',
     '[mcp_servers.rea.tools]\nbinary_session = ["approve", 1e3]',
+    "[mcp_servers.rea.tools]\nbinary_session = 2026-10-20T00:00:00Z",
+    "[mcp_servers.rea]\ntools = 2026-10-20T00:00:00Z",
   ])(
     "reports malformed Codex tools setting %s as invalid",
     async (toolsFragment) => {

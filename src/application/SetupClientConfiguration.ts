@@ -834,6 +834,7 @@ const codexTools = (
   if (
     typeof registration !== "object" ||
     registration === null ||
+    registration instanceof Date ||
     !Object.hasOwn(registration, "tools")
   )
     return undefined;
@@ -841,6 +842,7 @@ const codexTools = (
   if (
     typeof rawTools !== "object" ||
     rawTools === null ||
+    rawTools instanceof Date ||
     Array.isArray(rawTools)
   )
     return undefined;
@@ -848,7 +850,7 @@ const codexTools = (
   if (rawEntries.length === 0) {
     return {};
   }
-  const validTools: Record<string, unknown> = {};
+  const validTools = Object.create(null) as Record<string, unknown>;
   for (const [toolName, toolConfig] of rawEntries) {
     const parsed = parseCodexToolEntry(toolConfig);
     if (parsed.status === "valid") {
