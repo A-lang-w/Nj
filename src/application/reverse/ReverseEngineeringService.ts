@@ -855,7 +855,11 @@ export class ReverseEngineeringService {
           provider_executable: command,
           command_arguments: [...args],
         },
-        rawResult: null,
+        // Cancellation may arrive after a provider result was collected. Preserve
+        // that partial raw output on the error Evidence without changing the
+        // established null raw_result contract for completed command Evidence.
+        rawResult:
+          failure instanceof AnalysisCancelledError ? { stdout, stderr } : null,
         result,
         limitations,
         ...(absolutePath === undefined
