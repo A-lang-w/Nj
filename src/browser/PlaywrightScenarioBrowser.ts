@@ -320,10 +320,7 @@ const androidScenarioTempDirectory = (
 
 const HOST_TEMP_NAMES = ["TMPDIR", "TMP", "TEMP"] as const;
 
-let androidHostTempUsers = 0;
-let androidHostTempPrevious:
-  | Readonly<Record<(typeof HOST_TEMP_NAMES)[number], string | undefined>>
-  | undefined;
+let androidHostTempQueue: Promise<void> = Promise.resolve();
 
 const restoreHostTempValue = (
   name: string,
@@ -333,42 +330,49 @@ const restoreHostTempValue = (
   else process.env[name] = value;
 };
 
+const enqueueAndroidHostTemp = <Value>(
+  operation: () => Promise<Value>,
+): Promise<Value> => {
+  const previous = androidHostTempQueue;
+  const result = previous.then(operation, operation);
+  androidHostTempQueue = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+};
+
 /**
  * Playwright creates `playwright-artifacts-*` with the host `os.tmpdir()`
- * before Chromium starts. Android reads `TMPDIR` for that call, so the
- * scenario's writable directory has to be visible on the host until launch
- * finishes. `TMP` and `TEMP` are published for the same window because some
- * hosts resolve `os.tmpdir()` from those names instead.
+ * after an await, before Chromium starts. That lookup is process-wide, so
+ * overlapping Android launches have to take turns publishing their writable
+ * directory. `TMP` and `TEMP` are published for the same window because some
+ * hosts resolve `os.tmpdir()` from those names instead. The previous values
+ * return as soon as that launch has created the directory.
  */
-const retainAndroidHostTempDirectory = (
+const withAndroidHostTempDirectory = <Value>(
   directory: string | undefined,
-): (() => void) => {
-  if (
-    process.platform !== "android" ||
-    directory === undefined ||
-    (androidHostTempUsers === 0 && tmpdir() === directory)
-  )
-    return () => undefined;
-  if (androidHostTempUsers === 0) {
-    androidHostTempPrevious = {
+  launch: () => Promise<Value>,
+): Promise<Value> => {
+  if (process.platform !== "android" || directory === undefined)
+    return launch();
+  return enqueueAndroidHostTemp(async () => {
+    const previous = {
       TMPDIR: process.env.TMPDIR,
       TMP: process.env.TMP,
       TEMP: process.env.TEMP,
     };
-    for (const name of HOST_TEMP_NAMES) process.env[name] = directory;
-  }
-  androidHostTempUsers += 1;
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    androidHostTempUsers -= 1;
-    if (androidHostTempUsers > 0 || androidHostTempPrevious === undefined)
-      return;
-    for (const name of HOST_TEMP_NAMES)
-      restoreHostTempValue(name, androidHostTempPrevious[name]);
-    androidHostTempPrevious = undefined;
-  };
+    const changed = tmpdir() !== directory;
+    if (changed)
+      for (const name of HOST_TEMP_NAMES) process.env[name] = directory;
+    try {
+      return await launch();
+    } finally {
+      if (changed)
+        for (const name of HOST_TEMP_NAMES)
+          restoreHostTempValue(name, previous[name]);
+    }
+  });
 };
 
 const allowedBrowserEnvironment = (
@@ -767,41 +771,40 @@ export const openPlaywrightScenarioBrowser = async (
     join(preferredTemp ?? tmpdir(), "rea-browser-scenario-"),
   );
   let context: BrowserContext;
-  let releaseHostTemp = (): void => undefined;
   try {
     await chmod(profilePath, 0o700);
-    releaseHostTemp = retainAndroidHostTempDirectory(preferredTemp);
-    context = await launcher.launchPersistentContext(profilePath, {
-      executablePath: resolve(scenario.browser.executable_path),
-      headless: scenario.browser.headless,
-      acceptDownloads: false,
-      viewport: {
-        width: scenario.environment.viewport.width,
-        height: scenario.environment.viewport.height,
-      },
-      deviceScaleFactor: scenario.environment.viewport.device_scale_factor,
-      locale: scenario.environment.locale,
-      timezoneId: scenario.environment.timezone,
-      colorScheme: scenario.environment.color_scheme,
-      reducedMotion: scenario.environment.reduced_motion,
-      serviceWorkers: scenario.environment.service_workers,
-      env: allowedBrowserEnvironment(environment),
-      handleSIGHUP: false,
-      handleSIGINT: false,
-      handleSIGTERM: false,
-      timeout: 0,
-      // Termux's Chromium cannot create its renderer process through Android's
-      // executable boundary. Single-process mode keeps the browser and page in
-      // the Termux-launched process so scenario navigation remains available.
-      // Android has no usable /dev/shm, so shared-memory files stay in the
-      // writable temp directory instead of failing the launch.
-      args:
-        process.platform === "android"
-          ? ["--no-sandbox", "--disable-dev-shm-usage", "--single-process"]
-          : [],
-    });
+    context = await withAndroidHostTempDirectory(preferredTemp, () =>
+      launcher.launchPersistentContext(profilePath, {
+        executablePath: resolve(scenario.browser.executable_path),
+        headless: scenario.browser.headless,
+        acceptDownloads: false,
+        viewport: {
+          width: scenario.environment.viewport.width,
+          height: scenario.environment.viewport.height,
+        },
+        deviceScaleFactor: scenario.environment.viewport.device_scale_factor,
+        locale: scenario.environment.locale,
+        timezoneId: scenario.environment.timezone,
+        colorScheme: scenario.environment.color_scheme,
+        reducedMotion: scenario.environment.reduced_motion,
+        serviceWorkers: scenario.environment.service_workers,
+        env: allowedBrowserEnvironment(environment),
+        handleSIGHUP: false,
+        handleSIGINT: false,
+        handleSIGTERM: false,
+        timeout: 0,
+        // Termux's Chromium cannot create its renderer process through Android's
+        // executable boundary. Single-process mode keeps the browser and page in
+        // the Termux-launched process so scenario navigation remains available.
+        // Android has no usable /dev/shm, so shared-memory files stay in the
+        // writable temp directory instead of failing the launch.
+        args:
+          process.platform === "android"
+            ? ["--no-sandbox", "--disable-dev-shm-usage", "--single-process"]
+            : [],
+      }),
+    );
   } catch (cause: unknown) {
-    releaseHostTemp();
     const cleanup = new AnalysisCleanupLease(
       () => rm(profilePath, { recursive: true, force: true, maxRetries: 3 }),
       ["browser_profile"],
@@ -814,13 +817,7 @@ export const openPlaywrightScenarioBrowser = async (
     }
   }
   const cleanup = new PlaywrightScenarioBrowserCleanupOwner({
-    closeBrowser: async () => {
-      try {
-        await context.close();
-      } finally {
-        releaseHostTemp();
-      }
-    },
+    closeBrowser: () => context.close(),
     removeProfile: () =>
       rm(profilePath, { recursive: true, force: true, maxRetries: 3 }),
   });
@@ -846,4 +843,3 @@ export const openPlaywrightScenarioBrowser = async (
     }
   }
 };
-

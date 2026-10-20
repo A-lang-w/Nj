@@ -229,6 +229,87 @@ it.each([
   },
 );
 
+const hostTempEnvironment = () => ({
+  TMPDIR: process.env.TMPDIR,
+  TMP: process.env.TMP,
+  TEMP: process.env.TEMP,
+});
+
+it("keeps overlapping Android launches on their own host temp directories", async () => {
+  const firstRoot = await createTestTempDirectory("rea-termux-overlap-a-");
+  const secondRoot = await createTestTempDirectory("rea-termux-overlap-b-");
+  vi.stubEnv("TMPDIR", "");
+  vi.stubEnv("TMP", "");
+  vi.stubEnv("TEMP", "");
+  Object.defineProperty(process, "platform", { value: "android" });
+  const firstEntered = deferred<void>();
+  const releaseFirst = deferred<void>();
+  const secondEntered = deferred<void>();
+  let firstTempAtStart: ReturnType<typeof hostTempEnvironment> | undefined;
+  let firstTempAtEnd: ReturnType<typeof hostTempEnvironment> | undefined;
+  let secondTemp: ReturnType<typeof hostTempEnvironment> | undefined;
+  const opening = (root: string, onLaunch: () => Promise<void>) =>
+    openPlaywrightScenarioBrowser(
+      androidLaunchScenario(process.execPath),
+      { PREFIX: root, TMPDIR: "", TMP: "", TEMP: "" },
+      {
+        launcher: {
+          connectOverCDP: async () => {
+            throw new Error("Unexpected connection");
+          },
+          launchPersistentContext: async () => {
+            await onLaunch();
+            throw new Error("launch boundary reached");
+          },
+        },
+      },
+    );
+  const first = opening(firstRoot, async () => {
+    firstTempAtStart = hostTempEnvironment();
+    firstEntered.resolve(undefined);
+    await releaseFirst.promise;
+    firstTempAtEnd = hostTempEnvironment();
+  });
+  try {
+    await firstEntered.promise;
+    const second = opening(secondRoot, async () => {
+      secondTemp = hostTempEnvironment();
+      secondEntered.resolve(undefined);
+    });
+    expect(
+      await Promise.race([
+        secondEntered.promise.then(() => "entered" as const),
+        new Promise<"queued">((resolve) => {
+          setTimeout(() => resolve("queued"), 100);
+        }),
+      ]),
+    ).toBe("queued");
+    releaseFirst.resolve(undefined);
+    await expect(first).rejects.toThrow("launch boundary reached");
+    await expect(second).rejects.toThrow("launch boundary reached");
+  } finally {
+    releaseFirst.resolve(undefined);
+  }
+  const firstTemp = join(firstRoot, "tmp");
+  const secondDirectory = join(secondRoot, "tmp");
+  expect(firstTempAtStart).toEqual({
+    TMPDIR: firstTemp,
+    TMP: firstTemp,
+    TEMP: firstTemp,
+  });
+  expect(firstTempAtEnd).toEqual(firstTempAtStart);
+  expect(secondTemp).toEqual({
+    TMPDIR: secondDirectory,
+    TMP: secondDirectory,
+    TEMP: secondDirectory,
+  });
+  expect(hostTempEnvironment()).toEqual({
+    TMPDIR: "",
+    TMP: "",
+    TEMP: "",
+  });
+});
+
 it("places Playwright's host artifact directory on the Termux temp directory", async () => {
   await import("playwright-core");
   const prefix = await createTestTempDirectory("rea-termux-host-");
@@ -247,6 +328,45 @@ it("places Playwright's host artifact directory on the Termux temp directory", a
       name.startsWith("playwright-artifacts-"),
     ),
   ).toBe(true);
+  expect(process.env.TMPDIR).toBe("");
+  expect(process.env.TMP).toBe("");
+  expect(process.env.TEMP).toBe("");
+});
+
+it("places each overlapping Playwright artifact directory in its own Termux temp", async () => {
+  await import("playwright-core");
+  const firstRoot = await createTestTempDirectory("rea-termux-artifacts-a-");
+  const secondRoot = await createTestTempDirectory("rea-termux-artifacts-b-");
+  vi.stubEnv("TMPDIR", "");
+  vi.stubEnv("TMP", "");
+  vi.stubEnv("TEMP", "");
+  Object.defineProperty(process, "platform", { value: "android" });
+  const launch = (root: string) =>
+    openPlaywrightScenarioBrowser(
+      androidLaunchScenario(join(root, "missing-chromium")),
+      { PREFIX: root, TMPDIR: "", TMP: "", TEMP: "" },
+    );
+  const settled = await Promise.allSettled([
+    launch(firstRoot),
+    launch(secondRoot),
+  ]);
+  expect(settled.map((result) => result.status)).toEqual([
+    "rejected",
+    "rejected",
+  ]);
+  for (const result of settled)
+    if (result.status === "rejected")
+      expect(result.reason).toEqual(
+        expect.objectContaining({
+          message: expect.stringMatching(/executable doesn't exist/),
+        }),
+      );
+  const artifactCount = async (root: string) =>
+    (await readdir(join(root, "tmp"))).filter((name) =>
+      name.startsWith("playwright-artifacts-"),
+    ).length;
+  expect(await artifactCount(firstRoot)).toBe(1);
+  expect(await artifactCount(secondRoot)).toBe(1);
   expect(process.env.TMPDIR).toBe("");
   expect(process.env.TMP).toBe("");
   expect(process.env.TEMP).toBe("");
@@ -905,4 +1025,3 @@ it("bounds an opening failure response while retaining the same late cleanup lea
     vi.useRealTimers();
   }
 });
-
