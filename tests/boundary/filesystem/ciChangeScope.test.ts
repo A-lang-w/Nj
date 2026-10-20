@@ -737,6 +737,42 @@ it.each([
     { code: true, package: true, runtime: true, apple: false },
   ],
   [
+    "src/application/ClientRegistrationEnvironment.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/ClientRegistrationStatus.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/ClientRegistrationIdentity.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/ClientConfigurationDocument.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/ClientConfigurationFiles.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/ClientConfigurationPublication.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/ClientConfigurationCleanup.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/DshCordisPatch.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/DshCordisYaml.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
     "scripts/verify-packed-bridge.mjs",
     {
       code: true,
