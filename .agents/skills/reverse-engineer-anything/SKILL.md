@@ -351,6 +351,11 @@ answered, partially answered, or unresolved based on its evidence; keep
 bounded negative searches bounded, and do not describe a broad investigation
 as complete while required questions remain open.
 
+When the user wants multiple agents to investigate independent questions through
+Coordo, read [the Coordo handoff workflow](references/coordo-multi-agent.md).
+It creates scoped ledger tasks that point to an existing private Evidence bundle;
+it does not run other agents or broaden authority to inspect the target.
+
 ## Read only the relevant guide
 
 - Native binaries, managed assemblies, archives, and extraction:
