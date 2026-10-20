@@ -64,8 +64,10 @@ export class CdpConnection {
     operation: BrowserObservationOperation,
     signal?: AbortSignal,
     limits?: { readonly maxPayloadBytes: number },
+    onConnected?: (connection: CdpConnection) => void,
   ): Promise<CdpConnection> {
-    if (signal?.aborted === true) throw new AnalysisCancelledError(operation);
+    if (signal?.aborted === true)
+      throw new AnalysisCancelledError(operation, { cause: signal.reason });
     const maxPayloadBytes =
       limits === undefined
         ? WEB_RUNTIME_LIMITS.protocolBytes
@@ -79,14 +81,36 @@ export class CdpConnection {
         `CDP maxPayloadBytes must be a positive safe integer no greater than ${String(MAX_WEBSOCKET_PAYLOAD_BYTES)}.`,
       );
     const socket = new WebSocket(url, {
-      // waitForOpen owns the deadline, cancellation, cleanup, and typed errors;
-      // keep ws's timer disabled so handshake failures have one owner.
+      // waitForOpen owns the deadline and typed handshake failures; the
+      // connection owner registers this socket before waiting for open.
       handshakeTimeout: 0,
       maxPayload: maxPayloadBytes,
       perMessageDeflate: false,
     });
-    await waitForOpen(socket, operation, signal);
-    return new CdpConnection(socket, operation, maxPayloadBytes);
+    const connection = new CdpConnection(socket, operation, maxPayloadBytes);
+    try {
+      onConnected?.(connection);
+    } catch (cause: unknown) {
+      await connection.close();
+      throw cause;
+    }
+    try {
+      await waitForOpen(socket, operation, signal);
+    } catch (cause: unknown) {
+      if (onConnected === undefined) {
+        try {
+          await connection.close();
+        } catch (cleanupCause: unknown) {
+          throw new AggregateError(
+            [cause, cleanupCause],
+            "CDP WebSocket handshake failed and its transport cleanup is incomplete.",
+            { cause },
+          );
+        }
+      }
+      throw cause;
+    }
+    return connection;
   }
 
   /** Subscribe to validated CDP event envelopes. */
@@ -129,7 +153,9 @@ export class CdpConnection {
     if (this.#closed || this.socket.readyState !== WebSocket.OPEN)
       throw this.#transportError(this.#transportFailure);
     if (signal?.aborted === true)
-      throw new AnalysisCancelledError(this.operation);
+      throw new AnalysisCancelledError(this.operation, {
+        cause: signal.reason,
+      });
     const id = this.#nextId;
     this.#nextId += 1;
     const message = JSON.stringify({
@@ -143,7 +169,11 @@ export class CdpConnection {
         const pending = this.#pending.get(id);
         if (pending === undefined) return;
         this.#complete(id, pending);
-        reject(new AnalysisCancelledError(this.operation));
+        reject(
+          new AnalysisCancelledError(this.operation, {
+            cause: signal?.reason,
+          }),
+        );
       };
       const timer = setTimeout(() => {
         const pending = this.#pending.get(id);
@@ -192,17 +222,64 @@ export class CdpConnection {
   async #closeTransport(): Promise<void> {
     this.#closed = true;
     this.#failPending("disconnected");
-    if (this.socket.readyState === WebSocket.CLOSED) return;
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
-        this.socket.terminate();
-        resolve();
-      }, 1_000);
-      this.socket.once("close", () => {
+    if (socketIsClosed(this.socket)) return;
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let fallbackStarted = false;
+      let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (cause?: unknown): void => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
-        resolve();
-      });
-      this.socket.close();
+        if (fallbackTimer !== undefined) clearTimeout(fallbackTimer);
+        this.socket.off("close", onClose);
+        if (cause === undefined) resolve();
+        else reject(cause);
+      };
+      const onClose = (): void => finish();
+      const forceClose = (gracefulFailure?: unknown): void => {
+        if (settled || fallbackStarted) return;
+        fallbackStarted = true;
+        clearTimeout(timer);
+        if (socketIsClosed(this.socket)) {
+          finish();
+          return;
+        }
+        try {
+          this.socket.terminate();
+        } catch (cause: unknown) {
+          gracefulFailure =
+            gracefulFailure === undefined
+              ? cause
+              : new AggregateError(
+                  [gracefulFailure, cause],
+                  "Graceful and forced CDP WebSocket close both failed.",
+                  { cause: gracefulFailure },
+                );
+        }
+        if (socketIsClosed(this.socket)) finish();
+        else {
+          fallbackTimer = setTimeout(() => {
+            if (socketIsClosed(this.socket)) {
+              finish();
+              return;
+            }
+            finish(
+              gracefulFailure ??
+                new BrowserObservationError(this.operation, "cleanup_failed", {
+                  detail: "REA could not confirm release of its CDP WebSocket.",
+                }),
+            );
+          }, 1_000);
+        }
+      };
+      const timer = setTimeout(() => forceClose(), 1_000);
+      this.socket.once("close", onClose);
+      try {
+        this.socket.close();
+      } catch (closeCause: unknown) {
+        forceClose(closeCause);
+      }
     });
   }
 
@@ -350,6 +427,9 @@ export class CdpConnection {
   }
 }
 
+const socketIsClosed = (socket: WebSocket): boolean =>
+  socket.readyState === WebSocket.CLOSED;
+
 const rawText = (data: RawData): string =>
   Array.isArray(data)
     ? Buffer.concat(data).toString("utf8")
@@ -373,11 +453,9 @@ const waitForOpen = async (
     const onFailure = (cause: unknown): void => {
       cleanup();
       reject(
-        signal?.aborted === true
-          ? new AnalysisCancelledError(operation)
-          : new BrowserObservationError(operation, "endpoint_unreachable", {
-              cause,
-            }),
+        new BrowserObservationError(operation, "endpoint_unreachable", {
+          cause,
+        }),
       );
     };
     const onClose = (code: number, reason: Buffer): void => {
@@ -388,8 +466,9 @@ const waitForOpen = async (
       );
     };
     const onAbort = (): void => {
+      cleanup();
       terminateSocket(socket);
-      onFailure(new AnalysisCancelledError(operation));
+      reject(new AnalysisCancelledError(operation, { cause: signal?.reason }));
     };
     const cleanup = (): void => {
       clearTimeout(timer);
@@ -415,6 +494,9 @@ const waitForOpen = async (
   });
 
 const terminateSocket = (socket: WebSocket): void => {
-  socket.once("error", () => undefined);
-  socket.terminate();
+  try {
+    socket.terminate();
+  } catch {
+    // The owning connection remains registered and will retry bounded close.
+  }
 };

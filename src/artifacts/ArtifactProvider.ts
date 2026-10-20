@@ -1,3 +1,6 @@
+import { bindArtifactFileCleanup } from "./ArtifactFileOperation.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   createAnalysisExecution,
@@ -30,8 +33,6 @@ import {
   AnalysisInputError,
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
-import { ArtifactOperationError } from "../domain/artifactOperationError.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { interfaceBuilderLimitsSchema } from "../domain/apple/interfaceBuilderGraph.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -234,18 +235,18 @@ class ArtifactClient implements AnalysisClient {
       (cause: unknown) => {
         const failure =
           cause instanceof ArtifactReaderFailure ? cause : undefined;
-        return err(
-          new ProviderCleanupError(
-            ARTIFACT_GRAPH_PROVIDER.id,
-            failure?.cleanup?.resources ?? ["artifact resources"],
-            {
-              reason:
-                failure?.cleanup?.reason ??
-                (cause instanceof Error ? cause.message : String(cause)),
-            },
-            { cause, operation: "close_binary" },
-          ),
+        const error = new ProviderCleanupError(
+          ARTIFACT_GRAPH_PROVIDER.id,
+          failure?.cleanup?.resources ?? ["artifact resources"],
+          {
+            reason:
+              failure?.cleanup?.reason ??
+              (cause instanceof Error ? cause.message : String(cause)),
+          },
+          { cause, operation: "close_binary" },
         );
+        bindArtifactFileCleanup(cause, error);
+        return err(error);
       },
     );
   }
@@ -315,6 +316,7 @@ class ArtifactClient implements AnalysisClient {
       targetSha256: this.target.sha256,
       enumerateRoots: bundle !== undefined,
       parameters,
+      resourceScope: this.#resourceScope,
       ...(options?.signal === undefined ? {} : { signal: options.signal }),
     });
     return ok(
@@ -401,34 +403,6 @@ const isArtifactOperation = (
   ARTIFACT_ANALYSIS_OPERATIONS.includes(
     operation as (typeof ARTIFACT_ANALYSIS_OPERATIONS)[number],
   );
-
-/** Translate one artifact boundary failure while retaining cleanup evidence. */
-export const translateArtifactFailure = (
-  operation: ArtifactAnalysisOperation,
-  cause: unknown,
-): AnalysisError => {
-  if (cause instanceof ArtifactReaderFailure)
-    return new ArtifactOperationError(
-      operation,
-      cause.reason,
-      cause.details,
-      cause.message,
-      {
-        ...(cause.cleanup === undefined ? {} : { cleanup: cause.cleanup }),
-        ...(cause.partialObservation === undefined
-          ? {}
-          : { partialObservation: cause.partialObservation }),
-      },
-    );
-  // Caller-selection and unsupported-target failures are already typed; keep
-  // their correction details instead of reducing them to an I/O failure.
-  if (
-    cause instanceof AnalysisInputError ||
-    cause instanceof AnalysisUnsupportedTargetError
-  )
-    return cause;
-  return new ArtifactOperationError(operation, "io");
-};
 
 const subjectFor = (
   path: string,
