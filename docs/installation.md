@@ -988,6 +988,12 @@ If the client deadline is the problem, request `analysis_mode: "background"` (or
 `"auto"`) and poll with `wait_ms`; the server-owned job keeps running after the
 request returns. `REA_GHIDRA_AUTO_BACKGROUND_AFTER_MS` sets the auto threshold
 (default 120,000 ms). A job still ends with its MCP server process.
+`REA_MAX_CONCURRENT_ANALYSES` (default 2) bounds simultaneous provider starts
+for foreground and background opens alike; a start beyond the cap waits in FIFO
+order instead of starting another JVM. The one-shot CLI has no owner for a
+background job, so `rea analyze --analysis-mode background` fails with
+`capability_unavailable` and names the MCP alternative; `--analysis-mode auto`
+runs in the foreground.
 See [Ghidra first-query deadlines and recovery](mcp-contracts.md#ghidra-first-query-deadlines-and-recovery)
 for client options and the close/reopen recovery flow.
 

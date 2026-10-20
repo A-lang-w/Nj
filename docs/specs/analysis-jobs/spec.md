@@ -185,7 +185,10 @@ New codes and states:
 - `sessionToolContracts.ts`: `open_binary` gains `analysis_mode`,
   `auto_background_after_ms`; `binary_session` gains `wait_ms` and `analysis`.
 - Analysis tool contracts: only the new `analysis_in_progress` error and optional
-  `wait_ms`. Target routing is in the multi-target spec.
+  `wait_ms`. The wait budget belongs to the target-bound analysis tools; the
+  live-session navigation tools declare none, and the adapter consumes a
+  `wait_ms` only when the tool's own schema declares one. Target routing is in
+  the multi-target spec.
 - `toolEffects.ts`: background opens are long-lived process owners.
 - Regenerate the catalog. Update `docs/mcp-contracts.md`,
   `docs/installation.md` (startup timeout guidance), and the packaged
