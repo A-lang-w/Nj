@@ -4,6 +4,7 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { mkdir, writeFile, rm, access, readdir } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import type {
@@ -229,25 +230,21 @@ it.each([
   },
 );
 
-const hostTempEnvironment = () => ({
-  TMPDIR: process.env.TMPDIR,
-  TMP: process.env.TMP,
-  TEMP: process.env.TEMP,
-});
-
-it("keeps overlapping Android launches on their own host temp directories", async () => {
-  const firstRoot = await createTestTempDirectory("rea-termux-overlap-a-");
-  const secondRoot = await createTestTempDirectory("rea-termux-overlap-b-");
+it("does not let a stuck Android launch block later launches", async () => {
+  const firstRoot = await createTestTempDirectory("rea-termux-stuck-a-");
+  const secondRoot = await createTestTempDirectory("rea-termux-stuck-b-");
   vi.stubEnv("TMPDIR", "");
   vi.stubEnv("TMP", "");
   vi.stubEnv("TEMP", "");
   Object.defineProperty(process, "platform", { value: "android" });
+  const nodeOs = createRequire(import.meta.url)("node:os") as {
+    tmpdir: () => string;
+  };
   const firstEntered = deferred<void>();
   const releaseFirst = deferred<void>();
-  const secondEntered = deferred<void>();
-  let firstTempAtStart: ReturnType<typeof hostTempEnvironment> | undefined;
-  let firstTempAtEnd: ReturnType<typeof hostTempEnvironment> | undefined;
-  let secondTemp: ReturnType<typeof hostTempEnvironment> | undefined;
+  let firstLookup: string | undefined;
+  let firstLookupAfterWait: string | undefined;
+  let secondLookup: string | undefined;
   const opening = (root: string, onLaunch: () => Promise<void>) =>
     openPlaywrightScenarioBrowser(
       androidLaunchScenario(process.execPath),
@@ -265,49 +262,28 @@ it("keeps overlapping Android launches on their own host temp directories", asyn
       },
     );
   const first = opening(firstRoot, async () => {
-    firstTempAtStart = hostTempEnvironment();
+    firstLookup = nodeOs.tmpdir();
     firstEntered.resolve(undefined);
     await releaseFirst.promise;
-    firstTempAtEnd = hostTempEnvironment();
+    firstLookupAfterWait = nodeOs.tmpdir();
   });
   try {
     await firstEntered.promise;
-    const second = opening(secondRoot, async () => {
-      secondTemp = hostTempEnvironment();
-      secondEntered.resolve(undefined);
-    });
-    expect(
-      await Promise.race([
-        secondEntered.promise.then(() => "entered" as const),
-        new Promise<"queued">((resolve) => {
-          setTimeout(() => resolve("queued"), 100);
-        }),
-      ]),
-    ).toBe("queued");
-    releaseFirst.resolve(undefined);
-    await expect(first).rejects.toThrow("launch boundary reached");
-    await expect(second).rejects.toThrow("launch boundary reached");
+    await expect(
+      opening(secondRoot, async () => {
+        secondLookup = nodeOs.tmpdir();
+      }),
+    ).rejects.toThrow("launch boundary reached");
   } finally {
     releaseFirst.resolve(undefined);
   }
-  const firstTemp = join(firstRoot, "tmp");
-  const secondDirectory = join(secondRoot, "tmp");
-  expect(firstTempAtStart).toEqual({
-    TMPDIR: firstTemp,
-    TMP: firstTemp,
-    TEMP: firstTemp,
-  });
-  expect(firstTempAtEnd).toEqual(firstTempAtStart);
-  expect(secondTemp).toEqual({
-    TMPDIR: secondDirectory,
-    TMP: secondDirectory,
-    TEMP: secondDirectory,
-  });
-  expect(hostTempEnvironment()).toEqual({
-    TMPDIR: "",
-    TMP: "",
-    TEMP: "",
-  });
+  await expect(first).rejects.toThrow("launch boundary reached");
+  expect(firstLookup).toBe(join(firstRoot, "tmp"));
+  expect(firstLookupAfterWait).toBe(join(firstRoot, "tmp"));
+  expect(secondLookup).toBe(join(secondRoot, "tmp"));
+  expect(process.env.TMPDIR).toBe("");
+  expect(process.env.TMP).toBe("");
+  expect(process.env.TEMP).toBe("");
 });
 
 it("places Playwright's host artifact directory on the Termux temp directory", async () => {

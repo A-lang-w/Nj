@@ -5,7 +5,9 @@ import {
   AnalysisCleanupLeaseGroup,
   AnalysisCleanupLease,
 } from "../artifacts/AnalysisCleanupLease.js";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -318,61 +320,33 @@ const androidScenarioTempDirectory = (
   return prefix === undefined ? undefined : join(prefix, "tmp");
 };
 
-const HOST_TEMP_NAMES = ["TMPDIR", "TMP", "TEMP"] as const;
-
-let androidHostTempQueue: Promise<void> = Promise.resolve();
-
-const restoreHostTempValue = (
-  name: string,
-  value: string | undefined,
-): void => {
-  if (value === undefined) delete process.env[name];
-  else process.env[name] = value;
-};
-
-const enqueueAndroidHostTemp = <Value>(
-  operation: () => Promise<Value>,
-): Promise<Value> => {
-  const previous = androidHostTempQueue;
-  const result = previous.then(operation, operation);
-  androidHostTempQueue = result.then(
-    () => undefined,
-    () => undefined,
-  );
-  return result;
-};
+const nodeOs = createRequire(import.meta.url)(
+  "node:os",
+) as typeof import("node:os");
+const androidLaunchTemp = new AsyncLocalStorage<string>();
+let androidTmpdirScoped = false;
 
 /**
- * Playwright creates `playwright-artifacts-*` with the host `os.tmpdir()`
- * after an await, before Chromium starts. That lookup is process-wide, so
- * overlapping Android launches have to take turns publishing their writable
- * directory. `TMP` and `TEMP` are published for the same window because some
- * hosts resolve `os.tmpdir()` from those names instead. The previous values
- * return as soon as that launch has created the directory.
+ * Playwright calls `os.tmpdir()` after an await. Publishing that directory
+ * through `process.env` makes every overlapping launch share one folder, and
+ * a queue makes one stuck startup block the rest. The lookup is scoped to the
+ * launch that is creating `playwright-artifacts-*`.
  */
+const installAndroidTmpdirScope = (): void => {
+  if (androidTmpdirScoped) return;
+  androidTmpdirScoped = true;
+  const hostTmpdir = nodeOs.tmpdir;
+  nodeOs.tmpdir = () => androidLaunchTemp.getStore() ?? hostTmpdir();
+};
+
 const withAndroidHostTempDirectory = <Value>(
   directory: string | undefined,
   launch: () => Promise<Value>,
 ): Promise<Value> => {
   if (process.platform !== "android" || directory === undefined)
     return launch();
-  return enqueueAndroidHostTemp(async () => {
-    const previous = {
-      TMPDIR: process.env.TMPDIR,
-      TMP: process.env.TMP,
-      TEMP: process.env.TEMP,
-    };
-    const changed = tmpdir() !== directory;
-    if (changed)
-      for (const name of HOST_TEMP_NAMES) process.env[name] = directory;
-    try {
-      return await launch();
-    } finally {
-      if (changed)
-        for (const name of HOST_TEMP_NAMES)
-          restoreHostTempValue(name, previous[name]);
-    }
-  });
+  installAndroidTmpdirScope();
+  return androidLaunchTemp.run(directory, launch);
 };
 
 const allowedBrowserEnvironment = (
