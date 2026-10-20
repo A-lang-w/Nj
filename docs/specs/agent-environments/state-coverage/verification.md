@@ -86,5 +86,27 @@ Sentry tools with 46 to 105 fields). The MCP annotations add 113,182 bytes to
 at most 7.6 ms (Metabase), after the source was loaded. Agent tokens, CPU time
 and peak memory of the description build were not measured.
 
+After merging the environment state view's review fixes (its branch at
+6ad63bcc, which also brings main's evidence-file sources), every gate ran
+again on the merged tree: `npm run check:fast`, `npm run format:check`,
+`npx knip`, `npm run scan:todos` and `npm run docs:check` passed; `npm run
+jscpd`: 3.39% duplicated lines over 3362 files; `npx vitest run --project
+domain --project services`: 344 files, 5914 tests passed, 5 pre-existing
+skips; `npm run build:cached`, then `npm run test:focused --` the serve and
+tool-definition adapters, the serve MCP and CLI boundaries, the export CLI
+boundary, the analysis-view MCP and CLI boundaries, the compact input-schema
+budget and the analysis-detail and advertised-input-example contracts: 10
+files, 98 tests passed.
+
+The real-capture comparison was repeated on the merged code, with the base
+measured on the merged state view without this change: all 44 captures now
+produce a state, and 1,011 of 1,277 read tools are state-backed against 625
+on the base (216 item, 416 list and 379 document views against 214, 409 and
+2). Recorded reasons: `no-identity` 216 to 32 and `not-entity` 310 to none;
+`query-varies` 5 to 76 and `path-varies` 36 are document reads under more
+than one query or path; `list-differs` 35, `body-unusable` 33,
+`no-init-recording` 28, `query-body` 12, `envelope-varies` 4 are unchanged,
+and `fields-differ` is 9 to 10.
+
 Not covered here: serving from the state, the AgentEnv data plane and write
 effects, which are later increments.
