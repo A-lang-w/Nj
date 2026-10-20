@@ -7,6 +7,7 @@ import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
 } from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { Il2cppMetadataProvider } from "../../../src/il2cpp/Il2cppMetadataProvider.js";
 import {
   createElfFixture,
@@ -288,8 +289,19 @@ it("bounds concurrent snapshots and retains active decoding until close complete
   try {
     const refused = await provider.inspect({ path });
     expect(refused.ok).toBe(false);
-    if (!refused.ok)
+    if (!refused.ok) {
       expect(refused.error).toBeInstanceOf(AnalysisResourceConstraintError);
+      expect(projectAnalysisError(refused.error)).toMatchObject({
+        retryable: true,
+        details: {
+          resource: "capacity",
+          reported_limits: { maximum_concurrent_inspections: 1 },
+        },
+        remediation: {
+          action: expect.stringContaining("active IL2CPP metadata inspection"),
+        },
+      });
+    }
     await setImmediate();
     expect(closed).toBe(false);
   } finally {

@@ -7,12 +7,19 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 const OPERATION = "inspect_il2cpp_metadata";
 const capacity = (message: string) =>
-  new AnalysisResourceConstraintError(OPERATION, "capacity", message, {
-    maximum_seed_bytes: MAX_GHIDRA_SEED_BYTES,
-    maximum_seed_name_characters: MAX_GHIDRA_SEED_NAME_LENGTH,
-  });
+  new AnalysisResourceConstraintError(
+    OPERATION,
+    "capacity",
+    message,
+    {
+      maximum_seed_bytes: MAX_GHIDRA_SEED_BYTES,
+      maximum_seed_name_characters: MAX_GHIDRA_SEED_NAME_LENGTH,
+    },
+    fixedAllowanceOptions("The IL2CPP Ghidra seed-name allowance", "count"),
+  );
 import type { Il2cppMetadata } from "../domain/il2cpp/il2cppMetadata.js";
 
 /** A linked metadata report reduced to Ghidra function seeds. */

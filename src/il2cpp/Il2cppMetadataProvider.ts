@@ -37,6 +37,7 @@ import {
   type Il2cppMetadata,
   type Il2cppMetadataProviderInput,
 } from "../domain/il2cpp/il2cppMetadata.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -76,7 +77,13 @@ const failureForPrimary = (
       cause.reason === "native-type-text-capacity" ? "memory" : "capacity",
       cause.message,
       {},
-      { cause },
+      {
+        cause,
+        ...fixedAllowanceOptions(
+          "The IL2CPP native-link allowance",
+          cause.reason === "native-type-text-capacity" ? "parser" : "count",
+        ),
+      },
     );
   if (
     cause instanceof Il2cppBinaryFormatFailure ||
@@ -112,7 +119,10 @@ const failureForPrimary = (
         "file-size",
         cause.message,
         { maximum_input_bytes: maximum },
-        { cause },
+        {
+          cause,
+          ...fixedAllowanceOptions("the fixed IL2CPP input allowance", "input"),
+        },
       );
     if (cause.reason === "path")
       return new AnalysisInputError(OPERATION, { cause }, [
@@ -226,6 +236,7 @@ const reportLimit = (path: string, maximumBytes: number) =>
     "memory",
     `Complete IL2CPP metadata for ${path} exceeds the retained report budget; no complete inventory is retained.`,
     { maximum_report_bytes: maximumBytes },
+    fixedAllowanceOptions("The IL2CPP complete-report allowance", "report"),
   );
 
 const sourceArtifact = (path: string, snapshot: StableArtifactSnapshot) => ({
@@ -356,9 +367,13 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
       return err(
         new AnalysisResourceConstraintError(
           OPERATION,
-          "memory",
+          "capacity",
           "Only one IL2CPP metadata inspection is admitted per reader.",
           { maximum_concurrent_inspections: 1 },
+          {
+            remediationAction:
+              "Retry after the active IL2CPP metadata inspection on this reader completes.",
+          },
         ),
       );
     this.#inspecting = true;

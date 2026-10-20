@@ -1,0 +1,51 @@
+import { describe, expect, it } from "vitest";
+import { AnalysisResourceConstraintError } from "./analysisErrorCore.js";
+import { projectAnalysisError } from "./analysisErrorProjection.js";
+import {
+  fixedAllowanceOptions,
+  fixedAllowanceRemediation,
+  type FixedAllowanceKind,
+} from "./fixedAllowanceRemediation.js";
+
+const forbidden = {
+  parser: [
+    /available host memory\. Retry/u,
+    /worker memory limits and available/u,
+  ],
+  count: [/Wait for an active analysis/u, /\bretry\b/iu],
+  report: [/get_evidence_bundle/u, /complete CLI JSON output/u],
+  input: [/evidence reply/u, /file-size allowance for the evidence/u],
+  capture: [/available host memory\. Retry/u],
+  work: [/worker CPU limits and observed signal/u],
+} as const;
+
+describe("fixed allowance recovery", () => {
+  it.each([
+    ["parser", "memory"],
+    ["count", "capacity"],
+    ["report", "transport"],
+    ["input", "file-size"],
+    ["capture", "memory"],
+    ["work", "cpu"],
+  ] as const)(
+    "projects %s allowances without the generic %s fallback",
+    (kind: FixedAllowanceKind, resource) => {
+      const allowance = `The ${kind} allowance`;
+      const error = new AnalysisResourceConstraintError(
+        "inspect_fixture",
+        resource,
+        "allowance exceeded",
+        { maximum: 1 },
+        fixedAllowanceOptions(allowance, kind),
+      );
+      const projected = projectAnalysisError(error);
+      expect(projected.retryable).toBe(false);
+      expect(projected.remediation.action).toBe(
+        fixedAllowanceRemediation(allowance, kind),
+      );
+      expect(projected.remediation.action).toContain(allowance);
+      for (const pattern of forbidden[kind])
+        expect(projected.remediation.action).not.toMatch(pattern);
+    },
+  );
+});

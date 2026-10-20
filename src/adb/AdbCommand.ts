@@ -9,6 +9,7 @@ import type {
   AnalysisCapturedOutput,
   AnalysisError,
 } from "../domain/analysisErrorBase.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   execFileBytes,
@@ -139,7 +140,13 @@ export const runAdbCapture = async (
           "memory",
           `adb output exceeded the ${String(limits.maxOutputBytes)}-byte capture budget`,
           { max_output_bytes: limits.maxOutputBytes },
-          { cause },
+          {
+            cause,
+            ...fixedAllowanceOptions(
+              "The adb output capture allowance",
+              "capture",
+            ),
+          },
         ),
       );
     const stderr = failure.stderr.trim();
