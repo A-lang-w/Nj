@@ -725,6 +725,18 @@ it.each([
     { code: true, package: true, runtime: true, apple: false },
   ],
   [
+    "tests/boundary/filesystem/clientConfigurationEnvironment.test.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "tests/boundary/filesystem/clientConfigurationLayeredEnvironment.test.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "tests/acceptance/setup/registrationRuntimeEnvironmentCli.test.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
     "scripts/verify-packed-bridge.mjs",
     {
       code: true,
