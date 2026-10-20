@@ -29,6 +29,8 @@ export default defineConfig({
         items: [
           { text: "Native binaries", link: "/native-investigation" },
           { text: "Go build metadata", link: "/go-binaries" },
+          { text: "IL2CPP metadata", link: "/il2cpp-metadata" },
+          { text: "Model artifacts", link: "/model-artifacts" },
           { text: "Rust dependencies", link: "/rust-binaries" },
           {
             text: "JavaScript and Electron",
@@ -43,6 +45,7 @@ export default defineConfig({
             text: "Web network captures",
             link: "/web-network-captures",
           },
+          { text: "Agent environments", link: "/agent-environments" },
           { text: "Electron observation", link: "/electron-observation" },
           { text: "Electron fuses", link: "/electron-fuses" },
           { text: "Process capture", link: "/process-capture" },
@@ -50,6 +53,7 @@ export default defineConfig({
           { text: "JVM bytecode", link: "/jvm-analysis" },
           { text: "Android applications", link: "/android-analysis" },
           { text: "Apple applications", link: "/apple-application-analysis" },
+          { text: "Desktop installations", link: "/desktop-applications" },
           { text: "Firmware", link: "/firmware-analysis" },
           { text: "SQLite databases", link: "/sqlite-databases" },
           { text: "Packet captures", link: "/packet-captures" },
@@ -61,6 +65,7 @@ export default defineConfig({
         collapsed: true,
         items: [
           { text: "IDA", link: "/ida-provider" },
+          { text: "Kuna", link: "/kuna-provider" },
           { text: "Ghidra on Windows", link: "/windows-ghidra-p0" },
           { text: "Ghidra DOS analysis", link: "/ghidra-dos" },
           { text: "Ghidra raw binary", link: "/raw-binary" },

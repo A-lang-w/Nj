@@ -3,7 +3,7 @@ import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import type { ProviderAvailability } from "../application/AnalysisProvider.js";
 import type { JebAnalysisAvailability } from "../application/jeb/JebAnalysisPort.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   buildCapabilityInventory,
   compactToolAvailability,
@@ -13,7 +13,7 @@ import type {
   ClientFeatureAvailability,
   ToolAvailability,
 } from "../contracts/toolOutputSchemaPrimitives.js";
-import { jsonObjectSchema } from "../domain/jsonValue.js";
+import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { createServerIdentity } from "../serverIdentity.js";
 import { mcpClientMetadata } from "./mcpClientMetadata.js";
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
@@ -38,6 +38,9 @@ export interface SessionAvailabilityProbes {
   readonly jebAnalysisAvailability?: (
     signal: AbortSignal,
   ) => Promise<JebAnalysisAvailability>;
+  readonly evmLimiterAvailability?: (
+    signal: AbortSignal,
+  ) => Promise<ProviderAvailability | undefined>;
 }
 
 /** Inputs required to register the binary session status tool. */
@@ -49,22 +52,38 @@ export interface SessionStatusToolOptions extends SessionAvailabilityProbes {
   readonly availabilityPolicy: () => AvailabilityPolicy;
 }
 
+const probeSessionAvailability = (
+  probes: SessionAvailabilityProbes,
+  signal: AbortSignal,
+): Promise<{
+  readonly android: ProviderAvailability;
+  readonly jvm: ProviderAvailability | undefined;
+  readonly adb: ProviderAvailability | undefined;
+  readonly apktool: ProviderAvailability | undefined;
+  readonly jeb: JebAnalysisAvailability | undefined;
+  readonly evmLimiter: ProviderAvailability | undefined;
+}> =>
+  Promise.all([
+    probes.androidAnalysisAvailability(signal),
+    probes.jvmAnalysisAvailability?.(signal) ?? undefined,
+    probes.adbAnalysisAvailability?.(signal) ?? undefined,
+    probes.apktoolAnalysisAvailability?.(signal) ?? undefined,
+    probes.jebAnalysisAvailability?.(signal) ?? undefined,
+    probes.evmLimiterAvailability?.(signal) ?? undefined,
+  ] as const).then(([android, jvm, adb, apktool, jeb, evmLimiter]) => ({
+    android,
+    jvm,
+    adb,
+    apktool,
+    jeb,
+    evmLimiter,
+  }));
+
 /** Register the read-only provider and target status operation. */
 export const registerSessionStatusTool = (
   options: SessionStatusToolOptions,
 ): void => {
-  const {
-    server,
-    session,
-    contract,
-    startedAt,
-    availabilityPolicy,
-    androidAnalysisAvailability,
-    jvmAnalysisAvailability,
-    adbAnalysisAvailability,
-    apktoolAnalysisAvailability,
-    jebAnalysisAvailability,
-  } = options;
+  const { server, session, contract, startedAt, availabilityPolicy } = options;
   server.registerTool(
     contract.name,
     toolRegistrationOptions(contract),
@@ -73,50 +92,41 @@ export const registerSessionStatusTool = (
         context,
         server.server,
       );
-      let androidAvailability: ProviderAvailability;
-      let jvmAvailability: ProviderAvailability | undefined;
-      let adbAvailability: ProviderAvailability | undefined;
-      let apktoolAvailability: ProviderAvailability | undefined;
-      let jebAvailability: JebAnalysisAvailability | undefined;
+      let availabilityResults: Awaited<
+        ReturnType<typeof probeSessionAvailability>
+      >;
+      let status: JsonValue;
       try {
-        const [android, jvm, adb, apktool, jeb] = await Promise.all([
-          androidAnalysisAvailability(context.mcpReq.signal),
-          jvmAnalysisAvailability?.(context.mcpReq.signal) ?? undefined,
-          adbAnalysisAvailability?.(context.mcpReq.signal) ?? undefined,
-          apktoolAnalysisAvailability?.(context.mcpReq.signal) ?? undefined,
-          jebAnalysisAvailability?.(context.mcpReq.signal) ?? undefined,
-        ] as const);
-        androidAvailability = android;
-        jvmAvailability = jvm;
-        adbAvailability = adb;
-        apktoolAvailability = apktool;
-        jebAvailability = jeb;
-      } catch (cause) {
-        if (!context.mcpReq.signal.aborted) throw cause;
-        return server.delivery.toCallToolResult(
-          err(new AnalysisCancelledError("binary_session")),
-          contract,
+        availabilityResults = await probeSessionAvailability(
+          options,
+          context.mcpReq.signal,
         );
+        status = await session.status({ signal: context.mcpReq.signal });
+      } catch (cause) {
+        if (!(cause instanceof AnalysisError)) throw cause;
+        return server.delivery.toCallToolResult(err(cause), contract);
       }
-      const status = session.status();
       const statusObject = jsonObjectSchema.parse(status);
       const toolAvailability = buildCapabilityInventory(
         status,
         {
           ...availabilityPolicy(),
-          androidAnalysisAvailability: androidAvailability,
-          ...(jvmAvailability === undefined
+          androidAnalysisAvailability: availabilityResults.android,
+          ...(availabilityResults.jvm === undefined
             ? {}
-            : { jvmAnalysisAvailability: jvmAvailability }),
-          ...(adbAvailability === undefined
+            : { jvmAnalysisAvailability: availabilityResults.jvm }),
+          ...(availabilityResults.adb === undefined
             ? {}
-            : { adbAnalysisAvailability: adbAvailability }),
-          ...(apktoolAvailability === undefined
+            : { adbAnalysisAvailability: availabilityResults.adb }),
+          ...(availabilityResults.apktool === undefined
             ? {}
-            : { apktoolAnalysisAvailability: apktoolAvailability }),
-          ...(jebAvailability === undefined
+            : { apktoolAnalysisAvailability: availabilityResults.apktool }),
+          ...(availabilityResults.jeb === undefined
             ? {}
-            : { jebAnalysisAvailability: jebAvailability }),
+            : { jebAnalysisAvailability: availabilityResults.jeb }),
+          ...(availabilityResults.evmLimiter === undefined
+            ? {}
+            : { evmLimiterAvailability: availabilityResults.evmLimiter }),
         },
         clientFeatures,
       );

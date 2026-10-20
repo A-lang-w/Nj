@@ -5,12 +5,9 @@ import type { JvmAnalysisPort } from "../application/jvm/JvmAnalysisPort.js";
 import { createJvmAnalysisProvider } from "../composition/jvm.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { JvmOperation } from "../domain/jvm/jvmAnalysis.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import type { CliInstance } from "./types.js";
 
 /** The same source-recovery requests as MCP, with caller-owned output paths. */
@@ -23,35 +20,15 @@ export const registerJvmCommands = (
   const service = new JvmAnalysisService(provider);
   const execute = (name: string, operation: JvmOperation, input: unknown) =>
     withCommandCancellation((signal) =>
-      logCliCommand(logger, name, async () => {
-        const result = await service.execute(operation, input, { signal });
-        try {
-          await provider.close();
-        } catch (cause) {
-          const cleanup =
-            cause instanceof AnalysisError
-              ? cause
-              : new ProviderCleanupError(
-                  "vineflower",
-                  [],
-                  {
-                    reason:
-                      cause instanceof Error ? cause.message : String(cause),
-                  },
-                  { operation, cause },
-                );
-          return projectAnalysisError(
-            result.ok
-              ? cleanup.retainPartialObservation(result.value)
-              : analysisErrorWithCleanupFailure(
-                  result.error,
-                  cleanup,
-                  operation,
-                ),
-          );
-        }
-        return result.ok ? result.value : projectAnalysisError(result.error);
-      }),
+      logCliCommand(logger, name, () =>
+        finishAnalysisCommand(
+          () => service.execute(operation, input, { signal }),
+          { close: () => provider.close() },
+          "vineflower",
+          operation,
+          signal,
+        ),
+      ),
     );
   cli.command(CLI_COMMANDS.inspectJvmDecompiler, {
     description:
