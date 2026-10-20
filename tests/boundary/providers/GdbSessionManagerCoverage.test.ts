@@ -145,6 +145,8 @@ it.each([
   ["run <input.txt", false],
   ["run <&-", false],
   ["run 0<&-", false],
+  ["run <&- --mode fast", false],
+  ["run 0<&- arg", false],
   ["run 0<input.txt", false],
   ["run arg<input.txt", false],
   ["run arg2<input.txt", false],
@@ -1277,7 +1279,13 @@ const startWithVerifiedInferiorTty = async (
   return { manager, sessionId: started.value.session_id, commands };
 };
 
-it.each(["run < input.txt", "run <&-", "run 0<&-"])(
+it.each([
+  "run < input.txt",
+  "run <&-",
+  "run 0<&-",
+  "run <&- --mode fast",
+  "run 0<&- arg",
+])(
   "retains detach proof for the input-only redirection %s",
   async (runCommand) => {
     const commands: string[] = [];
