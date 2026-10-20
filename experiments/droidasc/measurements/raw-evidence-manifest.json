@@ -1,0 +1,101 @@
+{
+  "scope": "Local complete provider Evidence is not committed; these hashes identify the original raw benchmark outputs. Committed summaries retain every raw timing/resource observation. Rerun the harness to produce independently inspectable Evidence.",
+  "files": [
+    {
+      "sample": "apidemos",
+      "file": "1-asc.json",
+      "sha256": "b15123b35ae77bf7cc05f68baff701516b573eea43822e828684d92cc330ee39",
+      "bytes": 69616
+    },
+    {
+      "sample": "apidemos",
+      "file": "1-jadx.json",
+      "sha256": "624c5c04068c1b5f75c2b81e5d86e6e61723756a1750a04a05aa9d707d7f6c38",
+      "bytes": 46024
+    },
+    {
+      "sample": "apidemos",
+      "file": "2-asc.json",
+      "sha256": "a0dd413efbfb82ba6e616f3ebad8bc50f8fbeb60039ad7f4d8b27b8fed9f7336",
+      "bytes": 106501
+    },
+    {
+      "sample": "apidemos",
+      "file": "2-jadx.json",
+      "sha256": "056c77be62ee13d7d9426bbcb58454ec6bb9a0740c125a8ac3b30619d63e48d8",
+      "bytes": 49785
+    },
+    {
+      "sample": "apidemos",
+      "file": "3-asc.json",
+      "sha256": "7f0550063f20cf1ea6d312a505431a7cb9199b7509cc2fc423b1379ad57c943d",
+      "bytes": 78789
+    },
+    {
+      "sample": "apidemos",
+      "file": "3-jadx.json",
+      "sha256": "1b561c479f3284ecbee2582202d80eec8d9ed648c135314c5a011bba726b5300",
+      "bytes": 37379
+    },
+    {
+      "sample": "apidemos",
+      "file": "oracle.json",
+      "sha256": "d39534c1639b7bbe78b30845be35438f043a092d9f93b6c3c007d93151dd39ae",
+      "bytes": 354891
+    },
+    {
+      "sample": "apidemos",
+      "file": "summary.json",
+      "sha256": "63187998e590b9588866e532984477dbfd74f978e4682e7c0ae762a08fa6a950",
+      "bytes": 25720
+    },
+    {
+      "sample": "signal",
+      "file": "1-asc.json",
+      "sha256": "5f79e1ea181f746386909e55d96777c2af6dee1ca611a6f8a0fbab91c6259182",
+      "bytes": 104914
+    },
+    {
+      "sample": "signal",
+      "file": "1-jadx.json",
+      "sha256": "da89f8463fed1be00d9e43ecc7e2373bce2db9998d184aa8edbe1df0a1fbf224",
+      "bytes": 76882
+    },
+    {
+      "sample": "signal",
+      "file": "2-asc.json",
+      "sha256": "6a96d3f9b70e0348fbe1c684f7463990020217cff5fc53d3b5736037a2b64a5c",
+      "bytes": 115408
+    },
+    {
+      "sample": "signal",
+      "file": "2-jadx.json",
+      "sha256": "6144118b3a7383a2c2c4d6c59fc636e48930f324a1a295dd8160c04a669899e4",
+      "bytes": 81412
+    },
+    {
+      "sample": "signal",
+      "file": "3-asc.json",
+      "sha256": "cd2e2d75ac6b2829e166bff4da8a00c20b0355292d406a4d59a27f733943edaf",
+      "bytes": 101452
+    },
+    {
+      "sample": "signal",
+      "file": "3-jadx.json",
+      "sha256": "a5c9724a17aa0824831cf02623134410494be8d4149662d2ff6d59922be64eae",
+      "bytes": 75479
+    },
+    {
+      "sample": "signal",
+      "file": "oracle.json",
+      "sha256": "7e46a0b4965fa1c89bf73501cd2da51342f125160897b71ca585b5e1434f877f",
+      "bytes": 3427536
+    },
+    {
+      "sample": "signal",
+      "file": "summary.json",
+      "sha256": "f9548b3b520ca129fda47746533b09dc2ae9f1dce73ee184ab7b45b8a70e02e9",
+      "bytes": 38567
+    }
+  ]
+}

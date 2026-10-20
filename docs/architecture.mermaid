@@ -44,7 +44,7 @@ graph TD
         GDB["src/gdb/<br/>Persistent GDB/MI sessions<br/>owned process lifecycle and target state"]
 
         FIRMWARE["src/firmware/<br/>Binwalk / Unblob adapters<br/>owned processes, report normalization, private extraction"]
-        ANDROID["src/android/<br/>Static APK adapter<br/>owned SDK stdio, pinned headless JADX, normalization"]
+        ANDROID["src/android/<br/>Static APK adapters<br/>default headless JADX; opt-in DroidASC class discovery<br/>owned processes, identity and normalization"]
         REFERENCE["src/reference/<br/>Filesystem reference-source reader<br/>bounded traversal, validation, errors"]
     end
 

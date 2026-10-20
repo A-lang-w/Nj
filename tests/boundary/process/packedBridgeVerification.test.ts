@@ -26,12 +26,17 @@ const packedFiles = [
   ...Object.values(GHIDRA_BRIDGE_SOURCES).map(
     (name) => `package/bridge/ghidra/${name}`,
   ),
+  "package/bridge/android/rea_asc.py",
 ];
 const hopper = packedFiles[0]!;
 const validSource =
   '# Unicode source: 雨\nraise RuntimeError("Packed source must never execute")\n';
 
-async function fixture(source: string = validSource, omitHopper = false) {
+async function fixture(
+  source: string = validSource,
+  omitHopper = false,
+  sourceMember = hopper,
+) {
   const directory = await createTestTempDirectory("rea-packed-bridge-");
   const staging = join(directory, "source");
   const workspace = join(directory, "workspace");
@@ -40,7 +45,7 @@ async function fixture(source: string = validSource, omitHopper = false) {
     if (omitHopper && member === hopper) continue;
     const path = join(staging, member);
     await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, member === hopper ? source : "fixture\n");
+    await writeFile(path, member === sourceMember ? source : "fixture\n");
   }
   const tarball = join(directory, "packed bridges.tgz");
   await exec("tar", ["-czf", tarball, "-C", staging, "package"]);
@@ -84,6 +89,17 @@ it("reports invalid packed Python syntax with the member filename", async () => 
     stderr: expect.stringMatching(/hopper_bridge\.py[\s\S]*SyntaxError/u),
   });
   expect(await readdir(input.workspace)).toEqual([]);
+});
+
+it("reports invalid packed ASC Python without executing the provider", async () => {
+  const input = await fixture(
+    "def broken(:\n",
+    false,
+    "package/bridge/android/rea_asc.py",
+  );
+  await expect(verifyPackedBridge(input)).rejects.toMatchObject({
+    stderr: expect.stringMatching(/rea_asc\.py[\s\S]*SyntaxError/u),
+  });
 });
 
 it.each(["valid", "invalid"] as const)(

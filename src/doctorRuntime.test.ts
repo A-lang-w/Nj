@@ -202,6 +202,23 @@ const it = test.skipIf(process.platform === "win32");
 
 it("exposes jadx through the doctor provider selector", () => {
   expect(DOCTOR_PROVIDER_IDS).toContain("jadx");
+  expect(DOCTOR_PROVIDER_IDS).toContain("asc");
+});
+
+it("reports unconfigured ASC independently without persisting ambient Python settings", async () => {
+  const host = createSystemDoctorHost({
+    PYTHONPATH: "/not-a-selected-registration",
+  });
+  const inspections = await host.providerInspections?.();
+  expect(inspections?.find(({ id }) => id === "asc")).toMatchObject({
+    configured: false,
+    available: false,
+    registrationEnvironment: {},
+  });
+  expect(providerRegistrationEnvironment(inspections ?? [])).not.toHaveProperty(
+    "PYTHONPATH",
+  );
+  await host.close?.();
 });
 
 it("carries a validated REA_JADX_MCP_JAR into the provider registration environment", async () => {

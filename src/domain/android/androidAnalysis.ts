@@ -5,6 +5,12 @@ const target = {
   path: localPathStringSchema.describe(
     "Local APK path; the target is never executed",
   ),
+  backend: z
+    .enum(["jadx", "asc"])
+    .optional()
+    .describe(
+      "Explicit Android backend; omitted keeps JADX. ASC currently supports class discovery only and does not fall back to JADX.",
+    ),
 };
 const classTarget = {
   ...target,
@@ -121,6 +127,16 @@ const engine = z.strictObject({
   heap_limit_mib: z.number().int().positive().nullable(),
 });
 const common = { engine };
+const classSearchResult = z.strictObject({
+  ...common,
+  query: z.string(),
+  total_classes: z.number().int().nonnegative(),
+  matches: z.array(z.string()),
+  duplicate_names: z.array(
+    z.strictObject({ name: z.string(), occurrences: z.number().int().min(2) }),
+  ),
+  coverage: z.literal("complete"),
+});
 
 /** Portable observations with explicit decompiler and identity limitations. */
 export const androidResultSchemas = {
@@ -137,19 +153,16 @@ export const androidResultSchemas = {
     resource_count: z.number().int().nonnegative(),
     signature_verification: z.literal("not_performed"),
   }),
-  search_android_classes: z.strictObject({
-    ...common,
-    query: z.string(),
-    total_classes: z.number().int().nonnegative(),
-    matches: z.array(z.string()),
-    duplicate_names: z.array(
-      z.strictObject({
-        name: z.string(),
-        occurrences: z.number().int().min(2),
-      }),
-    ),
-    coverage: z.literal("complete"),
-  }),
+  search_android_classes: z.union([
+    classSearchResult,
+    classSearchResult.extend({
+      inventory_kind: z
+        .literal("dex_definitions")
+        .describe(
+          "ASC inventories raw DEX definitions including inner/synthetic classes, not JADX top-level aliases. Omitted preserves the existing JADX inventory.",
+        ),
+    }),
+  ]),
   inspect_android_class: z.strictObject({
     ...common,
     class_name: z.string(),
