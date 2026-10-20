@@ -1017,7 +1017,7 @@ it("rejects duplicate CArchive member names before projecting PYZ children", asy
   );
   await expect(scanCanonicalArtifactInventory(path)).rejects.toMatchObject({
     reason: "integrity",
-    message: "Duplicate CArchive member name: PYZ.pyz",
+    message: "Duplicate CArchive member name at table index 1",
   });
 });
 

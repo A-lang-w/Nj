@@ -43,6 +43,9 @@ same logical path as metadata remains independently extractable.
 Both declaration types require empty payloads and no compression. Their query
 paths do not participate in filesystem collision checks, directory ancestry or
 source-map target lookup; their parent identifies the declaring container.
+Complete authenticated inventory page sets preserve producer identities in any
+merge order, including metadata/file aliases. Malformed TOC diagnostics name the
+table index; original names remain available in the supplied artifact.
 
 Request `detail: "summary"` for a compact inspection, then query retained
 Evidence with `inspect_analysis_view`. An inventory view can select

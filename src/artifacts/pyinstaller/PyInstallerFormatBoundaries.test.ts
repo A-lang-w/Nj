@@ -6,6 +6,7 @@ import { expect, it, vi } from "vitest";
 import { withPyInstallerReader } from "../../../tests/fixtures/pyinstallerReader.js";
 import {
   scanCanonicalArtifactInventory,
+  inventoryArtifact,
   materializeArtifactInventory,
 } from "../../../tests/fixtures/artifactInventory.js";
 import {
@@ -14,10 +15,176 @@ import {
   PYTHON_39_MAGIC,
 } from "./CArchive.fixture.js";
 import { readPyzArchive } from "./PyzArchive.js";
+import { createEvidence } from "../../domain/evidence.js";
+import { jsonValueSchema } from "../../domain/jsonValue.js";
+import { parseArtifactInventoryEvidence } from "../../domain/artifactInventoryEvidence.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
 } from "../ArtifactReader.js";
+
+it.each([true, false])(
+  "authenticates mixed-kind duplicate pages in any merge order (option first: %s)",
+  async (optionFirst) => {
+    const logical = `__pyinstaller__/runtime-options/${optionFirst ? 0 : 1}`;
+    const option = {
+      name: "pyi-option",
+      typeCode: "o",
+      payload: Buffer.alloc(0),
+      compress: false,
+    };
+    const file = {
+      name: logical,
+      typeCode: "x",
+      payload: Buffer.from("first"),
+      compress: false,
+    };
+    await withPyInstallerReader(
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 309,
+        members: [
+          ...(optionFirst ? [option, file] : [file, option]),
+          {
+            ...file,
+            name: logical.replaceAll("/", "\\"),
+            payload: Buffer.from("second"),
+          },
+        ],
+      }),
+      async (_reader, _handle, path) => {
+        const inventory = await inventoryArtifact(path);
+        const group = inventory.occurrences.filter(
+          (row) => row.logical_path === logical,
+        );
+        expect(group).toHaveLength(3);
+        const pages = group.map((row, index) =>
+          createEvidence(
+            {
+              path,
+              sha256: inventory.manifest.root_sha256,
+              format: "pyinstaller",
+            },
+            {
+              id: "rea-artifact-graph",
+              name: "artifact inventory",
+              version: "1",
+            },
+            {
+              operation: "inventory_artifact",
+              parameters: { page: index },
+              confidence: "observed",
+              authority: "shipped-artifact",
+              result: jsonValueSchema.parse({
+                ...inventory,
+                nodes: index === 0 ? inventory.nodes : [],
+                edges: index === 0 ? inventory.edges : [],
+                occurrences:
+                  index === 0
+                    ? [
+                        ...inventory.occurrences.filter(
+                          (item) => item.logical_path !== logical,
+                        ),
+                        row,
+                      ]
+                    : [row],
+              }),
+            },
+          ),
+        );
+        for (const order of [
+          [0, 1, 2],
+          [0, 2, 1],
+          [1, 0, 2],
+          [1, 2, 0],
+          [2, 0, 1],
+          [2, 1, 0],
+        ]) {
+          const merged = parseArtifactInventoryEvidence(
+            order.map((index) => pages[index]),
+          ).inventory;
+          expect(merged.complete).toBe(true);
+          expect(merged.manifest).toEqual(inventory.manifest);
+          expect(merged.occurrences).toEqual(inventory.occurrences);
+        }
+      },
+    );
+  },
+);
+
+it.each(["duplicate", "size", "offset", "overlap"])(
+  "bounds %s diagnostics for large nondeclaration names",
+  async (mode) => {
+    const name = "member".repeat(200_000);
+    const first = {
+      name: mode === "overlap" ? name + "-a" : name,
+      typeCode: "x",
+      payload: Buffer.from("body"),
+      compress: false,
+      ...(mode === "size" ? { declaredUncompressedSize: 5 } : {}),
+    };
+    const bytes = cArchiveExecutable({
+      layout: "2.1",
+      pythonVersion: 309,
+      members:
+        mode === "duplicate" || mode === "overlap"
+          ? [
+              first,
+              { ...first, name: mode === "duplicate" ? name : name + "-b" },
+            ]
+          : [first],
+    });
+    const toc = 64 + bytes.readUInt32BE(bytes.length - 88 + 12);
+    if (mode === "offset")
+      bytes.writeUInt32BE(
+        bytes.readUInt32BE(bytes.length - 88 + 12) + 1,
+        toc + 4,
+      );
+    if (mode === "overlap")
+      bytes.writeUInt32BE(0, toc + bytes.readUInt32BE(toc) + 4);
+    await withPyInstallerReader(bytes, async (_reader, _handle, path) => {
+      const failure: unknown = await scanCanonicalArtifactInventory(path).then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+      expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+      if (!(failure instanceof ArtifactReaderFailure))
+        throw new Error("Expected parser failure");
+      expect(failure.reason).toBe(mode === "offset" ? "format" : "integrity");
+      expect(failure.message.length).toBeLessThan(128);
+      expect(failure.message).toContain(
+        `table index ${mode === "duplicate" || mode === "overlap" ? 1 : 0}`,
+      );
+    });
+  },
+);
+
+it.each(["empty", "span"])(
+  "bounds PYZ %s diagnostics for a maximum-size marshal name",
+  async (mode) => {
+    const image = pyzArchive({
+      magic: PYTHON_39_MAGIC,
+      modules: [
+        { name: "n".repeat(65_536), typeCode: 0, body: Buffer.from("body") },
+      ],
+    });
+    image.writeInt32LE(
+      mode === "empty" ? 0 : image.length + 1,
+      image.length - 4,
+    );
+    await withPyInstallerReader(image, async (_reader, handle) => {
+      const parsed = await readPyzArchive(handle, 0, image.length);
+      const message = !parsed.ok
+        ? parsed.error.message
+        : parsed.value.kind === "opaque"
+          ? parsed.value.limitation
+          : undefined;
+      expect(message).toBeDefined();
+      expect(message?.length).toBeLessThan(256);
+      expect(message).toContain("table index 0");
+    });
+  },
+);
 
 it("keeps malformed-declaration diagnostics bounded while identifying the TOC row", async () => {
   await withPyInstallerReader(

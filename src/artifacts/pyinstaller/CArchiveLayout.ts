@@ -339,7 +339,7 @@ const validateCArchiveMembers = (
         return err(
           pyInstallerFailure(
             "integrity",
-            `Duplicate CArchive member name: ${entry.name}`,
+            `Duplicate CArchive member name at table index ${String(entry.index)}`,
           ),
         );
       names.add(entry.name);
@@ -351,21 +351,21 @@ const validateCArchiveMembers = (
       return err(
         pyInstallerFailure(
           "integrity",
-          `Stored CArchive member size disagrees with its table entry: ${entry.name}`,
+          `Stored CArchive member size disagrees with its table entry at table index ${String(entry.index)}`,
         ),
       );
     if (entry.offset > tocOffset)
       return err(
         pyInstallerFailure(
           "format",
-          `CArchive member offset is outside the archive: ${entry.name}`,
+          `CArchive member offset is outside the archive at table index ${String(entry.index)}`,
         ),
       );
   }
   const ranges = entries
     .filter((entry) => entry.compressedSize > 0)
     .map((entry) => ({
-      name: entry.name,
+      index: entry.index,
       start: entry.offset,
       end: entry.offset + entry.compressedSize,
     }))
@@ -380,7 +380,7 @@ const validateCArchiveMembers = (
       return err(
         pyInstallerFailure(
           "integrity",
-          `CArchive member extends outside the archive or overlaps another member: ${range.name}`,
+          `CArchive member extends outside the archive or overlaps another member at table index ${String(range.index)}`,
         ),
       );
     occupied = range.end;

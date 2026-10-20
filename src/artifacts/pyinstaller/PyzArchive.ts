@@ -235,7 +235,10 @@ const onePyzEntry = (
     );
   if (typeCode !== 3 && length === 0)
     return err(
-      pyInstallerFailure("format", `PYZ entry ${name} has no compressed bytes`),
+      pyInstallerFailure(
+        "format",
+        `PYZ entry at table index ${String(index)} has no compressed bytes`,
+      ),
     );
   if (
     length < 0 ||
@@ -247,7 +250,7 @@ const onePyzEntry = (
     return err(
       pyInstallerFailure(
         "integrity",
-        `PYZ entry ${name} extends outside the archive payload region`,
+        `PYZ entry at table index ${String(index)} extends outside the archive payload region`,
       ),
     );
   return ok({
