@@ -33,7 +33,10 @@ async function assertStaleRetry(
   process.kill("SIGUSR1");
   expect(await inferior.waitForExit(1_000)).toBe(true);
   const endedRetry = await manager.retryCleanupFailures();
-  expect(endedRetry.ok).toBe(true);
+  expect(endedRetry.ok).toBe(false);
+  expect(manager.status(sessionId)).toBeDefined();
+  const finalRetry = await manager.retryCleanupFailures();
+  expect(finalRetry.ok).toBe(true);
   expect(manager.status(sessionId)).toBeUndefined();
 }
 
@@ -46,7 +49,7 @@ function createStopProcess(
       ...args: Parameters<typeof stopOwnedDebuggerProcess>
     ) => ReturnType<typeof stopOwnedDebuggerProcess>) {
   return async (session, name, options) => {
-    if (mode === "stale-retry" && attempts.value++ < 2) {
+    if (mode === "stale-retry" && attempts.value++ < 3) {
       await session.detachInferior?.();
       return {
         status: "incomplete",

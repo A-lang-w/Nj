@@ -1207,12 +1207,12 @@ export class RizinDebugSessionManager {
       });
       activeInferiors.push([fd, pid]);
     }
-    session.knownInferiorIdentities.clear();
     for (const [pid, identity] of currentIdentities)
       session.knownInferiorIdentities.set(pid, identity);
     session.inferiorInventoryComplete = true;
     if (activeInferiors.length === 0) {
-      session.knownInferiorIdentities.clear();
+      // Keep previously proven identities until the debugger is fully stopped.
+      // A stop timeout can leave this stale ptrace row for another cleanup retry.
       return { status: "no-inferior" };
     }
     if (activeInferiors.length !== 1)
