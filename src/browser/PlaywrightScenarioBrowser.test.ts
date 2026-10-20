@@ -309,6 +309,51 @@ it("places Playwright's host artifact directory on the Termux temp directory", a
   expect(process.env.TEMP).toBe("");
 });
 
+it("publishes a writable Playwright browsers path before an Android launch", async () => {
+  const prefix = await createTestTempDirectory("rea-termux-playwright-");
+  vi.stubEnv("PLAYWRIGHT_BROWSERS_PATH", "");
+  Object.defineProperty(process, "platform", { value: "android" });
+  await expect(
+    openPlaywrightScenarioBrowser(
+      androidLaunchScenario(join(prefix, "missing-chromium")),
+      { PREFIX: prefix, TMPDIR: "", TMP: "", TEMP: "" },
+    ),
+  ).rejects.toThrow(/executable doesn't exist/);
+  expect(process.env.PLAYWRIGHT_BROWSERS_PATH).toBe(
+    join(prefix, "tmp", "ms-playwright"),
+  );
+});
+
+it("launches Termux Chromium from the binary next to its ICU data", async () => {
+  const prefix = await createTestTempDirectory("rea-termux-icu-");
+  const wrapper = join(prefix, "bin", "chromium-browser");
+  const chrome = join(prefix, "lib", "chromium", "chrome");
+  await mkdir(join(prefix, "bin"), { recursive: true });
+  await mkdir(join(prefix, "lib", "chromium"), { recursive: true });
+  await writeFile(wrapper, "#!/bin/sh\n");
+  await writeFile(chrome, "#!/bin/sh\n");
+  Object.defineProperty(process, "platform", { value: "android" });
+  let executablePath: string | undefined;
+  await expect(
+    openPlaywrightScenarioBrowser(
+      androidLaunchScenario(wrapper),
+      { PREFIX: prefix, TMPDIR: "", TMP: "", TEMP: "" },
+      {
+        launcher: {
+          connectOverCDP: async () => {
+            throw new Error("Unexpected connection");
+          },
+          launchPersistentContext: async (_profile, options) => {
+            executablePath = options?.executablePath;
+            throw new Error("launch boundary reached");
+          },
+        },
+      },
+    ),
+  ).rejects.toThrow("launch boundary reached");
+  expect(executablePath).toBe(chrome);
+});
+
 it("places each overlapping Playwright artifact directory in its own Termux temp", async () => {
   await import("playwright-core");
   const firstRoot = await createTestTempDirectory("rea-termux-artifacts-a-");

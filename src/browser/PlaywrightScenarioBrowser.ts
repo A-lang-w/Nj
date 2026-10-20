@@ -6,10 +6,11 @@ import {
   AnalysisCleanupLease,
 } from "../artifacts/AnalysisCleanupLease.js";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import type {
   Browser,
@@ -318,6 +319,46 @@ const androidScenarioTempDirectory = (
   if (explicit !== undefined) return explicit;
   const prefix = nonemptyEnvironmentValue(environment, "PREFIX");
   return prefix === undefined ? undefined : join(prefix, "tmp");
+};
+
+/**
+ * Playwright 1.58.2 throws `Unsupported platform: android` while resolving
+ * its browser cache unless `PLAYWRIGHT_BROWSERS_PATH` is already set. The
+ * path is process-wide, so it is published once from the first writable
+ * Android temp directory and left for later launches.
+ */
+const publishAndroidPlaywrightBrowsersPath = async (
+  directory: string | undefined,
+): Promise<void> => {
+  if (
+    process.platform !== "android" ||
+    directory === undefined ||
+    nonemptyEnvironmentValue(process.env, "PLAYWRIGHT_BROWSERS_PATH") !==
+      undefined
+  )
+    return;
+  const browsersPath = join(directory, "ms-playwright");
+  await mkdir(browsersPath, { recursive: true });
+  process.env.PLAYWRIGHT_BROWSERS_PATH = browsersPath;
+};
+
+/**
+ * Termux's `chromium-browser` wrapper lives in `$PREFIX/bin`. Chromium then
+ * looks for `icudtl.dat` next to that wrapper and exits. The real binary
+ * sits next to the ICU file in `$PREFIX/lib/chromium`.
+ */
+const resolveAndroidChromiumExecutable = async (
+  executablePath: string,
+): Promise<string> => {
+  const resolved = resolve(executablePath);
+  if (process.platform !== "android") return resolved;
+  const sibling = join(dirname(resolved), "..", "lib", "chromium", "chrome");
+  try {
+    await access(sibling, fsConstants.F_OK);
+    return sibling;
+  } catch {
+    return resolved;
+  }
 };
 
 const nodeOs = createRequire(import.meta.url)(
@@ -726,6 +767,10 @@ export const openPlaywrightScenarioBrowser = async (
     readonly retainCleanup?: (lease: AnalysisCleanupLease) => void;
   } = {},
 ): Promise<OpenedScenarioBrowser> => {
+  if (scenario.browser.mode === "launch")
+    await publishAndroidPlaywrightBrowsersPath(
+      androidScenarioTempDirectory(environment),
+    );
   // Load Playwright only when a scenario opens; MCP startup stays off its module graph.
   const launcher =
     options.launcher ?? (await import("playwright-core")).chromium;
@@ -748,9 +793,12 @@ export const openPlaywrightScenarioBrowser = async (
   let context: BrowserContext;
   try {
     await chmod(profilePath, 0o700);
+    const executablePath = await resolveAndroidChromiumExecutable(
+      launchedBrowser.executable_path,
+    );
     context = await withAndroidHostTempDirectory(preferredTemp, () =>
       launcher.launchPersistentContext(profilePath, {
-        executablePath: resolve(launchedBrowser.executable_path),
+        executablePath,
         headless: launchedBrowser.headless,
         acceptDownloads: false,
         viewport: {
