@@ -659,7 +659,7 @@ describe("LC_LAZY_LOAD_DYLIB_INFO payload budget", () => {
 
   it("parses distinct non-nested lazy-info payloads under the dependency limit", async () => {
     const count = 8;
-    const payloadSize = 25;
+    const payloadSize = 26;
     const payload = new Uint8Array(payloadSize);
     new DataView(payload.buffer).setUint32(0, 24, true);
     new DataView(payload.buffer).setUint32(20, 24, true);
@@ -834,6 +834,32 @@ describe("LC_LAZY_LOAD_DYLIB_INFO string bounds", () => {
     expect(await read(imageFor(over, 1))).toMatchObject({
       status: "unsupported",
       reason: expect.stringContaining("string validation"),
+    });
+  });
+});
+
+describe("LC_LAZY_LOAD_DYLIB_INFO path terminator", () => {
+  it("rejects a load path whose NUL is the payload's final byte", async () => {
+    const payload = new Uint8Array(27);
+    const view = new DataView(payload.buffer);
+    view.setUint32(0, 24, true);
+    view.setUint32(20, 24, true);
+    payload[24] = 0x61;
+    const imageFor = (size: number) => {
+      const image = machoImage({
+        commands: [lazyLoadDylibInfoCommand(0, size)],
+      });
+      const bytes = new Uint8Array(image.length + payload.length);
+      bytes.set(image);
+      bytes.set(payload, image.length);
+      new DataView(bytes.buffer).setUint32(32 + 8, image.length, true);
+      new DataView(bytes.buffer).setUint32(32 + 12, size, true);
+      return bytes;
+    };
+    expect((await read(imageFor(payload.length))).status).toBe("parsed");
+    expect(await read(imageFor(26))).toMatchObject({
+      status: "malformed",
+      reason: expect.stringContaining("unterminated"),
     });
   });
 });
