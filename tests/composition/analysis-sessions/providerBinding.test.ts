@@ -166,6 +166,7 @@ describe("target-bound provider routing", () => {
       signal: controller.signal,
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(beta.profileResolutions).toBe(0);
     controller.abort();
     pending.resolve(successfulExecution("alpha"));
 
