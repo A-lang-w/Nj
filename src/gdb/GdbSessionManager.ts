@@ -1254,17 +1254,17 @@ export class GdbSessionManager {
           return err(new AnalysisInputError("gdb_console"));
         if (!interrupt) {
           session.noInferiorVerified = false;
+          // Execution commands keep the inventory and any incomplete-capture
+          // marker; MI does not replay group-start events for a resumed target.
           if (isGdbTargetIdentityBoundaryCommand(command)) {
             session.inferiorIdentityCaptureUntrusted = true;
             this.#clearInferiorIdentities(session);
-          } else if (isGdbExecutionCommand(command)) {
-            // Resume/step commands operate on the current inferior. MI does not
-            // emit a new thread-group-started event when that same target runs.
-            session.inferiorIdentityCaptureFailed = false;
           } else if (isGdbTargetDispositionCommand(command)) {
             // Keep the current inventory until the correlated disposition
             // result decides whether every known inferior was covered.
-          } else {
+          } else if (!isGdbExecutionCommand(command)) {
+            // An unrecognized command can change targets without a structured
+            // event that safely rebuilds the process identity inventory.
             this.#clearInferiorIdentities(session);
             session.inferiorIdentityCaptureFailed = true;
           }

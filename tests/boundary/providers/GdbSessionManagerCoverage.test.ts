@@ -985,14 +985,19 @@ it("retains the inferior identity across continue when GDB exits", async () => {
   const inferiorPid = "424243";
   let alive = true;
   let identityReads = 0;
+  let continueWasDispatched!: () => void;
+  const continued = new Promise<void>((resolve) => {
+    continueWasDispatched = resolve;
+  });
   const fake = createFakeSpawner((child, token, command) => {
     if (command.includes('console "run"'))
       child.stdout.write(
-        `=thread-group-started,id="i1",pid="${inferiorPid}"\n${token}^running\n*running,thread-id="all"\n`,
+        `=thread-group-started,id="i1",pid="${inferiorPid}"\n${token}^running\n*running,thread-id="all"\n*stopped,reason="breakpoint-hit",thread-id="1",stopped-threads="all"\n`,
       );
-    else if (command.includes('console "continue"'))
+    else if (command.includes('console "continue"')) {
+      continueWasDispatched();
       child.stdout.write(`${token}^running\n*running,thread-id="all"\n`);
-    else child.stdout.write(`${token}^done\n`);
+    } else child.stdout.write(`${token}^done\n`);
   });
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
     readInferiorProcessStartTime: async (pid) => {
@@ -1001,18 +1006,57 @@ it("retains the inferior identity across continue when GDB exits", async () => {
     },
   });
   const started = await expectGdbSessionStarted(manager);
-  const firstRun = manager.execute(started.value.session_id, "run");
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  expect((await manager.execute(started.value.session_id, "run")).ok).toBe(
+    true,
+  );
   const resumed = manager.execute(started.value.session_id, "continue");
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  await continued;
   fake.children[0]?.exitLeader(9);
   fake.children[0]?.closeInheritedOutput();
-  await Promise.all([firstRun, resumed]);
+  await resumed;
 
   alive = false;
   const closed = await manager.close(started.value.session_id);
   expect(identityReads).toBeGreaterThan(0);
   expect(closed.ok).toBe(true);
+}, 10_000);
+
+it("retains incomplete identity capture across continue and debugger exit", async () => {
+  const capturedPid = "424244";
+  const uncapturedPid = "424245";
+  let alive = true;
+  let continueWasDispatched!: () => void;
+  const continued = new Promise<void>((resolve) => {
+    continueWasDispatched = resolve;
+  });
+  const fake = createFakeSpawner((child, token, command) => {
+    if (command.includes('console "run"'))
+      child.stdout.write(
+        `=thread-group-started,id="i1",pid="${capturedPid}"\n=thread-group-started,id="i2",pid="${uncapturedPid}"\n${token}^running\n*running,thread-id="all"\n*stopped,reason="breakpoint-hit",thread-id="1",stopped-threads="all"\n`,
+      );
+    else if (command.includes('console "continue"')) {
+      continueWasDispatched();
+      child.stdout.write(`${token}^running\n*running,thread-id="all"\n`);
+    } else child.stdout.write(`${token}^done\n`);
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    readInferiorProcessStartTime: async (pid) =>
+      pid === capturedPid && alive ? "captured-inferior" : null,
+  });
+  const started = await expectGdbSessionStarted(manager);
+  expect((await manager.execute(started.value.session_id, "run")).ok).toBe(
+    true,
+  );
+  const resumed = manager.execute(started.value.session_id, "continue");
+  await continued;
+  alive = false;
+  fake.children[0]?.exitLeader(9);
+  fake.children[0]?.closeInheritedOutput();
+  await resumed;
+
+  const closed = await manager.close(started.value.session_id);
+  expect(closed.ok).toBe(false);
+  expect(manager.status(started.value.session_id)).toBeDefined();
 }, 10_000);
 
 it("does not release target ownership when kill covers only one known inferior", async () => {
