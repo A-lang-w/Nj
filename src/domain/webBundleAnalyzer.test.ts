@@ -4770,6 +4770,131 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "caught uninitialized var alias does not activate callback",
+    "const connect=()=>new Socket(URL);try{alias()}catch{}var alias=connect;const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
+    "undefined getter rest copy permits later default wait",
+    "(async()=>{const[{...copy},next=await 0,last]=(function*(){yield{get x(){return undefined}};yield undefined;new Socket(URL);yield 1;})();})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "caught uninitialized alias does not activate callback",
+    "const connect=()=>new Socket(URL);try{alias()}catch{}const alias=connect;const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
+    "caught uninitialized chain alias does not activate callback",
+    "const connect=()=>new Socket(URL);const first=connect;try{alias()}catch{}const alias=first;const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
+    "caught uninitialized call receiver does not activate callback",
+    "const connect=()=>new Socket(URL);try{alias.call(null)}catch{}const alias=connect;const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
+    "caught uninitialized bind receiver does not activate callback",
+    "const connect=()=>new Socket(URL);try{alias.bind(null)()}catch{}const alias=connect;const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
+    "initialized alias still owns early activation",
+    "const connect=()=>new Socket(URL);const alias=connect;try{alias()}catch{}const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "hoisted function still owns early activation",
+    "try{connect()}catch{}function connect(){new Socket(URL)}const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "nested caller cannot activate uninitialized alias",
+    "const connect=()=>new Socket(URL);function run(){try{alias()}catch{}}run();const alias=connect;const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
+    "nested caller preserves initialized alias activation",
+    "const connect=()=>new Socket(URL);const alias=connect;function run(){alias()}try{run()}catch{}const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "getter undefined selects mandatory default wait",
+    "(async()=>{const [{x=await 0},next]=(function*(){yield {get x(){return undefined;}};new Socket(URL);yield 1;})();})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "getter void result selects mandatory default wait",
+    "(async()=>{const [{x=await 0},next]=(function*(){yield {get x(){return void 0;}};new Socket(URL);yield 1;})();})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "getter nonundefined result skips default wait",
+    "(async()=>{const [{x=await 0},next]=(function*(){yield {get x(){return 0;}};new Socket(URL);yield 1;})();})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "shadowed undefined getter does not select wait",
+    "((undefined)=>{(async()=>{const [{x=await 0},next]=(function*(){yield {get x(){return undefined;}};new Socket(URL);yield 1;})();})();})(0);const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "throwing getter cannot complete default selection",
+    "(async()=>{const [{x=await 0},next]=(function*(){yield {get x(){throw 0;}};new Socket(URL);yield 1;})();})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "throwing undefined prefix cannot select wait",
+    "(async()=>{const [{x=await 0},next]=(function*(){yield {get x(){return (null.value,undefined);}};new Socket(URL);yield 1;})();})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "bare getter return selects mandatory default wait",
+    "(async()=>{const [{x=await 0},next]=(function*(){yield {get x(){return;}};new Socket(URL);yield 1;})();})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "selected if wait precedes finalizer",
+    "(async()=>{try{if(true){await 0}}finally{new Socket(URL)}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "selected else wait precedes finalizer",
+    "(async()=>{try{if(false){}else{await 0}}finally{new Socket(URL)}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "unselected wait cannot defer finalizer",
+    "(async()=>{try{if(false){await 0}}finally{new Socket(URL)}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "uncertain branch cannot prove finalizer wait",
+    "(async()=>{try{if(globalThis.flag){await 0}}finally{new Socket(URL)}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "selected throw cannot credit unreachable wait",
+    "(async()=>{try{if(true){null.value;await 0}}finally{new Socket(URL)}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "nested selected branch wait precedes finalizer",
+    "(async()=>{try{if(true){if(false){}else{await 0}}}finally{new Socket(URL)}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "selected conditional wait precedes finalizer",
+    "(async()=>{try{true?await 0:0}finally{new Socket(URL)}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "selected logical wait precedes finalizer",
+    "(async()=>{try{true&&await 0}finally{new Socket(URL)}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
     "replaced call leaves parameter generator dormant",
     "Function.prototype.call=()=>{};(function([x]){}).call(null,(function*(){new Socket(URL);yield 0;})());const Socket=globalThis.WebSocket;",
     true,

@@ -321,16 +321,25 @@ const patternPropertyValue = (
     };
   if (selected.kind === "undefined") return { known: true };
   if (selected.kind === "accessor") {
-    return patternAccessorValue(selected.node);
+    return patternAccessorValue(selected.node, state);
   }
   return { known: false };
 };
 
 /** A completed undefined getter result is not an unsupported accessor body. */
-const patternAccessorValue = (node: t.ObjectMethod): PatternValue => {
+const patternAccessorValue = (
+  node: t.ObjectMethod,
+  state: JavaScriptSemanticAnalysisState,
+): PatternValue => {
   const result = semanticDirectFunctionResult(node);
   if (result.kind === "undefined") return { known: true };
-  return result.kind === "value" && syntaxEvaluationCannotThrow(result.node)
+  return result.kind === "value" &&
+    (syntaxEvaluationCannotThrow(result.node) ||
+      isUnshadowedGlobal(
+        unwrapJavaScriptExpression(result.node).node,
+        state,
+        "undefined",
+      ))
     ? { known: true, node: result.node }
     : { known: false, completionUnknown: true };
 };
@@ -462,7 +471,7 @@ const patternCompletedSuspension = (
               slot.kind === "unknown" ||
               slot.kind === "invalid" ||
               (slot.kind === "accessor" &&
-                patternAccessorValue(slot.node).completionUnknown),
+                patternAccessorValue(slot.node, state).completionUnknown),
           )
         )
           return combinePatternCompletion(phase, "unproven");

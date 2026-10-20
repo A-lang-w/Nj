@@ -313,12 +313,38 @@ const webSocketInvocationHelperIntact = (
   );
 };
 
+/** Exact aliases identify a value; each read still needs its initialization event. */
+const webSocketAliasesInitialized = (
+  exact: NonNullable<ReturnType<typeof semanticExactValueIdentity>>,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  exact.aliases.every(({ read, initializer }) =>
+    t.isFunctionDeclaration(initializer.node)
+      ? semanticExpressionCannotThrow(read, state, (node) =>
+          webSocketExecutionContexts(node, state),
+        )
+      : semanticInitializerPrecedesRead({
+          initializer: initializer.node,
+          read,
+          ...(initializer.bindingNode === undefined
+            ? {}
+            : { bindingNode: initializer.bindingNode }),
+          parents: state.parentsByNode,
+          initializerContexts: webSocketExecutionContexts(
+            initializer.node,
+            state,
+          ),
+          readContexts: webSocketExecutionContexts(read, state),
+        }) === true,
+  );
+
 /** Normalize actual invocation separately from creating a bound function. */
 const webSocketStoredCallTarget = (
   raw: t.Node,
   state: JavaScriptSemanticAnalysisState,
   capture: t.Node,
   parameters: ReadonlyMap<string, readonly t.Function[]>,
+  checkInitialization = true,
 ): t.Node | undefined => {
   let current = unwrapJavaScriptExpression(raw).node;
   if (t.isMemberExpression(current) || t.isOptionalMemberExpression(current)) {
@@ -345,6 +371,12 @@ const webSocketStoredCallTarget = (
   while (!seen.has(current)) {
     seen.add(current);
     const exact = semanticExactValueIdentity(current, state);
+    if (
+      checkInitialization &&
+      exact !== undefined &&
+      !webSocketAliasesInitialized(exact, state)
+    )
+      return undefined;
     const value = exact?.node ?? current;
     // A bind call is followed only when its result is itself the callee.
     if (t.isCallExpression(value) || t.isOptionalCallExpression(value)) {
@@ -441,6 +473,10 @@ const webSocketStoredCalls = (
     // Install before identity queries: projections may reenter execution facts.
     facts.storedCalls = calls;
     const parameters = new Map<string, t.Function[]>();
+    const candidates: {
+      readonly fn: t.Function;
+      readonly call: JavaScriptSemanticAnalysisState["callSites"][number];
+    }[] = [];
     for (const call of state.callSites) {
       for (const argument of call.arguments.flatMap<t.Node>((argument) =>
         t.isArrayExpression(argument)
@@ -476,6 +512,7 @@ const webSocketStoredCalls = (
         state,
         call,
         parameters,
+        false,
       );
       const binding = t.isIdentifier(target)
         ? resolveSemanticBindingState(state, target, target.name)
@@ -485,9 +522,27 @@ const webSocketStoredCalls = (
         : binding?.kind === "parameter"
           ? (parameters.get(binding.bindingId) ?? [])
           : [];
-      for (const fn of new Set(functions))
+      for (const fn of new Set(functions)) {
         calls.set(fn, [...(calls.get(fn) ?? []), call]);
+        candidates.push({ fn, call });
+      }
     }
+    // Initialization depends on caller activations. Admit against the complete
+    // candidate graph, not the source-order prefix present while indexing.
+    const initialized: NonNullable<WebSocketExecutionFacts["storedCalls"]> =
+      new WeakMap();
+    for (const { fn, call } of candidates) {
+      if (
+        webSocketStoredCallTarget(call.callee, state, call, parameters) !==
+        undefined
+      )
+        initialized.set(fn, [...(initialized.get(fn) ?? []), call]);
+    }
+    calls = initialized;
+    // Discovery of candidate callers can populate derived caches. Publish only
+    // the admitted graph and discard those provisional activation facts.
+    executionFacts.delete(state);
+    webSocketExecutionFacts(state).storedCalls = calls;
   }
   return calls.get(node) ?? [];
 };
@@ -683,6 +738,16 @@ const webSocketEveryExitSuspension = (
       )
         pending.push(node.test);
       pending.push(node.body);
+    } else if (
+      t.isIfStatement(node) ||
+      t.isConditionalExpression(node) ||
+      t.isLogicalExpression(node)
+    ) {
+      const selected = syntaxUnconditionalOperands(node);
+      // Two operands prove a selected branch; a lone test cannot skip an
+      // uncertain branch that might throw before a later statement's wait.
+      if (selected?.length !== 2) break;
+      pending.push(...selected.toReversed());
     } else break;
   }
   cache.set(block, null);
@@ -1470,22 +1535,7 @@ const webSocketConsumerAlwaysWaits = (
           t.isArrayExpression(exact.node) ||
           t.isClassExpression(exact.node)
         ) ||
-        !exact.aliases.every(
-          ({ read, initializer }) =>
-            semanticInitializerPrecedesRead({
-              initializer: initializer.node,
-              read,
-              ...(initializer.bindingNode === undefined
-                ? {}
-                : { bindingNode: initializer.bindingNode }),
-              parents: state.parentsByNode,
-              initializerContexts: webSocketExecutionContexts(
-                initializer.node,
-                state,
-              ),
-              readContexts: webSocketExecutionContexts(read, state),
-            }) === true,
-        )
+        !webSocketAliasesInitialized(exact, state)
       )
         return undefined;
       return t.isOptionalCallExpression(node)
