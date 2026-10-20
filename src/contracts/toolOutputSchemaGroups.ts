@@ -23,10 +23,8 @@ import { processCaptureComparisonSchema } from "../domain/process/processCompari
 import {
   analysisBookmarkSchema,
   functionInstructionWindowSchema,
-  referenceEdgeSchema,
-  unresolvedCallSchema,
+  procedureReferencesResultSchema,
   analysisStringSchema,
-  procedureIdentitySchema,
 } from "../domain/hopperValues.js";
 import { nativeApiInspectionResultSchema } from "../domain/native/nativeApiBoundary.js";
 import {
@@ -168,15 +166,7 @@ export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
         ),
     }),
   ),
-  procedure_references: evidenceResultOf(
-    z.object({
-      procedure: procedureIdentitySchema,
-      direction: z.enum(["incoming", "outgoing"]),
-      reference_kinds_available: z.boolean(),
-      unresolved_calls: z.array(unresolvedCallSchema),
-      references: z.array(referenceEdgeSchema),
-    }),
-  ),
+  procedure_references: evidenceResultOf(procedureReferencesResultSchema),
   procedure_pseudo_code: evidenceResultOf(nullableText),
   resolve_containing_procedure: evidenceResultOf(containingProcedureResolution),
   search_procedures: evidenceResultOf(

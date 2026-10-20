@@ -29,25 +29,7 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { referenceKindSchema } from "../../domain/hopperValues.js";
-
-const procedureReferencesResultSchema = z.strictObject({
-  reference_kinds_available: z.boolean(),
-  references: z.array(
-    z.strictObject({
-      source_address: z.string(),
-      target_address: z.string(),
-      target_procedure: z
-        .strictObject({ address: z.string(), name: z.string().optional() })
-        .nullable()
-        .optional(),
-      kind: referenceKindSchema,
-    }),
-  ),
-  unresolved_calls: z.array(
-    z.strictObject({ address: z.string(), reason: z.string() }),
-  ),
-});
+import { procedureReferencesResultSchema } from "../../domain/hopperValues.js";
 
 /** Input parameters for reconstructing a procedure's hardware peripheral interactions. */
 export const reconstructProcedureHardwareInputSchema = z.strictObject({

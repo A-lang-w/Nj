@@ -303,6 +303,16 @@ export const referenceEdgeSchema = z
       .exactOptional(),
   })
   .strict();
+/** Provider procedure_references value shared by Hopper, Ghidra, and application workflows. */
+export const procedureReferencesResultSchema = z
+  .object({
+    procedure: procedureIdentitySchema,
+    direction: z.enum(["incoming", "outgoing"]),
+    reference_kinds_available: z.boolean(),
+    unresolved_calls: z.array(unresolvedCallSchema),
+    references: z.array(referenceEdgeSchema),
+  })
+  .strict();
 export const functionDossierSchema = z
   .object({
     procedure: procedureIdentitySchema.safeExtend({

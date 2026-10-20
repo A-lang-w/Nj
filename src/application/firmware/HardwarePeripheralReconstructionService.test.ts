@@ -11,6 +11,10 @@ import type {
 } from "../AnalysisProvider.js";
 import { err, ok } from "../../domain/result.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import {
+  ghidraFunctionIdentity,
+  ghidraReferenceEdge,
+} from "../../domain/ghidraValues.fixture.js";
 
 describe("Hardware peripheral reconstruction from offline instruction references", () => {
   it("reconstructs peripheral blocks and identifies standard architectural registers", () => {
@@ -140,11 +144,15 @@ describe("Hardware peripheral reconstruction through analysis operation port", (
   it("queries procedure references and reconstructs peripheral interaction profile", async () => {
     const mockExecution: AnalysisExecution = {
       result: {
+        procedure: ghidraFunctionIdentity(),
+        direction: "outgoing",
         reference_kinds_available: true,
         references: [
           {
             source_address: "0x08000200",
             target_address: "0x40020000", // GPIOA MODER
+            source_procedure: ghidraFunctionIdentity(),
+            target_procedure: null,
             kind: {
               available: true,
               provenance: "test",
@@ -167,6 +175,8 @@ describe("Hardware peripheral reconstruction through analysis operation port", (
           {
             source_address: "0x08000204",
             target_address: "0xe000e100", // NVIC_ISER0
+            source_procedure: ghidraFunctionIdentity(),
+            target_procedure: null,
             kind: {
               available: true,
               provenance: "test",
@@ -190,6 +200,8 @@ describe("Hardware peripheral reconstruction through analysis operation port", (
             // Pure function call (should be filtered out of MMIO attribution)
             source_address: "0x08000208",
             target_address: "0x08000500",
+            source_procedure: ghidraFunctionIdentity(),
+            target_procedure: null,
             kind: {
               available: true,
               provenance: "test",
@@ -279,5 +291,39 @@ describe("Hardware peripheral reconstruction through analysis operation port", (
     expect(invalidInput.ok).toBe(false);
     if (invalidInput.ok) return;
     expect(invalidInput.error._tag).toBe("AnalysisInputError");
+  });
+});
+
+describe("Ghidra procedure reference shape", () => {
+  it("keeps classification, body, direction, and source_procedure", async () => {
+    const edge = { ...ghidraReferenceEdge(), target_address: "0x40011000" };
+    const execution: AnalysisExecution = {
+      result: {
+        procedure: ghidraFunctionIdentity(),
+        direction: "outgoing",
+        reference_kinds_available: true,
+        references: [edge],
+        unresolved_calls: [],
+      },
+      rawResult: null,
+      provider: { id: "ghidra", name: "Ghidra", version: "12.1.4" },
+      locations: [],
+      subject: {
+        sha256: "b".repeat(64),
+        path: "/tmp/firmware.bin",
+        format: "raw-binary",
+        architecture: "arm",
+      },
+      limitations: [],
+    };
+    const result = await reconstructProcedureHardwareInteractions(
+      { execute: () => Promise.resolve(ok(execution)) },
+      { procedure: "fixture_main", architecture: "arm", platform: "stm32f4" },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.totalReferencesExamined).toBe(1);
+    expect(result.value.attributions[0]?.targetAddress).toBe("0x40011000");
   });
 });
