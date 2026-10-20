@@ -7,7 +7,7 @@ import { inspectKunaProviderOwned as inspectKunaProvider } from "./kunaFileClose
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { fakeKunaCalls, writeFakeKuna } from "./fakeKuna.js";
 import { createSystemDoctorHost } from "../../../../src/doctorRuntime.js";
-import { RegularFileOperationCancelled } from "../../../../src/filesystem/RegularFile.js";
+import { AnalysisCancelledError } from "../../../../src/domain/analysisErrorCore.js";
 import { STARTUP_OWNER_CLOSED } from "../../../../src/process/SharedStartupAttempt.js";
 
 const it = test.skipIf(process.platform === "win32");
@@ -185,10 +185,11 @@ it.each(["caller", "host"] as const)(
       // The unreleased probe normally waits for its ten-second deadline.
       await expect.poll(() => settled, { timeout: 2_000 }).toBe(true);
       const failure = await inspection;
-      expect(failure).toBeInstanceOf(RegularFileOperationCancelled);
-      if (!(failure instanceof RegularFileOperationCancelled))
+      expect(failure).toBeInstanceOf(AnalysisCancelledError);
+      if (!(failure instanceof AnalysisCancelledError))
         throw new Error("Expected Kuna inspection cancellation");
-      expect(failure.reason).toBe(
+      expect(failure.operation).toBe("doctor");
+      expect(failure.cause).toBe(
         source === "caller" ? reason : STARTUP_OWNER_CLOSED,
       );
       // Cancellation only settles once execFile has reaped its direct child.
