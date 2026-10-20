@@ -7,6 +7,7 @@ import {
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import { namespaceReceiverCases } from "./javascriptNamespaceReceiver.fixture.js";
+import { opaqueMutatorCases } from "./javascriptOpaqueMutators.fixture.js";
 import {
   callableScalarPropertyCases,
   callableReferencePropertyCases,
@@ -1964,4 +1965,26 @@ it("retains uncertainty for a saved callable property selected again after escap
       `${callableSavedPrefixUncertainty}require('fs').readFileSync('unproven');`,
     ).configurationOperations,
   ).toEqual([]);
+});
+
+it.each(opaqueMutatorCases)(
+  "retains read/capture identity across opaque and suspended inputs: $source",
+  ({ source, kept }) => {
+    expect(
+      analyzeJavaScriptSemantics(source).configurationOperations.map(
+        ({ key }) => key,
+      ),
+    ).toEqual(kept ? ["result"] : []);
+  },
+);
+
+it("preserves metadata reads before a later opaque-effect sequence", () => {
+  const source = `const label=()=>0;Object.assign=(t,v)=>{v.require=replacement};${"Object.assign({},label.name);".repeat(
+    64,
+  )}require('fs').readFileSync('kept');${"eval('void 0');".repeat(64)}`;
+  expect(
+    analyzeJavaScriptSemantics(source).configurationOperations.map(
+      ({ key }) => key,
+    ),
+  ).toEqual(["kept"]);
 });

@@ -12,6 +12,31 @@ import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 
 const execute = promisify(execFile);
 
+const opaqueMutatorSources = {
+  "opaque-receiver.cjs": `let receiver={};eval('receiver=module');
+    Reflect.set(module,'require',replacement,receiver);
+    require('fs').readFileSync('wrong-opaque-receiver');`,
+  "opaque-key.cjs": `let key='x';eval('key="require"');
+    Reflect.set(module,key,replacement);
+    require('fs').readFileSync('wrong-opaque-key');`,
+  "opaque-saved-receiver.cjs": `let receiver={};const saved=receiver;eval('receiver=module');
+    Reflect.set(module,'require',replacement,saved);
+    require('fs').readFileSync('opaque-saved-receiver.json');`,
+  "opaque-saved-key.cjs": `let key='x';const saved=key;eval('key="require"');
+    Reflect.set(module,saved,replacement);
+    require('fs').readFileSync('opaque-saved-key.json');`,
+  "await-module.cjs": `async function run(){
+    Object.assign=(t,v)=>{v.require=replacement};Object.assign({},await module);
+    require('fs').readFileSync('wrong-awaited-module');}run();`,
+  "yield-module.cjs": `function* run(){
+    Object.assign=(t,v)=>{v.require=replacement};Object.assign({},yield 1);
+    require('fs').readFileSync('wrong-resumed-module');}
+    const iterator=run();iterator.next();iterator.next(module);`,
+  "await-primitive.cjs": `async function run(){
+    Object.assign=(t,v)=>{v.require=replacement};Object.assign({},await 1);
+    require('fs').readFileSync('suspended-primitive.json');}run();`,
+};
+
 const writeReceiverReviewSources = async (root: string): Promise<void> => {
   const sources = [
     "import * as ns from 'node:path';import fs from 'node:fs';const receiver={};Reflect.set(ns,'saved',fs,receiver);receiver.saved.readFileSync=custom;fs.readFileSync('wrong-namespace-stored-value');",
@@ -85,6 +110,7 @@ const writeReceiverReviewSources = async (root: string): Promise<void> => {
   for (const [index, source] of sources.entries())
     await writeFile(join(root, `receiver-review-${index}.ts`), source);
   for (const [name, source] of Object.entries({
+    ...opaqueMutatorSources,
     "commonjs-callback.cjs": `Object.assign=(t,get)=>{get().require=replacement};
      Object.assign({},()=>module);require('fs').readFileSync('wrong-callback');`,
     "callable-scalar.cjs": `const label=function named(){};
@@ -306,6 +332,8 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     "nested-write-kept.json",
     "null-prototype-kept.json",
     "omitted-key.json",
+    "opaque-saved-key.json",
+    "opaque-saved-receiver.json",
     "opaque-unrelated.json",
     "ordered-kept.json",
     "outer-before-nested.json",
@@ -323,6 +351,7 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     "sequence-one.json",
     "sequence-two.json",
     "sibling.json",
+    "suspended-primitive.json",
     "timeline-first.json",
     "timeline-second.json",
     "wrapped-kept.json",

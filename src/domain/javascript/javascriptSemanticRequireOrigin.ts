@@ -47,7 +47,7 @@ import { semanticBranchMayBeSkipped } from "./javascriptSemanticEvaluationOrder.
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
 import {
   semanticOpaqueBindingReadMayHaveChanged,
-  semanticOpaqueBindingEffects,
+  createSemanticOpaqueReferenceEffectQuery,
 } from "./javascriptSemanticOpaqueEffects.js";
 
 export interface JavaScriptRequireOrigin {
@@ -338,6 +338,7 @@ const writesModuleRequire = (
   moduleRequireWrites.set(state, []);
   const writes: t.Node[] = [];
   const interop = createSemanticModuleInterop(state);
+  const opaqueReferenceEffect = createSemanticOpaqueReferenceEffectQuery(state);
   const isSeparateReceiver = (
     node: t.Node,
     visited = new Set<string>(),
@@ -1045,15 +1046,9 @@ const writesModuleRequire = (
         // A selected scalar is captured at its read. Escaping an ancestor
         // before that read can replace the slot; escaping the selected value
         // itself cannot replace the property that already supplied it.
-        for (const effect of semanticOpaqueBindingEffects(
-          binding,
-          state,
-          "reference",
-        )) {
-          timeDependent = true;
-          if (semanticEffectTiming(readAt, effect, state) !== "after")
-            changed = "ancestor";
-        }
+        const opaque = opaqueReferenceEffect(binding, readAt);
+        if (opaque !== undefined) timeDependent = true;
+        if (opaque === true) changed = "ancestor";
         for (const effect of binding.escapedPaths) {
           if (
             effect.path.length >= path.length ||
@@ -1339,6 +1334,19 @@ const writesModuleRequire = (
             written: true as const,
           })),
         );
+      } else if (t.isAwaitExpression(value)) {
+        // Await may unwrap a thenable; an unknown operand cannot establish
+        // that the resumed value is module-free.
+        pending.push({
+          node: value.argument,
+          path,
+          readAt,
+          ...context,
+          written: true,
+        });
+      } else if (t.isYieldExpression(value)) {
+        // The caller supplies a yield expression's resumed value.
+        return true;
       } else if (
         t.isBinaryExpression(value) ||
         t.isUnaryExpression(value) ||

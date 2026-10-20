@@ -11,6 +11,7 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
+import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import {
   semanticEffectTiming,
   semanticTopLevelEffectIsOrderable,
@@ -466,7 +467,8 @@ export const createSemanticModuleInterop = (
         initializer === undefined ||
         initializer.projection.length !== 0 ||
         (initializer.node.end ?? Infinity) >= (expression.start ?? -1) ||
-        visited.has(binding.bindingId)
+        visited.has(binding.bindingId) ||
+        semanticOpaqueBindingReadMayHaveChanged(binding, expression, state)
       )
         return undefined;
       visited.add(binding.bindingId);
@@ -609,7 +611,8 @@ export const createSemanticModuleInterop = (
         initializer === undefined ||
         (!t.isFunctionDeclaration(initializer) &&
           (initializer.end ?? Infinity) >= (current.start ?? -1)) ||
-        visited.has(binding.bindingId)
+        visited.has(binding.bindingId) ||
+        semanticOpaqueBindingReadMayHaveChanged(binding, current, state)
       )
         return undefined;
       visited.add(binding.bindingId);
