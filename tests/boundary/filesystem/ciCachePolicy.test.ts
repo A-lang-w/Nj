@@ -312,18 +312,30 @@ it("exports turbo remote-cache credentials wherever a workflow runs turbo", asyn
       expect(token, `${file}:${name}`).toContain("secrets.TURBO_TOKEN");
       expect(token, `${file}:${name}`).toContain("|| ''");
       expect(token, `${file}:${name}`).not.toBe("${{ secrets.TURBO_TOKEN }}");
-      for (const event of [
-        "push",
-        "schedule",
-        "workflow_dispatch",
-        "workflow_call",
-      ])
+      const grantsReleaseWrite = token.includes(
+        "inputs.remote_cache_write == true",
+      );
+      const grantsCalledEvent = token.includes(
+        "github.event_name == 'workflow_call'",
+      );
+      expect(grantsReleaseWrite || grantsCalledEvent, `${file}:${name}`).toBe(
+        true,
+      );
+      if (grantsReleaseWrite)
+        expect(token, `${file}:${name}`).not.toContain(
+          "github.event_name == 'workflow_call'",
+        );
+      for (const event of ["push", "schedule", "workflow_dispatch"])
         expect(token, `${file}:${name}`).toContain(
           `github.event_name == '${event}'`,
         );
       expect(token, `${file}:${name}`).not.toContain(
         "github.event_name == 'pull_request'",
       );
+      if (grantsReleaseWrite)
+        expect(cache, `${file}:${name}`).toContain(
+          "inputs.remote_cache_write == true",
+        );
       expect(cache, `${file}:${name}`).toContain("local:rw,remote:r");
       expect(cache, `${file}:${name}`).toContain("local:rw,remote:rw");
       expect(env.TURBO_TEAM, `${file}:${name}`).toBe("${{ vars.TURBO_TEAM }}");

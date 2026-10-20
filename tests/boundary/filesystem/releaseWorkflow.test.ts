@@ -42,7 +42,7 @@ async function readReleaseWorkflow() {
           needs: z.array(z.string()),
           uses: z.string(),
           secrets: z.record(z.string(), z.string()),
-          with: z.record(z.string(), z.string()),
+          with: z.record(z.string(), z.union([z.string(), z.boolean()])),
         }),
         publish: jobSchema,
         rehearsal: jobSchema.extend({
@@ -295,6 +295,7 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
   expect(workflow.jobs.qualification.with).toEqual({
     source_sha:
       "${{ needs.merged-release.outputs.sha || needs.release-please.outputs.sha }}",
+    remote_cache_write: true,
   });
   expect(workflow.jobs.publish.needs).toContain("qualification");
   expect(workflow.jobs.publish.needs).toContain("rehearsal");

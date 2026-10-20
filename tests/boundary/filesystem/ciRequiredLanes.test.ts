@@ -204,6 +204,80 @@ it("holds native and provider fan-out behind static validation while portable fe
   }
 });
 
+const trustedRemoteCacheWrite =
+  "${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}";
+
+async function assertProviderCacheCallers(
+  jobs: Awaited<ReturnType<typeof workflow>>["jobs"],
+  consumers: readonly string[],
+) {
+  for (const name of consumers) {
+    const caller = jobs[name];
+    expect(caller?.needs).toContain("build");
+    expect(caller?.secrets).toEqual({
+      TURBO_TOKEN: "${{ secrets.TURBO_TOKEN }}",
+    });
+    expect(caller?.with).toEqual({
+      build_cache_artifact: "rea-build-cache",
+      remote_cache_write: trustedRemoteCacheWrite,
+    });
+    const path = z.string().parse(caller?.uses);
+    const called = z
+      .object({
+        on: z.object({
+          workflow_call: z.object({
+            inputs: z.record(z.string(), z.unknown()),
+            secrets: z.object({
+              TURBO_TOKEN: z.object({ required: z.literal(false) }),
+            }),
+          }),
+          workflow_dispatch: z.unknown(),
+        }),
+        jobs: z.record(
+          z.string(),
+          z.object({
+            steps: z.array(
+              z.object({
+                uses: z.string().optional(),
+                with: z.record(z.string(), z.unknown()).optional(),
+              }),
+            ),
+          }),
+        ),
+      })
+      .parse(
+        parse(
+          await readFile(new URL(`../../../${path}`, import.meta.url), "utf8"),
+        ),
+      );
+    expect(called.on.workflow_call.inputs.build_cache_artifact).toMatchObject({
+      type: "string",
+      default: "",
+    });
+    expect(called.on.workflow_call.inputs.remote_cache_write).toMatchObject({
+      type: "boolean",
+      required: false,
+      default: false,
+    });
+    expect(Object.hasOwn(called.on, "workflow_dispatch")).toBe(true);
+    for (const job of Object.values(called.jobs))
+      expect(
+        job.steps.find(
+          (step) => step.uses === "./.github/actions/portable-build-cache",
+        )?.with,
+      ).toEqual({
+        build_cache_artifact: "${{ inputs.build_cache_artifact }}",
+      });
+  }
+  for (const name of [
+    "sqlite-runtime",
+    "nativeaot",
+    "ghidra_bridge",
+    "website",
+  ])
+    expect(jobs[name]?.secrets, name).toBeUndefined();
+}
+
 it("binds provider build reuse to the current run while keeping standalone dispatches independent", async () => {
   const { jobs } = await workflow();
   const buildSteps = z
@@ -267,48 +341,7 @@ it("binds provider build reuse to the current run while keeping standalone dispa
     ),
   );
   expect(jobs["test-shard"]?.if).toBe("needs.changes.outputs.code == 'true'");
-  for (const name of consumers) {
-    const caller = jobs[name];
-    expect(caller?.needs).toContain("build");
-    expect(caller?.with).toEqual({ build_cache_artifact: "rea-build-cache" });
-    const path = z.string().parse(caller?.uses);
-    const called = z
-      .object({
-        on: z.object({
-          workflow_call: z.object({
-            inputs: z.record(z.string(), z.unknown()),
-          }),
-          workflow_dispatch: z.unknown(),
-        }),
-        jobs: z.record(
-          z.string(),
-          z.object({
-            steps: z.array(
-              z.object({
-                uses: z.string().optional(),
-                with: z.record(z.string(), z.unknown()).optional(),
-              }),
-            ),
-          }),
-        ),
-      })
-      .parse(
-        parse(
-          await readFile(new URL(`../../../${path}`, import.meta.url), "utf8"),
-        ),
-      );
-    expect(called.on.workflow_call.inputs.build_cache_artifact).toMatchObject({
-      type: "string",
-      default: "",
-    });
-    expect(Object.hasOwn(called.on, "workflow_dispatch")).toBe(true);
-    for (const job of Object.values(called.jobs))
-      expect(
-        job.steps.find(
-          (step) => step.uses === "./.github/actions/portable-build-cache",
-        )?.with,
-      ).toEqual({ build_cache_artifact: "${{ inputs.build_cache_artifact }}" });
-  }
+  await assertProviderCacheCallers(jobs, consumers);
   const action = z
     .object({
       runs: z.object({
@@ -399,6 +432,11 @@ it("keeps fast feedback separate from complete qualification and release proof",
             source_sha: z.object({
               required: z.literal(true),
               type: z.literal("string"),
+            }),
+            remote_cache_write: z.object({
+              required: z.literal(false),
+              type: z.literal("boolean"),
+              default: z.literal(false),
             }),
           }),
           secrets: z.object({

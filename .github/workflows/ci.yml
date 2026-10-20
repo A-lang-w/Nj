@@ -15,6 +15,11 @@ on:
         description: Exact qualification source; must match the caller revision.
         required: true
         type: string
+      remote_cache_write:
+        description: Trusted release qualification may publish the remote cache.
+        required: false
+        type: boolean
+        default: false
     secrets:
       TURBO_TOKEN:
         description: Remote cache token. Only trusted release qualification passes it.
@@ -35,13 +40,12 @@ env:
   HUSKY: "0"
   # Set Actions secret TURBO_TOKEN and variable TURBO_TEAM. OIDC can mint
   # TURBO_TOKEN via vercel/setup-turborepo-remote-cache-action; do not commit a token.
-  # Writes only on the default branch for push, schedule, manual dispatch,
-  # and workflow_call when the caller passed TURBO_TOKEN. Release qualification
-  # passes it. Pull requests, including labeled workflow_call, get an empty
-  # token and remote read-only mode.
-  TURBO_TOKEN: "${{ (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call')) && secrets.TURBO_TOKEN || '' }}"
+  # A called workflow sees the caller event, so workflow_call is not an event
+  # name here. Release qualification sets remote_cache_write and passes the
+  # token. Open pull requests stay empty-token and remote read-only.
+  TURBO_TOKEN: "${{ (inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'))) && secrets.TURBO_TOKEN || '' }}"
   TURBO_TEAM: ${{ vars.TURBO_TEAM }}
-  TURBO_CACHE: "${{ (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call')) && 'local:rw,remote:rw' || 'local:rw,remote:r' }}"
+  TURBO_CACHE: "${{ (inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'))) && 'local:rw,remote:rw' || 'local:rw,remote:r' }}"
 
 jobs:
   changes:
@@ -452,7 +456,6 @@ jobs:
     # Portable tests still provide early feedback.
     needs: [changes, static, build]
     if: needs.changes.outputs.sqlite == 'true'
-    secrets: inherit
     uses: ./.github/workflows/sqlite-runtime.yml
 
   test:
@@ -938,91 +941,106 @@ jobs:
   browser:
     needs: [changes, static, build]
     if: needs.changes.outputs.browser == 'true'
-    secrets: inherit
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     uses: ./.github/workflows/real-browser.yml
     with:
       build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
   binary_layout:
     needs: [changes, static, build]
     if: needs.changes.outputs.binary_layout == 'true'
-    secrets: inherit
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     uses: ./.github/workflows/real-binary-layout.yml
     with:
       build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
   evm:
     needs: [changes, static, build]
     if: needs.changes.outputs.evm == 'true'
-    secrets: inherit
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     uses: ./.github/workflows/real-evm-interface.yml
     with:
       build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
   javascript_recovery:
     needs: [changes, static, build]
     if: needs.changes.outputs.javascript_recovery == 'true'
-    secrets: inherit
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     uses: ./.github/workflows/real-javascript-recovery.yml
     with:
       build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
   recorded_crash:
     needs: [changes, static, build]
     if: needs.changes.outputs.recorded_crash == 'true'
-    secrets: inherit
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     uses: ./.github/workflows/real-recorded-crash.yml
     with:
       build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
   web_network:
     needs: [changes, static, build]
     if: needs.changes.outputs.web_network == 'true'
-    secrets: inherit
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     uses: ./.github/workflows/real-web-network-captures.yml
     with:
       build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
   web_runtime:
     needs: [changes, static, build]
     if: needs.changes.outputs.web_runtime == 'true'
-    secrets: inherit
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     uses: ./.github/workflows/real-web-runtime.yml
     with:
       build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
   web_source_map:
     needs: [changes, static, build]
     if: needs.changes.outputs.web_source_map == 'true'
-    secrets: inherit
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     uses: ./.github/workflows/real-web-source-map.yml
     with:
       build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
   agentenv:
     needs: [changes, static, build]
     if: needs.changes.outputs.agentenv == 'true'
-    secrets: inherit
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     uses: ./.github/workflows/real-agentenv.yml
     with:
       build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
   nativeaot:
     needs: [changes, static]
     if: needs.changes.outputs.nativeaot == 'true'
-    secrets: inherit
     uses: ./.github/workflows/nativeaot-fixtures.yml
 
   ghidra_bridge:
     needs: [changes, static]
     if: needs.changes.outputs.ghidra_bridge == 'true'
-    secrets: inherit
     uses: ./.github/workflows/ghidra-bridge-sources.yml
 
   website:
     needs: [changes, static]
     if: needs.changes.outputs.website == 'true'
-    secrets: inherit
     uses: ./.github/workflows/website-check.yml
 
   required:

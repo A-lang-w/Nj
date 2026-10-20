@@ -311,6 +311,7 @@ jobs:
       TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     with:
       source_sha: ${{ needs.merged-release.outputs.sha || needs.release-please.outputs.sha }}
+      remote_cache_write: true
 
   rehearsal:
     name: Rehearse qualified release on a clean runner

@@ -11,6 +11,7 @@ import {
   estimatedShardCost,
   parseTestDurations,
   readTestDurations,
+  weightFileDurations,
 } from "../../ciTestSequencer.js";
 
 describe("CI test history", () => {
@@ -90,6 +91,21 @@ describe("duration shard allocation", () => {
     expect(estimatedShardCost("process-boundary", 400)).toBe(400);
     expect(estimatedShardCost("domain", 400)).toBe(200);
     expect(estimatedShardCost("adapters", 400)).toBe(200);
+  });
+
+  it("fills unknown files from the raw median before serial and shared weighting", () => {
+    expect(
+      weightFileDurations([
+        { project: "domain", duration: 400 },
+        { project: "process-boundary", duration: undefined },
+        { project: "adapters", duration: undefined },
+      ]),
+    ).toEqual([200, 400, 200]);
+    expect(
+      weightFileDurations([
+        { project: "process-boundary", duration: undefined },
+      ]),
+    ).toEqual([undefined]);
   });
 
   it.prop([

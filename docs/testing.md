@@ -1342,10 +1342,12 @@ snapshot. That cache is an AST cache keyed by file mtime and size, so a
 fresh checkout often misses it; Turbo still hashes the Knip task inputs. Knip
 includes its ignore rules and VitePress
 entry, so changes to those inputs cannot reuse an older successful check.
-Jobs that run Turbo export `TURBO_TEAM`. `TURBO_TOKEN` is set only when the
-ref is the default branch and the event is push, schedule, workflow_dispatch,
-or workflow_call, and only when that secret is available to the run. Release
-qualification passes `TURBO_TOKEN` into the called workflow. Labeled
+Jobs that run Turbo export `TURBO_TEAM`. A called workflow sees the caller
+event, so `workflow_call` is not an event name inside CI. `TURBO_TOKEN` is set
+when release qualification passes `remote_cache_write`, or when the ref is the
+default branch and the event is push, schedule, or workflow_dispatch, and only
+when that secret is available to the run. Release qualification passes
+`TURBO_TOKEN` and `remote_cache_write` into the called workflow. Labeled
 pull-request qualification does not. Pull requests receive an empty token and
 `TURBO_CACHE=local:rw,remote:r`, so they cannot publish remote cache entries.
 An empty token leaves the local Turbo cache in place.
