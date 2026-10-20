@@ -703,6 +703,59 @@ describe("NIB projection byte amplification", () => {
 });
 
 cliTest(
+  "compiled CLI separates keyed archive class identity from authored className fields",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-ib-class-identity-");
+    const bundle = join(root, "Example.app");
+    const contents = join(bundle, "Contents");
+    const resources = join(contents, "Resources");
+    await mkdir(resources, { recursive: true });
+    await mkdir(join(contents, "MacOS"), { recursive: true });
+    await writeFile(
+      join(contents, "MacOS", "App"),
+      thinMach(0xfeedfacf, 0x0100000c),
+    );
+    await writeFile(
+      join(contents, "Info.plist"),
+      "<plist><dict><key>CFBundleExecutable</key><string>App</string></dict></plist>",
+    );
+    await writeFile(
+      join(resources, "Identity.nib"),
+      buildBinary({
+        $archiver: "NSKeyedArchiver",
+        $objects: [
+          "$null",
+          { $class: { UID: 3 }, className: "NSButton" },
+          { className: "NSButton", $class: { UID: 3 } },
+          { $classname: "NSView", $classes: ["NSView", "NSObject"] },
+        ],
+        $top: { root: { UID: 1 } },
+      }),
+    );
+    const output = await cli.run({
+      arguments: ["decode-interface-builder", bundle, "--json"],
+      environment: { REA_LOG_LEVEL: "silent", REA_ANALYSIS_PROVIDER: "auto" },
+    });
+    expect(output.exitCode, output.stderr).toBe(0);
+    const result = interfaceBuilderAnalysisSchema.parse(
+      parseEvidence(output.json).normalized_result,
+    );
+    for (const id of ["1", "2"])
+      expect(result.graph.nodes).toContainEqual(
+        expect.objectContaining({
+          kind: "view",
+          name: "NSView",
+          attributes: {
+            interface_builder_object_id: id,
+            class_name: "NSView",
+            className: "NSButton",
+          },
+        }),
+      );
+  },
+);
+
+cliTest(
   "compiled CLI preserves distinct NIB keys and class identity",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-nib-name-identity-");
