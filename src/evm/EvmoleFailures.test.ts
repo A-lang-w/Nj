@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { evmInterfaceFailure } from "./EvmoleFailures.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
 
@@ -69,3 +70,26 @@ it.each([
     expect(result.cleanupResources).toEqual(["exact-owner"]);
   }
 });
+
+it.each(["caller stopped", { requested: "stop" }])(
+  "retains the artifact-read cancellation reason as opaque data: %j",
+  (reason) => {
+    const cleanup = {
+      reason: "reader released the carrier",
+      resources: ["artifact-descriptor"],
+    };
+    const source = new ArtifactReaderFailure(
+      "cancelled",
+      "Artifact read cancelled",
+      { cancellation: { reason }, cleanup },
+    );
+    const result = evmInterfaceFailure(
+      source,
+      "artifact-read",
+      "/selected.hex",
+    );
+    expect(result).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.cause).toBe(reason);
+    expect(result.cleanupResources).toEqual(["artifact-descriptor"]);
+  },
+);

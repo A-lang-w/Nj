@@ -130,7 +130,7 @@ export const evmInterfaceFailure = (
   if (cause instanceof ArtifactReaderFailure) {
     if (cause.reason === "cancelled")
       return new AnalysisCancelledError("inspect_evm_interface", {
-        cause,
+        cause: cause.cancellation?.reason ?? cause,
         ...cleanupOptions,
       });
     if (cause.reason === "integrity")
