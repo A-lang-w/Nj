@@ -185,6 +185,43 @@ it("settles a retained analysis client before admitting an external mutation", a
   await fixture.session.close();
 });
 
+it("retries reverse cleanup after draining earlier provider calls", async () => {
+  const fixture = await retryFixture();
+  const [target] = fixture.targets;
+  expect((await fixture.session.open(target)).ok).toBe(true);
+  fixture.allowCleanup();
+  const started = createDeferred<void>();
+  const release = createDeferred<void>();
+  let reverseCleanupPending = false;
+  let cleanupChecks = 0;
+  const inspection = fixture.session.withAdmittedAnalysis(
+    "inspect_with_objdump",
+    undefined,
+    async () => {
+      started.resolve();
+      await release.promise;
+      reverseCleanupPending = true;
+      return "inspection complete";
+    },
+  );
+  await started.promise;
+
+  const opening = fixture.session.open(target, {
+    beforeOpen: async () => {
+      cleanupChecks += 1;
+      return reverseCleanupPending ? err(fixture.cleanupError) : resultOk(null);
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(cleanupChecks).toBe(0);
+  release.resolve();
+  await inspection;
+
+  const openResult = await opening;
+  expect(openResult).toEqual(err(fixture.cleanupError));
+  expect(cleanupChecks).toBe(1);
+});
+
 it("keeps recorded unknowns when a target switch cannot retire the previous provider", async () => {
   const fixture = await retryFixture();
   const [first, second] = fixture.targets;

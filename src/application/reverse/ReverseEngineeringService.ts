@@ -341,10 +341,22 @@ export class ReverseEngineeringService {
     } catch (cause) {
       if (signal?.aborted)
         return err(new AnalysisCancelledError(operation, { cause }));
-      if (cause instanceof Error && Reflect.get(cause, "code") === "ETIMEDOUT")
+      if (
+        cause instanceof Error &&
+        Reflect.get(cause, "code") === "ETIMEDOUT"
+      ) {
+        const setting =
+          operation === "inspect_with_objdump"
+            ? "REA_OBJDUMP_COMMAND"
+            : "REA_RIZIN_COMMAND";
         return err(
-          new AnalysisTimeoutError(operation, DEFAULT_TIMEOUT_MS, { cause }),
+          new AnalysisTimeoutError(operation, DEFAULT_TIMEOUT_MS, {
+            cause,
+            userMessage: `Provider PATH lookup timed out; set an absolute ${setting} path.`,
+            remediationAction: `Set ${setting} to the absolute path of the caller-selected provider executable, then retry.`,
+          }),
         );
+      }
       return err(
         new AnalysisOutputError(
           operation,

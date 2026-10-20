@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { resolveWindowsProviderExecutable } from "../../src/composition/resolveWindowsProviderExecutable.js";
 import { ReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
+import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 
 const windowsLookup = (cwd: string, files: readonly string[]) => {
   const existingFiles = new Set(
@@ -214,15 +215,33 @@ describe("admitted Windows provider lookup", () => {
         if (mode === "close") closing = service.close();
         else if (mode === "cancel") controller.abort();
         else await vi.advanceTimersByTimeAsync(100);
-        expect(await result).toMatchObject({
+        const outcome = await result;
+        expect(outcome).toMatchObject({
           ok: false,
           error: {
             _tag:
               mode === "deadline"
                 ? "AnalysisTimeoutError"
                 : "AnalysisCancelledError",
+            ...(mode === "deadline"
+              ? {
+                  userMessage: expect.stringContaining(
+                    "absolute REA_OBJDUMP_COMMAND path",
+                  ),
+                  remediationAction: expect.stringContaining(
+                    "REA_OBJDUMP_COMMAND",
+                  ),
+                }
+              : {}),
           },
         });
+        if (mode === "deadline" && !outcome.ok)
+          expect(projectAnalysisError(outcome.error)).toMatchObject({
+            message: expect.stringContaining("absolute REA_OBJDUMP_COMMAND"),
+            remediation: {
+              action: expect.stringContaining("REA_OBJDUMP_COMMAND"),
+            },
+          });
         await closing;
         rejectProbe(new Error("late network failure"));
         await Promise.resolve();

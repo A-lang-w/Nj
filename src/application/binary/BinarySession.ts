@@ -298,6 +298,11 @@ export class BinarySession
   ): Promise<Result<BinaryTarget, AnalysisError>> {
     if (isAborted(options.signal))
       return err(new AnalysisCancelledError("open_binary"));
+    // An earlier admitted request may still be creating a retained cleanup
+    // owner. Drain it before checking that owner's retry state.
+    await this.#drainCalls(admittedThrough);
+    if (isAborted(options.signal))
+      return err(new AnalysisCancelledError("open_binary"));
     // Retry retained owners first: a successful retry resolves the stored
     // failure, so the guard below must observe the post-retry state.
     if (options.beforeOpen !== undefined) {
@@ -319,9 +324,6 @@ export class BinarySession
       activeProfile === null || activeProfile === undefined
         ? profile === null
         : profile !== null && analysisProfilesEqual(activeProfile, profile);
-    await this.#drainCalls(admittedThrough);
-    if (isAborted(options.signal))
-      return err(new AnalysisCancelledError("open_binary"));
     const pendingClosed = await this.#retryPendingCleanup();
     if (!pendingClosed.ok) return pendingClosed;
     if (isAborted(options.signal))
