@@ -745,6 +745,7 @@ const registerConfiguredAnalysisTools = (
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,
+    evidenceById,
   );
   registerIl2cppTools(
     server,
