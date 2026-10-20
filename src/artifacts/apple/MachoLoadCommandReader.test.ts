@@ -736,27 +736,49 @@ describe("LC_LAZY_LOAD_DYLIB_INFO string bounds", () => {
       status: "malformed",
       reason: expect.stringContaining("inside the payload header"),
     });
+    const symbolPayload = lazyLoadDylibInfoPayload({
+      path: "@rpath/libl.dylib",
+      symbols: ["_lf"],
+    });
+    new DataView(symbolPayload.buffer).setUint32(24, 4, true);
+    const symbolImage = machoImage({
+      commands: [lazyLoadDylibInfoCommand(0, symbolPayload.length)],
+    });
+    const symbolBytes = new Uint8Array(
+      symbolImage.length + symbolPayload.length,
+    );
+    symbolBytes.set(symbolImage);
+    symbolBytes.set(symbolPayload, symbolImage.length);
+    new DataView(symbolBytes.buffer).setUint32(
+      32 + 8,
+      symbolImage.length,
+      true,
+    );
+    expect(await read(symbolBytes)).toMatchObject({
+      status: "malformed",
+      reason: expect.stringContaining("symbol 0"),
+    });
   });
 
-  it("validates a repeated symbol string once and bounds distinct scans", async () => {
-    const symbolLength = 8 * 1024 * 1024 + 16;
-    const payloadFor = (step: number) => {
-      const count = 3;
-      const pathBytes = new TextEncoder().encode("@rpath/libl.dylib");
-      const pathOffset = 24 + count * 4;
-      const symbolOffset = pathOffset + pathBytes.length + 1;
-      const payload = new Uint8Array(symbolOffset + symbolLength + 1);
+  it("charges repeated and overlapping symbol scans against the string budget", async () => {
+    const path = new TextEncoder().encode("@rpath/libl.dylib");
+    const stringBytes = 64 * 1024;
+    const imageFor = (symbolCount: number, step: number) => {
+      const pathOffset = 24 + symbolCount * 4;
+      const stringOffset = pathOffset + path.length + 1;
+      const payload = new Uint8Array(stringOffset + stringBytes + 1);
       const view = new DataView(payload.buffer);
       view.setUint32(0, pathOffset, true);
-      view.setUint32(16, count, true);
+      view.setUint32(16, symbolCount, true);
       view.setUint32(20, 24, true);
-      payload.set(pathBytes, pathOffset);
-      payload.fill(0x61, symbolOffset, symbolOffset + symbolLength);
-      for (let index = 0; index < count; index += 1)
-        view.setUint32(24 + index * 4, symbolOffset + index * step, true);
-      return payload;
-    };
-    const imageFor = (payload: Uint8Array) => {
+      payload.set(path, pathOffset);
+      payload.fill(0x61, stringOffset, stringOffset + stringBytes);
+      for (let symbol = 0; symbol < symbolCount; symbol += 1)
+        view.setUint32(
+          24 + symbol * 4,
+          stringOffset + (step === 0 ? 0 : symbol % 8),
+          true,
+        );
       const image = machoImage({
         commands: [lazyLoadDylibInfoCommand(0, payload.length)],
       });
@@ -766,8 +788,17 @@ describe("LC_LAZY_LOAD_DYLIB_INFO string bounds", () => {
       new DataView(bytes.buffer).setUint32(32 + 8, image.length, true);
       return bytes;
     };
-    expect((await read(imageFor(payloadFor(0)))).status).toBe("parsed");
-    expect(await read(imageFor(payloadFor(1)))).toMatchObject({
+    expect(imageFor(2, 0).length).toBeLessThan(MAX_LOAD_COMMAND_BYTES);
+    expect(await read(imageFor(2, 0))).toMatchObject({
+      status: "parsed",
+      slices: [{ dependencies: [{ install_name: "@rpath/libl.dylib" }] }],
+    });
+    const over = Math.floor(MAX_LOAD_COMMAND_BYTES / (stringBytes + 1)) + 2;
+    expect(await read(imageFor(over, 0))).toMatchObject({
+      status: "unsupported",
+      reason: expect.stringContaining("string validation"),
+    });
+    expect(await read(imageFor(over, 1))).toMatchObject({
       status: "unsupported",
       reason: expect.stringContaining("string validation"),
     });

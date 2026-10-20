@@ -494,6 +494,7 @@ interface LazyPayloadWork {
   readonly reads: { fileOffset: number; bytes: Uint8Array }[];
   readonly strings: Map<number, CachedLazyString>;
   payloadBytes: number;
+  /** Scanned string bytes. Repeats and overlaps each count in full. */
   stringBytes: number;
   rangeChecks: number;
 }
@@ -785,6 +786,16 @@ const decodeLazyLoadDylibInfoPayload = (
   };
 };
 
+const chargeLazyString = (work: LazyPayloadWork, examined: number): void => {
+  const occupied = work.stringBytes + examined;
+  if (occupied > MAX_LOAD_COMMAND_BYTES)
+    throw new MachoFormatIssue(
+      "unsupported",
+      `LC_LAZY_LOAD_DYLIB_INFO string validation occupies ${occupied} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte limit`,
+    );
+  work.stringBytes = occupied;
+};
+
 /** NUL-terminated UTF-8 string after the fixed payload header. */
 const payloadString = (
   payload: Uint8Array,
@@ -809,28 +820,31 @@ const payloadString = (
     : undefined;
   const cached =
     absolute === undefined ? undefined : work.strings.get(absolute);
-  if (cached !== undefined) {
+  if (cached !== undefined && absolute !== undefined) {
     const end = cached.end - fileOffset;
     if (end < offset || end >= payload.byteLength)
       throw new MachoFormatIssue(
         "malformed",
         `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} is unterminated`,
       );
+    chargeLazyString(work, cached.end - absolute + 1);
     return cached.text;
   }
-  const end = payload.indexOf(0, offset);
-  const scanned = (end < 0 ? payload.byteLength : end) - offset;
-  work.stringBytes += scanned;
-  if (work.stringBytes > MAX_LOAD_COMMAND_BYTES)
-    throw new MachoFormatIssue(
-      "unsupported",
-      `LC_LAZY_LOAD_DYLIB_INFO string validation occupies ${work.stringBytes} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte limit`,
-    );
-  if (end < 0)
+  const remaining = MAX_LOAD_COMMAND_BYTES - work.stringBytes;
+  const windowEnd = Math.min(payload.byteLength, offset + remaining);
+  const end = payload.subarray(0, windowEnd).indexOf(0, offset);
+  if (end < 0) {
+    if (windowEnd < payload.byteLength)
+      throw new MachoFormatIssue(
+        "unsupported",
+        `LC_LAZY_LOAD_DYLIB_INFO string validation occupies ${work.stringBytes + (windowEnd - offset) + 1} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte limit`,
+      );
     throw new MachoFormatIssue(
       "malformed",
       `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} is unterminated`,
     );
+  }
+  chargeLazyString(work, end - offset + 1);
   let text: string;
   try {
     text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
