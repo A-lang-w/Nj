@@ -306,6 +306,9 @@ retained Evidence, so its strings are not charged as inline envelope text: a
 capture too large to project inline can be projected from its file. Before
 authentication REA checks that live heap headroom holds its copies of the parsed
 Evidence, and over MCP the read follows the request's cancellation.
+An invalid Evidence file returns `EvidenceFileError` with the selected `path`
+and `content_issues` relative to the file's JSON root; those locations do not
+refer to the request's `source.path` string.
 The envelope clone, hash scratch and capture clone stay charged during grouping.
 Temporary URL/path/MIME/query work and retained state must
 fit together within a 96 MiB projection representation budget. A whole group or

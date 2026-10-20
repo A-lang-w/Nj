@@ -38,6 +38,7 @@ import {
   scenarioCaptureFixture,
 } from "../../../tests/fixtures/browserScenarioCapture.js";
 import { readEvidenceFileSource } from "./evidenceFileSource.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 
 vi.mock("./evidenceFileSource.js", { spy: true });
 
@@ -960,7 +961,19 @@ describe("inspectAnalysisViewWithFiles", () => {
     });
     expect(notEvidence).toMatchObject({
       ok: false,
-      error: { _tag: "AnalysisInputError" },
+      error: { _tag: "EvidenceFileError", reason: "wrong-kind" },
+    });
+    if (notEvidence.ok) throw new Error("Expected invalid Evidence file");
+    expect(projectAnalysisError(notEvidence.error)).toMatchObject({
+      details: {
+        content_issues: expect.arrayContaining([
+          {
+            path: ["evidence_id"],
+            reason: "missing_argument",
+            expected: "string",
+          },
+        ]),
+      },
     });
   });
 

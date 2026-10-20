@@ -88,10 +88,6 @@ export const inspectAnalysisViewValidatedWithFiles = async (
   if (input.source.kind !== "evidence-file")
     return inspectAnalysisViewValidated(input, lookup);
   const loaded = await readEvidenceFileSource(input.source.path, options);
-  if (!loaded.ok) return loaded;
-  const parent = authenticateEvidence(loaded.value, ["source", "path"], {
-    source: input.source,
-  });
   // Authentication and projection are synchronous; yield so a pending abort is dispatched before each check.
   const cancelled = async (): Promise<boolean> => {
     await setImmediate();
@@ -100,11 +96,11 @@ export const inspectAnalysisViewValidatedWithFiles = async (
   // A request cancelled during authentication reports cancellation, even when authentication failed.
   if (await cancelled())
     return err(new AnalysisCancelledError(INSPECT_ANALYSIS_VIEW_OPERATION));
-  if (!parent.ok) return parent;
-  const id = parent.value.evidence_id;
+  if (!loaded.ok) return loaded;
+  const id = loaded.value.evidence_id;
   const projected = inspectAnalysisViewValidated(
     { ...input, source: { kind: "retained-evidence", evidence_id: id } },
-    (evidenceId) => (evidenceId === id ? parent.value : lookup?.(evidenceId)),
+    (evidenceId) => (evidenceId === id ? loaded.value : lookup?.(evidenceId)),
   );
   // A request cancelled during projection delivers and records nothing.
   return (await cancelled())

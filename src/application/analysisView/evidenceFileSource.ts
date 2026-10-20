@@ -1,4 +1,5 @@
 import { getHeapStatistics } from "node:v8";
+import { z } from "zod";
 
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -8,6 +9,12 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { INSPECT_ANALYSIS_VIEW_OPERATION } from "../../domain/analysisView/analysisViewErrors.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { parseEvidence, type Evidence } from "../../domain/evidence.js";
+import {
+  EvidenceFileError,
+  EvidenceIntegrityError,
+} from "../../domain/evidenceErrors.js";
+import { projectInputIssues } from "../../domain/inputIssueProjection.js";
 import { readJsonFile } from "../JsonFiles.js";
 import { RegularFileCleanupFailure } from "../RegularFileRead.js";
 
@@ -65,11 +72,11 @@ export const requireAuthenticationHeadroom = (
   );
 };
 
-/** Read one Evidence file under the request's cancellation and resource scope, then check room to authenticate it. */
+/** Read and authenticate one Evidence file under the request's cancellation and resource scope. */
 export const readEvidenceFileSource = async (
   path: string,
   options: EvidenceFileReadOptions = {},
-): Promise<Result<unknown, AnalysisError>> => {
+): Promise<Result<Evidence, AnalysisError>> => {
   const { signal, resources } = options;
   if (signal?.aborted)
     return err(new AnalysisCancelledError(INSPECT_ANALYSIS_VIEW_OPERATION));
@@ -92,5 +99,27 @@ export const readEvidenceFileSource = async (
   if (signal?.aborted)
     return err(new AnalysisCancelledError(INSPECT_ANALYSIS_VIEW_OPERATION));
   const headroom = requireAuthenticationHeadroom(loaded.value, path);
-  return headroom.ok ? ok(loaded.value) : headroom;
+  if (!headroom.ok) return headroom;
+  try {
+    return ok(parseEvidence(loaded.value));
+  } catch (cause: unknown) {
+    if (cause instanceof z.ZodError)
+      return err(
+        new EvidenceFileError("read", "wrong-kind", {
+          path,
+          cause,
+          contentIssues: projectInputIssues(cause.issues, loaded.value),
+          userMessage:
+            "The selected file does not contain valid Evidence. Repair or recreate the file and try again.",
+        }),
+      );
+    if (cause instanceof TypeError)
+      return err(
+        new EvidenceIntegrityError(cause.message, {
+          cause,
+          userMessage: cause.message,
+        }),
+      );
+    throw cause;
+  }
 };

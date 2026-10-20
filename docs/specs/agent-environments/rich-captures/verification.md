@@ -67,3 +67,38 @@ literal follows it. The Gitea capture above predates that guard and has not
 been projected with it: whether any of the 63 tools merged sub-resources this
 way, and the tool count with bare `/repos/{owner}/{repo}` routes kept one per
 pair, are not established here.
+
+## Linux follow-up (2026-10-20)
+
+Based on `dd2bf3565`, including main `5fa4defcb`, with Node 24.18.0 and npm
+11.16.0. The file reader now owns authentication; invalid Evidence returns the
+selected file path and file-relative `content_issues`. Service and advertised
+MCP error-envelope regressions cover this boundary.
+
+- Domain analysis views, application analysis views and error projection:
+  16 files, 298 tests passed.
+- Compiled analysis-view CLI/MCP and environment serve/export boundaries:
+  5 files, 48 tests passed.
+- Serial Turbo run: typecheck, lint, format, knip, package metadata and required
+  runtime/contract artifacts: 11 tasks passed. Documentation/catalog validation:
+  8 tasks passed. Architecture guards passed across 1,595 source files.
+- Real Gitea 28.2.0 official Linux binary (published compressed SHA-256 checked),
+  isolated SQLite database, two users and three public repositories with large
+  issue bodies. Actual Chromium navigation captured nine API transactions,
+  45 events, no drops, 12,584,312 bytes of Evidence. Inline manifest projection
+  was refused with `resource_constraint`; file CLI and default stdio MCP
+  projections agreed on five tools with all template rules selected. The
+  three trailing user sub-resources stayed separate. Malformed file diagnostics
+  named the file's JSON root. HTTP SDK replay verified six complete small
+  responses and twelve exact 256 KiB prefixes of large responses, each marked
+  truncated. Owned Gitea, browser and replay-server processes were stopped.
+
+One CPU and one test worker were used. Sampled sum of descendant RSS every
+50 ms (shared pages can count twice): focused tests 15.834 s / 15.327 CPU s /
+764.69 MiB peak; boundaries 194.916 s / 190.121 CPU s / 1,795.15 MiB;
+static/build 266.311 s / 259.658 CPU s / 4,677.44 MiB; real Gitea workflow
+31.631 s / 24.999 CPU s / 2,146.29 MiB. These are individual runs, not a
+cold/warm comparison; model token usage was not measured. The first external
+probe stopped at the expected CLI refusal because its driver rejected exit 1;
+the driver was corrected and the complete workflow passed. No new macOS,
+Windows, model-task scoring or AgentEnv runner verification is claimed here.
