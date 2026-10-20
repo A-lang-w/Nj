@@ -255,9 +255,7 @@ const verifySessionAndComparisonTools = async (
       details: { operation: "compare_web_captures" },
     },
   });
-  expect(JSON.stringify(malformedComparison.content)).toContain(
-    "SDK diagnostic truncated",
-  );
+  expect(JSON.stringify(malformedComparison.content)).toContain("types");
   const incompleteComparison = await connected.client.callTool({
     name: "compare_web_captures",
     arguments: { before: { inspection: capture } },

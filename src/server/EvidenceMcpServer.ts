@@ -70,10 +70,7 @@ const hasAdvertisedInputJsonSchema = (value: unknown): boolean => {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const SDK_INPUT_VALIDATION_MAX_CHARS = 4_096;
-const SDK_INPUT_VALIDATION_PREVIEW_CHARS = 128;
-
-/** Return only ordinary, bounded SDK argument diagnostics for normalization. */
+/** Recognize the SDK's argument diagnostic after its wire size is checked. */
 const sdkInputValidationDiagnostic = (
   text: string | undefined,
   tool: string | undefined,
@@ -82,14 +79,7 @@ const sdkInputValidationDiagnostic = (
   const prefix = `Input validation error: Invalid arguments for tool ${tool}`;
   if (!text.startsWith(prefix) || text[prefix.length] !== ":") return undefined;
   const diagnostic = text.slice(prefix.length + 1).trimStart();
-  if (
-    diagnostic.length === 0 ||
-    diagnostic.length > SDK_INPUT_VALIDATION_MAX_CHARS
-  )
-    return undefined;
-  return diagnostic.length <= SDK_INPUT_VALIDATION_PREVIEW_CHARS
-    ? diagnostic
-    : `${diagnostic.slice(0, SDK_INPUT_VALIDATION_PREVIEW_CHARS)}… [SDK diagnostic truncated; inspect the advertised inputSchema for complete field details]`;
+  return diagnostic.length === 0 ? undefined : diagnostic;
 };
 
 /** Replace the tool payload after the SDK codec while retaining its envelope. */
@@ -428,24 +418,39 @@ class ErrorEvidenceTransport implements Transport {
     const sdkDiagnostic = !isStructured
       ? message.result.content.find((item) => item.type === "text")?.text
       : undefined;
-    const normalized = this.normalizeSdkValidationError(
-      message,
-      tool,
-      targetContent,
-      sdkInputValidationDiagnostic(sdkDiagnostic, tool),
-    );
-    if (
-      normalized !== undefined &&
-      isJSONRPCResultResponse(normalized) &&
-      isCallToolResult(normalized.result) &&
-      normalized.result.content.length > 0 &&
-      measureMcpResultWithinBudget(normalized.result, budget).ok
-    )
-      return normalized;
-    const encoded =
+    let encoded =
       structured !== undefined
         ? encodeToolResult(structured, budget, "error-text", targetContent)
         : measureMcpResultWithinBudget(sdkResultWithMarker, budget);
+    const normalized = encoded.ok
+      ? this.normalizeSdkValidationError(
+          message,
+          tool,
+          targetContent,
+          sdkInputValidationDiagnostic(sdkDiagnostic, tool),
+        )
+      : undefined;
+    if (
+      normalized !== undefined &&
+      isJSONRPCResultResponse(normalized) &&
+      isCallToolResult(normalized.result)
+    ) {
+      // The structured diagnostic is a private carrier removed before sending.
+      // Measure the actual wire result, including its preserved SDK metadata.
+      const { structuredContent, ...wireResult } = normalized.result;
+      encoded =
+        normalized.result.content.length === 0
+          ? encodeToolResult(
+              jsonObjectSchema.parse(structuredContent),
+              budget,
+              "error-text",
+              targetContent,
+            )
+          : measureMcpResultWithinBudget(wireResult, budget);
+      if (encoded.ok) return normalized;
+      // JSON escaping and recovery fields can exceed the budget even when
+      // the original SDK result fits. Retain that original before replacing it.
+    }
     if (encoded.ok) return message;
     const operation = tool ?? "mcp_tool_error";
     const originalResult = jsonObjectSchema.parse(message.result);

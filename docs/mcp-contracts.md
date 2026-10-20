@@ -107,7 +107,8 @@ if retention is unavailable or fails, the diagnostic reports that reason.
 
 SDK-generated input validation failures are normalized into the same canonical
 `invalid_request` text when the bounded diagnostic fits the response budget.
-The field/type diagnostic is retained as a bounded issue message. Oversized
+The complete field/type diagnostic is preserved when normalization fits the
+response budget, including request-specific rejected fields and reasons. Oversized
 SDK diagnostics keep the existing retained-Evidence recovery path. An unknown
 tool remains an MCP JSON-RPC `-32602` error, but its message directs the caller
 to `tools/list` and an advertised operation instead of repeating the unknown
