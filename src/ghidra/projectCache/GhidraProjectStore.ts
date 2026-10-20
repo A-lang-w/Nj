@@ -25,6 +25,7 @@ import {
 import { ghidraProjectCacheKey } from "./GhidraProjectCacheKey.js";
 import {
   ensureGhidraProjectCacheRoot,
+  reclaimGhidraProjectCacheRootRepairs,
   type GhidraProjectCacheRootHost,
   type GhidraProjectCacheRootPreparation,
 } from "./GhidraProjectCacheRoot.js";
@@ -32,6 +33,7 @@ import {
   admitGhidraProjectDirectory,
   copyGhidraProjectDirectory,
   digestGhidraProjectDirectory,
+  ghidraProjectDirectoryBytes,
 } from "./GhidraProjectLayout.js";
 import {
   ghidraProjectManifestIdentity,
@@ -508,6 +510,10 @@ export class GhidraProjectStore {
    * so it contributes no listed size; it is removed here instead of escaping
    * the ceiling forever. Every removal targets the scanned directory, so a
    * damaged manifest never redirects a removal to another entry.
+   *
+   * The copies a root repair that stopped part-way left behind are reclaimed
+   * as well: they are not stored entries, so no other part of the prune would
+   * ever count or remove them. Their bytes are reported as freed.
    */
   async prune(
     signal?: AbortSignal,
@@ -529,9 +535,10 @@ export class GhidraProjectStore {
     const keys = await this.#entryKeys(signal);
     if (!keys.ok) return keys;
     await this.#pruneStaging(signal);
+    const reclaimed = await reclaimGhidraProjectCacheRootRepairs(this.#root);
     const protectedKeys = await this.#protectedKeys(signal);
     const removed: string[] = [];
-    let freed = 0;
+    let freed = reclaimed.reduce((total, reclaim) => total + reclaim.bytes, 0);
     const drop = async (key: string, bytes: number): Promise<void> => {
       await this.#discard(this.#entryPath(key));
       removed.push(key);
@@ -549,7 +556,7 @@ export class GhidraProjectStore {
       // freed total stays useful without re-reading project contents. The
       // removal targets the scanned directory, never a key the manifest names.
       if (protectedKeys.has(key)) continue;
-      await drop(key, await this.#directoryBytes(this.#entryPath(key)));
+      await drop(key, await ghidraProjectDirectoryBytes(this.#entryPath(key)));
     }
     const nowMs = Date.now();
     const fresh: GhidraProjectEntry[] = [];
@@ -779,18 +786,6 @@ export class GhidraProjectStore {
         await rm(lockPath, { recursive: true, force: true });
       }
     }
-  }
-
-  /** Best-effort stored bytes for a damaged entry that has no usable manifest. */
-  async #directoryBytes(path: string): Promise<number> {
-    const entry = await lstat(path).catch(() => undefined);
-    if (entry === undefined) return 0;
-    if (entry.isFile()) return entry.size;
-    if (!entry.isDirectory() || entry.isSymbolicLink()) return 0;
-    let total = 0;
-    for (const name of await readdir(path).catch(() => []))
-      total += await this.#directoryBytes(join(path, name));
-    return total;
   }
 
   async #discard(path: string): Promise<void> {

@@ -217,6 +217,26 @@ export interface GhidraProjectDigest {
   readonly sizeBytes: number;
 }
 
+/**
+ * The bytes a directory occupies, measured the way a prune measures an entry.
+ *
+ * A link is not followed and contributes nothing, so the measurement never
+ * reaches outside the directory it describes. An unreadable entry contributes
+ * nothing rather than failing the measurement.
+ */
+export const ghidraProjectDirectoryBytes = async (
+  path: string,
+): Promise<number> => {
+  const entry = await lstat(path).catch(() => undefined);
+  if (entry === undefined) return 0;
+  if (entry.isFile()) return entry.size;
+  if (!entry.isDirectory() || entry.isSymbolicLink()) return 0;
+  let total = 0;
+  for (const name of await readdir(path).catch(() => []))
+    total += await ghidraProjectDirectoryBytes(join(path, name));
+  return total;
+};
+
 /** Digest every file in a stored project for integrity verification. */
 export const digestGhidraProjectDirectory = async (
   directory: string,

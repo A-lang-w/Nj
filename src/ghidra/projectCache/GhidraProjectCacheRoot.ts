@@ -18,6 +18,7 @@ import {
   requireWindowsNativeAuthority,
   type WindowsNativeAuthority,
 } from "../../windows/WindowsNativeLoader.js";
+import { ghidraProjectDirectoryBytes } from "./GhidraProjectLayout.js";
 import { GhidraProjectCacheError } from "./GhidraProjectCacheTypes.js";
 
 const nativeIdentitySchema = z
@@ -39,10 +40,15 @@ const DURABLE_ROOT_LEAF = "root";
 const REPAIR_LOCK_SUFFIX = ".repair";
 
 /**
- * Name of the directory that holds the copies of the preserved projects until
- * each one is published at its final path.
+ * Suffix of the directory beside the root that holds the copies of the
+ * preserved projects until each one is published at its final path.
+ *
+ * The copies live beside the root because the root holds the store's data:
+ * a copy directory inside it would be indistinguishable from a stored
+ * project, and nothing would ever reclaim it. Beside the root the copies
+ * are found by their own name, so the reclamation never guesses.
  */
-const REPAIR_STAGING_DIRECTORY = "repair";
+const REPAIR_STAGING_SUFFIX = ".repair-staging";
 
 /**
  * A repair lock that has been silent for longer than this belongs to a
@@ -54,14 +60,14 @@ const REPAIR_LOCK_STALE_MS = 10 * 60 * 1000;
 /** Native operations that establish and verify a durable private cache root. */
 export interface GhidraProjectCacheRootHost {
   /**
-   * Create a private directory at `root` and return its path.
+   * Create a private directory at `path` and return its path.
    *
    * The directory must carry a protected, owner-only DACL and must not stay
    * sealed by an open native handle: Windows refuses a path-based rename into
    * a sealed directory, so a sealed root would refuse the stored projects the
    * store moves into it and the entries it publishes.
    */
-  createPrivateDirectory(root: string): Promise<string>;
+  createPrivateDirectory(path: string): Promise<string>;
   /** Throw unless `path` is an owner-only directory with a protected DACL. */
   verifyPrivateDirectory(path: string): unknown;
 }
@@ -91,10 +97,10 @@ export type GhidraProjectCacheRootPreparation =
 const systemRootHost = (): GhidraProjectCacheRootHost => {
   const native = (): WindowsNativeAuthority => requireWindowsNativeAuthority();
   return {
-    async createPrivateDirectory(root: string): Promise<string> {
+    async createPrivateDirectory(path: string): Promise<string> {
       const authority = native();
       const observed = authority.call("runtime_create", [
-        dirname(root),
+        dirname(path),
         "rea-ghidra-cache-",
       ]);
       const runtime = createdRuntimeSchema.safeParse(observed);
@@ -110,8 +116,8 @@ const systemRootHost = (): GhidraProjectCacheRootHost => {
           runtime.data.handle,
           DURABLE_ROOT_LEAF,
         ]);
-        await rename(join(runtime.data.path, DURABLE_ROOT_LEAF), root);
-        return root;
+        await rename(join(runtime.data.path, DURABLE_ROOT_LEAF), path);
+        return path;
       } finally {
         // The runtime root is empty once the durable directory is in place.
         // Closing it releases the native handles without touching the cache.
@@ -218,8 +224,8 @@ const quarantineRoot = async (root: string): Promise<string> => {
  * owner-only DACL, so the preserved projects are private like the root that
  * holds them.
  *
- * `keepAlive` runs before every child, so a repair that holds a lock for a
- * long copy can keep the lock from looking abandoned.
+ * `keepAlive` runs before every entry that is copied, so a repair that holds
+ * a lock for a long copy can keep the lock from looking abandoned.
  */
 const copyDirectoryContent = async (
   from: string,
@@ -229,13 +235,21 @@ const copyDirectoryContent = async (
   const names = await readdir(from);
   for (const name of names) {
     await keepAlive();
-    await copyCacheEntry(join(from, name), join(to, name));
+    await copyCacheEntry(join(from, name), join(to, name), keepAlive);
   }
   return names.length;
 };
 
-/** Copy one stored entry into the private root, refusing what it cannot hold. */
-const copyCacheEntry = async (from: string, to: string): Promise<void> => {
+/**
+ * Copy one stored entry into the repair staging, refusing what it cannot
+ * hold.
+ */
+const copyCacheEntry = async (
+  from: string,
+  to: string,
+  keepAlive: () => Promise<void>,
+): Promise<void> => {
+  await keepAlive();
   const stats = await lstat(from);
   if (stats.isSymbolicLink())
     throw rootError(
@@ -245,7 +259,7 @@ const copyCacheEntry = async (from: string, to: string): Promise<void> => {
   if (stats.isDirectory()) {
     await mkdir(to, { recursive: true, mode: 0o700 });
     for (const name of await readdir(from))
-      await copyCacheEntry(join(from, name), join(to, name));
+      await copyCacheEntry(join(from, name), join(to, name), keepAlive);
     await utimes(to, stats.atime, stats.mtime);
     return;
   }
@@ -259,28 +273,6 @@ const copyCacheEntry = async (from: string, to: string): Promise<void> => {
     createWriteStream(to, { flags: "wx", mode: 0o600 }),
   );
   await utimes(to, stats.atime, stats.mtime);
-};
-
-/**
- * Name of the directory that holds the copied projects until they are
- * published.
- *
- * The name avoids the children of the set-aside root, because every one of
- * them is copied into it.
- */
-const repairStagingName = async (previous: string): Promise<string> => {
-  const names = new Set(await readdir(previous).catch(() => []));
-  for (let attempt = 0; attempt < 64; attempt += 1) {
-    const candidate =
-      attempt === 0
-        ? REPAIR_STAGING_DIRECTORY
-        : `${REPAIR_STAGING_DIRECTORY}-${attempt}`;
-    if (!names.has(candidate)) return candidate;
-  }
-  throw rootError(
-    "Ghidra project cache root could not be staged for repair",
-    previous,
-  );
 };
 
 /**
@@ -315,6 +307,37 @@ const publishPreservedProjects = async (
 const repairLockPath = (root: string): string =>
   join(dirname(root), `${basename(root)}${REPAIR_LOCK_SUFFIX}`);
 
+/**
+ * Path of the directory that holds the copies of the preserved projects.
+ *
+ * The path is fixed, so the copies a repair that stopped part-way left
+ * behind are found by their own name and never mistaken for a stored
+ * project.
+ */
+const repairStagingPath = (root: string): string =>
+  join(dirname(root), `${basename(root)}${REPAIR_STAGING_SUFFIX}`);
+
+/**
+ * How long the repair lock beside the root has been silent.
+ *
+ * A lock that does not exist is as old as it can be: no session holds it.
+ */
+const repairLockAge = async (root: string): Promise<number> =>
+  await lstat(repairLockPath(root)).then(
+    (stats) => Date.now() - stats.mtimeMs,
+    () => Number.POSITIVE_INFINITY,
+  );
+
+/**
+ * Whether a repair is holding the lock beside the root right now.
+ *
+ * The lock is taken before the root is replaced and released when the repair
+ * is over, so a lock that has been silent for longer than any plausible
+ * repair belongs to a session that died.
+ */
+const repairInProgress = async (root: string): Promise<boolean> =>
+  (await repairLockAge(root)) < REPAIR_LOCK_STALE_MS;
+
 /** A held repair lock and what taking it proved about the root. */
 interface RepairLock {
   /** The file that serialises the repair. */
@@ -348,11 +371,7 @@ const acquireRepairLock = async (root: string): Promise<RepairLock> => {
   } catch (cause: unknown) {
     if (!isAlreadyExists(cause)) throw cause;
   }
-  const age = await lstat(path).then(
-    (stats) => Date.now() - stats.mtimeMs,
-    () => Number.POSITIVE_INFINITY,
-  );
-  if (age < REPAIR_LOCK_STALE_MS)
+  if ((await repairLockAge(root)) < REPAIR_LOCK_STALE_MS)
     throw new GhidraProjectCacheError(
       "busy",
       "Another session is rebuilding the Ghidra project cache root",
@@ -384,6 +403,45 @@ const keepRepairLockAlive = async (lock: string): Promise<void> => {
   await utimes(lock, now, now).catch(() => undefined);
 };
 
+/** A repair copy directory that was reclaimed, and the bytes it held. */
+export interface GhidraProjectCacheRootReclaim {
+  /** The reclaimed directory beside the cache root. */
+  readonly path: string;
+  /** The bytes the reclaimed copies occupied. */
+  readonly bytes: number;
+}
+
+/**
+ * Reclaim the copies a repair that stopped part-way left behind.
+ *
+ * A repair copies the stored projects into a staging directory beside the
+ * root and publishes each one by a rename. A session that stops while it
+ * copies leaves that directory behind, and the next session accepts the
+ * private root as ready, so the copies stay there for good: they are not
+ * stored entries, so no prune counts or removes them.
+ *
+ * A repair that is still running holds the lock beside the root, so its
+ * copies are left alone: reclaiming them would break the repair that is
+ * copying them. A lock that has been silent for longer than any plausible
+ * repair belongs to a session that died, so the copies it left are reclaimed
+ * with it. A copy that cannot be removed stays in place rather than being
+ * reported as reclaimed.
+ */
+export const reclaimGhidraProjectCacheRootRepairs = async (
+  root: string,
+): Promise<readonly GhidraProjectCacheRootReclaim[]> => {
+  if (await repairInProgress(root)) return [];
+  const path = repairStagingPath(root);
+  const stats = await lstat(path).catch(() => undefined);
+  if (stats === undefined) return [];
+  const bytes = await ghidraProjectDirectoryBytes(path);
+  const removed = await rm(path, { recursive: true, force: true }).then(
+    () => true,
+    () => false,
+  );
+  return removed ? [{ path, bytes }] : [];
+};
+
 /** What rebuilding a root that was not owner-only achieved. */
 interface WindowsRootRepair {
   /** The stored children copied into the private replacement. */
@@ -401,9 +459,11 @@ interface WindowsRootRepair {
  * keeps working instead of being disabled for the whole session, and the
  * copies are private like the root that holds them.
  *
- * The copies are made in a staging directory inside the private root and
+ * The copies are made in a private staging directory beside the root and
  * published one at a time, so a repair that stops part-way never leaves an
- * unfinished project at the path a session reads.
+ * unfinished project at the path a session reads. The staging directory is
+ * named by the root it belongs to, so the copies a repair that stopped
+ * part-way left behind are found and reclaimed instead of filling the disk.
  */
 const replaceWindowsRoot = async (
   root: string,
@@ -439,10 +499,16 @@ const replaceWindowsRoot = async (
       verification,
     );
   }
-  const staging = join(root, await repairStagingName(previous));
+  const staging = repairStagingPath(root);
+  // A repair that stopped part-way left its copies here. This session holds
+  // the repair lock, so no other repair is using them.
+  await rm(staging, { recursive: true, force: true }).catch(() => undefined);
   let preserved: number;
   try {
-    await mkdir(staging, { recursive: true, mode: 0o700 });
+    // The copies are made in a private directory of their own, so they carry
+    // an owner-only DACL while they are copied and are never mistaken for a
+    // stored project.
+    await host.createPrivateDirectory(staging);
     preserved = await copyDirectoryContent(previous, staging, () =>
       keepRepairLockAlive(lock),
     );
@@ -633,6 +699,27 @@ const ensureWindowsRoot = async (
 };
 
 /**
+ * Prepare the cache root for the platform that holds it.
+ *
+ * A POSIX root is created owner-only and an existing widened root is
+ * tightened. A Windows root is created through the native protected-DACL
+ * boundary, and a root that does not pass that verification is rebuilt as a
+ * private directory, because POSIX mode bits do not set a Windows DACL.
+ */
+const prepareCacheRoot = async (
+  root: string,
+  options: {
+    readonly platform?: NodeJS.Platform;
+    readonly host?: GhidraProjectCacheRootHost;
+  },
+): Promise<GhidraProjectCacheRootPreparation> => {
+  if ((options.platform ?? process.platform) === "win32")
+    return await ensureWindowsRoot(root, options.host ?? systemRootHost());
+  await ensurePosixRoot(root);
+  return { status: "ready" };
+};
+
+/**
  * Establish the durable cache root before any project bytes are written.
  *
  * POSIX roots are created owner-only and existing widened roots are tightened.
@@ -640,6 +727,11 @@ const ensureWindowsRoot = async (
  * existing root that does not pass it is rebuilt as a private directory that
  * keeps the stored projects, because POSIX mode bits do not set a Windows
  * DACL.
+ *
+ * The copies a repair that stopped part-way left behind are reclaimed here,
+ * so they cannot outlive the session that left them: the next session
+ * accepts the private root as ready, and nothing else would ever remove
+ * them.
  */
 export const ensureGhidraProjectCacheRoot = async (
   root: string,
@@ -649,10 +741,9 @@ export const ensureGhidraProjectCacheRoot = async (
   } = {},
 ): Promise<GhidraProjectCacheRootPreparation> => {
   try {
-    if ((options.platform ?? process.platform) === "win32")
-      return await ensureWindowsRoot(root, options.host ?? systemRootHost());
-    await ensurePosixRoot(root);
-    return { status: "ready" };
+    const preparation = await prepareCacheRoot(root, options);
+    await reclaimGhidraProjectCacheRootRepairs(root);
+    return preparation;
   } catch (cause: unknown) {
     if (cause instanceof GhidraProjectCacheError) throw cause;
     throw rootError(

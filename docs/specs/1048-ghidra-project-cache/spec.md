@@ -270,9 +270,13 @@ statement; needs CONTRIBUTING.md contribution-scope sign-off).
   private replacement so they carry its owner-only DACL, and it keeps the
   previous root until every project is copied, so a rebuild that cannot
   complete leaves the stored projects where they were. Each project is copied
-  into a staging directory and published by an atomic rename, so no session
-  reads a half-copied project, and a lock beside the root keeps one session
-  from rebuilding the root while another reads or discards a project.
+  into a private staging directory beside the root and published by an atomic
+  rename, so no session reads a half-copied project, and a lock beside the root
+  keeps one session from rebuilding the root while another reads or discards a
+  project. The copies an interrupted rebuild leaves behind are reclaimed by the
+  next session and by `cache-prune`, because they are not stored entries and no
+  other rule would ever remove them; the copies of a rebuild that still holds
+  the lock are left alone.
 - Admission mirrors existing-project rules; entries are derived data, never
   executed. Corrupt/foreign entry: rebuild as a miss **but always record the
   typed integrity failure** and never present a rebuilt entry as an untouched

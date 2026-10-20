@@ -168,7 +168,7 @@ describe("Windows cache root repair", () => {
     expect(outcome).toEqual({ status: "repaired", preservedEntries: 1 });
     // The stored project survives the rebuild.
     await expect(readFile(join(root, "entry"), "utf8")).resolves.toBe("stored");
-    expect(created).toEqual([root]);
+    expect(created).toEqual([root, join(parent, "cache.repair-staging")]);
     expect(verified).toEqual([root, root]);
     // The set-aside root is removed after the replacement is in place.
     await expect(readdir(parent)).resolves.toEqual(["cache"]);
@@ -373,6 +373,7 @@ describe("Windows cache root repair coordination", () => {
         async createPrivateDirectory(path) {
           rebuilt = true;
           await mkdir(path, { recursive: true });
+          if (path !== root) return path;
           // A concurrent publisher stored a project under the same name while
           // the rebuild was running.
           await mkdir(join(path, "entry"), { recursive: true });
@@ -626,6 +627,71 @@ describe("Windows cache root repair failures", () => {
       await chmod(join(parent, "cache.previous-1", "entry"), 0o700);
     },
   );
+});
+
+describe("Windows cache root repair leftovers", () => {
+  /**
+   * A private root beside the copies a repair that stopped part-way left
+   * behind, and the directory that holds them.
+   */
+  const interruptedRepair = async (): Promise<{
+    readonly parent: string;
+    readonly root: string;
+    readonly copies: string;
+  }> => {
+    const parent = await tempRoot();
+    const root = join(parent, "cache");
+    await mkdir(root);
+    const copies = join(parent, "cache.repair-staging");
+    await mkdir(join(copies, "entry"), { recursive: true });
+    await writeFile(join(copies, "entry", "project"), "copied");
+    return { parent, root, copies };
+  };
+
+  it("reclaims the copies a repair that stopped part-way left behind", async () => {
+    const { root, copies } = await interruptedRepair();
+    await expect(
+      ensureGhidraProjectCacheRoot(root, {
+        platform: "win32",
+        host: privateRootHost(),
+      }),
+    ).resolves.toEqual({ status: "ready" });
+    // The private root is accepted as ready, so nothing else would ever
+    // remove the copies the repair left behind.
+    await expect(lstat(copies)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("leaves the copies a running repair is making alone", async () => {
+    const { parent, root, copies } = await interruptedRepair();
+    // Another session holds the repair lock, so its copies are still in use.
+    await writeFile(join(parent, "cache.repair"), "held");
+    await expect(
+      ensureGhidraProjectCacheRoot(root, {
+        platform: "win32",
+        host: privateRootHost(),
+      }),
+    ).resolves.toEqual({ status: "ready" });
+    await expect(
+      lstat(copies).then((stats) => stats.isDirectory()),
+    ).resolves.toBe(true);
+  });
+
+  it("reclaims the copies a dead session's repair left behind", async () => {
+    const { parent, root, copies } = await interruptedRepair();
+    const lock = join(parent, "cache.repair");
+    await writeFile(lock, "abandoned");
+    // The lock is older than any plausible repair, so the session that left
+    // it behind is gone.
+    const abandoned = new Date(Date.now() - 60 * 60 * 1000);
+    await utimes(lock, abandoned, abandoned);
+    await expect(
+      ensureGhidraProjectCacheRoot(root, {
+        platform: "win32",
+        host: privateRootHost(),
+      }),
+    ).resolves.toEqual({ status: "ready" });
+    await expect(lstat(copies)).rejects.toMatchObject({ code: "ENOENT" });
+  });
 });
 
 describe("Windows cache root admission", () => {

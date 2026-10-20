@@ -11,7 +11,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { randomUUID } from "node:crypto";
@@ -381,6 +381,49 @@ describe("GhidraProjectStore maintenance", () => {
     expect(remaining.value.map((entry) => entry.key)).toEqual([
       ghidraProjectCacheKey(newer),
     ]);
+  });
+});
+
+describe("GhidraProjectStore repair leftovers", () => {
+  /** The copies a root repair that stopped part-way left behind. */
+  const interruptedCopies = async (): Promise<string> => {
+    const copies = join(dirname(root), `${basename(root)}.repair-staging`);
+    await mkdir(join(copies, "entry"), { recursive: true });
+    await writeFile(join(copies, "entry", "project"), Buffer.alloc(2048));
+    return copies;
+  };
+
+  it("reclaims the copies an interrupted rebuild left behind and counts their bytes", async () => {
+    const store = newStore();
+    const copies = await interruptedCopies();
+
+    const pruned = await store.prune();
+    if (!pruned.ok) throw new Error(`prune failed: ${pruned.error.message}`);
+    // The copies are not stored entries, so no entry key is removed for them.
+    expect(pruned.value.removed).toEqual([]);
+    // The bytes they occupied are reported as freed.
+    expect(pruned.value.bytes).toBe(2048);
+    await expect(stat(copies)).rejects.toThrow();
+    await rm(copies, { recursive: true, force: true });
+  });
+
+  it("keeps the copies a running rebuild is making", async () => {
+    const store = newStore();
+    const copies = await interruptedCopies();
+    // Another session holds the repair lock beside the root, so the copies it
+    // is making are still in use.
+    const lock = `${root}.repair`;
+    await writeFile(lock, "held");
+    try {
+      const pruned = await store.prune();
+      if (!pruned.ok) throw new Error(`prune failed: ${pruned.error.message}`);
+      expect(pruned.value.removed).toEqual([]);
+      expect(pruned.value.bytes).toBe(0);
+      await expect(stat(copies)).resolves.toBeDefined();
+    } finally {
+      await rm(lock, { force: true });
+      await rm(copies, { recursive: true, force: true });
+    }
   });
 });
 

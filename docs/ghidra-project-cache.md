@@ -59,12 +59,18 @@ replays in the later session.
   gave them. The rebuild keeps the previous root until every project is
   copied, and a rebuild that cannot complete leaves the stored projects where
   they were.
-- The rebuild copies each stored project into a staging directory inside the
-  private root and publishes it by an atomic rename, so a project is never
+- The rebuild copies each stored project into a private staging directory
+  beside the root and publishes it by an atomic rename, so a project is never
   visible at its final path while it is still being copied. A rebuild that
   stops part-way therefore leaves no half-copied project that a later session
   could read as a cache hit; the next session imports the target again and
   rebuilds it.
+- A rebuild that is interrupted leaves its unfinished copies in that staging
+  directory. The store never counts them, because they are not stored entries,
+  so the next session and `cache-prune` reclaim them instead of letting them
+  fill the disk for good. The copies of a rebuild that is still running are
+  left alone: the rebuild holds a lock beside the root, and a lock left behind
+  by a session that died is treated as abandoned.
 - One session rebuilds the root at a time. The rebuild holds a lock beside the
   root, and a session that finds the lock held reports the root as busy
   instead of reading or discarding a project another session is copying. A
@@ -111,7 +117,9 @@ output. Listing and verification are read-only; prune, remove, and
 corrupt entry that `--repair` cannot remove (for example while another session
 holds a recent lease) is reported under `failed_repairs`, and the command exits
 unsuccessfully. Prune also removes entries whose manifest is unreadable, so a
-damaged directory cannot escape the size ceiling.
+damaged directory cannot escape the size ceiling, and the unfinished copies an
+interrupted root rebuild left behind, so they cannot escape it either. The
+`freed_bytes` it reports cover both.
 
 ## Limitations
 
