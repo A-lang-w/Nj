@@ -14,6 +14,10 @@ normalized major/minor when known, library name and encryption marker. Member
 metadata retains the original name, table index, type, compression flag,
 relative offset and known directory record extent. Logical paths use archive
 path rules; the source name retains its spelling, including backslashes.
+`relative_offset` is relative to the CArchive start for CArchive rows, or to
+the decoded PYZ image for PYZ rows. A CArchive directory record starts at
+`archive_start + toc_offset + directory_record_offset`; its size is
+`directory_record_size`. PYZ row directory extents remain unknown.
 
 CArchive type `o` entries are runtime options. They are metadata occurrences,
 with no content artifact or extractable file. Their query paths are
@@ -28,6 +32,9 @@ occurrence IDs, requested `fields`, and `offset`/`limit`. Filters intersect;
 identities, parent Evidence and coverage survive projection. Full inventory
 Evidence remains available for export. A compact reply reduces returned context;
 it still performs the complete member inventory and hashing work.
+Focused views add calls and tool-schema costs. A complete small inventory can
+cost less overall; prefer compact delivery when the full member graph would
+overwhelm the answer.
 
 ```bash
 rea inspect-artifact /absolute/path/hello --detail summary --evidence_output /absolute/new/evidence.json --json

@@ -95,9 +95,10 @@ explicit path or endpoint and do not need it.
   executable): `open_binary` with the supplied local path; use `inspect_artifact`
   when its graph and findings help answer the question. A PyInstaller CArchive
   is the application layer; the bootloader is only the native prefix. Start with
-  `detail: "summary"`, then use retained inventory views for selected member
-  fields/pages. Runtime options are metadata, not files. Compact delivery still
-  inventories and hashes members. See the
+  `detail: "summary"` for large inventories, then use retained inventory views
+  for selected member fields/pages. A complete small inventory can cost less
+  than extra calls and schemas. Runtime options are metadata, not files.
+  Compact delivery still inventories and hashes members. See the
   [Python packaged applications guide](https://github.com/morluto/rea/blob/main/docs/python-packaged-applications.md).
 - Android APK code, classes, methods, or incoming references:
   `inspect_android_package`, then focused Android tools when advertised.
