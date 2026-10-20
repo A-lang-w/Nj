@@ -37,6 +37,27 @@ export const parseJadxFailure = (
   const parsed = bridgeFailureSchema.safeParse(candidate);
   return parsed.success ? parsed.data : undefined;
 };
+
+/**
+ * HotSpot's two heap-exhaustion reasons: the heap cannot hold the working set,
+ * and the collector spends nearly all of its time reclaiming almost none of it.
+ * Both are remedied by the same worker heap setting, and a larger heap turns
+ * the second into the first rather than into a different failure.
+ *
+ * A named bridge failure carries `jvm-memory-failure` instead, so this is the
+ * evidence available only before the bridge answers: a launcher that dies
+ * during startup writes the same `OutOfMemoryError` text to its retained
+ * stderr. Other `OutOfMemoryError` reasons (native thread, metaspace, direct
+ * buffer) are not heap shortages, so they keep the generic startup failure
+ * rather than claiming the heap setting is the fix. A heap below the JVM's own
+ * minimum never reaches this path: the VM refuses to initialize and prints its
+ * own message.
+ */
+const JADX_HEAP_EXHAUSTION = /java heap space|gc overhead limit exceeded/iu;
+
+/** Whether a launcher's retained stderr reports JVM heap exhaustion. */
+export const jadxHeapExhausted = (text: string): boolean =>
+  JADX_HEAP_EXHAUSTION.test(text);
 /** Values observed inside the exact JVM producing the analysis. */
 export const jadxRuntimeSchema = z.object({
   engine_reported_version: z.string().min(1),
