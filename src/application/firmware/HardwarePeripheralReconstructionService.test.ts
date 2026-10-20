@@ -79,6 +79,61 @@ describe("Hardware peripheral reconstruction from offline instruction references
     expect(report.limitations).toHaveLength(1);
     expect(report.limitations[0]).toContain("Failed to attribute reference");
   });
+
+  it("enriches peripheral blocks with STM32F1 and ESP32 SoC peripheral definitions", () => {
+    // STM32F1 GPIOA and USART1
+    const stm32Refs: AnalyzedInstructionReference[] = [
+      { target_address: "0x40010804", write: true }, // GPIOA
+      { target_address: "0x40013800", read: true }, // USART1
+    ];
+
+    const stm32Report = reconstructHardwareFromReferences(
+      stm32Refs,
+      "arm",
+      "stm32_driver",
+      "stm32f1",
+    );
+
+    expect(stm32Report.peripheralBlocks).toHaveLength(2);
+    const gpioa = stm32Report.peripheralBlocks.find(
+      (b) => b.blockBase === "0x40010000" || b.socPeripheralName === "GPIOA",
+    );
+    expect(gpioa?.socPeripheralName).toBe("GPIOA");
+    expect(gpioa?.socPeripheralBus).toBe("APB2");
+
+    // ESP32 UART0 and GPIO
+    const esp32Refs: AnalyzedInstructionReference[] = [
+      { target_address: "0x3ff40000", write: true }, // UART0
+      { target_address: "0x3ff44004", read: true }, // GPIO
+    ];
+
+    const esp32Report = reconstructHardwareFromReferences(
+      esp32Refs,
+      "riscv",
+      "esp32_app",
+      "esp32",
+    );
+
+    expect(esp32Report.peripheralBlocks).toHaveLength(2);
+    const uart0 = esp32Report.peripheralBlocks.find(
+      (b) => b.socPeripheralName === "UART0",
+    );
+    expect(uart0?.socPeripheralName).toBe("UART0");
+    expect(uart0?.socPeripheralBus).toBe("DPort");
+  });
+
+  it("automatically detects candidate SoC platform when unspecified", () => {
+    const references: AnalyzedInstructionReference[] = [
+      { target_address: "0x40010800", write: true },
+      { target_address: "0x40013800", read: true },
+      { target_address: "0x40021000", write: true },
+    ];
+
+    const report = reconstructHardwareFromReferences(references, "arm");
+    expect(report.detectedPlatforms.length).toBeGreaterThanOrEqual(1);
+    expect(report.detectedPlatforms[0]?.platform).toBe("stm32f1");
+    expect(report.detectedPlatforms[0]?.confidence).toBe(1.0);
+  });
 });
 
 describe("Hardware peripheral reconstruction through analysis operation port", () => {

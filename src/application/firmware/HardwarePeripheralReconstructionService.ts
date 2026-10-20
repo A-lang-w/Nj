@@ -16,6 +16,13 @@ import {
   hardwareMemoryRegionKindSchema,
 } from "../../domain/firmware/hardwareMemoryMap.js";
 import {
+  detectSocPlatform,
+  lookupSocPeripheral,
+  type SocPlatform,
+  socPlatformSchema,
+  type SocPlatformMatchCandidate,
+} from "../../domain/firmware/socPeripheralDatabase.js";
+import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
@@ -51,26 +58,40 @@ export const reconstructProcedureHardwareInputSchema = z.strictObject({
   architecture: hardwareArchitectureSchema.describe(
     "Target hardware CPU architecture for memory map and register resolution",
   ),
+  platform: socPlatformSchema
+    .optional()
+    .describe(
+      "Optional explicit target SoC family (stm32f1, stm32f4, gd32f1, esp32) for device-specific register mapping",
+    ),
 });
 export type ReconstructProcedureHardwareInput = z.infer<
   typeof reconstructProcedureHardwareInputSchema
 >;
 
+/** Enriched peripheral block with optional SoC-specific controller identification. */
+export interface ReconstructedPeripheralBlock extends HardwarePeripheralBlockSummary {
+  readonly socPeripheralName?: string | null;
+  readonly socPeripheralBus?: string | null;
+}
+
 /** Output result detailing reconstructed hardware peripheral interactions for a procedure. */
 export interface HardwarePeripheralReconstruction {
   readonly procedure: string;
   readonly architecture: HardwareArchitecture;
+  readonly platform: SocPlatform | null;
   readonly totalReferencesExamined: number;
   readonly mmioAccessCount: number;
   readonly nonMmioAccessCount: number;
-  readonly peripheralBlocks: readonly HardwarePeripheralBlockSummary[];
+  readonly peripheralBlocks: readonly ReconstructedPeripheralBlock[];
   readonly attributions: readonly HardwareAccessAttribution[];
+  readonly detectedPlatforms: readonly SocPlatformMatchCandidate[];
   readonly limitations: readonly string[];
 }
 
 export const hardwarePeripheralReconstructionSchema = z.strictObject({
   procedure: z.string(),
   architecture: hardwareArchitectureSchema,
+  platform: socPlatformSchema.nullable().optional(),
   totalReferencesExamined: z.number().int().min(0),
   mmioAccessCount: z.number().int().min(0),
   nonMmioAccessCount: z.number().int().min(0),
@@ -85,6 +106,8 @@ export const hardwarePeripheralReconstructionSchema = z.strictObject({
       uniqueAddresses: z.array(z.string()),
       observedOffsets: z.array(z.string()),
       knownRegisters: z.array(z.string()),
+      socPeripheralName: z.string().nullable().optional(),
+      socPeripheralBus: z.string().nullable().optional(),
     }),
   ),
   attributions: z.array(
@@ -105,6 +128,15 @@ export const hardwarePeripheralReconstructionSchema = z.strictObject({
       provenance: z.string().nullable().optional(),
     }),
   ),
+  detectedPlatforms: z.array(
+    z.strictObject({
+      platform: socPlatformSchema,
+      matchedCount: z.number().int().min(0),
+      totalAddresses: z.number().int().min(0),
+      confidence: z.number(),
+      matchedPeripherals: z.array(z.string()),
+    }),
+  ),
   limitations: z.array(z.string()),
 });
 
@@ -116,12 +148,28 @@ export const reconstructHardwareFromReferences = (
   references: readonly AnalyzedInstructionReference[],
   architecture: HardwareArchitecture,
   procedure = "detached",
+  platform: SocPlatform | null = null,
 ): HardwarePeripheralReconstruction => {
   const attributions: HardwareAccessAttribution[] = [];
   const limitations: string[] = [];
 
+  const candidateAddresses = references.map((r) => r.target_address);
+  const detectedPlatforms =
+    platform === null ? detectSocPlatform(candidateAddresses) : [];
+
+  const activePlatform =
+    platform ??
+    (detectedPlatforms.length > 0 &&
+    (detectedPlatforms[0]?.confidence ?? 0) >= 0.5
+      ? detectedPlatforms[0]?.platform
+      : null);
+
   for (const ref of references) {
-    const attributed = attributeHardwareAccess(ref, architecture);
+    const attributed = attributeHardwareAccess(
+      ref,
+      architecture,
+      activePlatform,
+    );
     if (attributed.ok) {
       attributions.push(attributed.value);
     } else {
@@ -136,14 +184,46 @@ export const reconstructHardwareFromReferences = (
     architecture,
   );
 
+  const peripheralBlocks: ReconstructedPeripheralBlock[] =
+    summary.peripheralBlocks.map((block) => {
+      const matchedNames = new Set<string>();
+      let primaryBus: string | null = null;
+
+      if (activePlatform) {
+        const baseDef = lookupSocPeripheral(block.blockBase, activePlatform);
+        if (baseDef) {
+          matchedNames.add(baseDef.name);
+          primaryBus = baseDef.bus;
+        }
+        for (const addr of block.uniqueAddresses) {
+          const def = lookupSocPeripheral(addr, activePlatform);
+          if (def) {
+            matchedNames.add(def.name);
+            primaryBus = def.bus;
+          }
+        }
+      }
+
+      return {
+        ...block,
+        socPeripheralName:
+          matchedNames.size > 0
+            ? Array.from(matchedNames).sort().join(", ")
+            : null,
+        socPeripheralBus: primaryBus,
+      };
+    });
+
   return {
     procedure,
     architecture,
+    platform,
     totalReferencesExamined: summary.totalReferencesExamined,
     mmioAccessCount: summary.mmioAccessCount,
     nonMmioAccessCount: summary.nonMmioAccessCount,
-    peripheralBlocks: summary.peripheralBlocks,
+    peripheralBlocks,
     attributions,
+    detectedPlatforms,
     limitations,
   };
 };
@@ -173,7 +253,7 @@ export const reconstructProcedureHardwareInteractions = async (
     );
   }
 
-  const { procedure, architecture } = parsed.data;
+  const { procedure, architecture, platform } = parsed.data;
 
   const execution = await analysis.execute(
     "procedure_references",
@@ -228,6 +308,7 @@ export const reconstructProcedureHardwareInteractions = async (
     analyzedReferences,
     architecture,
     procedure,
+    platform ?? null,
   );
 
   return ok(result);

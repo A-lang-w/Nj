@@ -4,6 +4,10 @@ import {
   type HardwareMemoryRegionKind,
 } from "./hardwareMemoryMap.js";
 import { lookupHardwareRegister } from "./hardwareRegisterCatalog.js";
+import {
+  lookupSocPeripheral,
+  type SocPlatform,
+} from "./socPeripheralDatabase.js";
 import { err, ok, type Result } from "../result.js";
 
 /** Minimal input reference contract representing an analyzed instruction reference. */
@@ -76,10 +80,13 @@ const deriveAccessKind = (
 /**
  * Attribute an analyzed instruction reference to its underlying hardware memory
  * region, calculating peripheral block coordinates and access direction.
+ * Optionally accepts an explicit SoC platform family (stm32f1, gd32f1, esp32, etc.)
+ * for exact peripheral controller identification and base address resolution.
  */
 export const attributeHardwareAccess = (
   reference: AnalyzedInstructionReference,
   architecture: HardwareArchitecture,
+  platform?: SocPlatform | null,
 ): Result<HardwareAccessAttribution, string> => {
   const classification = classifyHardwareMemoryAddress(
     reference.target_address,
@@ -87,12 +94,26 @@ export const attributeHardwareAccess = (
   );
   if (!classification.ok) return classification;
 
-  const { canonicalAddress, addressValue, regionKind, regionName, isMmio } =
-    classification.value;
+  const { canonicalAddress, addressValue } = classification.value;
+  let { regionKind, regionName, isMmio } = classification.value;
 
-  // Group into standard 4 KiB (0x1000) hardware peripheral register pages.
-  const blockBaseValue = addressValue & ~0xfffn;
-  const blockOffsetValue = addressValue & 0xfffn;
+  const socPeripheral =
+    platform != null ? lookupSocPeripheral(canonicalAddress, platform) : null;
+
+  let blockBaseValue: bigint;
+  let blockOffsetValue: bigint;
+
+  if (socPeripheral != null) {
+    regionKind = "peripheral_mmio";
+    regionName = `${socPeripheral.name} (${socPeripheral.bus})`;
+    isMmio = true;
+    blockBaseValue = socPeripheral.baseAddressValue;
+    blockOffsetValue = addressValue - socPeripheral.baseAddressValue;
+  } else {
+    // Group into standard 4 KiB (0x1000) hardware peripheral register pages.
+    blockBaseValue = addressValue & ~0xfffn;
+    blockOffsetValue = addressValue & 0xfffn;
+  }
 
   const accessKind = deriveAccessKind(reference.read, reference.write);
   const knownRegister = lookupHardwareRegister(canonicalAddress, architecture);

@@ -202,3 +202,31 @@ describe("Hardware peripheral interaction summarization", () => {
     ]);
   });
 });
+
+describe("SoC platform-specific peripheral attribution", () => {
+  it("attributes exact peripheral coordinates when an explicit SoC platform is provided", () => {
+    const stm32Ref: AnalyzedInstructionReference = {
+      target_address: "0x40010804",
+      write: true,
+    };
+    const stm32Result = attributeHardwareAccess(stm32Ref, "arm", "stm32f1");
+    expect(stm32Result.ok).toBe(true);
+    if (!stm32Result.ok) return;
+    expect(stm32Result.value.peripheralBlockBase).toBe("0x40010800");
+    expect(stm32Result.value.peripheralBlockOffset).toBe("0x4");
+    expect(stm32Result.value.regionName).toBe("GPIOA (APB2)");
+    expect(stm32Result.value.isMmio).toBe(true);
+
+    const esp32Ref: AnalyzedInstructionReference = {
+      target_address: "0x3ff40000",
+      read: true,
+    };
+    const esp32Result = attributeHardwareAccess(esp32Ref, "riscv", "esp32");
+    expect(esp32Result.ok).toBe(true);
+    if (!esp32Result.ok) return;
+    expect(esp32Result.value.peripheralBlockBase).toBe("0x3ff40000");
+    expect(esp32Result.value.peripheralBlockOffset).toBe("0x0");
+    expect(esp32Result.value.regionName).toBe("UART0 (DPort)");
+    expect(esp32Result.value.isMmio).toBe(true);
+  });
+});
