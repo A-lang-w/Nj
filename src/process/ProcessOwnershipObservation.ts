@@ -239,11 +239,24 @@ export const observeOwnedProcessLineage = async (
     return unavailableLineage(ownership, identityFailure);
   const descendants = descendantsOf([launcher.pid], processes);
   const verifiedDescendants: ProcessTableEntry[] = [];
-  // Every initial row is already accounted for. Only PIDs absent from that
-  // snapshot are refresh newcomers; a later parent or group change is re-read.
-  const originalPids = new Set(processes.map(({ pid }) => pid));
+  // Seed every initial row. A later refresh reads a row again when its parent,
+  // group, or launcher-tree membership changes, including when an ancestor moves.
+  const initialTree = new Set(descendants.map(({ pid }) => pid));
+  const initialRelations = new Map<number, ExaminedLineageRefresh>();
   const examinedRefresh = new Map<number, ExaminedLineageRefresh>();
+  for (const process of processes) {
+    if (process.pid === launcher.pid) continue;
+    const relation: ExaminedLineageRefresh = {
+      parentPid: process.parentPid,
+      processGroupId: process.processGroupId,
+      inTree: initialTree.has(process.pid),
+      descendant: undefined,
+    };
+    initialRelations.set(process.pid, relation);
+    examinedRefresh.set(process.pid, relation);
+  }
   let refreshDescendants: readonly ProcessTableEntry[] = [];
+  let suppressedRefreshPids = new Set<number>();
   for await (const { process: member, observation } of readProcessRunTokens(
     host,
     [launcher, ...descendants],
@@ -279,14 +292,15 @@ export const observeOwnedProcessLineage = async (
       const classified = await classifyIdentitylessLineageRefresh(
         ownership,
         launcher.pid,
-        originalPids,
         refreshed,
         host,
         examinedRefresh,
+        initialRelations,
       );
       if (classified.status === "unavailable")
         return unavailableLineage(ownership, classified.reason);
       refreshDescendants = classified.descendants;
+      suppressedRefreshPids = new Set(classified.suppressedPids);
     }
   }
   return {
@@ -297,7 +311,12 @@ export const observeOwnedProcessLineage = async (
       launcherPid: launcher.pid,
       launcherParentPid: launcher.parentPid,
       processGroupId: launcher.processGroupId,
-      descendants: [...verifiedDescendants, ...refreshDescendants]
+      descendants: [
+        ...verifiedDescendants.filter(
+          ({ pid }) => !suppressedRefreshPids.has(pid),
+        ),
+        ...refreshDescendants,
+      ]
         .sort((left, right) => left.pid - right.pid)
         .map(({ pid, parentPid, processGroupId }) => ({
           pid,
@@ -455,10 +474,12 @@ const observeNativeOwnedProcessLineage = async (
   };
 };
 
-/** Relation already classified for one refresh-only PID. */
+/** Relation already classified for one PID seen by an identityless refresh. */
 interface ExaminedLineageRefresh {
   readonly parentPid: number;
   readonly processGroupId: number;
+  /** True when this row was a launcher descendant at this classification. */
+  readonly inTree: boolean;
   readonly descendant: ProcessTableEntry | undefined;
 }
 
@@ -467,35 +488,38 @@ interface ExaminedLineageRefresh {
  * the launcher join the published lineage after a matching token. A matching
  * token outside that tree, or an unreadable live row, blocks a verified result.
  * A readable foreign token outside the tree is not part of this run. A row is
- * read again when its parent or process group changes.
+ * read again when its parent, process group, or launcher-tree membership
+ * changes. Unchanged rows from the initial snapshot are not read again.
  */
 const classifyIdentitylessLineageRefresh = async (
   ownership: OwnedProcessGroup,
   launcherPid: number,
-  originalPids: ReadonlySet<number>,
   refreshed: readonly ProcessTableEntry[],
   host: ProcessOwnershipHost,
   examined: Map<number, ExaminedLineageRefresh>,
+  initialRelations: ReadonlyMap<number, ExaminedLineageRefresh>,
 ): Promise<
   | {
       readonly status: "classified";
       readonly descendants: readonly ProcessTableEntry[];
+      readonly suppressedPids: readonly number[];
     }
   | { readonly status: "unavailable"; readonly reason: string }
 > => {
+  const inTree = new Set(
+    descendantsOf([launcherPid], refreshed).map(({ pid }) => pid),
+  );
   const due = refreshed.filter((process) => {
-    if (originalPids.has(process.pid)) return false;
+    if (process.pid === launcherPid) return false;
     const previous = examined.get(process.pid);
     return (
       previous === undefined ||
       previous.parentPid !== process.parentPid ||
-      previous.processGroupId !== process.processGroupId
+      previous.processGroupId !== process.processGroupId ||
+      previous.inTree !== inTree.has(process.pid)
     );
   });
   if (due.length > 0) {
-    const inTree = new Set(
-      descendantsOf([launcherPid], refreshed).map(({ pid }) => pid),
-    );
     const included = new Map<number, ProcessTableEntry>();
     const ownedOutside: number[] = [];
     for await (const { process, observation } of readProcessRunTokens(
@@ -529,17 +553,30 @@ const classifyIdentitylessLineageRefresh = async (
       examined.set(process.pid, {
         parentPid: process.parentPid,
         processGroupId: process.processGroupId,
+        inTree: inTree.has(process.pid),
         descendant: included.get(process.pid),
       });
   }
   const livePids = new Set(refreshed.map(({ pid }) => pid));
   for (const pid of examined.keys())
     if (!livePids.has(pid)) examined.delete(pid);
+  const suppressedPids = [...examined.keys()].filter((pid) => {
+    const seed = initialRelations.get(pid);
+    const entry = examined.get(pid);
+    return (
+      seed !== undefined &&
+      entry !== undefined &&
+      (seed.parentPid !== entry.parentPid ||
+        seed.processGroupId !== entry.processGroupId ||
+        seed.inTree !== entry.inTree)
+    );
+  });
   return {
     status: "classified",
     descendants: [...examined.values()].flatMap((entry) =>
       entry.descendant === undefined ? [] : [entry.descendant],
     ),
+    suppressedPids,
   };
 };
 

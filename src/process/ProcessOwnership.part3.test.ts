@@ -280,6 +280,88 @@ describe("identityless lineage refresh ignores the prior process table", () => {
   });
 });
 
+describe("identityless lineage refresh follows tree membership", () => {
+  const row = (
+    pid: number,
+    parentPid: number,
+    processGroupId = pid,
+  ): ProcessTableEntry => ({
+    pid,
+    parentPid,
+    processGroupId,
+    state: "S",
+    command: `pid-${String(pid)}`,
+  });
+
+  it("token-checks an initial outsider after it joins the launcher", async () => {
+    const environment = vi.fn((pid: number) =>
+      pid === 101
+        ? Promise.reject(new Error("process exited during environment read"))
+        : Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" }),
+    );
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([row(100, 1, 100), row(101, 100), row(102, 1)])
+      .mockResolvedValue([row(100, 1, 100), row(102, 100)]);
+    await expect(
+      observeOwnedProcessLineage(ownership, {
+        listProcesses,
+        environment,
+        signalGroup: vi.fn(),
+      }),
+    ).resolves.toMatchObject({
+      status: "verified",
+      lineage: {
+        descendants: [{ pid: 102, parentPid: 100, processGroupId: 102 }],
+      },
+    });
+    expect(environment).toHaveBeenCalledWith(102);
+  });
+
+  it("rejects a cached foreign row after an ancestor joins the launcher", async () => {
+    let outsiderReads = 0;
+    const environment = vi.fn((pid: number) => {
+      if (pid === 101 || pid === 103)
+        return Promise.reject(
+          new Error("process exited during environment read"),
+        );
+      if (pid !== 102)
+        return Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" });
+      outsiderReads += 1;
+      return Promise.resolve({});
+    });
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([
+        row(100, 1, 100),
+        row(101, 100),
+        row(103, 100),
+        row(50, 1),
+      ])
+      .mockResolvedValueOnce([
+        row(100, 1, 100),
+        row(103, 100),
+        row(50, 1),
+        row(102, 50),
+      ])
+      .mockResolvedValue([row(100, 1, 100), row(50, 100), row(102, 50)]);
+    await expect(
+      observeOwnedProcessLineage(ownership, {
+        listProcesses,
+        environment,
+        signalGroup: vi.fn(),
+      }),
+    ).resolves.toMatchObject({
+      status: "unavailable",
+      reason: "process lineage contains an unowned or PID-reused process",
+    });
+    expect(outsiderReads).toBe(2);
+    expect(environment.mock.calls.filter(([pid]) => pid === 50)).toHaveLength(
+      1,
+    );
+  });
+});
+
 describe("owned process-group cleanup discovery", () => {
   it("does not publish lineage when the launcher exits during validation", async () => {
     const launcher = {

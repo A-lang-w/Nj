@@ -274,7 +274,11 @@ candidates through smaller lineage observations, table omissions, reparenting,
 group changes, and failed cleanup retries. Identityless exit-refresh controls
 cover a replacement row that is not linked to the prior descendant set: a
 matching token on its own group is signaled, a foreign or absent token is not,
-an unreadable live token stays unresolved, and lineage does not publish a
+an unreadable live token stays unresolved, a replacement that appears only in
+the confirmation table is still token-checked, a group discovered during
+revalidation is signaled before cleanup succeeds, an unbounded confirmation
+chain stays unresolved, lineage reads a row again when its launcher-tree
+membership changes, and lineage does not publish a
 verified empty descendant list while that row remains unexamined. A readable token with unavailable
 identity stays unresolved. Native UID facts, rather than an earlier process-table
 row, determine whether a token denial concerns another user. Darwin tests compile

@@ -466,8 +466,14 @@ rows that appear only in a launcher-exit refresh before reporting that group
 clean or publishing an empty lineage. A matching token authorizes a signal only
 for a group whose leader carries the same token. A matching token whose leader
 is absent, or an unreadable token for a still-live new row, stays unresolved. A
-readable foreign token is not signaled. That refresh does not retain a ledger
-for a later attempt that never observes the launcher. The captured run keeps
+readable foreign token is not signaled. An unreadable row that has exited by
+the confirmation read does not hide a new row in that confirmation table, and a
+group proven while revalidating another owned group is signaled in the same
+cleanup. Confirmation reads are bounded; a table that keeps producing unreadable
+replacements stays unresolved. That refresh does not retain a ledger
+for a later attempt that never observes the launcher. Lineage reads a row again
+when its parent, group, or launcher-tree membership changes, so an ancestor
+move cannot leave a foreign descendant inside a verified result. The captured run keeps
 one evidence owner through settlement and cleanup.
 An absent or changed token leaves a previously related generation unresolved;
 current token proof is still required before signaling. Swept cleanup verifies the
