@@ -184,36 +184,39 @@ it("does not infer cancellation from a foreign ABORT_ERR code", async () => {
   });
 });
 
-it("keeps a truncated live adb capture retryable", async () => {
-  vi.mocked(execFileBytes).mockRejectedValueOnce(
-    Object.assign(new Error("too much"), {
-      code: 1,
-      stdout: "",
-      stderr: "",
-      signal: null,
-      killed: false,
-      outputTruncated: true,
-    }),
-  );
-  const result = await runAdbCapture(
-    "read_adb_logcat",
-    { device: "device" },
-    "/host/adb",
-    ["logcat", "-d"],
-    { timeoutMs: 100, maxOutputBytes: 1024 },
-    undefined,
-  );
-  expect(result.ok).toBe(false);
-  if (result.ok) throw new Error("Expected a capture allowance refusal");
-  const projected = projectAnalysisError(result.error);
-  expect(projected.retryable).toBe(true);
-  expect(projected.remediation.action).toContain(
-    "The adb output capture allowance",
-  );
-  expect(projected.remediation.action).toContain(
-    "live output may change between requests",
-  );
-});
+it.each([true, false])(
+  "projects a truncated adb capture as retryable only for volatile output (%s)",
+  async (volatileOutput) => {
+    vi.mocked(execFileBytes).mockRejectedValueOnce(
+      Object.assign(new Error("too much"), {
+        code: 1,
+        stdout: "",
+        stderr: "",
+        signal: null,
+        killed: false,
+        outputTruncated: true,
+      }),
+    );
+    const result = await runAdbCapture(
+      volatileOutput ? "read_adb_logcat" : "install_adb_package",
+      { device: "device" },
+      "/host/adb",
+      volatileOutput ? ["logcat", "-d"] : ["install", "app.apk"],
+      { timeoutMs: 100, maxOutputBytes: 1024, volatileOutput },
+      undefined,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected a capture allowance refusal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.retryable).toBe(volatileOutput);
+    expect(projected.remediation.action).toContain(
+      "The adb output capture allowance",
+    );
+    expect(projected.remediation.action).toContain(
+      "live output may change between requests",
+    );
+  },
+);
 
 it("keeps a physical failure even when the later abort reason is that same error", async () => {
   const controller = new AbortController();

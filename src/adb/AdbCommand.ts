@@ -87,6 +87,11 @@ export const adbArguments = (
 export interface AdbRunLimits {
   readonly timeoutMs: number;
   readonly maxOutputBytes: number;
+  /**
+   * Live device observations can shrink between calls. Mutation commands omit
+   * this so a truncated result stays non-retryable.
+   */
+  readonly volatileOutput?: boolean;
 }
 
 /** Keep the selected device separate from the file addressed by the command. */
@@ -146,8 +151,7 @@ export const runAdbCapture = async (
               "The adb output capture allowance",
               "capture",
             ),
-            // Device output can shrink between calls. Version text stays non-retryable.
-            retryable: true,
+            ...(limits.volatileOutput === true ? { retryable: true } : {}),
           },
         ),
       );
@@ -277,7 +281,7 @@ export const probeAdbPathExistence = async (
     { device: serial, path },
     binary,
     adbArguments(serial, ["shell", "test", "-e", path]),
-    limits,
+    { ...limits, volatileOutput: true },
     signal,
   );
   if (probed.ok) {
