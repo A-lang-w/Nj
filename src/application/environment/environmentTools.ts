@@ -129,6 +129,13 @@ const describeList = <Value>(
     : `${listed}${sample.length === 0 ? "" : ", "}… (${String(sample.length)}/${String(count)} shown; full list in ${holder})`;
 };
 
+/**
+ * A captured name as a JSON string, so a separator, quote or newline in it cannot read as more of the
+ * description. A name too long for a sample is left as it is: the sample refuses it either way.
+ */
+const quotedName = (name: string): string =>
+  name.length > DESCRIPTION_SAMPLE_BYTES ? name : JSON.stringify(name);
+
 /** Field names of the objects in first-seen order; the recorded bodies stay in the capture Evidence. */
 const withFields = (objects: readonly JsonObject[]): string => {
   const names = new Set<string>();
@@ -136,7 +143,7 @@ const withFields = (objects: readonly JsonObject[]): string => {
     for (const name of Object.keys(object)) names.add(name);
   return names.size === 0
     ? "with no fields"
-    : `with fields ${describeList(names, names.size, String, "capture Evidence")}`;
+    : `with fields ${describeList(names, names.size, quotedName, "capture Evidence")}`;
 };
 
 /** One level of a JSON body; a list is an array of objects found by the state's list rule. */
@@ -147,7 +154,7 @@ const describeJson = (value: JsonValue): string => {
     const [member] = pointerTokens(pointer);
     return member === undefined
       ? `a JSON array of objects ${withFields(items)}`
-      : `a JSON object whose ${describeText(member, "member", "capture Evidence")} lists objects ${withFields(items)}`;
+      : `a JSON object whose ${describeText(quotedName(member), "member", "capture Evidence")} lists objects ${withFields(items)}`;
   }
   if (isObject(value)) return `a JSON object ${withFields([value])}`;
   if (Array.isArray(value)) return "a JSON array";

@@ -46,7 +46,7 @@ describe("environmentToolDefinitions", () => {
     const users = tool("get_users_by_id");
     const definition = definitions.find(({ name }) => name === users.name);
     expect(definition?.description).toBe(
-      `${REPLAY_CATALOG_INSTRUCTIONS} GET ${users.path_template}; returns a JSON object with fields id, uid, login, email; recorded statuses 200; replays retained records [${users.record_ordinals.join(", ")}]; evidence ${source.evidenceId}`,
+      `${REPLAY_CATALOG_INSTRUCTIONS} GET ${users.path_template}; returns a JSON object with fields "id", "uid", "login", "email"; recorded statuses 200; replays retained records [${users.record_ordinals.join(", ")}]; evidence ${source.evidenceId}`,
     );
     expect(definition?.tool).toBe(users);
   });
@@ -150,13 +150,13 @@ const returnsOf = (bodyText: string): string | undefined =>
 describe("environment tool response shapes", () => {
   it("describes array, enveloped list and object responses one level deep with their statuses", () => {
     expect(described("get_folders")).toContain(
-      "GET /api/folders; returns a JSON array of objects with fields id, uid, title; recorded statuses 200; replays",
+      'GET /api/folders; returns a JSON array of objects with fields "id", "uid", "title"; recorded statuses 200; replays',
     );
     expect(described("get_dashboards_versions_by_uid")).toContain(
-      "; returns a JSON object whose versions lists objects with fields id, version; recorded statuses 200; replays",
+      '; returns a JSON object whose "versions" lists objects with fields "id", "version"; recorded statuses 200; replays',
     );
     expect(described("get_dashboards_by_uid")).toContain(
-      "; returns a JSON object with fields meta, dashboard; recorded statuses 200; replays",
+      '; returns a JSON object with fields "meta", "dashboard"; recorded statuses 200; replays',
     );
   });
 
@@ -182,7 +182,7 @@ describe("environment tool response shapes", () => {
       "returns a JSON number",
       "returns a JSON object with no fields",
       "returns a JSON array of objects with no fields",
-      "returns a JSON object with fields items",
+      'returns a JSON object with fields "items"',
     ]);
     const member = "m".repeat(2048);
     expect(
@@ -190,8 +190,27 @@ describe("environment tool response shapes", () => {
         { bodyText: JSON.stringify({ [member]: [{ id: 1 }, { id: 2 }] }) },
       ]),
     ).toContain(
-      `{numeric}; returns a JSON object whose ${"m".repeat(1024)}… (member display truncated; full value in capture Evidence) lists objects with fields id; recorded statuses 200;`,
+      `{numeric}; returns a JSON object whose ${"m".repeat(1024)}… (member display truncated; full value in capture Evidence) lists objects with fields "id"; recorded statuses 200;`,
     );
+  });
+
+  it("quotes captured names, so a separator in one cannot read as more of the description", () => {
+    const description = usersAnswering([
+      {
+        bodyText: JSON.stringify({
+          "id, name": 1,
+          "x; recorded statuses 500": 2,
+        }),
+      },
+    ]);
+    expect(description).toContain(
+      'returns a JSON object with fields "id, name", "x; recorded statuses 500"; recorded statuses 200;',
+    );
+    expect(
+      usersAnswering([
+        { bodyText: JSON.stringify({ "a\nb": [{ id: 1 }, { id: 2 }] }) },
+      ]),
+    ).toContain('whose "a\\nb" lists objects with fields "id";');
   });
 });
 
@@ -210,7 +229,7 @@ describe("environment tool response summaries", () => {
       [200, 401],
     );
     expect(description).toContain(
-      "{numeric}; returns a JSON object with fields id, login; recorded statuses 200, 401; replays retained records [0, 1, 2, 3];",
+      '{numeric}; returns a JSON object with fields "id", "login"; recorded statuses 200, 401; replays retained records [0, 1, 2, 3];',
     );
   });
 
@@ -225,12 +244,12 @@ describe("environment tool response summaries", () => {
         [200, 401, 403],
       ),
     ).toContain(
-      "{numeric}; status 401 returns a JSON object with fields message; recorded statuses 200, 401, 403; replays",
+      '{numeric}; status 401 returns a JSON object with fields "message"; recorded statuses 200, 401, 403; replays',
     );
     expect(
       usersAnswering([{ status: null, bodyText: '{"id":2}' }], []),
     ).toContain(
-      "{numeric}; a record without a status returns a JSON object with fields id; no recorded status; replays",
+      '{numeric}; a record without a status returns a JSON object with fields "id"; no recorded status; replays',
     );
   });
 
