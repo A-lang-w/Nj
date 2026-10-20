@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -713,20 +713,34 @@ it.skipIf(process.platform !== "linux")(
     const directory = await mkdtemp(join(tmpdir(), "rea-gdb-mcp-interrupt-"));
     const provider = join(directory, "gdb.mjs");
     const marker = join(directory, "running");
+    const interruptStopped = join(directory, "interrupt-stopped");
+    const releaseInterrupt = join(directory, "release-interrupt");
     await writeFile(
       provider,
       `#!${process.execPath}
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 process.on("SIGINT", () => process.stdout.write('*stopped,reason="signal-received",signal-name="SIGINT"\\n'));
 process.stdout.write("(gdb)\\n");
+let pendingInterrupt;
+setInterval(() => {
+  if (pendingInterrupt && existsSync(${JSON.stringify(releaseInterrupt)})) {
+    process.stdout.write(pendingInterrupt + '^done\\n');
+    pendingInterrupt = undefined;
+  }
+}, 5);
 process.stdin.on("data", (chunk) => {
   for (const line of chunk.toString().split("\\n")) {
     const token = /^(\\d+)/.exec(line)?.[1];
     if (!token) continue;
     if (line.includes('console "run"')) {
-      process.stdout.write(token + "^running\\n");
+      process.stdout.write(token + '^running\\n*running,thread-id="all"\\n*stopped,reason="breakpoint-hit",thread-id="1",stopped-threads=["1"]\\n');
       writeFileSync(${JSON.stringify(marker)}, "started");
-    } else if (line.includes("-exec-interrupt")) process.stdout.write(token + '^done\\n*stopped,reason="signal-received"\\n');
+    } else if (line.includes("-thread-info")) process.stdout.write(token + '^done,threads=[{id="1",state="stopped"},{id="2",state="running"}]\\n');
+    else if (line.includes("-exec-interrupt")) {
+      pendingInterrupt = token;
+      process.stdout.write('*stopped,reason="signal-received",stopped-threads="all"\\n');
+      writeFileSync(${JSON.stringify(interruptStopped)}, "stopped");
+    }
     else process.stdout.write(token + (line.includes("list-thread-groups") ? "^done,groups=[]\\n" : "^done\\n"));
   }
 });
@@ -734,8 +748,20 @@ process.stdin.on("data", (chunk) => {
     );
     await chmod(provider, 0o700);
     const target = join(directory, "target.macho");
+    const replacement = join(directory, "replacement.macho");
     await writeFile(target, thinMach(0xfeedfacf, 0x0100000c));
-    const analysisSession = createTestBinarySession(createCacheProvider([]));
+    await writeFile(replacement, thinMach(0xfeedfacf, 0x0100000c));
+    let resolveReplacementAdmission!: () => void;
+    const replacementAdmission = new Promise<void>((resolve) => {
+      resolveReplacementAdmission = resolve;
+    });
+    const cacheProvider = createCacheProvider([]);
+    const analysisSession = createTestBinarySession(cacheProvider, {
+      resolveAnalysisProfile: async (openedTarget, options) => {
+        if (openedTarget.path === replacement) resolveReplacementAdmission();
+        return cacheProvider.resolveAnalysisProfile!(openedTarget, options);
+      },
+    });
     expect((await analysisSession.open(target)).ok).toBe(true);
     const manager = new GdbSessionManager({
       platform: "linux",
@@ -766,20 +792,36 @@ process.stdin.on("data", (chunk) => {
         arguments: { session_id: sessionId, command: "run" },
       });
       await waitForStartedFile(marker);
+      expect((await run).isError ?? false).toBe(false);
       let opened = false;
-      const reopening = analysisSession.open(target).then((value) => {
+      const reopening = analysisSession.open(replacement).then((value) => {
         opened = true;
         return value;
       });
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      const enteredOpen = await Promise.race([
+        replacementAdmission.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 50)),
+      ]);
+      expect(enteredOpen).toBe(false);
       expect(opened).toBe(false);
-      const interrupted = await client.callTool({
+      const interrupting = client.callTool({
         name: "gdb_console",
         arguments: { session_id: sessionId, command: "interrupt" },
       });
+      await expect
+        .poll(() => readFile(interruptStopped, "utf8").catch(() => ""))
+        .toBe("stopped");
+      const openedBeforeInterruptSettled = await Promise.race([
+        replacementAdmission.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 50)),
+      ]);
+      await writeFile(releaseInterrupt, "release");
+      const interrupted = await interrupting;
+      expect(openedBeforeInterruptSettled).toBe(false);
       expect(interrupted.isError ?? false).toBe(false);
-      expect((await run).isError ?? false).toBe(false);
+      await replacementAdmission;
       expect((await reopening).ok).toBe(true);
+      expect(analysisSession.activeTarget()?.path).toBe(replacement);
       // An idle session has no admitted run for an interrupt to control.
       const invalid = await client.callTool({
         name: "gdb_console",
@@ -788,9 +830,12 @@ process.stdin.on("data", (chunk) => {
       expect(invalid.isError).toBe(true);
     } finally {
       await Promise.allSettled([client.close(), server.close()]);
-      await manager.closeAll();
-      await analysisSession.close();
-      await rm(directory, { recursive: true, force: true });
+      try {
+        await manager.closeAll();
+      } finally {
+        await analysisSession.close();
+        await rm(directory, { recursive: true, force: true });
+      }
     }
   },
 );

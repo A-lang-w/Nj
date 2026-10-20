@@ -83,6 +83,7 @@ export class BinarySession
 {
   #active: SessionBinding | undefined;
   #externalMutationCleanupFailure: AnalysisError | undefined;
+  #externalMutationOwner: Promise<void> | undefined;
   #pendingCleanup:
     | {
         readonly run: SessionRun;
@@ -272,6 +273,11 @@ export class BinarySession
     options: BinarySessionOpenOptions,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
+      const owner = await this.#waitForExternalMutationOwner(
+        "open_binary",
+        options.signal,
+      );
+      if (!owner.ok) return owner;
       const admitted = await this.#withLoadedSnapshot(options);
       if (!admitted.ok) return admitted;
       return this.#openWithinTransition(
@@ -479,11 +485,29 @@ export class BinarySession
     });
   }
 
+  /** Retain target lifecycle admission until an external writer is confirmed idle. */
+  retainExternalMutationOwner(completion: Promise<unknown>): void {
+    const owner = completion.then(
+      () => undefined,
+      () => new Promise<void>(() => {}),
+    );
+    const previous = this.#externalMutationOwner;
+    this.#externalMutationOwner =
+      previous === undefined
+        ? owner
+        : Promise.all([previous, owner]).then(() => undefined);
+  }
+
   /** Close the active target, if any. */
   close(
     options: BinarySessionCloseOptions = {},
   ): Promise<Result<null, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
+      const owner = await this.#waitForExternalMutationOwner(
+        "close_binary",
+        undefined,
+      );
+      if (!owner.ok) return owner;
       await this.#drainCalls(admittedThrough);
       return this.#closeActive(options);
     });
@@ -496,6 +520,11 @@ export class BinarySession
     options: BinarySessionCloseOptions = {},
   ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
+      const owner = await this.#waitForExternalMutationOwner(
+        "close_binary",
+        undefined,
+      );
+      if (!owner.ok) return owner;
       await this.#drainCalls(admittedThrough);
       const snapshot = this.exportAnalysisSnapshot();
       if (!snapshot.ok) return snapshot;
@@ -917,6 +946,20 @@ export class BinarySession
 
   #currentRoute(): SessionProviderRoute {
     return this.#active?.route ?? this.#providerRouter.initialRoute();
+  }
+
+  async #waitForExternalMutationOwner(
+    operation: string,
+    signal: AbortSignal | undefined,
+  ): Promise<Result<undefined, AnalysisCancelledError>> {
+    while (this.#externalMutationOwner !== undefined) {
+      const owner = this.#externalMutationOwner;
+      const settled = await this.#waitForTransition(operation, signal, owner);
+      if (!settled.ok) return settled;
+      if (this.#externalMutationOwner === owner)
+        this.#externalMutationOwner = undefined;
+    }
+    return ok(undefined);
   }
 
   #serialize<T>(

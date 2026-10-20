@@ -514,6 +514,7 @@ interface GdbSession {
   commandAbandoned: string | undefined;
   abandonedToken: number | undefined;
   inferiorRunning: boolean;
+  inferiorStopWaiters: Set<() => void>;
   executionGeneration: number;
   threadInfoVerificationPending: boolean;
   threadInfoVerificationAgain: boolean;
@@ -851,6 +852,7 @@ export class GdbSessionManager {
       commandAbandoned: undefined,
       abandonedToken: undefined,
       inferiorRunning: false,
+      inferiorStopWaiters: new Set(),
       executionGeneration: 0,
       threadInfoVerificationPending: false,
       threadInfoVerificationAgain: false,
@@ -876,6 +878,7 @@ export class GdbSessionManager {
     );
     launched.process.once("exit", (code, signalCode) => {
       session.exited = true;
+      this.#confirmInferiorStopped(session);
       session.exitCode = code;
       session.exitSignal = signalCode;
       void this.#waitForStdoutSettlement(session).then(() =>
@@ -1422,6 +1425,22 @@ export class GdbSessionManager {
     };
   }
 
+  /** Resolve only after MI confirms all inferiors stopped or GDB exits. */
+  waitForInferiorStop(sessionId: string): Promise<void> {
+    const session = this.#sessions.get(sessionId);
+    if (
+      session === undefined ||
+      session.exited ||
+      (!session.inferiorRunning &&
+        !session.interruptPending &&
+        ![...session.pending.values()].some((pending) => pending.interrupt))
+    )
+      return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      session.inferiorStopWaiters.add(resolve);
+    });
+  }
+
   async close(
     sessionId: string,
   ): Promise<
@@ -1616,6 +1635,7 @@ export class GdbSessionManager {
       return await operation();
     } finally {
       session.interruptPending = false;
+      this.#releaseInferiorStopWaitersIfSettled(session);
     }
   }
 
@@ -1753,7 +1773,7 @@ export class GdbSessionManager {
         const confirmsAllThreadsStopped =
           stoppedThreads === '"all"' ||
           (stoppedThreads === undefined && stoppedThreadId === undefined);
-        if (confirmsAllThreadsStopped) session.inferiorRunning = false;
+        if (confirmsAllThreadsStopped) this.#confirmInferiorStopped(session);
         // A partial stop completes run/step commands in non-stop mode. Query
         // thread state because the last running thread also reports a per-thread
         // stop rather than stopped-threads="all".
@@ -1785,7 +1805,8 @@ export class GdbSessionManager {
         pending.awaitingInferiorStop = true;
         if (pending.interrupt) {
           pending.interruptReplyObserved = true;
-          if (pending.interruptStopObserved) session.inferiorRunning = false;
+          if (pending.interruptStopObserved)
+            this.#confirmInferiorStopped(session);
           if (pending.interruptStopObserved) {
             clearTimeout(pending.timer);
             session.pending.delete(token);
@@ -1848,7 +1869,7 @@ export class GdbSessionManager {
           !gdbThreadInfoConfirmsAllStopped(result)
         )
           return;
-        session.inferiorRunning = false;
+        this.#confirmInferiorStopped(session);
         this.#completeStoppedCommands(session, true);
       })
       .catch(() => undefined)
@@ -1859,6 +1880,22 @@ export class GdbSessionManager {
         if (verifyAgain && session.inferiorRunning)
           this.#verifyNonStopThreadState(session);
       });
+  }
+
+  #confirmInferiorStopped(session: GdbSession): void {
+    session.inferiorRunning = false;
+    this.#releaseInferiorStopWaitersIfSettled(session);
+  }
+
+  #releaseInferiorStopWaitersIfSettled(session: GdbSession): void {
+    if (
+      session.inferiorRunning ||
+      session.interruptPending ||
+      [...session.pending.values()].some((pending) => pending.interrupt)
+    )
+      return;
+    for (const resolve of session.inferiorStopWaiters) resolve();
+    session.inferiorStopWaiters.clear();
   }
 
   #completeStoppedCommands(
@@ -2000,6 +2037,7 @@ export class GdbSessionManager {
       }))
       .then((stopped) => {
         if (stopped.status !== "incomplete") {
+          this.#confirmInferiorStopped(session);
           for (const failure of session.cleanupFailures)
             failure.resolveCleanup();
           session.cleanupFailures.clear();

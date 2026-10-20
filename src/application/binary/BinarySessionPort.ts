@@ -72,6 +72,8 @@ export interface BinarySessionPort
     ) => Promise<Result<null, AnalysisError>>,
     mutationStart?: "admission" | "provider-dispatch",
   ): Promise<Result<Result<Value, AnalysisError>, AnalysisError>>;
+  /** Keep target lifecycle transitions blocked while an external writer runs. */
+  retainExternalMutationOwner?(completion: Promise<unknown>): void;
   open(
     path: string,
     options?: {

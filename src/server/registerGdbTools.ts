@@ -27,7 +27,8 @@ import type { ToolResultDelivery } from "./toolResult.js";
 export type GdbToolManager = Pick<
   GdbSessionManager,
   "start" | "execute" | "status" | "close" | "retryCleanupFailures"
->;
+> &
+  Partial<Pick<GdbSessionManager, "waitForInferiorStop">>;
 
 /** Register persistent GDB session operations on the existing REA MCP server. */
 export const registerGdbTools = (
@@ -87,14 +88,22 @@ export const registerGdbTools = (
         );
         if (!ready.ok) return delivery.toCallToolResult(ready, consoleContract);
       }
-      const execute = () =>
-        logToolExecution(logger, consoleContract.name, () =>
-          manager.execute(
-            input.session_id,
-            input.command,
-            context.mcpReq.signal,
-          ),
+      const execute = async () => {
+        const executed = await logToolExecution(
+          logger,
+          consoleContract.name,
+          () =>
+            manager.execute(
+              input.session_id,
+              input.command,
+              context.mcpReq.signal,
+            ),
         );
+        const settled = manager.waitForInferiorStop?.(input.session_id);
+        if (settled !== undefined)
+          session?.retainExternalMutationOwner?.(settled);
+        return executed;
+      };
       // Interrupt must bypass mutation admission: the provider only admits it
       // while its original run owns admission, so queuing would deadlock stop.
       const executed = isGdbInterruptCommand(input.command)
