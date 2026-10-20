@@ -10,7 +10,7 @@ import type { ProviderAvailability } from "../AnalysisProvider.js";
 
 /** Static Android inspection boundary; implementation details belong to the provider. */
 export interface AndroidAnalysisPort {
-  /** Inspect the selected JAR and Java runtime without opening an APK. */
+  /** Inspect local backend prerequisites without opening an APK. */
   inspectAvailability(signal?: AbortSignal): Promise<ProviderAvailability>;
   /** Cancel active work and join cleanup of any retained provider resources. */
   close(): Promise<void>;

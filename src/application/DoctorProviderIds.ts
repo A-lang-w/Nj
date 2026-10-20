@@ -4,5 +4,6 @@ export const DOCTOR_PROVIDER_IDS = [
   "ghidra",
   "ida",
   "jadx",
+  "asc",
   "kuna",
 ] as const;

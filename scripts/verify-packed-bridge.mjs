@@ -14,6 +14,7 @@ export async function verifyPackedBridge({ tarball, packedFiles }) {
     ...Object.values(GHIDRA_BRIDGE_SOURCES).map(
       (name) => `package/bridge/ghidra/${name}`,
     ),
+    "package/bridge/android/rea_asc.py",
   ]) {
     if (!packedFiles.includes(path)) throw new Error(`package omitted ${path}`);
   }
@@ -23,13 +24,15 @@ export async function verifyPackedBridge({ tarball, packedFiles }) {
     [
       "import ast, sys, tarfile",
       "with tarfile.open(sys.argv[1]) as archive:",
-      "    member = archive.getmember(sys.argv[2])",
-      "    if not member.isfile():",
-      "        raise ValueError(f'{member.name} is not a regular file')",
-      "    with archive.extractfile(member) as source:",
-      "        ast.parse(source.read().decode('utf-8'), filename=sys.argv[2])",
+      "    for name in sys.argv[2:]:",
+      "        member = archive.getmember(name)",
+      "        if not member.isfile():",
+      "            raise ValueError(f'{member.name} is not a regular file')",
+      "        with archive.extractfile(member) as source:",
+      "            ast.parse(source.read().decode('utf-8'), filename=name)",
     ].join("\n"),
     tarball,
     packedHopperBridge,
+    "package/bridge/android/rea_asc.py",
   ]);
 }

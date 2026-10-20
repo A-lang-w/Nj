@@ -5,6 +5,7 @@ import {
 } from "./application/Doctor.js";
 import { fileURLToPath } from "node:url";
 import { inspectJadxProvider } from "./android/JadxDoctor.js";
+import { inspectAscProvider } from "./android/AscDoctor.js";
 import { inspectSystemGhidraProvider } from "./ghidra/GhidraDoctor.js";
 import { inspectIdaRegistration } from "./ida/IdaDoctor.js";
 import { inspectKunaProvider } from "./kuna/KunaDoctor.js";
@@ -57,6 +58,11 @@ export const createSystemDoctorHost = (
       ),
       inspectIdaRegistration(environment.REA_IDA_MCP_CONFIG),
       await inspectJadxProvider(
+        environment,
+        fileCloseResources,
+        inspectionSignal,
+      ),
+      await inspectAscProvider(
         environment,
         fileCloseResources,
         inspectionSignal,

@@ -36,7 +36,7 @@ export const ANDROID_TOOL_CONTRACTS = [
     name: "search_android_classes",
     ...toolContractMetadata("search_android_classes"),
     description:
-      "Search complete top-level decompiler class-name rows in an explicit local APK by case-sensitive substring. Empty query inventories all rows. Repeated names remain repeated and appear in duplicate_names; the provider accepts only class names for lookup, so these rows do not identify which same-name class node a later lookup selects. Retains artifact and engine identity; no APK execution.",
+      'Search class-name rows in an explicit local APK by case-sensitive substring. Omitted backend preserves JADX top-level decompiler aliases. Select backend: "asc" for optional caller-supplied DroidASC raw DEX definitions, including inner/synthetic classes; inventory_kind: "dex_definitions" distinguishes that scope and names are not interchangeable with JADX aliases. Empty query inventories all rows in the selected scope. Repeated names remain repeated and appear in duplicate_names; names do not disambiguate duplicate definitions. Retains artifact, DEX and engine identity; no APK execution or automatic fallback. ASC currently supports only this Android operation.',
     kind: "android-provider",
     inputSchema: androidInputSchemas.search_android_classes,
     outputSchema: evidenceResultOf(androidResultSchemas.search_android_classes),
