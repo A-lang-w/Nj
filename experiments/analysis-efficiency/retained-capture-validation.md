@@ -217,3 +217,22 @@ kernel family peak 1722.1 → 1147.0 MiB; 14 warm queries 5.998 → 0.108 s.
 First view was slower at 2.797 → 4.041 s. All original and selected Evidence
 agree. This final single pair requalifies the narrowed code; it is not a new
 latency distribution or an explanation of the slower unpaired replay.
+
+## Review-driven oracle correction
+
+Review found that the original page oracle checked only returned rows: a short
+page could pass with unchanged coverage metadata. The driver now also requires
+both selected records before checking their facts. This fixes the oracle at its
+owner, without changing production code or introducing a second validator.
+
+The revised driver's exact page-validation block rechecked all 22 completed
+production transcripts: 198 pages and 396 records passed. Controls truncating
+an authentic response to zero or one record, with coverage unchanged, both
+failed the new assertion. These are archived-response controls, not additional
+real-provider qualification. Earlier timings remain unchanged observations.
+
+Both real MCP import/query/export tasks were then repeated with the revised
+driver. Compact scope wall/CPU/peak were 5.370 s / 5.195 s / 648.4 MiB; large
+were 14.242 s / 13.966 s / 1140.9 MiB. Both preserve the prior answer digests,
+verify cleanup, and record zero OOM or limit events at payload exit. These
+candidate-only correctness replays do not create another before/after pair.

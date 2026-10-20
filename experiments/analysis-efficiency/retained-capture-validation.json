@@ -815,5 +815,80 @@
       }
     ],
     "qualification": "One final adjacent baseline/candidate pair, not a new distribution. The earlier slower unpaired compact/large runs are retained; their broad phase slowdown is not causally attributed."
+  },
+  "review_oracle_correction": {
+    "root_cause": "Returned-row iteration alone did not reject an empty or short page with unchanged coverage metadata.",
+    "fix": "Require exactly two selected records before checking row facts; production code unchanged.",
+    "archived_transcript_recheck": {
+      "oracle": "Exact page-validation block from the revised driver, evaluated against archived production replies",
+      "completed_transcripts": 22,
+      "pages": 198,
+      "records": 396,
+      "all_passed": true,
+      "negative_controls": [
+        {
+          "returned_records": 0,
+          "coverage_unchanged": true,
+          "rejected": true
+        },
+        {
+          "returned_records": 1,
+          "coverage_unchanged": true,
+          "rejected": true
+        }
+      ]
+    },
+    "real_mcp_replays": [
+      {
+        "name": "review-compact",
+        "capture_sha256": "2dbe00348c2f6fcd81f829564718e276052d4aaea77f2a6745cbd147869aec6f",
+        "answers_sha256": "641f85866e87c2768b4cf56911640e4f9e3f3340ac44cd7a468c5329fdd9448c",
+        "call_count": 17,
+        "scope_seconds": 5.37,
+        "payload_cpu_seconds": 5.194994,
+        "payload_family_peak_bytes": 679886848,
+        "payload_cleanup_verified": true,
+        "resource_events_at_payload_exit": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "final_whole_scope_counters_verified": false,
+        "abort": null
+      },
+      {
+        "name": "review-large",
+        "capture_sha256": "4854882fdeec3d66701779cfde1c614a09e3d5e3b90afdea3fc3d2566a0e6e3f",
+        "answers_sha256": "263db399005814e40a7e962f5a46d3eff95e4372cd541fe3241d050be41d3d60",
+        "call_count": 17,
+        "scope_seconds": 14.242,
+        "payload_cpu_seconds": 13.966121,
+        "payload_family_peak_bytes": 1196273664,
+        "payload_cleanup_verified": true,
+        "resource_events_at_payload_exit": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "final_whole_scope_counters_verified": false,
+        "abort": null
+      }
+    ]
   }
 }

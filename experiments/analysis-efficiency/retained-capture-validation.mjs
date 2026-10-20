@@ -161,6 +161,11 @@ try {
       assert.equal(view.parent_evidence_id, original.evidence_id);
       assert.equal(view.coverage.total, events.length);
       assert.equal(view.coverage.next_offset, offset + 2);
+      assert.equal(
+        view.items.length,
+        2,
+        "Every selected record must be returned",
+      );
       for (const [i, row] of view.items.entries()) {
         assert.equal(row.ordinal, offset + i);
         assert.equal(row.location.pointer, events[offset + i].pointer);
