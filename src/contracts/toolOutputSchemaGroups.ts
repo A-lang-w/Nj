@@ -1,6 +1,9 @@
 import { nativeFunctionMatchingSchema } from "../domain/native/functionMatching.js";
 import { nativeFunctionMatchingSummaryViewResultSchema } from "../domain/analysisView/analysisView.js";
 import { nativeByteReadSchema } from "../domain/native/nativeByteRead.js";
+import { analysisDetailOutputSchemaOf } from "./analysisDetail.js";
+import { nativeInventorySummaryViewResultSchema } from "../domain/analysisView/analysisView.js";
+import { nativeInventoryRowsSchemas } from "../domain/native/nativeInventory.js";
 import { z } from "zod";
 import { byteSearchResultSchema } from "../domain/native/bytePattern.js";
 import {
@@ -39,7 +42,6 @@ import {
   functionInstructionWindowSchema,
   referenceEdgeSchema,
   unresolvedCallSchema,
-  analysisStringSchema,
   procedureIdentitySchema,
 } from "../domain/hopperValues.js";
 import { nativeApiInspectionResultSchema } from "../domain/native/nativeApiBoundary.js";
@@ -78,7 +80,6 @@ import { nativeDispatchMetadataResultSchema } from "../domain/native/objcSwiftMe
 import { nativeInvestigationTraceSchema } from "../domain/native/nativeInvestigationGraph.js";
 import {
   addressList,
-  addressedValue,
   addressedEntry,
   containingProcedureResolution,
   functionDossierOutput,
@@ -133,10 +134,25 @@ export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   inline_comment: evidenceResultOf(nullableText),
   list_bookmarks: evidenceResultOf(z.array(analysisBookmarkSchema)),
   list_documents: evidenceResultOf(z.array(z.string())),
-  list_names: evidenceResultOf(z.array(addressedValue)),
-  list_procedures: evidenceResultOf(z.array(addressedValue)),
+  list_names: analysisDetailOutputSchemaOf(
+    nativeInventoryRowsSchemas.names,
+    nativeInventorySummaryViewResultSchema.extend({
+      parent_operation: z.literal("list_names"),
+    }),
+  ),
+  list_procedures: analysisDetailOutputSchemaOf(
+    nativeInventoryRowsSchemas.names,
+    nativeInventorySummaryViewResultSchema.extend({
+      parent_operation: z.literal("list_procedures"),
+    }),
+  ),
   list_segments: segmentOutput,
-  list_strings: evidenceResultOf(z.array(analysisStringSchema)),
+  list_strings: analysisDetailOutputSchemaOf(
+    nativeInventoryRowsSchemas.strings,
+    nativeInventorySummaryViewResultSchema.extend({
+      parent_operation: z.literal("list_strings"),
+    }),
+  ),
   next_address: evidenceResultOf(z.string()),
   prev_address: evidenceResultOf(z.string()),
   procedure_address: evidenceResultOf(z.string()),
@@ -187,10 +203,19 @@ export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   ),
   procedure_pseudo_code: evidenceResultOf(nullableText),
   resolve_containing_procedure: evidenceResultOf(containingProcedureResolution),
-  search_procedures: evidenceResultOf(
+  search_procedures: analysisDetailOutputSchemaOf(
     z.array(z.object({ address: z.string(), value: z.string() })),
+    nativeInventorySummaryViewResultSchema.extend({
+      parent_operation: z.literal("search_procedures"),
+    }),
   ),
-  search_strings: evidenceResultOf(z.array(analysisStringSchema)),
+
+  search_strings: analysisDetailOutputSchemaOf(
+    nativeInventoryRowsSchemas.strings,
+    nativeInventorySummaryViewResultSchema.extend({
+      parent_operation: z.literal("search_strings"),
+    }),
+  ),
   set_address_name: evidenceResultOf(z.boolean()),
   set_addresses_names: evidenceResultOf(z.record(z.string(), z.boolean())),
   set_bookmark: evidenceResultOf(z.boolean()),

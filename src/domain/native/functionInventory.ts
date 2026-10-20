@@ -1,5 +1,5 @@
 import { functionStructuralCandidate } from "./functionStructuralCandidate.js";
-import { z } from "zod";
+import type { z } from "zod";
 import type { Evidence } from "../evidence.js";
 import { EvidenceIntegrityError } from "../evidenceErrors.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
@@ -9,7 +9,10 @@ import {
   functionDossierSchema,
 } from "../hopperValues.js";
 import { isAutoName } from "../functionComparisonNormalization.js";
-import { addressedValue } from "./addressedValue.js";
+import {
+  addressedValueSchema,
+  nativeInventoryRowsSchemas,
+} from "./nativeInventory.js";
 import { parseNativeAddress } from "./nativeAddress.js";
 import { nativeByteReadSchema } from "./nativeByteRead.js";
 import { procedureInfoSchema } from "./procedureInfo.js";
@@ -20,7 +23,7 @@ import {
 } from "./functionByteCoverage.js";
 
 type Body = z.infer<typeof functionBodySchema>;
-type AddressedValue = z.infer<typeof addressedValue>;
+type AddressedValue = z.infer<typeof addressedValueSchema>;
 export interface MatchingFunction {
   readonly member: NativeFunctionMatchMember;
   readonly symbol: string | null;
@@ -217,7 +220,9 @@ export const readFunctionInventory = async (
     throw new EvidenceIntegrityError(
       "Expected artifact-bound list_procedures Evidence",
     );
-  const rows = z.array(addressedValue).parse(inventory.normalized_result);
+  const rows = nativeInventoryRowsSchemas.names.parse(
+    inventory.normalized_result,
+  );
   const facts: Facts = {
     details: new Map(),
     symbols: new Map(),

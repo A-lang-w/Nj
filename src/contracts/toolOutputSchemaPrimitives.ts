@@ -1,5 +1,4 @@
 import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
-export { addressedValue } from "../domain/native/addressedValue.js";
 import { z } from "zod";
 
 import {
