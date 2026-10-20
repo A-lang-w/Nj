@@ -40,7 +40,11 @@ async function assertStaleRetry(
 function createStopProcess(
   mode: string,
   attempts: { value: number },
-): typeof stopOwnedDebuggerProcess | ((...args: Parameters<typeof stopOwnedDebuggerProcess>) => ReturnType<typeof stopOwnedDebuggerProcess>) {
+):
+  | typeof stopOwnedDebuggerProcess
+  | ((
+      ...args: Parameters<typeof stopOwnedDebuggerProcess>
+    ) => ReturnType<typeof stopOwnedDebuggerProcess>) {
   return async (session, name, options) => {
     if (mode === "stale-retry" && attempts.value++ < 2) {
       await session.detachInferior?.();
@@ -55,7 +59,9 @@ function createStopProcess(
 
 async function assertClosedState(
   mode: string,
-  closed: Awaited<ReturnType<ReturnType<typeof createRizinTestManager>["close"]>>,
+  closed: Awaited<
+    ReturnType<ReturnType<typeof createRizinTestManager>["close"]>
+  >,
   manager: ReturnType<typeof createRizinTestManager>,
   sessionId: string,
   debuggerExit: ReturnType<typeof vi.spyOn>,
@@ -192,10 +198,7 @@ setInterval(() => {}, 1000);
                       .toBe("redirected");
                 }
               } else if (line === "e dbg.exitkills") {
-                if (
-                  mode === "ambiguous-policy" &&
-                  !descriptorOpen
-                ) {
+                if (mode === "ambiguous-policy" && !descriptorOpen) {
                   // End the identified process only during the final policy query.
                   launched.process.kill("SIGUSR1");
                   expect(await supervisor.waitForExit(1_000)).toBe(true);
