@@ -119,8 +119,14 @@ class ElfReader {
 
   cString(table: Buffer, offset: number, text: TextBudget): string | null {
     if (offset < 0 || offset >= table.length) return null;
-    const end = table.subarray(offset).indexOf(0);
-    if (end < 0) return null;
+    const affordable = text.limit - text.used;
+    const available = table.length - offset;
+    const scanned = Math.min(available, affordable + 1);
+    const end = table.subarray(offset, offset + scanned).indexOf(0);
+    if (end < 0) {
+      chargeText(text, scanned);
+      return null;
+    }
     chargeText(text, end);
     return table.subarray(offset, offset + end).toString("latin1");
   }

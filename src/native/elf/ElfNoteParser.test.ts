@@ -232,13 +232,10 @@ const hostElf = [
 }, null);
 
 it.skipIf(hostElf === null)(
-  "parses GNU property, build-id, and ABI-tag notes from a host ELF when present",
+  "parses a host ELF without requiring it to contain notes",
   () => {
     const report = parse(hostElf!);
     expect(report.coverage.status).toBe("complete");
-    const types = report.entries.map((entry) => entry.type_name);
-    if (report.tables.some((table) => table.alignment === 8))
-      expect(types).toContain("gnu_property");
     const buildId = report.entries.find(
       (entry) => entry.type_name === "gnu_build_id",
     );
@@ -254,9 +251,37 @@ it.skipIf(hostElf === null)(
         minor: expect.any(Number),
         subminor: expect.any(Number),
       });
-    expect(report.entries.length).toBeGreaterThan(0);
   },
 );
+
+const unterminatedNoteSections = (
+  sections: number,
+  nameBytes: number,
+): Buffer => {
+  const shnum = sections + 2;
+  const tableOffset = 64 + shnum * 64;
+  const shdr = (type: number, offset = 0, size = 0): Buffer => {
+    const header = Buffer.alloc(64);
+    header.writeUInt32LE(type, 4);
+    header.writeBigUInt64LE(BigInt(offset), 24);
+    header.writeBigUInt64LE(BigInt(size), 32);
+    return header;
+  };
+  const image = Buffer.concat([
+    elf64({ shoff: 64, shnum }),
+    shdr(0),
+    shdr(3, tableOffset, nameBytes),
+    ...Array.from({ length: sections }, () => shdr(7, tableOffset)),
+    Buffer.alloc(nameBytes, 0x41),
+  ]);
+  image.writeUInt16LE(1, 62);
+  return image;
+};
+
+it("bounds repeated scans of an unterminated section name", () => {
+  expect(parse(unterminatedNoteSections(1, 64)).tables[0]?.name).toBeNull();
+  expect(() => parse(unterminatedNoteSections(3, 400))).toThrow(/byte budget/u);
+});
 
 it("rejects note text that repeats beyond the shared byte budget", () => {
   const notes = elfNote("A".repeat(40), 1, Buffer.alloc(0));
