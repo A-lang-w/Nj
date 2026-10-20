@@ -458,6 +458,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 FunctionAnalysisObservation observation = analyzeFunctionObservation(request.params);
                 JsonObject result = functionObservation(observation.dossier(), observation.limitations());
                 result.add("relationship_coverage", observation.relationshipCoverage());
+                if (observation.decompilerFailed()) result.addProperty("cache_policy", "live");
                 yield result;
             }
             case "set_address_name", "set_addresses_names" -> {
@@ -1675,7 +1676,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (unrepresentedCaller(reference, callerFunctions)) missingCallers++;
         }
         return new FunctionAnalysisObservation(result, calls.limitations(),
-            callRelationshipCoverage(calls, missingCallers));
+            callRelationshipCoverage(calls, missingCallers), decompilerFailure != null);
     }
 
     private JsonObject nativeValueFlow(DecompileResults decompilation) throws Exception {
@@ -4902,7 +4903,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private record InventoryItem(Address address, String value, JsonObject facts) {}
     private record AddressNameRequest(String inputAddress, Address address, String name) {}
     private record FunctionEntry(Function function, InventoryItem item) {}
-    private record FunctionAnalysisObservation(JsonObject dossier, List<String> limitations, JsonObject relationshipCoverage) {}
+    private record FunctionAnalysisObservation(JsonObject dossier, List<String> limitations, JsonObject relationshipCoverage, boolean decompilerFailed) {}
     private record CallBoundaryObservation(List<String> limitations, Integer unrepresentedCalleeCalls, JsonArray unresolvedCalls) {}
     private record SwiftStringLiteralDecode(JsonArray literals, JsonArray omissions) {}
     private record SwiftLiteralLayout(

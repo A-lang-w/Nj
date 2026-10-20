@@ -121,6 +121,7 @@ export type GhidraProviderClientFactory = (
 type GhidraProviderClientInstance = ReturnType<GhidraProviderClientFactory>;
 
 interface GhidraExecutionMetadata {
+  readonly cachePolicy?: "live";
   readonly rawResult?: JsonValue;
   readonly limitations?: readonly string[];
   readonly locations?: readonly EvidenceLocation[];

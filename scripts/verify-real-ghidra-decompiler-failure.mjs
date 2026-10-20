@@ -18,7 +18,10 @@ import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "../dist/process/ProviderProcess.js";
-import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
+import {
+  OwnedCommandFailure,
+  runOwnedCommand,
+} from "../dist/process/OwnedCommand.js";
 import {
   assertVerifierCleanupComplete,
   completeVerifierRun,
@@ -71,15 +74,21 @@ try {
     ],
   };
   cleaned = false;
-  await runOwnedCommand(
-    {
-      ...compiler,
-      runId: run.run_id,
-      expectedCommand: null,
-    },
-    { timeoutMs: 60_000, diagnosticBytes: 1024 * 1024 },
-  );
-  cleaned = true;
+  try {
+    await runOwnedCommand(
+      {
+        ...compiler,
+        runId: run.run_id,
+        expectedCommand: null,
+      },
+      { timeoutMs: 60_000, diagnosticBytes: 1024 * 1024 },
+    );
+    cleaned = true;
+  } catch (cause) {
+    cleaned =
+      cause instanceof OwnedCommandFailure && cause.cleanupOwner === undefined;
+    throw cause;
+  }
   const targetDigest = digest(await readFile(targetPath));
   const bridgeDigest = digest(
     await readFile(join(bridge, "ReaGhidraBridge.java")),
@@ -163,6 +172,7 @@ try {
     probe.degraded,
   );
   if (!degraded.ok) throw degraded.error;
+  assert.equal(degraded.value.cachePolicy, "live");
   const dossier = degraded.value.value;
   assert.deepEqual(dossier.facet_availability.pseudocode, {
     available: false,
@@ -178,6 +188,7 @@ try {
     probe.baseline,
   );
   if (!baseline.ok) throw baseline.error;
+  assert.equal(baseline.value.cachePolicy, undefined);
   assert.deepEqual(dossier.basic_blocks, baseline.value.value.basic_blocks);
 
   // The healthy path through the real provider and authenticated transport
