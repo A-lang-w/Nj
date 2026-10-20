@@ -4,7 +4,6 @@ import {
   STDIO_DEFAULT_MAX_BUFFER_SIZE,
   type McpRequestContext,
 } from "@modelcontextprotocol/server";
-import type { StdioServerHandle } from "@modelcontextprotocol/server/stdio";
 import {
   RECORDED_MCP_CATALOG_SHA256,
   type RecordedMcpCatalog,
@@ -14,7 +13,7 @@ import { DeferredEvidenceMcpServer } from "../server/DeferredEvidenceMcpServer.j
 import { ToolResultDelivery } from "../server/ToolResultDelivery.js";
 import { createLogger } from "../logger.js";
 import { reportMcpShutdownFailure } from "./shutdown.js";
-import type { RuntimeDependencies } from "./types.js";
+import type { McpServerHandle, RuntimeDependencies } from "./types.js";
 import { MCP_CONNECTION_LOST, SERVER_START_FAILED } from "./messages.js";
 
 /** Verify the build-owned artifact before trusting its exact typed projection. */
@@ -114,7 +113,7 @@ export const runDeferred = async (
   });
   let firstCatalog: RecordedMcpCatalog | undefined = readCatalog();
   const servers = new Map<DeferredEvidenceMcpServer, () => Promise<void>>();
-  let handle: StdioServerHandle | undefined;
+  let handle: McpServerHandle | undefined;
   let attempt: Promise<void> | undefined;
   let unregister: () => void = () => undefined;
   const close = (): Promise<void> => {
@@ -146,7 +145,7 @@ export const runDeferred = async (
     // Keep cleanup reachable even if serve creates a server and then throws.
     unregister = dependencies.registerShutdown(requestClose);
     dependencies.captureShutdown?.(close);
-    handle = dependencies.serve(
+    handle = await dependencies.serve(
       (context) => {
         const catalog = firstCatalog ?? readCatalog();
         firstCatalog = undefined;
