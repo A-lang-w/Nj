@@ -11,6 +11,10 @@ import {
   callableScalarPropertyCases,
   callableReferencePropertyCases,
   opaqueBoundCallablePropertyCase,
+  callableCapturedPropertyCases,
+  callableEscapedPropertyCases,
+  aliasedMutatorCalleeCases,
+  aliasedMutatorExposureCases,
 } from "./javascriptCallableProperties.fixture.js";
 import {
   commonJsCallbackExposureCases,
@@ -1908,3 +1912,24 @@ it("retains uncertainty for a bound replacement without argument-capture proof",
     ).configurationOperations,
   ).toEqual([]);
 });
+
+it.each([...callableCapturedPropertyCases, ...aliasedMutatorCalleeCases])(
+  "preserves captured scalars and separate mutator implementations: %s",
+  (body) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `${body}require('fs').readFileSync('kept');`,
+      ).configurationOperations.map(({ key }) => key),
+    ).toEqual(["kept"]);
+  },
+);
+
+it.each([...callableEscapedPropertyCases, ...aliasedMutatorExposureCases])(
+  "retains escaped callable metadata and mutator callback exposure: %s",
+  (body) => {
+    expect(
+      analyzeJavaScriptSemantics(`${body}require('fs').readFileSync('wrong');`)
+        .configurationOperations,
+    ).toEqual([]);
+  },
+);

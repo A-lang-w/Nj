@@ -45,7 +45,10 @@ import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { semanticBranchMayBeSkipped } from "./javascriptSemanticEvaluationOrder.js";
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
-import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
+import {
+  semanticOpaqueBindingReadMayHaveChanged,
+  semanticOpaqueBindingEffects,
+} from "./javascriptSemanticOpaqueEffects.js";
 
 export interface JavaScriptRequireOrigin {
   readonly origin: JavaScriptModuleOrigin;
@@ -986,13 +989,14 @@ const writesModuleRequire = (
       // unknown call results and closures must retain the original uncertainty.
       written?: true;
       callee?: true;
+      changed?: true;
     }[] = nodes.map((node) => ({
       node,
       path: [],
       ...(calleeRoot ? { callee: true } : {}),
     }));
     const traversals = Array.from(
-      { length: 4 },
+      { length: 8 },
       () => new WeakMap<t.Node, Map<t.Node, SemanticPropertyPathCoverage>>(),
     );
     let timeDependent = false;
@@ -1008,15 +1012,16 @@ const writesModuleRequire = (
         readAt: capturedAt,
         written,
         callee,
+        changed: inheritedChange,
       } = pending.pop()!;
-      const context = {
-        ...(written ? { written } : {}),
-        ...(callee ? { callee } : {}),
-      };
+      let changed = inheritedChange;
       const provenFree = callee ? calleeModuleFree : moduleFree;
       const value = unwrapJavaScriptExpression(source).node;
       const readAt = capturedAt ?? value;
-      const traversal = traversals[(callee ? 2 : 0) + (written ? 1 : 0)]!;
+      const traversal =
+        traversals[
+          (inheritedChange ? 4 : 0) + (callee ? 2 : 0) + (written ? 1 : 0)
+        ]!;
       const captures =
         traversal.get(value) ?? new Map<t.Node, SemanticPropertyPathCoverage>();
       const coverage =
@@ -1028,6 +1033,46 @@ const writesModuleRequire = (
       const binding = t.isIdentifier(value)
         ? resolveSemanticBindingState(state, value, value.name)
         : undefined;
+      if (binding !== undefined && path.length > 0) {
+        // A selected scalar is captured at its read. Escaping an ancestor
+        // before that read can replace the slot; escaping the selected value
+        // itself cannot replace the property that already supplied it.
+        for (const effect of semanticOpaqueBindingEffects(
+          binding,
+          state,
+          "reference",
+        )) {
+          timeDependent = true;
+          if (semanticEffectTiming(readAt, effect, state) !== "after")
+            changed = true;
+        }
+        for (const effect of binding.escapedPaths) {
+          if (
+            effect.path.length >= path.length ||
+            !effect.path.every((key, index) => {
+              const selected = path[index];
+              return (
+                selected === null ||
+                typeof selected === "object" ||
+                semanticPropertyPathKeyMatches(key, String(selected))
+              );
+            })
+          )
+            continue;
+          timeDependent = true;
+          if (
+            effect.node !== call &&
+            semanticEffectTiming(readAt, effect.node, state) !== "after" &&
+            !nativeReplacement(effect.node)
+          )
+            changed = true;
+        }
+      }
+      const context = {
+        ...(written ? { written } : {}),
+        ...(callee ? { callee } : {}),
+        ...(changed ? { changed } : {}),
+      };
       for (const effect of binding?.memberWrites ?? []) {
         if (
           !effect.path.slice(0, path.length).every((key, index) => {
@@ -1072,7 +1117,7 @@ const writesModuleRequire = (
             });
         }
       }
-      if (!written && provenFree.get(value)?.covers(path)) continue;
+      if (!written && !changed && provenFree.get(value)?.covers(path)) continue;
       examined.push({ node: value, path, ...(callee ? { callee } : {}) });
       for (const reference of interop.intrinsicValueReferences(value))
         pending.push({
@@ -1223,10 +1268,13 @@ const writesModuleRequire = (
         // Binding/member effects above still own overwritten metadata. Resolve
         // the selected intrinsic scalar before treating the whole callable as
         // a value that unknown code can invoke.
-        if (isPrimitiveJavaScriptCallableProperty(value, path)) continue;
+        if (isPrimitiveJavaScriptCallableProperty(value, path)) {
+          if (changed) return true;
+          continue;
+        }
         // A callable value can expose captures or results when unknown code
         // invokes it. Merely allocating the callable proves neither absent.
-        if (!callee || written) return true;
+        if (!callee) return true;
       } else if (t.isNewExpression(value)) {
         // Construction can expose instance fields even when an explicit return
         // is primitive or a return branch is skipped. Ordinary function return

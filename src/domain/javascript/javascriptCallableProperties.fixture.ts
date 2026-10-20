@@ -48,3 +48,46 @@ export const callableReferencePropertyCases = [
   "const label=function named(){};label.owner=module;Object.assign=(t,v)=>{v.require=replacement};Object.assign({},label.owner);",
   "const label=function named(){};label.prototype.owner=module;Object.assign=(t,v)=>{v.require=replacement};Object.assign({},label.prototype.owner);",
 ];
+
+export const callableCapturedPropertyCases = [
+  "const label=()=>module;const display=label.name;patch(label);Object.assign=(t,key)=>{t[key]=1};Object.assign({},display);",
+  "const label=()=>module;const {name:display}=label;patch(label);Object.assign=(t,key)=>{t[key]=1};Object.assign({},display);",
+  "const label=()=>module;const display=label.name;eval('Object.defineProperty(label,\"name\",{value:label()})');Object.assign=(t,key)=>{t[key]=1};Object.assign({},display);",
+  "const label=()=>module;patch(label.name);Object.assign=(t,key)=>{t[key]=1};Object.assign({},label.name);",
+  "const label=()=>module;Object.defineProperty(label,'unrelated',{value:1});Object.assign=(t,key)=>{t[key]=1};Object.assign({},label.name);",
+  "const label=()=>module;Object.assign=(t,key)=>{t[key]=1};Object.assign({},label.name);patch(label);",
+  "const label=()=>module;const box={label};const display=box.label.name;patch(box.label);Object.assign=(t,key)=>{t[key]=1};Object.assign({},display);",
+  "const label=()=>module;const box={label};patch(box.unrelated);Object.assign=(t,key)=>{t[key]=1};Object.assign({},box.label.name);",
+  "const label=()=>module;const display=label.name;patch(label);const O=Object;O.assign=(t,key)=>{t[key]=1};O.assign({},display);",
+];
+
+export const callableEscapedPropertyCases = [
+  ...["name", "length"].map(
+    (key) =>
+      `const label=()=>module;patch(label,'${key}');Object.assign=(t,v)=>{v.require=replacement};Object.assign({},label.${key});`,
+  ),
+  "const label=()=>module;const alias=label;patch(alias);Object.assign=(t,v)=>{v.require=replacement};Object.assign({},label.name);",
+  "const label=()=>module;const box={label};patch(box.label);Object.assign=(t,v)=>{v.require=replacement};Object.assign({},box.label.name);",
+  "const label=()=>module;patch(label);const {name:display}=label;Object.assign=(t,v)=>{v.require=replacement};Object.assign({},display);",
+  "const label=()=>module;eval('Object.defineProperty(label,\"name\",{value:label()})');Object.assign=(t,v)=>{v.require=replacement};Object.assign({},label.name);",
+  "const label=()=>module;const alias=label;eval('Object.defineProperty(alias,\"name\",{value:alias()})');Object.assign=(t,v)=>{v.require=replacement};Object.assign({},label.name);",
+  "const label=function named(){};patch(label);Object.assign=(t,v)=>{v.require=replacement};Object.assign({},label.name);",
+  "const label=()=>module;Object.assign=(t,v)=>{v.require=replacement};Object.assign({},label.name);patch(label);Object.assign({},label.name);",
+  "const label=()=>module;const box={label};patch(box);Object.assign=(t,v)=>{v.require=replacement};Object.assign({},box.label.name);",
+];
+
+export const aliasedMutatorCalleeCases = [
+  "const O=Object;O.assign=(t,key)=>{t[key]=1};O.assign({},1);",
+  "const O=Object;O.assign=(t,key)=>{t[key]=1};const assign=O.assign;assign({},1);",
+  "const O=Object;O.assign=(t,key)=>{t[key]=1};O.assign.call(null,{},1);",
+  "const O=Object;O.assign=(t,key)=>{t[key]=1};O.assign.apply(null,[{},1]);",
+  "const R=Reflect;R.set=(t,key)=>{t[key]=1};R.set({},1);",
+];
+
+export const aliasedMutatorExposureCases = [
+  "const O=Object;O.assign=(t,v)=>{v().require=replacement};O.assign({},()=>module);",
+  "const O=Object;O.assign=(t,v)=>{v().require=replacement};const assign=O.assign;assign({},()=>module);",
+  "const O=Object;O.assign=(t,v)=>{v().require=replacement};O.assign.call(null,{},()=>module);",
+  "const O=Object;O.assign=(t,v)=>{v().require=replacement};O.assign.apply(null,[{},()=>module]);",
+  "const O=Object;O.assign=Reflect.set.bind(null,module,'require');O.assign(replacement);",
+];

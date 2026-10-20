@@ -1752,9 +1752,12 @@ const observableMutationPaths = (
         // Keep class/getter projections distinct so cycle pruning does not
         // discard observable escapes through a shared getter result.
         if (
-          t.isNewExpression(expression) &&
-          semanticClassCandidates(expression.callee, state).length === 0
+          t.isFunction(expression) ||
+          (t.isNewExpression(expression) &&
+            semanticClassCandidates(expression.callee, state).length === 0)
         )
+          // Callable metadata is mutable independently of its return values.
+          // Preserve its escapes and exact writes even for a primitive return.
           (observer.origins ??= new Set()).add("opaque");
         else if (
           t.isObjectExpression(expression) ||
@@ -1774,6 +1777,8 @@ const observableMutationPaths = (
             if (origin !== undefined) link(origin, observer);
           } else if (expression.name === "Array")
             (observer.origins ??= new Set()).add("array");
+          else if (["Object", "Reflect"].includes(expression.name))
+            (observer.origins ??= new Set()).add("opaque");
           else if (
             ["globalThis", "global", "window", "self"].includes(expression.name)
           )

@@ -103,6 +103,23 @@ const writeReceiverReviewSources = async (root: string): Promise<void> => {
      require('fs').readFileSync('wrong-callable-name');`,
   );
   await writeFile(
+    join(root, "callable-escaped-property.cjs"),
+    `const label=()=>module;patch(label);
+     Object.assign=(t,v)=>{v.require=replacement};Object.assign({},label.name);
+     require('fs').readFileSync('wrong-escaped-callable');`,
+  );
+  await writeFile(
+    join(root, "callable-captured-property.cjs"),
+    `const label=()=>module;const display=label.name;patch(label);
+     Object.assign=(t,key)=>{t[key]=1};Object.assign({},display);
+     require('fs').readFileSync('callable-captured.json');`,
+  );
+  await writeFile(
+    join(root, "aliased-mutator.cjs"),
+    `const O=Object;O.assign=(t,key)=>{t[key]=1};O.assign({},1);
+     require('fs').readFileSync('aliased-mutator.json');`,
+  );
+  await writeFile(
     join(root, "commonjs-bound-callback.cjs"),
     `Object.assign=(t,get)=>{get().require=replacement};
      const assign=Object.assign.bind(null,{},()=>module);
@@ -263,10 +280,12 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
   ).toEqual([
     "REVIEW_MODE",
     "SEPARATE_MODE",
+    "aliased-mutator.json",
     "allocated-before.json",
     "before-write.json",
     "before.json",
     "bound-separate.json",
+    "callable-captured.json",
     "callable-name.json",
     "commonjs-primitive-union.json",
     "constructed-receiver.json",
