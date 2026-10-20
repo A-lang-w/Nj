@@ -253,12 +253,17 @@ export class ReverseEngineeringService {
       input.operation === "architectures"
         ? input
         : { ...input, path: absoluteCallerPath(input.path) };
+    let parameters: Readonly<Record<string, JsonValue>>;
+    if (input.operation === "disassemble") {
+      const { symbol, ...base } = input;
+      parameters = symbol === undefined ? base : { ...base, symbol };
+    } else parameters = input;
     return this.#observe(
       "inspect_with_objdump",
       (signal) =>
         this.#commands.objdump(bound, signal === undefined ? {} : { signal }),
       bound.operation === "architectures" ? undefined : bound.path,
-      input,
+      parameters,
       options.signal,
     );
   }
@@ -722,6 +727,12 @@ export class ReverseEngineeringService {
           ]),
       "A non-zero process exit is preserved as an observed command result.",
       ...(operation === "inspect_with_objdump" &&
+      typeof parameters.symbol === "string"
+        ? [
+            "Disassembly is scoped to the caller-selected symbol using the provider's matching and symbol-boundary semantics; an empty match does not establish artifact-wide absence.",
+          ]
+        : []),
+      ...(operation === "inspect_with_objdump" &&
       parameters.follow_debug_links === true
         ? [
             "DWARF output may include local debug-link files whose identities are not bound to Evidence.",
@@ -795,9 +806,7 @@ export class ReverseEngineeringService {
           provider_executable: command,
           command_arguments: [...args],
         },
-        // The captured command observation is the complete provider result, so
-        // it is recorded once as `normalized_result`. `raw_result` stays null
-        // rather than repeating multi-MiB stdout/stderr a second time.
+        rawResult: result,
         result,
         limitations,
         ...(absolutePath === undefined

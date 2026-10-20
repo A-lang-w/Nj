@@ -22,8 +22,8 @@ import type {
   SpawnedOwnedProviderProcess,
 } from "../../../src/process/ProviderProcess.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
-import { parseLinuxProcessStartTime } from "../../../src/process/ProcessOwnershipObservation.js";
 import { createProviderSpawnTracker } from "../../support/gdbProviderSpawnTracking.js";
+import { parseLinuxProcessStat } from "../../../src/process/LinuxProcessStat.js";
 import { expectGdbSessionStarted } from "./gdbTestHelpers.js";
 
 let directory: string | undefined;
@@ -1863,6 +1863,7 @@ it.each([
 
 it("retains ownership when descriptor readback omits input confirmation", async () => {
   const commands: string[] = [];
+  let inferiorAlive = true;
   const fake = createFakeSpawner((child, token, command) => {
     commands.push(command);
     const response = command.includes("inferior-tty-show")
@@ -1874,7 +1875,12 @@ it("retains ownership when descriptor readback omits input confirmation", async 
   });
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
     // Exercise malformed output from the injected descriptor boundary.
-    verifyInferiorOutputSink: async () => undefined as never,
+    verifyInferiorOutputSink: async (pid, _tty, rememberIdentity) => {
+      rememberIdentity({ pid, startTime: "controlled-inferior" });
+      return undefined as never;
+    },
+    readInferiorProcessStartTime: async () =>
+      inferiorAlive ? "controlled-inferior" : null,
   });
   const started = await expectGdbSessionStarted(manager, undefined, {
     inferiorTty: "/dev/pts/42",
@@ -1886,6 +1892,19 @@ it("retains ownership when descriptor readback omits input confirmation", async 
   expect(manager.status(started.value.session_id)).toBeDefined();
   expect(commands).not.toContain("-target-detach");
   expect(fake.children[0]?.killSignals).toEqual([]);
+
+  const gdb = fake.children[0];
+  if (gdb === undefined) throw new Error("Fake GDB did not spawn");
+  gdb.exitLeader(0);
+  gdb.closeInheritedOutput();
+  inferiorAlive = false;
+  const retried = await manager.close(started.value.session_id);
+
+  expect(retried).toMatchObject({
+    ok: true,
+    value: { target_state: "unknown" },
+  });
+  expect(manager.status(started.value.session_id)).toBeUndefined();
 });
 
 it("detaches a live inferior before the shared stop helper signals GDB", async () => {
@@ -2039,7 +2058,9 @@ it.each([
         expect(observedPid).toBe(pid);
         if (process.platform === "linux") {
           const stat = await readFile(`/proc/${observedPid}/stat`, "utf8");
-          capturedStartTime = parseLinuxProcessStartTime(stat);
+          const parsed = parseLinuxProcessStat(stat);
+          capturedStartTime =
+            parsed?.pid === Number(observedPid) ? parsed.startTime : undefined;
         } else capturedStartTime = `test-inferior-${observedPid}`;
         if (capturedStartTime === undefined)
           throw new Error("Controlled inferior identity was unreadable");
@@ -2050,7 +2071,8 @@ it.each([
         if (observedPid !== pid || !inferiorAlive) return null;
         if (process.platform === "linux") {
           const stat = await readFile(`/proc/${observedPid}/stat`, "utf8");
-          return parseLinuxProcessStartTime(stat) ?? null;
+          const parsed = parseLinuxProcessStat(stat);
+          return parsed?.pid === Number(observedPid) ? parsed.startTime : null;
         }
         return capturedStartTime ?? null;
       },
