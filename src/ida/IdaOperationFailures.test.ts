@@ -481,7 +481,7 @@ describe("headless IDA procedure lookup failures", () => {
         );
         expect(
           projected.retryable,
-          "the same unresolved procedure fails again",
+          "an unchanged invalid request is not retryable",
         ).toBe(false);
         expect(
           projected.details,
