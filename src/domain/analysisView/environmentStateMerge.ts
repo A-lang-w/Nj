@@ -20,8 +20,8 @@ export interface ObservedEntity {
   readonly type: string;
   readonly collection: string;
   readonly id: string;
-  /** Timeline position of the first observation, then its index within that body. */
-  readonly order: readonly [number, number];
+  /** Timeline position of the earliest observation, then its index within that body. */
+  order: readonly [number, number];
   readonly observations: StateObservation[];
 }
 
@@ -64,8 +64,13 @@ export const mergeObservedEntity = (entity: ObservedEntity): StateEntity => {
       }))
       .filter((view) => Object.keys(view.fields).length > 0)
       .sort((left, right) => compare(left.tool, right.tool)),
+    // Cited in timeline order, whichever plan observed them first.
     record_ordinals: [
-      ...new Set(entity.observations.map((observation) => observation.ordinal)),
+      ...new Set(
+        entity.observations
+          .toSorted((left, right) => left.position - right.position)
+          .map((observation) => observation.ordinal),
+      ),
     ],
   };
 };
