@@ -1,5 +1,4 @@
 import { projectProtobufCapturePage } from "./protobufCaptureView.js";
-import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -10,7 +9,7 @@ import { err, ok, type Result } from "../result.js";
 import {
   webNetworkCaptureRecordSchema,
   webNetworkCaptureBinaryDescriptorSchema,
-  webNetworkCaptureSchema,
+  safeParseOwnedWebNetworkCapture,
   webNetworkCaptureArtifactSchema,
   webNetworkCaptureDecoderSchema,
   protobufCaptureCoverageSchema,
@@ -415,22 +414,11 @@ const preview = (record: WebNetworkCaptureRecord, format: string) => {
 };
 
 /** Authenticate the retained report and its subject at one owning boundary. */
-const checkedCaptureReports = new WeakMap<object, WebNetworkCapture>();
-
 const parseCaptureParent = (
   parent: AnalysisViewParent,
 ): Result<WebNetworkCapture, AnalysisError> => {
-  const key = parent.normalizedResult;
-  const reusable =
-    parent.sealedResult === true &&
-    typeof key === "object" &&
-    key !== null &&
-    isImmutableJsonSnapshot(key);
-  const cached = reusable ? checkedCaptureReports.get(key) : undefined;
-  const parsed =
-    cached === undefined
-      ? webNetworkCaptureSchema.safeParse(key)
-      : { success: true as const, data: cached };
+  const parsed = safeParseOwnedWebNetworkCapture(parent.normalizedResult);
+
   if (!parsed.success)
     return err(
       analysisInputErrorFromIssues(
@@ -443,8 +431,7 @@ const parseCaptureParent = (
         { cause: parsed.error },
       ),
     );
-  const report = reusable ? (key as WebNetworkCapture) : parsed.data;
-  if (reusable && cached === undefined) checkedCaptureReports.set(key, report);
+  const report = parsed.data;
   if (
     report.artifact.sha256 !== null &&
     (parent.subject == null ||
@@ -481,7 +468,7 @@ export const projectWebNetworkCaptureView = (
           path: ["view"],
           reason: "invalid_value",
           message:
-            "Historical captures support summary, capture record pages, qlog fact pages and admitted api-surface or environment-manifest views.",
+            "Historical captures support summary, capture record pages, qlog fact pages and admitted api-surface, environment-manifest or environment-state views.",
         },
       ]),
     );
