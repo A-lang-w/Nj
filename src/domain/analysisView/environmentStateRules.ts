@@ -398,11 +398,14 @@ export const identifies = (
   items: readonly JsonObject[],
   name: string,
 ): boolean => {
-  const values = items.map((item) => scalarText(item[name]));
-  return (
-    values.every((value) => value !== undefined) &&
-    new Set(values).size === values.length
-  );
+  // Stop at the first missing or repeated value, so a sparse list costs one read per field.
+  const seen = new Set<string>();
+  for (const item of items) {
+    const value = scalarText(item[name]);
+    if (value === undefined || seen.has(value)) return false;
+    seen.add(value);
+  }
+  return true;
 };
 
 /** Fields ending in one of these may identify listed items that no identity name identifies. */

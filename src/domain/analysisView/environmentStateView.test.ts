@@ -17,7 +17,12 @@ import {
   type AnalysisViewResult,
 } from "./analysisView.js";
 import { EnvironmentStateAccumulator } from "./EnvironmentStateAccumulator.js";
-import { at, replaceAt } from "./environmentStateRules.js";
+import {
+  at,
+  identityCandidates,
+  replaceAt,
+  type JsonObject,
+} from "./environmentStateRules.js";
 
 type State = Extract<AnalysisViewResult, { kind: "environment-state" }>;
 const ALL_RULES = [
@@ -1006,4 +1011,31 @@ it("reads only item totals and next-page markers as signs of a partial list", ()
   expect(membership({ total: "50", items: [{ id: 1 }] })).toEqual([
     ["recorded", []],
   ]);
+});
+
+it("reads a sparse list once per candidate field when inferring identity", () => {
+  const fields = 2_000;
+  const wide: JsonObject = Object.fromEntries(
+    Array.from({ length: fields }, (_, index) => [
+      `f${String(index)}Id`,
+      index,
+    ]),
+  );
+  let reads = 0;
+  const sparse = Array.from(
+    { length: 5_000 },
+    () =>
+      new Proxy<JsonObject>(
+        {},
+        {
+          get: (target, key, receiver) => {
+            reads += 1;
+            return Reflect.get(target, key, receiver) as unknown;
+          },
+        },
+      ),
+  );
+  expect(identityCandidates([wide, ...sparse])).toEqual([]);
+  // Each identity name and suffix field stops at the first sparse item.
+  expect(reads).toBeLessThanOrEqual(fields + 20);
 });
