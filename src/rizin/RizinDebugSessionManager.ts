@@ -192,6 +192,7 @@ interface RizinDebugSession {
   readonly inferiorTtyInode: number;
   readonly knownInferiorIdentities: Map<string, OwnedInferiorIdentity>;
   readonly pendingInferiorPids: Set<string>;
+  inferiorInventoryRowsComplete: boolean;
   confirmedDetachedInferiorIdentity: OwnedInferiorIdentity | undefined;
   completedDetachCommand:
     | {
@@ -484,13 +485,28 @@ export class RizinDebugSessionManager {
       inferiorTtyInode: ttyInode,
       knownInferiorIdentities: new Map(),
       pendingInferiorPids: new Set(),
+      inferiorInventoryRowsComplete: false,
       confirmedDetachedInferiorIdentity: undefined,
       completedDetachCommand: undefined,
       verifiedDetachResult: undefined,
       inferiorInventoryComplete: false,
       inferiorStateUnknown: () => !session.inferiorInventoryComplete,
       verifyInferiorsEndedAfterExit: async () => {
-        if (!session.inferiorInventoryComplete) return false;
+        const hadPendingInferiors = session.pendingInferiorPids.size > 0;
+        if (!session.inferiorInventoryRowsComplete) return false;
+        if (!session.inferiorInventoryComplete && !hadPendingInferiors)
+          return false;
+        for (const pid of session.pendingInferiorPids) {
+          try {
+            const first = await this.#readProcessStartTime(pid);
+            if (first !== null) return false;
+            if ((await this.#readProcessStartTime(pid)) !== null) return false;
+            session.pendingInferiorPids.delete(pid);
+          } catch {
+            return false;
+          }
+        }
+        if (session.pendingInferiorPids.size > 0) return false;
         const ended = await verifyOwnedInferiorsEnded(
           session.knownInferiorIdentities.values(),
           this.#readProcessStartTime,
@@ -1217,9 +1233,16 @@ export class RizinDebugSessionManager {
   async #readInferiorInventory(
     session: RizinDebugSession,
   ): Promise<Array<[string, string]>> {
+    // A previous complete read does not certify any later inventory. Invalidate
+    // it before awaiting Rizin so cleanup cannot reuse stale completeness if
+    // identity resolution fails after a new PID has been observed.
+    session.inferiorInventoryComplete = false;
+    session.inferiorInventoryRowsComplete = false;
     const parsed = parseRizinPtraceRows(
       await this.#runInternalCommand(session, "olj"),
     );
+    if (parsed.error === undefined)
+      session.inferiorInventoryRowsComplete = true;
     let identityFailure: unknown;
     if (parsed.error === undefined) {
       const pendingAtStart = [...session.pendingInferiorPids];

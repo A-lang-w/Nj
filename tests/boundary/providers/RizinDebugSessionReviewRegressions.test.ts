@@ -2233,6 +2233,144 @@ it.skipIf(process.platform !== "linux")(
 );
 
 it.skipIf(process.platform !== "linux")(
+  "does not release Rizin cleanup after a later inventory leaves a reported PID unresolved",
+  async () => {
+    const tty = await rizinTestInferiorTty();
+    const detached = await spawnTestInferiorOnTty(tty);
+    const unresolved = await spawnTestInferiorOnTty(tty);
+    expect(detached.pid).toBeDefined();
+    expect(unresolved.pid).toBeDefined();
+    if (detached.pid === undefined || unresolved.pid === undefined) return;
+    directory = await mkdtemp(
+      join(tmpdir(), "rea-rizin-pending-after-detach-"),
+    );
+    const provider = join(directory, "fake-rizin-pending-after-detach.mjs");
+    await writeFile(
+      provider,
+      `#!/usr/bin/env node
+process.stdout.write("\\0");
+let input = "";
+let inventory = 0;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n"); if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    if (line === "olj") {
+      inventory += 1;
+      const rows = inventory === 1
+        ? [{ fd: 12, raised: true, uri: "ptrace://${detached.pid}" }]
+        : [{ fd: 13, raised: true, uri: "ptrace://${unresolved.pid}" }];
+      process.stdout.write(JSON.stringify(rows) + "\\0");
+    }
+    else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
+    else if (line === "o- 12") process.kill(${detached.pid}, "SIGTERM");
+    else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
+    else process.stdout.write("\\0");
+  }
+});
+`,
+    );
+    await chmod(provider, 0o700);
+
+    let unresolvedReadFailed = false;
+    let unresolvedIdentityReadFails = true;
+    let inventoryUnknownAfterFailedRead: boolean | undefined;
+    let cleanupAfterDebuggerExit: boolean | undefined;
+    let cleanupWhileUnresolvedInferiorAlive: boolean | undefined;
+    let cleanupAfterUnresolvedInferiorExit: boolean | undefined;
+    let stopCalls = 0;
+    const manager = new RizinDebugSessionManager(
+      { ...process.env, REA_RIZIN_COMMAND: provider },
+      {
+        platform: "linux",
+        readProcessStartTime: async (pid) => {
+          if (pid === String(unresolved.pid)) {
+            unresolvedReadFailed = true;
+            if (unresolvedIdentityReadFails)
+              throw new Error(
+                "injected identity read failure for later inferior",
+              );
+            return unresolved.exitCode === null &&
+              unresolved.signalCode === null
+              ? "200"
+              : null;
+          }
+          return detached.exitCode === null && detached.signalCode === null
+            ? "100"
+            : null;
+        },
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          ownedProviderProcesses.push(launched.process);
+          return launched;
+        },
+        stopProcess: async (session) => {
+          if (stopCalls++ > 0) {
+            cleanupAfterUnresolvedInferiorExit =
+              (await session.verifyInferiorsEndedAfterExit?.()) === true;
+            return cleanupAfterUnresolvedInferiorExit
+              ? { status: "stopped" }
+              : { status: "incomplete", reason: "unresolved inferior remains" };
+          }
+          try {
+            await session.detachInferior?.();
+          } catch {
+            // The later valid inventory is deliberately unresolved.
+          }
+          inventoryUnknownAfterFailedRead =
+            session.inferiorStateUnknown?.() ?? true;
+          // Model the stale-complete state called out by the review. The
+          // pending-PID guard must independently prevent false cleanup success.
+          expect(Reflect.set(session, "inferiorInventoryComplete", true)).toBe(
+            true,
+          );
+          session.launched.process.kill("SIGTERM");
+          expect(await session.supervisor.waitForExit(1_000)).toBe(true);
+          cleanupAfterDebuggerExit =
+            (await session.verifyInferiorsEndedAfterExit?.()) === true;
+          unresolvedIdentityReadFails = false;
+          cleanupWhileUnresolvedInferiorAlive =
+            (await session.verifyInferiorsEndedAfterExit?.()) === true;
+          return cleanupWhileUnresolvedInferiorAlive
+            ? { status: "stopped" }
+            : { status: "incomplete", reason: "unresolved inferior remains" };
+        },
+      },
+    );
+    managers.push(manager);
+    const started = await manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: tty,
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    const closed = await manager.close(started.value.session_id);
+
+    expect(unresolvedReadFailed).toBe(true);
+    expect(inventoryUnknownAfterFailedRead).toBe(true);
+    expect(cleanupAfterDebuggerExit).toBe(false);
+    expect(cleanupWhileUnresolvedInferiorAlive).toBe(false);
+    expect(closed.ok).toBe(false);
+    expect(manager.status(started.value.session_id)).toBeDefined();
+    expect(unresolved.exitCode).toBeNull();
+
+    const unresolvedExit = new Promise<void>((resolveExit) =>
+      unresolved.once("exit", () => resolveExit()),
+    );
+    unresolved.kill("SIGTERM");
+    await unresolvedExit;
+    const retried = await manager.retryCleanupFailures();
+
+    expect(retried).toEqual({ ok: true, value: null });
+    expect(cleanupAfterUnresolvedInferiorExit).toBe(true);
+    expect(manager.status(started.value.session_id)).toBeUndefined();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
   "keeps Rizin cleanup unknown when an inferior inventory is only partially captured",
   async () => {
     const inferior = await spawnTestInferior();
