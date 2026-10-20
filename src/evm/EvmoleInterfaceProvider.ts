@@ -773,6 +773,16 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         return err(failure);
       }
     }
+    if (result.ok && options?.signal?.aborted)
+      result = err(
+        new AnalysisCancelledError(OPERATION, {
+          cause: options.signal.reason,
+          partialObservation: evmInterfaceEvidence(input, result.value),
+          ...(retainedOutput === undefined
+            ? {}
+            : { capturedOutput: retainedOutput }),
+        }),
+      );
     return result;
   }
 
