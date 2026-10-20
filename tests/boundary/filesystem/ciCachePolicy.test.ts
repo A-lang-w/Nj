@@ -312,7 +312,12 @@ it("exports turbo remote-cache credentials wherever a workflow runs turbo", asyn
       expect(token, `${file}:${name}`).toContain("secrets.TURBO_TOKEN");
       expect(token, `${file}:${name}`).toContain("|| ''");
       expect(token, `${file}:${name}`).not.toBe("${{ secrets.TURBO_TOKEN }}");
-      for (const event of ["push", "schedule", "workflow_dispatch", "workflow_call"])
+      for (const event of [
+        "push",
+        "schedule",
+        "workflow_dispatch",
+        "workflow_call",
+      ])
         expect(token, `${file}:${name}`).toContain(
           `github.event_name == '${event}'`,
         );
