@@ -576,7 +576,10 @@ export class ReverseEngineeringService {
     let failure: AnalysisError | undefined;
     let cleanupOwner: ProviderProcessSupervisor | undefined;
     let earlyFailure: AnalysisError | undefined;
-    if (signal?.aborted) return err(new AnalysisCancelledError(operation));
+    if (signal?.aborted)
+      return err(
+        new AnalysisCancelledError(operation, { cause: signal.reason }),
+      );
     try {
       const output = await this.#run(
         command,

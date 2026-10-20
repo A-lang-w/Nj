@@ -313,6 +313,43 @@ it("preserves an independent timeout after cleanup succeeds", async () => {
   expect(projectAnalysisError(error).details).not.toHaveProperty("cleanup");
 });
 
+it("preserves the caller reason when cancellation arrives during the initial artifact digest", async () => {
+  const { directory, path } = await createArtifact();
+  const controller = new AbortController();
+  const reason = { source: "caller", request: "opaque-initial-digest-cancel" };
+  let digestCalls = 0;
+  const runOwned = vi.fn(async () => providerSnapshot());
+  const service = new CoreReverseEngineeringService({
+    commands: createReverseEngineeringCommandPort({}),
+    runOwned,
+    digest: async () => {
+      digestCalls += 1;
+      if (digestCalls === 1) {
+        controller.abort(reason);
+        return "a".repeat(64);
+      }
+      return "b".repeat(64);
+    },
+  });
+
+  try {
+    const result = await service.inspectWithObjdump(
+      { path, operation: "file_headers" },
+      { signal: controller.signal },
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    expect(digestCalls).toBe(1);
+    expect(runOwned).not.toHaveBeenCalled();
+  } finally {
+    await service.close().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 it("does not project cancellation cleanup as incomplete after a successful retry", async () => {
   const error = new AnalysisCancelledError("inspect_with_objdump", {
     cleanup: { reason: "first stop incomplete", resources: ["owned-run"] },
