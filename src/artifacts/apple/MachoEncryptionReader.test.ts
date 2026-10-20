@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { CPU, fatImage, machoImage, readerOf } from "./MachoImage.fixture.js";
 import { readMachoEncryption } from "./MachoEncryptionReader.js";
-import { MAX_LOAD_COMMAND_BYTES } from "./MachoLoadCommandReader.js";
+import {
+  MAX_LOAD_COMMAND_BYTES,
+  readMachoImage,
+} from "./MachoLoadCommandReader.js";
 
 const LC_SEGMENT = 0x1;
 const LC_SEGMENT_64 = 0x19;
@@ -351,6 +354,43 @@ describe("Mach-O encryption reader: segment mapping", () => {
     });
   });
 
+  it("names only sections whose bytes the range and their segment both cover", async () => {
+    const spanning = segment("__TEXT", {
+      vmAddress: 0x1000n,
+      fileOffset: 0x4000,
+      fileSize: 0x2000,
+      sections: [
+        { name: "__text", offset: 0x3000, size: 0x2000 },
+        // Declared past the segment's file-backed bytes.
+        { name: "__stray", offset: 0x7000, size: 0x1000 },
+      ],
+    });
+    const covered = await onlySlice(
+      padded(
+        machoImage({
+          commands: [
+            spanning,
+            encryption({ cryptoff: 0x4000, cryptsize: 0x4000, cryptid: 1 }),
+          ],
+        }),
+      ),
+    );
+    expect(covered.range?.mapping).toMatchObject({
+      sections: [{ segment: "__TEXT", section: "__text" }],
+    });
+    const empty = await onlySlice(
+      padded(
+        machoImage({
+          commands: [
+            spanning,
+            encryption({ cryptoff: 0x4000, cryptsize: 0, cryptid: 1 }),
+          ],
+        }),
+      ),
+    );
+    expect(empty.range?.mapping).toMatchObject({ fragments: [], sections: [] });
+  });
+
   it("keeps segment name bytes 0x80-0x9f as their own code points", async () => {
     const named = segment("__X", {
       vmAddress: 0x1000n,
@@ -572,6 +612,60 @@ describe("Mach-O encryption reader: universal files", () => {
         { cpu_subtype: CPU.arm64e.subtype, status: "absent" },
         { cpu_subtype: CPU.arm64eX1.subtype, status: "absent" },
       ],
+    });
+  });
+});
+
+describe("Mach-O encryption reader: large universal files", () => {
+  it("keeps a healthy slice when a sibling's range is invalid past the 16 MiB scan limit", async () => {
+    const slice = padded(
+      machoImage({
+        commands: [
+          text(),
+          encryption({ cryptoff: 0x4000, cryptsize: 0x4000, cryptid: 1 }),
+        ],
+      }),
+    );
+    const size = MAX_LOAD_COMMAND_BYTES + 0x100000;
+    const table = new DataView(new ArrayBuffer(8 + 2 * 20));
+    table.setUint32(0, 0xcafebabe);
+    table.setUint32(4, 2);
+    const entry = (index: number, fields: readonly number[]) =>
+      fields.forEach((value, field) =>
+        table.setUint32(8 + index * 20 + field * 4, value),
+      );
+    entry(0, [CPU.arm64.type, CPU.arm64.subtype, 0x1000, slice.length, 12]);
+    // Declared past the end of the file.
+    entry(1, [CPU.x86_64.type, CPU.x86_64.subtype, size, 0x1000, 12]);
+    const prefix = new Uint8Array(0x1000 + slice.length);
+    prefix.set(new Uint8Array(table.buffer));
+    prefix.set(slice, 0x1000);
+    // The bytes past the slice are zero, so the reader never needs them.
+    const sparseReadAt = async (offset: number, length: number) => {
+      const result = new Uint8Array(
+        Math.max(0, Math.min(length, size - offset)),
+      );
+      if (offset < prefix.length)
+        result.set(prefix.subarray(offset, offset + result.length));
+      return result;
+    };
+
+    expect(await readMachoEncryption(sparseReadAt, size)).toMatchObject({
+      status: "parsed",
+      slices: [
+        { container_file_offset: 0x1000, status: "encrypted" },
+        {
+          container_file_offset: size,
+          status: "malformed",
+          reason: "FAT architecture 1 slice range extends beyond the file",
+        },
+      ],
+    });
+    // The confirmed container reports the sibling's real fault, not an
+    // unresolved JVM identity.
+    expect(await readMachoImage(sparseReadAt, size)).toEqual({
+      status: "malformed",
+      reason: "FAT architecture 1 slice range extends beyond the file",
     });
   });
 });

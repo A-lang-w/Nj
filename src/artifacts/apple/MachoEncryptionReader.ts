@@ -6,9 +6,11 @@ import type {
 } from "../../domain/apple/machoEncryption.js";
 import { validateFatSliceIdentity } from "../../domain/apple/machoContainer.js";
 import {
+  frameLoadCommands,
   readMachoContainer,
-  readSliceLoadCommands,
+  readSliceCommandTable,
   type MachoLoadCommand,
+  type MachoReadIssue,
   type MachoSliceHeader,
   type ReadAt,
 } from "./MachoLoadCommandReader.js";
@@ -85,34 +87,48 @@ const readSlice = async (
     readonly fat: FatDeclaration | null;
   },
 ): Promise<MachoSliceEncryption> => {
-  const framed = await readSliceLoadCommands(readAt, slice.offset, slice.size);
-  const { header } = framed;
+  const table = await readSliceCommandTable(readAt, slice.offset, slice.size);
   const base = {
     architecture: null,
-    cpu_type: header?.cpuType ?? slice.fat?.cpuType ?? null,
-    cpu_subtype: header?.cpuSubtype ?? slice.fat?.cpuSubtype ?? null,
+    cpu_type: table.header?.cpuType ?? slice.fat?.cpuType ?? null,
+    cpu_subtype: table.header?.cpuSubtype ?? slice.fat?.cpuSubtype ?? null,
     container_file_offset: slice.offset,
     size: slice.size,
   };
-  const commands = framed.commands
-    .filter(({ command }) => isEncryptionCommand(command))
-    .map(decodeEncryptionCommand);
-  if (framed.status !== "framed")
-    // Commands seen before a failure stay as partial facts; an incomplete
-    // walk can never prove the command is absent.
-    return {
-      ...base,
-      status: framed.status === "unsupported" ? "unknown" : "malformed",
-      reason: framed.reason,
-      commands,
-      range: null,
-    };
+  // Only encryption and segment commands are retained; the rest are framed
+  // and dropped so a large table of small commands stays one buffer.
+  const commands: MachoEncryptionCommand[] = [];
+  const segments: MachoLoadCommand[] = [];
+  // Commands seen before a failure stay as partial facts; an incomplete walk
+  // can never prove the command is absent.
+  const incomplete = ({
+    status,
+    reason,
+  }: MachoReadIssue): MachoSliceEncryption => ({
+    ...base,
+    status: status === "unsupported" ? "unknown" : "malformed",
+    reason,
+    commands,
+    range: null,
+  });
+  if (table.status !== "read") return incomplete(table);
+  const { header } = table;
+  const framed = frameLoadCommands(table, (command) => {
+    if (isEncryptionCommand(command.command))
+      commands.push(decodeEncryptionCommand(command));
+    else if (
+      command.command === LC_SEGMENT ||
+      command.command === LC_SEGMENT_64
+    )
+      segments.push(command);
+  });
+  if (framed.status !== "framed") return incomplete(framed);
   const identityIssue =
     slice.fat === null
       ? null
       : validateFatSliceIdentity(slice.fat, {
-          cpuType: framed.header.cpuType,
-          cpuSubtype: framed.header.cpuSubtype,
+          cpuType: header.cpuType,
+          cpuSubtype: header.cpuSubtype,
         });
   if (identityIssue !== null)
     return {
@@ -122,7 +138,7 @@ const readSlice = async (
       commands,
       range: null,
     };
-  const outcome = classify(commands, framed.header, slice.size);
+  const outcome = classify(commands, header, slice.size);
   if (outcome.status !== "valid")
     return { ...base, ...outcome, commands, range: null };
   return {
@@ -130,7 +146,7 @@ const readSlice = async (
     status: outcome.command.cryptid === 0 ? "not-encrypted" : "encrypted",
     reason: null,
     commands,
-    range: encryptedRange(outcome.command, framed, slice.offset),
+    range: encryptedRange(outcome.command, header, segments, slice.offset),
   };
 };
 
@@ -220,10 +236,8 @@ const encryptedRange = (
     readonly cryptsize: number;
     readonly cryptid: number;
   },
-  framed: {
-    readonly header: MachoSliceHeader;
-    readonly commands: readonly MachoLoadCommand[];
-  },
+  header: MachoSliceHeader,
+  segmentCommands: readonly MachoLoadCommand[],
   containerOffset: number,
 ): MachoEncryptedRange => {
   const start = command.cryptoff;
@@ -234,7 +248,7 @@ const encryptedRange = (
     slice_end: end,
     container_start: containerOffset + start,
     container_end: containerOffset + end,
-    mapping: mapRange(start, end, framed),
+    mapping: mapRange(start, end, header, segmentCommands),
   };
 };
 
@@ -254,19 +268,15 @@ interface SegmentFacts {
 const mapRange = (
   start: number,
   end: number,
-  framed: {
-    readonly header: MachoSliceHeader;
-    readonly commands: readonly MachoLoadCommand[];
-  },
+  header: MachoSliceHeader,
+  segmentCommands: readonly MachoLoadCommand[],
 ): MachoEncryptedRange["mapping"] => {
   const segments: SegmentFacts[] = [];
-  for (const command of framed.commands) {
-    if (command.command !== LC_SEGMENT && command.command !== LC_SEGMENT_64)
-      continue;
-    if ((command.command === LC_SEGMENT_64) !== framed.header.wide)
+  for (const command of segmentCommands) {
+    if ((command.command === LC_SEGMENT_64) !== header.wide)
       return {
         status: "unknown",
-        reason: `load command ${command.index} ${command.command === LC_SEGMENT_64 ? "LC_SEGMENT_64" : "LC_SEGMENT"} appears in a ${framed.header.wide ? 64 : 32}-bit image`,
+        reason: `load command ${command.index} ${command.command === LC_SEGMENT_64 ? "LC_SEGMENT_64" : "LC_SEGMENT"} appears in a ${header.wide ? 64 : 32}-bit image`,
       };
     const segment = decodeSegment(command);
     if (typeof segment === "string")
@@ -297,11 +307,15 @@ const mapRange = (
     cursor = Math.max(cursor, to);
   }
   if (cursor < end) fragments.push(unmapped(cursor, end));
+  // A section counts only where the range, the section and its segment's
+  // file-backed bytes all overlap, so names agree with the fragments.
   const sections = fileBacked.flatMap((segment) =>
     segment.sections
       .filter(
         ({ zerofill, size, offset }) =>
-          !zerofill && size > 0 && offset < end && offset + size > start,
+          !zerofill &&
+          Math.max(start, offset, segment.fileOffset) <
+            Math.min(end, offset + size, segment.fileOffset + segment.fileSize),
       )
       .map(({ name }) => ({ segment: segment.name, section: name })),
   );

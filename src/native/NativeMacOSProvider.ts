@@ -957,21 +957,23 @@ class NativeMacOSClient implements AnalysisClient {
                 Number(before.size),
               ),
             );
-            if (!result.ok) return result;
+            // Failures are thrown so a descriptor close failure keeps them
+            // as its primary error instead of reporting a completed read.
+            if (!result.ok) throw result.error;
             const [after, current] = await Promise.all([
               file.stat({ bigint: true }),
               lstat(path, { bigint: true }),
             ]);
-            return sameRegularFileState(before, after) &&
-              sameRegularFileState(before, current)
-              ? result
-              : err(
-                  new AnalysisArtifactChangedError(
-                    "inspect_macho",
-                    path,
-                    "the Mach-O file changed while it was inspected",
-                  ),
-                );
+            if (
+              !sameRegularFileState(before, after) ||
+              !sameRegularFileState(before, current)
+            )
+              throw new AnalysisArtifactChangedError(
+                "inspect_macho",
+                path,
+                "the Mach-O file changed while it was inspected",
+              );
+            return result;
           },
           "reject",
         ),

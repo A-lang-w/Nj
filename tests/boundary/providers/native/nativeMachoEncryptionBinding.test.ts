@@ -112,15 +112,21 @@ it("refuses a target the reader cannot bind instead of reporting encryption unre
   expect(result.error._tag).toBe("ProviderAdapterError");
 });
 
+/** Replay fixture output while appending to the target once otool reads it. */
+class MutatingRunner extends NativeFixtureRunner {
+  constructor(private readonly path: string) {
+    super();
+  }
+
+  override async run(tool: string, arguments_: readonly string[]) {
+    if (tool === "otool") await appendFile(this.path, "changed");
+    return super.run(tool, arguments_);
+  }
+}
+
 it("refuses facts when the file changes while the tools inspect it", async () => {
   const path = await writeTarget();
-  class MutatingRunner extends NativeFixtureRunner {
-    override async run(tool: string, arguments_: readonly string[]) {
-      if (tool === "otool") await appendFile(path, "changed");
-      return super.run(tool, arguments_);
-    }
-  }
-  const { result } = await inspect(path, new MutatingRunner());
+  const { result } = await inspect(path, new MutatingRunner(path));
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected a changed-artifact refusal");
   expect(result.error).toMatchObject({
@@ -174,6 +180,24 @@ it("retains the target descriptor when close rejects and retries it on client cl
   state.failing = false;
   expect((await client.close()).ok).toBe(true);
   expect(state.attempts).toBe(3);
+  expect(result.error.cleanupIncomplete).toBe(false);
+});
+
+it("keeps the inspection failure primary when the descriptor close also rejects", async () => {
+  const path = await writeTarget();
+  const state = await failingClose();
+  const { client, result } = await inspect(path, new MutatingRunner(path));
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected change and close failures");
+  expect(result.error).toBeInstanceOf(ProviderCleanupError);
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupResources).toEqual([path]);
+  expect(result.error.cleanupPrimary?._tag).toBe(
+    "AnalysisArtifactChangedError",
+  );
+
+  state.failing = false;
+  expect((await client.close()).ok).toBe(true);
   expect(result.error.cleanupIncomplete).toBe(false);
 });
 

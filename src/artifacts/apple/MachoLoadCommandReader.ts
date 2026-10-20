@@ -6,6 +6,7 @@ import type {
 import { machoCpuSubtypeBase } from "../../domain/apple/machoCpuIdentity.js";
 import {
   classifyFatContainerIdentity,
+  isMachoHeaderMagic,
   readFatContainerHeader,
   validateFatSliceIdentity,
   type FatSliceDeclaration,
@@ -191,13 +192,8 @@ export const readMachoContainer = async (
     let identity = classifyFatContainerIdentity(header, () => undefined);
     if (identity.state === "needs-slice-header") {
       const sliceHeaders = new Map<number, number | null>();
-      for (const offset of identity.offsets) {
-        const bytes = await readAt(offset, 4);
-        sliceHeaders.set(
-          offset,
-          bytes.byteLength < 4 ? null : viewOf(bytes).getUint32(0, false),
-        );
-      }
+      for (const offset of identity.offsets)
+        sliceHeaders.set(offset, await readSliceMagic(readAt, offset));
       identity = classifyFatContainerIdentity(header, (offset) =>
         sliceHeaders.get(offset),
       );
@@ -209,11 +205,14 @@ export const readMachoContainer = async (
       return { kind: "not-mach-o" };
     // A large CAFEBABE input whose bounded prefix resembles an invalid
     // known-CPU FAT table remains unknown until its JVM identity can be
-    // checked; do not turn the resource limit into a malformed claim.
+    // checked; do not turn the resource limit into a malformed claim. A slice
+    // with a valid range that starts with a Mach-O header settles identity,
+    // and its siblings' range faults then stay their own.
     if (
       identity.state === "malformed" &&
       magic === FAT_MAGIC &&
-      size > MAX_LOAD_COMMAND_BYTES
+      size > MAX_LOAD_COMMAND_BYTES &&
+      !(await observesMachoSlice(readAt, header))
     )
       return {
         kind: "issue",
@@ -238,6 +237,31 @@ export const readMachoContainer = async (
       reason: "big-endian Mach-O images are not supported",
     };
   return { kind: "not-mach-o" };
+};
+
+/** A slice's first word read big-endian, or null when it is truncated. */
+const readSliceMagic = async (
+  readAt: ReadAt,
+  offset: number,
+): Promise<number | null> => {
+  const bytes = await readAt(offset, 4);
+  return bytes.byteLength < 4 ? null : viewOf(bytes).getUint32(0, false);
+};
+
+const observesMachoSlice = async (
+  readAt: ReadAt,
+  header: {
+    readonly slices: readonly FatSliceDeclaration[];
+    readonly rangeIssues: readonly (FatSliceRangeIssue | null)[];
+  },
+): Promise<boolean> => {
+  for (const [index, slice] of header.slices.entries())
+    if (
+      header.rangeIssues[index] === null &&
+      isMachoHeaderMagic(await readSliceMagic(readAt, slice.offset))
+    )
+      return true;
+  return false;
 };
 
 /** Decode every slice's dylib-loading load commands without reading code. */
@@ -326,27 +350,21 @@ export interface MachoLoadCommand {
   readonly body: Uint8Array;
 }
 
-/**
- * One slice's framed load commands. A failure keeps the header when it was
- * read and every command framed before the failing one, in order.
- */
-export type MachoSliceLoadCommands =
+/** One slice's header and raw load-command table, or why it was not read. */
+export type MachoSliceCommandTable =
   | {
-      readonly status: "framed";
+      readonly status: "read";
       readonly header: MachoSliceHeader;
-      readonly commands: readonly MachoLoadCommand[];
+      readonly bytes: Uint8Array;
     }
-  | (MachoReadIssue & {
-      readonly header: MachoSliceHeader | null;
-      readonly commands: readonly MachoLoadCommand[];
-    });
+  | (MachoReadIssue & { readonly header: MachoSliceHeader | null });
 
-/** Read one slice's header and frame its load commands without decoding them. */
-export const readSliceLoadCommands = async (
+/** Read one slice's header and load-command bytes without framing them. */
+export const readSliceCommandTable = async (
   readAt: ReadAt,
   base: number,
   length: number,
-): Promise<MachoSliceLoadCommands> => {
+): Promise<MachoSliceCommandTable> => {
   const headerBytes = await readAt(base, 28);
   if (headerBytes.byteLength < 28)
     return failed("malformed", "Mach-O header is truncated", null);
@@ -389,43 +407,44 @@ export const readSliceLoadCommands = async (
   const bytes = await readAt(base + header.headerSize, header.commandBytes);
   if (bytes.byteLength < header.commandBytes)
     return failed("malformed", "load commands is truncated", header);
-  return frameCommands(bytes, header);
+  return { status: "read", header, bytes };
 };
 
 const failed = (
   status: MachoReadIssue["status"],
   reason: string,
   header: MachoSliceHeader | null,
-  commands: readonly MachoLoadCommand[] = [],
-): MachoSliceLoadCommands => ({ status, reason, header, commands });
+): MachoSliceCommandTable => ({ status, reason, header });
 
-const frameCommands = (
-  bytes: Uint8Array,
-  header: MachoSliceHeader,
-): MachoSliceLoadCommands => {
+/**
+ * Hand each load command to `visit` in order without retaining it. A framing
+ * failure is returned after every command before the failing one was visited.
+ */
+export const frameLoadCommands = (
+  {
+    header,
+    bytes,
+  }: { readonly header: MachoSliceHeader; readonly bytes: Uint8Array },
+  visit: (command: MachoLoadCommand) => void,
+): { readonly status: "framed" } | MachoReadIssue => {
   // loader.h: load commands are 8-byte aligned in 64-bit images, 4 in 32-bit.
   const alignment = header.wide ? 8 : 4;
   const view = viewOf(bytes);
-  const commands: MachoLoadCommand[] = [];
   let offset = 0;
   for (let index = 0; index < header.commandCount; index++) {
     if (offset + 8 > bytes.byteLength)
-      return failed(
-        "malformed",
-        `load command ${index} starts beyond sizeofcmds`,
-        header,
-        commands,
-      );
+      return {
+        status: "malformed",
+        reason: `load command ${index} starts beyond sizeofcmds`,
+      };
     const command = view.getUint32(offset, true);
     const size = view.getUint32(offset + 4, true);
     if (size < 8 || size % alignment !== 0 || offset + size > bytes.byteLength)
-      return failed(
-        "malformed",
-        `load command ${index} at offset ${offset} has invalid cmdsize ${size}`,
-        header,
-        commands,
-      );
-    commands.push({
+      return {
+        status: "malformed",
+        reason: `load command ${index} at offset ${offset} has invalid cmdsize ${size}`,
+      };
+    visit({
       index,
       command,
       offset,
@@ -434,13 +453,11 @@ const frameCommands = (
     offset += size;
   }
   if (offset !== bytes.byteLength)
-    return failed(
-      "malformed",
-      `load commands declare ${header.commandCount} commands but sizeofcmds holds ${bytes.byteLength} bytes`,
-      header,
-      commands,
-    );
-  return { status: "framed", header, commands };
+    return {
+      status: "malformed",
+      reason: `load commands declare ${header.commandCount} commands but sizeofcmds holds ${bytes.byteLength} bytes`,
+    };
+  return { status: "framed" };
 };
 
 const readSlice = async (
@@ -453,14 +470,10 @@ const readSlice = async (
     readonly alignmentExponent: number;
   } | null = null,
 ): Promise<MachoSlice> => {
-  const framed = await readSliceLoadCommands(readAt, base, length);
-  const issue =
-    framed.status === "framed"
-      ? null
-      : new MachoFormatIssue(framed.status, framed.reason);
-  // Only a failed read lacks a header, so `issue` is set here.
-  if (framed.header === null) throw issue;
-  const { header } = framed;
+  const table = await readSliceCommandTable(readAt, base, length);
+  if (table.status !== "read")
+    throw new MachoFormatIssue(table.status, table.reason);
+  const { header } = table;
   const slice: MachoSlice = {
     architecture: architectureName(header.cpuType, header.cpuSubtype),
     slice_offset: base,
@@ -480,11 +493,13 @@ const readSlice = async (
     dyld_environment: [],
     code_signature_present: false,
   };
-  // Commands framed before a framing failure decode first, so a defect in an
-  // earlier command keeps precedence over a later framing defect.
-  for (const { command, body, index } of framed.commands)
-    decodeCommand(command, body, index, slice);
-  if (issue !== null) throw issue;
+  // Each command decodes as it is framed, so a defect in an earlier command
+  // keeps precedence over a later framing defect.
+  const framed = frameLoadCommands(table, ({ command, body, index }) =>
+    decodeCommand(command, body, index, slice),
+  );
+  if (framed.status !== "framed")
+    throw new MachoFormatIssue(framed.status, framed.reason);
   const distinctPlatforms = [...new Set(slice.platforms)];
   slice.platform =
     distinctPlatforms.length === 1 ? (distinctPlatforms[0] ?? null) : null;
