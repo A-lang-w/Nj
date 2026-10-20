@@ -13,11 +13,10 @@ import {
   clientServerListedDisabled,
   clientServerPath,
   codexApprovalModeSchema,
-  codexToolOutputTokenLimitSchema,
-  hasTomlFloatProperty,
   legacyClientServerPath,
   OMP_DISABLED_SERVERS_KEY,
   parseClientConfiguration,
+  parseCodexToolEntry,
   parseZcodeFallbackConfiguration,
   serializeClientConfiguration,
   withClientServers,
@@ -829,58 +828,6 @@ const clientConfigurationDesired = (
   };
 };
 
-const codexToolEntry = (value: unknown): unknown | undefined => {
-  if (typeof value !== "object" || value === null) {
-    return undefined;
-  }
-  if (Array.isArray(value)) {
-    if (value.length === 0) return [];
-    if (value.length > 2) return undefined;
-    const [rawApproval, rawLimit] = value;
-    const parsedApproval = codexApprovalModeSchema.safeParse(rawApproval);
-    if (value.length === 1) {
-      return parsedApproval.success ? [parsedApproval.data] : undefined;
-    }
-    const parsedLimit =
-      rawLimit !== undefined && !hasTomlFloatProperty(value, "1")
-        ? codexToolOutputTokenLimitSchema.safeParse(rawLimit)
-        : undefined;
-    if (parsedApproval.success && parsedLimit?.success) {
-      return [parsedApproval.data, parsedLimit.data];
-    }
-    if (parsedApproval.success) {
-      return [parsedApproval.data];
-    }
-    if (parsedLimit?.success) {
-      return { output_token_limit: parsedLimit.data };
-    }
-    return undefined;
-  }
-  const rawEntries = Object.entries(value);
-  if (rawEntries.length === 0) {
-    return {};
-  }
-  const entry: Record<string, unknown> = {};
-  for (const [key, prop] of rawEntries) {
-    if (key === "approval_mode") {
-      const parsedApproval = codexApprovalModeSchema.safeParse(prop);
-      if (parsedApproval.success) {
-        entry[key] = parsedApproval.data;
-      }
-    } else if (key === "output_token_limit") {
-      if (!hasTomlFloatProperty(value, key)) {
-        const parsedLimit = codexToolOutputTokenLimitSchema.safeParse(prop);
-        if (parsedLimit.success) {
-          entry[key] = parsedLimit.data;
-        }
-      }
-    } else {
-      entry[key] = prop;
-    }
-  }
-  return Object.keys(entry).length > 0 ? entry : undefined;
-};
-
 const codexTools = (
   registration: unknown,
 ): Record<string, unknown> | undefined => {
@@ -903,9 +850,11 @@ const codexTools = (
   }
   const validTools: Record<string, unknown> = {};
   for (const [toolName, toolConfig] of rawEntries) {
-    const entry = codexToolEntry(toolConfig);
-    if (entry !== undefined) {
-      validTools[toolName] = entry;
+    const parsed = parseCodexToolEntry(toolConfig);
+    if (parsed.status === "valid") {
+      validTools[toolName] = parsed.value;
+    } else if (parsed.status === "repairable") {
+      validTools[toolName] = parsed.repaired;
     }
   }
   return Object.keys(validTools).length > 0 ? validTools : undefined;

@@ -4,8 +4,8 @@ import {
   clientServerForcedEnabled,
   clientServerListedDisabled,
   codexApprovalModeSchema,
-  codexServerToolsSchema,
   effectiveClientServer,
+  parseCodexToolEntry,
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
 import { lstat } from "node:fs/promises";
@@ -99,7 +99,9 @@ const registrationSchema = z
     type: z.string().optional(),
     transport: z.string().optional(),
     serverName: z.string().optional(),
-    tools: z.union([z.array(z.string()), codexServerToolsSchema]).optional(),
+    tools: z
+      .union([z.array(z.string()), z.record(z.string(), z.unknown())])
+      .optional(),
     disabled: z.boolean().optional(),
     enabled: z.boolean().optional(),
   })
@@ -475,17 +477,29 @@ const parseRegistration = (
     };
   }
   const registration = registrationSchema.parse(target);
-  if (
-    client.name === "codex" &&
-    Object.hasOwn(registration, "default_tools_approval_mode")
-  )
-    codexApprovalModeSchema.parse(
-      Reflect.get(registration, "default_tools_approval_mode"),
-    );
-  if (client.name === "codex" && Array.isArray(registration.tools))
-    throw new TypeError(
-      "Expected Codex tools to be a table of per-tool settings",
-    );
+  if (client.name === "codex") {
+    if (Object.hasOwn(registration, "default_tools_approval_mode")) {
+      codexApprovalModeSchema.parse(
+        Reflect.get(registration, "default_tools_approval_mode"),
+      );
+    }
+    if (Array.isArray(registration.tools)) {
+      throw new TypeError(
+        "Expected Codex tools to be a table of per-tool settings",
+      );
+    }
+    if (
+      registration.tools !== undefined &&
+      typeof registration.tools === "object" &&
+      registration.tools !== null
+    ) {
+      for (const toolValue of Object.values(registration.tools)) {
+        if (parseCodexToolEntry(toolValue).status !== "valid") {
+          throw new TypeError("Invalid Codex per-tool setting");
+        }
+      }
+    }
+  }
   if (
     client.name !== "codex" &&
     registration.tools !== undefined &&

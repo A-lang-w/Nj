@@ -75,51 +75,85 @@ const tomlFloatProperties = new WeakMap<object, ReadonlySet<string>>();
 export const hasTomlFloatProperty = (value: object, key: string): boolean =>
   tomlFloatProperties.get(value)?.has(key) === true;
 
-const codexServerToolObjectSchema = z
-  .object({
-    approval_mode: codexApprovalModeSchema.optional(),
-    output_token_limit: codexToolOutputTokenLimitSchema.optional(),
-  })
-  .passthrough();
+export type CodexToolParseResult =
+  | { status: "valid"; value: unknown }
+  | { status: "repairable"; repaired: unknown }
+  | { status: "invalid" };
 
-const codexServerToolSequenceSchema = z
-  .unknown()
-  .refine((seq) => Array.isArray(seq) && !hasTomlFloatProperty(seq, "1"), {
-    message: "Expected output_token_limit to be a TOML integer",
-    path: [1],
-  })
-  .pipe(
-    z.union([
-      z.tuple([]),
-      z.tuple([codexApprovalModeSchema]),
-      z.tuple([codexApprovalModeSchema, codexToolOutputTokenLimitSchema]),
-    ]),
-  );
-
-/** Codex per-tool configuration entry (`[mcp_servers.<server>.tools.<tool>]`). */
-export const codexServerToolSchema = z.union([
-  z
-    .unknown()
-    .refine(
-      (tool) =>
-        typeof tool === "object" &&
-        tool !== null &&
-        !Array.isArray(tool) &&
-        !hasTomlFloatProperty(tool, "output_token_limit"),
-      {
-        message: "Expected output_token_limit to be a TOML integer",
-        path: ["output_token_limit"],
-      },
-    )
-    .pipe(codexServerToolObjectSchema),
-  codexServerToolSequenceSchema,
-]);
-
-/** Codex per-tool configuration table (`[mcp_servers.<server>.tools.<tool>]`). */
-export const codexServerToolsSchema = z.record(
-  z.string(),
-  codexServerToolSchema,
-);
+/** Parse and validate a Codex per-tool setting at the document boundary. */
+export const parseCodexToolEntry = (value: unknown): CodexToolParseResult => {
+  if (typeof value !== "object" || value === null) {
+    return { status: "invalid" };
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return { status: "valid", value };
+    }
+    if (value.length > 2) {
+      return { status: "invalid" };
+    }
+    const [rawApproval, rawLimit] = value;
+    const parsedApproval = codexApprovalModeSchema.safeParse(rawApproval);
+    if (value.length === 1) {
+      return parsedApproval.success
+        ? { status: "valid", value }
+        : { status: "invalid" };
+    }
+    const hasFloat = hasTomlFloatProperty(value, "1");
+    const parsedLimit =
+      rawLimit !== undefined && !hasFloat
+        ? codexToolOutputTokenLimitSchema.safeParse(rawLimit)
+        : undefined;
+    if (parsedApproval.success && parsedLimit?.success) {
+      return { status: "valid", value };
+    }
+    if (parsedApproval.success) {
+      return { status: "repairable", repaired: [parsedApproval.data] };
+    }
+    if (parsedLimit?.success) {
+      return {
+        status: "repairable",
+        repaired: { output_token_limit: parsedLimit.data },
+      };
+    }
+    return { status: "invalid" };
+  }
+  const rawEntries = Object.entries(value);
+  if (rawEntries.length === 0) {
+    return { status: "valid", value };
+  }
+  let hasRepair = false;
+  const repaired: Record<string, unknown> = {};
+  for (const [key, prop] of rawEntries) {
+    if (key === "approval_mode") {
+      const parsedApproval = codexApprovalModeSchema.safeParse(prop);
+      if (parsedApproval.success) {
+        repaired[key] = parsedApproval.data;
+      } else {
+        hasRepair = true;
+      }
+    } else if (key === "output_token_limit") {
+      if (hasTomlFloatProperty(value, key)) {
+        hasRepair = true;
+      } else {
+        const parsedLimit = codexToolOutputTokenLimitSchema.safeParse(prop);
+        if (parsedLimit.success) {
+          repaired[key] = parsedLimit.data;
+        } else {
+          hasRepair = true;
+        }
+      }
+    } else {
+      repaired[key] = prop;
+    }
+  }
+  if (hasRepair) {
+    return Object.keys(repaired).length > 0
+      ? { status: "repairable", repaired }
+      : { status: "invalid" };
+  }
+  return { status: "valid", value };
+};
 
 /** Compare parsed configuration values without depending on parser prototypes. */
 export const clientConfigurationValuesEqual = (
