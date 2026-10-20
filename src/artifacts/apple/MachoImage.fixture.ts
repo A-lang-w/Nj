@@ -130,6 +130,87 @@ export const machoImage = (options: {
   return bytes;
 };
 
+/**
+ * Little-endian `LC_LAZY_LOAD_DYLIB_INFO` (0x3a) payload.
+ * The 24-byte header is load-path offset, flag image offset, flags,
+ * pointer format, chain-start image offset, symbol count, and the
+ * symbol-offset array offset. Strings are NUL-terminated and the payload
+ * is padded to 8 bytes, matching a one-symbol `@rpath/libl.dylib` payload
+ * of 56 bytes.
+ */
+export const lazyLoadDylibInfoPayload = (options: {
+  readonly path: string;
+  readonly symbols?: readonly string[];
+  readonly flags?: number;
+}): Uint8Array => {
+  const symbols = options.symbols ?? [];
+  const headerSize = 24;
+  const pathBytes = encoder.encode(options.path);
+  const symbolBytes = symbols.map((symbol) => encoder.encode(symbol));
+  const symbolArrayOffset = headerSize;
+  const pathOffset = symbolArrayOffset + symbols.length * 4;
+  let cursor = pathOffset + pathBytes.length + 1;
+  const symbolOffsets = symbolBytes.map((bytes) => {
+    const offset = cursor;
+    cursor += bytes.length + 1;
+    return offset;
+  });
+  const payload = new Uint8Array(Math.ceil(cursor / 8) * 8);
+  const view = new DataView(payload.buffer);
+  view.setUint32(0, pathOffset, true);
+  view.setUint16(8, options.flags ?? 0, true);
+  view.setUint32(16, symbols.length, true);
+  view.setUint32(20, symbolArrayOffset, true);
+  symbolOffsets.forEach((offset, index) =>
+    view.setUint32(symbolArrayOffset + index * 4, offset, true),
+  );
+  payload.set(pathBytes, pathOffset);
+  symbolBytes.forEach((bytes, index) => {
+    const offset = symbolOffsets[index];
+    if (offset !== undefined) payload.set(bytes, offset);
+  });
+  return payload;
+};
+
+/**
+ * Place one `LC_LAZY_LOAD_DYLIB_INFO` command among the other commands and
+ * append its payload after the image. `dataoff` is relative to this slice.
+ */
+export const machoImageWithLazyLoadDylibInfo = (options: {
+  readonly path: string;
+  readonly symbols?: readonly string[];
+  readonly flags?: number;
+  readonly cpu?: { readonly type: number; readonly subtype: number };
+  readonly fileType?: number;
+  readonly wide?: boolean;
+  readonly commandsBefore?: readonly Uint8Array[];
+  readonly commandsAfter?: readonly Uint8Array[];
+}): Uint8Array => {
+  const payload = lazyLoadDylibInfoPayload(options);
+  const command = new Uint8Array(16);
+  const commandView = new DataView(command.buffer);
+  commandView.setUint32(0, 0x3a, true);
+  commandView.setUint32(4, command.length, true);
+  const wide = options.wide ?? true;
+  const commandsBefore = options.commandsBefore ?? [];
+  const image = machoImage({
+    ...(options.cpu === undefined ? {} : { cpu: options.cpu }),
+    ...(options.fileType === undefined ? {} : { fileType: options.fileType }),
+    wide,
+    commands: [...commandsBefore, command, ...(options.commandsAfter ?? [])],
+  });
+  const out = new Uint8Array(image.length + payload.length);
+  out.set(image);
+  out.set(payload, image.length);
+  const headerSize = wide ? 32 : 28;
+  const commandAt =
+    headerSize + commandsBefore.reduce((total, item) => total + item.length, 0);
+  const view = new DataView(out.buffer);
+  view.setUint32(commandAt + 8, image.length, true);
+  view.setUint32(commandAt + 12, payload.length, true);
+  return out;
+};
+
 /** Thin Mach-O with one unknown command, for width and command-size regressions. */
 export const machoImageWithUnknownCommand = (
   wide: boolean,

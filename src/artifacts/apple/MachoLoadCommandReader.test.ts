@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -14,7 +14,9 @@ import {
   dylibCommand,
   dylibUseCommand,
   fatImage,
+  lazyLoadDylibInfoPayload,
   machoImage,
+  machoImageWithLazyLoadDylibInfo,
   readerOf,
   rpathCommand,
   versionMinCommand,
@@ -350,6 +352,178 @@ describe("Mach-O load command reader: decodes thin-image load commands", () => {
         delayed: false,
       },
     ]);
+  });
+});
+
+describe("LC_LAZY_LOAD_DYLIB_INFO payload", () => {
+  it("reads install names from the linkedit payload in load-command order", async () => {
+    const payload = lazyLoadDylibInfoPayload({
+      path: "@rpath/libl.dylib",
+      symbols: ["_lf"],
+    });
+    expect(payload).toHaveLength(56);
+    const image = machoImageWithLazyLoadDylibInfo({
+      path: "@rpath/libl.dylib",
+      symbols: ["_lf"],
+      commandsBefore: [
+        dylibCommand(LC.LOAD_DYLIB, "/usr/lib/libSystem.B.dylib"),
+      ],
+      commandsAfter: [dylibCommand(LC.LOAD_DYLIB, "@rpath/libafter.dylib")],
+    });
+    const facts = await read(image);
+    if (facts.status !== "parsed")
+      throw new Error(
+        facts.status === "not-mach-o" ? facts.status : facts.reason,
+      );
+    expect(
+      facts.slices[0]?.dependencies.map(
+        ({ command, install_name: name, encoding, weak, current_version }) => ({
+          command,
+          name,
+          encoding,
+          weak,
+          current_version,
+        }),
+      ),
+    ).toEqual([
+      {
+        command: "LC_LOAD_DYLIB",
+        name: "/usr/lib/libSystem.B.dylib",
+        encoding: "dylib_command",
+        weak: false,
+        current_version: "1.0.0",
+      },
+      {
+        command: "LC_LAZY_LOAD_DYLIB_INFO",
+        name: "@rpath/libl.dylib",
+        encoding: "lazy_load_dylib_info",
+        weak: false,
+        current_version: null,
+      },
+      {
+        command: "LC_LOAD_DYLIB",
+        name: "@rpath/libafter.dylib",
+        encoding: "dylib_command",
+        weak: false,
+        current_version: "1.0.0",
+      },
+    ]);
+    const weak = await read(
+      machoImageWithLazyLoadDylibInfo({
+        path: "@rpath/libl.dylib",
+        flags: 0x1,
+      }),
+    );
+    if (weak.status !== "parsed")
+      throw new Error(weak.status === "not-mach-o" ? weak.status : weak.reason);
+    expect(weak.slices[0]?.dependencies[0]).toMatchObject({ weak: true });
+    const universal = await read(
+      fatImage([
+        {
+          cpu: CPU.arm64,
+          bytes: machoImageWithLazyLoadDylibInfo({
+            path: "@rpath/libl.dylib",
+            symbols: ["_lf"],
+          }),
+        },
+      ]),
+    );
+    if (universal.status !== "parsed")
+      throw new Error(
+        universal.status === "not-mach-o" ? universal.status : universal.reason,
+      );
+    expect(universal.slices[0]?.dependencies[0]?.install_name).toBe(
+      "@rpath/libl.dylib",
+    );
+  });
+
+  it("rejects a lazy-info payload that is truncated, mis-pointed, or has unknown flags", async () => {
+    const outside = machoImageWithLazyLoadDylibInfo({
+      path: "@rpath/libl.dylib",
+    });
+    const view = new DataView(outside.buffer);
+    const commandAt = 32;
+    view.setUint32(commandAt + 8, outside.length, true);
+    expect((await read(outside)).status).toBe("malformed");
+
+    const badPayload = lazyLoadDylibInfoPayload({
+      path: "@rpath/libl.dylib",
+    });
+    const badPath = machoImageWithLazyLoadDylibInfo({
+      path: "@rpath/libl.dylib",
+    });
+    const payloadAt = badPath.length - badPayload.length;
+    new DataView(badPath.buffer).setUint32(payloadAt, badPath.length, true);
+    expect(await read(badPath)).toMatchObject({
+      status: "malformed",
+      reason: expect.stringContaining("load path"),
+    });
+
+    const unknownFlags = machoImageWithLazyLoadDylibInfo({
+      path: "@rpath/libl.dylib",
+      flags: 0x2,
+    });
+    expect(await read(unknownFlags)).toMatchObject({
+      status: "unsupported",
+      reason: expect.stringContaining("unrecognized bits"),
+    });
+  });
+});
+
+describe("LC_LAZY_LOAD_DYLIB_INFO resolution", () => {
+  it("reports the lazy edge and does not treat an absent image as a launch failure", async () => {
+    const root = await createTestTempDirectory("rea-lazy-info-");
+    const executablePath = "lazy";
+    const dylibPath = "lib/libl.dylib";
+    const executable = machoImageWithLazyLoadDylibInfo({
+      path: "@rpath/libl.dylib",
+      symbols: ["_lf"],
+      commandsBefore: [
+        buildVersionCommand(1),
+        rpathCommand("@executable_path/lib"),
+        dylibCommand(LC.LOAD_DYLIB, "/usr/lib/libSystem.B.dylib"),
+      ],
+    });
+    const dylib = machoImage({
+      fileType: FILE_TYPE.dylib,
+      commands: [
+        buildVersionCommand(1),
+        dylibCommand(LC.ID_DYLIB, "@rpath/libl.dylib"),
+        dylibCommand(LC.LOAD_DYLIB, "@rpath/libdeep.dylib"),
+      ],
+    });
+    await mkdir(join(root, "lib"));
+    await writeFile(join(root, executablePath), executable);
+    await writeFile(join(root, dylibPath), dylib);
+    const trace = () =>
+      traceDylibResolution({
+        rootPath: root,
+        targetPath: join(root, executablePath),
+        targetSha256: createHash("sha256").update(executable).digest("hex"),
+        enumerateRoots: false,
+        parameters: { roots: [executablePath] },
+      });
+    const present = await trace();
+    expect(present.coverage.status).toBe("complete");
+    expect(present.edges.map(({ install_name: name }) => name)).toEqual([
+      "/usr/lib/libSystem.B.dylib",
+      "@rpath/libl.dylib",
+    ]);
+    expect(present.edges[1]).toMatchObject({
+      command: "LC_LAZY_LOAD_DYLIB_INFO",
+      encoding: "lazy_load_dylib_info",
+      current_version: null,
+      compatibility_version: null,
+      resolution: { status: "resolved", image: dylibPath },
+    });
+    expect(present.findings).toEqual([]);
+    await rename(join(root, dylibPath), `${join(root, dylibPath)}.moved`);
+    const absent = await trace();
+    expect(absent.coverage.status).toBe("complete");
+    expect(absent.findings.map(({ kind }) => kind)).toEqual([
+      "lazy-load-unresolved",
+    ]);
+    expect(absent.edges[1]?.resolution.status).toBe("unresolved");
   });
 });
 

@@ -32,6 +32,7 @@ const LC_LOAD_DYLIB = 0xc;
 const LC_LOAD_WEAK_DYLIB = 0x80000018;
 const LC_REEXPORT_DYLIB = 0x8000001f;
 const LC_LAZY_LOAD_DYLIB = 0x20;
+const LC_LAZY_LOAD_DYLIB_INFO = 0x3a;
 const LC_LOAD_UPWARD_DYLIB = 0x80000023;
 const LC_RPATH = 0x8000001c;
 const LC_DYLD_ENVIRONMENT = 0x27;
@@ -85,6 +86,9 @@ const legacyVersionMinPlatform = (
 
 /** `mach-o/loader.h` `dylib_use_command`: `nameoff == 28` and this marker. */
 const DYLIB_USE_MARKER = 0x1a741800;
+const LAZY_INFO_HEADER_BYTES = 24;
+/** ld64 may-be-missing bit: the lazy image is allowed to be absent. */
+const LAZY_INFO_MAY_BE_MISSING = 0x1;
 const DYLIB_USE_WEAK_LINK = 0x1;
 const DYLIB_USE_REEXPORT = 0x2;
 const DYLIB_USE_UPWARD = 0x4;
@@ -293,7 +297,7 @@ const readSlice = async (
       commandBytes,
       "load commands",
     );
-    const slice = decodeCommands(commands, {
+    const decoded = decodeCommands(commands, {
       wide,
       cpuType: identity.cpuType,
       cpuSubtype: identity.cpuSubtype,
@@ -305,6 +309,14 @@ const readSlice = async (
       fatCpuSubtype: fat?.fatCpuSubtype ?? null,
       fatAlignmentExponent: fat?.alignmentExponent ?? null,
     });
+    const slice = decoded.slice;
+    for (const dependency of decoded.dependencies) {
+      slice.dependencies.push(
+        dependency.kind === "parsed"
+          ? dependency.value
+          : await readLazyLoadDylibInfo(readAt, base, length, dependency),
+      );
+    }
     const distinctPlatforms = [...new Set(slice.platforms)];
     slice.platform =
       distinctPlatforms.length === 1 ? (distinctPlatforms[0] ?? null) : null;
@@ -334,7 +346,13 @@ const decodeCommands = (
     readonly fatCpuSubtype: number | null;
     readonly fatAlignmentExponent: number | null;
   },
-): MachoSlice => {
+): {
+  readonly slice: MachoSlice;
+  readonly dependencies: readonly (
+    | { readonly kind: "parsed"; readonly value: MachoDependency }
+    | LazyLoadDylibInfoCommand
+  )[];
+} => {
   const view = viewOf(bytes);
   const slice: MachoSlice = {
     architecture: architectureName(header.cpuType, header.cpuSubtype),
@@ -355,6 +373,10 @@ const decodeCommands = (
     dyld_environment: [],
     code_signature_present: false,
   };
+  const dependencies: Array<
+    | { readonly kind: "parsed"; readonly value: MachoDependency }
+    | LazyLoadDylibInfoCommand
+  > = [];
   let offset = 0;
   for (let index = 0; index < header.commandCount; index++) {
     if (offset + 8 > bytes.byteLength)
@@ -374,7 +396,8 @@ const decodeCommands = (
         `load command ${index} at offset ${offset} has invalid cmdsize ${size}`,
       );
     const body = bytes.subarray(offset, offset + size);
-    decodeCommand(command, body, index, slice);
+    const decoded = decodeCommand(command, body, index, slice);
+    if (decoded !== undefined) dependencies.push(decoded);
     offset += size;
   }
   if (offset !== bytes.byteLength)
@@ -382,15 +405,25 @@ const decodeCommands = (
       "malformed",
       `load commands declare ${header.commandCount} commands but sizeofcmds holds ${bytes.byteLength} bytes`,
     );
-  return slice;
+  return { slice, dependencies };
 };
+
+interface LazyLoadDylibInfoCommand {
+  readonly kind: "lazy-info";
+  readonly index: number;
+  readonly dataOffset: number;
+  readonly dataSize: number;
+}
 
 const decodeCommand = (
   command: number,
   body: Uint8Array,
   index: number,
   slice: MachoSlice,
-): void => {
+):
+  | { readonly kind: "parsed"; readonly value: MachoDependency }
+  | LazyLoadDylibInfoCommand
+  | undefined => {
   if (command === LC_ID_DYLIB) {
     slice.install_name = commandString(body, 24, index);
     return;
@@ -440,9 +473,140 @@ const decodeCommand = (
     slice.platforms.push(legacyPlatform);
     return;
   }
+  if (command === LC_LAZY_LOAD_DYLIB_INFO)
+    return decodeLazyLoadDylibInfoCommand(body, index);
   const name = DEPENDENCY_COMMANDS.get(command);
   if (name !== undefined)
-    slice.dependencies.push(decodeDependency(name, body, index));
+    return { kind: "parsed", value: decodeDependency(name, body, index) };
+  return undefined;
+};
+
+/**
+ * `LC_LAZY_LOAD_DYLIB_INFO` is a linkedit-data command. The install name is
+ * not in the command; it is a NUL-terminated string in the payload.
+ */
+const decodeLazyLoadDylibInfoCommand = (
+  body: Uint8Array,
+  index: number,
+): LazyLoadDylibInfoCommand => {
+  if (body.byteLength < 16)
+    throw new MachoFormatIssue(
+      "malformed",
+      `load command ${index} is too short for LC_LAZY_LOAD_DYLIB_INFO`,
+    );
+  const view = viewOf(body);
+  const dataOffset = view.getUint32(8, true);
+  const dataSize = view.getUint32(12, true);
+  if (dataSize < LAZY_INFO_HEADER_BYTES)
+    throw new MachoFormatIssue(
+      "malformed",
+      `load command ${index} LC_LAZY_LOAD_DYLIB_INFO payload is shorter than its 24-byte header`,
+    );
+  if (dataSize > MAX_LOAD_COMMAND_BYTES)
+    throw new MachoFormatIssue(
+      "unsupported",
+      `LC_LAZY_LOAD_DYLIB_INFO payload occupies ${dataSize} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte limit`,
+    );
+  return { kind: "lazy-info", index, dataOffset, dataSize };
+};
+
+const readLazyLoadDylibInfo = async (
+  readAt: ReadAt,
+  base: number,
+  length: number,
+  command: LazyLoadDylibInfoCommand,
+): Promise<MachoDependency> => {
+  if (
+    command.dataOffset > length ||
+    command.dataSize > length - command.dataOffset
+  )
+    throw new MachoFormatIssue(
+      "malformed",
+      `load command ${command.index} LC_LAZY_LOAD_DYLIB_INFO payload extends beyond the Mach-O slice`,
+    );
+  const fileOffset = base + command.dataOffset;
+  if (!Number.isSafeInteger(fileOffset))
+    throw new MachoFormatIssue(
+      "malformed",
+      `load command ${command.index} LC_LAZY_LOAD_DYLIB_INFO payload offset is not a safe integer`,
+    );
+  const payload = await readExact(
+    readAt,
+    fileOffset,
+    command.dataSize,
+    `load command ${command.index} LC_LAZY_LOAD_DYLIB_INFO payload`,
+  );
+  return decodeLazyLoadDylibInfoPayload(payload, command.index);
+};
+
+const decodeLazyLoadDylibInfoPayload = (
+  payload: Uint8Array,
+  index: number,
+): MachoDependency => {
+  const view = viewOf(payload);
+  const pathOffset = view.getUint32(0, true);
+  const flags = view.getUint16(8, true);
+  const symbolCount = view.getUint32(16, true);
+  const symbolArrayOffset = view.getUint32(20, true);
+  if ((flags & ~LAZY_INFO_MAY_BE_MISSING) !== 0)
+    throw new MachoFormatIssue(
+      "unsupported",
+      `load command ${index} LC_LAZY_LOAD_DYLIB_INFO flags 0x${flags.toString(16)} include unrecognized bits`,
+    );
+  if (
+    symbolArrayOffset > payload.byteLength ||
+    symbolCount > (payload.byteLength - symbolArrayOffset) / 4
+  )
+    throw new MachoFormatIssue(
+      "malformed",
+      `load command ${index} LC_LAZY_LOAD_DYLIB_INFO symbol table extends beyond the payload`,
+    );
+  const installName = payloadString(payload, pathOffset, index, "load path");
+  for (let symbol = 0; symbol < symbolCount; symbol += 1) {
+    const offset = view.getUint32(symbolArrayOffset + symbol * 4, true);
+    payloadString(payload, offset, index, `symbol ${symbol}`);
+  }
+  return {
+    command: "LC_LAZY_LOAD_DYLIB_INFO",
+    encoding: "lazy_load_dylib_info",
+    install_name: installName,
+    weak: (flags & LAZY_INFO_MAY_BE_MISSING) !== 0,
+    upward: false,
+    reexport: false,
+    delayed_init: false,
+    current_version: null,
+    compatibility_version: null,
+  };
+};
+
+/** NUL-terminated UTF-8 string at a payload-relative offset. */
+const payloadString = (
+  payload: Uint8Array,
+  offset: number,
+  index: number,
+  label: string,
+): string => {
+  if (offset >= payload.byteLength)
+    throw new MachoFormatIssue(
+      "malformed",
+      `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} offset ${offset} is outside the payload`,
+    );
+  const end = payload.indexOf(0, offset);
+  if (end < 0)
+    throw new MachoFormatIssue(
+      "malformed",
+      `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} is unterminated`,
+    );
+  try {
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+      payload.subarray(offset, end),
+    );
+  } catch {
+    throw new MachoFormatIssue(
+      "malformed",
+      `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} is not UTF-8`,
+    );
+  }
 };
 
 const decodeDependency = (

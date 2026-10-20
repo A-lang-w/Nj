@@ -180,8 +180,10 @@ rea trace-dylib-resolution MyApp.app --root Contents/MacOS/MyApp --architecture 
 
 Load commands are parsed in TypeScript from Mach-O and FAT headers, including
 the `dylib_use_command` encoding newer linkers emit for flags such as delayed
-initialization. Nothing is executed and no Apple tool is required, so the tool
-also works off macOS.
+initialization, and `LC_LAZY_LOAD_DYLIB_INFO` (`0x3a`). That command stores its
+install name in a linkedit payload rather than in the load command itself.
+Nothing is executed and no Apple tool is required, so the tool also works off
+macOS.
 
 Resolution follows dyld:
 
@@ -222,8 +224,10 @@ cache rather than on disk, so REA does not check them against the host.
 `findings` are derived, not observed:
 
 - `required-load-unresolved`, `weak-load-unresolved`, and `lazy-load-unresolved`.
-  `LC_LAZY_LOAD_DYLIB` dependencies are resolved but not traversed, because dyld
-  loads them on first use; an unresolved one is not a launch failure.
+  `LC_LAZY_LOAD_DYLIB` and `LC_LAZY_LOAD_DYLIB_INFO` dependencies are resolved
+  but not traversed, because dyld loads them on first use; an unresolved one is
+  not a launch failure. `LC_LAZY_LOAD_DYLIB_INFO` has no compatibility version,
+  so those fields are null. Its may-be-missing flag is reported as `weak`.
 - `earlier-rpath-candidate-absent`: a compatible Mach-O placed at an earlier
   modeled search path could take precedence, subject to unmodeled search inputs
   and code-signing library validation. These findings do not establish which
