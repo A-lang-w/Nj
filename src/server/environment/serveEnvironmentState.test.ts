@@ -202,6 +202,8 @@ describe("state data plane", () => {
     });
     for (const altered of [
       '"login":9007199254740993',
+      // Exact in this spelling, but data/get would write it as digits it could not load again.
+      '"login":1e20',
       '"__proto__":{"polluted":true},"login":"renamed"',
     ]) {
       const reply = await plane.post(
