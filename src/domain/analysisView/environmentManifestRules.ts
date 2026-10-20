@@ -13,7 +13,6 @@ export const TEMPLATE_RULES = [
   "prefix-variance",
 ] as const;
 export type TemplateRule = (typeof TEMPLATE_RULES)[number];
-export type ManifestRule = RouteRule | TemplateRule;
 /** The opt-in rules whose parameters a prefix-variance parameter can share; never itself, so shared evidence does not chain. */
 type SharedRule = Exclude<TemplateRule, "prefix-variance">;
 
