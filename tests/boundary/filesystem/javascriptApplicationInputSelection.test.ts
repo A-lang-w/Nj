@@ -23,25 +23,11 @@ const application = async () => {
 };
 
 describe("JavaScript application input selection", () => {
-  it("preserves the selected path and host reason for an overlong name or unresolved symlink", async () => {
+  it("preserves the selected path and host reason for an overlong name", async () => {
     const { root } = await application();
     const longPath = join(root, "x".repeat(300));
-    const loopPath = join(root, "loop-a");
-    await symlink("loop-b", loopPath);
-    await symlink("loop-a", join(root, "loop-b"));
-    await writeFile(join(root, "chain-end"), "");
-    let target = "chain-end";
-    for (let index = 59; index >= 0; index -= 1) {
-      const name = `chain-${String(index)}`;
-      await symlink(target, join(root, name));
-      target = name;
-    }
-    const chainPath = join(root, "chain-0");
 
-    const longError = await analyzeFailure({ input_path: longPath });
-    const loopError = await analyzeFailure({ input_path: loopPath });
-    const chainError = await analyzeFailure({ input_path: chainPath });
-    expect(longError).toMatchObject({
+    expect(await analyzeFailure({ input_path: longPath })).toMatchObject({
       code: "invalid_request",
       details: {
         issues: [
@@ -55,37 +41,55 @@ describe("JavaScript application input selection", () => {
         ],
       },
     });
-    expect(loopError).toMatchObject({
-      code: "invalid_request",
-      details: {
-        issues: [
-          {
-            path: ["input_path"],
-            reason: "invalid_value",
-            message: expect.stringContaining(
-              `Selected input path could not be resolved because symbolic-link traversal looped or exceeded the host limit (ELOOP): ${loopPath}`,
-            ),
-          },
-        ],
-      },
-    });
-    expect(chainError).toMatchObject({
-      code: "invalid_request",
-      details: {
-        issues: [
-          {
-            path: ["input_path"],
-            reason: "invalid_value",
-            message: expect.stringContaining(
-              `Selected input path could not be resolved because symbolic-link traversal looped or exceeded the host limit (ELOOP): ${chainPath}`,
-            ),
-          },
-        ],
-      },
-    });
-    expect(longError).not.toEqual(loopError);
-    expect(loopError).not.toEqual(chainError);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "preserves the selected path when symlink traversal loops or exceeds the host limit",
+    async () => {
+      const { root } = await application();
+      const loopPath = join(root, "loop-a");
+      await symlink("loop-b", loopPath);
+      await symlink("loop-a", join(root, "loop-b"));
+      await writeFile(join(root, "chain-end"), "");
+      let target = "chain-end";
+      for (let index = 59; index >= 0; index -= 1) {
+        const name = `chain-${String(index)}`;
+        await symlink(target, join(root, name));
+        target = name;
+      }
+      const chainPath = join(root, "chain-0");
+
+      const loopError = await analyzeFailure({ input_path: loopPath });
+      const chainError = await analyzeFailure({ input_path: chainPath });
+      const eloopMessage = (path: string) =>
+        `Selected input path could not be resolved because symbolic-link traversal looped or exceeded the host limit (ELOOP): ${path}`;
+      expect(loopError).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["input_path"],
+              reason: "invalid_value",
+              message: expect.stringContaining(eloopMessage(loopPath)),
+            },
+          ],
+        },
+      });
+      expect(chainError).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["input_path"],
+              reason: "invalid_value",
+              message: expect.stringContaining(eloopMessage(chainPath)),
+            },
+          ],
+        },
+      });
+      expect(loopError).not.toEqual(chainError);
+    },
+  );
 
   it("reports a missing input path as invalid input, not an artifact read failure", async () => {
     const { root } = await application();
