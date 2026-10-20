@@ -91,11 +91,15 @@ replays in the later session.
 - A rebuild that cannot complete puts the previous root back, and the stored
   projects another session published while the rebuild was running are moved
   into it first: a rollback keeps a project another session stored instead of
-  discarding it.
+  discarding it. A rollback that cannot move them keeps both roots in place,
+  and the message names the one that holds the stored projects.
 - The store keeps its staging, lock, and lease directories inside the cache
   root. A link at one of those names is replaced by the store's own
   directory, never followed, so a root that other principals could write
-  cannot make the store clean up outside the cache root.
+  cannot make the store clean up outside the cache root. The entry at that
+  name is moved aside and compared with the one the session observed, so a
+  directory another session created after that observation is put back
+  instead of being removed with the copy or the lock it holds.
 - **Miss** imports writable into a private runtime project; when the session
   closes after a clean, complete, mutation-free analysis the saved project is
   copied into the cache and published by an atomic rename under a per-key lock.

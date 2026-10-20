@@ -19,6 +19,10 @@ import { randomUUID } from "node:crypto";
 
 import { ghidraProjectCacheKey } from "./GhidraProjectCacheKey.js";
 import {
+  ghidraProjectCacheIdentity as identity,
+  ghidraProjectCacheTarget,
+} from "./GhidraProjectCache.fixture.js";
+import {
   GHIDRA_PROJECT_CACHE_SCHEMA_VERSION,
   type GhidraProjectCacheIdentity,
 } from "./GhidraProjectCacheTypes.js";
@@ -31,22 +35,7 @@ import {
   type GhidraProjectPublishInput,
 } from "./GhidraProjectStore.js";
 
-const identity = (): GhidraProjectCacheIdentity => ({
-  providerId: "ghidra",
-  providerVersion: "12.1.4",
-  jvmVmName: "OpenJDK 64-Bit Server VM",
-  platform: "linux",
-  targetSha256: "a".repeat(64),
-  importProfileDigest: "b".repeat(64),
-});
-
-const target = {
-  sha256: "a".repeat(64),
-  kind: "executable",
-  format: "pe",
-  architecture: "x86_64",
-  executable_role: "shared-library",
-} as const;
+const target = ghidraProjectCacheTarget();
 
 let root: string;
 let source: string;

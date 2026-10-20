@@ -791,6 +791,77 @@ describe("Windows cache root repair failures", () => {
   );
 });
 
+describe("Windows cache root repair restoration failures", () => {
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "keeps both roots and reports where the stored projects are when the replacement cannot be removed",
+    async () => {
+      const parent = await tempRoot();
+      const root = join(parent, "cache");
+      const shared = join(parent, "shared");
+      await mkdir(root);
+      await mkdir(shared);
+      await writeFile(join(root, "entry"), "stored");
+      await symlink(shared, join(root, "shared"), "dir");
+      let inspected = false;
+      try {
+        await expect(
+          ensureGhidraProjectCacheRoot(root, {
+            platform: "win32",
+            host: privateRootHost({
+              async createPrivateDirectory(path) {
+                await mkdir(path, { recursive: true });
+                // The staging directory that holds the copies is created like
+                // any other private directory, or the repair could never
+                // remove it.
+                if (path !== root) return path;
+                // Another session used the replacement while the repair was
+                // running, and the copy it left there cannot be removed, so
+                // the replacement cannot be removed either.
+                await mkdir(join(path, "staging", "held"), { recursive: true });
+                await writeFile(
+                  join(path, "staging", "held", "project"),
+                  "held",
+                );
+                await chmod(join(path, "staging", "held"), 0o500);
+                return path;
+              },
+              verifyPrivateDirectory() {
+                if (!inspected) {
+                  inspected = true;
+                  throw new Error(
+                    "Private object owner is not the current user",
+                  );
+                }
+                return { privateDacl: true };
+              },
+            }),
+          }),
+        ).rejects.toMatchObject({
+          reason: "io",
+          path: root,
+          message: expect.stringContaining("the previous root is preserved at"),
+        });
+        // The set-aside root keeps every stored project, and the message
+        // names it because the replacement could not be removed.
+        await expect(
+          readFile(join(parent, "cache.previous-1", "entry"), "utf8"),
+        ).resolves.toBe("stored");
+        await expect(
+          lstat(join(parent, "cache.previous-1", "shared")).then((stats) =>
+            stats.isSymbolicLink(),
+          ),
+        ).resolves.toBe(true);
+      } finally {
+        // Restore the permissions the fixture held so the tree can be removed
+        // even when an assertion above fails.
+        await chmod(join(root, "staging", "held"), 0o700).catch(
+          () => undefined,
+        );
+      }
+    },
+  );
+});
+
 describe("Windows cache root repair leftovers", () => {
   /**
    * A private root beside the copies a repair that stopped part-way left
