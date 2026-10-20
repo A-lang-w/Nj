@@ -344,9 +344,16 @@ describe("Windows cache root repair coordination", () => {
       await new Promise((resolve) => setTimeout(resolve, 1));
       const beside = await readdir(parent).catch((): string[] => []);
       if (beside.includes("cache.repair")) locked = true;
+      // The repair replaces the root, so the entry can be observed under the
+      // old root and then read through the replacement. Only a read that
+      // stayed on one root describes what a session would find there.
+      const observed = await lstat(root).catch(() => undefined);
+      if (observed === undefined) continue;
       const names = await readdir(root).catch((): string[] => []);
       if (!names.includes("entry")) continue;
       const published = await readdir(join(root, "entry")).catch(() => []);
+      const still = await lstat(root).catch(() => undefined);
+      if (still === undefined || still.ino !== observed.ino) continue;
       if (published.length !== files)
         incomplete = `a published project held ${published.length} of ${files} files`;
     }
@@ -562,13 +569,18 @@ describe("Windows cache root repair locking", () => {
       }),
     });
     // The repair holds the lock while it copies, so the lock can be handed
-    // to another session while the repair runs.
+    // to another session while the repair runs. Wait for the owner token to be
+    // written: the file exists before its token does, and a takeover that
+    // lands in between is overwritten by this repair's own write.
+    let held = "";
     let waited = 0;
-    while (!existsSync(lock) && waited < 10_000) {
+    while (waited < 10_000) {
+      held = (await readFile(lock, "utf8").catch(() => "")).trim();
+      if (/^[0-9a-f-]{36}$/u.test(held)) break;
       waited += 1;
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
-    expect(existsSync(lock)).toBe(true);
+    expect(held).toMatch(/^[0-9a-f-]{36}$/u);
     // Another session took the lock over.
     await writeFile(lock, "another-session");
     release();
