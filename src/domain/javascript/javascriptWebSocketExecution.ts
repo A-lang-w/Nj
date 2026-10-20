@@ -57,6 +57,11 @@ import {
 } from "./javascriptSymbolicControlFlow.js";
 import { childNodes } from "./javascriptSemanticTraversal.js";
 import { semanticAsyncDeclarationFacts } from "./javascriptSemanticResourceAcquisition.js";
+import {
+  semanticPrototypeLookupMayChange,
+  semanticPropertyPathKeyMatches,
+} from "./javascriptSemanticPropertyPaths.js";
+import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
 
 /** A direct return preserves the value separately from the completed activation. */
 const webSocketReturnedOwner = (
@@ -190,10 +195,130 @@ const webSocketFreshMethodSelection = (
     : undefined;
 };
 
+/** Known caller activations order helper lookup independently of lexical source order. */
+const webSocketHelperEffectFollowsRead = (
+  capture: t.Node,
+  effect: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (semanticEffectTiming(capture, effect, state) === "after") return true;
+  const frames = webSocketExecutionContexts(capture, state, true).filter(
+    ({ owner }) => owner === state.program,
+  );
+  return (
+    frames.length > 0 &&
+    frames.every(
+      ({ point }) => semanticEffectTiming(point, effect, state) === "after",
+    )
+  );
+};
+
+const noCallbackParameters: ReadonlyMap<string, readonly t.Function[]> =
+  new Map();
+
+/** A helper name alone does not prove the selected function is the built-in. */
+const webSocketInvocationHelperIntact = (
+  receiver: t.Node,
+  method: "call" | "apply" | "bind",
+  capture: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  parameters: ReadonlyMap<string, readonly t.Function[]> = noCallbackParameters,
+  ownedFunction?: t.Function,
+  seen: Set<t.Node> = new Set(),
+): boolean => {
+  state.memberMutationFactsPhase ??= "requested";
+  // Discovery requests the index; final call facts are invalidated by its phase.
+  if (state.memberMutationFactsPhase !== "indexed") return true;
+  const identity = semanticExactValueIdentity(receiver, state);
+  const value = identity?.node ?? receiver;
+  if (seen.has(value)) return false;
+  seen.add(value);
+  if (
+    identity?.aliases.some(({ read }) => {
+      const binding = resolveSemanticBindingState(state, read, read.name);
+      return (
+        binding === undefined ||
+        [...binding.memberWrites, ...binding.escapedPaths].some(
+          ({ path, node }) =>
+            semanticPrototypeLookupMayChange(path, method) &&
+            !webSocketHelperEffectFollowsRead(capture, node, state),
+        )
+      );
+    })
+  )
+    return false;
+  let freshBound = false;
+  if (t.isCallExpression(value) || t.isOptionalCallExpression(value)) {
+    const callee = unwrapJavaScriptExpression(value.callee).node;
+    if (
+      (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+      semanticStaticPropertyName(callee.property, callee.computed) === "bind"
+    ) {
+      if (
+        !webSocketInvocationHelperIntact(
+          callee.object,
+          "bind",
+          value,
+          state,
+          parameters,
+          ownedFunction,
+          seen,
+        )
+      )
+        return false;
+      // The bound allocation has its own helpers, not the target's own slots.
+      freshBound = true;
+    }
+  }
+  const binding = t.isIdentifier(value)
+    ? resolveSemanticBindingState(state, value, value.name)
+    : undefined;
+  const functions = t.isFunction(value)
+    ? [value]
+    : binding?.kind === "parameter"
+      ? (parameters.get(binding.bindingId) ?? [])
+      : ownedFunction === undefined
+        ? []
+        : [ownedFunction];
+  if (!freshBound && functions.length === 0) return false;
+  const selected = ["global", "Function", "prototype", method];
+  if (
+    state.ambientReferenceEffects.some(
+      ({ path, node }) =>
+        path.length <= selected.length &&
+        path.every((key, index) =>
+          semanticPropertyPathKeyMatches(key, selected[index] ?? ""),
+        ) &&
+        !webSocketHelperEffectFollowsRead(capture, node, state),
+    )
+  )
+    return false;
+  return (
+    freshBound ||
+    functions.every(
+      (fn) =>
+        !(state.literalMemberEffects?.get(fn) ?? []).some(
+          ({ path, node, kind }) =>
+            // Exact result exposure is the receiver itself, not an intervening mutator.
+            !(
+              identity?.node === fn &&
+              kind === "escape" &&
+              path.length === 0 &&
+              node === unwrapJavaScriptExpression(receiver).node
+            ) &&
+            semanticPrototypeLookupMayChange(path, method) &&
+            !webSocketHelperEffectFollowsRead(capture, node, state),
+        ),
+    )
+  );
+};
+
 /** Normalize actual invocation separately from creating a bound function. */
 const webSocketStoredCallTarget = (
   raw: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  capture: t.Node,
+  parameters: ReadonlyMap<string, readonly t.Function[]>,
 ): t.Node | undefined => {
   let current = unwrapJavaScriptExpression(raw).node;
   if (t.isMemberExpression(current) || t.isOptionalMemberExpression(current)) {
@@ -202,7 +327,19 @@ const webSocketStoredCallTarget = (
       current.computed,
     );
     if (method === "bind") return undefined;
-    if (method === "call" || method === "apply") current = current.object;
+    if (method === "call" || method === "apply") {
+      if (
+        !webSocketInvocationHelperIntact(
+          current.object,
+          method,
+          capture,
+          state,
+          parameters,
+        )
+      )
+        return undefined;
+      current = current.object;
+    }
   }
   const seen = new Set<t.Node>();
   while (!seen.has(current)) {
@@ -217,6 +354,16 @@ const webSocketStoredCallTarget = (
           t.isOptionalMemberExpression(callee)) &&
         semanticStaticPropertyName(callee.property, callee.computed) === "bind"
       ) {
+        if (
+          !webSocketInvocationHelperIntact(
+            callee.object,
+            "bind",
+            value,
+            state,
+            parameters,
+          )
+        )
+          return undefined;
         current = callee.object;
         continue;
       }
@@ -290,7 +437,12 @@ const webSocketStoredCalls = (
       }
     }
     for (const call of state.callSites) {
-      const target = webSocketStoredCallTarget(call.callee, state);
+      const target = webSocketStoredCallTarget(
+        call.callee,
+        state,
+        call,
+        parameters,
+      );
       const binding = t.isIdentifier(target)
         ? resolveSemanticBindingState(state, target, target.name)
         : undefined;
@@ -356,9 +508,24 @@ const webSocketImmediateInvocation = (
       );
       if (member !== "call" && member !== "apply" && member !== "bind")
         return undefined;
+      const receiver = invocation.object;
       binds = member === "bind";
       callee = webSocketOuterExpression(invocation, state);
       invocation = state.parentsByNode.get(callee);
+      if (
+        t.isFunction(node) &&
+        (t.isCallExpression(invocation) ||
+          t.isOptionalCallExpression(invocation)) &&
+        !webSocketInvocationHelperIntact(
+          receiver,
+          member,
+          invocation,
+          state,
+          noCallbackParameters,
+          node,
+        )
+      )
+        return undefined;
     }
     if (t.isDecorator(invocation)) {
       if (invocation.expression !== callee) return undefined;

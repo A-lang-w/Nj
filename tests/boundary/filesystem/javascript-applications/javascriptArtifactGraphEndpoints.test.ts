@@ -682,6 +682,114 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "r58-16.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");const bound=connect.bind(null);bound.call=()=>{};bound.call(null);const Socket=globalThis.WebSocket;bound();',
+    present: true,
+  },
+  {
+    file: "r58-17.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");connect.call=()=>{};const bound=connect.bind(null);bound.call(null);const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r58-14.js",
+    source:
+      'Function.prototype.call=()=>{};(()=>new Socket("wss://example.test/review-latest")).call(null);const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r58-15.js",
+    source:
+      'Function.prototype.bind=()=>()=>{};(()=>new Socket("wss://example.test/review-latest")).bind(null)();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r58-0.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");connect.call=()=>{};connect.call(null);const Socket=globalThis.WebSocket;connect();',
+    present: true,
+  },
+  {
+    file: "r58-1.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");connect.apply=()=>{};connect.apply(null,[]);const Socket=globalThis.WebSocket;connect();',
+    present: true,
+  },
+  {
+    file: "r58-2.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");connect.bind=()=>()=>{};connect.bind(null)();const Socket=globalThis.WebSocket;connect();',
+    present: true,
+  },
+  {
+    file: "r58-3.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");const alias=connect;alias.call=()=>{};connect.call(null);const Socket=globalThis.WebSocket;connect();',
+    present: true,
+  },
+  {
+    file: "r58-4.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");connect.apply=()=>{};connect.call(null);const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r58-5.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");connect.label=0;connect.call(null);const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r58-6.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");try{connect.call(null)}catch{}connect.call=()=>{};const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r58-7.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");Function.prototype.call=()=>{};connect.call(null);const Socket=globalThis.WebSocket;connect();',
+    present: true,
+  },
+  {
+    file: "r58-8.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");Function.prototype.apply=()=>{};connect.apply(null,[]);const Socket=globalThis.WebSocket;connect();',
+    present: true,
+  },
+  {
+    file: "r58-9.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");Function.prototype.bind=()=>()=>{};connect.bind(null)();const Socket=globalThis.WebSocket;connect();',
+    present: true,
+  },
+  {
+    file: "r58-10.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");const bound=connect.bind(null);connect.bind=()=>()=>{};bound();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r58-11.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");connect.call=()=>{};((run)=>run.call(null))(connect);const Socket=globalThis.WebSocket;connect();',
+    present: true,
+  },
+  {
+    file: "r58-12.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");try{((run)=>run.call(null))(connect)}catch{}connect.call=()=>{};const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r58-13.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");const alias=connect;function change(value){value.call=()=>{}}change(alias);connect.call(null);const Socket=globalThis.WebSocket;connect();',
+    present: true,
+  },
+  {
     file: "r57-0.js",
     source:
       'const connect=()=>new Socket("wss://example.test/review-latest");connect.call(null);const Socket=globalThis.WebSocket;',

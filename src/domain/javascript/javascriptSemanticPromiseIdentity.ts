@@ -23,23 +23,9 @@ import {
 } from "./javascriptSymbolicControlFlow.js";
 import {
   semanticPropertyPathKeyMatches,
-  type JavaScriptSemanticPropertyPath,
+  semanticPrototypeLookupMayChange,
 } from "./javascriptSemanticPropertyPaths.js";
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
-
-/** Replacing a prototype link can change an inherited lookup, not just an own slot. */
-const promiseLookupMayChange = (
-  path: JavaScriptSemanticPropertyPath,
-  property: "constructor" | "then",
-): boolean => {
-  for (const [index, key] of path.entries()) {
-    const prototype = semanticPropertyPathKeyMatches(key, "__proto__");
-    if (index === path.length - 1)
-      return prototype || semanticPropertyPathKeyMatches(key, property);
-    if (!prototype) return false;
-  }
-  return true;
-};
 
 const promiseAmbientLookupIntact = (
   property: "constructor" | "then",
@@ -82,7 +68,7 @@ const nativePromiseAwaitIdentityIntact = (
       binding !== undefined &&
       [...binding.memberWrites, ...binding.escapedPaths].every(
         ({ path, node: effect }) =>
-          !promiseLookupMayChange(path, "constructor") ||
+          !semanticPrototypeLookupMayChange(path, "constructor") ||
           // Copying a promise reference does not snapshot its properties.
           // Every alias shares lookup validity at the actual await/adoption site.
           semanticEffectTiming(capture, effect, state) === "after",
@@ -249,7 +235,7 @@ export const semanticPromiseSettlementDependency = (
             [...binding.memberWrites, ...binding.escapedPaths].some(
               ({ path, node: effect }) =>
                 semanticEffectTiming(capture, effect, state) !== "after" &&
-                promiseLookupMayChange(path, "then"),
+                semanticPrototypeLookupMayChange(path, "then"),
             )
           );
         })

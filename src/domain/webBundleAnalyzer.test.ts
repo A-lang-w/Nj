@@ -4770,6 +4770,96 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "bound helper overwrite belongs to bound allocation",
+    "const connect=()=>new Socket(URL);const bound=connect.bind(null);bound.call=()=>{};bound.call(null);const Socket=globalThis.WebSocket;bound();",
+    true,
+  ],
+  [
+    "target own helper does not replace bound helper",
+    "const connect=()=>new Socket(URL);connect.call=()=>{};const bound=connect.bind(null);bound.call(null);const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "prototype replacement leaves literal call dormant",
+    "Function.prototype.call=()=>{};(()=>new Socket(URL)).call(null);const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "prototype replacement leaves literal bind dormant",
+    "Function.prototype.bind=()=>()=>{};(()=>new Socket(URL)).bind(null)();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "replaced call does not activate original callback",
+    "const connect=()=>new Socket(URL);connect.call=()=>{};connect.call(null);const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
+    "replaced apply does not activate original callback",
+    "const connect=()=>new Socket(URL);connect.apply=()=>{};connect.apply(null,[]);const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
+    "replaced bind does not bind original callback",
+    "const connect=()=>new Socket(URL);connect.bind=()=>()=>{};connect.bind(null)();const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
+    "alias helper write reaches original allocation",
+    "const connect=()=>new Socket(URL);const alias=connect;alias.call=()=>{};connect.call(null);const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
+    "unrelated helper write preserves native call",
+    "const connect=()=>new Socket(URL);connect.apply=()=>{};connect.call(null);const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "unrelated function property preserves native call",
+    "const connect=()=>new Socket(URL);connect.label=0;connect.call(null);const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "later helper write does not erase earlier call",
+    "const connect=()=>new Socket(URL);try{connect.call(null)}catch{}connect.call=()=>{};const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "prototype call replacement does not activate original",
+    "const connect=()=>new Socket(URL);Function.prototype.call=()=>{};connect.call(null);const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
+    "prototype apply replacement does not activate original",
+    "const connect=()=>new Socket(URL);Function.prototype.apply=()=>{};connect.apply(null,[]);const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
+    "prototype bind replacement does not bind original",
+    "const connect=()=>new Socket(URL);Function.prototype.bind=()=>()=>{};connect.bind(null)();const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
+    "captured bound function survives later helper replacement",
+    "const connect=()=>new Socket(URL);const bound=connect.bind(null);connect.bind=()=>()=>{};bound();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "parameter helper replacement does not activate original",
+    "const connect=()=>new Socket(URL);connect.call=()=>{};((run)=>run.call(null))(connect);const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
+    "parameter helper after later write remains early call",
+    "const connect=()=>new Socket(URL);try{((run)=>run.call(null))(connect)}catch{}connect.call=()=>{};const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "escaped callback helper remains unproven",
+    "const connect=()=>new Socket(URL);const alias=connect;function change(value){value.call=()=>{}}change(alias);connect.call(null);const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
     "stored call runs before constructor binding",
     "const connect=()=>new Socket(URL);connect.call(null);const Socket=globalThis.WebSocket;",
     false,

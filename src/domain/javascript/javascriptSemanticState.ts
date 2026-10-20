@@ -137,7 +137,7 @@ export interface JavaScriptSemanticAnalysisState {
   readonly bindingWrites: Map<string, t.Node[]>;
   /** Allocation effects produced by the shared alias-aware mutation pass. */
   literalMemberEffects?: WeakMap<
-    t.ObjectExpression | t.ArrayExpression,
+    t.ObjectExpression | t.ArrayExpression | t.Function,
     JavaScriptSemanticLiteralMemberEffect[]
   >;
   /** Demand and readiness belong to the shared member-effects index, not its consumers. */

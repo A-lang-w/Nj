@@ -568,7 +568,8 @@ export function* collectSemanticMemberMutationsSteps(
       } else {
         if (
           t.isObjectExpression(expression) ||
-          t.isArrayExpression(expression)
+          t.isArrayExpression(expression) ||
+          t.isFunction(expression)
         ) {
           // A literal may escape through an assignment result before another
           // binding projects it. Retain effects on the allocation itself,
@@ -1239,6 +1240,7 @@ const observableMutationPaths = (
         // discard observable escapes through a shared getter result.
         if (
           semanticNativePromiseProducer(expression, state) ||
+          t.isFunction(expression) ||
           (t.isNewExpression(expression) &&
             semanticClassCandidates(expression.callee, state).length === 0)
         )
