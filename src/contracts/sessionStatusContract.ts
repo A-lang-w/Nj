@@ -5,6 +5,13 @@ import { localPathStringSchema } from "../domain/localPath.js";
 
 /** Optional expectations used to compare the live session with its caller. */
 export const binarySessionInputSchema = z.strictObject({
+  target_id: z
+    .string()
+    .min(1)
+    .describe(
+      "Opaque target handle returned by open_binary. Omit to report the current target.",
+    )
+    .optional(),
   expected_package_version: z.string().min(1).optional(),
   expected_catalog_digest: z
     .string()

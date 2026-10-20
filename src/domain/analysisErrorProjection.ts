@@ -18,6 +18,7 @@ import {
   AnalysisOutputError,
   AnalysisTimeoutError,
   AnalysisResourceConstraintError,
+  AnalysisTargetNotOpenError,
 } from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
 import {
@@ -231,6 +232,7 @@ const STATIC_ERROR_CODES = {
   HopperCancelledError: "cancelled",
   AnalysisTimeoutError: "provider_timeout",
   AnalysisResourceConstraintError: "resource_constraint",
+  AnalysisTargetNotOpenError: "target_not_open",
   HopperTimeoutError: "provider_timeout",
   HopperProcessError: "provider_unavailable",
   HopperStartError: "provider_unavailable",
@@ -286,6 +288,12 @@ const requestErrorDetails = (
       resource: error.resource,
       reason: error.reason,
       reported_limits: error.reportedLimits,
+    };
+  if (error instanceof AnalysisTargetNotOpenError)
+    return {
+      operation: error.operation,
+      target_id: error.requestedTargetId,
+      open_target_ids: [...error.openTargetIds],
     };
   if (error instanceof AnalysisArtifactChangedError)
     return {
@@ -602,6 +610,7 @@ export interface AnalysisErrorProjection extends Readonly<
     | "revision_conflict"
     | "configuration_invalid"
     | "target_unavailable"
+    | "target_not_open"
     | "execution_failure";
   readonly category:
     | "invalid_input"
@@ -621,3 +630,4 @@ export interface AnalysisErrorProjection extends Readonly<
   }>;
   readonly details?: Readonly<Record<string, JsonValue>>;
 }
+

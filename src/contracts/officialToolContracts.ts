@@ -9,6 +9,7 @@ import {
   examplesFor,
   optionalAddress,
   procedure,
+  targetId,
 } from "./toolContractHelpers.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { toolContractMetadata } from "./toolEffects.js";
@@ -23,7 +24,9 @@ const official = <Name extends string, Schema extends z.ZodObject>(
   description: string,
   inputSchema: Schema,
 ) => {
-  const strictInputSchema = inputSchema.strict();
+  const strictInputSchema = inputSchema
+    .extend({ target_id: targetId.optional() })
+    .strict();
   return {
     name,
     ...toolContractMetadata(name),
