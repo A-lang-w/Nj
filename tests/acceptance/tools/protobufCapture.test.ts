@@ -23,6 +23,13 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 type CaptureCall = Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"];
 type CaptureRequest = z.input<typeof inspectWebNetworkCaptureInputSchema>;
 
+const retainedCaptureDetailsSchema = z.object({
+  partial_observation: z.strictObject({
+    kind: z.literal("retained-evidence"),
+    evidence_id: z.string(),
+  }),
+});
+
 async function verifyCaptureExclusions(
   call: CaptureCall,
   args: CaptureRequest,
@@ -123,12 +130,9 @@ async function verifyPartialCaptureSources(
   });
   const missingError = parseMcpToolError(missing).error;
   expect(missingError.code).toBe("invalid_request");
-  const retainedSource = z
-    .strictObject({
-      kind: z.literal("retained-evidence"),
-      evidence_id: z.string(),
-    })
-    .parse(missingError.details?.partial_observation);
+  const retainedSource = retainedCaptureDetailsSchema.parse(
+    missingError.details,
+  ).partial_observation;
   const retainedSummary = await call("inspect_analysis_view", {
     source: retainedSource,
     view: { kind: "summary" },
@@ -170,12 +174,9 @@ async function verifyPartialCaptureSources(
   const capacityError = parseMcpToolError(capacity).error;
   expect(capacityError.code).toBe("resource_constraint");
   expect(capacityError.retryable).toBe(false);
-  const capacitySource = z
-    .strictObject({
-      kind: z.literal("retained-evidence"),
-      evidence_id: z.string(),
-    })
-    .parse(capacityError.details?.partial_observation);
+  const capacitySource = retainedCaptureDetailsSchema.parse(
+    capacityError.details,
+  ).partial_observation;
   const capacitySummary = await call("inspect_analysis_view", {
     source: capacitySource,
     view: { kind: "summary" },

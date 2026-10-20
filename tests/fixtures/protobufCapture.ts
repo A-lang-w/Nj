@@ -39,7 +39,7 @@ export const protobufCaptureDescriptor = () =>
   );
 
 export const protobufHar = (
-  body = protobufCaptureBody(),
+  body: Buffer = protobufCaptureBody(),
   mimeType = "application/grpc-web+proto",
 ) =>
   JSON.stringify({
