@@ -33,7 +33,9 @@ the parameter another tool already uses at that position, so the write becomes
   the literal has that length and uses only their character classes, so an
   identifier that happens to hold no digit still qualifies. An empty literal, a
   stop word or a `v1`-style version never qualifies. Each parameter's spelling
-  is summarised once, so a literal is checked without rescanning its values.
+  is summarised once, so a literal is checked without rescanning its values,
+  and a value longer than 128 characters is compared only exactly, so a huge
+  segment costs no classification.
 - Positions templated by the four format rules are never shared, so
   `/api/teams/{numeric}` still absorbs no literal.
 - Values stay with the parameter that observed them: when parameters of

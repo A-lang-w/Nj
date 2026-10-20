@@ -141,3 +141,9 @@ here. The gates above passed again (domain and services 7255 passed with 5
 pre-existing skips; the focused boundaries 76; `jscpd` 3.49%). Over the 50
 showcase captures the tools with and without `prefix-variance` are unchanged,
 name for name: 69 literal tools templated, 25 of them writes.
+
+A second review round bounded the spelling summary: characters are classified
+in one pass, and a value longer than 128 characters is compared only exactly.
+Its test fails on the previous head, the gates passed again (domain and
+services 7257, focused boundaries 76, `jscpd` 3.49%), and the census over the 50
+captures is again unchanged.
