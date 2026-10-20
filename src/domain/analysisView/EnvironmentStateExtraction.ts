@@ -77,6 +77,8 @@ export class EnvironmentStateExtraction {
   readonly #plans: StatePlan[] = [];
   readonly #entities = new Map<string, ObservedEntity>();
   readonly #volatile = new Map<string, Set<string>>();
+  /** Types with a value that changed across a recorded write, which may be that write's effect. */
+  readonly #rewritten = new Set<string>();
   readonly #merged = new Map<string, StateEntity>();
   /** Merged entities by type and collection, built once on first use after merging. */
   #collections: Map<string, StateEntity[]> | undefined;
@@ -112,10 +114,13 @@ export class EnvironmentStateExtraction {
       this.#merge();
       const gate = this.#gateContext();
       for (const plan of this.#plans)
-        this.#views.set(
-          plan.tool.name,
-          plan.item ? checkItemPlan(gate, plan) : checkListPlan(gate, plan),
-        );
+        if (this.#rewritten.has(plan.type))
+          this.#recorded(plan.tool, "fields-differ");
+        else
+          this.#views.set(
+            plan.tool.name,
+            plan.item ? checkItemPlan(gate, plan) : checkListPlan(gate, plan),
+          );
       const documents = this.#documents(candidates);
       for (const { tool } of candidates)
         if (!this.#views.has(tool.name)) this.#recorded(tool, "not-entity");
@@ -350,6 +355,7 @@ export class EnvironmentStateExtraction {
     if (id === undefined) return;
     const collection = collectionPathOf(record, plan.item);
     const key = entityKey(plan.type, collection, id);
+    const position = this.#position.get(record.ordinal)!;
     let entity = this.#entities.get(key);
     if (entity === undefined) {
       this.#retain(ENTRY_BYTES * 4 + textBytes(key.length));
@@ -357,13 +363,12 @@ export class EnvironmentStateExtraction {
         type: plan.type,
         collection,
         id,
-        order: [this.#position.get(record.ordinal)!, index],
+        order: [position, index],
         observations: [],
       };
       this.#entities.set(key, entity);
     } else {
       // Plans are observed item tools first, so keep the earliest sighting in timeline order.
-      const position = this.#position.get(record.ordinal)!;
       const [first, at] = entity.order;
       if (position < first || (position === first && index < at))
         entity.order = [position, index];
@@ -381,16 +386,29 @@ export class EnvironmentStateExtraction {
         Object.hasOwn(earlier.object, name) &&
         !same(earlier.object[name], object[name])
       ) {
+        // A change across any recorded write, even under another root, is not evidence of volatility.
+        if (this.#writeBetween(earlier.position, position)) {
+          this.#rewritten.add(plan.type);
+          continue;
+        }
         const fields = this.#volatile.get(plan.type) ?? new Set<string>();
         this.#volatile.set(plan.type, fields.add(name));
       }
     this.#retain(ENTRY_BYTES + jsonBytes(object));
     entity.observations.push({
-      position: this.#position.get(record.ordinal)!,
+      position,
       ordinal: record.ordinal,
       tool: plan.tool.name,
       item: plan.item,
       object,
+    });
+  }
+
+  /** Whether a recorded write lies strictly between two timeline positions. */
+  #writeBetween(from: number, to: number): boolean {
+    return this.#writes.some((write) => {
+      const position = this.#position.get(write.ordinal)!;
+      return position > from && position < to;
     });
   }
 

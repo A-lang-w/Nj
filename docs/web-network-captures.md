@@ -474,19 +474,21 @@ array, or the one array of objects in an envelope that is not itself an entity.
 `entities` merge every initial observation of one identity within one
 collection path: an item view's latest values win over a list view's, a view
 whose latest values differ keeps them in `view_fields`, and a field whose value
-changed between one tool's observations with no related write between is named
-in the type's `volatile_fields`, keeping the latest value. Entities are ordered
+changed between one tool's observations with no recorded write between is named
+in the type's `volatile_fields`, keeping the latest value. A value that changed
+across a write under another root may be that write's effect, so every tool of
+its type is a recorded view with reason `fields-differ`. Entities are ordered
 by type, collection and first sighting; that order is a list's state order.
 Every entity cites its `record_ordinals`.
 
 `views` lists one plan per read tool in tool order:
 
-| Shape      | Plan                                                                                                                                                                                                                                                            |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `item`     | The entity object at `pointer` (the root or one member), the ordered `fields` the view shows and the `required_fields` every recording had, and `envelope_ordinal`: the recording whose response, with the entity replaced, every item response shares          |
-| `list`     | The array at `pointer`, its `fields`, `membership` (`all`: every entity of the collection in state order, when each recording listed exactly that and had no query; `recorded`: the entities each recording listed) and `counters` that equal the number listed |
-| `document` | The path's latest initial value, held in `documents`                                                                                                                                                                                                            |
-| `recorded` | A `reason` the tool replays its recordings instead                                                                                                                                                                                                              |
+| Shape      | Plan                                                                                                                                                                                                                                                                                                                           |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `item`     | The entity object at `pointer` (the root or one member), the ordered `fields` the view shows and the `required_fields` every recording had, and `envelope_ordinal`: the recording whose response, with the entity replaced, every item response shares                                                                         |
+| `list`     | The array at `pointer`, its `fields`, `membership` (`all`: every entity of the collection in state order, when each recording listed exactly that, had no query and no `total` or `count` member differing from the number listed; `recorded`: the entities each recording listed) and `counters` that equal the number listed |
+| `document` | The path's latest initial value, held in `documents`                                                                                                                                                                                                                                                                           |
+| `recorded` | A `reason` the tool replays its recordings instead                                                                                                                                                                                                                                                                             |
 
 An item or list plan is kept only when it reproduces the latest initial
 recording of each request line from the state, comparing JSON values without

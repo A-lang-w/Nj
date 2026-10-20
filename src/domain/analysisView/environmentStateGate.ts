@@ -182,9 +182,13 @@ const listFacts = (
         if (!same(ids, expected)) all = false;
       } else all = false;
       const parent = plan.pointer === "" || !isObject(body) ? {} : body;
-      const names = Object.keys(parent).filter(
-        (name) => /total|count/iu.test(name) && parent[name] === items.length,
+      const counted = Object.keys(parent).filter(
+        (name) =>
+          /total|count/iu.test(name) && typeof parent[name] === "number",
       );
+      // A count that differs from the number listed shows the list is not the whole collection.
+      if (counted.some((name) => parent[name] !== items.length)) all = false;
+      const names = counted.filter((name) => parent[name] === items.length);
       counters = (counters ?? names).filter((name) => names.includes(name));
     });
   return { all, counters: (counters ?? []).sort(compare) };

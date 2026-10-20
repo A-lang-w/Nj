@@ -198,6 +198,40 @@ it("keeps the latest value of a field that changed with no related write and nam
   );
 });
 
+it("leaves a type recorded when a value changed across a write under another root", () => {
+  const state = stateOf(
+    captureOf([
+      ["GET", "/api/search", [{ id: 1, title: "Granite Ledger" }]],
+      ["POST", "/api/dashboards/db", { id: 1, title: "Saltmarsh Depot" }],
+      ["GET", "/api/search", [{ id: 1, title: "Saltmarsh Depot" }]],
+    ]),
+  );
+  expect(state.types).toEqual([]);
+  expect(state.entities).toEqual([]);
+  expect(viewOf(state, "get_search")).toEqual({
+    tool: "get_search",
+    shape: "recorded",
+    reason: "fields-differ",
+  });
+});
+
+it("does not list the whole collection when a counter exceeds the number listed", () => {
+  const state = stateOf(
+    captureOf([
+      [
+        "GET",
+        "/api/items",
+        { total: 50, items: [{ id: 1, title: "Ada Finch" }] },
+      ],
+    ]),
+  );
+  expect(viewOf(state, "get_items")).toMatchObject({
+    shape: "list",
+    membership: "recorded",
+    counters: [],
+  });
+});
+
 it("lists the whole collection with its counter only when every recording did", () => {
   const rows: Row[] = [
     [

@@ -32,8 +32,11 @@ later increments.
   Never treat an envelope that is itself an entity as a list.
 - Merge observations into one entity per collection and identity: item views'
   latest values win over list views', differing views keep their own values,
-  and a value that changed between repeats of one request line with no related
-  write is volatile and keeps the latest.
+  and a value that changed between repeats of one request line with no recorded
+  write is volatile and keeps the latest; a change across a write under another
+  root leaves every tool of the type recorded.
+- A list has `all` membership only when no `total` or `count` envelope member
+  differs from the number of entities it lists.
 - Keep an item or list plan only when it reproduces each request line's latest
   initial recording from the state, comparing JSON values without regard to
   member order; otherwise record the tool with a reason. Parse bodies only when
