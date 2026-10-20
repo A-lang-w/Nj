@@ -1076,6 +1076,22 @@ describe("Ghidra FAT native decompiler admission", () => {
       detail: "requires mach-o arm64",
     },
     {
+      name: "foreign-only FAT declaring one family twice",
+      bytes: fat([0x01000007, 0x01000007]),
+      status: "unavailable",
+      detail: "requires mach-o arm64",
+    },
+    {
+      name: "foreign-only FAT whose first same-family slice is undersized",
+      bytes: (() => {
+        const bytes = fat([0x01000007, 0x01000007]);
+        bytes.writeUInt32BE(31, 8 + 12);
+        return bytes;
+      })(),
+      status: "unavailable",
+      detail: "requires mach-o arm64",
+    },
+    {
       name: "matching universal FAT",
       bytes: fat([0x01000007, 0x0100000c]),
       status: "available",
