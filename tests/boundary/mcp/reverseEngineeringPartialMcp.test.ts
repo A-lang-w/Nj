@@ -151,7 +151,8 @@ it("admits Rizin mutation after invalidating before dispatch", async () => {
   const { server, handler } = createReverseEngineeringMcpHarness();
   const events: string[] = [];
   const service = new ReverseEngineeringService({
-    run: async () => {
+    run: async (_command, _arguments, options) => {
+      options?.onDispatch?.();
       events.push("dispatch");
       return { stdout: "rizin output", stderr: "" };
     },
@@ -183,7 +184,10 @@ it("invalidates the snapshot in the legacy Rizin admission path", async () => {
   const { server, handler } = createReverseEngineeringMcpHarness();
   const invalidateSnapshot = vi.fn();
   const service = new ReverseEngineeringService({
-    run: async () => ({ stdout: "rizin output", stderr: "" }),
+    run: async (_command, _arguments, options) => {
+      options?.onDispatch?.();
+      return { stdout: "rizin output", stderr: "" };
+    },
   });
   registerReverseEngineeringTools(
     server,
@@ -326,7 +330,8 @@ it.skipIf(process.platform === "win32").each(["success", "timeout"])(
 
     const { server, handler } = createReverseEngineeringMcpHarness();
     const service = new ReverseEngineeringService({
-      run: async () => {
+      run: async (_command, _arguments, options) => {
+        options?.onDispatch?.();
         await writeFile(alias, "changed by Rizin");
         if (outcome === "timeout")
           throw Object.assign(new Error("timed out"), {
