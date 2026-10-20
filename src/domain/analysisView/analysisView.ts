@@ -6,6 +6,12 @@ import {
   modelArtifactViewContextSchema,
 } from "./modelArtifactView.js";
 import {
+  commandSummaryContext,
+  gdbCommandSummarySchema,
+  projectCommandObservationView,
+} from "./commandObservationView.js";
+import { commandObservationSchema } from "../commandObservation.js";
+import {
   goBinarySummarySchema,
   goBinaryViewContextSchema,
   goBinaryViewPageSchema,
@@ -386,6 +392,8 @@ const viewResultBase = {
   parent_operation: z.enum([
     "inspect_binary_layout",
     "inspect_go_binary",
+    "gdb_console",
+    "inspect_with_objdump",
     "inspect_desktop_application",
     "analyze_javascript_application",
     "analyze_function",
@@ -420,6 +428,23 @@ const summaryViewResultBase = {
   view: summaryViewSchema,
   ...viewResultBase,
 } as const;
+
+/** Opt-in command delivery keeps output once and retains the complete parent. */
+export const gdbCommandSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  ...commandSummaryContext,
+  parent_operation: z.literal("gdb_console"),
+  artifact: artifactSchema.nullable(),
+  summary: gdbCommandSummarySchema,
+});
+
+export const objdumpSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  ...commandSummaryContext,
+  parent_operation: z.literal("inspect_with_objdump"),
+  artifact: artifactSchema.nullable(),
+  summary: commandObservationSchema,
+});
 
 /** Opt-in Go delivery retains original bytes and exposes build identity/counts. */
 export const goBinarySummaryViewResultSchema = z.strictObject({
@@ -634,6 +659,8 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: environmentStateViewRequestSchema,
   }),
   z.discriminatedUnion("parent_operation", [
+    gdbCommandSummaryViewResultSchema,
+    objdumpSummaryViewResultSchema,
     goBinarySummaryViewResultSchema,
     binaryLayoutSummaryViewResultSchema,
     desktopApplicationSummaryViewResultSchema,
@@ -926,6 +953,8 @@ const parentArtifactPath = (parent: AnalysisViewParent): string => {
 
 /** Named source owners for views that need no extra decoder or accumulator. */
 const retainedViewProjectors = new Map<string, typeof projectWasmArtifactView>([
+  ["gdb_console", projectCommandObservationView],
+  ["inspect_with_objdump", projectCommandObservationView],
   ["inspect_go_binary", projectGoBinaryView],
   ...NATIVE_INVENTORY_OPERATIONS.map(
     (operation) => [operation, projectNativeInventoryView] as const,
