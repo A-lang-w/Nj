@@ -107,12 +107,7 @@ export const pyzArchive = (input: {
             module.compressedSuffix ?? Buffer.alloc(0),
           ]);
     entries.push(
-      marshalPair(
-        module.name,
-        module.typeCode,
-        compressed.length === 0 ? 0 : offset,
-        compressed.length,
-      ),
+      marshalPair(module.name, module.typeCode, offset, compressed.length),
     );
     if (compressed.length > 0) {
       blobs.push(compressed);

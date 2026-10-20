@@ -16,6 +16,112 @@ import {
 import { readPyzArchive } from "./PyzArchive.js";
 import type { ArtifactEntry } from "../ArtifactReader.js";
 
+it.each([
+  ["sequence", Buffer.from("5ba1860100", "hex")],
+  ["string", Buffer.from("7501000100", "hex")],
+  [
+    "depth",
+    Buffer.concat([
+      ...Array.from({ length: 18 }, () => Buffer.from([0x29, 1])),
+      Buffer.from("6900000000", "hex"),
+    ]),
+  ],
+  [
+    "nodes",
+    Buffer.concat([
+      Buffer.from("5ba0860100", "hex"),
+      Buffer.alloc(100_000 * 5).fill(Buffer.from("6900000000", "hex")),
+    ]),
+  ],
+])(
+  "preserves the marshal %s resource failure through inventory",
+  async (_guard, toc) => {
+    await withPyInstallerReader(
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 309,
+        members: [
+          {
+            name: "PYZ.pyz",
+            typeCode: "z",
+            compress: false,
+            payload: pyzArchive({ magic: PYTHON_39_MAGIC, modules: [], toc }),
+          },
+        ],
+      }),
+      async (_reader, _handle, path) => {
+        await expect(
+          scanCanonicalArtifactInventory(path),
+        ).rejects.toMatchObject({
+          reason: "limit",
+          message: expect.stringContaining("PYZ marshal"),
+        });
+      },
+    );
+  },
+);
+
+it.each([1, 2])(
+  "rejects a namespace row with offset 12 and length %s",
+  async (length) => {
+    const image = pyzArchive({
+      magic: PYTHON_39_MAGIC,
+      modules: [{ name: "ns", typeCode: 3, body: Buffer.alloc(0) }],
+    });
+    // The fixture's last two marshal integers are the namespace offset/length.
+    image.writeInt32LE(12, image.length - 9);
+    image.writeInt32LE(length, image.length - 4);
+    await withPyInstallerReader(
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 309,
+        members: [
+          { name: "PYZ.pyz", typeCode: "z", compress: false, payload: image },
+        ],
+      }),
+      async (_reader, _handle, path) => {
+        await expect(
+          scanCanonicalArtifactInventory(path),
+        ).rejects.toMatchObject({
+          reason: "integrity",
+          message: expect.stringContaining("namespace"),
+        });
+      },
+    );
+  },
+);
+
+it("retains the producer's nonzero namespace offset without inventing data", async () => {
+  await withPyInstallerReader(
+    cArchiveExecutable({
+      layout: "2.1",
+      pythonVersion: 309,
+      members: [
+        {
+          name: "PYZ.pyz",
+          typeCode: "z",
+          compress: false,
+          payload: pyzArchive({
+            magic: PYTHON_39_MAGIC,
+            modules: [{ name: "ns", typeCode: 3, body: Buffer.alloc(0) }],
+          }),
+        },
+      ],
+    }),
+    async (_reader, _handle, path) => {
+      const inventory = await scanCanonicalArtifactInventory(path);
+      expect(
+        inventory.occurrences.find((row) => row.logical_path === "PYZ.pyz/ns"),
+      ).toMatchObject({
+        entry_kind: "directory",
+        declared_size: 0,
+        compressed_size: 0,
+        format_metadata: { relative_offset: 12, type_code: 3 },
+      });
+    },
+  );
+});
+
 it("retains multipackage references as distinct unresolved declarations", async () => {
   const names = [
     "../owner/app:assets/x:y",

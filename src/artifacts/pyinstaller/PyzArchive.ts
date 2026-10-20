@@ -128,13 +128,15 @@ const parsePyzParts = (
       ),
     );
   const marshalled = readMarshalSubset(table);
-  if (!marshalled.ok)
+  if (!marshalled.ok) {
+    if (marshalled.error.reason !== "format") return marshalled;
     return ok({
       kind: "opaque",
       pythonMagic,
       sha256,
       limitation: `PYZ table of contents could not be parsed (${marshalled.error.message}); the member was left opaque.`,
     });
+  }
   const entries = pyzEntries(marshalled.value, size, table.length);
   if (!entries.ok)
     return entries.error.reason === "format"
@@ -227,6 +229,14 @@ const onePyzEntry = (
       pyInstallerFailure(
         "format",
         `PYZ table entry type ${String(typeCode)} is not a known module, package, data, or namespace code`,
+      ),
+    );
+  // The producer retains its current file offset for an empty namespace blob.
+  if (typeCode === 3 && length !== 0)
+    return err(
+      pyInstallerFailure(
+        "integrity",
+        `PYZ namespace entry ${name} declares a nonzero source length`,
       ),
     );
   if (typeCode !== 3 && length === 0)
