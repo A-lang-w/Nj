@@ -32,8 +32,11 @@ export const toolFamilyCatalog = (sources) => {
       surface: "artifact-provider",
       contracts: [
         ...sources.artifactContracts.ARTIFACT_TOOL_CONTRACTS,
+        ...sources.desktopContracts.DESKTOP_APPLICATION_TOOL_CONTRACTS,
         ...sources.evmContracts.EVM_TOOL_CONTRACTS,
         ...sources.goContracts.GO_TOOL_CONTRACTS,
+        ...sources.il2cppContracts.IL2CPP_TOOL_CONTRACTS,
+        ...sources.modelContracts.MODEL_TOOL_CONTRACTS,
         ...sources.rustContracts.RUST_TOOL_CONTRACTS,
         ...sources.wasmContracts.WASM_TOOL_CONTRACTS,
         ...sources.sqliteContracts.SQLITE_TOOL_CONTRACTS,
@@ -224,6 +227,13 @@ export const providerCatalog = (sources) => {
       contracts: declaredContracts("ida", sources.idaProvider.IDA_OPERATIONS),
     },
     {
+      identity: sources.kunaProvider.KUNA_PROVIDER_IDENTITY,
+      contracts: declaredContracts(
+        "kuna",
+        sources.kunaProvider.KUNA_OPERATIONS,
+      ),
+    },
+    {
       identity: sources.nativeProvider.NATIVE_MACOS_PROVIDER_IDENTITY,
       contracts: sources.nativeContracts.NATIVE_TOOL_CONTRACTS,
     },
@@ -264,6 +274,14 @@ export const providerCatalog = (sources) => {
       contracts: sources.goContracts.GO_TOOL_CONTRACTS,
     },
     {
+      identity: sources.il2cppProvider.IL2CPP_METADATA_PROVIDER_IDENTITY,
+      contracts: sources.il2cppContracts.IL2CPP_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.modelProvider.MODEL_ARTIFACT_PROVIDER_IDENTITY,
+      contracts: sources.modelContracts.MODEL_TOOL_CONTRACTS,
+    },
+    {
       identity: sources.rustProvider.RUST_BINARY_PROVIDER_IDENTITY,
       contracts: sources.rustContracts.RUST_TOOL_CONTRACTS,
     },
@@ -277,7 +295,10 @@ export const providerCatalog = (sources) => {
     },
     {
       identity: sources.artifactProviders.ARTIFACT_GRAPH_PROVIDER,
-      contracts: sources.artifactContracts.ARTIFACT_TOOL_CONTRACTS,
+      contracts: [
+        ...sources.artifactContracts.ARTIFACT_TOOL_CONTRACTS,
+        ...sources.desktopContracts.DESKTOP_APPLICATION_TOOL_CONTRACTS,
+      ],
     },
     {
       identity: sources.artifactProviders.MANAGED_STATIC_PROVIDER,
