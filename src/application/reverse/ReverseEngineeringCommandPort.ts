@@ -4,6 +4,10 @@ import type {
   RizinInput,
 } from "../../domain/reverseEngineering.js";
 
+/** Capacity refusal emitted before a provider command has been resolved. */
+export const PROVIDER_COMMAND_RESOLUTION_CAPACITY_ERROR_CODE =
+  "EREA_PROVIDER_COMMAND_RESOLUTION_CAPACITY";
+
 /** Provider-neutral command profile consumed by the shared application workflow. */
 export interface ReverseEngineeringProviderCommand {
   readonly executable: string;

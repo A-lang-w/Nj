@@ -1,17 +1,12 @@
 import type { InvestigationRecordPort } from "../investigation/InvestigationRecordPort.js";
-import type { ExecutableFormatHint } from "../../domain/dosCom.js";
-import type {
-  BinaryArchitecture,
-  BinaryTarget,
-} from "../../domain/binaryTargetTypes.js";
+import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
-import type { AnalysisProviderSelector } from "../../contracts/providerSelection.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Result } from "../../domain/result.js";
 import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
-import type { AnalysisSnapshotLoader } from "./BinarySessionOpen.js";
+import type { BinarySessionOpenOptions } from "./BinarySessionOpen.js";
 import type { WorkflowSnapshotRecordInput } from "./BinarySessionRecords.js";
 
 import type {
@@ -74,16 +69,7 @@ export interface BinarySessionPort
   ): Promise<Result<Result<Value, AnalysisError>, AnalysisError>>;
   open(
     path: string,
-    options?: {
-      readonly signal?: AbortSignal;
-      readonly targetKind?: BinaryTarget["kind"];
-      readonly formatHint?: ExecutableFormatHint;
-      readonly architecture?: BinaryArchitecture;
-      readonly entryPoint?: string;
-      readonly snapshot?: AnalysisSnapshot;
-      readonly loadSnapshot?: AnalysisSnapshotLoader;
-      readonly providerId?: AnalysisProviderSelector;
-    },
+    options?: BinarySessionOpenOptions,
   ): Promise<Result<BinaryTarget, AnalysisError>>;
   close(
     options?: BinarySessionCloseOptions,

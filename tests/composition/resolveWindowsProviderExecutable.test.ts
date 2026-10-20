@@ -6,6 +6,8 @@ import { resolveWindowsProviderExecutable } from "../../src/composition/resolveW
 import { ReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
+import { AnalysisResourceConstraintError } from "../../src/domain/analysisErrorCore.js";
+import { PROVIDER_COMMAND_RESOLUTION_CAPACITY_ERROR_CODE } from "../../src/application/reverse/ReverseEngineeringCommandPort.js";
 
 const windowsLookup = (cwd: string, files: readonly string[]) => {
   const existingFiles = new Set(
@@ -204,7 +206,9 @@ describe("bounded Windows PATH probes", () => {
         { PATH: "D:\\tools", PATHEXT: ".EXE" },
         { cwd: "D:\\work", isFile },
       ),
-    ).rejects.toThrow(/capacity is exhausted/u);
+    ).rejects.toMatchObject({
+      code: PROVIDER_COMMAND_RESOLUTION_CAPACITY_ERROR_CODE,
+    });
 
     pending.forEach((resolve) => resolve(false));
     isFile.mockImplementation(() => Promise.resolve(false));
@@ -216,6 +220,75 @@ describe("bounded Windows PATH probes", () => {
         { cwd: "D:\\work", isFile },
       ),
     ).resolves.toBe("objdump");
+  });
+
+  it("projects saturated PATH probes as a retryable capacity error", async () => {
+    const pending: Array<(found: boolean) => void> = [];
+    const isFile = () =>
+      new Promise<boolean>((resolve) => {
+        pending.push(resolve);
+      });
+    const retained = Array.from({ length: 8 }, () =>
+      resolveWindowsProviderExecutable(
+        "objdump",
+        { PATH: "D:\\tools", PATHEXT: ".EXE" },
+        { cwd: "D:\\work", isFile },
+      ),
+    );
+    await Promise.resolve();
+    const base = createReverseEngineeringCommandPort({}, "win32");
+    const service = new ReverseEngineeringService({
+      commands: {
+        ...base,
+        objdump: async (input, options) => {
+          const command = await base.objdump(input, options);
+          return {
+            ...command,
+            executable: await resolveWindowsProviderExecutable(
+              "objdump",
+              { PATH: "D:\\tools", PATHEXT: ".EXE" },
+              {
+                cwd: "D:\\work",
+                isFile,
+                ...(options?.signal === undefined
+                  ? {}
+                  : { signal: options.signal }),
+              },
+            ),
+          };
+        },
+      },
+      run: vi.fn(async () => ({ stdout: "", stderr: "" })),
+    });
+    try {
+      const result = await service.inspectWithObjdump({
+        operation: "architectures",
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisResourceConstraintError",
+          resource: "capacity",
+          retryable: true,
+          remediationAction: expect.stringContaining(
+            "absolute executable path",
+          ),
+        },
+      });
+      if (result.ok) throw new Error("Expected PATH capacity error");
+      expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "resource_constraint",
+        retryable: true,
+        remediation: {
+          action: expect.stringContaining("absolute executable path"),
+        },
+      });
+    } finally {
+      pending.forEach((resolve) => resolve(false));
+      await Promise.all(retained);
+      await service.close();
+    }
   });
 });
 

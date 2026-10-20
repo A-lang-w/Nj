@@ -3,6 +3,7 @@ import { win32 } from "node:path";
 
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
+import { PROVIDER_COMMAND_RESOLUTION_CAPACITY_ERROR_CODE } from "../application/reverse/ReverseEngineeringCommandPort.js";
 
 export interface WindowsExecutableLookup {
   /** Windows-formatted working directory; defaults to the process CWD. */
@@ -56,8 +57,11 @@ const probeWindowsPathEntry = (
   path: string,
 ): Promise<boolean> => {
   if (pendingWindowsPathProbes >= MAX_PENDING_WINDOWS_PATH_PROBES)
-    throw new Error(
-      "Windows provider PATH lookup capacity is exhausted by filesystem probes that have not settled.",
+    throw Object.assign(
+      new Error(
+        "Windows provider PATH lookup capacity is exhausted by filesystem probes that have not settled.",
+      ),
+      { code: PROVIDER_COMMAND_RESOLUTION_CAPACITY_ERROR_CODE },
     );
   pendingWindowsPathProbes += 1;
   let probe: Promise<boolean>;

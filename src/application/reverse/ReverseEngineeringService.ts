@@ -27,6 +27,7 @@ import type {
   ReverseEngineeringCommandPort,
   ReverseEngineeringProviderCommand,
 } from "./ReverseEngineeringCommandPort.js";
+import { PROVIDER_COMMAND_RESOLUTION_CAPACITY_ERROR_CODE } from "./ReverseEngineeringCommandPort.js";
 import {
   execFileOutput,
   execFileOutputFailure,
@@ -357,6 +358,25 @@ export class ReverseEngineeringService {
           }),
         );
       }
+      if (
+        cause instanceof Error &&
+        Reflect.get(cause, "code") ===
+          PROVIDER_COMMAND_RESOLUTION_CAPACITY_ERROR_CODE
+      )
+        return err(
+          new AnalysisResourceConstraintError(
+            operation,
+            "capacity",
+            "Windows provider PATH lookup capacity is occupied by filesystem probes that have not settled.",
+            { max_pending_path_probes: 8 },
+            {
+              cause,
+              retryable: true,
+              remediationAction:
+                "Wait for pending PATH probes to settle and retry, or select the provider by an absolute executable path.",
+            },
+          ),
+        );
       return err(
         new AnalysisOutputError(
           operation,
