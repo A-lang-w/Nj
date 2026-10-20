@@ -6,6 +6,7 @@ import {
   isJSONRPCRequest,
   isJSONRPCNotification,
   isJSONRPCResultResponse,
+  type CallToolResult,
   type Implementation,
   type Icon,
   type JSONRPCMessage,
@@ -89,6 +90,27 @@ const sdkInputValidationDiagnostic = (
   return diagnostic.length <= SDK_INPUT_VALIDATION_PREVIEW_CHARS
     ? diagnostic
     : `${diagnostic.slice(0, SDK_INPUT_VALIDATION_PREVIEW_CHARS)}… [SDK diagnostic truncated; inspect the advertised inputSchema for complete field details]`;
+};
+
+/** Replace the tool payload after the SDK codec while retaining its envelope. */
+const replaceToolResultPayload = (
+  original: CallToolResult,
+  replacement: CallToolResult,
+): CallToolResult => {
+  const {
+    content: _content,
+    structuredContent: _structuredContent,
+    isError: _isError,
+    _meta,
+    ...envelope
+  } = original;
+  return {
+    ...envelope,
+    ...replacement,
+    ...(_meta === undefined && replacement._meta === undefined
+      ? {}
+      : { _meta: { ..._meta, ...replacement._meta } }),
+  };
 };
 
 /** Remove only client-facing output schemas; SDK registrations stay canonical. */
@@ -492,15 +514,7 @@ class ErrorEvidenceTransport implements Transport {
     const replacement = this.delivery.toErrorToolResult(failure, targetContent);
     return {
       ...message,
-      result: {
-        ...replacement,
-        // The SDK stamps `resultType` on modern-era results before this
-        // transport sees them; the replacement must keep the stamp or a
-        // 2026-07-28 client discards REA's structured error entirely.
-        ...(typeof message.result.resultType === "string"
-          ? { resultType: message.result.resultType }
-          : {}),
-      },
+      result: replaceToolResultPayload(message.result, replacement),
     };
   }
 
@@ -527,12 +541,7 @@ class ErrorEvidenceTransport implements Transport {
     const result = this.delivery.toErrorToolResult(error, targetContent);
     return {
       ...message,
-      result: {
-        ...result,
-        ...(typeof message.result.resultType === "string"
-          ? { resultType: message.result.resultType }
-          : {}),
-      },
+      result: replaceToolResultPayload(message.result, result),
     };
   }
 
