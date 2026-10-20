@@ -34,6 +34,12 @@ export const inspectGoBinaryInputSchema = z.strictObject({
   path: localPathStringSchema.describe(
     "Absolute filesystem path to the selected executable or library",
   ),
+  detail: z
+    .enum(["complete", "summary"])
+    .default("complete")
+    .describe(
+      "complete returns all metadata inline; summary retains complete Evidence and returns build identity and counts for subsequent retained Go views.",
+    ),
 });
 
 /** Compiler-written build information and its original file-backed source ranges. */

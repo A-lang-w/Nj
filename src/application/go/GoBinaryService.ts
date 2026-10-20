@@ -16,8 +16,17 @@ import {
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import {
+  requireAnalysisViewRetention,
+  summarizeRetainedAnalysis,
+  type AnalysisViewRetention,
+} from "../analysisView/AnalysisViewService.js";
 
 const OPERATION = "inspect_go_binary";
+const NO_RETENTION: AnalysisViewRetention = {
+  recordEvidence: undefined,
+  evidenceById: undefined,
+};
 const architectureForSubject = (architecture: string) => {
   switch (architecture) {
     case "386":
@@ -43,6 +52,7 @@ export class GoBinaryService {
   async inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
+    retention: AnalysisViewRetention = NO_RETENTION,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted)
       return err(
@@ -65,7 +75,12 @@ export class GoBinaryService {
           },
         ]),
       );
-    const inspected = await this.provider.inspect(input.data, options);
+    const { detail, ...providerInput } = input.data;
+    if (detail === "summary") {
+      const ready = requireAnalysisViewRetention(OPERATION, retention);
+      if (!ready.ok) return ready;
+    }
+    const inspected = await this.provider.inspect(providerInput, options);
     if (!inspected.ok) return inspected;
     const report = goBinarySchema.safeParse(inspected.value);
     if (!report.success || report.data.artifact.path !== input.data.path)
@@ -77,7 +92,7 @@ export class GoBinaryService {
       );
     const value = report.data;
     const architecture = architectureForSubject(value.architecture);
-    return completeProviderEvidence(
+    const completed = completeProviderEvidence(
       createEvidence(
         {
           path: value.artifact.path,
@@ -88,7 +103,7 @@ export class GoBinaryService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.data,
+          parameters: providerInput,
           result: value,
           confidence: "observed",
           limitations: value.limitations,
@@ -108,5 +123,9 @@ export class GoBinaryService {
       ),
       options?.signal,
     );
+    if (!completed.ok) return completed;
+    return detail === "summary"
+      ? summarizeRetainedAnalysis(completed.value, retention)
+      : completed;
   }
 }
