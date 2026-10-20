@@ -395,6 +395,120 @@ describe("identityless lineage refresh follows tree membership", () => {
   });
 });
 
+describe("identityless lineage refresh drops exited descendants", () => {
+  const row = (
+    pid: number,
+    parentPid: number,
+    processGroupId = pid,
+  ): ProcessTableEntry => ({
+    pid,
+    parentPid,
+    processGroupId,
+    state: "S",
+    command: `pid-${String(pid)}`,
+  });
+
+  it("omits a validated descendant that is gone from the latest refresh", async () => {
+    const environment = vi.fn((pid: number) =>
+      pid === 101 || pid === 103
+        ? Promise.reject(new Error("process exited during environment read"))
+        : Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" }),
+    );
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([
+        row(100, 1, 100),
+        row(102, 100),
+        row(101, 100),
+        row(103, 100),
+      ])
+      .mockResolvedValueOnce([row(100, 1, 100), row(102, 100), row(103, 100)])
+      .mockResolvedValue([row(100, 1, 100)]);
+    const result = await observeOwnedProcessLineage(ownership, {
+      listProcesses,
+      environment,
+      signalGroup: vi.fn(),
+    });
+    expect(result.status).toBe("verified");
+    if (result.status !== "verified") return;
+    expect(result.lineage.descendants).toEqual([]);
+  });
+});
+
+describe("identityless lineage refresh rechecks the launcher relation", () => {
+  const row = (
+    pid: number,
+    parentPid: number,
+    processGroupId = pid,
+    command = `pid-${String(pid)}`,
+  ): ProcessTableEntry => ({
+    pid,
+    parentPid,
+    processGroupId,
+    state: "S",
+    command,
+  });
+
+  it("rejects a same-token launcher whose process group changed", async () => {
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([
+        row(100, 1, 100, "root"),
+        row(102, 100),
+        row(101, 100),
+      ])
+      .mockResolvedValue([row(100, 1, 999, "root"), row(102, 100)]);
+    await expect(
+      observeOwnedProcessLineage(
+        { ...ownership, expectedCommand: "root" },
+        {
+          listProcesses,
+          environment: (pid) =>
+            pid === 101
+              ? Promise.reject(
+                  new Error("process exited during environment read"),
+                )
+              : Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" }),
+          signalGroup: vi.fn(),
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: "unavailable",
+      reason: "owned launcher process-group identity did not match",
+    });
+  });
+
+  it("rejects a same-token launcher whose command changed", async () => {
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([
+        row(100, 1, 100, "root"),
+        row(102, 100),
+        row(101, 100),
+      ])
+      .mockResolvedValue([row(100, 1, 100, "replacement"), row(102, 100)]);
+    await expect(
+      observeOwnedProcessLineage(
+        { ...ownership, expectedCommand: "root" },
+        {
+          listProcesses,
+          environment: (pid) =>
+            pid === 101
+              ? Promise.reject(
+                  new Error("process exited during environment read"),
+                )
+              : Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" }),
+          signalGroup: vi.fn(),
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: "unavailable",
+      reason:
+        "owned launcher command identity did not match (observed=replacement; expected=root)",
+    });
+  });
+});
+
 describe("identityless lineage refresh rechecks the launcher", () => {
   const row = (
     pid: number,

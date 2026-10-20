@@ -259,6 +259,7 @@ export const observeOwnedProcessLineage = async (
   }
   let refreshDescendants: readonly ProcessTableEntry[] = [];
   let suppressedRefreshPids = new Set<number>();
+  let latestRefreshPids: ReadonlySet<number> | undefined;
   for await (const { process: member, observation } of readProcessRunTokens(
     host,
     [launcher, ...descendants],
@@ -306,6 +307,7 @@ export const observeOwnedProcessLineage = async (
         return unavailableLineage(ownership, classified.reason);
       refreshDescendants = classified.descendants;
       suppressedRefreshPids = new Set(classified.suppressedPids);
+      latestRefreshPids = new Set(refreshed.map(({ pid }) => pid));
     }
   }
   return {
@@ -319,6 +321,7 @@ export const observeOwnedProcessLineage = async (
       descendants: [
         ...verifiedDescendants.filter(
           ({ pid }) =>
+            (latestRefreshPids === undefined || latestRefreshPids.has(pid)) &&
             !suppressedRefreshPids.has(pid) &&
             !refreshDescendants.some((descendant) => descendant.pid === pid),
         ),
@@ -540,6 +543,9 @@ const classifyIdentitylessLineageRefresh = async (
         reason: "process lineage contains an unowned or PID-reused process",
       };
   }
+  const identityFailure = launcherIdentityFailure(refreshedLauncher, ownership);
+  if (identityFailure !== null)
+    return { status: "unavailable", reason: identityFailure };
   const inTree = new Set(
     descendantsOf([launcherPid], refreshed).map(({ pid }) => pid),
   );

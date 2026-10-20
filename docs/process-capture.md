@@ -479,8 +479,9 @@ replacements stays unresolved. That refresh does not retain a ledger
 for a later attempt that never observes the launcher. Lineage reads a row again
 when its parent, group, or launcher-tree membership changes, and it reads a
 token again on the next refresh even when those fields are unchanged. The
-launcher is read on every lineage refresh; a missing or unowned launcher PID
-is not published as a verified lineage. An
+launcher is read on every lineage refresh; a missing, unowned, or
+relation-changed launcher PID is not published as a verified lineage. A
+descendant absent from the latest refresh is omitted. An
 ancestor move cannot leave a foreign descendant inside a verified result. A
 group that reappears after cleanup already processed it is revalidated once;
 another appearance stays unresolved. The captured run keeps
