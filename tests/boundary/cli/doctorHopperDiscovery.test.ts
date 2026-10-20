@@ -6,7 +6,7 @@ import { expect } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-cliTest.skipIf(process.platform !== "darwin")(
+cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
   "reports invalid Hopper startup timeouts without launching the discovered engine",
   async ({ cli }) => {
     const home = await createTestTempDirectory("rea-doctor-hopper-timeout-");
@@ -20,6 +20,13 @@ cliTest.skipIf(process.platform !== "darwin")(
       ["120000", 0],
     ] as const) {
       const environment = {
+        ...(process.platform === "linux"
+          ? {
+              // Keep the foreign launcher unsupported without reaching the
+              // release network. This qualifies timeout diagnostics only.
+              NODE_OPTIONS: `--import=${new URL("../../fixtures/hopperRejectionFeed.mjs", import.meta.url).href}`,
+            }
+          : {}),
         HOME: home,
         HOPPER_LAUNCHER_PATH: launcher,
         REA_HOPPER_STARTUP_TIMEOUT_MS: timeout,
@@ -34,19 +41,20 @@ cliTest.skipIf(process.platform !== "darwin")(
         arguments: ["doctor", "--provider", "hopper", "--json"],
         environment,
       });
-      expect(doctor.exitCode).toBe(expectedExit);
-      expect(doctor.json).toMatchObject({ healthy: expectedExit === 0 });
-      if (expectedExit !== 0)
-        expect(doctor.json).toMatchObject({
-          scope_checks: expect.arrayContaining([
-            expect.objectContaining({
-              name: "hopper-startup-timeout",
-              ok: false,
-              classification: "config_drift",
-              detail: expect.stringContaining("REA_HOPPER_STARTUP_TIMEOUT_MS"),
-            }),
-          ]),
-        });
+      // Linux independently rejects this shell fixture as a Hopper build.
+      const healthy = process.platform === "darwin" && expectedExit === 0;
+      expect(doctor.exitCode).toBe(healthy ? 0 : 1);
+      expect(doctor.json).toMatchObject({
+        healthy,
+        scope_checks: expect.arrayContaining([
+          expect.objectContaining({
+            name: "hopper-startup-timeout",
+            ok: expectedExit === 0,
+            classification: expectedExit === 0 ? "healthy" : "config_drift",
+            detail: expect.stringContaining("REA_HOPPER_STARTUP_TIMEOUT_MS"),
+          }),
+        ]),
+      });
     }
     await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
   },

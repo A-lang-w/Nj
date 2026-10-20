@@ -3,17 +3,33 @@ import { describe, expect, it } from "vitest";
 import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import { createDoctorHostFixture as host } from "./Doctor.fixture.js";
-import { runDoctor, systemDoctorHost } from "./Doctor.js";
+import { runDoctor, systemDoctorHost, type DoctorHost } from "./Doctor.js";
 import { err } from "../domain/result.js";
 import { HopperReleaseError } from "./HopperReleaseFeed.js";
 
 describe("doctor Hopper startup timeout", () => {
-  it("keeps a configured invalid Hopper timeout unhealthy in an audit with an available peer", async () => {
-    const selectedHost = {
-      ...systemDoctorHost({
-        environment: { REA_HOPPER_STARTUP_TIMEOUT_MS: "0" },
-      }),
-      ...host({
+  const timeoutHost = (
+    value: string | undefined,
+    overrides: Partial<DoctorHost> = {},
+  ): DoctorHost => ({
+    ...systemDoctorHost({
+      environment:
+        value === undefined ? {} : { REA_HOPPER_STARTUP_TIMEOUT_MS: value },
+    }),
+    ...host({
+      installationPaths: () => Promise.resolve([]),
+      clientRegistrations: () => Promise.resolve([]),
+      ...overrides,
+    }),
+  });
+
+  it.each([
+    ["0", false],
+    ["120000", true],
+  ] as const)(
+    "checks timeout %s in an audit with an available peer",
+    async (value, healthy) => {
+      const selectedHost = timeoutHost(value, {
         providerInspections: () =>
           Promise.resolve([
             {
@@ -25,22 +41,23 @@ describe("doctor Hopper startup timeout", () => {
               checks: [],
             },
           ]),
-      }),
-    };
-    const result = await runDoctor(undefined, selectedHost);
-    expect(result.healthy).toBe(false);
-    expect(result.environment_healthy).toBe(false);
-  });
+      });
+      const result = await runDoctor(undefined, selectedHost);
+      expect(result.healthy).toBe(healthy);
+      expect(result.environment_healthy).toBe(healthy);
+      expect(result.checks).toContainEqual(
+        expect.objectContaining({
+          name: "hopper-startup-timeout",
+          ok: healthy,
+        }),
+      );
+    },
+  );
 
   it.each(["", "0", "-1", "1.5", "1e3", "invalid", "2147483648"])(
     "rejects invalid Hopper startup timeout %j in the selected provider scope",
     async (value) => {
-      const selectedHost = {
-        ...systemDoctorHost({
-          environment: { REA_HOPPER_STARTUP_TIMEOUT_MS: value },
-        }),
-        ...host(),
-      };
+      const selectedHost = timeoutHost(value);
       const result = await runDoctor(undefined, selectedHost, {
         providers: ["hopper"],
       });
@@ -61,12 +78,7 @@ describe("doctor Hopper startup timeout", () => {
   it.each([undefined, "1", "120000", "2147483647"])(
     "keeps Hopper ready with the valid startup timeout %j",
     async (value) => {
-      const selectedHost = {
-        ...systemDoctorHost({
-          environment: { REA_HOPPER_STARTUP_TIMEOUT_MS: value },
-        }),
-        ...host(),
-      };
+      const selectedHost = timeoutHost(value);
       expect(
         (await runDoctor(undefined, selectedHost, { providers: ["hopper"] }))
           .healthy,
@@ -75,12 +87,7 @@ describe("doctor Hopper startup timeout", () => {
   );
 
   it("keeps an invalid Hopper timeout informational outside the Hopper scope", async () => {
-    const selectedHost = {
-      ...systemDoctorHost({
-        environment: { REA_HOPPER_STARTUP_TIMEOUT_MS: "0" },
-      }),
-      ...host(),
-    };
+    const selectedHost = timeoutHost("0");
     const result = await runDoctor(undefined, selectedHost, { providers: [] });
     expect(result.healthy).toBe(true);
     expect(result.informational_checks).toContainEqual(
