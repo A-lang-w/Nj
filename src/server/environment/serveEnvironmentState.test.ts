@@ -5,7 +5,7 @@ import {
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { timedCaptureEvidence } from "../../../tests/fixtures/analysisView.js";
 import {
@@ -565,6 +565,63 @@ describe("state data plane response budget", () => {
       MAX_RPC_RESPONSE_BYTES,
     );
     expect(loginOf(plane.store)).toBe("probe");
+  });
+
+  it("measures each reply before building it, so one past the budget is never serialized whole", async () => {
+    const document = renamedDocument();
+    const login = "x".repeat(Math.ceil(MAX_RPC_RESPONSE_BYTES / 3));
+    const large = {
+      rea_state: {
+        ...document.rea_state,
+        entities: document.rea_state.entities.map((entity) =>
+          entity.type === "/api/users" && entity.id === "2"
+            ? { ...entity, fields: { ...entity.fields, login } }
+            : entity,
+        ),
+      },
+    };
+    const root = await createTestTempDirectory(
+      "rea-environment-state-measure-",
+    );
+    const path = join(root, "large.json");
+    await writeFile(path, JSON.stringify(large));
+    const plane = dataPlane();
+    await plane.add({ kind: "file", file: { uri: pathToFileURL(path).href } });
+    const reply = (id: number) => ({
+      jsonrpc: "2.0",
+      id,
+      result: { parts: [{ kind: "data", data: plane.store.snapshot() }] },
+    });
+    const replyBytes = Buffer.byteLength(JSON.stringify(reply(3)));
+    const stringify = vi.spyOn(JSON, "stringify");
+    try {
+      const batch = await plane.post(
+        [1, 2, 3].map((id) => ({ jsonrpc: "2.0", id, method: "data/get" })),
+      );
+      // A refused read is measured exactly, from bounded parts.
+      expect(batch.json).toMatchObject([
+        { id: 1 },
+        { id: 2 },
+        {
+          id: 3,
+          error: {
+            data: { reply_bytes: replyBytes },
+          },
+        },
+      ]);
+      // No whole reply was handed to JSON.stringify by the server.
+      expect(
+        stringify.mock.calls.some(
+          ([value]) =>
+            typeof value === "object" &&
+            value !== null &&
+            "result" in value &&
+            (value as { id?: unknown }).id === 3,
+        ),
+      ).toBe(false);
+    } finally {
+      stringify.mockRestore();
+    }
   });
 });
 

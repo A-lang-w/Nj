@@ -50,6 +50,10 @@ import {
   type StateFetcher,
 } from "./stateIntake.js";
 import { TargetContentTransport } from "./targetContentTransport.js";
+import {
+  bufferedJsonParts,
+  jsonParts,
+} from "../../domain/jsonSerialization.js";
 
 /** Where the environment card is served. */
 export const ENVIRONMENT_CARD_PATH = "/.well-known/agent-env.json";
@@ -186,22 +190,33 @@ const overBudget = (replyBytes: number): RpcError => ({
   data: { max_response_bytes: MAX_RPC_RESPONSE_BYTES, reply_bytes: replyBytes },
 });
 
-/** Serialize a response's replies in order within its budget; one that would pass it becomes an error stating it, unless that error is no smaller. */
+/**
+ * Serialize a response's replies in order within its budget. Each reply is measured in bounded
+ * parts before it is assembled, and parts past the budget are counted but not kept, so a reply
+ * that would pass the budget is never built; it becomes an error stating it, unless that error
+ * is no smaller.
+ */
 const replyEncoder = (): ((reply: RpcReply) => string) => {
   let used = 0;
   return (reply) => {
-    const text = JSON.stringify(reply);
-    const bytes = Buffer.byteLength(text, "utf8");
+    const parts: string[] = [];
+    let bytes = 0;
+    for (const part of bufferedJsonParts(jsonParts(reply))) {
+      bytes += Buffer.byteLength(part, "utf8");
+      if (used + bytes <= MAX_RPC_RESPONSE_BYTES) parts.push(part);
+    }
     if (used + bytes <= MAX_RPC_RESPONSE_BYTES) {
       used += bytes;
-      return text;
+      return parts.join("");
     }
     const refused = JSON.stringify({
       jsonrpc: "2.0",
       id: reply.id,
       error: overBudget(bytes),
     });
-    return Buffer.byteLength(refused, "utf8") < bytes ? refused : text;
+    return Buffer.byteLength(refused, "utf8") < bytes
+      ? refused
+      : JSON.stringify(reply);
   };
 };
 
