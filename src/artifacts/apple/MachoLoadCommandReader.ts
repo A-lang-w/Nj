@@ -5,6 +5,7 @@ import type {
 } from "../../domain/apple/dylibResolution.js";
 import { machoCpuSubtypeBase } from "../../domain/apple/machoCpuIdentity.js";
 import {
+  machoLoadCommandAlignment,
   classifyFatContainerIdentity,
   isMachoHeaderMagic,
   readFatContainerHeader,
@@ -427,8 +428,7 @@ export const frameLoadCommands = (
   }: { readonly header: MachoSliceHeader; readonly bytes: Uint8Array },
   visit: (command: MachoLoadCommand) => void,
 ): { readonly status: "framed" } | MachoReadIssue => {
-  // loader.h: load commands are 8-byte aligned in 64-bit images, 4 in 32-bit.
-  const alignment = header.wide ? 8 : 4;
+  const alignment = machoLoadCommandAlignment(header.wide);
   const view = viewOf(bytes);
   let offset = 0;
   for (let index = 0; index < header.commandCount; index++) {
