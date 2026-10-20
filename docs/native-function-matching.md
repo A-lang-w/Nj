@@ -1,6 +1,8 @@
 # Match native functions across builds
 
-`match_native_functions` pairs two existing `list_procedures` Evidence inventories.
+`match_native_functions` pairs two existing `list_procedures` Evidence inventories. Select `list_procedures` `detail: "summary"` to retain
+complete source rows without transferring the entire inventory. Its
+`parent_evidence_id` is the reference matching consumes.
 Targets may be opened sequentially; matching never opens a target, rereads its
 file, executes it or starts a provider. Preserve each inventory before closing its
 target, or import its Evidence bundle later. `close_binary` clears session
@@ -72,7 +74,7 @@ counts. Large member lists are omitted by default; select `left`/`right` columns
 explicitly or page individual `functions`. Batch `match_ids`/`function_ids`, exact function `names`, state
 and side filters intersect. Mandatory identities and provenance survive column
 selection. Page coverage covers selected retained facts. Function identity binds
-inventory Evidence and occurrence ordinal, preserving same-address alternatives.
+inventory Evidence and the owning inventory’s `source_index`, preserving same-address alternatives.
 One validation, lazy member index and bounded recent filter are retained per
 immutable parent; no live target state is cached.
 
@@ -106,3 +108,11 @@ extract its matching Evidence record to a JSON file for the existing CLI
 Representation admission is bounded at 96 MiB before cloning selected observations
 and expanding matching indexes. Work yields to cancellation. No worker/provider
 concurrency is introduced; this budget is not a bound on total process RSS.
+
+The self-owned source fixture is [nativeFunctionMatching.c](https://github.com/morluto/rea/blob/main/tests/fixtures/nativeFunctionMatching.c).
+On Linux x86-64, compile with `cc -O2 -g0 -fno-pie -no-pie -DVERSION=1` and
+`-DVERSION=2`; copy the second binary and run `strip --strip-all` on that copy.
+It includes unchanged/changed code, a byte-identical rename, a removed/added
+observation, an inlined function, identical-code aliases and a renamed changed
+function with an observed call/string signature. Analyze without executing the
+fixture. Full-provider verification still needs caller-supplied Ghidra and Java.

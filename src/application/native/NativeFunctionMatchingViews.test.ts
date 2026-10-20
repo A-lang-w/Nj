@@ -49,7 +49,7 @@ it("pages individual function facts without transferring an entire ambiguous ali
     items: [
       {
         function_id: member,
-        ordinal: 123,
+        source_index: 123,
         address: "0x7b",
         name: "same",
         side: "left",

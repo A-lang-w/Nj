@@ -15,9 +15,9 @@ export const functionStructuralCandidate = (
 ): string | null => {
   if (
     evidence.subject?.architecture == null ||
-    !dossier.facet_availability.cfg.available ||
-    !dossier.facet_availability.callees.available ||
-    !dossier.facet_availability.strings_names.available ||
+    dossier.facet_availability?.cfg?.available !== true ||
+    dossier.facet_availability?.callees?.available !== true ||
+    dossier.facet_availability?.strings_names?.available !== true ||
     dossier.unresolved_calls === undefined ||
     assessFunctionCallCoverage(evidence.relationship_coverage, dossier).blockers
       .length > 0 ||

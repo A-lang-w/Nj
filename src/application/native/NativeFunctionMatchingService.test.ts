@@ -102,6 +102,18 @@ it("keeps informative CFG/call/string fingerprints as unresolved candidates and 
   });
   expect(incomplete.report.summary.unresolved).toBe(0);
   expect(incomplete.report.source_coverage.left_structural_candidates).toBe(0);
+  const legacy = { ...l };
+  delete legacy.facet_availability;
+  const missingFacets = await compare({
+    left,
+    right,
+    left_observations: [observe("1", "analyze_function", legacy)],
+    right_observations: [observe("2", "analyze_function", r)],
+  });
+  expect(missingFacets.report.source_coverage.left_structural_candidates).toBe(
+    0,
+  );
+  expect(missingFacets.report.summary.unresolved).toBe(0);
   l.callees = [];
   l.referenced_strings = [];
   r.callees = [];

@@ -13,7 +13,7 @@ export const nativeMatchStateSchema = z.enum([
 export const nativeFunctionMatchMemberSchema = z.strictObject({
   function_id: z.string().min(1),
   inventory_evidence_id: evidenceId,
-  ordinal: z.number().int().nonnegative(),
+  source_index: z.number().int().nonnegative(),
   address: z.string(),
   name: z.string(),
   body_sha256: digestSchema.nullable(),
@@ -102,9 +102,9 @@ export const nativeFunctionMatchingSchema = nativeFunctionMatchingContextSchema
         for (const member of match[side]) {
           if (
             member.inventory_evidence_id !== report[side].evidence_id ||
-            member.ordinal >= report[side].functions ||
+            member.source_index >= report[side].functions ||
             member.function_id !==
-              `${report[side].evidence_id}/${member.ordinal}` ||
+              `${report[side].evidence_id}/${member.source_index}` ||
             members[side].has(member.function_id) ||
             !member.evidence_links.includes(member.inventory_evidence_id) ||
             (member.dossier_evidence_id !== null &&

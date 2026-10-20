@@ -104,9 +104,9 @@ const addNames = async (
   symbols: Facts["symbols"],
   checkpoint: NativeMatchingCheckpoint,
 ): Promise<void> => {
-  for (const symbol of z
-    .array(addressedValue)
-    .parse(observation.normalized_result)) {
+  for (const symbol of nativeInventoryRowsSchemas.names.parse(
+    observation.normalized_result,
+  )) {
     await checkpoint(128 + symbol.value.length * 2);
     const address = parseNativeAddress(symbol.address);
     let group = symbols.get(address);
@@ -159,8 +159,8 @@ const functionFact = async (
   {
     inventory,
     row,
-    ordinal,
-  }: { inventory: Evidence; row: AddressedValue; ordinal: number },
+    sourceIndex,
+  }: { inventory: Evidence; row: AddressedValue; sourceIndex: number },
   facts: Facts,
 ): Promise<MatchingFunction> => {
   const address = parseNativeAddress(row.address),
@@ -187,9 +187,9 @@ const functionFact = async (
     );
   return {
     member: {
-      function_id: `${inventory.evidence_id}/${ordinal}`,
+      function_id: `${inventory.evidence_id}/${sourceIndex}`,
       inventory_evidence_id: inventory.evidence_id,
-      ordinal,
+      source_index: sourceIndex,
       address,
       name: row.value,
       body_sha256: fingerprint?.sha256 ?? null,
@@ -249,10 +249,10 @@ export const readFunctionInventory = async (
     }
   }
   const functions: MatchingFunction[] = [];
-  for (let ordinal = 0; ordinal < rows.length; ordinal++) {
-    const row = rows[ordinal]!;
+  for (let sourceIndex = 0; sourceIndex < rows.length; sourceIndex++) {
+    const row = rows[sourceIndex]!;
     await checkpoint(1024 + 4 * (row.address.length + row.value.length));
-    functions.push(await functionFact({ inventory, row, ordinal }, facts));
+    functions.push(await functionFact({ inventory, row, sourceIndex }, facts));
   }
   return functions;
 };
