@@ -56,9 +56,17 @@ const inspectRaceConnection = (
     }),
   });
 
-it.each(["initial", "refreshed", "final", "ancestor", "stable"])(
+it.each([
+  "initial",
+  "refreshed",
+  "final",
+  "ancestor",
+  "opaque-ancestor",
+  "stable",
+])(
   "binds frame authorization to the tree read across file checks: %s",
   async (stage) => {
+    const isAncestor = stage.endsWith("ancestor");
     const root = await mkdtemp(join(tmpdir(), "rea-frame-generation-race-"));
     temporary.push(root);
     const main = join(root, "main.html"),
@@ -94,7 +102,7 @@ it.each(["initial", "refreshed", "final", "ancestor", "stable"])(
         method: "Page.frameNavigated",
         params: {
           frame: {
-            id: stage === "ancestor" ? "parent" : "child",
+            id: isAncestor ? "parent" : "child",
             parentId: "main",
             url: "https://foreign.test/new-document",
           },
@@ -113,7 +121,7 @@ it.each(["initial", "refreshed", "final", "ancestor", "stable"])(
           const shouldInject =
             (stage === "initial" && reads === 1) ||
             (stage === "refreshed" && reads === 2) ||
-            (stage === "ancestor" && reads === 2) ||
+            (isAncestor && reads === 2) ||
             (stage === "final" && reads === 3);
           return {
             frameTree: {
@@ -121,27 +129,25 @@ it.each(["initial", "refreshed", "final", "ancestor", "stable"])(
               childFrames:
                 (stage === "initial" && reads > 1) ||
                 (stage === "refreshed" && reads !== 2) ||
-                (stage === "ancestor" && reads !== 2) ||
+                (isAncestor && reads !== 2) ||
                 (stage === "final" && reads === 1)
                   ? []
                   : [
                       {
                         frame: {
-                          id: stage === "ancestor" ? "parent" : "child",
+                          id: isAncestor ? "parent" : "child",
                           parentId: "main",
                           get url() {
-                            if (
-                              shouldInject &&
-                              stage !== "ancestor" &&
-                              !fired
-                            ) {
+                            if (shouldInject && !isAncestor && !fired) {
                               fired = true;
                               queueMicrotask(inject);
                             }
-                            return childUrl;
+                            return stage === "opaque-ancestor"
+                              ? "about:blank"
+                              : childUrl;
                           },
                         },
-                        ...(stage === "ancestor"
+                        ...(isAncestor
                           ? {
                               childFrames: [
                                 {
@@ -375,7 +381,7 @@ it.each([7, null, "", "claimed-parent"])(
     const main = join(root, "index.html");
     await writeFile(main, "main");
     const completeness = new CdpCaptureCompleteness();
-    const frames = await captureFrames(
+    const { frames } = await captureFrames(
       {
         frameTree: {
           frame: { id: "main", url: pathToFileURL(main).href, parentId },
@@ -415,7 +421,7 @@ describe("Electron frame capture", () => {
       const childUrl = pathToFileURL(child).href;
       const completeness = new CdpCaptureCompleteness();
 
-      const frames = await captureFrames(
+      const { frames } = await captureFrames(
         {
           frameTree: {
             frame: { id: "frame-main", url: mainUrl },

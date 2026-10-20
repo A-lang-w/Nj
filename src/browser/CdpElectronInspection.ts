@@ -62,8 +62,12 @@ interface ElectronInspectionState {
   navigationDuringCapture: boolean;
 }
 
-interface ElectronFrameRead {
+interface ElectronFrameInventory {
   readonly frames: ElectronPageInspection["frames"];
+  readonly parents: ReadonlyMap<string, string | null>;
+}
+
+interface ElectronFrameRead extends ElectronFrameInventory {
   readonly generations: ReadonlyMap<string, number>;
 }
 
@@ -225,10 +229,11 @@ const authorizeFrameGenerations = (
   state: ElectronInspectionState,
 ): void => {
   const unproven = markUnstableFrameRead(read, state);
+  for (const [id, parent] of read.parents)
+    if (!unproven.has(id)) state.frameParents.set(id, parent);
   for (const frame of read.frames) {
     const generation = read.generations.get(frame.frame_id) ?? 0;
     if (unproven.has(frame.frame_id)) continue;
-    state.frameParents.set(frame.frame_id, frame.parent_frame_id);
     state.authorizedFrameGenerations.add(
       compositeKey([frame.frame_id, generation]),
     );
@@ -240,20 +245,18 @@ const unprovenFrameIds = (
   read: ElectronFrameRead,
   state: ElectronInspectionState,
 ): Set<string> => {
-  const present = new Set(read.frames.map((frame) => frame.frame_id));
   const children = new Map<string, string[]>();
   const unproven = new Set<string>();
-  for (const frame of read.frames) {
+  for (const [id, parent] of read.parents) {
     if (
-      (read.generations.get(frame.frame_id) ?? 0) !==
-      (state.frameGenerations.get(frame.frame_id) ?? 0)
+      (read.generations.get(id) ?? 0) !== (state.frameGenerations.get(id) ?? 0)
     )
-      unproven.add(frame.frame_id);
-    if (frame.parent_frame_id === null) continue;
-    if (!present.has(frame.parent_frame_id)) unproven.add(frame.frame_id);
-    const siblings = children.get(frame.parent_frame_id) ?? [];
-    siblings.push(frame.frame_id);
-    children.set(frame.parent_frame_id, siblings);
+      unproven.add(id);
+    if (parent === null) continue;
+    if (!read.parents.has(parent)) unproven.add(id);
+    const siblings = children.get(parent) ?? [];
+    siblings.push(id);
+    children.set(parent, siblings);
   }
   const pending = [...unproven];
   while (pending.length > 0) {
@@ -395,10 +398,11 @@ const readCurrentFrames = async (
     context.signal,
   );
   seedFrameDocuments(result, generations, state);
-  const frames = await captureFrames(result, completeness, context.signal);
-  if (frames[0] === undefined)
+  const inventory = await captureFrames(result, completeness, context.signal);
+  const main = inventory.frames[0];
+  if (main === undefined || inventory.parents.get(main.frame_id) !== null)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
-  return { frames, generations };
+  return { ...inventory, generations };
 };
 
 const markUnstableFrameRead = (
@@ -494,7 +498,8 @@ const assertStableMainFrame = async (
   if (state.navigationDuringCapture || afterPath !== expectedPath)
     throw new BrowserObservationError("inspect_web_page", "target_changed");
   const completeness = new CdpCaptureCompleteness();
-  const frames = await captureFrames(result, completeness, context.signal);
+  const inventory = await captureFrames(result, completeness, context.signal);
+  const { frames } = inventory;
   if (
     state.navigationDuringCapture ||
     (state.mainFrameId !== undefined &&
@@ -502,7 +507,7 @@ const assertStableMainFrame = async (
         (state.frameGenerations.get(state.mainFrameId) ?? 0))
   )
     throw new BrowserObservationError("inspect_web_page", "target_changed");
-  markUnstableFrameRead({ frames, generations }, state);
+  markUnstableFrameRead({ ...inventory, generations }, state);
   if (
     completeness
       .snapshot()
@@ -521,12 +526,13 @@ export const captureFrames = async (
   result: unknown,
   completeness: CdpCaptureCompleteness,
   signal?: AbortSignal,
-): Promise<ElectronPageInspection["frames"]> => {
+): Promise<ElectronFrameInventory> => {
   const frameTree = recordValue(requiredRecord(result).frameTree);
   if (frameTree === undefined)
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   const frames: ElectronPageInspection["frames"] = [];
-  const admittedParents = new Map<UnknownRecord, string>();
+  const enclosingParents = new Map<UnknownRecord, string>();
+  const parents = new Map<string, string | null>();
   for (const tree of walkFrameTrees(frameTree, (count) =>
     completeness.exclude("frames", "invalid_protocol_value", count),
   )) {
@@ -535,15 +541,15 @@ export const captureFrames = async (
     const frameId = cdpStringValue(frame?.id);
     const parentId = cdpStringValue(frame?.parentId);
     // Only the enclosing tree root may omit its parent. Children must agree
-    // with an admitted enclosing frame; malformed ancestry cannot grant proof
-    // to that frame or to any of its descendants.
+    // with a structurally proved enclosing frame, independent of its file policy.
+    // Malformed ancestry cannot grant proof to a frame or its descendants.
     const ancestryKnown =
       tree === frameTree
         ? frame !== undefined && !Object.hasOwn(frame, "parentId")
         : parentId !== undefined &&
           parentId !== "" &&
           parentId !== frameId &&
-          parentId === admittedParents.get(tree);
+          parentId === enclosingParents.get(tree);
     if (
       frame === undefined ||
       frameId === undefined ||
@@ -553,6 +559,9 @@ export const captureFrames = async (
       completeness.exclude("frames", "invalid_protocol_value");
       continue;
     }
+    parents.set(frameId, parentId ?? null);
+    for (const child of recordsValue(tree.childFrames))
+      enclosingParents.set(child, frameId);
     const path = await authorizedElectronFile(
       cdpStringValue(frame.url) ?? "",
       signal,
@@ -567,10 +576,8 @@ export const captureFrames = async (
       parent_frame_id: parentId ?? null,
       file_path: path,
     });
-    for (const child of recordsValue(tree.childFrames))
-      admittedParents.set(child, frameId);
   }
-  return frames;
+  return { frames, parents };
 };
 
 const captureResources = async (
