@@ -46,7 +46,7 @@ const asyncResourceRegistration = (
   if (state.memberMutationFactsPhase !== "indexed")
     return { status: "unknown" };
   let prototype: "default" | "null" | "unknown" = "default";
-  const disposers = new Map<string, t.ObjectProperty | t.ObjectMethod>();
+  const disposers = new Map<string, (t.ObjectProperty | t.ObjectMethod)[]>();
   for (const property of node.properties) {
     if (t.isSpreadElement(property)) return { status: "unknown" };
     const key = unwrapJavaScriptExpression(property.key).node;
@@ -71,7 +71,10 @@ const asyncResourceRegistration = (
     )
       return { status: "unknown" };
     if (symbol && t.isMemberExpression(key) && t.isIdentifier(key.property))
-      disposers.set(key.property.name, property);
+      disposers.set(key.property.name, [
+        ...(disposers.get(key.property.name) ?? []),
+        property,
+      ]);
     if (
       !property.computed &&
       t.isObjectProperty(property) &&
@@ -86,8 +89,22 @@ const asyncResourceRegistration = (
       (state.ambientWrites.covers(["global", "Object", "prototype", null]) ||
         state.ambientEscapes.covers(["global", "Object", "prototype", null])));
   for (const name of ["asyncDispose", "dispose"]) {
-    const method = disposers.get(name);
+    const members = disposers.get(name) ?? [];
+    let accessor = false;
+    let method: t.ObjectProperty | t.ObjectMethod | undefined;
+    for (const member of members.toReversed()) {
+      if (t.isObjectMethod(member, { kind: "set" })) {
+        accessor = true;
+        continue;
+      }
+      if (!accessor || (t.isObjectMethod(member) && member.kind === "get"))
+        method = member;
+      break;
+    }
     if (method === undefined) {
+      // A setter-only own descriptor reads as undefined and shadows the
+      // prototype. It therefore falls through to Symbol.dispose.
+      if (accessor) continue;
       if (inheritedUnknown) return { status: "unknown" };
       continue;
     }

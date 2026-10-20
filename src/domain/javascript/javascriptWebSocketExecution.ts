@@ -16,6 +16,7 @@ import {
   unwrapJavaScriptExpression,
   semanticStaticPropertyName,
   readExactJavaScriptLiteral,
+  readExactJavaScriptNormalResult,
   semanticFinalObjectMember,
   semanticFinalClassMember,
   semanticStaticPropertyKey,
@@ -360,6 +361,28 @@ const webSocketStoredCallTarget = (
       // A constructor selection of the built-in helper never enters its receiver.
       if (t.isNewExpression(capture)) return undefined;
       if (
+        method === "apply" &&
+        (t.isCallExpression(capture) || t.isOptionalCallExpression(capture))
+      ) {
+        const argumentList = capture.arguments[1];
+        if (argumentList !== undefined && !t.isSpreadElement(argumentList)) {
+          const result = readExactJavaScriptNormalResult(
+            argumentList,
+            syntaxEvaluationCannotThrow,
+          );
+          // CreateListFromArrayLike rejects every non-nullish primitive before
+          // the receiver body can run. Unknown values remain possible objects.
+          if (
+            result.found &&
+            result.value !== null &&
+            result.value !== undefined &&
+            typeof result.value !== "object" &&
+            typeof result.value !== "function"
+          )
+            return undefined;
+        }
+      }
+      if (
         !webSocketInvocationHelperIntact(
           current.object,
           method,
@@ -418,10 +441,7 @@ interface WebSocketExecutionFacts {
   readonly effects: JavaScriptSemanticAnalysisState["literalMemberEffects"];
   readonly phase: JavaScriptSemanticAnalysisState["memberMutationFactsPhase"];
   readonly callCount: number;
-  storedCalls?: WeakMap<
-    t.Function | t.Class,
-    readonly JavaScriptSemanticAnalysisState["callSites"][number][]
-  >;
+  storedCalls?: WeakMap<t.Function | t.Class, readonly WebSocketStoredCall[]>;
   readonly immediateCallers: WeakMap<t.Node, t.Function | null>;
   readonly suspensions: WebSocketSuspensionFacts;
   readonly bodySuspensions: WeakMap<
@@ -435,6 +455,17 @@ interface WebSocketExecutionFacts {
       readonly statics: ReadonlyMap<t.Node, WebSocketSuspension | null>;
     }
   >;
+}
+
+type WebSocketCallSite = JavaScriptSemanticAnalysisState["callSites"][number];
+
+interface WebSocketStoredCall {
+  readonly call: WebSocketCallSite;
+  readonly parameters: ReadonlyMap<string, readonly t.Function[]>;
+  readonly activation?: {
+    readonly owner: t.Function;
+    readonly call: WebSocketCallSite;
+  };
 }
 const executionFacts = new WeakMap<
   JavaScriptSemanticAnalysisState,
@@ -470,6 +501,20 @@ const webSocketExecutionFacts = (
   return facts;
 };
 
+/** The function that owns a runtime parameter binding. */
+const webSocketParameterOwner = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): t.Function | undefined => {
+  let current = node;
+  for (;;) {
+    const parent = state.parentsByNode.get(current);
+    if (parent === undefined) return undefined;
+    if (t.isFunction(parent)) return parent;
+    current = parent;
+  }
+};
+
 /** Exact immutable aliases share one call-site index, including their lexical caller. */
 const webSocketStoredCalls = (
   node: t.Function | t.Class,
@@ -481,11 +526,15 @@ const webSocketStoredCalls = (
     calls = new WeakMap();
     // Install before identity queries: projections may reenter execution facts.
     facts.storedCalls = calls;
-    const parameters = new Map<string, t.Function[]>();
-    const candidates: {
-      readonly fn: t.Function | t.Class;
-      readonly call: JavaScriptSemanticAnalysisState["callSites"][number];
+    const parameterSuppliers: {
+      readonly bindingId: string;
+      readonly fn: t.Function;
+      readonly owner: t.Function;
+      readonly call: WebSocketCallSite;
     }[] = [];
+    const candidates: (WebSocketStoredCall & {
+      readonly fn: t.Function | t.Class;
+    })[] = [];
     for (const call of state.callSites) {
       // Callee/argument/substitution evaluation must finish before entry. A
       // definite prefix failure is not an activation of the selected body.
@@ -507,22 +556,29 @@ const webSocketStoredCalls = (
           selected.parameter.name,
         );
         const exact = semanticExactValueIdentity(argument, state);
+        const owner = webSocketParameterOwner(selected.parameter, state);
         if (
           binding?.kind === "parameter" &&
           binding.definitions.length === 1 &&
           binding.initializers.length === 0 &&
           binding.referenceInitializers.length === 0 &&
           exact !== undefined &&
-          t.isFunction(exact.node)
+          t.isFunction(exact.node) &&
+          owner !== undefined
         )
-          parameters.set(binding.bindingId, [
-            ...(parameters.get(binding.bindingId) ?? []),
-            exact.node,
-          ]);
+          parameterSuppliers.push({
+            bindingId: binding.bindingId,
+            fn: exact.node,
+            owner,
+            call,
+          });
       }
     }
-    for (const call of state.callSites) {
-      if (syntaxEvaluationAlwaysThrows(call)) continue;
+    const addCandidates = (
+      call: WebSocketCallSite,
+      parameters: ReadonlyMap<string, readonly t.Function[]>,
+      activation?: WebSocketStoredCall["activation"],
+    ): void => {
       const target = webSocketStoredCallTarget(
         t.isTaggedTemplateExpression(call) ? call.tag : call.callee,
         state,
@@ -542,15 +598,43 @@ const webSocketStoredCalls = (
       for (const fn of new Set(functions)) {
         if (t.isNewExpression(call) && !javaScriptFunctionCanConstruct(fn))
           continue;
-        calls.set(fn, [...(calls.get(fn) ?? []), call]);
-        candidates.push({ fn, call });
+        if (
+          candidates.some(
+            (candidate) =>
+              candidate.fn === fn &&
+              candidate.call === call &&
+              candidate.activation?.owner === activation?.owner &&
+              candidate.activation?.call === activation?.call,
+          )
+        )
+          continue;
+        const candidate =
+          activation === undefined
+            ? { fn, call, parameters }
+            : { fn, call, parameters, activation };
+        calls?.set(fn, [...(calls.get(fn) ?? []), candidate]);
+        candidates.push(candidate);
+      }
+    };
+    for (const call of state.callSites) {
+      if (syntaxEvaluationAlwaysThrows(call)) continue;
+      addCandidates(call, noCallbackParameters);
+      for (const supplier of parameterSuppliers) {
+        const parameters = new Map<string, readonly t.Function[]>([
+          [supplier.bindingId, [supplier.fn]],
+        ]);
+        addCandidates(call, parameters, {
+          owner: supplier.owner,
+          call: supplier.call,
+        });
       }
     }
     // Initialization depends on caller activations. Admit against the complete
     // candidate graph, not the source-order prefix present while indexing.
     const initialized: NonNullable<WebSocketExecutionFacts["storedCalls"]> =
       new WeakMap();
-    for (const { fn, call } of candidates) {
+    for (const candidate of candidates) {
+      const { fn, call, parameters } = candidate;
       if (
         webSocketStoredCallTarget(
           t.isTaggedTemplateExpression(call) ? call.tag : call.callee,
@@ -559,7 +643,7 @@ const webSocketStoredCalls = (
           parameters,
         ) !== undefined
       )
-        initialized.set(fn, [...(initialized.get(fn) ?? []), call]);
+        initialized.set(fn, [...(initialized.get(fn) ?? []), candidate]);
     }
     calls = initialized;
     // Discovery of candidate callers can populate derived caches. Publish only
@@ -651,7 +735,7 @@ const webSocketImmediateInvocation = (
       invocation.callee !== callee
     ) {
       const stored = webSocketStoredCalls(node, state);
-      return stored.length === 1 ? stored[0] : undefined;
+      return stored.length === 1 ? stored[0]?.call : undefined;
     }
     if (t.isNewExpression(invocation) && !javaScriptFunctionCanConstruct(node))
       return undefined;
@@ -1923,6 +2007,30 @@ interface WebSocketActivationPrefix {
   readonly suspendedOwner: t.Node | undefined;
 }
 
+const webSocketStoredCallMatches = (
+  stored: WebSocketStoredCall,
+  calls: ReadonlyMap<t.Function | t.Class, WebSocketCallSite>,
+): boolean =>
+  stored.activation === undefined ||
+  calls.get(stored.activation.owner) === undefined ||
+  calls.get(stored.activation.owner) === stored.activation.call;
+
+const webSocketStoredCallContexts = (
+  stored: WebSocketStoredCall,
+  activation: t.Function | t.Class,
+  calls: ReadonlyMap<t.Function | t.Class, WebSocketCallSite>,
+): ReadonlyMap<t.Function | t.Class, WebSocketCallSite> | undefined => {
+  const selected = new Map(calls);
+  if (stored.activation !== undefined) {
+    const existing = selected.get(stored.activation.owner);
+    if (existing !== undefined && existing !== stored.activation.call)
+      return undefined;
+    selected.set(stored.activation.owner, stored.activation.call);
+  }
+  selected.set(activation, stored.call);
+  return selected;
+};
+
 /** Retain every visible activation rather than treating repetition as a TDZ. */
 const webSocketExecutionContextsForCalls = (
   node: t.Node,
@@ -1934,6 +2042,7 @@ const webSocketExecutionContextsForCalls = (
   >,
   expanded: Map<t.Function | t.Class, WebSocketActivationPrefix[]>,
 ): readonly SemanticExecutionFrame[] => {
+  let selectedCalls = calls;
   const contexts: SemanticExecutionFrame[] = [];
   let point = node;
   let suspendedOwner: t.Node | undefined;
@@ -1969,8 +2078,12 @@ const webSocketExecutionContextsForCalls = (
     if (activation !== undefined) {
       if (activations.has(activation)) return contexts;
       activations.add(activation);
-      const stored = webSocketStoredCalls(activation, state);
-      if (stored.length > 1 && !calls.has(activation)) {
+      const allStored = webSocketStoredCalls(activation, state);
+      const stored = allStored.filter((candidate) =>
+        webSocketStoredCallMatches(candidate, selectedCalls),
+      );
+      if (allStored.length > 0 && stored.length === 0) return [];
+      if (stored.length > 1 && !selectedCalls.has(activation)) {
         // Join identical prefixes rather than expanding a Cartesian history.
         const prefixes = expanded.get(activation) ?? [];
         if (
@@ -1984,22 +2097,44 @@ const webSocketExecutionContextsForCalls = (
           return [...contexts, { owner: activation, point }];
         prefixes.push({ current, point, suspendedOwner });
         expanded.set(activation, prefixes);
-        return stored.flatMap((call) =>
-          webSocketExecutionContextsForCalls(
-            node,
-            state,
-            directOnly,
-            new Map([...calls, [activation, call]]),
-            expanded,
-          ),
+        return stored.flatMap((candidate) => {
+          const next = webSocketStoredCallContexts(
+            candidate,
+            activation,
+            selectedCalls,
+          );
+          return next === undefined
+            ? []
+            : webSocketExecutionContextsForCalls(
+                node,
+                state,
+                directOnly,
+                next,
+                expanded,
+              );
+        });
+      }
+      if (stored.length === 1 && !selectedCalls.has(activation)) {
+        const only = stored[0];
+        if (only === undefined) return [];
+        const next = webSocketStoredCallContexts(
+          only,
+          activation,
+          selectedCalls,
         );
+        if (next === undefined) return [];
+        selectedCalls = next;
       }
     }
     if (javaScriptClassField(parent) && parent.value === current) {
       if (parent.static)
         suspendedAt(webSocketClassPrefix(parent, false, state));
       else {
-        const construction = webSocketClassConstruction(parent, state, calls);
+        const construction = webSocketClassConstruction(
+          parent,
+          state,
+          selectedCalls,
+        );
         if (construction === undefined)
           return [...contexts, { owner: parent, point }];
         suspendedAfter(construction);
@@ -2035,8 +2170,9 @@ const webSocketExecutionContextsForCalls = (
         | t.AssignmentExpression
         | t.YieldExpression =
         t.isClassMethod(parent) && parent.kind === "constructor"
-          ? webSocketClassConstruction(parent, state, calls)
-          : (calls.get(parent) ?? webSocketImmediateInvocation(parent, state));
+          ? webSocketClassConstruction(parent, state, selectedCalls)
+          : (selectedCalls.get(parent) ??
+            webSocketImmediateInvocation(parent, state));
       contexts.push({ owner: parent, point });
       const generatorBody =
         current === parent.body &&
@@ -2150,8 +2286,8 @@ const webSocketExecutionContextsForCalls = (
       // A returned callable executes outside its producer's completed activation.
       if (
         webSocketReturnedOwner(parent, state) !== undefined ||
-        webSocketStoredCalls(parent, state).includes(
-          invocation as JavaScriptSemanticAnalysisState["callSites"][number],
+        webSocketStoredCalls(parent, state).some(
+          ({ call }) => call === invocation,
         )
       ) {
         current = invocation;

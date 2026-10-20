@@ -129,6 +129,10 @@ const importOptionsCanComplete = (
   if (slot?.kind === "unknown") return false;
   const attributes = slot?.kind === "member" ? slot.node : undefined;
   if (attributes !== undefined) {
+    // Reading an ordinary method returns its inert function object. Its
+    // built-in own properties are non-enumerable, so attribute validation has
+    // no user-defined entry to evaluate.
+    if (t.isObjectMethod(attributes, { kind: "method" })) return true;
     // Get(options, "with") invokes an own getter before validating attributes.
     // Only a direct normal result is evidence; arbitrary getter bodies stay unknown.
     const getter = t.isObjectMethod(attributes, { kind: "get" })
