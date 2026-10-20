@@ -4770,6 +4770,91 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "stored tag before constructor initialization",
+    "const connect=()=>new Socket(URL);connect``;const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "stored tag after constructor initialization",
+    "const connect=()=>new Socket(URL);const Socket=globalThis.WebSocket;connect``;",
+    true,
+  ],
+  [
+    "immutable alias tag before initialization",
+    "const connect=()=>new Socket(URL);const tag=connect;tag``;const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "bound tag before initialization",
+    "const connect=()=>new Socket(URL);const tag=connect.bind(null);tag``;const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "nested tag before initialization",
+    "const connect=()=>new Socket(URL);function run(){connect``}run();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "async stored tag waits before constructor read",
+    "const connect=async()=>{await 0;new Socket(URL)};connect``;const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "caught uninitialized tag does not activate callback",
+    "const connect=()=>new Socket(URL);try{tag``}catch{}const tag=connect;const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
+    "tag interpolation waits before body activation",
+    "(async()=>{const connect=()=>new Socket(URL);connect`${await 0}`;})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "nested while test waits before generator resumes",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){while(await 0){}}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "nested for test waits before generator resumes",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){for(;await 0;){}}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "nested for initializer waits before false test",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){for(await 0;false;){}}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "false nested while skips body wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){while(false){await 0}}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "false nested for skips update wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){for(;false;await 0){}}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "throwing nested for initializer precedes test wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{for(null.x;await 0;){}}catch{}}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "uncertain nested branch cannot guarantee test wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){if(globalThis.flag){while(await 0){}}}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "do continue reaches required test wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){do{continue}while(await 0)}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "do break skips test wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){do{break}while(await 0)}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
     "caught uninitialized var alias does not activate callback",
     "const connect=()=>new Socket(URL);try{alias()}catch{}var alias=connect;const Socket=globalThis.WebSocket;connect();",
     true,

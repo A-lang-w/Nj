@@ -1071,7 +1071,8 @@ function* collectDefinitionsSteps(
       if (
         t.isCallExpression(node) ||
         t.isOptionalCallExpression(node) ||
-        t.isNewExpression(node)
+        t.isNewExpression(node) ||
+        t.isTaggedTemplateExpression(node)
       )
         state.callSites.push(node);
       if (

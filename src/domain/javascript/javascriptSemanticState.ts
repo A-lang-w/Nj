@@ -122,11 +122,12 @@ export interface JavaScriptSemanticAnalysisState {
   readonly parentsByNode: WeakMap<t.Node, t.Node>;
   /** Await sites retained by the definitions pass for lazy promise-result indexing. */
   readonly awaitSites: t.AwaitExpression[];
-  /** Call sites retained once for exact local callback activation ownership. */
+  /** Calls and template tags retained once for exact local activation ownership. */
   readonly callSites: (
     | t.CallExpression
     | t.OptionalCallExpression
     | t.NewExpression
+    | t.TaggedTemplateExpression
   )[];
   readonly scopes: JavaScriptSemanticScopeState[];
   readonly scopesById: Map<string, JavaScriptSemanticScopeState>;

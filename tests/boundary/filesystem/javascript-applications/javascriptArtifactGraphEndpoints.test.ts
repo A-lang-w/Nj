@@ -682,6 +682,108 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "r61-0.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");connect``;const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r61-1.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");const Socket=globalThis.WebSocket;connect``;',
+    present: true,
+  },
+  {
+    file: "r61-2.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");const tag=connect;tag``;const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r61-3.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");const tag=connect.bind(null);tag``;const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r61-4.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");function run(){connect``}run();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r61-5.js",
+    source:
+      'const connect=async()=>{await 0;new Socket("wss://example.test/review-latest")};connect``;const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r61-6.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/review-latest");try{tag``}catch{}const tag=connect;const Socket=globalThis.WebSocket;connect();',
+    present: true,
+  },
+  {
+    file: "r61-7.js",
+    source:
+      '(async()=>{const connect=()=>new Socket("wss://example.test/review-latest");connect`${await 0}`;})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r61-8.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){while(await 0){}}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r61-9.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){for(;await 0;){}}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r61-10.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){for(await 0;false;){}}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r61-11.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){while(false){await 0}}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r61-12.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){for(;false;await 0){}}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r61-13.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{for(null.x;await 0;){}}catch{}}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r61-14.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){if(globalThis.flag){while(await 0){}}}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r61-15.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){do{continue}while(await 0)}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r61-16.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){do{break}while(await 0)}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
     file: "r60-23.js",
     source:
       'const connect=()=>new Socket("wss://example.test/review-latest");try{alias()}catch{}var alias=connect;const Socket=globalThis.WebSocket;connect();',

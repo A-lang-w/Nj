@@ -469,6 +469,20 @@ const syntaxLoopCompletion = (
   node: t.Loop,
   complete: CompleteSyntax,
 ): SyntaxCompletion => {
+  // Initializers and the first test execute even if the body never does.
+  // Route them through the same completion boundary as the body, so waits and
+  // throws retain their order instead of being inferred from the test value.
+  const prefix = syntaxSequenceCompletion(
+    t.isForStatement(node)
+      ? [node.init, node.test].filter((item) => item != null)
+      : t.isWhileStatement(node)
+        ? [node.test]
+        : t.isForInStatement(node) || t.isForOfStatement(node)
+          ? [node.right]
+          : [],
+    complete,
+  );
+  if (!prefix.normal) return prefix;
   if (t.isDoWhileStatement(node)) {
     const test = readExactJavaScriptNormalResult(
       node.test,
@@ -493,13 +507,13 @@ const syntaxLoopCompletion = (
             node.test,
             syntaxEvaluationCannotThrow,
           );
-    if (test?.found && !test.value)
-      return t.isForStatement(node) ? complete(node.init) : normalCompletion;
+    if (test?.found && !test.value) return prefix;
   }
   return {
     // Loop termination is deliberately not proven from syntax alone.
     normal: true,
     abrupt: [
+      ...prefix.abrupt,
       { kind: "throw" },
       ...complete(node.body).abrupt.filter(
         (exit) =>

@@ -478,6 +478,9 @@ const webSocketStoredCalls = (
       readonly call: JavaScriptSemanticAnalysisState["callSites"][number];
     }[] = [];
     for (const call of state.callSites) {
+      // Tags receive a synthetic template object before their substitutions;
+      // ordinary argument offsets do not prove callback parameter ownership.
+      if (t.isTaggedTemplateExpression(call)) continue;
       for (const argument of call.arguments.flatMap<t.Node>((argument) =>
         t.isArrayExpression(argument)
           ? [argument, ...argument.elements.filter((item) => item !== null)]
@@ -508,7 +511,7 @@ const webSocketStoredCalls = (
     }
     for (const call of state.callSites) {
       const target = webSocketStoredCallTarget(
-        call.callee,
+        t.isTaggedTemplateExpression(call) ? call.tag : call.callee,
         state,
         call,
         parameters,
@@ -533,8 +536,12 @@ const webSocketStoredCalls = (
       new WeakMap();
     for (const { fn, call } of candidates) {
       if (
-        webSocketStoredCallTarget(call.callee, state, call, parameters) !==
-        undefined
+        webSocketStoredCallTarget(
+          t.isTaggedTemplateExpression(call) ? call.tag : call.callee,
+          state,
+          call,
+          parameters,
+        ) !== undefined
       )
         initialized.set(fn, [...(initialized.get(fn) ?? []), call]);
     }
