@@ -2364,7 +2364,7 @@ export const commandMayChangeInferiorOutput = (command: string): boolean => {
   // redirection still revoke the startup proof.
   const inputOnlyRunRedirection =
     runCommand &&
-    /^\s+(?:[^<>;&|\r\n]+\s+)?<\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s<>;&|]+)\s*$/u.test(
+    /^\s+(?:(?:[^<>;&|\r\n]+\s+)?0?|[^<>;&|\r\n]*[^\d\s<>;&|])<\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s<>;&|]+)\s*$/u.test(
       runTail,
     );
   const mayRunWithOutputRedirection =
