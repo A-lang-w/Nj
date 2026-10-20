@@ -1,5 +1,15 @@
-import { chmod, lstat, mkdir, readdir, rename, rm } from "node:fs/promises";
+import { createReadStream, createWriteStream } from "node:fs";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readdir,
+  rename,
+  rm,
+  utimes,
+} from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { pipeline } from "node:stream/promises";
 
 import { z } from "zod";
 
@@ -48,6 +58,12 @@ export type GhidraProjectCacheRootPreparation =
       readonly status: "repaired";
       /** The stored children carried over from the previous root. */
       readonly preservedEntries: number;
+      /**
+       * The set-aside root that survived the rebuild. It still holds a copy
+       * of the stored projects that the principals its DACL admits can read,
+       * so it is reported instead of left unmentioned.
+       */
+      readonly leftoverRoot?: string;
     };
 
 const systemRootHost = (): GhidraProjectCacheRootHost => {
@@ -100,13 +116,13 @@ const isNotFound = (cause: unknown): boolean =>
 
 const rootError = (
   message: string,
-  root: string,
+  path: string,
   cause?: unknown,
 ): GhidraProjectCacheError =>
   new GhidraProjectCacheError(
     "io",
     message,
-    root,
+    path,
     cause === undefined ? undefined : { cause },
   );
 
@@ -164,88 +180,192 @@ const quarantineRoot = async (root: string): Promise<string> => {
 };
 
 /**
- * Move every child of `from` into `to`.
+ * Copy every child of `from` into `to`.
  *
- * Both directories are on the same volume, so each move is a rename and the
- * stored bytes are preserved exactly. The moved children keep the permissions
- * they were created with; the private root protects everything written into
- * it from then on.
+ * The copy is deliberate. A relocated child keeps the permissions it was
+ * created with, so a child of a shared root stays readable by the principals
+ * its DACL admits even inside a private root: Windows accounts hold
+ * SeChangeNotifyPrivilege, which bypasses the traverse check on the private
+ * parent. A copy created inside the private root inherits the root's
+ * owner-only DACL, so the preserved projects are private like the root that
+ * holds them.
  */
-const moveDirectoryContent = async (
+const copyDirectoryContent = async (
   from: string,
   to: string,
 ): Promise<number> => {
   const names = await readdir(from);
   for (const name of names) {
-    await rename(join(from, name), join(to, name));
+    await copyCacheEntry(join(from, name), join(to, name));
   }
   return names.length;
 };
+
+/** Copy one stored entry into the private root, refusing what it cannot hold. */
+const copyCacheEntry = async (from: string, to: string): Promise<void> => {
+  const stats = await lstat(from);
+  if (stats.isSymbolicLink())
+    throw rootError(
+      "Ghidra project cache root holds a link that cannot be copied into a private directory",
+      from,
+    );
+  if (stats.isDirectory()) {
+    await mkdir(to, { recursive: true, mode: 0o700 });
+    for (const name of await readdir(from))
+      await copyCacheEntry(join(from, name), join(to, name));
+    await utimes(to, stats.atime, stats.mtime);
+    return;
+  }
+  if (!stats.isFile())
+    throw rootError(
+      "Ghidra project cache root holds an entry that cannot be copied into a private directory",
+      from,
+    );
+  await pipeline(
+    createReadStream(from),
+    createWriteStream(to, { flags: "wx", mode: 0o600 }),
+  );
+  await utimes(to, stats.atime, stats.mtime);
+};
+
+/** What rebuilding a root that was not owner-only achieved. */
+interface WindowsRootRepair {
+  /** The stored children copied into the private replacement. */
+  readonly preserved: number;
+  /** The set-aside root that survived the rebuild, when one did. */
+  readonly leftover: string | undefined;
+}
 
 /**
  * Rebuild a root that native verification refused as a private directory.
  *
  * A root that is not owner-only keeps every stored project readable by the
  * principals its DACL admits, and the store cannot use it at all. The stored
- * children move into a private root that replaces it, so the cache keeps
- * working instead of being disabled for the whole session.
+ * children are copied into a private root that replaces it, so the cache
+ * keeps working instead of being disabled for the whole session, and the
+ * copies are private like the root that holds them.
  */
 const replaceWindowsRoot = async (
   root: string,
   host: GhidraProjectCacheRootHost,
-  cause: unknown,
-): Promise<number> => {
+): Promise<WindowsRootRepair> => {
   const previous = await quarantineRoot(root);
-  let preserved = 0;
   try {
     await host.createPrivateDirectory(root);
-    preserved = await moveDirectoryContent(previous, root);
-  } catch {
-    // The previous root keeps the stored projects when the replacement fails.
-    const restored = await restoreQuarantinedRoot(previous, root);
-    throw rootError(
-      restored
-        ? "Ghidra project cache root is not an owner-only directory and could not be rebuilt as a private directory"
-        : `Ghidra project cache root is not an owner-only directory and could not be rebuilt as a private directory; the previous root is preserved at ${previous}`,
-      root,
-      cause,
-    );
+  } catch (failure: unknown) {
+    throw await rebuildFailure(root, previous, failure);
   }
-  // The set-aside root is emptied only after the replacement is in place.
-  await rm(previous, { recursive: true, force: true }).catch(() => undefined);
-  await assertDirectory(root);
   try {
+    // The copy writes into the replacement, so the destination must be the
+    // directory the native boundary created and not a link in its place.
+    await assertDirectory(root);
+  } catch (failure: unknown) {
+    throw await rebuildFailure(root, previous, failure);
+  }
+  try {
+    // The replacement is verified before a stored project is copied into it,
+    // so a root that is not owner-only never receives the preserved projects.
     host.verifyPrivateDirectory(root);
   } catch (verification: unknown) {
+    const restored = await restoreQuarantinedRoot(previous, root);
     throw rootError(
-      "Ghidra project cache root could not be verified as owner-only",
+      repairFailureMessage(
+        "Ghidra project cache root could not be verified as owner-only",
+        previous,
+        restored,
+      ),
       root,
       verification,
     );
   }
-  return preserved;
+  let preserved: number;
+  try {
+    preserved = await copyDirectoryContent(previous, root);
+  } catch (failure: unknown) {
+    throw await rebuildFailure(root, previous, failure);
+  }
+  // The set-aside root is redundant once every stored project is copied into
+  // the private replacement. A root that survives the removal still holds a
+  // copy the principals it admits can read, so its path is reported.
+  return { preserved, leftover: await removeQuarantinedRoot(previous) };
 };
+
+/**
+ * Report a repair that could not complete, keeping the stored projects.
+ *
+ * The set-aside root holds every stored project until the replacement is in
+ * place, so it is put back when the repair fails. When it cannot be put
+ * back, both directories stay in place and the caller reports their paths.
+ */
+const rebuildFailure = async (
+  root: string,
+  previous: string,
+  failure: unknown,
+): Promise<GhidraProjectCacheError> => {
+  const restored = await restoreQuarantinedRoot(previous, root);
+  return rootError(
+    repairFailureMessage(
+      "Ghidra project cache root is not an owner-only directory and could not be rebuilt as a private directory",
+      previous,
+      restored,
+    ),
+    root,
+    failure,
+  );
+};
+
+/** Name the set-aside root when the stored projects stay where they were. */
+const repairFailureMessage = (
+  summary: string,
+  previous: string,
+  restored: boolean,
+): string =>
+  restored
+    ? summary
+    : `${summary}; the previous root is preserved at ${previous}`;
 
 /**
  * Put the set-aside root back when a repair cannot complete.
  *
- * Returns whether the configured path holds the previous root again. When it
- * does not, the caller reports where the stored projects were preserved.
+ * The replacement holds copies of the set-aside root's children, never the
+ * only copy of a stored project, so it can be removed without losing one.
+ * The set-aside root keeps every stored project until the replacement is in
+ * place, so it is put back here. Returns whether the configured path holds
+ * the previous root again; when it does not, the caller reports where the
+ * stored projects were preserved.
  */
 const restoreQuarantinedRoot = async (
   previous: string,
   root: string,
 ): Promise<boolean> => {
-  // Return the children that already moved into the replacement, so the
-  // previous root keeps every stored project.
-  await moveDirectoryContent(root, previous).catch(() => undefined);
-  await rm(root, { recursive: true, force: true }).catch(() => undefined);
+  const removed = await rm(root, { recursive: true, force: true }).then(
+    () => true,
+    () => false,
+  );
+  if (!removed) return false;
   try {
     await rename(previous, root);
     return true;
   } catch {
     return false;
   }
+};
+
+/**
+ * Remove the set-aside root once the private replacement holds every project.
+ *
+ * Returns the path of a root that survived the removal. It still holds a
+ * copy of the stored projects that the principals it admits can read, so the
+ * caller reports it instead of leaving it unmentioned.
+ */
+const removeQuarantinedRoot = async (
+  previous: string,
+): Promise<string | undefined> => {
+  const removed = await rm(previous, { recursive: true, force: true }).then(
+    () => true,
+    () => false,
+  );
+  return removed ? undefined : previous;
 };
 
 const ensureWindowsRoot = async (
@@ -268,12 +388,18 @@ const ensureWindowsRoot = async (
     try {
       host.verifyPrivateDirectory(root);
       return { status: "ready" };
-    } catch (cause: unknown) {
+    } catch {
       // POSIX tightens a widened root in place. Windows cannot express an
       // owner-only DACL, so the root is rebuilt as a private directory and the
-      // stored projects move into it.
-      const preserved = await replaceWindowsRoot(root, host, cause);
-      return { status: "repaired", preservedEntries: preserved };
+      // stored projects are copied into it.
+      const repair = await replaceWindowsRoot(root, host);
+      return {
+        status: "repaired",
+        preservedEntries: repair.preserved,
+        ...(repair.leftover === undefined
+          ? {}
+          : { leftoverRoot: repair.leftover }),
+      };
     }
   }
   try {

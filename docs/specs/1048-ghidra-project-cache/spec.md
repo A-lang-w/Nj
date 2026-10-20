@@ -264,9 +264,12 @@ statement; needs CONTRIBUTING.md contribution-scope sign-off).
 
 - Store is REA-owned and owner-only under the home (`cache/` is purgeable).
   POSIX creates `0700` and tightens an existing widened root. Windows creates
-  the durable root through the native protected-DACL boundary and rejects an
-  existing root that does not pass native verification before any read or
-  write.
+  the durable root through the native protected-DACL boundary and rebuilds an
+  existing root that does not pass native verification as a private directory
+  before any read or write. The rebuild copies the stored projects into the
+  private replacement so they carry its owner-only DACL, and it keeps the
+  previous root until every project is copied, so a rebuild that cannot
+  complete leaves the stored projects where they were.
 - Admission mirrors existing-project rules; entries are derived data, never
   executed. Corrupt/foreign entry: rebuild as a miss **but always record the
   typed integrity failure** and never present a rebuilt entry as an untouched

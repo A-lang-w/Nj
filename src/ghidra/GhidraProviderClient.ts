@@ -1175,7 +1175,11 @@ const repairedProjectRootLimitation = (
     { readonly status: "repaired" }
   >,
 ): string =>
-  `The Ghidra project cache root was not owner-only and was rebuilt as a private directory; ${preparation.preservedEntries} stored item(s) were preserved.`;
+  `The Ghidra project cache root was not owner-only and was rebuilt as a private directory; ${preparation.preservedEntries} stored item(s) were preserved.${
+    preparation.leftoverRoot === undefined
+      ? ""
+      : ` The previous root could not be removed and still holds a copy of them at ${preparation.leftoverRoot}.`
+  }`;
 
 /** A provider already observed as running can be restarted by reopening. */
 const exitedProviderMessage = (

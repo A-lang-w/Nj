@@ -173,6 +173,46 @@ describe("Windows cache root repair", () => {
     await expect(readdir(parent)).resolves.toEqual(["cache"]);
   });
 
+  it("copies the preserved projects into the private root", async () => {
+    const parent = await tempRoot();
+    const root = join(parent, "cache");
+    await mkdir(root);
+    await mkdir(join(root, "staging"));
+    await writeFile(join(root, "staging", "project"), "stored");
+    await writeFile(join(root, "entry"), "stored");
+    const original = await lstat(join(root, "entry"));
+    // Only the root that was already there is not owner-only; the rebuilt one
+    // passes the same native verification.
+    let inspected = false;
+    const outcome = await ensureGhidraProjectCacheRoot(root, {
+      platform: "win32",
+      host: privateRootHost({
+        async createPrivateDirectory(path) {
+          await mkdir(path, { recursive: true });
+          return path;
+        },
+        verifyPrivateDirectory() {
+          if (!inspected) {
+            inspected = true;
+            throw new Error("Private object owner is not the current user");
+          }
+          return { privateDacl: true };
+        },
+      }),
+    });
+    expect(outcome).toEqual({ status: "repaired", preservedEntries: 2 });
+    // The stored projects are carried over.
+    await expect(readFile(join(root, "entry"), "utf8")).resolves.toBe("stored");
+    await expect(
+      readFile(join(root, "staging", "project"), "utf8"),
+    ).resolves.toBe("stored");
+    // The preserved projects are recreated inside the private root, so they
+    // carry its owner-only DACL instead of the permissions the shared root
+    // gave them. A filesystem that reports no inode number cannot show it.
+    const preserved = await lstat(join(root, "entry"));
+    if (original.ino !== 0) expect(preserved.ino).not.toBe(original.ino);
+  });
+
   it("restores the previous root when the rebuild cannot start", async () => {
     const parent = await tempRoot();
     const root = join(parent, "cache");
@@ -253,6 +293,150 @@ describe("Windows cache root repair", () => {
     ).rejects.toMatchObject({ reason: "io", path: root });
     expect(verified).toBe(false);
   });
+});
+
+describe("Windows cache root repair failures", () => {
+  it("keeps every stored project when the repair cannot copy it into the private root", async () => {
+    const parent = await tempRoot();
+    const root = join(parent, "cache");
+    const shared = join(parent, "shared");
+    await mkdir(root);
+    await mkdir(shared);
+    await writeFile(join(root, "entry"), "stored");
+    // A link cannot be carried into the private root: it would keep naming
+    // the shared directory it points at.
+    await symlink(shared, join(root, "shared"), "dir");
+    let inspected = false;
+    await expect(
+      ensureGhidraProjectCacheRoot(root, {
+        platform: "win32",
+        host: privateRootHost({
+          async createPrivateDirectory(path) {
+            await mkdir(path, { recursive: true });
+            return path;
+          },
+          verifyPrivateDirectory() {
+            if (!inspected) {
+              inspected = true;
+              throw new Error("Private object owner is not the current user");
+            }
+            return { privateDacl: true };
+          },
+        }),
+      }),
+    ).rejects.toMatchObject({
+      reason: "io",
+      path: root,
+      message: expect.stringContaining(
+        "could not be rebuilt as a private directory",
+      ),
+    });
+    // Nothing is discarded: the previous root is back with every stored
+    // project, and the entry that could not be copied is still there.
+    await expect(readFile(join(root, "entry"), "utf8")).resolves.toBe("stored");
+    const link = await lstat(join(root, "shared"));
+    expect(link.isSymbolicLink()).toBe(true);
+    await expect(readdir(parent)).resolves.toEqual(["cache", "shared"]);
+  });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "keeps both roots and reports where the stored projects are when the repair cannot complete",
+    async () => {
+      const parent = await tempRoot();
+      const root = join(parent, "cache");
+      const shared = join(parent, "shared");
+      await mkdir(root);
+      await mkdir(shared);
+      await writeFile(join(root, "entry"), "stored");
+      await symlink(shared, join(root, "shared"), "dir");
+      let inspected = false;
+      await expect(
+        ensureGhidraProjectCacheRoot(root, {
+          platform: "win32",
+          host: privateRootHost({
+            async createPrivateDirectory(path) {
+              await mkdir(path, { recursive: true });
+              // The replacement cannot be removed, so both roots stay.
+              await mkdir(join(path, "held"));
+              await writeFile(join(path, "held", "project"), "held");
+              await chmod(join(path, "held"), 0o500);
+              return path;
+            },
+            verifyPrivateDirectory() {
+              if (!inspected) {
+                inspected = true;
+                throw new Error("Private object owner is not the current user");
+              }
+              return { privateDacl: true };
+            },
+          }),
+        }),
+      ).rejects.toMatchObject({
+        reason: "io",
+        path: root,
+        message: expect.stringContaining("the previous root is preserved at"),
+      });
+      // The set-aside root keeps every stored project, and the message names
+      // it because the replacement could not be removed.
+      await expect(
+        readFile(join(parent, "cache.previous-1", "entry"), "utf8"),
+      ).resolves.toBe("stored");
+      await expect(
+        lstat(join(parent, "cache.previous-1", "shared")).then((stats) =>
+          stats.isSymbolicLink(),
+        ),
+      ).resolves.toBe(true);
+      // Restore the permissions the fixture held so the tree can be removed.
+      await chmod(join(root, "held"), 0o700);
+    },
+  );
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "reports the set-aside root that could not be removed",
+    async () => {
+      const parent = await tempRoot();
+      const root = join(parent, "cache");
+      await mkdir(root);
+      await mkdir(join(root, "entry"));
+      await writeFile(join(root, "entry", "project"), "stored");
+      // The stored project cannot be removed while its directory is
+      // read-only, so the set-aside root survives the rebuild.
+      await chmod(join(root, "entry"), 0o500);
+      let inspected = false;
+      const outcome = await ensureGhidraProjectCacheRoot(root, {
+        platform: "win32",
+        host: privateRootHost({
+          async createPrivateDirectory(path) {
+            await mkdir(path, { recursive: true });
+            return path;
+          },
+          verifyPrivateDirectory() {
+            if (!inspected) {
+              inspected = true;
+              throw new Error("Private object owner is not the current user");
+            }
+            return { privateDacl: true };
+          },
+        }),
+      });
+      expect(outcome).toEqual({
+        status: "repaired",
+        preservedEntries: 1,
+        leftoverRoot: join(parent, "cache.previous-1"),
+      });
+      // The private replacement holds the stored project.
+      await expect(
+        readFile(join(root, "entry", "project"), "utf8"),
+      ).resolves.toBe("stored");
+      // The set-aside root still holds a copy the principals it admits can
+      // read, which is why its path is reported.
+      await expect(
+        readFile(join(parent, "cache.previous-1", "entry", "project"), "utf8"),
+      ).resolves.toBe("stored");
+      // Restore the permissions the fixture held so the tree can be removed.
+      await chmod(join(parent, "cache.previous-1", "entry"), 0o700);
+    },
+  );
 });
 
 describe("Windows cache root admission", () => {

@@ -54,8 +54,10 @@ replays in the later session.
   protected-DACL boundary. An existing Windows root that does not pass that
   verification is rebuilt as a private directory that keeps the stored
   projects, because a root that other principals can read is unusable for the
-  store. The rebuild keeps the previous root until the replacement is in
-  place, and a rebuild that cannot complete leaves the stored projects where
+  store. The rebuild copies the stored projects into the private replacement,
+  so they carry its owner-only DACL instead of the permissions the shared root
+  gave them. The rebuild keeps the previous root until every project is
+  copied, and a rebuild that cannot complete leaves the stored projects where
   they were.
 - **Miss** imports writable into a private runtime project; when the session
   closes after a clean, complete, mutation-free analysis the saved project is
