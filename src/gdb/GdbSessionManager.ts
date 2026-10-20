@@ -83,12 +83,15 @@ interface PendingCommand {
   readonly token: number;
   readonly command: string;
   readonly evidenceCommand: string;
+  readonly interrupt: boolean;
   readonly lines: string[];
   outputBytes: number;
   outputTruncated: boolean;
   outputInvalidUtf8: boolean;
   terminalRecord: string | undefined;
   awaitingInferiorStop: boolean;
+  interruptReplyObserved: boolean;
+  interruptStopObserved: boolean;
   readonly resolve: (result: GdbCommandResult) => void;
   readonly reject: (error: Error) => void;
   readonly cleanup: () => void;
@@ -1743,7 +1746,10 @@ export class GdbSessionManager {
       if (line.startsWith("*stopped")) {
         session.inferiorRunning = false;
         for (const [token, pending] of session.pending) {
-          if (!pending.awaitingInferiorStop) continue;
+          if (pending.interrupt) {
+            pending.interruptStopObserved = true;
+            if (!pending.interruptReplyObserved) continue;
+          } else if (!pending.awaitingInferiorStop) continue;
           clearTimeout(pending.timer);
           session.pending.delete(token);
           pending.cleanup();
@@ -1783,7 +1789,40 @@ export class GdbSessionManager {
         session.inferiorRunning = true;
         pending.terminalRecord = line;
         pending.awaitingInferiorStop = true;
+        if (pending.interrupt) {
+          pending.interruptReplyObserved = true;
+          if (pending.interruptStopObserved) session.inferiorRunning = false;
+          if (pending.interruptStopObserved) {
+            clearTimeout(pending.timer);
+            session.pending.delete(token);
+            pending.cleanup();
+            pending.resolve({
+              command: "",
+              mi: line,
+              records: [...pending.lines],
+              console: pending.lines
+                .filter((record) => record.startsWith("~"))
+                .join("\n"),
+              target: pending.lines
+                .filter((record) => record.startsWith("@"))
+                .join("\n"),
+              log: pending.lines
+                .filter((record) => record.startsWith("&"))
+                .join("\n"),
+              output_truncated: pending.outputTruncated,
+              ...(pending.outputInvalidUtf8
+                ? { output_invalid_utf8: true as const }
+                : {}),
+              completion_status: "complete",
+            });
+          }
+        }
         continue;
+      }
+      if (pending.interrupt && match[2] === "done") {
+        pending.terminalRecord = line;
+        pending.interruptReplyObserved = true;
+        if (!pending.interruptStopObserved) continue;
       }
       clearTimeout(pending.timer);
       session.pending.delete(token);
@@ -2222,6 +2261,7 @@ export class GdbSessionManager {
         token,
         command,
         evidenceCommand,
+        interrupt: command === "-exec-interrupt --all",
         lines: [],
         resolve: (result) => {
           cleanup();
@@ -2238,6 +2278,8 @@ export class GdbSessionManager {
         outputInvalidUtf8: false,
         terminalRecord: undefined,
         awaitingInferiorStop: false,
+        interruptReplyObserved: false,
+        interruptStopObserved: false,
       };
       session.pending.set(token, pending);
       abortListener = (): void => {
