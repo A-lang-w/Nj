@@ -1681,14 +1681,18 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     signal: AbortSignal | undefined,
     permit: StartPermit,
   ): Promise<Result<undefined, AnalysisError>> {
-    if (signal?.aborted === true)
-      return err(new AnalysisCancelledError(operation));
+    if (isAborted(signal)) return err(new AnalysisCancelledError(operation));
     if (this.#activeStarts >= this.#limits.maxConcurrentAnalyses) {
       // A provider a forced close could not release keeps the permit this
       // start would wait for, and the cleanup that owns that permit is
       // retried inside the open. Waiting first would wait for an open that
       // never begins, so the retained cleanup is retried before the wait.
       await this.#retryRetainedCleanups();
+      // The retry is an await, so the request may have been cancelled while
+      // it ran. A cancelled request takes no permit and enters no queue: the
+      // abort event has already fired, so a listener attached now would never
+      // run and the request would wait for a permit that may never come.
+      if (isAborted(signal)) return err(new AnalysisCancelledError(operation));
     }
     if (this.#activeStarts < this.#limits.maxConcurrentAnalyses) {
       this.#activeStarts += 1;

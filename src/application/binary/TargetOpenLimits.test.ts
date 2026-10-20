@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisResourceConstraintError,
+} from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { AnalysisProfileResolution } from "../AnalysisProvider.js";
 import type { AnalysisClient } from "../AnalysisProvider.js";
@@ -160,31 +163,89 @@ describe("the start permit of a start that never unwinds", () => {
 });
 
 /**
+ * The state of a provider a forced close cannot release.
+ *
+ * The provider's start never unwinds and its close is refused, so the forced
+ * close leaves the provider running and the retained cleanup keeps the start
+ * permit until a later close releases it.
+ */
+type RetainedCleanupState = {
+  /** The clients the registry created. */
+  clients: number;
+  /** The closes the clients were asked for. */
+  closes: number;
+  /** Whether a close after the forced one is refused too. */
+  refuseClose: boolean;
+  /** The close a retry waits for, when the test has to interleave with it. */
+  retry?: { readonly promise: Promise<Result<null, AnalysisError>> };
+};
+
+/** The refusal of a provider that a close cannot release. */
+const refusedCleanup = (): AnalysisError =>
+  new ProviderCleanupError("fixture", ["provider-client"], {
+    reason: "fixture close refused",
+  });
+
+/**
  * A provider whose first start never unwinds and whose close can refuse.
  *
  * The forced close cannot release that provider, so the retained cleanup
  * keeps the start permit until a later close releases it.
  */
-const retainedCleanupProvider = (state: {
-  clients: number;
-  refuseClose: boolean;
-}): AnalysisClient => ({
+const retainedCleanupProvider = (
+  state: RetainedCleanupState,
+): AnalysisClient => ({
   // The first start never unwinds, so the close has to release the client.
   execute: () =>
     state.clients === 1
       ? new Promise<ReturnType<typeof observed>>(() => undefined)
       : Promise.resolve(observed(null)),
-  close: () =>
-    Promise.resolve(
-      state.refuseClose
-        ? err(
-            new ProviderCleanupError("fixture", ["provider-client"], {
-              reason: "fixture close refused",
-            }),
-          )
-        : resultOk(null),
-    ),
+  close: () => {
+    state.closes += 1;
+    // The forced close is refused, so the cleanup of that provider stays
+    // pending and the retained cleanup owns it.
+    if (state.closes === 1) return Promise.resolve(err(refusedCleanup()));
+    // A retry waits for the test, so a request can be cancelled while it
+    // runs.
+    if (state.retry !== undefined) return state.retry.promise;
+    return state.refuseClose
+      ? Promise.resolve(err(refusedCleanup()))
+      : Promise.resolve(resultOk(null));
+  },
 });
+
+/**
+ * Open the first target as a start that never unwinds and refuse its close.
+ *
+ * The forced close cannot release the provider, so it stays alive and the
+ * retained cleanup keeps the start permit.
+ */
+const openWithRetainedCleanup = async (
+  registry: BinaryTargetRegistry,
+  state: RetainedCleanupState,
+  path: string,
+  options: { readonly keepOthersOpen?: boolean } = {},
+): Promise<string> => {
+  await openInBackground(registry, path, options);
+  await vi.waitFor(() => expect(state.clients).toBe(1));
+  const targetId = registry.currentTargetId();
+  expect(targetId).toBeDefined();
+  expect((await registry.close({ targetId: targetId! })).ok).toBe(false);
+  return targetId!;
+};
+
+/** The registry whose provider a forced close cannot release. */
+const retainedCleanupRegistry = (
+  state: RetainedCleanupState,
+): BinaryTargetRegistry =>
+  createTestBinaryTargetRegistry(
+    () => {
+      state.clients += 1;
+      return retainedCleanupProvider(state);
+    },
+    {},
+    { maxConcurrentAnalyses: 1, jobSettleTimeoutMs: 50 },
+  );
 
 /**
  * The start permit of a provider the close could not release.
@@ -197,24 +258,10 @@ const retainedCleanupProvider = (state: {
 describe("the start permit of a retained cleanup", () => {
   it("is kept until the retained cleanup releases the provider", async () => {
     const [first, second] = await createBinarySessionTargets();
-    const state = { clients: 0, refuseClose: true };
-    const registry = createTestBinaryTargetRegistry(
-      () => {
-        state.clients += 1;
-        return retainedCleanupProvider(state);
-      },
-      {},
-      { maxConcurrentAnalyses: 1, jobSettleTimeoutMs: 50 },
-    );
+    const state = { clients: 0, closes: 0, refuseClose: true };
+    const registry = retainedCleanupRegistry(state);
 
-    await openInBackground(registry, first);
-    await vi.waitFor(() => expect(state.clients).toBe(1));
-    const firstId = registry.currentTargetId();
-    expect(firstId).toBeDefined();
-
-    // The forced close cannot release the provider, so it stays alive.
-    const closed = await registry.close({ targetId: firstId! });
-    expect(closed.ok).toBe(false);
+    const firstId = await openWithRetainedCleanup(registry, state, first);
 
     // The provider is still running, so the next start waits for its permit.
     const opening = openInBackground(registry, second);
@@ -223,31 +270,19 @@ describe("the start permit of a retained cleanup", () => {
 
     // The retained cleanup releases the provider and gives the permit back.
     state.refuseClose = false;
-    expect((await registry.close({ targetId: firstId! })).ok).toBe(true);
+    expect((await registry.close({ targetId: firstId })).ok).toBe(true);
     await vi.waitFor(() => expect(state.clients).toBe(2));
     await opening;
   });
 
   it("is retried before a replacement open waits for the permit", async () => {
     const [first, second] = await createBinarySessionTargets();
-    const state = { clients: 0, refuseClose: true };
-    const registry = createTestBinaryTargetRegistry(
-      () => {
-        state.clients += 1;
-        return retainedCleanupProvider(state);
-      },
-      {},
-      { maxConcurrentAnalyses: 1, jobSettleTimeoutMs: 50 },
-    );
+    const state = { clients: 0, closes: 0, refuseClose: true };
+    const registry = retainedCleanupRegistry(state);
 
-    await openInBackground(registry, first, { keepOthersOpen: false });
-    await vi.waitFor(() => expect(state.clients).toBe(1));
-    const firstId = registry.currentTargetId();
-    expect(firstId).toBeDefined();
-
-    // The forced close cannot release the provider, so it stays alive and
-    // keeps the start permit.
-    expect((await registry.close({ targetId: firstId! })).ok).toBe(false);
+    await openWithRetainedCleanup(registry, state, first, {
+      keepOthersOpen: false,
+    });
 
     // The provider can be released now.
     state.refuseClose = false;
@@ -258,5 +293,59 @@ describe("the start permit of a retained cleanup", () => {
     const opening = registry.open(second);
     await vi.waitFor(() => expect(state.clients).toBe(2), { timeout: 2_000 });
     expect((await opening).ok).toBe(true);
+  });
+});
+
+/**
+ * A start that is cancelled while the retained cleanup is retried.
+ *
+ * The retained cleanup is retried before the start permit is taken, so the
+ * request waits for that retry. A request that is cancelled while the retry
+ * runs must neither take the permit nor enter the queue: the abort event has
+ * already fired, so a listener attached after it never runs and the request
+ * waits for a permit that may never come.
+ */
+describe("a start that is cancelled while the retained cleanup is retried", () => {
+  it("reports the cancellation instead of waiting for a permit", async () => {
+    const [first, second] = await createBinarySessionTargets();
+    const retry = createDeferred<Result<null, AnalysisError>>();
+    const state = {
+      clients: 0,
+      closes: 0,
+      refuseClose: true,
+      retry,
+    };
+    const registry = retainedCleanupRegistry(state);
+
+    await openWithRetainedCleanup(registry, state, first);
+    expect(state.closes).toBe(1);
+
+    // The next open retries the retained cleanup before it takes the permit
+    // that the cleanup owns.
+    const controller = new AbortController();
+    const opening = registry.open(second, {
+      keepOthersOpen: true,
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(state.closes).toBe(2));
+
+    // The request is cancelled while the cleanup retry runs.
+    controller.abort();
+    retry.resolve(err(refusedCleanup()));
+
+    // The cancelled request reports the cancellation instead of waiting for
+    // a permit that may never come.
+    const settled = await Promise.race([
+      opening,
+      new Promise<undefined>((resolve) => {
+        const timer = setTimeout(() => resolve(undefined), 500);
+        timer.unref?.();
+      }),
+    ]);
+    expect(settled).toBeDefined();
+    if (settled === undefined) return;
+    expect(settled.ok).toBe(false);
+    if (settled.ok) return;
+    expect(settled.error).toBeInstanceOf(AnalysisCancelledError);
   });
 });
