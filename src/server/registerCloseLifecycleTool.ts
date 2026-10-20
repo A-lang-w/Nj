@@ -177,6 +177,11 @@ export const registerCloseLifecycleTool = ({
     if (failure === undefined) return closed;
     if (snapshotReceipt !== undefined && closed.ok)
       failure.retainDiagnostics(snapshotReceipt(closed.value));
+    else if (snapshotReceipt !== undefined && !closed.ok) {
+      const savedSnapshot = closed.error.diagnostics?.saved_snapshot;
+      if (savedSnapshot !== undefined)
+        failure.retainDiagnostics({ saved_snapshot: savedSnapshot });
+    }
     return err(failure);
   };
   server.registerTool(
