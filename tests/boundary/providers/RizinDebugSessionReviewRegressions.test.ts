@@ -248,6 +248,7 @@ let input = "";
 let detached = false;
 let pendingDetach = false;
 let pendingExitPolicyReadback = false;
+let exitPolicyReadbacks = 0;
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   input += chunk;
@@ -255,7 +256,10 @@ process.stdin.on("data", (chunk) => {
     const boundary = input.indexOf("\\n"); if (boundary < 0) break;
     const line = input.slice(0, boundary); input = input.slice(boundary + 1);
     if (line === "olj") process.stdout.write((detached ? "[]" : JSON.stringify([{ fd: 12, raised: true, uri: "ptrace://${pid}" }])) + "\\0");
-    else if (line === "e dbg.exitkills") pendingExitPolicyReadback = true;
+    else if (line === "e dbg.exitkills") {
+      exitPolicyReadbacks += 1;
+      pendingExitPolicyReadback = true;
+    }
     else if (line.startsWith("o- ")) {
       pendingDetach = true;
       setTimeout(() => { detached = true; }, 700);
@@ -264,15 +268,49 @@ process.stdin.on("data", (chunk) => {
       const marker = line.slice(6);
       if (pendingExitPolicyReadback) {
         pendingExitPolicyReadback = false;
-        setTimeout(() => process.stdout.write("false\\0" + marker + "\\0"), 700);
+        setTimeout(() => {
+          if (exitPolicyReadbacks >= 2)
+            writeFileSync(${JSON.stringify(completionPath)}, "done");
+          process.stdout.write("false\\0" + marker + "\\0");
+        }, 700);
       } else if (pendingDetach) {
         pendingDetach = false;
         setTimeout(() => {
-          writeFileSync(${JSON.stringify(completionPath)}, "done");
           process.stdout.write(marker + "\\0");
         }, 700);
       } else process.stdout.write(marker + "\\0");
     }
+    else process.stdout.write("\\0");
+  }
+});
+`,
+  );
+  await chmod(provider, 0o700);
+  return provider;
+};
+
+const createReusedPidPtraceProvider = async (
+  pid: number,
+  providerDirectory: string,
+  commandsPath: string,
+): Promise<string> => {
+  const provider = join(providerDirectory, "fake-rizin-reused-pid.mjs");
+  await writeFile(
+    provider,
+    `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+process.stdout.write("\\0");
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n"); if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    appendFileSync(${JSON.stringify(commandsPath)}, line + "\\n");
+    if (line === "olj") process.stdout.write(JSON.stringify([{ fd: 12, raised: true, uri: "ptrace://${pid}" }]) + "\\0");
+    else if (line === "e dbg.exitkills") process.stdout.write("true\\0");
+    else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
     else process.stdout.write("\\0");
   }
 });
@@ -451,10 +489,16 @@ it.skipIf(process.platform !== "linux")(
       directory,
       completionPath,
     );
+    let resolveDetachVerified!: (value: boolean) => void;
+    const detachVerified = new Promise<boolean>((resolve) => {
+      resolveDetachVerified = resolve;
+    });
     const manager = new RizinDebugSessionManager(
       { ...process.env, REA_RIZIN_COMMAND: provider },
       {
         platform: "linux",
+        onInferiorDetachVerified: (result: { readonly status: string }) =>
+          resolveDetachVerified(result.status === "detached"),
         spawnProcess: async (options) => {
           const launched = await spawnOwnedProviderProcess(options);
           ownedProviderProcesses.push(launched.process);
@@ -475,19 +519,14 @@ it.skipIf(process.platform !== "linux")(
     if (!firstClose.ok)
       expect(firstClose.error.message).toContain("not verified within 1000 ms");
 
-    const deadline = Date.now() + 3_000;
-    let completed = false;
-    while (Date.now() < deadline) {
-      try {
-        await readFile(completionPath, "utf8");
-        completed = true;
-        break;
-      } catch {
-        await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
-      }
-    }
-    expect(completed).toBe(true);
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
+    const completion = await Promise.race([
+      detachVerified,
+      new Promise<boolean>((resolve) =>
+        setTimeout(() => resolve(false), 4_000),
+      ),
+    ]);
+    expect(completion).toBe(true);
+    expect(await readFile(completionPath, "utf8")).toBe("done");
 
     const retried = await manager.retryCleanupFailures();
     expect(
@@ -499,6 +538,56 @@ it.skipIf(process.platform !== "linux")(
     });
     expect(manager.status(started.value.session_id)).toBeUndefined();
     expect(inferior.exitCode).toBeNull();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "treats a retained Rizin PID row with a new start time as stale after identity reuse",
+  async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-rizin-reused-pid-"));
+    const commandsPath = join(directory, "commands");
+    const provider = await createReusedPidPtraceProvider(
+      45_678,
+      directory,
+      commandsPath,
+    );
+    const identityObservations: string[] = [];
+    const manager = new RizinDebugSessionManager(
+      { ...process.env, REA_RIZIN_COMMAND: provider },
+      {
+        platform: "linux",
+        readProcessStartTime: async () => {
+          const observed = identityObservations.length === 0 ? "100" : "200";
+          identityObservations.push(observed);
+          return observed;
+        },
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          ownedProviderProcesses.push(launched.process);
+          return launched;
+        },
+      },
+    );
+    managers.push(manager);
+    const started = await manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: await rizinTestInferiorTty(),
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    expect((await manager.close(started.value.session_id)).ok).toBe(false);
+    expect(await manager.retryCleanupFailures()).toEqual({
+      ok: true,
+      value: null,
+    });
+
+    expect(identityObservations[0]).toBe("100");
+    expect(
+      identityObservations.slice(1).every((value) => value === "200"),
+    ).toBe(true);
+    expect(await readFile(commandsPath, "utf8")).not.toContain("o- 12");
+    expect(manager.status(started.value.session_id)).toBeUndefined();
   },
 );
 

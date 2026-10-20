@@ -242,6 +242,10 @@ export class RizinDebugSessionManager {
   readonly #platform: NodeJS.Platform;
   readonly #stopProcess: typeof stopOwnedDebuggerProcess;
   readonly #spawnProcess: typeof spawnOwnedProviderProcess;
+  readonly #readProcessStartTime: (pid: string) => Promise<string | null>;
+  readonly #onInferiorDetachVerified:
+    | ((result: OwnedDebuggerDetachResult) => void)
+    | undefined;
 
   constructor(
     environment: Readonly<NodeJS.ProcessEnv> = process.env,
@@ -254,6 +258,12 @@ export class RizinDebugSessionManager {
       readonly platform?: NodeJS.Platform;
       readonly stopProcess?: typeof stopOwnedDebuggerProcess;
       readonly spawnProcess?: typeof spawnOwnedProviderProcess;
+      /** @internal Test seam for deterministic Linux process identity checks. */
+      readonly readProcessStartTime?: (pid: string) => Promise<string | null>;
+      /** @internal Test seam called after all detach checks have completed. */
+      readonly onInferiorDetachVerified?: (
+        result: OwnedDebuggerDetachResult,
+      ) => void;
     } = {},
   ) {
     this.#environment = { ...environment };
@@ -265,6 +275,9 @@ export class RizinDebugSessionManager {
     this.#platform = options.platform ?? process.platform;
     this.#stopProcess = options.stopProcess ?? stopOwnedDebuggerProcess;
     this.#spawnProcess = options.spawnProcess ?? spawnOwnedProviderProcess;
+    this.#readProcessStartTime =
+      options.readProcessStartTime ?? readLinuxProcessStartTime;
+    this.#onInferiorDetachVerified = options.onInferiorDetachVerified;
   }
 
   async start(
@@ -436,6 +449,7 @@ export class RizinDebugSessionManager {
         if (!session.inferiorInventoryComplete) return false;
         const ended = await verifyOwnedInferiorsEnded(
           session.knownInferiorIdentities.values(),
+          this.#readProcessStartTime,
         );
         if (ended) session.knownInferiorIdentities.clear();
         return ended;
@@ -448,6 +462,7 @@ export class RizinDebugSessionManager {
           : this.#detachInferior(session);
         return attempt.then((result) => {
           session.verifiedDetachResult = result;
+          this.#onInferiorDetachVerified?.(result);
           return result;
         });
       },
@@ -1187,6 +1202,7 @@ export class RizinDebugSessionManager {
     if (inferior.length === 0) {
       await assertRizinEmptyInferiorInventory(
         session.knownInferiorIdentities.values(),
+        this.#readProcessStartTime,
       );
       // Keep prior identities until the debugger itself is fully stopped.
       // A later cleanup retry may receive a stale ptrace row after this valid
@@ -1198,7 +1214,7 @@ export class RizinDebugSessionManager {
     const activeInferiors: Array<[string, string]> = [];
     for (const [fd, pid] of inferior) {
       const previous = session.knownInferiorIdentities.get(pid);
-      const startTime = await readLinuxProcessStartTime(pid);
+      const startTime = await this.#readProcessStartTime(pid);
       if (startTime === null) {
         if (
           previous === undefined ||
@@ -1209,10 +1225,12 @@ export class RizinDebugSessionManager {
           );
         continue;
       }
-      if (previous !== undefined && previous.startTime !== startTime)
-        throw new Error(
-          `Inferior PID ${pid} changed identity during Rizin session cleanup.`,
-        );
+      if (previous !== undefined && previous.startTime !== startTime) {
+        // Rizin can retain a ptrace row after the original PID has exited.
+        // The changed start time identifies a replacement process; preserve
+        // the old identity as ended and never detach or inspect the replacement.
+        continue;
+      }
       currentIdentities.set(pid, {
         pid,
         startTime,
@@ -1233,7 +1251,7 @@ export class RizinDebugSessionManager {
     const identity = session.knownInferiorIdentities.get(pid)!;
     assertRizinProcessStartTimeStable(
       identity.startTime,
-      await readLinuxProcessStartTime(pid),
+      await this.#readProcessStartTime(pid),
     );
     await this.#verifyDebuggerExitPolicy(session);
     await this.#verifyInferiorOutputDescriptors(session, pid);
@@ -1256,13 +1274,19 @@ export class RizinDebugSessionManager {
     try {
       assertRizinProcessStartTimeStable(
         identity.startTime,
-        await readLinuxProcessStartTime(pid),
+        await this.#readProcessStartTime(pid),
       );
       inputSink = await this.#verifyInferiorOutputDescriptors(session, pid);
     } catch (cause) {
       // Detach resumes the inferior. Its identity or descriptors may disappear
       // before readback; only a previously identified process can prove its end.
-      if (!(await verifyOwnedInferiorsEnded([identity]))) throw cause;
+      if (
+        !(await verifyOwnedInferiorsEnded(
+          [identity],
+          this.#readProcessStartTime,
+        ))
+      )
+        throw cause;
       // Keep the identity while Rizin may still report a stale ptrace row.
       // A retry can then prove that this exact process ended instead of
       // treating the stale PID as an unowned, never-identified process.
@@ -1310,7 +1334,7 @@ export class RizinDebugSessionManager {
       async () =>
         assertRizinProcessStartTimeStable(
           identity.startTime,
-          await readLinuxProcessStartTime(pid),
+          await this.#readProcessStartTime(pid),
         ),
     );
   }
