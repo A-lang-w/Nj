@@ -9,7 +9,7 @@ const DRIVE_PREFIX = /^[A-Za-z]:/u;
 type DestinationEntryKind = Exclude<ArtifactEntry["kind"], "metadata">;
 
 /** Declarations have query identities, but never claim a destination path. */
-const hasDestinationPath = (
+export const hasDestinationPath = (
   kind: ArtifactEntry["kind"],
 ): kind is DestinationEntryKind => kind !== "metadata";
 

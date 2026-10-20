@@ -41,8 +41,8 @@ The reader preserves the raw reference and splits its first colon into
 another executable or claim its contents are available. A real file with the
 same logical path as metadata remains independently extractable.
 Both declaration types require empty payloads and no compression. Their query
-paths do not participate in filesystem collision checks or directory ancestry;
-their parent identifies the declaring container.
+paths do not participate in filesystem collision checks, directory ancestry or
+source-map target lookup; their parent identifies the declaring container.
 
 Request `detail: "summary"` for a compact inspection, then query retained
 Evidence with `inspect_analysis_view`. An inventory view can select

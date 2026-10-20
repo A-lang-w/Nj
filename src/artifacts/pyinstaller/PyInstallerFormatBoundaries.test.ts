@@ -222,6 +222,65 @@ it("anchors declarations to their source container rather than a same-named dire
   );
 });
 
+it("resolves a unique source-map file despite a metadata query-path alias", async () => {
+  const logical = "__pyinstaller__/runtime-options/0";
+  await withPyInstallerReader(
+    cArchiveExecutable({
+      layout: "2.1",
+      pythonVersion: 309,
+      members: [
+        {
+          name: "pyi-option",
+          typeCode: "o",
+          payload: Buffer.alloc(0),
+          compress: false,
+        },
+        {
+          name: logical,
+          typeCode: "x",
+          payload: Buffer.from("let value = 1;"),
+          compress: false,
+        },
+        {
+          name: logical + ".map",
+          typeCode: "x",
+          payload: Buffer.from(
+            JSON.stringify({
+              version: 3,
+              sources: ["source.js"],
+              names: [],
+              mappings: "AAAA",
+            }),
+          ),
+          compress: false,
+        },
+      ],
+    }),
+    async (_reader, _handle, path) => {
+      const inventory = await scanCanonicalArtifactInventory(path);
+      const source = inventory.occurrences.find(
+        (row) => row.logical_path === logical && row.entry_kind === "file",
+      );
+      const map = inventory.occurrences.find(
+        (row) => row.logical_path === logical + ".map",
+      );
+      expect(source?.artifact_id).toBeTruthy();
+      expect(map).toBeDefined();
+      expect(
+        inventory.edges.find(
+          (edge) => edge.occurrence_id === map?.occurrence_id,
+        ),
+      ).toMatchObject({
+        relation: "maps-source",
+        parent_artifact_id: source?.artifact_id,
+      });
+      expect(
+        map?.limitations.some((note) => note.includes("multiple occurrences")),
+      ).toBe(false);
+    },
+  );
+});
+
 it.each(["x", "s", "empty-module"])(
   "does not treat a same-named %s as a crypto-key module",
   async (kind) => {

@@ -1,6 +1,7 @@
 import { hasGodotPckHeader } from "../../domain/godotPckFormat.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { hasDestinationPath } from "../ArtifactPaths.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { isJavaScriptSourcePath } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
@@ -56,12 +57,13 @@ export interface MutableOccurrence {
   limitations: string[];
 }
 
-/** Index every occurrence by canonical logical path without choosing an owner. */
-export const indexOccurrencesByPath = (
+/** Index destination paths without mixing in declaration query names or choosing an owner. */
+export const indexDestinationOccurrencesByPath = (
   occurrences: readonly MutableOccurrence[],
 ): ReadonlyMap<string, readonly MutableOccurrence[]> => {
   const byPath = new Map<string, MutableOccurrence[]>();
   for (const occurrence of occurrences) {
+    if (!hasDestinationPath(occurrence.entry_kind)) continue;
     const matches = byPath.get(occurrence.logical_path);
     if (matches === undefined)
       byPath.set(occurrence.logical_path, [occurrence]);
@@ -318,7 +320,7 @@ export const createArtifactEdges = (
   producer?: ArtifactCommand,
 ): { readonly edges: ArtifactEdge[]; readonly limitations: string[] } => {
   const byId = new Map(occurrences.map((item) => [item.occurrence_id, item]));
-  const byPath = indexOccurrencesByPath(occurrences);
+  const byPath = indexDestinationOccurrencesByPath(occurrences);
   const edges: ArtifactEdge[] = [];
   const limitations: string[] = [];
   for (const occurrence of occurrences) {

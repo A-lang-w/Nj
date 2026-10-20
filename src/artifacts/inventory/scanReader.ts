@@ -26,7 +26,7 @@ import {
   createArtifactNode,
   createOccurrence,
   noteUnreadContainerSuffix,
-  indexOccurrencesByPath,
+  indexDestinationOccurrencesByPath,
   resolveOccurrenceParents,
   type MutableOccurrence,
 } from "./ArtifactGraphConstruction.js";
@@ -107,7 +107,7 @@ export const scanReader = async (
   await visitArtifactEntries(context, reader, "");
   // Archive directories may appear after their children. Resolve containment
   // against the complete index before directory identities are materialized.
-  const byPath = indexOccurrencesByPath(occurrences);
+  const byPath = indexDestinationOccurrencesByPath(occurrences);
   const parentResolution = resolveOccurrenceParents(
     occurrences,
     byPath,
