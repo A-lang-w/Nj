@@ -198,6 +198,17 @@ export interface AnalysisClient extends AnalysisOperationPort {
     parameters: Readonly<Record<string, JsonValue>>,
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError> | undefined>;
+  /**
+   * Start the provider this client selected, when the client defers it.
+   *
+   * A composed client answers a health probe without touching a child, so a
+   * caller that needs the provider running asks for that start explicitly.
+   * A client that starts its provider with its first call has nothing to do
+   * here and does not implement it.
+   */
+  startProvider?(
+    options?: ExecutionOptions,
+  ): Promise<Result<null, AnalysisError>>;
   /** Retained token-verified process snapshots for dynamic providers this client started. */
   runtimeLineageSnapshots?(): readonly ProviderRuntimeLineageSnapshot[];
   /** Current provider work that may outlive a timed-out or cancelled caller. */

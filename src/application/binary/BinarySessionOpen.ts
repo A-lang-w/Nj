@@ -41,6 +41,15 @@ export interface BinarySessionOpenOptions {
    */
   readonly loadSnapshot?: AnalysisSnapshotLoader;
   readonly providerId?: AnalysisProviderSelector;
+  /**
+   * Start the selected provider as part of this open.
+   *
+   * A composed client defers its start to the first analysis call. A caller
+   * that reports the target as started asks for that start here, so the
+   * provider runs inside the open's own start window and under the start
+   * limits that window carries.
+   */
+  readonly startProvider?: boolean;
 }
 
 interface CurrentOpenBinding {
@@ -138,7 +147,14 @@ export const validateResolvedSessionTarget = (
   return { ok: true, value: { target, route, sameTarget } };
 };
 
-const sameSessionTarget = (
+/**
+ * Whether two observations name the same live target.
+ *
+ * The requested path, the resolved realpath and the file digest decide it,
+ * so a rebuilt binary at the same path is a different target and never
+ * inherits the analysis of the file it replaced.
+ */
+export const sameSessionTarget = (
   current: BinaryTarget | undefined,
   target: BinaryTarget,
 ): boolean =>

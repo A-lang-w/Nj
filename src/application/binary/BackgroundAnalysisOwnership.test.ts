@@ -219,6 +219,61 @@ describe("a slot whose cleanup failed", () => {
   });
 });
 
+describe("a forced close whose cleanup failed", () => {
+  it("keeps the cleanup ownership so a later close retries it", async () => {
+    const [first] = await createBinarySessionTargets();
+    let closeAttempts = 0;
+    let clients = 0;
+    const registry = createTestBinaryTargetRegistry(
+      () => {
+        clients += 1;
+        return {
+          // The start never unwinds, so the close has to release the client.
+          execute: () =>
+            new Promise<ReturnType<typeof observed>>(() => undefined),
+          close: () => {
+            closeAttempts += 1;
+            return Promise.resolve(
+              closeAttempts === 1
+                ? err(
+                    new ProviderCleanupError("fixture", ["provider-client"], {
+                      reason: "fixture close refused",
+                    }),
+                  )
+                : resultOk(null),
+            );
+          },
+        };
+      },
+      {},
+      { jobSettleTimeoutMs: 50 },
+    );
+
+    expect(
+      (
+        await registry.open(first, {
+          analysisMode: "background",
+        })
+      ).ok,
+    ).toBe(true);
+    // The provider client exists, so the close has one to release.
+    await vi.waitFor(() => expect(clients).toBe(1));
+    const targetId = registry.currentTargetId();
+    expect(targetId).toBeDefined();
+
+    // The close gives up on the wedged start, and the provider stays alive.
+    const closed = await registry.close({ targetId: targetId! });
+    expect(closed.ok).toBe(false);
+    expect(closeAttempts).toBe(1);
+
+    // The session still owns the client it could not release, so a later
+    // close retries that cleanup instead of skipping it.
+    const retried = await registry.close({ targetId: targetId! });
+    expect(retried.ok).toBe(true);
+    expect(closeAttempts).toBe(2);
+  });
+});
+
 describe("a background open that fails", () => {
   it("leaves an already open target visible and closable", async () => {
     const [first] = await createBinarySessionTargets();

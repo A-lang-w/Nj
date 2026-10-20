@@ -87,6 +87,8 @@ export interface BinarySessionPort
       readonly snapshot?: AnalysisSnapshot;
       /** Load the staged snapshot inside the open's turn. */
       readonly loadSnapshot?: AnalysisSnapshotLoader;
+      /** Start the selected provider as part of this open. */
+      readonly startProvider?: boolean;
       readonly keepOthersOpen?: boolean;
       readonly analysisMode?: "foreground" | "background" | "auto";
       readonly autoBackgroundAfterMs?: number;

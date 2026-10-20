@@ -5,10 +5,7 @@ import {
   analysisProfilesEqual,
   type AnalysisProfileCommitment,
 } from "../../domain/analysisProfile.js";
-import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -50,6 +47,10 @@ import {
 import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { profilelessNativeDispatchProfile } from "./ProfilelessNativeWorkflowSnapshot.js";
+import {
+  externalMutationRefusal,
+  refusesExternalMutation,
+} from "./ExternalMutationAdmission.js";
 const OFFICIAL_OPERATIONS: ReadonlySet<string> = new Set(
   OFFICIAL_TOOL_CONTRACTS.map(({ name }) => name),
 );
@@ -261,7 +262,7 @@ export class BinarySession
     resolved: Pick<ResolvedSessionOpen, "target" | "route">,
     options: Pick<
       BinarySessionOpenOptions,
-      "signal" | "snapshot" | "loadSnapshot"
+      "signal" | "snapshot" | "loadSnapshot" | "startProvider"
     > = {},
   ): Promise<Result<BinaryTarget, AnalysisError>> {
     return this.#open(
@@ -312,7 +313,10 @@ export class BinarySession
   async #openWithinTransition(
     admittedThrough: number,
     resolve: () => Promise<Result<ResolvedSessionOpen, AnalysisError>>,
-    options: Pick<BinarySessionOpenOptions, "signal" | "snapshot">,
+    options: Pick<
+      BinarySessionOpenOptions,
+      "signal" | "snapshot" | "startProvider"
+    >,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
     const generation = this.#lifecycleGeneration;
     if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true)
@@ -374,9 +378,8 @@ export class BinarySession
     // A provider start that rejects instead of returning an error must still
     // release its client. The rejection would otherwise skip the failure path
     // that owns the cleanup and leave the provider process running.
-    const started = await client
-      .execute("health", {}, options)
-      .catch((cause: unknown) =>
+    const started = await this.#startClient(run, options).catch(
+      (cause: unknown) =>
         err(
           new ProviderAdapterError(route.identity.id, "health", {
             cause,
@@ -386,7 +389,7 @@ export class BinarySession
             },
           }),
         ),
-      );
+    );
     if (this.#pendingStart === run) this.#pendingStart = undefined;
     if (generation !== this.#lifecycleGeneration) {
       // A forced close retired this slot while the start was in flight. The
@@ -434,6 +437,28 @@ export class BinarySession
     return ok(target);
   }
 
+  /**
+   * Start the provider this open binds.
+   *
+   * The health probe is the start for a client that starts its provider with
+   * its first call. A composed client answers that probe without touching a
+   * child, so an open that reports the target as started asks the client to
+   * start the provider it selected. The start belongs to this window, so a
+   * close that gives up on it still owns the client it started.
+   */
+  async #startClient(
+    run: SessionRun,
+    options: Pick<BinarySessionOpenOptions, "signal" | "startProvider">,
+  ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    const health = await run.client.execute("health", {}, options);
+    if (!health.ok) return health;
+    if (options.startProvider !== true) return health;
+    const start = run.client.startProvider;
+    if (start === undefined) return health;
+    const started = await start(options);
+    return started.ok ? health : err(started.error);
+  }
+
   /** Serialize an external mutation and retire the potentially stale analysis. */
   withAdmittedExternalMutation<Value>(
     _path: string | undefined,
@@ -471,13 +496,13 @@ export class BinarySession
       if (!pendingCleanup.ok) return pendingCleanup;
 
       const activeAtDispatch = this.#active;
-      if (activeAtDispatch?.route.binding?.identity.id === "ghidra")
-        return err(
-          new AnalysisOutputError(
-            operationName,
-            "Close the active Ghidra session explicitly before an external mutation; rebinding would discard its ephemeral analysis edits.",
-          ),
-        );
+      if (
+        activeAtDispatch !== undefined &&
+        refusesExternalMutation(
+          activeAtDispatch.route.binding?.identity.id ?? "",
+        )
+      )
+        return err(externalMutationRefusal(operationName));
       // A protocol reply does not prove that background writers have stopped.
       // Retire the old analysis and require an explicit fresh open rather than
       // silently binding a snapshot while an unrestricted command can still write.
@@ -697,8 +722,18 @@ export class BinarySession
     // cleanup keeps that ownership for a retry. Releasing it here would close
     // the client a second time.
     if (this.#pendingCleanup?.run === run) return this.#retryPendingCleanup();
-    run.released = true;
-    return closeAnalysisClient(run.client, run.route.identity.id, {});
+    // Another run may own the pending cleanup. It is retried first, so its
+    // ownership is not lost, and this run waits behind it.
+    const pending = await this.#retryPendingCleanup();
+    if (!pending.ok) return pending;
+    // A failed close keeps this run's cleanup pending, so a later release
+    // retries it. The run is marked released only once the close succeeded;
+    // marking it before would let a client that is still alive escape every
+    // retry.
+    this.#pendingCleanup = { run, retainDocument: false };
+    const closed = await this.#retryPendingCleanup();
+    if (closed.ok) run.released = true;
+    return closed;
   }
 
   async #retryPendingCleanup(

@@ -12,7 +12,10 @@ import type {
   CapabilityDescriptor,
   ExecutionOptions,
   ProviderIdentity,
+  ProviderRequestActivitySnapshot,
+  ProviderRuntimeLineageSnapshot,
 } from "../AnalysisProvider.js";
+import type { ProviderOperationHealth } from "../../domain/providerOperationHealth.js";
 import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
@@ -129,10 +132,12 @@ export class CompositeProvider implements AnalysisProvider {
   readonly #identity: ProviderIdentity;
   readonly #capabilities: readonly CapabilityDescriptor[];
   readonly #providerByOperation: ReadonlyMap<string, AnalysisProvider>;
+  readonly #providers: readonly AnalysisProvider[];
 
   constructor(readonly providers: readonly AnalysisProvider[]) {
     if (providers.length === 0)
       throw new RangeError("CompositeProvider requires at least one provider");
+    this.#providers = providers;
     this.#identity = Object.freeze(
       compositeProviderIdentity(
         providers.map((provider) => provider.identity()),
@@ -191,6 +196,15 @@ export class CompositeProvider implements AnalysisProvider {
       closed = true;
       return closeClients(options);
     };
+    // The selected provider is the one whose profile the route bound. The
+    // health probe answers without touching a child, so the selected
+    // provider is started only when a caller asks for that start.
+    const selected =
+      profile === undefined
+        ? undefined
+        : this.#providers.find(
+            (candidate) => candidate.identity().id === profile.provider.id,
+          );
     return {
       executeIfReady: (operation, parameters, options) => {
         const provider = this.#providerByOperation.get(operation);
@@ -201,13 +215,18 @@ export class CompositeProvider implements AnalysisProvider {
           Promise.resolve(undefined)
         );
       },
+      startProvider: async (options) => {
+        if (closed) return err(clientClosedError(this.#identity.id));
+        if (selected === undefined) return ok(null);
+        const started = await clientFor(selected).execute(
+          "health",
+          {},
+          options,
+        );
+        return started.ok ? ok(null) : err(started.error);
+      },
       execute: async (operation, parameters, options) => {
-        if (closed)
-          return err(
-            new ProviderAdapterError(this.#identity.id, operation, {
-              diagnostics: { reason: "client_closed" },
-            }),
-          );
+        if (closed) return err(clientClosedError(this.#identity.id, operation));
         if (operation === "health")
           return executeCompositeHealth(this.#identity, clients, options);
         const provider = this.#providerByOperation.get(operation);
@@ -223,49 +242,71 @@ export class CompositeProvider implements AnalysisProvider {
             )
           : clientFor(provider).execute(operation, parameters, options);
       },
-      runtimeLineageSnapshots: () =>
-        [...clients.values()]
-          .flatMap((client) => client.runtimeLineageSnapshots?.() ?? [])
-          .sort((left, right) =>
-            compareUnicodeCodePoints(left.provider.id, right.provider.id),
-          ),
-      requestActivitySnapshots: () =>
-        [...clients.values()]
-          .flatMap((client) => client.requestActivitySnapshots?.() ?? [])
-          .sort((left, right) =>
-            compareUnicodeCodePoints(left.provider.id, right.provider.id),
-          ),
-      reuseReadiness: () => {
-        if (closed) return "blocked";
-        const states = [...clients.values()].map(
-          (client) => client.reuseReadiness?.() ?? "unknown",
-        );
-        if (states.some((state) => state === "blocked")) return "blocked";
-        return states.some((state) => state === "unknown")
-          ? "unknown"
-          : "ready";
-      },
-      operationHealthSnapshot: () => {
-        const snapshots = [...clients.values()].map((client) =>
-          client.operationHealthSnapshot?.(),
-        );
-        const failed = snapshots.find(
-          (snapshot) =>
-            snapshot !== undefined &&
-            (snapshot.state === "exited" ||
-              snapshot.state === "unreachable" ||
-              snapshot.state === "not_started"),
-        );
-        if (failed !== undefined) return failed;
-        const nonIdle = snapshots.find(
-          (snapshot) => snapshot !== undefined && snapshot.state !== "idle",
-        );
-        if (nonIdle !== undefined) return nonIdle;
-        if (snapshots.some((snapshot) => snapshot === undefined))
-          return undefined;
-        return snapshots[0];
-      },
+      runtimeLineageSnapshots: () => compositeRuntimeLineage(clients),
+      requestActivitySnapshots: () => compositeRequestActivity(clients),
+      reuseReadiness: () => compositeReuseReadiness(clients, closed),
+      operationHealthSnapshot: () => compositeOperationHealth(clients),
       close,
     };
   }
 }
+
+const clientClosedError = (
+  identity: string,
+  operation = "health",
+): ProviderAdapterError =>
+  new ProviderAdapterError(identity, operation, {
+    diagnostics: { reason: "client_closed" },
+  });
+
+const compositeRuntimeLineage = (
+  clients: ReadonlyMap<AnalysisProvider, AnalysisClient>,
+): readonly ProviderRuntimeLineageSnapshot[] =>
+  [...clients.values()]
+    .flatMap((client) => client.runtimeLineageSnapshots?.() ?? [])
+    .sort((left, right) =>
+      compareUnicodeCodePoints(left.provider.id, right.provider.id),
+    );
+
+const compositeRequestActivity = (
+  clients: ReadonlyMap<AnalysisProvider, AnalysisClient>,
+): readonly ProviderRequestActivitySnapshot[] =>
+  [...clients.values()]
+    .flatMap((client) => client.requestActivitySnapshots?.() ?? [])
+    .sort((left, right) =>
+      compareUnicodeCodePoints(left.provider.id, right.provider.id),
+    );
+
+const compositeReuseReadiness = (
+  clients: ReadonlyMap<AnalysisProvider, AnalysisClient>,
+  closed: boolean,
+): "ready" | "blocked" | "unknown" => {
+  if (closed) return "blocked";
+  const states = [...clients.values()].map(
+    (client) => client.reuseReadiness?.() ?? "unknown",
+  );
+  if (states.some((state) => state === "blocked")) return "blocked";
+  return states.some((state) => state === "unknown") ? "unknown" : "ready";
+};
+
+const compositeOperationHealth = (
+  clients: ReadonlyMap<AnalysisProvider, AnalysisClient>,
+): ProviderOperationHealth | undefined => {
+  const snapshots = [...clients.values()].map((client) =>
+    client.operationHealthSnapshot?.(),
+  );
+  const failed = snapshots.find(
+    (snapshot) =>
+      snapshot !== undefined &&
+      (snapshot.state === "exited" ||
+        snapshot.state === "unreachable" ||
+        snapshot.state === "not_started"),
+  );
+  if (failed !== undefined) return failed;
+  const nonIdle = snapshots.find(
+    (snapshot) => snapshot !== undefined && snapshot.state !== "idle",
+  );
+  if (nonIdle !== undefined) return nonIdle;
+  if (snapshots.some((snapshot) => snapshot === undefined)) return undefined;
+  return snapshots[0];
+};
