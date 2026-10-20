@@ -122,6 +122,35 @@ export const hardwarePeripheralReconstructionSchema = z.strictObject({
   limitations: z.array(z.string()),
 });
 
+const leadingSocPlatforms = (
+  candidates: readonly SocPlatformMatchCandidate[],
+): readonly SocPlatformMatchCandidate[] => {
+  const topCount = candidates[0]?.matchedCount;
+  if (topCount === undefined) return [];
+  return candidates.filter((candidate) => candidate.matchedCount === topCount);
+};
+
+/** Use a catalog only when it is alone at the top and covers half the hits. */
+const chooseDetectedSocPlatform = (
+  candidates: readonly SocPlatformMatchCandidate[],
+): SocPlatform | null => {
+  const leaders = leadingSocPlatforms(candidates);
+  const leader = leaders[0];
+  if (leaders.length !== 1 || leader === undefined || leader.confidence < 0.5) {
+    return null;
+  }
+  return leader.platform;
+};
+
+const unresolvedSocPlatformLimitation = (
+  candidates: readonly SocPlatformMatchCandidate[],
+): string | null => {
+  const leaders = leadingSocPlatforms(candidates);
+  if (leaders.length < 2) return null;
+  const names = leaders.map((candidate) => candidate.platform).join(", ");
+  return `SoC platform is unresolved because ${names} share the highest peripheral match count`;
+};
+
 /**
  * Reconstruct hardware peripheral interactions from a set of analyzed instruction references.
  * Pure deterministic domain workflow for offline and provider-decoupled analysis.
@@ -137,14 +166,13 @@ export const reconstructHardwareFromReferences = (
 
   const candidateAddresses = references.map((r) => r.target_address);
   const detectedPlatforms =
-    platform === null ? detectSocPlatform(candidateAddresses) : [];
-
+    platform === null
+      ? detectSocPlatform(candidateAddresses, architecture)
+      : [];
   const activePlatform =
-    platform ??
-    (detectedPlatforms.length > 0 &&
-    (detectedPlatforms[0]?.confidence ?? 0) >= 0.5
-      ? detectedPlatforms[0]?.platform
-      : null);
+    platform ?? chooseDetectedSocPlatform(detectedPlatforms);
+  const tie = unresolvedSocPlatformLimitation(detectedPlatforms);
+  if (tie !== null) limitations.push(tie);
 
   for (const ref of references) {
     const attributed = attributeHardwareAccess(
@@ -293,5 +321,8 @@ export const reconstructProcedureHardwareInteractions = async (
     platform ?? null,
   );
 
-  return ok(result);
+  return ok({
+    ...result,
+    limitations: [...execution.value.limitations, ...result.limitations],
+  });
 };

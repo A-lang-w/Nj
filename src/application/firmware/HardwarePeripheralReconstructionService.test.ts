@@ -57,11 +57,16 @@ describe("Hardware peripheral reconstruction from offline instruction references
     expect(report.nonMmioAccessCount).toBe(1);
     expect(report.peripheralBlocks).toHaveLength(2);
 
-    // Block 0: UART1 (0x40011000)
+    // 0x40011000 is GPIOC on STM32F1 and GD32, and USART1 on STM32F4.
     const uartBlock = report.peripheralBlocks[0];
     expect(uartBlock?.blockBase).toBe("0x40011000");
     expect(uartBlock?.totalAccesses).toBe(2);
     expect(uartBlock?.knownRegisters).toEqual([]);
+    expect(uartBlock?.regionName).toBe("Peripheral MMIO");
+    expect(uartBlock?.socPeripheralName ?? null).toBeNull();
+    expect(report.limitations).toEqual([
+      "SoC platform is unresolved because stm32f1, stm32f4, gd32f1 share the highest peripheral match count",
+    ]);
 
     // Block 1: SCS (0xe000e000)
     const scsBlock = report.peripheralBlocks[1];
@@ -137,6 +142,71 @@ describe("Hardware peripheral reconstruction from offline instruction references
     expect(report.detectedPlatforms.length).toBeGreaterThanOrEqual(1);
     expect(report.detectedPlatforms[0]?.platform).toBe("stm32f1");
     expect(report.detectedPlatforms[0]?.confidence).toBe(1.0);
+    expect(
+      report.peripheralBlocks.every((block) => block.socPeripheralName == null),
+    ).toBe(true);
+    expect(report.limitations[0]).toContain("stm32f1, gd32f1");
+  });
+});
+
+describe("SoC catalog selection", () => {
+  it("names a peripheral only when one catalog leads", () => {
+    const report = reconstructHardwareFromReferences(
+      [{ target_address: "0x40023800", read: true }],
+      "arm",
+    );
+
+    expect(report.detectedPlatforms).toEqual([
+      {
+        platform: "stm32f4",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["RCC"],
+      },
+    ]);
+    expect(report.peripheralBlocks[0]?.socPeripheralName).toBe("RCC");
+    expect(report.peripheralBlocks[0]?.regionKind).toBe("peripheral_mmio");
+    expect(report.limitations).toEqual([]);
+  });
+
+  it("keeps an ESP32-C UART when unrelated references are present", () => {
+    const report = reconstructHardwareFromReferences(
+      [
+        { target_address: "0x60000000", read: true },
+        { target_address: "0x20000040", read: true },
+        { target_address: "0x80001000", read: true },
+      ],
+      "riscv",
+    );
+
+    expect(report.detectedPlatforms[0]).toMatchObject({
+      platform: "esp32",
+      matchedCount: 1,
+      totalAddresses: 1,
+      confidence: 1,
+    });
+    const uart = report.peripheralBlocks.find(
+      (block) => block.socPeripheralName === "UART0",
+    );
+    expect(uart?.regionKind).toBe("peripheral_mmio");
+    expect(uart?.socPeripheralBus).toBe("System");
+  });
+
+  it("does not rename an x86 data read to an ESP32 UART", () => {
+    const report = reconstructHardwareFromReferences(
+      [{ target_address: "0x3ff40000", read: true }],
+      "x86",
+    );
+
+    expect(report.detectedPlatforms).toEqual([]);
+    expect(
+      report.peripheralBlocks.some((block) =>
+        (block.socPeripheralName ?? "").includes("UART0"),
+      ),
+    ).toBe(false);
+    expect(report.attributions[0]?.regionName).toBe("System RAM");
+    expect(report.attributions[0]?.isMmio).toBe(false);
   });
 });
 
@@ -325,5 +395,43 @@ describe("Ghidra procedure reference shape", () => {
     if (!result.ok) return;
     expect(result.value.totalReferencesExamined).toBe(1);
     expect(result.value.attributions[0]?.targetAddress).toBe("0x40011000");
+  });
+
+  it("keeps provider limitations ahead of local address errors", async () => {
+    const providerLimitation = "Ghidra omitted operand kinds for one edge";
+    const execution: AnalysisExecution = {
+      result: {
+        procedure: ghidraFunctionIdentity(),
+        direction: "outgoing",
+        reference_kinds_available: true,
+        references: [
+          ghidraReferenceEdge(),
+          { ...ghidraReferenceEdge(), target_address: "not-an-address" },
+        ],
+        unresolved_calls: [],
+      },
+      rawResult: null,
+      provider: { id: "ghidra", name: "Ghidra", version: "12.1.4" },
+      locations: [],
+      subject: {
+        sha256: "c".repeat(64),
+        path: "/tmp/firmware.bin",
+        format: "raw-binary",
+        architecture: "arm",
+      },
+      limitations: [providerLimitation],
+    };
+
+    const result = await reconstructProcedureHardwareInteractions(
+      { execute: () => Promise.resolve(ok(execution)) },
+      { procedure: "fixture_main", architecture: "arm" },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.limitations[0]).toBe(providerLimitation);
+    expect(result.value.limitations.at(-1)).toContain(
+      "Failed to attribute reference to not-an-address",
+    );
   });
 });

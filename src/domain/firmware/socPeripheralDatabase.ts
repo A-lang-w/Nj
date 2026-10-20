@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { HardwareArchitecture } from "./hardwareMemoryMap.js";
 
 /** Supported microcontroller and SoC platform families. */
 export const SOC_PLATFORMS = ["stm32f1", "stm32f4", "gd32f1", "esp32"] as const;
@@ -819,6 +820,14 @@ const PLATFORM_PERIPHERALS: Record<
   esp32: ESP32_PERIPHERALS,
 };
 
+/** CPU families whose memory maps can contain each catalog. */
+const PLATFORM_CPU: Record<SocPlatform, readonly HardwareArchitecture[]> = {
+  stm32f1: ["arm"],
+  stm32f4: ["arm"],
+  gd32f1: ["arm"],
+  esp32: ["riscv"],
+};
+
 const HEX_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{1,16}$/u;
 
 /**
@@ -880,38 +889,59 @@ export interface SocPlatformMatchCandidate {
 }
 
 /**
- * Automatically detect candidate SoC platforms given a list of observed MMIO addresses.
- * Useful when inspecting raw firmware where the specific MCU is unconfirmed.
+ * Rank SoC catalogs against observed addresses.
+ *
+ * Catalogs whose CPU does not match `architecture` are ignored. Confidence
+ * uses only addresses that hit a compatible catalog, so code and SRAM
+ * references do not dilute a single peripheral hit. Callers must not treat
+ * the first row as a decision when several catalogs share that match count.
  */
 export const detectSocPlatform = (
   addresses: readonly string[],
+  architecture?: HardwareArchitecture,
 ): readonly SocPlatformMatchCandidate[] => {
-  if (addresses.length === 0) return [];
+  const platforms =
+    architecture === undefined
+      ? SOC_PLATFORMS
+      : SOC_PLATFORMS.filter((platform) =>
+          PLATFORM_CPU[platform].includes(architecture),
+        );
+  if (addresses.length === 0 || platforms.length === 0) return [];
 
-  const candidates: SocPlatformMatchCandidate[] = [];
+  const hits = new Map<SocPlatform, { count: number; names: Set<string> }>(
+    platforms.map((platform) => [platform, { count: 0, names: new Set() }]),
+  );
+  let relevantAddresses = 0;
 
-  for (const platform of SOC_PLATFORMS) {
-    const matchedNames = new Set<string>();
-    let matchedCount = 0;
-
-    for (const addr of addresses) {
-      const match = lookupSocPeripheral(addr, platform);
-      if (match !== null) {
-        matchedCount += 1;
-        matchedNames.add(match.name);
-      }
+  for (const address of addresses) {
+    let relevant = false;
+    for (const platform of platforms) {
+      const match = lookupSocPeripheral(address, platform);
+      const bucket = hits.get(platform);
+      if (match === null || bucket === undefined) continue;
+      relevant = true;
+      bucket.count += 1;
+      bucket.names.add(match.name);
     }
-
-    if (matchedCount > 0) {
-      candidates.push({
-        platform,
-        matchedCount,
-        totalAddresses: addresses.length,
-        confidence: Number((matchedCount / addresses.length).toFixed(3)),
-        matchedPeripherals: Array.from(matchedNames).sort(),
-      });
-    }
+    if (relevant) relevantAddresses += 1;
   }
 
-  return candidates.sort((a, b) => b.matchedCount - a.matchedCount);
+  if (relevantAddresses === 0) return [];
+
+  const candidates: SocPlatformMatchCandidate[] = [];
+  for (const platform of platforms) {
+    const bucket = hits.get(platform);
+    if (bucket === undefined || bucket.count === 0) continue;
+    candidates.push({
+      platform,
+      matchedCount: bucket.count,
+      totalAddresses: relevantAddresses,
+      confidence: Number((bucket.count / relevantAddresses).toFixed(3)),
+      matchedPeripherals: Array.from(bucket.names).sort(),
+    });
+  }
+
+  return candidates.sort(
+    (left, right) => right.matchedCount - left.matchedCount,
+  );
 };

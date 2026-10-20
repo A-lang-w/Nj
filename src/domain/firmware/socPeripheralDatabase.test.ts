@@ -99,4 +99,47 @@ describe("ESP32 peripheral lookup and automated platform detection", () => {
     expect(lookupSocPeripheral("invalid", "esp32")).toBeNull();
     expect(detectSocPlatform(["0x12345678", "0x87654321"])).toEqual([]);
   });
+
+  it("scores only addresses that hit a CPU-compatible catalog", () => {
+    const diluted = detectSocPlatform(
+      ["0x60000000", "0x20000040", "0x80001000"],
+      "riscv",
+    );
+    expect(diluted).toEqual([
+      {
+        platform: "esp32",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["UART0"],
+      },
+    ]);
+
+    expect(detectSocPlatform(["0x3ff40000"], "x86")).toEqual([]);
+    expect(detectSocPlatform(["0x40011000"], "arm64")).toEqual([]);
+    expect(detectSocPlatform(["0x40023800"], "arm")).toEqual([
+      {
+        platform: "stm32f4",
+        matchedCount: 1,
+        totalAddresses: 1,
+        confidence: 1,
+        matchedPeripherals: ["RCC"],
+      },
+    ]);
+  });
+
+  it("keeps overlapping STM32 and GD32 catalogs tied", () => {
+    const tied = detectSocPlatform(
+      ["0x40013800", "0x40010800", "0x40021000"],
+      "arm",
+    );
+    const leaders = tied.filter(
+      (candidate) => candidate.matchedCount === tied[0]?.matchedCount,
+    );
+    expect(leaders.map((candidate) => candidate.platform)).toEqual([
+      "stm32f1",
+      "gd32f1",
+    ]);
+    expect(leaders.every((candidate) => candidate.confidence === 1)).toBe(true);
+  });
 });
