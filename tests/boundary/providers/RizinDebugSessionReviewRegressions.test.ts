@@ -1365,7 +1365,7 @@ process.stdin.on("data", (chunk) => {
     await selectedExit;
     expect((await manager.retryCleanupFailures()).ok).toBe(false);
     expect(detachOutcomes.at(-1)).toContain(
-      `omitted retained inferior PID ${mismatched.pid}`,
+      `omitted unresolved inferior PID ${mismatched.pid}`,
     );
     expect(mismatched.exitCode).toBeNull();
     expect(
@@ -1672,6 +1672,103 @@ it.skipIf(process.platform !== "linux")(
 );
 
 it.skipIf(process.platform !== "linux")(
+  "retains a newly observed PID when identity lookup fails before an empty retry inventory",
+  async () => {
+    const inferior = await spawnTestInferior();
+    expect(inferior.pid).toBeDefined();
+    if (inferior.pid === undefined) return;
+    directory = await mkdtemp(
+      join(tmpdir(), "rea-rizin-new-pending-identity-"),
+    );
+    const provider = join(directory, "fake-rizin-new-pending-identity.mjs");
+    await writeFile(
+      provider,
+      `#!/usr/bin/env node
+process.stdout.write("\\0");
+let input = "";
+let inventory = 0;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n"); if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    if (line === "olj") {
+      inventory += 1;
+      process.stdout.write((inventory === 1
+        ? JSON.stringify([{ fd: 12, raised: true, uri: "ptrace://${inferior.pid}" }])
+        : "[]") + "\\0");
+    }
+    else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
+    else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
+    else process.stdout.write("\\0");
+  }
+});
+`,
+    );
+    await chmod(provider, 0o700);
+
+    let identityReads = 0;
+    const outcomes: string[] = [];
+    const manager = new RizinDebugSessionManager(
+      { ...process.env, REA_RIZIN_COMMAND: provider },
+      {
+        platform: "linux",
+        readProcessStartTime: async (pid) => {
+          expect(pid).toBe(String(inferior.pid));
+          if (identityReads++ === 0)
+            throw new Error("transient identity read failure for new PID");
+          return inferior.exitCode === null && inferior.signalCode === null
+            ? "100"
+            : null;
+        },
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          ownedProviderProcesses.push(launched.process);
+          return launched;
+        },
+        stopProcess: async (session) => {
+          try {
+            outcomes.push(
+              (await session.detachInferior?.())?.status ?? "missing-detach",
+            );
+          } catch (cause) {
+            outcomes.push(
+              cause instanceof Error ? cause.message : String(cause),
+            );
+          }
+          return { status: "incomplete", reason: "injected retained debugger" };
+        },
+      },
+    );
+    managers.push(manager);
+    const started = await manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: await rizinTestInferiorTty(),
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    expect((await manager.close(started.value.session_id)).ok).toBe(false);
+    expect(outcomes[0]).toContain("transient identity read failure");
+    expect((await manager.retryCleanupFailures()).ok).toBe(false);
+    expect(outcomes[1]).toContain(
+      `omitted unresolved inferior PID ${inferior.pid}`,
+    );
+    expect(outcomes[1]).not.toBe("no-inferior");
+    expect(inferior.exitCode).toBeNull();
+
+    const inferiorExit = new Promise<void>((resolve) =>
+      inferior.once("exit", () => resolve()),
+    );
+    inferior.kill("SIGTERM");
+    await inferiorExit;
+    expect((await manager.retryCleanupFailures()).ok).toBe(false);
+    expect(outcomes[2]).toBe("no-inferior");
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
   "keeps a partially observed PID unknown until identity or exit is proven",
   async () => {
     const inferior = await spawnTestInferior();
@@ -1750,6 +1847,132 @@ process.stdin.on("data", (chunk) => {
     expect(outcomes.at(-1)).toContain("identity");
     expect(outcomes.at(-1)).not.toBe("no-inferior");
     expect(inferior.exitCode).toBeNull();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "retains a later valid PID while reconciling a pending PID omitted after a partial inventory",
+  async () => {
+    const earlier = await spawnTestInferior();
+    const later = await spawnTestInferior();
+    expect(earlier.pid).toBeDefined();
+    expect(later.pid).toBeDefined();
+    if (earlier.pid === undefined || later.pid === undefined) return;
+    directory = await mkdtemp(join(tmpdir(), "rea-rizin-pending-pid-order-"));
+    const commandsPath = join(directory, "commands");
+    const provider = join(directory, "fake-rizin-pending-pid-order.mjs");
+    await writeFile(
+      provider,
+      `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+process.stdout.write("\\0");
+let input = "";
+let inventory = 0;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n"); if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    appendFileSync(${JSON.stringify(commandsPath)}, line + "\\n");
+    if (line === "olj") {
+      inventory += 1;
+      const output = inventory === 1
+        ? JSON.stringify([{ fd: 12, raised: true, uri: "ptrace://${earlier.pid}" }, {}])
+        : inventory === 2
+          ? JSON.stringify([{ fd: 13, raised: true, uri: "ptrace://${later.pid}" }])
+          : "[]";
+      process.stdout.write(output + "\\0");
+    }
+    else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
+    else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
+    else process.stdout.write("\\0");
+  }
+});
+`,
+    );
+    await chmod(provider, 0o700);
+
+    let earlierIdentityReads = 0;
+    let earlierIdentityReadFailed = false;
+    const outcomes: string[] = [];
+    const manager = new RizinDebugSessionManager(
+      { ...process.env, REA_RIZIN_COMMAND: provider },
+      {
+        platform: "linux",
+        readProcessStartTime: async (pid) => {
+          if (pid === String(earlier.pid)) {
+            if (earlierIdentityReads++ === 0) {
+              earlierIdentityReadFailed = true;
+              throw new Error(
+                "transient identity read failure for earlier PID",
+              );
+            }
+            return earlier.exitCode === null && earlier.signalCode === null
+              ? "100"
+              : null;
+          }
+          if (pid === String(later.pid))
+            return later.exitCode === null && later.signalCode === null
+              ? "200"
+              : null;
+          throw new Error(`unexpected PID ${pid}`);
+        },
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          ownedProviderProcesses.push(launched.process);
+          return launched;
+        },
+        stopProcess: async (session) => {
+          try {
+            outcomes.push(
+              (await session.detachInferior?.())?.status ?? "missing-detach",
+            );
+          } catch (cause) {
+            outcomes.push(
+              cause instanceof Error ? cause.message : String(cause),
+            );
+          }
+          return { status: "incomplete", reason: "injected retained debugger" };
+        },
+      },
+    );
+    managers.push(manager);
+    const started = await manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: await rizinTestInferiorTty(),
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    expect((await manager.close(started.value.session_id)).ok).toBe(false);
+    expect((await manager.retryCleanupFailures()).ok).toBe(false);
+    expect(earlierIdentityReadFailed).toBe(true);
+    expect(outcomes[0]).toContain("malformed descriptor row");
+    expect(outcomes[1]).toContain(
+      `omitted unresolved inferior PID ${earlier.pid}`,
+    );
+
+    const earlierExit = new Promise<void>((resolve) =>
+      earlier.once("exit", () => resolve()),
+    );
+    earlier.kill("SIGTERM");
+    await earlierExit;
+    expect((await manager.retryCleanupFailures()).ok).toBe(false);
+    expect(outcomes[2]).toContain(
+      `omitted unresolved inferior PID ${later.pid}`,
+    );
+    expect(outcomes[2]).not.toBe("no-inferior");
+    expect(later.exitCode).toBeNull();
+    expect(await readFile(commandsPath, "utf8")).not.toContain("o- ");
+
+    const laterExit = new Promise<void>((resolve) =>
+      later.once("exit", () => resolve()),
+    );
+    later.kill("SIGTERM");
+    await laterExit;
+    expect((await manager.retryCleanupFailures()).ok).toBe(false);
+    expect(outcomes[3]).toBe("no-inferior");
   },
 );
 

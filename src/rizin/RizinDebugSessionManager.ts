@@ -1209,7 +1209,12 @@ export class RizinDebugSessionManager {
     );
     let identityFailure: unknown;
     if (parsed.error === undefined) {
-      for (const pid of [...session.pendingInferiorPids]) {
+      const pendingAtStart = [...session.pendingInferiorPids];
+      // Retain every reported PID before reconciling previously pending
+      // identities. Resolving an older PID can fail, but must not discard
+      // targets observed in this complete inventory.
+      for (const [, pid] of parsed.rows) session.pendingInferiorPids.add(pid);
+      for (const pid of pendingAtStart) {
         try {
           if (parsed.rows.some(([, observedPid]) => observedPid === pid)) {
             await this.#resolveInferiorRowIdentity(session, pid);
@@ -1533,17 +1538,27 @@ export class RizinDebugSessionManager {
     session: RizinDebugSession,
     pid: string,
   ): Promise<OwnedInferiorIdentity | undefined> {
+    const resolved = (identity: OwnedInferiorIdentity | undefined) => {
+      session.pendingInferiorPids.delete(pid);
+      return identity;
+    };
     const previous = session.knownInferiorIdentities.get(pid);
     const startTime = await this.#readProcessStartTime(pid);
     if (startTime === null) {
-      if (previous === undefined)
+      if (previous === undefined) {
+        // A PID reported by Rizin but not yet identified may have exited
+        // before the caller can resolve it. Require a second absent read
+        // before releasing the retained row.
+        if ((await this.#readProcessStartTime(pid)) === null)
+          return resolved(undefined);
         throw new Error(
           `Inferior PID ${pid} ended before its identity could be established.`,
         );
+      }
       // A transient ENOENT can race with PID reuse. Confirm the second lookup
       // directly so a new identity still goes through tracer ownership checks.
       const confirmedStartTime = await this.#readProcessStartTime(pid);
-      if (confirmedStartTime === null) return undefined;
+      if (confirmedStartTime === null) return resolved(undefined);
       if (
         previous.startTime !== confirmedStartTime &&
         !(await this.#replacementIsTracedByOwnedDebugger(
@@ -1553,11 +1568,11 @@ export class RizinDebugSessionManager {
         ))
       ) {
         await this.#verifyDebuggerExitPolicy(session);
-        return undefined;
+        return resolved(undefined);
       }
       const identity = { pid, startTime: confirmedStartTime };
       session.knownInferiorIdentities.set(pid, identity);
-      return identity;
+      return resolved(identity);
     }
     if (
       previous !== undefined &&
@@ -1568,7 +1583,7 @@ export class RizinDebugSessionManager {
       // TracerPid identifies whether that row could still affect a replacement;
       // only a fresh debugger policy readback makes a stale row ignorable.
       await this.#verifyDebuggerExitPolicy(session);
-      return undefined;
+      return resolved(undefined);
     }
     const identity = { pid, startTime };
     const confirmedDetach = session.confirmedDetachedInferiorIdentity;
@@ -1580,10 +1595,10 @@ export class RizinDebugSessionManager {
       // A stale ptrace row can survive detach while the same process remains
       // alive. Confirm it is no longer traced before ignoring the row.
       await this.#verifyDebuggerExitPolicy(session);
-      return undefined;
+      return resolved(undefined);
     }
     session.knownInferiorIdentities.set(pid, identity);
-    return identity;
+    return resolved(identity);
   }
 
   async #verifyConfirmedDetachedInferior(
