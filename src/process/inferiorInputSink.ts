@@ -23,13 +23,44 @@ const NULL_DEVICE = "/dev/null";
 export const verifyInferiorInputSink = async (
   pid: string,
   terminal: SelectedTerminal,
+  verifyOwnedIdentity?: () => Promise<void>,
 ): Promise<InferiorInputSink> => {
   if (process.platform !== "linux")
     throw new Error(
       "Inferior input descriptors can only be verified through Linux /proc.",
     );
   const descriptorPath = `/proc/${pid}/fd/0`;
-  const destination = await readlink(descriptorPath);
+  let destination: string;
+  try {
+    destination = await readlink(descriptorPath);
+  } catch (cause) {
+    if (
+      cause instanceof Error &&
+      "code" in cause &&
+      cause.code === "ENOENT" &&
+      verifyOwnedIdentity !== undefined
+    ) {
+      // A process may close fd 0 while retaining its output streams. Confirm
+      // the process identity between two observations so a reused PID or a
+      // descriptor reopened during the read cannot be mistaken for absence.
+      await verifyOwnedIdentity();
+      try {
+        destination = await readlink(descriptorPath);
+      } catch (secondCause) {
+        if (
+          secondCause instanceof Error &&
+          "code" in secondCause &&
+          secondCause.code === "ENOENT"
+        ) {
+          await verifyOwnedIdentity();
+          return "not-inherited";
+        }
+        throw secondCause;
+      }
+    } else {
+      throw cause;
+    }
+  }
   const observed = await stat(descriptorPath);
   const isCharacterDevice =
     (observed.mode & fsConstants.S_IFMT) === fsConstants.S_IFCHR;

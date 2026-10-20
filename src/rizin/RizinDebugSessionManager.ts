@@ -1285,11 +1285,22 @@ export class RizinDebugSessionManager {
           `Inferior descriptor ${descriptor} is not routed to the selected TTY.`,
         );
     }
-    return verifyInferiorInputSink(pid, {
-      path: session.inferiorTty,
-      dev: session.inferiorTtyDevice,
-      ino: session.inferiorTtyInode,
-    });
+    const identity = session.knownInferiorIdentities.get(pid);
+    if (identity === undefined)
+      throw new Error("Rizin has no owned identity for the selected inferior.");
+    return verifyInferiorInputSink(
+      pid,
+      {
+        path: session.inferiorTty,
+        dev: session.inferiorTtyDevice,
+        ino: session.inferiorTtyInode,
+      },
+      async () =>
+        assertRizinProcessStartTimeStable(
+          identity.startTime,
+          await readLinuxProcessStartTime(pid),
+        ),
+    );
   }
 
   async #runInternalCommand(

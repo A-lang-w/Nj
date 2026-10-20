@@ -449,11 +449,23 @@ const verifyGdbInferiorOutputSink = async (
   // Preserve the proven identity even if fd 0 cannot be classified. A later
   // retry can then confirm that the inferior ended after GDB exits.
   rememberIdentity({ pid, startTime: before });
-  const inputSink = await verifyInferiorInputSink(pid, {
-    path: ttyPath,
-    dev: tty.dev,
-    ino: tty.ino,
-  });
+  const inputSink = await verifyInferiorInputSink(
+    pid,
+    {
+      path: ttyPath,
+      dev: tty.dev,
+      ino: tty.ino,
+    },
+    async () => {
+      const currentStat = parseLinuxProcessStat(
+        await readFile(statPath, "utf8"),
+      );
+      if (currentStat?.pid !== expectedPid || currentStat.startTime !== before)
+        throw new Error(
+          "The GDB inferior identity changed while verifying its closed stdin descriptor.",
+        );
+    },
+  );
   return inputSink;
 };
 
