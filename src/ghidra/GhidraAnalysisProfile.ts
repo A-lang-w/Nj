@@ -249,8 +249,8 @@ export const resolveGhidraAnalysisProfile = async (
           ? {
               borland_seh_recovery:
                 installation.platform === "win32"
-                  ? "observe-only-windows-p0-v1"
-                  : "rtl-identity-gated-unowned-body-gaps-v2",
+                  ? "observe-only-windows-p0-containment-v2"
+                  : "bounded-rtl-identity-and-containment-v3",
             }
           : {}),
         function_references: "complete-body-and-entry-reference-manager-v2",

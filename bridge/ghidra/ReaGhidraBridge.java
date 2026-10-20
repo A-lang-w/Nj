@@ -2082,13 +2082,19 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (function != null) {
             result.addProperty("found", true);
             result.add("procedure", procedureIdentity(function));
-            return result;
+            return functionObservation(result, new FunctionBoundaryLimitations(function).values());
         }
         result.addProperty("found", false);
         result.add("procedure", JsonNull.INSTANCE);
         boolean inside = query.isMemoryAddress() && currentProgram.getMemory().contains(query);
         result.addProperty("reason", inside ? "not_in_procedure" : "outside_segments");
-        return result;
+        List<String> limitations = new ArrayList<>();
+        for (var observation : sehObservations.values()) {
+            if (!observation.handlers().contains(query)) continue;
+            limitations.addAll(observation.diagnostics());
+            limitations.addAll(observation.omissions());
+        }
+        return functionObservation(result, limitations);
     }
 
     private JsonArray search(JsonObject params, boolean procedureSearch) throws Exception {

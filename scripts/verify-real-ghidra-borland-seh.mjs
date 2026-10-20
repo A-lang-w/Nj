@@ -167,6 +167,12 @@ try {
     const resolved = parseEvidence(
       await call("resolve_containing_procedure", { address: "0x401025" }),
     );
+    assert.ok(
+      resolved.limitations.some(
+        (text) =>
+          text.includes("SEH registration") && text.includes("included"),
+      ),
+    );
     assert.equal(resolved.normalized_result.found, true);
     assert.equal(resolved.normalized_result.procedure.address, "0x401000");
     const info = parseEvidence(
@@ -216,6 +222,14 @@ try {
         text.includes("No supplied Borland RTL identity"),
       ),
     );
+    const omittedContainment = parseEvidence(
+      await call("resolve_containing_procedure", { address: "0x401020" }),
+    );
+    assert.ok(
+      omittedContainment.limitations.some((text) =>
+        text.includes("No supplied Borland RTL identity"),
+      ),
+    );
     await call("close_binary", {});
   } finally {
     try {
@@ -247,7 +261,10 @@ try {
         "procedure_reference_provenance",
         "partial_coverage_retains_indirect_call_diagnostics",
         "handler_only_string_and_call",
-        "containing_procedure",
+        "containing_procedure_provenance",
+        "in_span_independent_rtl",
+        "initially_undecoded_veneer_provenance",
+        "bounded_gap_omission",
         "nonzero_fs_rejected",
         "independent_owner_preserved",
         "windows_observe_only_policy",

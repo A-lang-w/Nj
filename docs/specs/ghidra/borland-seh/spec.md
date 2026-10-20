@@ -26,3 +26,13 @@ Record recognized registrations and remaining omissions as Evidence limitations.
 
 No target execution, Windows P0 mutation, general exception-table recovery,
 guessed compiler version, or forced ownership outside the existing body span.
+
+## Follow-up review contracts
+
+Bound speculative handler recovery across the complete startup analysis by
+instruction visits, decoded bytes and queued work. Exhaustion preserves a typed
+static-coverage omission and must not publish a partially expanded body. RTL
+identity uses actual FunctionManager ownership and AddressSet membership, even
+inside the enclosing numeric span. Retain the validated veneer fact from its
+producer, including an initially undecoded entry. Containment queries carry the
+same SEH observations for recovered addresses and known omitted handler entries.

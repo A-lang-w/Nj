@@ -50,3 +50,24 @@ JDK 21 and darwin/arm64:
   Windows-host execution and full public-target coverage remain unverified.
 - No controlled speed, live-model token or process-family memory comparison was
   performed for this pass; no performance improvement is claimed.
+
+## Follow-up review implementation
+
+Use one analysis-wide recovery budget (16,384 instruction/work visits, 64 KiB
+new instruction bytes, and 4,096 queued addresses), charged before disassembly
+or enqueueing. Restrict each DisassembleCommand to the x86 maximum instruction
+extent (15 bytes) and disable flow following. Exhaustion is an omission, not a
+format limit. Re-read the entry instruction at the producing boundary after recovery.
+Wrap containment in the existing value/limitations envelope and validate that
+operation's envelope at the inventory boundary. Exercise budget exhaustion,
+in-span independent RTL, initially cleared instructions, and positive/negative
+containment through real Ghidra and CLI/MCP.
+
+Follow-up validation on `ccc7da309`: 204 tests passed across function/inventory
+values, client lifecycle, bridge-source ownership and inventory MCP. The real
+Ghidra probe/CLI/MCP run passed the large NOP-gap budget omission without partial
+body publication, in-span independent RTL, initially undecoded veneer provenance,
+and positive/omitted containment provenance. Target SHA-256 remained unchanged;
+runtime roots were empty and process lineage was positively verified empty.
+Static and documentation checks passed. Windows-host and full public-binary
+coverage remain unverified; no new performance improvement is claimed.

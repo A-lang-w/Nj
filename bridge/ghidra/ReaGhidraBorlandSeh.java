@@ -18,11 +18,20 @@ import java.util.Map;
 public final class ReaGhidraBorlandSeh {
     public record Observation(List<String> diagnostics, List<String> omissions, List<Address> handlers) {}
 
+    /** Analysis-wide resource admission, not a claim about compiler limits. */
+    private static final class RecoveryBudget {
+        int visits = 16_384;
+        long bytes = 64 * 1024;
+        static final int MAX_PENDING = 4096;
+        static final String EXHAUSTED = "Handler recovery resource budget exhausted; static coverage remains partial.";
+    }
+
     public static Map<Address, Observation> analyze(Program program, TaskMonitor monitor,
             boolean allowMutation) throws Exception {
         Map<Address, Observation> observations = new LinkedHashMap<>();
         if (!program.getExecutableFormat().equals("Portable Executable (PE)") ||
             !program.getLanguageID().getIdAsString().startsWith("x86:LE:32:")) return observations;
+        RecoveryBudget budget = new RecoveryBudget();
         AddressSet owned = new AddressSet();
         for (Function function : program.getFunctionManager().getFunctions(true)) {
             monitor.checkCancelled();
@@ -47,7 +56,8 @@ public final class ReaGhidraBorlandSeh {
                             function.getBody().contains(entry.getMaxAddress().next())));
                 String failure = included ? null :
                     !allowMutation ? "Windows P0 does not admit handler body recovery." :
-                    recover(program, function, handler, owned, monitor);
+                    recover(program, function, handler, owned, monitor, budget);
+                entry = program.getListing().getInstructionAt(handler);
                 owned.add(function.getBody());
                 AddressSet newlyOwned = new AddressSet(function.getBody()).subtract(previous);
                 for (Address nested : registrations(program, function, newlyOwned, monitor))
@@ -113,7 +123,7 @@ public final class ReaGhidraBorlandSeh {
     }
 
     private static String recover(Program program, Function function, Address handler,
-            AddressSet owned, TaskMonitor monitor) throws Exception {
+            AddressSet owned, TaskMonitor monitor, RecoveryBudget budget) throws Exception {
         AddressSet original = new AddressSet(function.getBody());
         if (!original.getMinAddress().getAddressSpace().equals(original.getMaxAddress().getAddressSpace()) ||
             !handler.getAddressSpace().equals(
@@ -145,6 +155,8 @@ public final class ReaGhidraBorlandSeh {
         boolean veneer = false;
         while (!pending.isEmpty()) {
             monitor.checkCancelled();
+            if (budget.visits-- <= 0 || pending.size() > RecoveryBudget.MAX_PENDING)
+                return RecoveryBudget.EXHAUSTED;
             Address address = pending.removeFirst();
             if (original.contains(address)) {
                 Instruction existing = program.getListing().getInstructionAt(address);
@@ -158,13 +170,19 @@ public final class ReaGhidraBorlandSeh {
             if (!allowed.contains(address)) return "Handler flow crosses a data or ownership boundary.";
             Instruction instruction = program.getListing().getInstructionAt(address);
             if (instruction == null) {
-                DisassembleCommand command = new DisassembleCommand(new AddressSet(address), allowed, false);
+                if (budget.bytes < 15) return RecoveryBudget.EXHAUSTED;
+                Address maximum = address;
+                for (int index = 0; index < 14 && maximum.next() != null; index++) maximum = maximum.next();
+                AddressSet decode = new AddressSet(address, maximum).intersect(allowed);
+                DisassembleCommand command = new DisassembleCommand(new AddressSet(address), decode, false);
                 command.enableCodeAnalysis(false);
                 command.applyTo(program, monitor);
                 instruction = program.getListing().getInstructionAt(address);
             }
             if (instruction == null || !allowed.contains(instruction.getMinAddress(), instruction.getMaxAddress()))
                 return "Handler flow could not be decoded completely within the unowned gap.";
+            if (instruction.getLength() > budget.bytes) return RecoveryBudget.EXHAUSTED;
+            budget.bytes -= instruction.getLength();
             added.add(instruction.getMinAddress(), instruction.getMaxAddress());
             var flow = instruction.getFlowType();
             Address[] destinations = instruction.getFlows();
@@ -178,6 +196,8 @@ public final class ReaGhidraBorlandSeh {
             if (flow.isJump()) {
                 if (flow.isComputed() || destinations.length == 0)
                     return "Handler has an unresolved computed jump.";
+                if (pending.size() + destinations.length > RecoveryBudget.MAX_PENDING)
+                    return RecoveryBudget.EXHAUSTED;
                 pending.addAll(Arrays.asList(destinations));
             }
             Address fallthrough = instruction.getFallThrough();
@@ -233,8 +253,7 @@ public final class ReaGhidraBorlandSeh {
         if (!flow.isJump() || flow.isConditional() || flow.isComputed() || targets.length != 1) return false;
         Address target = targets[0];
         if (!target.getAddressSpace().equals(function.getEntryPoint().getAddressSpace()) ||
-            (target.compareTo(function.getBody().getMinAddress()) >= 0 &&
-                target.compareTo(function.getBody().getMaxAddress()) <= 0)) return false;
+            function.getBody().contains(target)) return false;
         MemoryBlock block = program.getMemory().getBlock(target);
         return block != null && block.isInitialized() && block.isExecute() &&
             program.getListing().getDefinedDataContaining(target) == null;
