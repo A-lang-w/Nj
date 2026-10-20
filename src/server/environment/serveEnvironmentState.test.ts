@@ -627,6 +627,57 @@ describe("state data plane response budget", () => {
   });
 });
 
+describe("state data plane response budget reserve", () => {
+  it("keeps room for every later refusal and the batch's framing, so the body never passes the budget", async () => {
+    const document = renamedDocument();
+    const withLogin = (login: string) => ({
+      rea_state: {
+        ...document.rea_state,
+        entities: document.rea_state.entities.map((entity) =>
+          entity.type === "/api/users" && entity.id === "2"
+            ? { ...entity, fields: { ...entity.fields, login } }
+            : entity,
+        ),
+      },
+    });
+    const plane = dataPlane();
+    await plane.add({ kind: "data", data: withLogin("") });
+    const base = Buffer.byteLength(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        result: { parts: [{ kind: "data", data: plane.store.snapshot() }] },
+      }),
+    );
+    // Three reads that alone fall 100 bytes short of the budget.
+    const login = "x".repeat(
+      Math.floor((MAX_RPC_RESPONSE_BYTES - 100) / 3) - base,
+    );
+    const root = await createTestTempDirectory(
+      "rea-environment-state-reserve-",
+    );
+    const path = join(root, "large.json");
+    await writeFile(path, JSON.stringify(withLogin(login)));
+    await plane.add({ kind: "file", file: { uri: pathToFileURL(path).href } });
+    const ids = Array.from({ length: 23 }, (_, index) => index + 1);
+    const batch = await plane.post(
+      ids.map((id) => ({ jsonrpc: "2.0", id, method: "data/get" })),
+    );
+    // The third read would leave no room for the twenty refusals after it.
+    expect((batch.json as unknown[]).slice(0, 3)).toMatchObject([
+      { id: 1, result: {} },
+      { id: 2, result: {} },
+      { id: 3, error: { code: -32000 } },
+    ]);
+    expect((batch.json as { id: number }[]).map((reply) => reply.id)).toEqual(
+      ids,
+    );
+    expect(Buffer.byteLength(JSON.stringify(batch.json))).toBeLessThanOrEqual(
+      MAX_RPC_RESPONSE_BYTES,
+    );
+  });
+});
+
 const served: ServedEnvironment[] = [];
 afterEach(async () => {
   await Promise.all(served.splice(0).map((entry) => entry.close()));
