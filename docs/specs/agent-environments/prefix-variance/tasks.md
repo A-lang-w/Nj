@@ -7,3 +7,4 @@
 - [x] Add rule tests.
 - [x] Run static, formatting, duplication, documentation and test gates.
 - [x] Project the 51 corpus captures with and without the rule and record the results.
+- [x] Rebuild five randomly drawn environments end to end and compare them with their published versions and the live applications.
