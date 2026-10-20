@@ -627,6 +627,45 @@ process.stdin.on("data", (chunk) => {
   return provider;
 };
 
+const createReusedPidAfterDetachProvider = async (
+  pid: number,
+  commandsPath: string,
+): Promise<string> => {
+  const provider = join(directory!, "fake-rizin-reused-pid-after-detach.mjs");
+  await writeFile(
+    provider,
+    `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+process.stdout.write("\\0");
+let input = "";
+let detached = false;
+let inventoryReads = 0;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n"); if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    appendFileSync(${JSON.stringify(commandsPath)}, line + "\\n");
+    if (line === "olj") {
+      inventoryReads += 1;
+      const row = detached
+        ? inventoryReads > 2 ? [] : [{ fd: 13, raised: true, uri: "ptrace://${pid}" }]
+        : [{ fd: 12, raised: true, uri: "ptrace://${pid}" }];
+      process.stdout.write(JSON.stringify(row) + "\\0");
+    }
+    else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
+    else if (line === "o- 12") detached = true;
+    else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
+    else process.stdout.write("\\0");
+  }
+});
+`,
+  );
+  await chmod(provider, 0o700);
+  return provider;
+};
+
 const createOmittedInferiorProvider = async (
   firstPid: number,
   retainedPid: number,
@@ -1243,6 +1282,55 @@ it.skipIf(process.platform !== "linux")(
     expect(commands.match(/^o- 13$/gm)).toHaveLength(1);
     expect(manager.status(started.value.session_id)).toBeUndefined();
     expect(inferior.exitCode).toBeNull();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "retains a replacement process when detach readback reuses the selected PID",
+  async () => {
+    const tty = await rizinTestInferiorTty();
+    const inferior = await spawnTestInferiorOnTty(tty);
+    const pid = inferior.pid;
+    expect(pid).toBeDefined();
+    if (pid === undefined) return;
+    directory = await mkdtemp(join(tmpdir(), "rea-rizin-detach-reused-pid-"));
+    const commandsPath = join(directory, "commands");
+    const provider = await createReusedPidAfterDetachProvider(
+      pid,
+      commandsPath,
+    );
+    const manager = new RizinDebugSessionManager(
+      { ...process.env, REA_RIZIN_COMMAND: provider },
+      {
+        platform: "linux",
+        readProcessStartTime: async () => {
+          const commands = await readFile(commandsPath, "utf8").catch(() => "");
+          return commands.includes("o- 12\n") ? "200" : "100";
+        },
+        readProcessTracerPid: async () => 777,
+        readProcessTaskIds: async () => new Set(["777"]),
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          ownedProviderProcesses.push(launched.process);
+          return launched;
+        },
+      },
+    );
+    managers.push(manager);
+    const started = await manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: tty,
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    expect((await manager.close(started.value.session_id)).ok).toBe(false);
+    expect((await manager.retryCleanupFailures()).ok).toBe(false);
+    expect(manager.status(started.value.session_id)).toBeDefined();
+    expect(inferior.exitCode).toBeNull();
+    expect(
+      (await readFile(commandsPath, "utf8")).match(/^o- 12$/gm),
+    ).toHaveLength(1);
   },
 );
 

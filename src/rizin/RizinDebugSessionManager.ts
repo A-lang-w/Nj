@@ -1499,7 +1499,13 @@ export class RizinDebugSessionManager {
           );
       }
       for (const [pid, identity] of session.knownInferiorIdentities) {
-        if (pid === completed.identity.pid) continue;
+        // The selected PID may have been reused after detach readback. Skip
+        // only the exact selected process identity, then verify any replacement.
+        if (
+          pid === completed.identity.pid &&
+          identity.startTime === completed.identity.startTime
+        )
+          continue;
         if (
           !(await verifyOwnedInferiorsEnded(
             [identity],

@@ -143,6 +143,8 @@ it.each([
   ["define start\nrun", true],
   ["run < input.txt", false],
   ["run <input.txt", false],
+  ["run <&-", false],
+  ["run 0<&-", false],
   ["run 0<input.txt", false],
   ["run arg<input.txt", false],
   ["run arg2<input.txt", false],
@@ -150,6 +152,7 @@ it.each([
   ["run < input.txt --mode fast", false],
   ["run arg < input.txt", false],
   ["run 2<input.txt", true],
+  ["run 2<&-", true],
   ["run > /tmp/output", true],
   ["run < input.txt > /tmp/output", true],
   ["run < input.txt; echo done", true],
@@ -1274,42 +1277,45 @@ const startWithVerifiedInferiorTty = async (
   return { manager, sessionId: started.value.session_id, commands };
 };
 
-it("retains detach proof for an inferior input-only redirection", async () => {
-  const commands: string[] = [];
-  let outputSinkChecks = 0;
-  const fake = createFakeSpawner((_child, token, command) => {
-    commands.push(command);
-    const response = command.includes("inferior-tty-show")
-      ? '^done,inferior_tty_terminal="/dev/pts/42"'
-      : command.includes("list-thread-groups")
-        ? '^done,groups=[{id="i1",pid="123"}]'
-        : "^done";
-    fake.children[0]?.stdout.write(`${token}${response}\n`);
-  });
-  const manager = managerWithFakeSpawner(fake.spawnProcess, {
-    verifyInferiorOutputSink: async () => {
-      outputSinkChecks += 1;
-      // A regular file on stdin is independent of the durable selected output
-      // terminal and is permitted by the production descriptor classifier.
-      return "not-inherited";
-    },
-  });
-  const started = await manager.start(undefined, {
-    inferiorTty: "/dev/pts/42",
-  });
-  expect(started.ok).toBe(true);
-  if (!started.ok) return;
+it.each(["run < input.txt", "run <&-", "run 0<&-"])(
+  "retains detach proof for the input-only redirection %s",
+  async (runCommand) => {
+    const commands: string[] = [];
+    let outputSinkChecks = 0;
+    const fake = createFakeSpawner((_child, token, command) => {
+      commands.push(command);
+      const response = command.includes("inferior-tty-show")
+        ? '^done,inferior_tty_terminal="/dev/pts/42"'
+        : command.includes("list-thread-groups")
+          ? '^done,groups=[{id="i1",pid="123"}]'
+          : "^done";
+      fake.children[0]?.stdout.write(`${token}${response}\n`);
+    });
+    const manager = managerWithFakeSpawner(fake.spawnProcess, {
+      verifyInferiorOutputSink: async () => {
+        outputSinkChecks += 1;
+        // A regular file on stdin is independent of the durable selected output
+        // terminal and is permitted by the production descriptor classifier.
+        return "not-inherited";
+      },
+    });
+    const started = await manager.start(undefined, {
+      inferiorTty: "/dev/pts/42",
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
 
-  expect(
-    (await manager.execute(started.value.session_id, "run < input.txt")).ok,
-  ).toBe(true);
-  expect(manager.status(started.value.session_id)?.inferior_tty_verified).toBe(
-    true,
-  );
-  expect((await manager.close(started.value.session_id)).ok).toBe(true);
-  expect(outputSinkChecks).toBe(2);
-  expect(commands).toContain("-target-detach");
-});
+    expect(
+      (await manager.execute(started.value.session_id, runCommand)).ok,
+    ).toBe(true);
+    expect(
+      manager.status(started.value.session_id)?.inferior_tty_verified,
+    ).toBe(true);
+    expect((await manager.close(started.value.session_id)).ok).toBe(true);
+    expect(outputSinkChecks).toBe(2);
+    expect(commands).toContain("-target-detach");
+  },
+);
 
 const createProvider = async (body: string): Promise<string> => {
   directory ??= await mkdtemp(join(tmpdir(), "rea-gdb-coverage-"));

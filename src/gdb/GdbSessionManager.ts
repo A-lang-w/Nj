@@ -2365,7 +2365,7 @@ export const commandMayChangeInferiorOutput = (command: string): boolean => {
   const inputOnlyRunRedirection = (() => {
     if (
       !runCommand ||
-      /[>;&|\r\n]/u.test(runTail) ||
+      /[>;|\r\n]/u.test(runTail) ||
       runTail.indexOf("<") < 0 ||
       runTail.indexOf("<") !== runTail.lastIndexOf("<")
     )
@@ -2373,6 +2373,16 @@ export const commandMayChangeInferiorOutput = (command: string): boolean => {
     const inputIndex = runTail.indexOf("<");
     const argumentsAndFd = runTail.slice(0, inputIndex);
     const inputPath = runTail.slice(inputIndex + 1);
+    // POSIX shell syntax also permits closing stdin with `<&-`. Only fd 0
+    // preserves the configured output sink; closing an output descriptor is
+    // still rejected below.
+    if (inputPath.trim() === "&-") {
+      const descriptor = /(?:^|\s)(\d+)$/u.exec(argumentsAndFd)?.[1];
+      return (
+        (descriptor === undefined || descriptor === "0") &&
+        !/[<>;&|\r\n]/u.test(argumentsAndFd)
+      );
+    }
     if (
       !/^\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s<>;&|]+)(?:\s+[^<>;&|\r\n]+)*\s*$/u.test(
         inputPath,
