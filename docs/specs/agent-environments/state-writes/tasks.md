@@ -13,10 +13,10 @@
 - [x] Let lines that only page a whole collection back `membership: "all"`,
       and answer argument-less list calls from them.
 - [x] Count served write tools in exports and describe them in bundle READMEs.
-- [ ] Add domain, services, adapters and boundary coverage.
+- [x] Add domain, services, adapters and boundary coverage.
 - [x] Document the write model and serving.
 - [x] Run the view over every showcase capture and report per-capture verdicts.
-- [ ] Export one randomly chosen environment, run write tasks in the AgentEnv
+- [x] Export one randomly chosen environment, run write tasks in the AgentEnv
       framework and grade them from `data/get`.
 - [x] Compare the served model with the live application on the same calls.
-- [ ] Run static, formatting, duplication, documentation and test gates.
+- [x] Run static, formatting, duplication, documentation and test gates.
