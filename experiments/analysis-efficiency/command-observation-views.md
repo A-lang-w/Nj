@@ -118,8 +118,8 @@ the CLI/SDK/client runs above, not simulated-provider tests.
 Run the oracle for the selected Bash image, then use the SDK driver with
 `--runtime`, `--input`, `--oracle`, `--output`, `--provider gdb|objdump`,
 `--symbol`, `--detail complete|summary` and optional `--warm`. The wire driver
-also takes the fixed Codex/Node paths, `--mode`, `--symbol`, `--budget` and
-`--export`. Run each through `resource-run.py --observe-payload-exit`, preserving
+also takes the fixed Codex/Node paths, `--mode`, `--symbol` and `--budget`; it always performs the
+export (eight tool calls). Run each through `resource-run.py --observe-payload-exit`, preserving
 its sibling `.log`; the verifier and counter accept `--root` for those results.
 
 Default Rizin execution returned ENOENT with no configured alternative. Cutter
@@ -128,3 +128,12 @@ present. Real Rizin/Cutter performance and GUI workflows remain unverified.
 Their command semantics were not changed. Existing objdump native symbol
 selection was reused. No claim covers arbitrary GDB target execution or another
 host client's output budget.
+
+Review follow-up adds nine CLI publication regressions (16 CLI tests including the
+existing cleanup cases), three deterministic delivery-oracle tests, and a focused
+strict typecheck of the new CLI boundary and its transitive source. Real client
+small/default and large/generous summary runs pass the strengthened oracle and
+export complete parents; only the explicit complete/default baseline may finish
+with an incomplete answer. The unused export switch was removed: export is
+mandatory in this question. Product source and the original paired measurements
+are unchanged; the receipt records these additional validation runs separately.

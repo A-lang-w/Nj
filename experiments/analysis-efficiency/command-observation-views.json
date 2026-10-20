@@ -1276,5 +1276,53 @@
     "command-observation-costs.py": "d52e265d29880e18cd7d03a208a2000e359997a2d0717c1eb0e498af0ebd6231",
     "command-observation-queries.mjs": "0a7a68a747f5a23d7e819aeca4204f0a04bd5bfbd2e0d508bb45dfee0b6ce3ab",
     "command-observation-verify.py": "7b983a228477ccffa61293531afc99176d69b506961cff5ee18a660d1e9e733c"
+  },
+  "review_followup": {
+    "parent_commit": "b361d5de54a7a2f618a80af5846fad55f8f3f7d8",
+    "production_source_changes": false,
+    "changes": [
+      "Shared acceptance oracle rejects incomplete summary delivery under every budget; only complete/default-budget baseline may remain incomplete.",
+      "Removed unused --export option; native export remains mandatory in the eight-call question.",
+      "Nine CLI regressions use registered argument/option codecs and real file publication with controlled captures; no real-provider claim from these tests."
+    ],
+    "checks": {
+      "python_acceptance_regressions": 3,
+      "cli_tests_passed": 16,
+      "new_cli_regressions": 9,
+      "focused_cli_typecheck": "passed with unchanged strict compiler settings and transitive source dependencies",
+      "standard_static_tasks": "lint:built, format:check, knip, metadata:check, jscpd, scan:todos all passed"
+    },
+    "wire_revalidation": [
+      {
+        "case": "review-wire-baseline-verified",
+        "status": "expected-incomplete-task",
+        "task_completed": false,
+        "tool_calls": 8,
+        "requests": 9,
+        "payload_cleanup_verified": true
+      },
+      {
+        "case": "review-wire-summary-final",
+        "status": "passed",
+        "task_completed": true,
+        "tool_calls": 8,
+        "requests": 9,
+        "payload_cleanup_verified": true
+      },
+      {
+        "case": "review-wire-large-final",
+        "status": "passed",
+        "task_completed": true,
+        "tool_calls": 8,
+        "requests": 9,
+        "payload_cleanup_verified": true
+      }
+    ],
+    "updated_driver_sha256": {
+      "command-observation-wire.py": "1124a3eda1779a78e37cac6b004f3593fadea62d310f6801bdf71062413549d6",
+      "command_observation_delivery.py": "5c42fc767b859f9f7ba71bac6b83ea05db1bb9639ac438ce2741a1e01d55a260",
+      "test_command_observation_delivery.py": "71d835a58aa7541d54a01326ca9001df0d63959e79f813cd0debfdc0d7837343"
+    },
+    "measurement_limits": "Original timing/token cohorts and their source/runtime pins are unchanged. Review revalidation is correctness evidence, not a replacement paired timing cohort."
   }
 }

@@ -11,6 +11,7 @@ import re
 import time
 import traceback
 import subprocess
+from command_observation_delivery import verify_command_delivery
 
 
 async def main():
@@ -25,7 +26,6 @@ async def main():
     parser.add_argument("--oracle", type=Path, required=True)
     parser.add_argument("--expected-tools", type=int, default=210)
     parser.add_argument("--mode", choices=["complete", "summary"], required=True)
-    parser.add_argument("--export", action="store_true")
     parser.add_argument("--question", choices=["disassembly"], default="disassembly")
     parser.add_argument("--symbol", choices=["execute_command", "execute_command_internal"], required=True)
     parser.add_argument("--budget", type=int, default=30000)
@@ -230,18 +230,9 @@ async def main():
         assert evidence['subject'] is None
         assert evidence['normalized_result']['completion_status']=='complete' and not evidence['normalized_result']['output_truncated']
         delivered_result=outputs['call_local_6']
-        delivery_complete='_invalid_json_payload' not in delivered_result
-        if delivery_complete:
-            if args.mode=='complete':assert delivered_result==evidence
-            else:
-                selected=delivered_result['normalized_result'];assert selected['parent_evidence_id']==evidence['evidence_id']
-                assert delivered_result['raw_result'] is None and delivered_result['subject'] is None
-                expected={k:v for k,v in evidence['normalized_result'].items() if k not in ['console','target','log']}
-                selected_report={k:v for k,v in selected['summary'].items() if k!='available_counts'}
-                assert selected_report==expected
-                assert next(e for e in bundle['records'] if e['evidence_id']==delivered_result['evidence_id'])==delivered_result
-        if args.budget: assert delivery_complete, 'Generous budget did not deliver complete native Evidence'
-        elif args.mode=='complete': assert not delivery_complete, 'Default truncation was not reproduced'
+        delivery_complete=verify_command_delivery(delivered_result,evidence,args.mode,args.budget)
+        if delivery_complete and args.mode=='summary':
+            assert next(e for e in bundle['records'] if e['evidence_id']==delivered_result['evidence_id'])==delivered_result
         report['task_completed']=delivery_complete
         report['observations']={'parent_evidence_id':evidence['evidence_id'],'exported':True,'native_console_utf16_units':len(evidence['normalized_result']['console'].encode('utf-16-le'))//2,'client_delivered_full_evidence':delivery_complete,'selected_symbol':args.symbol,'tool_output_budget':args.budget or 'client default','subject':evidence['subject']}
         report["captured_requests"]=len(captured)
