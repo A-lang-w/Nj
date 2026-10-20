@@ -136,7 +136,27 @@ export const registerCloseLifecycleTool = ({
       }
       throw reverseCleanup.reason;
     }
-    if (resourceClose.status === "rejected") throw resourceClose.reason;
+    if (resourceClose.status === "rejected") {
+      if (
+        snapshotReceipt !== undefined &&
+        sessionClose.status === "fulfilled" &&
+        sessionClose.value.ok
+      )
+        return err(
+          new AnalysisOutputError(
+            closeContract.name,
+            "Process capture cleanup failed unexpectedly.",
+            {
+              cause: resourceClose.reason,
+              cleanup: {
+                reason: "cleanup callback rejected unexpectedly",
+                resources: ["process capture cleanup"],
+              },
+            },
+          ).retainDiagnostics(snapshotReceipt(sessionClose.value.value)),
+        );
+      throw resourceClose.reason;
+    }
     const closed = sessionClose.value;
     const resources = resourceClose.value;
     const reverse = reverseCleanup.value;
@@ -155,12 +175,7 @@ export const registerCloseLifecycleTool = ({
           next,
         ).bindCleanupDependencies([failure, next]);
     if (failure === undefined) return closed;
-    if (
-      snapshotReceipt !== undefined &&
-      closed.ok &&
-      reverseCleanup.status === "fulfilled" &&
-      !reverseCleanup.value.ok
-    )
+    if (snapshotReceipt !== undefined && closed.ok)
       failure.retainDiagnostics(snapshotReceipt(closed.value));
     return err(failure);
   };

@@ -120,6 +120,35 @@ describe("close lifecycle reverse cleanup ordering", () => {
     await expectSavedSnapshotReceipt(handler);
   });
 
+  it("preserves a successful snapshot receipt when only process capture cleanup fails", async () => {
+    const session = {
+      closeWithSnapshot: async () => ok(savedSnapshotReceipt),
+    } as unknown as BinarySessionPort;
+    const { handler } = register({
+      session,
+      closeProcessResources: async () =>
+        err(new ProviderCleanupError("test-provider", ["capture"], {})),
+      retry: async () => ok(null),
+    });
+
+    await expectSavedSnapshotReceipt(handler);
+  });
+
+  it("preserves a successful snapshot receipt when process capture cleanup rejects", async () => {
+    const session = {
+      closeWithSnapshot: async () => ok(savedSnapshotReceipt),
+    } as unknown as BinarySessionPort;
+    const { handler } = register({
+      session,
+      closeProcessResources: async () => {
+        throw new Error("capture cleanup rejected");
+      },
+      retry: async () => ok(null),
+    });
+
+    await expectSavedSnapshotReceipt(handler);
+  });
+
   it("preserves a successful snapshot receipt when reverse cleanup rejects", async () => {
     const session = {
       closeWithSnapshot: async () => ok(savedSnapshotReceipt),
