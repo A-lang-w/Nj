@@ -40,10 +40,17 @@ public class ReaDecompilerFailureProbe extends GhidraScript {
         checks.add(name);
     }
 
-    private Function function(String name) {
-        for (Function f : currentProgram.getFunctionManager().getFunctions(true))
-            if (!f.isThunk() && (f.getName().equals(name) || f.getName().equals("_" + name))) return f;
-        throw new IllegalStateException("Missing fixture function " + name);
+    private Function exportedFunction(String name) {
+        Function selected = null;
+        for (Function f : currentProgram.getFunctionManager().getFunctions(true)) {
+            if (!f.isThunk() && (f.getName().equals(name) || f.getName().equals("_" + name)) &&
+                currentProgram.getSymbolTable().isExternalEntryPoint(f.getEntryPoint())) {
+                if (selected != null) throw new IllegalStateException("Ambiguous fixture export " + name);
+                selected = f;
+            }
+        }
+        if (selected == null) throw new IllegalStateException("Missing fixture export " + name);
+        return selected;
     }
 
     private GhidraScript script(String name, File expected) throws Exception {
@@ -115,12 +122,13 @@ public class ReaDecompilerFailureProbe extends GhidraScript {
         decompiler.setAccessible(true);
         DecompInterface real = (DecompInterface) decompiler.get(bridge);
 
-        Function target = function("rea_cross_branch");
+        Function target = exportedFunction("rea_cross_branch");
+        String procedure = "0x" + Long.toUnsignedString(target.getEntryPoint().getOffset(), 16);
         JsonObject query = new JsonObject();
-        query.addProperty("procedure", target.getName());
+        query.addProperty("procedure", procedure);
         JsonObject pseudocodeQuery = new JsonObject();
         pseudocodeQuery.add("document", JsonNull.INSTANCE);
-        pseudocodeQuery.addProperty("procedure", target.getName());
+        pseudocodeQuery.addProperty("procedure", procedure);
 
         JsonObject baseline;
         JsonObject degraded;
@@ -131,9 +139,10 @@ public class ReaDecompilerFailureProbe extends GhidraScript {
             require("baseline_pseudocode_available", !value.get("pseudocode").getAsString().isEmpty() &&
                 value.getAsJsonObject("facet_availability").getAsJsonObject("pseudocode").get("available").getAsBoolean());
             require("baseline_native_api_available", value.getAsJsonObject("native_api").get("available").getAsBoolean());
-            require("baseline_listing_facts_present", value.getAsJsonArray("assembly").size() > 0 &&
-                value.getAsJsonArray("callers").size() > 0 && value.getAsJsonArray("callees").size() > 0 &&
-                value.getAsJsonArray("basic_blocks").size() > 1);
+            require("baseline_assembly_present", value.getAsJsonArray("assembly").size() > 0);
+            require("baseline_callers_present", value.getAsJsonArray("callers").size() > 0);
+            require("baseline_callees_present", value.getAsJsonArray("callees").size() > 0);
+            require("baseline_multiple_blocks_present", value.getAsJsonArray("basic_blocks").size() > 1);
 
             decompiler.set(bridge, failing(target, DisposeState.NOT_DISPOSED));
             degraded = envelope(analyze.invoke(bridge, query));

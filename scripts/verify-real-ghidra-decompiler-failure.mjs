@@ -1,11 +1,9 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { parseConfig } from "../dist/config/parseConfig.js";
@@ -20,12 +18,14 @@ import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "../dist/process/ProviderProcess.js";
-import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
+import {
+  assertVerifierCleanupComplete,
+  completeVerifierRun,
+  createVerifierRun,
+} from "./lib/verifier-run.mjs";
 
-const exec = promisify(execFile);
 const run = createVerifierRun();
-const procedureName = (name) =>
-  process.platform === "darwin" ? `_${name}` : name;
 assert.ok(
   process.platform === "linux" || process.platform === "darwin",
   "This regression lane requires Linux or macOS",
@@ -57,20 +57,36 @@ try {
     workspace,
     process.platform === "darwin" ? "cross-format.dylib" : "cross-format.so",
   );
-  await exec(process.env.REA_CC ?? "cc", [
-    ...(process.platform === "darwin" ? ["-dynamiclib"] : ["-shared"]),
-    "-fPIC",
-    "-O0",
-    join(fixtures, "cross-format.c"),
-    "-o",
-    targetPath,
-  ]);
+  const compiler = {
+    command: process.env.REA_CC ?? "cc",
+    arguments: [
+      ...(process.platform === "darwin" ? ["-dynamiclib"] : ["-shared"]),
+      "-fPIC",
+      "-O0",
+      // Bind this source-owned fixture's calls to its own definitions on ELF.
+      ...(process.platform === "linux" ? ["-Wl,-Bsymbolic"] : []),
+      join(fixtures, "cross-format.c"),
+      "-o",
+      targetPath,
+    ],
+  };
+  cleaned = false;
+  await runOwnedCommand(
+    {
+      ...compiler,
+      runId: run.run_id,
+      expectedCommand: null,
+    },
+    { timeoutMs: 60_000, diagnosticBytes: 1024 * 1024 },
+  );
+  cleaned = true;
   const targetDigest = digest(await readFile(targetPath));
   const bridgeDigest = digest(
     await readFile(join(bridge, "ReaGhidraBridge.java")),
   );
   const project = join(workspace, "project");
   await mkdir(project);
+  cleaned = false;
   const launch = await spawnOwnedProviderProcess({
     command: installation.analyzeHeadlessPath,
     arguments: [
@@ -140,8 +156,8 @@ try {
     );
   }
 
-  // The degraded dossier must satisfy the same output contract REA applies to
-  // every bridge reply before it becomes Evidence.
+  // The degraded dossier must satisfy the same provider output contract REA
+  // applies to every bridge reply.
   const degraded = parseGhidraFunctionResult(
     "analyze_function",
     probe.degraded,
@@ -164,8 +180,8 @@ try {
   if (!baseline.ok) throw baseline.error;
   assert.deepEqual(dossier.basic_blocks, baseline.value.value.basic_blocks);
 
-  // The healthy path through the real provider, authenticated transport and
-  // Evidence projection keeps its pseudocode and native API boundary.
+  // The healthy path through the real provider and authenticated transport
+  // keeps its pseudocode and native API boundary.
   const provider = new GhidraProvider(
     config.value,
     silentLogger,
@@ -185,7 +201,7 @@ try {
   let healthy;
   try {
     const result = await client.execute("analyze_function", {
-      procedure: procedureName("rea_cross_branch"),
+      procedure: dossier.procedure.address,
     });
     if (!result.ok) throw result.error;
     const value = result.value.result;
@@ -207,11 +223,28 @@ try {
   if (failures.length > 0)
     throw new AggregateError(
       failures,
-      "Decompiler failure Evidence verification failed",
+      "Decompiler failure provider verification failed",
     );
   assert.equal(digest(await readFile(targetPath)), targetDigest);
+  cleaned = false;
+  const verifierRun = await completeVerifierRun(run);
+  try {
+    assertVerifierCleanupComplete(verifierRun.process_lineage);
+  } catch (cause) {
+    throw new Error(
+      `Verifier cleanup unresolved; retained ${workspace}; run ${run.run_id}`,
+      { cause },
+    );
+  }
+  cleaned = true;
   report = {
     status: "passed",
+    target_sha256: targetDigest,
+    source_sha256: digest(await readFile(join(fixtures, "cross-format.c"))),
+    compiler,
+    bridge_sha256: bridgeDigest,
+    provider: profile.value.profile.provider,
+    analysis_profile_digest: profile.value.profile.digest,
     checks: probe.checks,
     degraded: {
       pseudocode: dossier.facet_availability.pseudocode,
@@ -223,8 +256,9 @@ try {
       basic_blocks: dossier.basic_blocks.length,
     },
     healthy,
+    verifier_run: verifierRun,
     scope:
-      "Real Ghidra ELF or Mach-O analysis with an injected decompiler failure; output-contract parsing of the degraded dossier; real read-only TCP Evidence projection of the healthy path. No target execution; natural decompiler failures and Windows are unverified.",
+      "Real Ghidra ELF or Mach-O analysis with an injected decompiler failure; output-contract parsing of the degraded dossier; real read-only TCP provider projection of the healthy path. No target execution; natural decompiler failures, degraded CLI/MCP projection and Windows are unverified.",
   };
 } finally {
   if (cleaned) await rm(workspace, { recursive: true, force: true });
@@ -233,6 +267,5 @@ console.log(
   JSON.stringify({
     ...report,
     cleanup: "complete",
-    verifier_run: await completeVerifierRun(run),
   }),
 );

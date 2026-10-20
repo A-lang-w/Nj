@@ -40,7 +40,7 @@ binaries and Ghidra projects are never committed.
   cancellation still ends the request. Run `npm run build:cached`, then
   `node scripts/verify-real-ghidra-decompiler-failure.mjs` on Linux or macOS
   x64/arm64. The lane also parses the degraded dossier with REA's Ghidra output
-  contract and checks the healthy path through the real read-only TCP bridge.
+  contract and checks the healthy provider path through the real read-only TCP bridge.
   The injection does not establish which natural inputs make the decompiler
   fail.
 
