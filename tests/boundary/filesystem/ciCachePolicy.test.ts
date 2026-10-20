@@ -332,11 +332,13 @@ it("exports turbo remote-cache credentials wherever a workflow runs turbo", asyn
       expect(token, `${file}:${name}`).not.toContain(
         "github.event_name == 'pull_request'",
       );
-      if (grantsReleaseWrite)
+      if (grantsReleaseWrite) {
         expect(cache, `${file}:${name}`).toContain(
           "inputs.remote_cache_write == true",
         );
-      expect(cache, `${file}:${name}`).toContain("local:rw,remote:r");
+        expect(cache, `${file}:${name}`).toContain("|| 'local:rw'");
+        expect(cache, `${file}:${name}`).not.toContain("local:rw,remote:r'");
+      } else expect(cache, `${file}:${name}`).toContain("local:rw,remote:r'");
       expect(cache, `${file}:${name}`).toContain("local:rw,remote:rw");
       expect(env.TURBO_TEAM, `${file}:${name}`).toBe("${{ vars.TURBO_TEAM }}");
     }

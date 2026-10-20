@@ -1353,8 +1353,9 @@ default branch and the event is push, schedule, or workflow_dispatch, and only
 when that secret is available to the run. Release qualification passes
 `TURBO_TOKEN` and `remote_cache_write` into the called workflow. Labeled
 pull-request qualification does not. Pull requests receive an empty token and
-`TURBO_CACHE=local:rw,remote:r`, so they cannot publish remote cache entries.
-An empty token leaves the local Turbo cache in place.
+`TURBO_CACHE=local:rw`. Remote reads require `TURBO_TOKEN`, and this repository
+does not pass a separate read-only credential into pull requests. An empty
+token leaves the local Turbo cache in place.
 
 The shared npm-cache action caches downloads, not `node_modules`, and every
 consumer still runs `npm ci`. Keys cover the runner OS, actual Node architecture,
