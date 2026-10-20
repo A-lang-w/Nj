@@ -64,9 +64,9 @@ import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
   projectPlistValue,
   nonFiniteRealLimitation,
-  unknownRealLimitation,
   negativeZeroRealLimitation,
   unknownDateLimitation,
+  unknownScalarLimitation,
 } from "../domain/apple/plistValue.js";
 import { createPlistNumberProjection } from "../domain/apple/plistNumbers.js";
 import type { NativeUiObservationResult } from "../domain/native/nativeUiObservation.js";
@@ -118,6 +118,7 @@ import {
   createNativeUiHelperRuntime,
   type NativeUiHelperRuntime,
 } from "./NativeUiHelperRuntime.js";
+import { NativeUiInterruptionControl } from "./NativeUiInterruptionControl.js";
 
 type SignatureRuntimeRootFactory = () => Promise<
   Pick<PrivateRuntimeRoot, "path" | "close">
@@ -362,57 +363,57 @@ class NativeMacOSClient implements AnalysisClient {
           this.#nativeUiCleanupFailure(earlierCleanupFailures, operation),
         );
       const runtime = createNativeUiHelperRuntime(this.environment);
-      const observationSignal =
-        signal === undefined
-          ? runtime.signal
-          : AbortSignal.any([signal, runtime.signal]);
-      this.#pendingNativeUiRuntimes.add(runtime);
-      let result: Awaited<ReturnType<typeof observeNativeUi>>;
+      const interruption = new NativeUiInterruptionControl(
+        signal,
+        runtime.signal,
+      );
       try {
-        result = await observeNativeUi(this.target, operation, parameters, {
-          environment: this.environment,
-          signal: observationSignal,
-          runtime,
-        });
-      } catch (cause: unknown) {
-        result = err(
-          cause instanceof AnalysisError
-            ? cause
-            : new ProviderAdapterError(IDENTITY.id, operation, { cause }),
-        );
+        this.#pendingNativeUiRuntimes.add(runtime);
+        let result: Awaited<ReturnType<typeof observeNativeUi>>;
+        try {
+          result = await observeNativeUi(this.target, operation, parameters, {
+            environment: this.environment,
+            runtime,
+            interruption,
+          });
+        } catch (cause: unknown) {
+          result = err(
+            cause instanceof AnalysisError
+              ? cause
+              : new ProviderAdapterError(IDENTITY.id, operation, { cause }),
+          );
+        }
+        try {
+          await runtime.close();
+          this.#pendingNativeUiRuntimes.delete(runtime);
+        } catch (cause: unknown) {
+          result = finishNativeUiObservation(result, operation, interruption);
+          const cleanup = this.#nativeUiCleanupFailure(
+            [{ runtime, cause }],
+            operation,
+            result.ok ? result.value : undefined,
+          );
+          return err(
+            result.ok
+              ? cleanup
+              : analysisErrorWithCleanupFailure(
+                  result.error,
+                  cleanup,
+                  operation,
+                ).bindCleanupDependencies([result.error, cleanup]),
+          );
+        }
+        result = finishNativeUiObservation(result, operation, interruption);
+        return result.ok
+          ? ok(
+              createAnalysisExecution(result.value, IDENTITY, {
+                limitations: result.value.limitations,
+              }),
+            )
+          : result;
+      } finally {
+        interruption.dispose();
       }
-      try {
-        await runtime.close();
-        this.#pendingNativeUiRuntimes.delete(runtime);
-      } catch (cause: unknown) {
-        result = finishNativeUiObservation(
-          result,
-          operation,
-          observationSignal,
-        );
-        const cleanup = this.#nativeUiCleanupFailure(
-          [{ runtime, cause }],
-          operation,
-          result.ok ? result.value : undefined,
-        );
-        return err(
-          result.ok
-            ? cleanup
-            : analysisErrorWithCleanupFailure(
-                result.error,
-                cleanup,
-                operation,
-              ).bindCleanupDependencies([result.error, cleanup]),
-        );
-      }
-      result = finishNativeUiObservation(result, operation, observationSignal);
-      return result.ok
-        ? ok(
-            createAnalysisExecution(result.value, IDENTITY, {
-              limitations: result.value.limitations,
-            }),
-          )
-        : result;
     });
   }
 
@@ -957,8 +958,8 @@ class NativeMacOSClient implements AnalysisClient {
 
 const nativeCommandCleanupFailure = (
   failures: readonly NativeCommandCleanupFailure[],
-): ProviderCleanupError =>
-  new ProviderCleanupError(
+): ProviderCleanupError => {
+  const failure = new ProviderCleanupError(
     IDENTITY.id,
     [...new Set(failures.flatMap(({ resources }) => resources))],
     {
@@ -969,6 +970,18 @@ const nativeCommandCleanupFailure = (
       })),
     },
   );
+  if (
+    failures.length === 0 ||
+    failures.some(({ marker }) => marker === undefined)
+  )
+    return failure;
+  const markers = failures.flatMap(({ marker }) =>
+    marker === undefined ? [] : [marker],
+  );
+  return markers.length === 0
+    ? failure
+    : failure.bindCleanupDependencies(markers);
+};
 
 /** Each file workflow retains its own exact resource set through client close. */
 const closeNativeFileScope = async (
@@ -1020,6 +1033,29 @@ const translateCommandFailure = (
   operation: NativeToolName,
   failure: NativeCommandFailure,
 ): AnalysisError => {
+  const cleanupOwners = [
+    ...failure.cleanupFailures,
+    ...(failure.cleanupOwner === undefined
+      ? []
+      : [
+          {
+            owner: failure.cleanupOwner,
+            marker: failure.cleanupMarker,
+            reason:
+              failure.cleanupFailure ??
+              "native command cleanup remains incomplete",
+            resources: failure.cleanupResources,
+          },
+        ]),
+  ];
+  const markers = cleanupOwners.flatMap(({ marker }) =>
+    marker === undefined ? [] : [marker],
+  );
+  const bindCleanup = (error: AnalysisError): AnalysisError =>
+    cleanupOwners.length === 0 ||
+    cleanupOwners.some(({ marker }) => marker === undefined)
+      ? error
+      : error.bindCleanupDependencies([...new Set(markers)]);
   const preparation = failure.preparationFailure;
   if (preparation !== undefined) {
     const marker = preparation.cleanupFailure;
@@ -1068,9 +1104,9 @@ const translateCommandFailure = (
               ...options,
               cause: preparation.cancellation.reason,
             });
-    return marker === undefined
-      ? error
-      : error.bindCleanupDependencies([marker]);
+    return bindCleanup(
+      marker === undefined ? error : error.bindCleanupDependencies([marker]),
+    );
   }
   const capturedOutput =
     failure.capture === null
@@ -1097,42 +1133,55 @@ const translateCommandFailure = (
   };
   if (failure.reason === "unavailable") {
     const reason = `${failure.tool} is unavailable through xcrun.`;
-    return new AnalysisCapabilityUnavailableError(
-      IDENTITY.id,
-      operation,
-      reason,
-      { ...errorOptions, userMessage: reason },
+    return bindCleanup(
+      new AnalysisCapabilityUnavailableError(IDENTITY.id, operation, reason, {
+        ...errorOptions,
+        userMessage: reason,
+      }),
     );
   }
   if (failure.reason === "cancelled")
-    return new AnalysisCancelledError(operation, errorOptions);
+    return bindCleanup(
+      new AnalysisCancelledError(operation, {
+        ...errorOptions,
+        ...(failure.cancellation === undefined
+          ? {}
+          : { cause: failure.cancellation.reason }),
+      }),
+    );
   if (failure.reason === "timeout")
-    return new AnalysisTimeoutError(
-      operation,
-      NATIVE_COMMAND_TIMEOUT_MS,
-      errorOptions,
+    return bindCleanup(
+      new AnalysisTimeoutError(
+        operation,
+        NATIVE_COMMAND_TIMEOUT_MS,
+        errorOptions,
+      ),
     );
   if (failure.reason === "output-limit")
-    return new AnalysisResourceConstraintError(
-      operation,
-      "memory",
-      `Native command output exceeded ${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)} bytes; complete output is required for analysis.`,
-      { max_output_bytes: NATIVE_COMMAND_OUTPUT_BUDGET_BYTES },
-      errorOptions,
+    return bindCleanup(
+      new AnalysisResourceConstraintError(
+        operation,
+        "memory",
+        `Native command output exceeded ${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)} bytes; complete output is required for analysis.`,
+        { max_output_bytes: NATIVE_COMMAND_OUTPUT_BUDGET_BYTES },
+        errorOptions,
+      ),
     );
-  return new ProviderAdapterError(IDENTITY.id, operation, {
-    cause: failure,
-    ...errorOptions,
-    diagnostics: {
-      tool: failure.tool,
-      reason: failure.reason,
-      exit_code: failure.capture?.exitCode ?? failure.exitCode,
-      signal: failure.capture?.signal ?? null,
-      stdout_bytes: failure.capture?.stdoutBytes ?? 0,
-      stderr_bytes: failure.capture?.stderrBytes ?? 0,
-      ...(failure.detail === null ? {} : { detail: failure.detail }),
-    },
-  });
+  return bindCleanup(
+    new ProviderAdapterError(IDENTITY.id, operation, {
+      cause: failure,
+      ...errorOptions,
+      diagnostics: {
+        tool: failure.tool,
+        reason: failure.reason,
+        exit_code: failure.capture?.exitCode ?? failure.exitCode,
+        signal: failure.capture?.signal ?? null,
+        stdout_bytes: failure.capture?.stdoutBytes ?? 0,
+        stderr_bytes: failure.capture?.stderrBytes ?? 0,
+        ...(failure.detail === null ? {} : { detail: failure.detail }),
+      },
+    }),
+  );
 };
 
 const translateCodeSignExitFailure = (
@@ -1243,15 +1292,15 @@ const parseEntitlements = (
       ...(projected.nonFiniteRealCount === 0
         ? []
         : [nonFiniteRealLimitation(projected.nonFiniteRealCount)]),
-      ...(projected.unknownRealCount === 0
-        ? []
-        : [unknownRealLimitation(projected.unknownRealCount)]),
       ...(projected.negativeZeroRealCount === 0
         ? []
         : [negativeZeroRealLimitation(projected.negativeZeroRealCount)]),
       ...(projected.unknownDateCount === 0
         ? []
         : [unknownDateLimitation(projected.unknownDateCount)]),
+      ...(projected.unknownScalarCount === 0
+        ? []
+        : [unknownScalarLimitation(projected.unknownScalarCount)]),
     ],
   };
 };

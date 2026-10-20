@@ -32,6 +32,7 @@ import {
 } from "./ClientRegistrationEnvironment.js";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { npxRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import {
   MCP_STARTUP_POLICY,
@@ -284,14 +285,22 @@ const persistClientConfiguration = async ({
       : registered;
   let serialized: ReturnType<typeof serializeClientConfiguration>;
   try {
-    serialized = serializeClientConfiguration(document, format, original, [
-      ...Object.keys(fallbackServers)
-        .filter((name) => name !== PRODUCT_IDENTITY.mcpServerKey)
-        .map((name) => clientServerPath(parsed, name)),
-      clientServerPath(parsed, PRODUCT_IDENTITY.mcpServerKey),
-      ...(legacyPath === undefined ? [] : [legacyPath]),
-      ...(enableOmp ? [[OMP_DISABLED_SERVERS_KEY]] : []),
-    ]);
+    serialized = serializeClientConfiguration(
+      document,
+      format,
+      original,
+      [
+        ...Object.keys(fallbackServers)
+          .filter((name) => name !== PRODUCT_IDENTITY.mcpServerKey)
+          .map((name) => clientServerPath(parsed, name)),
+        clientServerPath(parsed, PRODUCT_IDENTITY.mcpServerKey),
+        ...(legacyPath === undefined ? [] : [legacyPath]),
+        ...(enableOmp ? [[OMP_DISABLED_SERVERS_KEY]] : []),
+      ],
+      // Setup deletes only REA's OpenCode V1 name, which the native V2 entry
+      // supersedes whatever its launcher; every repeat goes, as one member does.
+      { removeShadowedMembersAt: legacyPath === undefined ? [] : [legacyPath] },
+    );
   } catch (cause: unknown) {
     // An unserializable edit is reported before any file is written.
     void cause;
@@ -753,7 +762,8 @@ const clientConfigurationDesired = (
   if (!environment.ok) throw environment.error;
   const registrationEnvironment =
     client.name === "kimi" &&
-    environment.value.REA_MCP_INPUT_SCHEMA_PROFILE === undefined
+    snapshotEnvironment(environment.value).REA_MCP_INPUT_SCHEMA_PROFILE ===
+      undefined
       ? {
           ...environment.value,
           REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
