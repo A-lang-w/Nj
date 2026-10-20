@@ -1354,7 +1354,11 @@ it("restores the caller's run ID for the inferior through a startup directive", 
     [{}, "unset environment REA_PROCESS_RUN_ID"],
     [
       { REA_PROCESS_RUN_ID: "caller-run" },
-      "set environment REA_PROCESS_RUN_ID caller-run",
+      "set environment REA_PROCESS_RUN_ID =caller-run",
+    ],
+    [
+      { REA_PROCESS_RUN_ID: "=caller-run" },
+      "set environment REA_PROCESS_RUN_ID ==caller-run",
     ],
   ] as const) {
     seen.length = 0;
@@ -1370,20 +1374,33 @@ it("restores the caller's run ID for the inferior through a startup directive", 
   }
 });
 
-it("refuses a caller run ID that cannot be expressed as one directive", async () => {
-  const manager = new GdbSessionManager({
-    platform: "linux",
-    environment: { REA_PROCESS_RUN_ID: "a\nb" },
-    spawnProcess: async () => {
-      throw new Error("must not spawn");
-    },
-  });
-  managers.push(manager);
+it.each([
+  "a\nb",
+  "a\rb",
+  " caller-run",
+  "\tcaller-run",
+  "caller-run ",
+  "caller-run\t",
+])(
+  "refuses a caller run ID that cannot be expressed as one directive: %j",
+  async (runId) => {
+    const manager = new GdbSessionManager({
+      platform: "linux",
+      environment: { REA_PROCESS_RUN_ID: runId },
+      spawnProcess: async () => {
+        throw new Error("must not spawn");
+      },
+    });
+    managers.push(manager);
 
-  const started = await manager.start();
+    const started = await manager.start();
 
-  expect(started.ok).toBe(false);
-});
+    expect(started.ok).toBe(false);
+    if (!started.ok) {
+      expect(started.error.message).toContain("cannot be preserved");
+    }
+  },
+);
 
 it("retries MI2 after an MI3 process exits before its startup prompt", async () => {
   const provider = await createProvider(`

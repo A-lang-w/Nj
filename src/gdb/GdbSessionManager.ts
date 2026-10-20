@@ -750,13 +750,16 @@ export class GdbSessionManager {
     const callerRunId = Object.hasOwn(this.#environment, "REA_PROCESS_RUN_ID")
       ? this.#environment.REA_PROCESS_RUN_ID
       : undefined;
-    if (callerRunId !== undefined && /[\r\n]/u.test(callerRunId)) {
+    if (
+      callerRunId !== undefined &&
+      (/[\r\n]/u.test(callerRunId) || /^\s|\s$/u.test(callerRunId))
+    ) {
       releaseReservation();
       return err(
         new AnalysisCapabilityUnavailableError(
           "gdb",
           "start_gdb_session",
-          "The caller's REA_PROCESS_RUN_ID contains a line break and cannot be preserved for the inferior.",
+          "The caller's REA_PROCESS_RUN_ID contains a line break or boundary whitespace and cannot be preserved for the inferior.",
         ),
       );
     }
@@ -773,7 +776,7 @@ export class GdbSessionManager {
           "-iex",
           callerRunId === undefined
             ? "unset environment REA_PROCESS_RUN_ID"
-            : `set environment REA_PROCESS_RUN_ID ${callerRunId}`,
+            : `set environment REA_PROCESS_RUN_ID =${callerRunId}`,
         ],
         runId: randomUUID(),
         stdin: "pipe",
