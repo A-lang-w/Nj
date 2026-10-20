@@ -455,7 +455,11 @@ path has a segment such as `search`, `query`, `list`, `find`, `fuzzy`,
 successful reads that finished before the first such write under the same root:
 the path's API base (the literal segments every tool sharing its first segment
 has), any `v1`-style version segments, then one more segment. A read that
-overlaps that write in time is left out.
+overlaps that write in time is left out. A write whose URL a scenario redacted
+has an unknown target, so it ends the state of every type, and a limitation
+counts such writes. Values from a `capture_browser_scenario` parent keep the
+capture's redaction markers in place of declared secrets; the state is not
+refused for them, as the manifest is not.
 
 Each `GET` tool whose template ends in a parameter is an item tool, and its
 type's `collection_template` is the template without that parameter; any other

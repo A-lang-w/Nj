@@ -168,11 +168,14 @@ const listFacts = (
         body === undefined ? undefined : listItems(body, plan.pointer);
       if (body === undefined || items === undefined) return;
       items.forEach((item) => union.add(item));
-      const ids = items.map((item) => scalarText(item[field]) ?? "");
-      const expected = context
-        .inCollection(plan.type, collectionPathOf(record, false))
-        .map((entity) => entity.id);
-      if (record.query !== undefined || !same(ids, expected)) all = false;
+      // Once a list cannot be the whole collection, its membership is not compared again.
+      if (all && record.query === undefined) {
+        const ids = items.map((item) => scalarText(item[field]) ?? "");
+        const expected = context
+          .inCollection(plan.type, collectionPathOf(record, false))
+          .map((entity) => entity.id);
+        if (!same(ids, expected)) all = false;
+      } else all = false;
       const parent = plan.pointer === "" || !isObject(body) ? {} : body;
       const names = Object.keys(parent).filter(
         (name) => /total|count/iu.test(name) && parent[name] === items.length,

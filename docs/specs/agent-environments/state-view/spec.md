@@ -24,15 +24,16 @@ later increments.
 - Order primary-origin records by recorded start time, or by record order when
   any start time is missing, and say which. Bound each type's state by the first
   write under its root (API base, version segments, one segment); a query
-  `POST` is not a write, and a read overlapping the write is left out.
+  `POST` is not a write, a read overlapping the write is left out, and a write
+  whose URL was redacted bounds every type, with a limitation counting it.
 - Prove an item type's identity field from the requested path value its
   responses repeat; otherwise infer it from a fixed list of identity names that
-  every listed item carries distinctly. Never treat an envelope that is itself
-  an entity as a list.
+  every listed item carries distinctly, which needs at least one listed item.
+  Never treat an envelope that is itself an entity as a list.
 - Merge observations into one entity per collection and identity: item views'
   latest values win over list views', differing views keep their own values,
-  and a value that changed with no related write is volatile and keeps the
-  latest.
+  and a value that changed between repeats of one request line with no related
+  write is volatile and keeps the latest.
 - Keep an item or list plan only when it reproduces each request line's latest
   initial recording from the state, comparing JSON values without regard to
   member order; otherwise record the tool with a reason. Parse bodies only when

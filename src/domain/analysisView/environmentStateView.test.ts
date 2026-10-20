@@ -349,3 +349,47 @@ it("refuses when extraction would exceed the projection budget", () => {
     },
   });
 });
+
+it("ends every type's state at a write whose URL was redacted, and says so", () => {
+  const parent = captureOf([
+    ["GET", "/api/items/1", { id: 1, title: "Granite Ledger" }],
+    ["PUT", "/api/items/1", { id: 1 }],
+    ["GET", "/api/items/1", { id: 1, title: "Saltmarsh Depot" }],
+  ]);
+  const result = structuredClone(parent.normalizedResult) as {
+    records: { reported: { request: { url: string | null } } }[];
+  };
+  // A scenario keeps a redacted URL as null, so the write's target is unknown.
+  result.records[1]!.reported.request.url = null;
+  const state = stateOf({ ...parent, normalizedResult: result });
+  expect(state.types).toMatchObject([{ init_before_ordinal: 1 }]);
+  expect(state.entities).toMatchObject([
+    { fields: { title: "Granite Ledger" }, record_ordinals: [0] },
+  ]);
+  expect(state.limitations).toContain(
+    "1 of the recorded writes had a redacted URL; each ends the initial state of every type, since its target is unknown.",
+  );
+});
+
+it("infers no identity for a list whose recordings held no items", () => {
+  const state = stateOf(captureOf([["GET", "/api/widgets", []]]));
+  expect(state.types).toEqual([]);
+  expect(state.views).toEqual([
+    { tool: "get_widgets", shape: "recorded", reason: "no-identity" },
+  ]);
+});
+
+it("does not call a value volatile when it differs between request lines", () => {
+  const state = stateOf(
+    captureOf([
+      ["GET", "/api/items/1?lang=fr", { id: 1, name: "Bonjour" }],
+      ["GET", "/api/items/1", { id: 1, name: "Hello" }],
+    ]),
+  );
+  expect(state.types).toEqual([]);
+  expect(
+    state.views.map((view) =>
+      view.shape === "recorded" ? [view.tool, view.reason] : view.tool,
+    ),
+  ).toEqual([["get_items_by_id", "fields-differ"]]);
+});

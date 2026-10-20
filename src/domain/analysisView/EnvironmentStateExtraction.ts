@@ -78,6 +78,8 @@ export class EnvironmentStateExtraction {
   readonly #entities = new Map<string, ObservedEntity>();
   readonly #volatile = new Map<string, Set<string>>();
   readonly #merged = new Map<string, StateEntity>();
+  /** Merged entities by type and collection, built once on first use after merging. */
+  #collections: Map<string, StateEntity[]> | undefined;
 
   constructor(input: {
     readonly tools: readonly StateToolFacts[];
@@ -280,6 +282,7 @@ export class EnvironmentStateExtraction {
     const proved = this.#identity.get(type)?.field;
     let pointer: string | undefined;
     let names: readonly string[] | undefined;
+    let sawItems = false;
     for (const record of recordings) {
       const found = this.#withBody(record.ordinal, (body) => {
         if (body === undefined) return null;
@@ -288,6 +291,7 @@ export class EnvironmentStateExtraction {
           located === undefined ? undefined : listItems(body, located);
         if (items === undefined) return undefined;
         pointer = located;
+        if (items.length > 0) sawItems = true;
         return items.length === 0
           ? (names ?? (proved === undefined ? IDENTITY_NAMES : [proved]))
           : (proved === undefined ? IDENTITY_NAMES : [proved]).filter((name) =>
@@ -301,7 +305,12 @@ export class EnvironmentStateExtraction {
       names = (names ?? found).filter((name) => found.includes(name));
     }
     const field = names?.[0];
-    if (field === undefined || pointer === undefined) {
+    // An identity name is only inferred from items that carry it; empty lists prove none.
+    if (
+      field === undefined ||
+      pointer === undefined ||
+      (proved === undefined && !sawItems)
+    ) {
       this.#recorded(tool, "no-identity");
       return;
     }
@@ -351,8 +360,12 @@ export class EnvironmentStateExtraction {
       };
       this.#entities.set(key, entity);
     }
+    // Only a repeated request line shows a value changing; other lines may differ by query.
+    const line = requestLine(record);
     const earlier = entity.observations.findLast(
-      (observation) => observation.tool === plan.tool.name,
+      (observation) =>
+        observation.tool === plan.tool.name &&
+        requestLine(this.#byOrdinal.get(observation.ordinal)!) === line,
     );
     for (const name of Object.keys(object))
       if (
@@ -400,9 +413,17 @@ export class EnvironmentStateExtraction {
   }
 
   #inCollection(type: string, collection: string): StateEntity[] {
-    return [...this.#merged.values()].filter(
-      (entity) => entity.type === type && entity.collection === collection,
-    );
+    if (this.#collections === undefined) {
+      this.#retain(ENTRY_BYTES * (this.#merged.size + 1));
+      this.#collections = new Map();
+      for (const entity of this.#merged.values()) {
+        const key = JSON.stringify([entity.type, entity.collection]);
+        const members = this.#collections.get(key);
+        if (members === undefined) this.#collections.set(key, [entity]);
+        else members.push(entity);
+      }
+    }
+    return this.#collections.get(JSON.stringify([type, collection])) ?? [];
   }
 
   /** A written path whose read is not an entity holds one document value: its latest init recording. */
