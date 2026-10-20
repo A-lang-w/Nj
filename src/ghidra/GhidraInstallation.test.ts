@@ -9,7 +9,7 @@ import {
   parseGhidraJavaOutput,
   type GhidraJavaObservation,
 } from "./GhidraJavaProbe.js";
-import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -77,6 +77,73 @@ const host = (
 afterEach(() => {
   vi.unstubAllEnvs();
 });
+
+it.skipIf(process.platform === "win32")(
+  "publishes the stable launcher spelling only when it resolves to the validated root",
+  async () => {
+    const root = await createTestTempDirectory("rea-ghidra-stable-");
+    const keg = join(root, "Cellar", "ghidra", "12.1.4", "libexec");
+    const opt = join(root, "opt", "ghidra");
+    const bin = join(root, "bin");
+    const launcher = join(keg, "ghidraRun");
+    await mkdir(join(keg, "Ghidra"), { recursive: true });
+    await mkdir(join(keg, "support"), { recursive: true });
+    await mkdir(join(root, "opt"), { recursive: true });
+    await mkdir(bin, { recursive: true });
+    await writeFile(
+      join(keg, "Ghidra", "application.properties"),
+      "application.version=12.1.4\n",
+    );
+    await writeFile(launcher, "#!/bin/sh\nexit 0\n");
+    await writeFile(
+      join(keg, "support", "analyzeHeadless"),
+      "#!/bin/sh\nexit 0\n",
+    );
+    await chmod(launcher, 0o700);
+    await chmod(join(keg, "support", "analyzeHeadless"), 0o700);
+    await symlink("../Cellar/ghidra/12.1.4", opt);
+    await symlink("../opt/ghidra/libexec/ghidraRun", join(bin, "ghidra"));
+    const stable = join(root, "opt", "ghidra", "libexec");
+
+    expect(
+      discoverGhidraInstallationOnPath({ PATH: bin }, process.platform),
+    ).toBe(stable);
+
+    // An alias whose own directory is not the validated root stays unpublished.
+    const alias = join(root, "alias");
+    const aliasBin = join(root, "alias-bin");
+    await mkdir(alias, { recursive: true });
+    await mkdir(aliasBin, { recursive: true });
+    await symlink(launcher, join(alias, "ghidraRun"));
+    await symlink("../alias/ghidraRun", join(aliasBin, "ghidra"));
+    expect(
+      discoverGhidraInstallationOnPath({ PATH: aliasBin }, process.platform),
+    ).toBe(keg);
+
+    // A package-manager upgrade moves the stable prefix and deletes the keg.
+    await rm(opt);
+    await symlink("../Cellar/ghidra/12.1.5", opt);
+    const upgraded = join(root, "Cellar", "ghidra", "12.1.5", "libexec");
+    await mkdir(join(upgraded, "Ghidra"), { recursive: true });
+    await mkdir(join(upgraded, "support"), { recursive: true });
+    await writeFile(
+      join(upgraded, "Ghidra", "application.properties"),
+      "application.version=12.1.5\n",
+    );
+    await writeFile(join(upgraded, "ghidraRun"), "#!/bin/sh\nexit 0\n");
+    await writeFile(
+      join(upgraded, "support", "analyzeHeadless"),
+      "#!/bin/sh\nexit 0\n",
+    );
+    await chmod(join(upgraded, "ghidraRun"), 0o700);
+    await chmod(join(upgraded, "support", "analyzeHeadless"), 0o700);
+    await rm(join(root, "Cellar", "ghidra", "12.1.4"), { recursive: true });
+
+    expect(
+      discoverGhidraInstallationOnPath({ PATH: bin }, process.platform),
+    ).toBe(stable);
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "resolves a PATH launcher only when its real target is a complete installation",
