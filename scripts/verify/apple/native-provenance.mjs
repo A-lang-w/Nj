@@ -25,7 +25,17 @@ export async function verifyNativeProvenance(app, executable) {
     const definitions = new Map(
       (await client.listTools()).tools.map((tool) => [tool.name, tool]),
     );
+    let bundleResourcesOpen = false;
     for (const [operation, arguments_] of operations) {
+      const needsBundleResources = operation === "inspect_plist";
+      if (needsBundleResources !== bundleResourcesOpen) {
+        const opened = await client.callTool({
+          name: needsBundleResources ? "open_bundle_resources" : "open_binary",
+          arguments: { path: app },
+        });
+        assert.notEqual(opened.isError, true, JSON.stringify(opened));
+        bundleResourcesOpen = needsBundleResources;
+      }
       const cli = toolContract(operation).outputSchema.parse(
         await artifactCliEvidence(
           operation.replaceAll("_", "-"),
