@@ -117,6 +117,69 @@ it("keeps symbol origin unknown when supplied metadata describes a different sam
   );
 });
 
+it("preserves contradictory symbol origins from inventory/name facts or multiple name observations, independently of byte correspondence", async () => {
+  const observe = (operation: string, generated: boolean) =>
+    createEvidence(nativeMatchingTarget("1"), nativeMatchingProvider, {
+      operation,
+      parameters: {},
+      result: [
+        {
+          address: "0x10",
+          value: "same_name",
+          symbol: {
+            primary: true,
+            dynamic: generated,
+            external: false,
+            type: "function",
+            source: generated ? "default" : "user_defined",
+          },
+        },
+      ],
+    });
+  const right = nativeMatchingInventory("2", [
+    { address: "0x20", value: "same_name" },
+  ]);
+  for (const [left, names] of [
+    [observe("list_procedures", false), [observe("list_names", true)]],
+    [observe("list_procedures", true), [observe("list_names", false)]],
+    [
+      nativeMatchingInventory("1", [{ address: "0x10", value: "same_name" }]),
+      [observe("list_names", false), observe("list_names", true)],
+    ],
+    [
+      nativeMatchingInventory("1", [{ address: "0x10", value: "same_name" }]),
+      [observe("list_names", true), observe("list_names", false)],
+    ],
+  ] as const) {
+    for (const withBytes of [false, true]) {
+      const { report } = await compare({
+        left,
+        right,
+        left_observations: [
+          ...names,
+          ...(withBytes ? nativeMatchingDetails("1", "0x10", "c3") : []),
+        ],
+        right_observations: withBytes
+          ? nativeMatchingDetails("2", "0x20", "c3")
+          : [],
+      });
+      expect(report.summary.matched).toBe(withBytes ? 1 : 0);
+      expect(report.matches[0]!.basis).toBe(
+        withBytes ? "identical-bytes" : null,
+      );
+      const member = report.matches[0]!.left[0]!;
+      expect(member.limitations).toContain(
+        "Conflicting generated and named symbol-origin observations; exact-name matching is unavailable. Independent complete body bytes remain eligible.",
+      );
+      expect(member.limitations.join(" ")).not.toContain(
+        "Symbol origin unavailable",
+      );
+      for (const source of names)
+        expect(member.evidence_links).toContain(source.evidence_id);
+    }
+  }
+});
+
 it("keeps informative CFG/call/string fingerprints as unresolved candidates and refuses incomplete structural observations", async () => {
   const profile = createAnalysisProfile(nativeMatchingProvider, {
     fixture: "structural-candidates-v1",

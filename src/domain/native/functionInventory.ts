@@ -138,7 +138,10 @@ const addBytes = async (
 const reportedSymbol = (
   row: AddressedValue,
   known: Symbols | undefined,
-): { readonly value: string | null; readonly originKnown: boolean } => {
+): {
+  readonly value: string | null;
+  readonly origin: "known" | "unknown" | "conflicting";
+} => {
   const names = [
     ...(row.symbol === undefined ? [] : [row]),
     ...(known?.values.filter((symbol) => symbol.value === row.value) ?? []),
@@ -156,7 +159,12 @@ const reportedSymbol = (
       row.value.length === 0 || generated || (!named && isAutoName(row.value))
         ? null
         : row.value,
-    originKnown: names.some((symbol) => symbol.symbol !== undefined),
+    origin:
+      generated && named
+        ? "conflicting"
+        : names.some((symbol) => symbol.symbol !== undefined)
+          ? "known"
+          : "unknown",
   };
 };
 const functionFact = async (
@@ -195,9 +203,13 @@ const functionFact = async (
         ? "Conflicting procedure observations; body and dossier remain unknown."
         : "No complete unambiguous bytes for the observed function body.",
     );
-  if (!symbol.originKnown)
+  if (symbol.origin === "unknown")
     limitations.push(
       "Symbol origin unavailable; exact-name matching uses the reported name and the existing automatic-name exclusion rule.",
+    );
+  if (symbol.origin === "conflicting")
+    limitations.push(
+      "Conflicting generated and named symbol-origin observations; exact-name matching is unavailable. Independent complete body bytes remain eligible.",
     );
   if (detail?.dossier === null)
     limitations.push(
