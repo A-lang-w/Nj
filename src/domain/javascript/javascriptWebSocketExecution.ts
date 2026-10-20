@@ -373,39 +373,73 @@ const webSocketStoredCallTarget = (
   return undefined;
 };
 
-const storedCallbackCalls = new WeakMap<
+interface WebSocketExecutionFacts {
+  readonly effects: JavaScriptSemanticAnalysisState["literalMemberEffects"];
+  readonly phase: JavaScriptSemanticAnalysisState["memberMutationFactsPhase"];
+  readonly callCount: number;
+  storedCalls?: WeakMap<
+    t.Function,
+    readonly JavaScriptSemanticAnalysisState["callSites"][number][]
+  >;
+  readonly immediateCallers: WeakMap<t.Node, t.Function | null>;
+  readonly suspensions: WebSocketSuspensionFacts;
+  readonly bodySuspensions: WeakMap<
+    t.Node,
+    { readonly value: boolean | undefined }
+  >;
+  readonly classPrefixes: WeakMap<
+    t.Class,
+    {
+      readonly keys: ReadonlyMap<t.Node, WebSocketSuspension | null>;
+      readonly statics: ReadonlyMap<t.Node, WebSocketSuspension | null>;
+    }
+  >;
+}
+const executionFacts = new WeakMap<
   JavaScriptSemanticAnalysisState,
-  {
-    readonly effects: JavaScriptSemanticAnalysisState["literalMemberEffects"];
-    readonly count: number;
-    readonly phase: JavaScriptSemanticAnalysisState["memberMutationFactsPhase"];
-    readonly calls: WeakMap<
-      t.Function,
-      readonly JavaScriptSemanticAnalysisState["callSites"][number][]
-    >;
-  }
+  WebSocketExecutionFacts
 >();
+
+/** Every derived activation and suspension belongs to one effect-index version. */
+const webSocketExecutionFacts = (
+  state: JavaScriptSemanticAnalysisState,
+): WebSocketExecutionFacts => {
+  let facts = executionFacts.get(state);
+  if (
+    facts === undefined ||
+    facts.effects !== state.literalMemberEffects ||
+    facts.phase !== state.memberMutationFactsPhase ||
+    facts.callCount !== state.callSites.length
+  ) {
+    facts = {
+      effects: state.literalMemberEffects,
+      phase: state.memberMutationFactsPhase,
+      callCount: state.callSites.length,
+      immediateCallers: new WeakMap(),
+      suspensions: {
+        completed: new WeakMap(),
+        exits: new WeakMap(),
+        prefixes: new WeakMap(),
+      },
+      bodySuspensions: new WeakMap(),
+      classPrefixes: new WeakMap(),
+    };
+    executionFacts.set(state, facts);
+  }
+  return facts;
+};
 
 /** Exact immutable aliases share one call-site index, including their lexical caller. */
 const webSocketStoredCalls = (
   node: t.Function,
   state: JavaScriptSemanticAnalysisState,
 ) => {
-  let facts = storedCallbackCalls.get(state);
-  if (
-    facts === undefined ||
-    facts.effects !== state.literalMemberEffects ||
-    facts.phase !== state.memberMutationFactsPhase ||
-    facts.count !== state.callSites.length
-  ) {
-    facts = {
-      effects: state.literalMemberEffects,
-      phase: state.memberMutationFactsPhase,
-      count: state.callSites.length,
-      calls: new WeakMap(),
-    };
+  const facts = webSocketExecutionFacts(state);
+  let calls = facts.storedCalls;
+  if (calls === undefined) {
+    calls = new WeakMap();
     // Install before identity queries: projections may reenter execution facts.
-    storedCallbackCalls.set(state, facts);
+    facts.storedCalls = calls;
     const parameters = new Map<string, t.Function[]>();
     for (const call of state.callSites) {
       for (const argument of call.arguments.flatMap<t.Node>((argument) =>
@@ -452,10 +486,10 @@ const webSocketStoredCalls = (
           ? (parameters.get(binding.bindingId) ?? [])
           : [];
       for (const fn of new Set(functions))
-        facts.calls.set(fn, [...(facts.calls.get(fn) ?? []), call]);
+        calls.set(fn, [...(calls.get(fn) ?? []), call]);
     }
   }
-  return facts.calls.get(node) ?? [];
+  return calls.get(node) ?? [];
 };
 
 /** Binding a literal defers it only until that bound result is invoked. */
@@ -730,37 +764,15 @@ const webSocketOrderedEvaluation = (
 };
 
 interface WebSocketSuspensionFacts {
-  readonly effects: JavaScriptSemanticAnalysisState["literalMemberEffects"];
-  readonly phase: JavaScriptSemanticAnalysisState["memberMutationFactsPhase"];
   readonly completed: WeakMap<t.Node, WebSocketSuspension | null>;
   readonly exits: WeakMap<t.BlockStatement, WebSocketSuspension | null>;
   readonly prefixes: WeakMap<t.Node, ReadonlyMap<t.Node, WebSocketSuspension>>;
 }
-const webSocketSuspensions = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  WebSocketSuspensionFacts
->();
-
-/** Resource acquisition and cached prefixes depend on the same effect-index phase. */
+/** Resource acquisition and cached prefixes share the activation's version. */
 const webSocketSuspensionFacts = (
   state: JavaScriptSemanticAnalysisState,
 ): WebSocketSuspensionFacts => {
-  let facts = webSocketSuspensions.get(state);
-  if (
-    facts === undefined ||
-    facts.effects !== state.literalMemberEffects ||
-    facts.phase !== state.memberMutationFactsPhase
-  ) {
-    facts = {
-      effects: state.literalMemberEffects,
-      phase: state.memberMutationFactsPhase,
-      completed: new WeakMap(),
-      exits: new WeakMap(),
-      prefixes: new WeakMap(),
-    };
-    webSocketSuspensions.set(state, facts);
-  }
-  return facts;
+  return webSocketExecutionFacts(state).suspensions;
 };
 
 /** Catch and loop heads consume the same ordered binding facts as destructuring. */
@@ -1129,21 +1141,12 @@ const webSocketSelectedCallee = (raw: t.Node): t.Node => {
   }
 };
 
-const immediateCallers = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  WeakMap<t.Node, t.Function | null>
->();
-
 /** Reuse body activation ownership, caching only each requested callee subtree. */
 const webSocketImmediateCaller = (
   call: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): t.Function | undefined => {
-  let callers = immediateCallers.get(state);
-  if (callers === undefined) {
-    callers = new WeakMap();
-    immediateCallers.set(state, callers);
-  }
+  const callers = webSocketExecutionFacts(state).immediateCallers;
   const cached = callers.get(call);
   if (cached !== undefined) return cached ?? undefined;
   if (
@@ -1337,32 +1340,16 @@ const webSocketGeneratorResume = (
     : undefined;
 };
 
-const bodySuspensionFacts = new WeakMap<
-  t.Node,
-  {
-    readonly effects: JavaScriptSemanticAnalysisState["literalMemberEffects"];
-    readonly phase: JavaScriptSemanticAnalysisState["memberMutationFactsPhase"];
-    readonly value: boolean | undefined;
-  }
->();
 /** A synchronous iterator resumes in-turn unless its consumer body can await. */
 const webSocketBodyMaySuspend = (
   body: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean | undefined => {
-  const known = bodySuspensionFacts.get(body);
-  if (
-    known !== undefined &&
-    known.effects === state.literalMemberEffects &&
-    known.phase === state.memberMutationFactsPhase
-  )
-    return known.value;
+  const cache = webSocketExecutionFacts(state).bodySuspensions;
+  const known = cache.get(body);
+  if (known !== undefined) return known.value;
   const remember = (value: boolean | undefined): boolean | undefined => {
-    bodySuspensionFacts.set(body, {
-      effects: state.literalMemberEffects,
-      phase: state.memberMutationFactsPhase,
-      value,
-    });
+    cache.set(body, { value });
     return value;
   };
   const pending = [body];
@@ -1678,17 +1665,6 @@ export const webSocketInitializerDominatesRead = (
   );
 };
 
-const webSocketClassPrefixes = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  WeakMap<
-    t.Class,
-    {
-      readonly keys: ReadonlyMap<t.Node, WebSocketSuspension | null>;
-      readonly statics: ReadonlyMap<t.Node, WebSocketSuspension | null>;
-    }
-  >
->();
-
 /** Index class evaluation once; all keys precede every static initializer. */
 const webSocketClassPrefix = (
   member: t.Node,
@@ -1699,11 +1675,7 @@ const webSocketClassPrefix = (
   const declaration =
     body === undefined ? undefined : state.parentsByNode.get(body);
   if (!t.isClass(declaration)) return undefined;
-  let byClass = webSocketClassPrefixes.get(state);
-  if (byClass === undefined) {
-    byClass = new WeakMap();
-    webSocketClassPrefixes.set(state, byClass);
-  }
+  const byClass = webSocketExecutionFacts(state).classPrefixes;
   let prefixes = byClass.get(declaration);
   if (prefixes === undefined) {
     const keys = new Map<t.Node, WebSocketSuspension | null>();

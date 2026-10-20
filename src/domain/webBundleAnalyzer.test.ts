@@ -4770,6 +4770,51 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "replaced call leaves parameter generator dormant",
+    "Function.prototype.call=()=>{};(function([x]){}).call(null,(function*(){new Socket(URL);yield 0;})());const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "replaced apply leaves parameter generator dormant",
+    "Function.prototype.apply=()=>{};(function([x]){}).apply(null,[(function*(){new Socket(URL);yield 0;})()]);const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "native call still consumes parameter generator",
+    "(function([x]){}).call(null,(function*(){new Socket(URL);yield 0;})());const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "native apply still consumes parameter generator",
+    "(function([x]){}).apply(null,[(function*(){new Socket(URL);yield 0;})()]);const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "later helper replacement preserves earlier parameter consumption",
+    "try{(function([x]){}).call(null,(function*(){new Socket(URL);yield 0;})())}catch{}Function.prototype.call=()=>{};const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "unrelated helper replacement preserves parameter consumption",
+    "Function.prototype.apply=()=>{};(function([x]){}).call(null,(function*(){new Socket(URL);yield 0;})());const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "replaced call does not hide later generator resume",
+    "Function.prototype.call=()=>{};const values=(function*(){new Socket(URL);yield 0;})();(function([x]){}).call(null,values);const Socket=globalThis.WebSocket;values.next();",
+    true,
+  ],
+  [
+    "class key replaced helper leaves generator dormant",
+    "Function.prototype.call=()=>{};class C{[(function([x]){}).call(null,(function*(){new Socket(URL);yield 0;})())](){}}const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "class key native helper consumes generator",
+    "class C{[(function([x]){}).call(null,(function*(){new Socket(URL);yield 0;})())](){}}const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
     "bound helper overwrite belongs to bound allocation",
     "const connect=()=>new Socket(URL);const bound=connect.bind(null);bound.call=()=>{};bound.call(null);const Socket=globalThis.WebSocket;bound();",
     true,

@@ -682,6 +682,60 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "r59-0.js",
+    source:
+      'Function.prototype.call=()=>{};(function([x]){}).call(null,(function*(){new Socket("wss://example.test/review-latest");yield 0;})());const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r59-1.js",
+    source:
+      'Function.prototype.apply=()=>{};(function([x]){}).apply(null,[(function*(){new Socket("wss://example.test/review-latest");yield 0;})()]);const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r59-3.js",
+    source:
+      '(function([x]){}).call(null,(function*(){new Socket("wss://example.test/review-latest");yield 0;})());const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r59-4.js",
+    source:
+      '(function([x]){}).apply(null,[(function*(){new Socket("wss://example.test/review-latest");yield 0;})()]);const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r59-6.js",
+    source:
+      'try{(function([x]){}).call(null,(function*(){new Socket("wss://example.test/review-latest");yield 0;})())}catch{}Function.prototype.call=()=>{};const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r59-7.js",
+    source:
+      'Function.prototype.apply=()=>{};(function([x]){}).call(null,(function*(){new Socket("wss://example.test/review-latest");yield 0;})());const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r59-8.js",
+    source:
+      'Function.prototype.call=()=>{};const values=(function*(){new Socket("wss://example.test/review-latest");yield 0;})();(function([x]){}).call(null,values);const Socket=globalThis.WebSocket;values.next();',
+    present: true,
+  },
+  {
+    file: "r59-9.js",
+    source:
+      'Function.prototype.call=()=>{};class C{[(function([x]){}).call(null,(function*(){new Socket("wss://example.test/review-latest");yield 0;})())](){}}const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r59-10.js",
+    source:
+      'class C{[(function([x]){}).call(null,(function*(){new Socket("wss://example.test/review-latest");yield 0;})())](){}}const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
     file: "r58-16.js",
     source:
       'const connect=()=>new Socket("wss://example.test/review-latest");const bound=connect.bind(null);bound.call=()=>{};bound.call(null);const Socket=globalThis.WebSocket;bound();',
