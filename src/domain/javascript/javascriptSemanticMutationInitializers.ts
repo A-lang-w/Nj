@@ -18,7 +18,7 @@ import type {
 } from "./javascriptSemanticState.js";
 
 interface StatementPosition {
-  readonly body: readonly t.Statement[];
+  readonly body: readonly t.Node[];
   readonly index: number;
   readonly declaratorIndex: number;
 }
@@ -83,13 +83,23 @@ const initializerPositionCache = (
 };
 
 const statementPosition = (
-  statement: t.Statement,
+  statement: t.Node,
   parents: WeakMap<t.Node, t.Node>,
   declarator?: t.VariableDeclarator,
 ): StatementPosition | null => {
-  const parent = parents.get(statement);
+  let owner = statement;
+  let parent = parents.get(owner);
+  if (
+    (t.isExportNamedDeclaration(parent) ||
+      t.isExportDefaultDeclaration(parent)) &&
+    parent.declaration === statement
+  ) {
+    owner = parent;
+    parent = parents.get(owner);
+  }
   if (!t.isProgram(parent) && !t.isBlockStatement(parent)) return null;
-  const index = parent.body.indexOf(statement);
+  const body: readonly t.Node[] = parent.body;
+  const index = body.indexOf(owner);
   return index < 0
     ? null
     : {
