@@ -489,6 +489,115 @@ describe("identityless exit refresh leaves unrelated replacements unresolved", (
   });
 });
 
+describe("identityless exit refresh keeps later confirmation rows", () => {
+  it("token-checks a replacement born in the liveness table after an unreadable row exits", async () => {
+    const unreadable = {
+      ...launcher,
+      pid: 102,
+      parentPid: 1,
+      processGroupId: 102,
+      command: "unreadable-replacement",
+    };
+    const escaped = {
+      ...launcher,
+      pid: 103,
+      parentPid: 1,
+      processGroupId: 103,
+      command: "owned-replacement",
+    };
+    const signalGroup = vi.fn();
+    const environment = vi.fn((pid: number) =>
+      pid === 102
+        ? Promise.reject(new Error("environment unavailable"))
+        : Promise.resolve({ REA_PROCESS_RUN_ID: ownership.runId }),
+    );
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([
+        { ...launcher, command: "[MainThread]" },
+        { ...launcher, pid: 101, parentPid: 100 },
+      ])
+      .mockResolvedValueOnce([unreadable])
+      .mockResolvedValue([escaped]);
+    await expect(
+      cleanupOwnedProcessGroup(
+        { ...ownership, expectedCommand: "fixture" },
+        { listProcesses, environment, signalGroup },
+      ),
+    ).resolves.toEqual({ cleaned: true, signaled: true });
+    expect(environment).toHaveBeenCalledWith(103);
+    expect(signalGroup.mock.calls).toEqual([[103, "SIGKILL"]]);
+  });
+
+  it("signals an escaped group discovered while revalidating the planned group", async () => {
+    const escaped = {
+      ...launcher,
+      pid: 102,
+      parentPid: 1,
+      processGroupId: 102,
+      command: "reparented-grandchild",
+    };
+    const signalGroup = vi.fn();
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([launcher])
+      .mockResolvedValueOnce([{ ...launcher, command: "[MainThread]" }])
+      .mockResolvedValue([escaped]);
+    await expect(
+      cleanupOwnedProcessGroup(
+        { ...ownership, expectedCommand: "fixture" },
+        {
+          listProcesses,
+          environment: () =>
+            Promise.resolve({ REA_PROCESS_RUN_ID: ownership.runId }),
+          signalGroup,
+        },
+      ),
+    ).resolves.toEqual({ cleaned: true, signaled: true });
+    expect(signalGroup.mock.calls).toEqual([[102, "SIGKILL"]]);
+  });
+
+  it("stays unresolved when exit-refresh confirmations do not settle", async () => {
+    const signalGroup = vi.fn();
+    let nextPid = 200;
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([
+        { ...launcher, command: "[MainThread]" },
+        { ...launcher, pid: 101, parentPid: 100 },
+      ])
+      .mockImplementation(() => {
+        const pid = nextPid;
+        nextPid += 1;
+        return Promise.resolve([
+          {
+            ...launcher,
+            pid,
+            parentPid: 1,
+            processGroupId: pid,
+            command: "churn",
+          },
+        ]);
+      });
+    await expect(
+      cleanupOwnedProcessGroup(
+        { ...ownership, expectedCommand: "fixture" },
+        {
+          listProcesses,
+          environment: () =>
+            Promise.reject(new Error("environment unavailable")),
+          signalGroup,
+        },
+      ),
+    ).resolves.toMatchObject({
+      cleaned: false,
+      reason:
+        "process ownership could not be revalidated: exit refresh confirmation limit exceeded",
+    });
+    expect(signalGroup).not.toHaveBeenCalled();
+  });
+});
+
 describe("owned process-group cleanup validation: launcher exit races", () => {
   it.each([101, 999])(
     "retains cleanup uncertainty for a detached descendant in group %s after launcher exit",

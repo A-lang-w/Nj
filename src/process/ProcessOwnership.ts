@@ -348,7 +348,11 @@ export const cleanupOwnedProcessGroup = async (
   );
   if ("cleaned" in plan) return plan;
   let signaled = false;
-  for (const processGroupId of plan.signalOrder) {
+  const pendingGroups = [...plan.signalOrder];
+  const scheduledGroups = new Set(pendingGroups);
+  while (pendingGroups.length > 0) {
+    const processGroupId = pendingGroups.shift();
+    if (processGroupId === undefined) break;
     const revalidation = await revalidateOwnedProcessGroup(
       processGroupId,
       ownership,
@@ -358,6 +362,11 @@ export const cleanupOwnedProcessGroup = async (
     );
     if ("cleaned" in revalidation)
       return mergeUnverifiedObservations(revalidation, plan.unverified);
+    for (const groupId of revalidation.escapedProcessGroupIds) {
+      if (scheduledGroups.has(groupId)) continue;
+      scheduledGroups.add(groupId);
+      pendingGroups.push(groupId);
+    }
     if (revalidation.empty) continue;
     try {
       host.signalGroup(processGroupId, "SIGKILL");
@@ -574,6 +583,9 @@ const settledProcessTable = (
   escapedProcessGroupIds: [],
 });
 
+/** Confirmation tables taken after an unreadable exit-refresh row disappears. */
+const EXIT_REFRESH_CONFIRMATION_LIMIT = 8;
+
 /**
  * Token-check rows that exist only in the post-exit table. A prior PID, group,
  * or ancestry link is handled by the caller; these rows have none of those.
@@ -585,34 +597,48 @@ const classifyUnlinkedExitRows = async (
   refreshed: readonly ProcessTableEntry[],
   unlinked: readonly ProcessTableEntry[],
   host: ProcessOwnershipHost,
+  priorPids: ReadonlySet<number>,
 ): Promise<
-  | { readonly kind: "clear" }
+  | { readonly kind: "clear"; readonly processes: readonly ProcessTableEntry[] }
   | { readonly kind: "uncertain"; readonly reason: string }
-  | { readonly kind: "escaped"; readonly groupIds: readonly number[] }
-> => {
-  if (unlinked.length === 0) return { kind: "clear" };
-  const matched: ProcessTableEntry[] = [];
-  const unreadable: { readonly pid: number; readonly reason: string }[] = [];
-  for await (const { process, observation } of readProcessRunTokens(
-    host,
-    unlinked,
-  )) {
-    if (observation.state === "readable") {
-      if (observation.runId === ownership.runId) matched.push(process);
-      continue;
+  | {
+      readonly kind: "escaped";
+      readonly processes: readonly ProcessTableEntry[];
+      readonly groupIds: readonly number[];
     }
-    unreadable.push({ pid: process.pid, reason: observation.reason });
-  }
-  if (unreadable.length > 0) {
-    let live: ReadonlySet<number> | undefined;
+> => {
+  let current = refreshed;
+  let pending = unlinked;
+  let confirmations = 0;
+  const matched: ProcessTableEntry[] = [];
+  const inspected = new Set<number>();
+  while (pending.length > 0) {
+    const due = pending.filter((process) => !inspected.has(process.pid));
+    if (due.length === 0) break;
+    for (const process of due) inspected.add(process.pid);
+    const unreadable: { readonly pid: number; readonly reason: string }[] = [];
+    for await (const { process, observation } of readProcessRunTokens(
+      host,
+      due,
+    )) {
+      if (observation.state === "readable") {
+        if (observation.runId === ownership.runId) matched.push(process);
+        continue;
+      }
+      unreadable.push({ pid: process.pid, reason: observation.reason });
+    }
+    if (unreadable.length === 0) break;
+    let liveRows: readonly ProcessTableEntry[] | undefined;
     try {
-      live = new Set(
-        liveProcesses(await host.listProcesses()).map(({ pid }) => pid),
-      );
+      liveRows = liveProcesses(await host.listProcesses());
     } catch (cause: unknown) {
       void cause;
-      live = undefined;
+      liveRows = undefined;
     }
+    const live =
+      liveRows === undefined
+        ? undefined
+        : new Set(liveRows.map(({ pid }) => pid));
     const stillLive = unreadable.filter(
       (candidate) => live === undefined || live.has(candidate.pid),
     );
@@ -629,12 +655,31 @@ const classifyUnlinkedExitRows = async (
             : `process ownership could not be revalidated for PID ${String(only.pid)}: ${only.reason}`,
       };
     }
+    if (liveRows === undefined) break;
+    confirmations += 1;
+    if (confirmations > EXIT_REFRESH_CONFIRMATION_LIMIT)
+      return {
+        kind: "uncertain",
+        reason:
+          "process ownership could not be revalidated: exit refresh confirmation limit exceeded",
+      };
+    // The confirmation read is its own table. A replacement born there is
+    // still unexamined; the exited unreadable row must not hide it.
+    current = liveRows;
+    pending = liveRows.filter(
+      (process) =>
+        !priorPids.has(process.pid) &&
+        !inspected.has(process.pid) &&
+        process.processGroupId !== ownership.processGroupId,
+    );
   }
-  if (matched.length === 0) return { kind: "clear" };
-  const matchedPids = new Set(matched.map(({ pid }) => pid));
+  const livePids = new Set(current.map(({ pid }) => pid));
+  const stillMatched = matched.filter((process) => livePids.has(process.pid));
+  if (stillMatched.length === 0) return { kind: "clear", processes: current };
+  const matchedPids = new Set(stillMatched.map(({ pid }) => pid));
   const groupIds = new Set<number>();
-  for (const process of matched) {
-    const leader = refreshed.find(
+  for (const process of stillMatched) {
+    const leader = current.find(
       (candidate) =>
         candidate.pid === process.processGroupId &&
         candidate.processGroupId === process.processGroupId,
@@ -649,6 +694,7 @@ const classifyUnlinkedExitRows = async (
   }
   return {
     kind: "escaped",
+    processes: current,
     groupIds: [...groupIds].sort((left, right) => left - right),
   };
 };
@@ -762,11 +808,12 @@ const settleLauncherExit = async (
       refreshed.processes,
       unlinked,
       host,
+      priorPids,
     );
     if (classified.kind === "uncertain")
       return { cleaned: false, reason: classified.reason };
     return {
-      processes: refreshed.processes,
+      processes: classified.processes,
       escapedProcessGroupIds:
         classified.kind === "escaped" ? classified.groupIds : [],
     };
@@ -987,8 +1034,15 @@ const revalidateOwnedProcessGroup = async (
   host: ProcessOwnershipHost,
   expectedIdentities: ReadonlyMap<number, string | null>,
   exitSettlement: ProcessExitSettlementBudget,
-): Promise<{ readonly empty: boolean } | ProcessCleanupResult> => {
+): Promise<
+  | {
+      readonly empty: boolean;
+      readonly escapedProcessGroupIds: readonly number[];
+    }
+  | ProcessCleanupResult
+> => {
   let members: readonly ProcessTableEntry[];
+  let escapedProcessGroupIds: readonly number[] = [];
   try {
     const settled = await settleLauncherExit(
       ownership,
@@ -997,6 +1051,7 @@ const revalidateOwnedProcessGroup = async (
       exitSettlement,
     );
     if ("cleaned" in settled) return settled;
+    escapedProcessGroupIds = settled.escapedProcessGroupIds;
     const processes = settled.processes;
     const relationSnapshot = await readProcessRelationSnapshot(
       ownership,
@@ -1034,7 +1089,7 @@ const revalidateOwnedProcessGroup = async (
       reason:
         "descendant process-group leader identity could not be revalidated",
     };
-  return { empty: members.length === 0 };
+  return { empty: members.length === 0, escapedProcessGroupIds };
 };
 
 const cleanupValidationFailure = (
