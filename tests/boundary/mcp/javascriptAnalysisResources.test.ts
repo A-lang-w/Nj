@@ -225,6 +225,9 @@ it("returns a directly usable partial analysis reference for an oversized timeou
     expect(error.message).toContain("analysis_timeout_ms");
     expect(error.remediation.action).toContain("Increase analysis_timeout_ms");
     expect(error.remediation.action).toContain("--analysis-timeout-ms");
+    expect(error.remediation.action).toContain(
+      "rea analyze-javascript-application",
+    );
     expect(error.remediation.action).toContain("empty array is invalid");
     expect(error.remediation.action).toContain("not analysis work");
     expect(error.remediation.action).toContain(

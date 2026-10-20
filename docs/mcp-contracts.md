@@ -96,8 +96,9 @@ names the rejected operation: re-read that operation's advertised input schema
 (call `tools/list` if the catalog may be stale), correct the listed fields, and
 do not repeat the unchanged call. `recovery.kind=inspect_timeout_state` names
 the operation and the REA server/provider deadline; inspect partial Evidence
-and reported cleanup state, then use the operation's timeout controls or reduce
-the work. Raising only the MCP client's deadline cannot extend this budget. These hints never
+and reported cleanup state, then follow producer-specific remediation or reduce
+supported work. Generic errors do not assume adjustable timeout controls. Raising
+only the MCP client's deadline cannot extend this budget. These hints never
 include the complete catalog or caller arguments.
 Failures omit `structuredContent`, since each advertised `outputSchema`
 describes successful results. Successful replies retain their schema-validated

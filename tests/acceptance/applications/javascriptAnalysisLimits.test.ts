@@ -59,7 +59,9 @@ cliTest(
       code: "provider_timeout",
       message: expect.stringContaining("analysis_timeout_ms"),
       remediation: {
-        action: expect.stringContaining("--analysis-timeout-ms"),
+        action: expect.stringContaining(
+          "rea analyze-javascript-application <input_path> --analysis-timeout-ms",
+        ),
       },
       recovery: { kind: "inspect_timeout_state", timeout_ms: 1 },
     });
