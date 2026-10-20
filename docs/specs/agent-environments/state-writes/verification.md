@@ -28,8 +28,8 @@ carry; its digest now matches the combined branch.
 
 ## Real captures
 
-The `environment-state` view ran over the 51 showcase captures (44 HAR, 5
-`capture_browser_scenario`, the rest public APIs), each within its budget in
+The `environment-state` view ran over the 50 showcase captures (45 HAR
+inspections and 5 `capture_browser_scenario` captures), each within its budget in
 8–110 ms. It served 33 write tools in 16 captures (11 creates, 12 updates, 10
 deletes). Of the other 150 state-changing tools, 102 name no state type or
 document (most write to literal single-entity paths the manifest left
@@ -171,7 +171,7 @@ b4b7ebc7 (their review fixes) and main at edbd291a, then main at 17f581ff
 (the analysis-view tool description string, which main changes often). The gates above ran again
 and passed: `npm run jscpd` 3.44% over 3579 files; domain and services 7442
 passed with 5 pre-existing skips; the focused boundary set 72 passed. The
-write verdicts over the 51 captures were unchanged plan by plan, and the
+write verdicts over the 50 captures were unchanged plan by plan, and the
 in-process smoke again applied all 33 served write tools. The AgentEnv runs
 and the live comparison above ran on cbb7b613, before these merges.
 After the second main merge: `npm run check:fast`, `npm run format:check`,
