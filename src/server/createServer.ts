@@ -10,9 +10,16 @@ import { wasmArtifactModule } from "../composition/wasm.js";
 import { registerWasmTools } from "./registerWasmTools.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
-import { createPeResourcesService } from "../composition/binaryDiagnostics.js";
+import {
+  createPackerIndicatorsService,
+  createPeResourcesService,
+} from "../composition/binaryDiagnostics.js";
 import type { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
-import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
+import type { PackerIndicatorsService } from "../application/binaryDiagnostics/PackerIndicatorsService.js";
+import {
+  registerPackerIndicatorsTool,
+  registerPeResourcesTool,
+} from "./registerPeResourcesTool.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import {
   evmInterfaceModule,
@@ -336,6 +343,7 @@ export const createServer = (
     options.il2cppMetadata ?? createIl2cppMetadataService();
   const peResources = createPeResourcesService();
   const electronFuses = options.electronFuses ?? createElectronFuseService();
+  const packerIndicators = createPackerIndicatorsService();
   const webNetworkCapture =
     options.webNetworkCapture ?? createWebNetworkCaptureService(environment);
   const javascriptRecovery =
@@ -422,6 +430,7 @@ export const createServer = (
       modelArtifact.close(),
       peResources.close(),
       electronFuses.close(),
+      packerIndicators.close(),
       webNetworkCapture.close(),
       javascriptRecovery.close?.() ?? Promise.resolve(),
       ...(options.optionalObservationProviderOwner === "caller"
@@ -485,6 +494,7 @@ export const createServer = (
     il2cppMetadata,
     peResources,
     electronFuses,
+    packerIndicators,
     webNetworkCapture,
   };
   registerDesktopApplicationTool(
@@ -704,6 +714,7 @@ const registerConfiguredAnalysisTools = (
     rustBinary,
     il2cppMetadata,
     peResources,
+    packerIndicators,
     webNetworkCapture,
     artifactResources,
   }: ServerToolContext,
@@ -748,6 +759,13 @@ const registerConfiguredAnalysisTools = (
   registerPeResourcesTool(
     server,
     peResources,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerPackerIndicatorsTool(
+    server,
+    packerIndicators,
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,
@@ -885,6 +903,7 @@ interface ServerToolContext extends ReturnType<typeof createSessionRecorders> {
   readonly il2cppMetadata: Il2cppMetadataService;
   readonly peResources: PeResourcesService;
   readonly electronFuses: ElectronFuseService;
+  readonly packerIndicators: PackerIndicatorsService;
   readonly webNetworkCapture: WebNetworkCaptureService;
   readonly artifactResources: ArtifactResourceScope;
   readonly server: EvidenceMcpServer;
