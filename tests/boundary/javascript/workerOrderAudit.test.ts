@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
+import { once } from "node:events";
 import { createInterface } from "node:readline";
+import { PassThrough, type Readable } from "node:stream";
+import { setImmediate as yieldToIo } from "node:timers/promises";
 import { expect, it } from "vitest";
 import {
   AnalysisCancelledError,
@@ -10,7 +13,8 @@ import {
   javaScriptWorkerMessageSchema,
   type JavaScriptWorkerMessage,
 } from "../../../src/javascript/analysis/JavaScriptAnalysisWorkerProtocol.js";
-import type { Readable } from "node:stream";
+import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
+import type { JavaScriptArtifactFile } from "../../../src/domain/javascript/javascriptArtifactFiles.js";
 
 const observeWorkerFrames = (
   stdout: Readable | null | undefined,
@@ -18,15 +22,41 @@ const observeWorkerFrames = (
 ): void => {
   if (stdout === null || stdout === undefined)
     throw new Error("Expected fixture worker stdout pipe");
-  createInterface({ input: stdout }).on("line", (line) =>
-    observe(
-      javaScriptWorkerMessageSchema.parse(JSON.parse(line)),
-      !stdout.readableEnded,
-    ),
-  );
+  // The runtime attaches its diagnostic and protocol readers together after
+  // adopting the launch. Wait for that owner before starting a flowing reader.
+  const attach = (event: string | symbol): void => {
+    if (event !== "data") return;
+    stdout.off("newListener", attach);
+    createInterface({ input: stdout }).on("line", (line) =>
+      observe(
+        javaScriptWorkerMessageSchema.parse(JSON.parse(line)),
+        !stdout.readableEnded,
+      ),
+    );
+  };
+  stdout.on("newListener", attach);
 };
-import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
-import type { JavaScriptArtifactFile } from "../../../src/domain/javascript/javascriptArtifactFiles.js";
+
+it("preserves buffered startup bytes until the runtime owns stdout", async () => {
+  const stdout = new PassThrough();
+  const frame = { kind: "ready", heap_limit_bytes: 1 } as const;
+  const encoded = JSON.stringify(frame) + "\n";
+  const observed: JavaScriptWorkerMessage[] = [];
+  const owned: Buffer[] = [];
+  observeWorkerFrames(stdout, (message) => observed.push(message));
+  try {
+    stdout.write(encoded);
+    await yieldToIo();
+    expect(observed).toEqual([]);
+    stdout.on("data", (chunk: Buffer) => owned.push(chunk));
+    stdout.end();
+    await once(stdout, "end");
+    expect(observed).toEqual([frame]);
+    expect(Buffer.concat(owned).toString()).toBe(encoded);
+  } finally {
+    stdout.destroy();
+  }
+});
 
 const sourceText = "export const observed = 1;";
 const file: JavaScriptArtifactFile = {
