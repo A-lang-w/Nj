@@ -27,12 +27,13 @@ import type { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
 import { publishFirmwareExtraction } from "./FirmwarePublication.js";
 import {
   FIRMWARE_LIMITS,
-  firmwarePublicationTimeoutMs,
-  startFirmwareDeadline,
-  type FirmwareDeadline,
   BINWALK_PROVIDER_IDENTITY,
   UNBLOB_PROVIDER_IDENTITY,
 } from "./FirmwareRelease.js";
+import {
+  startFirmwareDeadline,
+  type FirmwareDeadline,
+} from "./FirmwareDeadline.js";
 import { admitFirmwareVersion } from "./FirmwareVersion.js";
 import {
   firmwareToolUnavailable,
@@ -189,7 +190,12 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
     try {
       await this.#files.close();
     } catch (cause: unknown) {
-      failures.push(firmwareFailure(cause, "firmware", "close_firmware"));
+      failures.push(
+        firmwareFailure(cause, {
+          engine: "firmware",
+          operation: "close_firmware",
+        }),
+      );
     }
     const workspace = await this.#retryWorkspaceCleanup();
     if (workspace.failure !== undefined) failures.push(workspace.failure);
@@ -202,7 +208,10 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
     try {
       await this.#files.retryCleanup();
     } catch (cause: unknown) {
-      fileFailure = firmwareFailure(cause, "firmware", "close_firmware");
+      fileFailure = firmwareFailure(cause, {
+        engine: "firmware",
+        operation: "close_firmware",
+      });
     }
     const workspace = await this.#retryWorkspaceCleanup();
     return {
@@ -312,7 +321,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
         : AbortSignal.any([options.signal, phase.signal]);
     // Extraction and publication have separate budgets: publication time depends on the
     // destination filesystem, so it must not be charged to the extraction deadline.
-    let deadline = startFirmwareDeadline(FIRMWARE_LIMITS.timeoutMs);
+    let deadline = startFirmwareDeadline("analysis", FIRMWARE_LIMITS.timeoutMs);
     let signal = withCaller(deadline);
     let outcome: Outcome;
     try {
@@ -478,7 +487,8 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
             cause: signal.reason,
           });
         deadline = startFirmwareDeadline(
-          firmwarePublicationTimeoutMs(entries.length),
+          "publication",
+          request.input.publication_timeout_ms,
         );
         signal = withCaller(deadline);
         result = await publishFirmwareExtraction({
@@ -536,12 +546,11 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
         ),
       );
     } catch (cause: unknown) {
-      const failure = firmwareFailure(
-        cause,
-        engineName,
-        request.operation,
+      const failure = firmwareFailure(cause, {
+        engine: engineName,
+        operation: request.operation,
         deadline,
-      );
+      });
       outcome = err(failure);
     }
     const finished = await finishFirmwareWorkspace(
