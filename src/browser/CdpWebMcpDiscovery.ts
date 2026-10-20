@@ -228,7 +228,6 @@ const handleFrameUpdate = (
     return true;
   }
   const observation = observeCdpFrameUrl(frame);
-  const rawUrl = observation.kind === "observed" ? observation.url : undefined;
   const facts = classifyCdpFrameUrl(observation, state.origins);
   if (observation.kind !== "observed") {
     removeFrameTools(frameId, state.tools);
@@ -243,9 +242,9 @@ const handleFrameUpdate = (
   }
   // Chromium can briefly commit an inherited, empty document while replacing
   // a subframe. That intermediate URL says nothing about the frame's eventual
-  // scope or its registered tools; wait for the next committed URL (or the
-  // authoritative frame-tree re-probe at the end of discovery).
-  if (isTransientFrameUrl(rawUrl)) {
+  // scope or its registered tools; wait for a committed URL and fresh replay.
+  // Without those observations, discovery remains attach-limited.
+  if (isTransientFrameUrl(observation.scopeUrl)) {
     if (documentCommitted) {
       removeFrameTools(frameId, state.tools);
       state.transientFrames.add(frameId);
@@ -311,8 +310,20 @@ const removeFrameTools = (
     if (tool.frame_id === frameId) tools.delete(key);
 };
 
-const isTransientFrameUrl = (url: string | undefined): boolean =>
-  url === "" || url === "about:blank" || url === "about:srcdoc";
+const isTransientFrameUrl = (url: string): boolean => {
+  if (url === "") return true;
+  try {
+    const base = new URL(url);
+    return (
+      base.protocol === "about:" &&
+      base.search === "" &&
+      (base.pathname === "blank" || base.pathname === "srcdoc")
+    );
+  } catch (cause: unknown) {
+    void cause;
+    return false;
+  }
+};
 
 const removeFrame = (
   frameId: string,
