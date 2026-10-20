@@ -33,6 +33,8 @@ function fail(message) {
   throw new Error(message);
 }
 
+class Cancelled extends Error {}
+
 function parseArgs(argv) {
   const args = { apply: false, resume: false };
   for (let index = 0; index < argv.length; index++) {
@@ -245,20 +247,31 @@ async function withHandoffManifest(project, manifest, tasks, action) {
       tasks,
     };
     await writeFile(path, JSON.stringify(handoff), { mode: 0o600 });
-    return JSON.parse(
-      command(
-        process.execPath,
-        [
-          handoffScript,
-          "--project",
-          project,
-          "--manifest",
-          path,
-          ...(action === "apply" ? ["--apply"] : []),
-        ],
+    const result = spawnSync(
+      process.execPath,
+      [
+        handoffScript,
+        "--project",
         project,
-      ),
+        "--manifest",
+        path,
+        ...(action === "apply" ? ["--apply"] : []),
+      ],
+      { cwd: project, shell: false, encoding: "utf8", maxBuffer: maxOutput },
     );
+    // The helper is REA's own validator and already withholds Coordo's
+    // diagnostics, so its first error line is safe and actionable to relay.
+    if (result.error || result.status !== 0)
+      fail(
+        `Coordo handoff ${action} failed: ${
+          result.stderr
+            ?.split("\n")[0]
+            ?.replace(/^Coordo handoff: /u, "")
+            .trim() ||
+          (result.error?.code ?? result.status ?? "unknown")
+        }`,
+      );
+    return JSON.parse(result.stdout);
   } finally {
     await unlink(path).catch(() => {});
     await import("node:fs/promises")
@@ -304,6 +317,52 @@ function inside(root, path) {
   return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
+// Reports, run state, locks and raw agent logs are private. Check each
+// destination itself; an existing ignore file may cover only some of them.
+function requireIgnored(project, path) {
+  const rel = relative(project, resolve(project, path));
+  const ignored = spawnSync("git", ["check-ignore", "-q", "--", rel], {
+    cwd: project,
+    stdio: "ignore",
+    shell: false,
+  });
+  if (ignored.status !== 0)
+    fail(
+      `${rel} is not Git ignored; ignore all of .coordo/runs/ before running`,
+    );
+}
+
+// Report paths are normalized by validation, so the path string identifies
+// the destination. A claim stays with its run so no other manifest can write
+// the same report, including concurrently.
+async function claimReports(claims, runId) {
+  const created = [];
+  try {
+    for (const { claim, path } of claims) {
+      try {
+        await writeFile(
+          claim,
+          `${JSON.stringify({ run_id: runId, report_path: path })}\n`,
+          { flag: "wx", mode: 0o600 },
+        );
+        created.push(claim);
+      } catch (error) {
+        if (error.code !== "EEXIST") throw error;
+        const owner = await readFile(claim, "utf8")
+          .then((text) => JSON.parse(text).run_id)
+          .catch(() => null);
+        if (owner !== runId)
+          fail(
+            `Report path ${path} is reserved by ${owner ? `run ${owner}` : "another run"}; use a distinct report path, or remove ${claim} after confirming that run is finished`,
+          );
+      }
+    }
+  } catch (error) {
+    await Promise.all(created.map((claim) => unlink(claim).catch(() => {})));
+    throw error;
+  }
+}
+
 async function readReport(project, path, expected, kind) {
   const full = resolve(project, path);
   if (!inside(project, path)) fail(`Report escapes the project: ${path}`);
@@ -324,7 +383,7 @@ async function readReport(project, path, expected, kind) {
   return report;
 }
 
-function checkFinding(report, task, id) {
+function checkFinding(report, id) {
   exact(
     report,
     [
@@ -362,9 +421,12 @@ function checkFinding(report, task, id) {
     )
       fail(`Invalid evidence reference in ${id}`);
   }
+  // An observation is a direct reading of Evidence; it must cite at least one
+  // Evidence ID. Whether the cited Evidence proves the claim is the reviewer's.
+  if (report.observations.some((claim) => claim.evidence_ids.length === 0))
+    fail(`Observation in ${id} cites no Evidence ID`);
   if (report.status === "answered" && report.observations.length === 0)
     fail(`Answered finding ${id} has no observations`);
-  if (task.evidence_ids.length === 0) fail(`No supporting Evidence for ${id}`);
 }
 
 function checkReview(report, ids) {
@@ -406,6 +468,7 @@ async function saveState(path, state) {
 }
 
 async function dispatch(project, agent, id, logPath, children) {
+  requireIgnored(project, logPath);
   return new Promise((done) => {
     const log = createWriteStream(logPath, { flags: "w", mode: 0o600 });
     const child = spawn("coordo", ["dispatch", agent, id], {
@@ -434,30 +497,44 @@ async function dispatch(project, agent, id, logPath, children) {
   });
 }
 
-async function dispatchWorkers(project, manifest, state, statePath, children) {
+// A closed task whose report fails validation stays closed and is not
+// redispatched; its error is reported instead.
+async function validateWorker(project, manifest, entry, index) {
+  entry.closed = true;
+  try {
+    const report = await readReport(
+      project,
+      manifest.tasks[index].report_path,
+      manifest,
+      "rea-finding/v1",
+    );
+    checkFinding(report, entry.id);
+    entry.validated = true;
+    entry.closed = false;
+    delete entry.error;
+  } catch (error) {
+    entry.error = error.message;
+  }
+}
+
+async function dispatchWorkers(
+  project,
+  manifest,
+  state,
+  statePath,
+  children,
+  checkpoint,
+) {
+  // Saved success flags are never trusted across invocations: recheck every
+  // worker against the current ledger and its current report file.
   const before = ledgerSnapshot(project);
   for (let index = 0; index < state.workers.length; index++) {
     const entry = state.workers[index];
-    if (
-      entry.validated ||
-      before.find((item) => item.id === entry.id)?.status !== "done"
-    )
-      continue;
-    entry.closed = true;
-    try {
-      const report = await readReport(
-        project,
-        manifest.tasks[index].report_path,
-        manifest,
-        "rea-finding/v1",
-      );
-      checkFinding(report, manifest.tasks[index], entry.id);
-      entry.validated = true;
-      entry.closed = false;
-      delete entry.error;
-    } catch (error) {
-      entry.error = error.message;
-    }
+    entry.validated = false;
+    entry.closed = false;
+    delete entry.error;
+    if (before.find((item) => item.id === entry.id)?.status === "done")
+      await validateWorker(project, manifest, entry, index);
   }
   await saveState(statePath, state);
   const pending = state.workers
@@ -468,6 +545,7 @@ async function dispatchWorkers(project, manifest, state, statePath, children) {
     offset < pending.length;
     offset += manifest.maxParallel
   ) {
+    checkpoint();
     const batch = pending.slice(offset, offset + manifest.maxParallel);
     const results = await Promise.all(
       batch.map(async ({ entry, index }) => {
@@ -502,25 +580,36 @@ async function dispatchWorkers(project, manifest, state, statePath, children) {
           `Dispatch did not close ${entry.id}; inspect ${result.logPath}`;
         continue;
       }
-      entry.closed = true;
-      try {
-        const report = await readReport(
-          project,
-          manifest.tasks[result.index].report_path,
-          manifest,
-          "rea-finding/v1",
-        );
-        checkFinding(report, manifest.tasks[result.index], entry.id);
-        entry.validated = true;
-        entry.closed = false;
-        delete entry.error;
-      } catch (error) {
-        entry.error = error.message;
-      }
+      await validateWorker(project, manifest, entry, result.index);
     }
     await saveState(statePath, state);
     if (state.workers.some((entry) => entry.error)) break;
   }
+}
+
+function summary(outcome, runId, manifest, state, statePath) {
+  return `${JSON.stringify(
+    {
+      outcome,
+      run_id: runId,
+      workers: state.workers.map((entry, index) => ({
+        task_id: entry.id,
+        agent: manifest.tasks[index].to,
+        report_path: manifest.tasks[index].report_path,
+        validated: entry.validated,
+        ...(entry.error ? { error: entry.error } : {}),
+      })),
+      reviewer: {
+        task_id: state.reviewer.id,
+        agent: manifest.reviewer.to,
+        report_path: manifest.reviewer.report_path,
+        ...state.reviewer,
+      },
+      state_path: statePath,
+    },
+    null,
+    2,
+  )}\n`;
 }
 
 async function main() {
@@ -546,10 +635,19 @@ async function main() {
   const descriptions = manifest.tasks.map((_, index) =>
     taskDescription(manifest, index, runId),
   );
+  // Render the reviewer handoff before any task exists, with task IDs wider
+  // than Coordo allocates, so an oversized review cannot fail after workers.
   const handoffPreview = await withHandoffManifest(
     project,
     manifest,
-    descriptions,
+    [
+      ...descriptions,
+      reviewDescription(
+        manifest,
+        runId,
+        descriptions.map(() => "TASK-999999999"),
+      ),
+    ],
     "dry-run",
   );
   ensureHeadless(project, [
@@ -567,7 +665,7 @@ async function main() {
           mode: "dry-run",
           run_id: runId,
           max_parallel: manifest.maxParallel,
-          workers: handoffPreview.tasks,
+          workers: handoffPreview.tasks.slice(0, descriptions.length),
           reviewer: reviewDescription(
             manifest,
             runId,
@@ -591,10 +689,11 @@ async function main() {
   }).catch((error) => {
     if (error.code !== "EEXIST") throw error;
   });
-  for (const path of [
+  const reports = [
     ...manifest.tasks.map((task) => task.report_path),
     manifest.reviewer.report_path,
-  ]) {
+  ];
+  for (const path of reports) {
     if (!inside(project, path)) fail(`Report escapes project: ${path}`);
     let directory = runs;
     for (const part of relative(runs, resolve(project, path, "..")).split(
@@ -611,19 +710,36 @@ async function main() {
           `Report directory must not be a symlink: ${relative(project, directory)}`,
         );
     }
-    const ignored = spawnSync("git", ["check-ignore", "-q", "--", path], {
-      cwd: project,
-      stdio: "ignore",
-      shell: false,
-    });
-    if (ignored.status !== 0) fail(`Report path is not Git ignored: ${path}`);
   }
+  const reservations = join(runs, "reservations");
+  await mkdir(reservations, { mode: 0o700 }).catch((error) => {
+    if (error.code !== "EEXIST") throw error;
+  });
+  const reservationStats = await lstat(reservations);
+  if (reservationStats.isSymbolicLink() || !reservationStats.isDirectory())
+    fail(".coordo/runs/reservations must be a regular directory");
+  const claims = reports.map((path) => ({
+    path,
+    claim: join(reservations, `${sha256(path)}.claim`),
+  }));
   const lockPath = `${statePath}.lock`;
+  // Log names use Coordo task IDs, which exist only after task creation;
+  // dispatch rechecks each actual log path before writing it.
+  for (const path of [
+    ...reports,
+    ...claims.map(({ claim }) => claim),
+    statePath,
+    lockPath,
+    `${statePath}.0.next`,
+    join(runs, `rea-${runId}-TASK-0.log`),
+  ])
+    requireIgnored(project, path);
   const lock = await open(lockPath, "wx", 0o600).catch(() =>
     fail(`Run ${runId} is already locked; inspect ${lockPath}`),
   );
   const children = new Set();
-  const stop = () => {
+  let cancelled = false;
+  const killChildren = () => {
     for (const child of children) {
       try {
         process.kill(-child.pid, "SIGTERM");
@@ -632,10 +748,17 @@ async function main() {
       }
     }
   };
+  const stop = () => {
+    cancelled = true;
+    killChildren();
+  };
+  const checkpoint = () => {
+    if (cancelled) throw new Cancelled("Run cancelled");
+  };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
+  let state;
   try {
-    let state;
     if (args.resume) {
       const stateStats = await lstat(statePath);
       if (stateStats.isSymbolicLink() || !stateStats.isFile())
@@ -646,6 +769,8 @@ async function main() {
         state.manifestSha256 !== sha256(manifestBytes)
       )
         fail("Run state does not match manifest");
+      delete state.cancelled;
+      await claimReports(claims, runId);
     } else {
       try {
         await stat(statePath);
@@ -653,10 +778,7 @@ async function main() {
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
       }
-      for (const report of [
-        ...manifest.tasks.map((task) => task.report_path),
-        manifest.reviewer.report_path,
-      ]) {
+      for (const report of reports) {
         try {
           await lstat(resolve(project, report));
           fail(`Report already exists: ${report}`);
@@ -664,6 +786,7 @@ async function main() {
           if (error.code !== "ENOENT") throw error;
         }
       }
+      await claimReports(claims, runId);
       state = {
         runId,
         manifestSha256: sha256(manifestBytes),
@@ -686,6 +809,7 @@ async function main() {
     for (let index = 0; index < descriptions.length; index++) {
       const entry = state.workers[index];
       if (entry.id) continue;
+      checkpoint();
       const marker = `REA run ${runId} worker ${index + 1}.`;
       const existing = taskByMarker(project, marker);
       if (existing) entry.id = existing.id;
@@ -706,19 +830,18 @@ async function main() {
       state.pending = null;
       await saveState(statePath, state);
     }
-    await dispatchWorkers(project, manifest, state, statePath, children);
+    await dispatchWorkers(
+      project,
+      manifest,
+      state,
+      statePath,
+      children,
+      checkpoint,
+    );
+    checkpoint();
     if (state.workers.some((entry) => !entry.validated)) {
       process.stdout.write(
-        JSON.stringify(
-          {
-            outcome: "partial",
-            run_id: runId,
-            workers: state.workers,
-            state_path: statePath,
-          },
-          null,
-          2,
-        ) + "\n",
+        summary("partial", runId, manifest, state, statePath),
       );
       process.exitCode = 4;
       return;
@@ -748,30 +871,36 @@ async function main() {
       state.pending = null;
       await saveState(statePath, state);
     }
+    // Like worker results, a saved review result is rechecked on every run.
+    state.reviewer.validated = false;
+    delete state.reviewer.status;
+    delete state.reviewer.error;
     let reviewTaskDone =
       ledgerSnapshot(project).find((item) => item.id === state.reviewer.id)
         ?.status === "done";
-    if (
-      !reviewTaskDone &&
-      !state.reviewer.validated &&
-      state.reviewer.attempts < 2
-    ) {
-      state.reviewer.dispatched = true;
-      state.reviewer.attempts++;
-      await saveState(statePath, state);
-      const logPath = join(runs, `rea-${runId}-${state.reviewer.id}.log`);
-      const ok = await dispatch(
-        project,
-        manifest.reviewer.to,
-        state.reviewer.id,
-        logPath,
-        children,
-      );
-      if (!ok)
-        state.reviewer.error = `Review dispatch failed; inspect ${logPath}`;
-      reviewTaskDone =
-        ledgerSnapshot(project).find((item) => item.id === state.reviewer.id)
-          ?.status === "done";
+    if (!reviewTaskDone) {
+      if (state.reviewer.attempts >= 2)
+        state.reviewer.error = "Review dispatch retry limit reached";
+      else {
+        checkpoint();
+        state.reviewer.dispatched = true;
+        state.reviewer.attempts++;
+        await saveState(statePath, state);
+        const logPath = join(runs, `rea-${runId}-${state.reviewer.id}.log`);
+        const ok = await dispatch(
+          project,
+          manifest.reviewer.to,
+          state.reviewer.id,
+          logPath,
+          children,
+        );
+        reviewTaskDone =
+          ledgerSnapshot(project).find((item) => item.id === state.reviewer.id)
+            ?.status === "done";
+        if (!ok || !reviewTaskDone)
+          state.reviewer.error = `Review dispatch did not close ${state.reviewer.id}; inspect ${logPath}`;
+        checkpoint();
+      }
     }
     if (reviewTaskDone) {
       try {
@@ -794,33 +923,21 @@ async function main() {
       state.reviewer.validated && state.reviewer.status === "accepted"
         ? "complete"
         : "partial";
-    process.stdout.write(
-      JSON.stringify(
-        {
-          outcome,
-          run_id: runId,
-          workers: state.workers.map((entry, index) => ({
-            task_id: entry.id,
-            agent: manifest.tasks[index].to,
-            report_path: manifest.tasks[index].report_path,
-            validated: entry.validated,
-          })),
-          reviewer: {
-            task_id: state.reviewer.id,
-            agent: manifest.reviewer.to,
-            report_path: manifest.reviewer.report_path,
-            ...state.reviewer,
-          },
-          state_path: statePath,
-        },
-        null,
-        2,
-      ) + "\n",
-    );
+    process.stdout.write(summary(outcome, runId, manifest, state, statePath));
     if (outcome !== "complete") process.exitCode = 4;
+  } catch (error) {
+    if (!(error instanceof Cancelled) || !state) throw error;
+    // Stopped by the user: record what exists and start nothing further.
+    state.cancelled = true;
+    await saveState(statePath, state);
+    process.stdout.write(
+      summary("cancelled", runId, manifest, state, statePath),
+    );
+    process.exitCode = 130;
   } finally {
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
+    killChildren();
     await lock.close();
     await unlink(lockPath).catch(() => {});
   }

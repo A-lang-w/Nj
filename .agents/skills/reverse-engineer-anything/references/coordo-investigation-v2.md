@@ -70,8 +70,9 @@ Use a manifest with this shape, replacing every example value:
 ## Preview and run
 
 Preview validates the manifest, bundle digest, Git ignore state, report paths,
-and headless adapter availability. It creates no Coordo tasks and starts no
-agents:
+and headless adapter availability. It also renders the reviewer handoff, so a
+review whose combined Evidence IDs exceed the task text limit fails here rather
+than after the workers run. It creates no Coordo tasks and starts no agents:
 
 ```bash
 node .agents/skills/reverse-engineer-anything/scripts/coordo-investigate.mjs \
@@ -91,12 +92,24 @@ node .agents/skills/reverse-engineer-anything/scripts/coordo-investigate.mjs \
   --apply
 ```
 
+Before writing anything, `--apply` and `--resume` check that every output is
+ignored by Git: reports, run state, the run lock, report reservations and raw
+agent logs under `.coordo/runs/`. The runner creates `.coordo/runs/.gitignore`
+with `*` when it is absent, but never rewrites an existing one; if that file or
+the project's rules cover only part of the directory, the run stops before
+creating tasks. Each report path is reserved for its run in
+`.coordo/runs/reservations/`, so another manifest cannot write the same report,
+even concurrently. Reservations stay with their run; to reuse a path with a
+different manifest, confirm the earlier run is finished and remove its
+reservation, or choose a new report path.
+
 Workers run concurrently up to `max_parallel` (one to four). They share the
 selected project and local Evidence bundle, so assign read-only analysis scopes
 and unique report paths. The reviewer starts only after every worker task is
 closed and its report passes structural and identity checks. Each report binds
 the target digest, bundle digest and Coordo task ID. Findings use separate
-observation and inference lists, and include coverage and unknowns.
+observation and inference lists, and include coverage and unknowns. Every
+observation must cite at least one Evidence ID.
 
 The script checks report structure and identity, not whether the analysis is
 true or whether every cited Evidence ID belongs to the bundle. The independent
@@ -116,7 +129,14 @@ node .agents/skills/reverse-engineer-anything/scripts/coordo-investigate.mjs \
 ```
 
 The run state prevents duplicate tasks and allows one dispatch retry for an
-open task. If a process is interrupted forcefully, its run lock remains; check
+open task. Resume does not trust saved results: it rechecks every task against
+the current ledger and every report file, so a report removed or changed since
+the last run turns a previous `complete` into `partial`.
+
+`SIGINT` or `SIGTERM` stops the running agents, starts no further task or
+dispatch, saves the run state and prints a `cancelled` summary with exit code
+130; resume it with the same manifest. If a process is killed forcefully, its
+run lock remains; check
 that no agent process is still active before removing the stale lock and
 resuming. If an agent closes a task without producing a valid report, preserve
 that task and report the gap rather than treating the investigation as
