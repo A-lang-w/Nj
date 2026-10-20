@@ -528,6 +528,9 @@ interface GdbSession {
   commandAbandoned: string | undefined;
   abandonedToken: number | undefined;
   inferiorRunning: boolean;
+  executionGeneration: number;
+  threadInfoVerificationPending: boolean;
+  threadInfoVerificationAgain: boolean;
   interruptPending: boolean;
   recentRecordsTruncated: boolean;
 }
@@ -862,6 +865,9 @@ export class GdbSessionManager {
       commandAbandoned: undefined,
       abandonedToken: undefined,
       inferiorRunning: false,
+      executionGeneration: 0,
+      threadInfoVerificationPending: false,
+      threadInfoVerificationAgain: false,
       interruptPending: false,
       recentRecordsTruncated: false,
     };
@@ -1748,7 +1754,10 @@ export class GdbSessionManager {
           pending.outputInvalidUtf8 ||= invalidUtf8;
         } else pending.outputTruncated = true;
       }
-      if (line.startsWith("*running")) session.inferiorRunning = true;
+      if (line.startsWith("*running")) {
+        session.executionGeneration += 1;
+        session.inferiorRunning = true;
+      }
       if (line.startsWith("*stopped")) {
         const stoppedThreads =
           /(?:^|,)stopped-threads=("all"|\[[^\]]*\])(?:,|$)/u.exec(line)?.[1];
@@ -1759,65 +1768,17 @@ export class GdbSessionManager {
           stoppedThreads === '"all"' ||
           (stoppedThreads === undefined && stoppedThreadId === undefined);
         if (confirmsAllThreadsStopped) session.inferiorRunning = false;
-        // A partial stop completes run/step commands in non-stop mode, while
-        // the inferior remains globally running until MI confirms all threads
-        // stopped. Interrupt-all still waits for that global confirmation.
+        // A partial stop completes run/step commands in non-stop mode. Query
+        // thread state because the last running thread also reports a per-thread
+        // stop rather than stopped-threads="all".
         if (session.inferiorRunning) {
-          for (const [token, pending] of session.pending) {
-            if (pending.interrupt || !pending.awaitingInferiorStop) continue;
-            clearTimeout(pending.timer);
-            session.pending.delete(token);
-            pending.cleanup();
-            const records = [...pending.lines];
-            pending.resolve({
-              command: "",
-              mi: pending.terminalRecord ?? "",
-              records,
-              console: records
-                .filter((record) => record.startsWith("~"))
-                .join("\n"),
-              target: records
-                .filter((record) => record.startsWith("@"))
-                .join("\n"),
-              log: records
-                .filter((record) => record.startsWith("&"))
-                .join("\n"),
-              output_truncated: pending.outputTruncated,
-              ...(pending.outputInvalidUtf8
-                ? { output_invalid_utf8: true as const }
-                : {}),
-              completion_status: "complete",
-            });
-          }
+          this.#completeStoppedCommands(session, false);
+          if (!session.threadInfoVerificationPending)
+            this.#verifyNonStopThreadState(session);
+          else session.threadInfoVerificationAgain = true;
           continue;
         }
-        for (const [token, pending] of session.pending) {
-          if (pending.interrupt) {
-            pending.interruptStopObserved = true;
-            if (!pending.interruptReplyObserved) continue;
-          } else if (!pending.awaitingInferiorStop) continue;
-          clearTimeout(pending.timer);
-          session.pending.delete(token);
-          pending.cleanup();
-          const records = [...pending.lines];
-          pending.resolve({
-            command: "",
-            mi: pending.terminalRecord ?? "",
-            records,
-            console: records
-              .filter((record) => record.startsWith("~"))
-              .join("\n"),
-            target: records
-              .filter((record) => record.startsWith("@"))
-              .join("\n"),
-            log: records.filter((record) => record.startsWith("&")).join("\n"),
-            output_truncated: pending.outputTruncated,
-            ...(pending.outputInvalidUtf8
-              ? { output_invalid_utf8: true as const }
-              : {}),
-            completion_status: "complete",
-          });
-        }
+        this.#completeStoppedCommands(session, true);
         continue;
       }
       const match = /^(\d+)\^(done|running|connected|error|exit)(?:,|$)/u.exec(
@@ -1832,6 +1793,7 @@ export class GdbSessionManager {
       const pending = session.pending.get(token);
       if (pending === undefined) continue;
       if (match[2] === "running") {
+        session.executionGeneration += 1;
         session.inferiorRunning = true;
         pending.terminalRecord = line;
         pending.awaitingInferiorStop = true;
@@ -1877,6 +1839,63 @@ export class GdbSessionManager {
       pending.resolve({
         command: "",
         mi: line,
+        records,
+        console: records.filter((record) => record.startsWith("~")).join("\n"),
+        target: records.filter((record) => record.startsWith("@")).join("\n"),
+        log: records.filter((record) => record.startsWith("&")).join("\n"),
+        output_truncated: pending.outputTruncated,
+        ...(pending.outputInvalidUtf8
+          ? { output_invalid_utf8: true as const }
+          : {}),
+        completion_status: "complete",
+      });
+    }
+  }
+
+  #verifyNonStopThreadState(session: GdbSession): void {
+    session.threadInfoVerificationPending = true;
+    const generation = session.executionGeneration;
+    void this.#request(session, "-thread-info")
+      .then((result) => {
+        if (
+          generation !== session.executionGeneration ||
+          result.completion_status !== "complete" ||
+          result.output_truncated ||
+          !/^\d+\^done(?:,|$)/u.test(result.mi) ||
+          !/threads=\[/u.test(result.mi) ||
+          /state="running"/u.test(result.mi)
+        )
+          return;
+        session.inferiorRunning = false;
+        this.#completeStoppedCommands(session, true);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        session.threadInfoVerificationPending = false;
+        const verifyAgain = session.threadInfoVerificationAgain;
+        session.threadInfoVerificationAgain = false;
+        if (verifyAgain && session.inferiorRunning)
+          this.#verifyNonStopThreadState(session);
+      });
+  }
+
+  #completeStoppedCommands(
+    session: GdbSession,
+    allThreadsStopped: boolean,
+  ): void {
+    for (const [token, pending] of session.pending) {
+      if (pending.interrupt) {
+        if (!allThreadsStopped) continue;
+        pending.interruptStopObserved = true;
+        if (!pending.interruptReplyObserved) continue;
+      } else if (!pending.awaitingInferiorStop) continue;
+      clearTimeout(pending.timer);
+      session.pending.delete(token);
+      pending.cleanup();
+      const records = [...pending.lines];
+      pending.resolve({
+        command: "",
+        mi: pending.terminalRecord ?? "",
         records,
         console: records.filter((record) => record.startsWith("~")).join("\n"),
         target: records.filter((record) => record.startsWith("@")).join("\n"),
@@ -2556,7 +2575,9 @@ export const gdbOneShotCommandMayInvalidateDetachProof = (
     ((firstToken !== "s" &&
       UNAUDITABLE_ONE_SHOT_COMMANDS.some((name) =>
         name === "source"
-          ? firstToken.length >= 4 && name.startsWith(firstToken)
+          ? firstToken.length >= 2 &&
+            firstToken !== "s" &&
+            name.startsWith(firstToken)
           : name.startsWith(firstToken),
       )) ||
       // `!command` is shell's alias.
@@ -2582,7 +2603,8 @@ export const commandMayChangeInferiorOutput = (command: string): boolean => {
   // Require the unambiguous `sour` prefix before treating it as source.
   const mayBeSourceCommand =
     firstToken !== undefined &&
-    firstToken.length >= 4 &&
+    firstToken.length >= 2 &&
+    firstToken !== "s" &&
     "source".startsWith(firstToken);
   const mayDefineAlias =
     firstToken !== undefined && "alias".startsWith(firstToken);

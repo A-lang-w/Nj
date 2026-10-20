@@ -3517,6 +3517,73 @@ it("keeps running threads interruptible after a non-stop partial stop", async ()
   expect(child.killSignals).toEqual(["SIGINT"]);
 });
 
+it("finishes interrupt after the last per-thread stop is verified by MI", async () => {
+  let observedRun!: () => void;
+  const runStarted = new Promise<void>((resolve) => {
+    observedRun = resolve;
+  });
+  let threadInfoQueries = 0;
+  let observedThreadInfo!: (token: string) => void;
+  const firstThreadInfo = new Promise<string>((resolve) => {
+    observedThreadInfo = resolve;
+  });
+  let observedInterrupt!: (token: string) => void;
+  const interruptSent = new Promise<string>((resolve) => {
+    observedInterrupt = resolve;
+  });
+  const fake = createFakeSpawner((child, token, command) => {
+    if (command.includes('console "run"')) {
+      child.stdout.write(`${token}^running\n*running,thread-id="all"\n`);
+      observedRun();
+    } else if (command.includes("interrupt")) observedInterrupt(token);
+    else if (command === "-thread-info") {
+      threadInfoQueries += 1;
+      if (threadInfoQueries === 1) observedThreadInfo(token);
+      else
+        child.stdout.write(
+          `${token}^done,threads=[{id="1",state="stopped"}]\n`,
+        );
+    } else
+      child.stdout.write(
+        command.includes("list-thread-groups")
+          ? `${token}^done,groups=[]\n`
+          : `${token}^done\n`,
+      );
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    commandTimeoutMs: 500,
+  });
+  const started = await expectGdbSessionStarted(manager);
+  const child = fake.children[0]!;
+  const originalKill = child.kill.bind(child);
+  child.kill = (signal) => {
+    if (signal !== "SIGINT") return originalKill(signal);
+    child.killSignals.push(signal);
+    return true;
+  };
+  const run = manager.execute(started.value.session_id, "run");
+  await runStarted;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  child.stdout.write(
+    '*stopped,reason="breakpoint-hit",thread-id="1",stopped-threads=["1"]\n',
+  );
+  const threadInfoToken = await firstThreadInfo;
+  await expect(run).resolves.toMatchObject({ ok: true });
+  expect(threadInfoQueries).toBe(1);
+  const interrupt = manager.execute(started.value.session_id, "interrupt");
+  const interruptToken = await interruptSent;
+  child.stdout.write(`${interruptToken}^done\n`);
+  child.stdout.write(
+    '*stopped,reason="signal-received",signal-name="SIGINT",thread-id="1",stopped-threads=["1"]\n',
+  );
+  child.stdout.write(
+    `${threadInfoToken}^done,threads=[{id="1",state="running"}]\n`,
+  );
+  await expect(interrupt).resolves.toMatchObject({ ok: true });
+  expect(child.killSignals).toEqual(["SIGINT"]);
+  expect(threadInfoQueries).toBe(2);
+});
+
 it.each(["cancel", "timeout"] as const)(
   "retains a %s running command until async stop before cleanup",
   async (mode) => {

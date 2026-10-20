@@ -10,6 +10,8 @@ describe("one-shot GDB command classification", () => {
     "info threads &",
     "source commands.gdb",
     "sour commands.gdb",
+    "sou commands.gdb",
+    "so commands.gdb",
   ])(
     "treats %s as able to outlive or invalidate the detach proof",
     (command) => {
