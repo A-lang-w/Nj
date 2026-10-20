@@ -74,6 +74,18 @@ export const verifyInferiorInputSink = async (
   ) {
     classification = "durable";
   } else if (isCharacterDevice && destination === NULL_DEVICE) {
+    // readlink and stat observe the descriptor at different instants. Bind
+    // the `/dev/null` name to the stat snapshot by checking the character
+    // device number, so a reopened fd cannot pair a stale link with another
+    // character device.
+    const nullDevice = await stat(NULL_DEVICE);
+    if (
+      (nullDevice.mode & fsConstants.S_IFMT) !== fsConstants.S_IFCHR ||
+      observed.rdev !== nullDevice.rdev
+    )
+      throw new Error(
+        "Inferior standard input changed while verifying the null device; its independence from the debugger is unverified.",
+      );
     classification = "not-inherited";
   } else if ((observed.mode & fsConstants.S_IFMT) === fsConstants.S_IFREG) {
     classification = "not-inherited";

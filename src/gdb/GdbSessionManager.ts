@@ -2373,7 +2373,11 @@ export const commandMayChangeInferiorOutput = (command: string): boolean => {
     const inputIndex = runTail.indexOf("<");
     const argumentsAndFd = runTail.slice(0, inputIndex);
     const inputPath = runTail.slice(inputIndex + 1);
-    if (!/^\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s<>;&|]+)\s*$/u.test(inputPath))
+    if (
+      !/^\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s<>;&|]+)(?:\s+[^<>;&|\r\n]+)*\s*$/u.test(
+        inputPath,
+      )
+    )
       return false;
     // Only a standalone decimal token attached to `<` is an IO descriptor.
     // `arg2<input.txt` ends in an argument named `arg2`, so it still uses fd 0.

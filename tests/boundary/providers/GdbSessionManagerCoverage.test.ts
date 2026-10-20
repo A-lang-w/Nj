@@ -146,6 +146,8 @@ it.each([
   ["run 0<input.txt", false],
   ["run arg<input.txt", false],
   ["run arg2<input.txt", false],
+  ["run <input.txt --mode fast", false],
+  ["run < input.txt --mode fast", false],
   ["run arg < input.txt", false],
   ["run 2<input.txt", true],
   ["run > /tmp/output", true],
