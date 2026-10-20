@@ -70,9 +70,9 @@ export const collectSemanticReturns = (
             : null,
         valueExpressionLocation: returned === null ? null : range(returned),
         value:
-          returned === null
+          expression.node === null
             ? { status: "unknown", reason: "Return has no value." }
-            : evaluateSemanticExpression(returned, state),
+            : evaluateSemanticExpression(expression.node, state),
       });
     }
     return {
