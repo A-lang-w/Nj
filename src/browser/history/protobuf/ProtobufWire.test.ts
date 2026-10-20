@@ -222,6 +222,46 @@ it("distinguishes native gRPC flags from web trailers and retains partial messag
   ).toBe("partial");
 });
 
+it("rejects HTTP-forbidden control characters in trailer values as partial", async () => {
+  for (const char of ["\u0000", "\u000a", "\u000d", "\u000b", "\u007f"]) {
+    const body = Buffer.concat([
+      frame(Buffer.from("0801", "hex")),
+      frame(Buffer.from(`grpc-status: 0\r\nx-note: a${char}b\r\n`), 128),
+    ]);
+    const web = await decodeProtobufBody(
+      body,
+      "grpc-web",
+      source,
+      same,
+      new ProtobufBudget(),
+    );
+    expect(web.status).toBe("partial");
+    expect(web.frames[1]).toMatchObject({
+      status: "partial",
+      error: { reason: "Invalid gRPC-web trailer header block" },
+    });
+    expect(web.frames[0]).toMatchObject({ kind: "data", status: "complete" });
+  }
+  // SP/HTAB and empty values stay accepted (RFC 9110 5.5 field-value grammar)
+  const ok = Buffer.concat([
+    frame(Buffer.from("0801", "hex")),
+    frame(Buffer.from("grpc-status: 0\r\nx-note:  a b\t\r\nx-empty:\r\n"), 128),
+  ]);
+  const valid = await decodeProtobufBody(
+    ok,
+    "grpc-web",
+    source,
+    same,
+    new ProtobufBudget(),
+  );
+  expect(valid.status).toBe("complete");
+  expect(valid.frames[1]?.trailers).toEqual([
+    { name: "grpc-status", value: "0" },
+    { name: "x-note", value: "a b\t" },
+    { name: "x-empty", value: "" },
+  ]);
+});
+
 it("decodes independently padded base64 chunks with explicit coordinates and rejects noncanonical text", async () => {
   const first = frame(Buffer.from("0801", "hex"));
   const second = frame(Buffer.from("0802", "hex"));

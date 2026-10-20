@@ -32,6 +32,16 @@ export const PROTOBUF_LIMITATIONS = [
   "Schema values are interpretations of the caller-supplied descriptor, not proof that the sender used that schema. Map semantics, extensions, required-field validation and unknown schema fields are not reconstructed.",
 ] as const;
 
+// RFC 9110 5.5: field values exclude control characters (0x00-0x08, 0x0A-0x1F,
+// 0x7F). Bare CR/LF are line breaks; they cannot survive a split() on CRLF.
+const hasTrailerValueControl = (value: string): boolean => {
+  for (let at = 0; at < value.length; at += 1) {
+    const code = value.charCodeAt(at);
+    if (code <= 8 || (code >= 10 && code <= 31) || code === 127) return true;
+  }
+  return false;
+};
+
 export const decodeProtobufBody = async (
   body: Uint8Array,
   framing: ProtobufDecoding["framing"],
@@ -164,15 +174,19 @@ export const decodeProtobufBody = async (
           for (const line of text.split("\r\n")) {
             if (line === "") continue;
             const colon = line.indexOf(":");
+            const value = line.slice(colon + 1).replace(/^[ \t]+/, "");
+            // RFC 9110 5.5: bare CR/LF cannot survive a split() on CRLF; the
+            // other controls are excluded from field values outright.
             if (
               colon <= 0 ||
-              !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(line.slice(0, colon))
+              !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(line.slice(0, colon)) ||
+              hasTrailerValueControl(value)
             )
               throw new Error("Malformed trailer header");
             budget.charge(512);
             frame.trailers.push({
               name: redact(line.slice(0, colon)),
-              value: redact(line.slice(colon + 1).replace(/^[ \t]+/, "")),
+              value: redact(value),
             });
           }
           frame.examined_bytes = length;
