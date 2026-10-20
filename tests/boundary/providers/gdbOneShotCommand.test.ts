@@ -8,6 +8,8 @@ describe("one-shot GDB command classification", () => {
     "sh touch /tmp/x",
     "!sleep 3600",
     "info threads &",
+    "source commands.gdb",
+    "sour commands.gdb",
   ])(
     "treats %s as able to outlive or invalidate the detach proof",
     (command) => {
@@ -15,7 +17,7 @@ describe("one-shot GDB command classification", () => {
     },
   );
 
-  it.each(["info registers", "print &value", "bt"])(
+  it.each(["info registers", "print &value", "bt", "s", "step", "step 2"])(
     "keeps %s eligible for the one-shot path",
     (command) => {
       expect(gdbOneShotCommandMayInvalidateDetachProof(command)).toBe(false);

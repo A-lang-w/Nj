@@ -1759,10 +1759,38 @@ export class GdbSessionManager {
           stoppedThreads === '"all"' ||
           (stoppedThreads === undefined && stoppedThreadId === undefined);
         if (confirmsAllThreadsStopped) session.inferiorRunning = false;
-        // In non-stop mode a stop can identify one thread while peers remain
-        // active. Keep the session running until MI explicitly reports all
-        // threads stopped (or an all-stop event omits per-thread fields).
-        if (session.inferiorRunning) continue;
+        // A partial stop completes run/step commands in non-stop mode, while
+        // the inferior remains globally running until MI confirms all threads
+        // stopped. Interrupt-all still waits for that global confirmation.
+        if (session.inferiorRunning) {
+          for (const [token, pending] of session.pending) {
+            if (pending.interrupt || !pending.awaitingInferiorStop) continue;
+            clearTimeout(pending.timer);
+            session.pending.delete(token);
+            pending.cleanup();
+            const records = [...pending.lines];
+            pending.resolve({
+              command: "",
+              mi: pending.terminalRecord ?? "",
+              records,
+              console: records
+                .filter((record) => record.startsWith("~"))
+                .join("\n"),
+              target: records
+                .filter((record) => record.startsWith("@"))
+                .join("\n"),
+              log: records
+                .filter((record) => record.startsWith("&"))
+                .join("\n"),
+              output_truncated: pending.outputTruncated,
+              ...(pending.outputInvalidUtf8
+                ? { output_invalid_utf8: true as const }
+                : {}),
+              completion_status: "complete",
+            });
+          }
+          continue;
+        }
         for (const [token, pending] of session.pending) {
           if (pending.interrupt) {
             pending.interruptStopObserved = true;
@@ -2525,9 +2553,12 @@ export const gdbOneShotCommandMayInvalidateDetachProof = (
   const firstToken = /^\s*([^\s;]+)/u.exec(command)?.[1]?.toLowerCase();
   if (
     firstToken !== undefined &&
-    (UNAUDITABLE_ONE_SHOT_COMMANDS.some((name) =>
-      name.startsWith(firstToken),
-    ) ||
+    ((firstToken !== "s" &&
+      UNAUDITABLE_ONE_SHOT_COMMANDS.some((name) =>
+        name === "source"
+          ? firstToken.length >= 4 && name.startsWith(firstToken)
+          : name.startsWith(firstToken),
+      )) ||
       // `!command` is shell's alias.
       firstToken.startsWith("!"))
   )
@@ -2547,8 +2578,12 @@ export const commandMayChangeInferiorOutput = (command: string): boolean => {
   const firstToken = /^\s*([^\s;]+)/u.exec(command)?.[1]?.toLowerCase();
   const mayBeTtyCommand =
     firstToken !== undefined && "tty".startsWith(firstToken);
+  // `s` is GDB's built-in alias for `step`, not a `source` abbreviation.
+  // Require the unambiguous `sour` prefix before treating it as source.
   const mayBeSourceCommand =
-    firstToken !== undefined && "source".startsWith(firstToken);
+    firstToken !== undefined &&
+    firstToken.length >= 4 &&
+    "source".startsWith(firstToken);
   const mayDefineAlias =
     firstToken !== undefined && "alias".startsWith(firstToken);
   const mayRunWithOutputRedirection =

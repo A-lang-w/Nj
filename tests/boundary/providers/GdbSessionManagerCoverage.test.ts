@@ -3494,6 +3494,10 @@ it("keeps running threads interruptible after a non-stop partial stop", async ()
   child.stdout.write(
     '*stopped,reason="breakpoint-hit",thread-id="1",stopped-threads=["1"]\n',
   );
+  await expect(run).resolves.toMatchObject({
+    ok: true,
+    value: { result: { completion_status: "complete" } },
+  });
   await new Promise<void>((resolve) => setImmediate(resolve));
 
   let interruptSettled = false;
@@ -3510,7 +3514,6 @@ it("keeps running threads interruptible after a non-stop partial stop", async ()
     '*stopped,reason="signal-received",signal-name="SIGINT",stopped-threads="all"\n',
   );
   await expect(interrupt).resolves.toMatchObject({ ok: true });
-  await expect(run).resolves.toMatchObject({ ok: true });
   expect(child.killSignals).toEqual(["SIGINT"]);
 });
 
