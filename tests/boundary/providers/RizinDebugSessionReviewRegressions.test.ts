@@ -5,7 +5,10 @@ import { join } from "node:path";
 
 import { afterEach, expect, it } from "vitest";
 
-import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
+import {
+  assertRizinEmptyInferiorInventory,
+  RizinDebugSessionManager,
+} from "../../../src/rizin/RizinDebugSessionManager.js";
 import {
   spawnOwnedProviderProcess,
   type ProviderProcessHandle,
@@ -21,6 +24,20 @@ import { createInjectedProcess } from "./RizinDebugSessionCoverage.fixtures.js";
 let directory: string | undefined;
 const managers: Array<{ closeAll(): Promise<void> }> = [];
 const inferiorProcesses: ChildProcess[] = [];
+
+it("requires retained Rizin inferior identities to be absent before accepting an empty inventory", async () => {
+  const identity = { pid: "123", startTime: "100" };
+
+  await expect(
+    assertRizinEmptyInferiorInventory([identity], async () => "100"),
+  ).rejects.toThrow("still active");
+  await expect(
+    assertRizinEmptyInferiorInventory([identity], async () => "101"),
+  ).rejects.toThrow("changed identity");
+  await expect(
+    assertRizinEmptyInferiorInventory([identity], async () => null),
+  ).resolves.toBeUndefined();
+});
 
 const startRizinWithProvider = async (
   provider: string,
@@ -134,6 +151,38 @@ process.stdin.on("data", (chunk) => {
     const line = input.slice(0, boundary); input = input.slice(boundary + 1);
     if (line === "olj") process.stdout.write(JSON.stringify(${JSON.stringify(rows.map(({ fd, pid }) => ({ fd, raised: true, uri: `ptrace://${pid}` })))} ) + "\\0");
     else if (line === "e dbg.exitkills") process.stdout.write("true\\0");
+    else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
+    else process.stdout.write("\\0");
+  }
+});
+`,
+  );
+  await chmod(provider, 0o700);
+  return provider;
+};
+
+const createRetryEmptyInventoryProvider = async (
+  pid: number,
+): Promise<string> => {
+  directory = await mkdtemp(join(tmpdir(), "rea-rizin-empty-retry-"));
+  const provider = join(directory, "fake-rizin-empty-retry.mjs");
+  await writeFile(
+    provider,
+    `#!/usr/bin/env node
+process.stdout.write("\\0");
+let input = "";
+let inventory = 0;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n"); if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    if (line === "olj") {
+      inventory += 1;
+      process.stdout.write((inventory === 1 ? JSON.stringify([{ fd: 12, raised: true, uri: "ptrace://${pid}" }]) : "[]") + "\\0");
+    }
+    else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
     else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
     else process.stdout.write("\\0");
   }
@@ -295,6 +344,51 @@ process.stdin.on("data", (chunk) => {
       );
     }
     expect(manager.status(sessionId)?.output_invalid_utf8).toBe(true);
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "does not forget an active inferior after descriptor failure and an empty retry inventory",
+  async () => {
+    const inferior = await spawnTestInferior();
+    const pid = inferior.pid;
+    expect(pid).toBeDefined();
+    if (pid === undefined) return;
+    const provider = await createRetryEmptyInventoryProvider(pid);
+    const detachResults: string[] = [];
+    const manager = new RizinDebugSessionManager(
+      { ...process.env, REA_RIZIN_COMMAND: provider },
+      {
+        platform: "linux",
+        spawnProcess: async (options) => spawnOwnedProviderProcess(options),
+        stopProcess: async (session) => {
+          try {
+            const detached = await session.detachInferior?.();
+            detachResults.push(detached?.status ?? "missing-detach-capability");
+          } catch (cause) {
+            detachResults.push(
+              cause instanceof Error ? cause.message : String(cause),
+            );
+          }
+          return { status: "incomplete", reason: "injected retained debugger" };
+        },
+      },
+    );
+    managers.push(manager);
+    const started = await manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: await rizinTestInferiorTty(),
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    expect((await manager.close(started.value.session_id)).ok).toBe(false);
+    expect((await manager.retryCleanupFailures()).ok).toBe(false);
+
+    expect(detachResults).toHaveLength(2);
+    expect(detachResults[0]).toContain("descriptor 1");
+    expect(detachResults[1]).toContain("still active");
+    expect(manager.status(started.value.session_id)?.state).toBe("closed");
   },
 );
 

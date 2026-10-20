@@ -1176,6 +1176,9 @@ export class RizinDebugSessionManager {
       await this.#runInternalCommand(session, "olj"),
     );
     if (inferior.length === 0) {
+      await assertRizinEmptyInferiorInventory(
+        session.knownInferiorIdentities.values(),
+      );
       // Keep prior identities until the debugger itself is fully stopped.
       // A later cleanup retry may receive a stale ptrace row after this valid
       // empty inventory; retaining the proof lets us recognize that exact PID.
@@ -1438,6 +1441,26 @@ export const assertRizinProcessStartTimeStable = (
     throw new Error(
       "The inferior PID disappeared or was reused during detach verification.",
     );
+};
+
+/** Reject an empty ptrace inventory while a retained inferior identity is still present. */
+export const assertRizinEmptyInferiorInventory = async (
+  identities: Iterable<OwnedInferiorIdentity>,
+  readStartTime: (
+    pid: string,
+  ) => Promise<string | null> = readLinuxProcessStartTime,
+): Promise<void> => {
+  for (const identity of identities) {
+    const observed = await readStartTime(identity.pid);
+    if (observed === null) continue;
+    if (observed !== identity.startTime)
+      throw new Error(
+        `Inferior PID ${identity.pid} changed identity during Rizin session cleanup.`,
+      );
+    throw new Error(
+      `Rizin reported no inferior while identified PID ${identity.pid} is still active.`,
+    );
+  }
 };
 
 const hasUnclaimedRizinFrames = (session: RizinDebugSession): boolean =>
