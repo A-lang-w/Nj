@@ -344,9 +344,16 @@ describe("Windows cache root repair coordination", () => {
       await new Promise((resolve) => setTimeout(resolve, 1));
       const beside = await readdir(parent).catch((): string[] => []);
       if (beside.includes("cache.repair")) locked = true;
+      // The repair replaces the root, so the entry can be observed under the
+      // old root and then read through the replacement. Only a read that
+      // stayed on one root describes what a session would find there.
+      const observed = await lstat(root).catch(() => undefined);
+      if (observed === undefined) continue;
       const names = await readdir(root).catch((): string[] => []);
       if (!names.includes("entry")) continue;
       const published = await readdir(join(root, "entry")).catch(() => []);
+      const still = await lstat(root).catch(() => undefined);
+      if (still === undefined || still.ino !== observed.ino) continue;
       if (published.length !== files)
         incomplete = `a published project held ${published.length} of ${files} files`;
     }
@@ -562,13 +569,18 @@ describe("Windows cache root repair locking", () => {
       }),
     });
     // The repair holds the lock while it copies, so the lock can be handed
-    // to another session while the repair runs.
+    // to another session while the repair runs. Wait for the owner token to be
+    // written: the file exists before its token does, and a takeover that
+    // lands in between is overwritten by this repair's own write.
+    let held = "";
     let waited = 0;
-    while (!existsSync(lock) && waited < 10_000) {
+    while (waited < 10_000) {
+      held = (await readFile(lock, "utf8").catch(() => "")).trim();
+      if (/^[0-9a-f-]{36}$/u.test(held)) break;
       waited += 1;
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
-    expect(existsSync(lock)).toBe(true);
+    expect(held).toMatch(/^[0-9a-f-]{36}$/u);
     // Another session took the lock over.
     await writeFile(lock, "another-session");
     release();
@@ -680,48 +692,54 @@ describe("Windows cache root repair failures", () => {
       await writeFile(join(root, "entry"), "stored");
       await symlink(shared, join(root, "shared"), "dir");
       let inspected = false;
-      await expect(
-        ensureGhidraProjectCacheRoot(root, {
-          platform: "win32",
-          host: privateRootHost({
-            async createPrivateDirectory(path) {
-              await mkdir(path, { recursive: true });
-              // Only the replacement cannot be removed, so both roots stay.
-              // The staging directory that holds the copies is created like
-              // any other private directory, or the repair could never
-              // remove it.
-              if (path !== root) return path;
-              await mkdir(join(path, "held"));
-              await writeFile(join(path, "held", "project"), "held");
-              await chmod(join(path, "held"), 0o500);
-              return path;
-            },
-            verifyPrivateDirectory() {
-              if (!inspected) {
-                inspected = true;
-                throw new Error("Private object owner is not the current user");
-              }
-              return { privateDacl: true };
-            },
+      try {
+        await expect(
+          ensureGhidraProjectCacheRoot(root, {
+            platform: "win32",
+            host: privateRootHost({
+              async createPrivateDirectory(path) {
+                await mkdir(path, { recursive: true });
+                // The replacement cannot be written, so the rollback cannot
+                // move its entry into the set-aside root. Both roots stay and
+                // the message names the one that keeps the stored projects.
+                if (path !== root) return path;
+                await mkdir(join(path, "held"));
+                await writeFile(join(path, "held", "project"), "held");
+                await chmod(path, 0o500);
+                return path;
+              },
+              verifyPrivateDirectory() {
+                if (!inspected) {
+                  inspected = true;
+                  throw new Error(
+                    "Private object owner is not the current user",
+                  );
+                }
+                return { privateDacl: true };
+              },
+            }),
           }),
-        }),
-      ).rejects.toMatchObject({
-        reason: "io",
-        path: root,
-        message: expect.stringContaining("the previous root is preserved at"),
-      });
-      // The set-aside root keeps every stored project, and the message names
-      // it because the replacement could not be removed.
-      await expect(
-        readFile(join(parent, "cache.previous-1", "entry"), "utf8"),
-      ).resolves.toBe("stored");
-      await expect(
-        lstat(join(parent, "cache.previous-1", "shared")).then((stats) =>
-          stats.isSymbolicLink(),
-        ),
-      ).resolves.toBe(true);
-      // Restore the permissions the fixture held so the tree can be removed.
-      await chmod(join(root, "held"), 0o700);
+        ).rejects.toMatchObject({
+          reason: "io",
+          path: root,
+          message: expect.stringContaining("the previous root is preserved at"),
+        });
+        // The set-aside root keeps every stored project, and the message names
+        // it because the replacement could not be carried over.
+        await expect(
+          readFile(join(parent, "cache.previous-1", "entry"), "utf8"),
+        ).resolves.toBe("stored");
+        await expect(
+          lstat(join(parent, "cache.previous-1", "shared")).then((stats) =>
+            stats.isSymbolicLink(),
+          ),
+        ).resolves.toBe(true);
+      } finally {
+        // Restore the permissions the fixture held so the tree can be removed
+        // even when an assertion above fails.
+        await chmod(root, 0o700).catch(() => undefined);
+        await chmod(join(root, "held"), 0o700).catch(() => undefined);
+      }
     },
   );
 
@@ -769,6 +787,77 @@ describe("Windows cache root repair failures", () => {
       ).resolves.toBe("stored");
       // Restore the permissions the fixture held so the tree can be removed.
       await chmod(join(parent, "cache.previous-1", "entry"), 0o700);
+    },
+  );
+});
+
+describe("Windows cache root repair restoration failures", () => {
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "keeps both roots and reports where the stored projects are when the replacement cannot be removed",
+    async () => {
+      const parent = await tempRoot();
+      const root = join(parent, "cache");
+      const shared = join(parent, "shared");
+      await mkdir(root);
+      await mkdir(shared);
+      await writeFile(join(root, "entry"), "stored");
+      await symlink(shared, join(root, "shared"), "dir");
+      let inspected = false;
+      try {
+        await expect(
+          ensureGhidraProjectCacheRoot(root, {
+            platform: "win32",
+            host: privateRootHost({
+              async createPrivateDirectory(path) {
+                await mkdir(path, { recursive: true });
+                // The staging directory that holds the copies is created like
+                // any other private directory, or the repair could never
+                // remove it.
+                if (path !== root) return path;
+                // Another session used the replacement while the repair was
+                // running, and the copy it left there cannot be removed, so
+                // the replacement cannot be removed either.
+                await mkdir(join(path, "staging", "held"), { recursive: true });
+                await writeFile(
+                  join(path, "staging", "held", "project"),
+                  "held",
+                );
+                await chmod(join(path, "staging", "held"), 0o500);
+                return path;
+              },
+              verifyPrivateDirectory() {
+                if (!inspected) {
+                  inspected = true;
+                  throw new Error(
+                    "Private object owner is not the current user",
+                  );
+                }
+                return { privateDacl: true };
+              },
+            }),
+          }),
+        ).rejects.toMatchObject({
+          reason: "io",
+          path: root,
+          message: expect.stringContaining("the previous root is preserved at"),
+        });
+        // The set-aside root keeps every stored project, and the message
+        // names it because the replacement could not be removed.
+        await expect(
+          readFile(join(parent, "cache.previous-1", "entry"), "utf8"),
+        ).resolves.toBe("stored");
+        await expect(
+          lstat(join(parent, "cache.previous-1", "shared")).then((stats) =>
+            stats.isSymbolicLink(),
+          ),
+        ).resolves.toBe(true);
+      } finally {
+        // Restore the permissions the fixture held so the tree can be removed
+        // even when an assertion above fails.
+        await chmod(join(root, "staging", "held"), 0o700).catch(
+          () => undefined,
+        );
+      }
     },
   );
 });

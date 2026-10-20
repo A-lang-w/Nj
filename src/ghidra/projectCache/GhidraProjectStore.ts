@@ -7,7 +7,6 @@ import {
   readdir,
   rename,
   rm,
-  unlink,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -639,17 +638,74 @@ export class GhidraProjectStore {
    * outside the cache root. The link is removed instead of followed, and the
    * store's own directory takes its place: only the entry at REA's own name
    * is removed, never what the link points at.
+   *
+   * A name another session replaced while this session looked at it is moved
+   * aside and compared by inode, so a directory a concurrent session created
+   * and is writing into is never removed by this one.
    */
   async #ensureWorkingDirectory(path: string): Promise<void> {
     const stats = await lstat(path).catch(() => undefined);
     if (stats === undefined) {
-      await mkdir(path, { recursive: true, mode: 0o700 });
+      await this.#createWorkingDirectory(path);
       return;
     }
     if (stats.isDirectory() && !stats.isSymbolicLink()) return;
-    if (stats.isSymbolicLink()) await unlink(path);
-    else await rm(path, { recursive: true, force: true });
-    await mkdir(path, { recursive: true, mode: 0o700 });
+    const aside = `${path}.${randomUUID()}.replaced`;
+    try {
+      await rename(path, aside);
+    } catch (cause: unknown) {
+      if (isNotFound(cause)) {
+        // Another session replaced the name; take the directory only if it is
+        // a real one it left there.
+        await this.#createWorkingDirectory(path);
+        return;
+      }
+      throw cause;
+    }
+    const moved = await lstat(aside).catch(() => undefined);
+    if (
+      moved === undefined ||
+      moved.ino !== stats.ino ||
+      moved.dev !== stats.dev
+    ) {
+      // Another session won the name with a directory this session did not
+      // observe. Its directory is put back; when the name was taken again in
+      // the meantime the moved directory is left beside the root instead of
+      // being removed, because another session may still be writing into it.
+      try {
+        await rename(aside, path);
+      } catch {
+        // Leave the moved directory in place: it is not this session's to
+        // remove.
+      }
+      await this.#assertWorkingDirectory(path);
+      return;
+    }
+    // Only the entry this call observed and moved is removed. A directory
+    // another session created at the name in the meantime is left alone.
+    await rm(aside, { recursive: true, force: true }).catch(() => undefined);
+    await this.#createWorkingDirectory(path);
+  }
+
+  /** Create one of the store's working directories and confirm it is real. */
+  async #createWorkingDirectory(path: string): Promise<void> {
+    await mkdir(path, { recursive: true, mode: 0o700 }).catch(
+      (cause: unknown) => {
+        if (!isAlreadyExists(cause)) throw cause;
+      },
+    );
+    await this.#assertWorkingDirectory(path);
+  }
+
+  /** Reject a name that is not a real directory, including a link. */
+  async #assertWorkingDirectory(path: string): Promise<void> {
+    const stats = await lstat(path);
+    if (!stats.isDirectory() || stats.isSymbolicLink())
+      throw new GhidraProjectCacheError(
+        "layout",
+        "Ghidra project cache working directory must be a directory, not a link",
+        path,
+      );
   }
 
   /**
@@ -666,14 +722,23 @@ export class GhidraProjectStore {
   /** Record that a hit is in use so a concurrent prune leaves it alone. */
   async #touchLease(key: string): Promise<void> {
     const path = this.#leasePath(key);
+    const temporary = `${path}.${randomUUID()}.tmp`;
     try {
       await this.#ensureWorkingDirectory(dirname(path));
-      await writeFile(path, `${new Date().toISOString()}\n`, {
+      // The lease is written beside its final name and renamed into place.
+      // The rename replaces the name atomically and never follows a link at
+      // the destination, so the lease is never absent while a hit is using it
+      // and a link planted before the root was tightened is replaced instead
+      // of followed.
+      await writeFile(temporary, `${new Date().toISOString()}\n`, {
         encoding: "utf8",
+        flag: "wx",
         mode: 0o600,
       });
+      await rename(temporary, path);
     } catch {
       // A lease is a best-effort eviction guard; a hit stays valid without it.
+      await rm(temporary, { force: true }).catch(() => undefined);
     }
   }
 

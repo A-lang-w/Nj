@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { dirname, join } from "node:path";
 import { DeferredAnalysisClient } from "../providers/DeferredAnalysisClient.js";
 import type { ProviderInspectionScope } from "../providers/ProviderInspectionScope.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
@@ -821,9 +822,20 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     context: AnalysisClientContext | undefined,
   ): GhidraProjectPersistence {
     const reuse = managed.reservation.hit;
+    // A resolution is prepared once per target, but two clients can share the
+    // profile digest that selects it. Each client gets its own staging slot,
+    // so one client's failed publish never discards another client's copy.
+    const stagingPath = managed.reservation.stagingPath;
+    const reservation =
+      stagingPath === undefined
+        ? managed.reservation
+        : {
+            ...managed.reservation,
+            stagingPath: join(dirname(stagingPath), randomUUID()),
+          };
     return {
       store: managed.store,
-      reservation: managed.reservation,
+      reservation,
       identity: managed.identity,
       target: {
         sha256: target.sha256,
