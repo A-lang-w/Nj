@@ -483,6 +483,31 @@ const readSegmentSpan = (
   };
 };
 
+interface LazyPayloadWork {
+  readonly dependencies: Map<string, MachoDependency>;
+  readonly reads: { fileOffset: number; bytes: Uint8Array }[];
+  readonly strings: Map<number, string>;
+  payloadBytes: number;
+  stringBytes: number;
+}
+
+const containedPayload = (
+  reads: readonly { fileOffset: number; bytes: Uint8Array }[],
+  fileOffset: number,
+  size: number,
+): Uint8Array | undefined => {
+  for (const read of reads) {
+    const start = fileOffset - read.fileOffset;
+    if (
+      start >= 0 &&
+      Number.isSafeInteger(start) &&
+      start + size <= read.bytes.byteLength
+    )
+      return read.bytes.subarray(start, start + size);
+  }
+  return undefined;
+};
+
 const appendDependencies = async (
   slice: MachoSlice,
   dependencies: readonly (
@@ -494,33 +519,33 @@ const appendDependencies = async (
   length: number,
   maxVmOffset: bigint,
 ): Promise<void> => {
-  const payloads = new Map<string, MachoDependency>();
-  let payloadBytes = 0;
+  const work: LazyPayloadWork = {
+    dependencies: new Map(),
+    reads: [],
+    strings: new Map(),
+    payloadBytes: 0,
+    stringBytes: 0,
+  };
   for (const dependency of dependencies) {
     if (dependency.kind === "parsed") {
       slice.dependencies.push(dependency.value);
       continue;
     }
     const key = `${dependency.dataOffset}:${dependency.dataSize}`;
-    const cached = payloads.get(key);
+    const cached = work.dependencies.get(key);
     if (cached !== undefined) {
       slice.dependencies.push(cached);
       continue;
     }
-    payloadBytes += dependency.dataSize;
-    if (payloadBytes > MAX_LOAD_COMMAND_BYTES)
-      throw new MachoFormatIssue(
-        "unsupported",
-        `LC_LAZY_LOAD_DYLIB_INFO payloads occupy ${payloadBytes} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte aggregate limit`,
-      );
     const value = await readLazyLoadDylibInfo(
       readAt,
       base,
       length,
       dependency,
       maxVmOffset,
+      work,
     );
-    payloads.set(key, value);
+    work.dependencies.set(key, value);
     slice.dependencies.push(value);
   }
 };
@@ -620,12 +645,38 @@ const decodeLazyLoadDylibInfoCommand = (
   return { kind: "lazy-info", index, dataOffset, dataSize };
 };
 
+const readLazyPayloadBytes = async (
+  readAt: ReadAt,
+  fileOffset: number,
+  size: number,
+  index: number,
+  work: LazyPayloadWork,
+): Promise<Uint8Array> => {
+  const covered = containedPayload(work.reads, fileOffset, size);
+  if (covered !== undefined) return covered;
+  work.payloadBytes += size;
+  if (work.payloadBytes > MAX_LOAD_COMMAND_BYTES)
+    throw new MachoFormatIssue(
+      "unsupported",
+      `LC_LAZY_LOAD_DYLIB_INFO payloads occupy ${work.payloadBytes} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte aggregate limit`,
+    );
+  const payload = await readExact(
+    readAt,
+    fileOffset,
+    size,
+    `load command ${index} LC_LAZY_LOAD_DYLIB_INFO payload`,
+  );
+  work.reads.push({ fileOffset, bytes: payload });
+  return payload;
+};
+
 const readLazyLoadDylibInfo = async (
   readAt: ReadAt,
   base: number,
   length: number,
   command: LazyLoadDylibInfoCommand,
   maxVmOffset: bigint,
+  work: LazyPayloadWork,
 ): Promise<MachoDependency> => {
   if (
     command.dataOffset > length ||
@@ -641,19 +692,28 @@ const readLazyLoadDylibInfo = async (
       "malformed",
       `load command ${command.index} LC_LAZY_LOAD_DYLIB_INFO payload offset is not a safe integer`,
     );
-  const payload = await readExact(
+  const payload = await readLazyPayloadBytes(
     readAt,
     fileOffset,
     command.dataSize,
-    `load command ${command.index} LC_LAZY_LOAD_DYLIB_INFO payload`,
+    command.index,
+    work,
   );
-  return decodeLazyLoadDylibInfoPayload(payload, command.index, maxVmOffset);
+  return decodeLazyLoadDylibInfoPayload(
+    payload,
+    command.index,
+    fileOffset,
+    maxVmOffset,
+    work,
+  );
 };
 
 const decodeLazyLoadDylibInfoPayload = (
   payload: Uint8Array,
   index: number,
+  fileOffset: number,
   maxVmOffset: bigint,
+  work: LazyPayloadWork,
 ): MachoDependency => {
   const view = viewOf(payload);
   const pathOffset = view.getUint32(0, true);
@@ -685,10 +745,17 @@ const decodeLazyLoadDylibInfoPayload = (
       "malformed",
       `load command ${index} LC_LAZY_LOAD_DYLIB_INFO symbol table extends beyond the payload`,
     );
-  const installName = payloadString(payload, pathOffset, index, "load path");
+  const installName = payloadString(
+    payload,
+    pathOffset,
+    fileOffset,
+    index,
+    "load path",
+    work,
+  );
   for (let symbol = 0; symbol < symbolCount; symbol += 1) {
     const offset = view.getUint32(symbolArrayOffset + symbol * 4, true);
-    payloadString(payload, offset, index, `symbol ${symbol}`);
+    payloadString(payload, offset, fileOffset, index, `symbol ${symbol}`, work);
   }
   return {
     command: "LC_LAZY_LOAD_DYLIB_INFO",
@@ -703,26 +770,47 @@ const decodeLazyLoadDylibInfoPayload = (
   };
 };
 
-/** NUL-terminated UTF-8 string at a payload-relative offset. */
+/** NUL-terminated UTF-8 string after the fixed payload header. */
 const payloadString = (
   payload: Uint8Array,
   offset: number,
+  fileOffset: number,
   index: number,
   label: string,
+  work: LazyPayloadWork,
 ): string => {
+  if (offset < LAZY_INFO_HEADER_BYTES)
+    throw new MachoFormatIssue(
+      "malformed",
+      `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} offset ${offset} is inside the payload header`,
+    );
+  const absolute = Number.isSafeInteger(fileOffset + offset)
+    ? fileOffset + offset
+    : undefined;
+  const cached =
+    absolute === undefined ? undefined : work.strings.get(absolute);
+  if (cached !== undefined) return cached;
   if (offset >= payload.byteLength)
     throw new MachoFormatIssue(
       "malformed",
       `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} offset ${offset} is outside the payload`,
     );
   const end = payload.indexOf(0, offset);
+  const scanned = (end < 0 ? payload.byteLength : end) - offset;
+  work.stringBytes += scanned;
+  if (work.stringBytes > MAX_LOAD_COMMAND_BYTES)
+    throw new MachoFormatIssue(
+      "unsupported",
+      `LC_LAZY_LOAD_DYLIB_INFO string validation occupies ${work.stringBytes} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte limit`,
+    );
   if (end < 0)
     throw new MachoFormatIssue(
       "malformed",
       `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} is unterminated`,
     );
+  let text: string;
   try {
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
       payload.subarray(offset, end),
     );
   } catch {
@@ -731,6 +819,8 @@ const payloadString = (
       `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} is not UTF-8`,
     );
   }
+  if (absolute !== undefined) work.strings.set(absolute, text);
+  return text;
 };
 
 const decodeDependency = (
