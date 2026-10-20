@@ -16,9 +16,8 @@ On Linux, JADX launches an REA-owned process and requires a procps-compatible
 
 ## Optional DroidASC class discovery
 
-This branch proposes an opt-in DroidASC backend; maintainer scope approval is
-pending. It does not replace JADX or establish release availability. The first
-slice supports `search_android_classes` only. All other Android operations still
+The opt-in DroidASC backend supports `search_android_classes` without replacing
+JADX. All other Android operations still
 use JADX by default; explicitly selecting ASC for them returns a capability error,
 not an automatic fallback or a second engine startup.
 

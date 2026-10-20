@@ -5,7 +5,7 @@ question with a **2.0× lower median first-query latency** and **6.9× lower sam
 process-family RSS** than JADX. Repeated queries were **17.6× slower**: ASC starts
 a new Python worker each time, whereas JADX retains its loaded JVM. This supports
 an optional cold-discovery backend, not replacing JADX or claiming general Android
-analysis superiority. Maintainer scope approval for the proposal remains pending.
+analysis superiority.
 
 ## Reproduce
 
