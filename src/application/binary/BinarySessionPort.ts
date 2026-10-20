@@ -123,6 +123,25 @@ export interface BinarySessionPort
       readonly retainProviderDocuments?: boolean;
     },
   ): Promise<Result<null, AnalysisError>>;
+  /**
+   * Close the addressed target without waiting for its transition chain.
+   *
+   * A provider start that ignores its abort keeps the session's transition
+   * promise unsettled, and the ordinary close serializes behind it. This path
+   * is the escalation a caller uses when its own bound on the interrupted
+   * start expires; the cleanup still runs through the owner that stops the
+   * provider.
+   */
+  closeWithoutTransition?(
+    options: Pick<ExecutionOptions, "progress"> & {
+      readonly retainProviderDocuments?: boolean;
+      readonly targetId?: string;
+    },
+    behavior: {
+      readonly clearRecords: boolean;
+      readonly closeOwnedProviderResources: boolean;
+    },
+  ): Promise<Result<null, AnalysisError>>;
   /** Save a snapshot and close while excluding later provider requests. */
   closeWithSnapshot(
     path: string,
