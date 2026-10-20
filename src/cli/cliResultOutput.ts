@@ -22,6 +22,7 @@ import {
 } from "../domain/analysisErrorProjection.js";
 import {
   hasClearRecordBoundary,
+  isJsonLinesError,
   jsonOutputParts,
   writeJsonOutput,
   writeOutputText,
@@ -230,13 +231,16 @@ export const createCliResultOutput = (
     const filterPaths = options.filterOutput
       ? Filter.parse(options.filterOutput)
       : undefined;
+    const isFailure =
+      isJsonLinesError(value) ||
+      cliOperationFailurePayload(value) !== undefined;
     const operationFailure =
       options.fullOutput || filterPaths !== undefined
         ? cliOperationFailurePayload(value)
         : undefined;
     if (
       format === "jsonl" &&
-      operationFailure === undefined &&
+      !isFailure &&
       !hasClearRecordBoundary(value, filterPaths !== undefined)
     ) {
       error = projectAnalysisError(
@@ -271,7 +275,7 @@ export const createCliResultOutput = (
       operationFailure === undefined
     )
       return false;
-    if (options.tokenCount) {
+    if (error === undefined && options.tokenCount) {
       // Incur/tokenx materialize JSON. Measure its UTF-16 expansion before
       // allowing that allocation, independently of UTF-8 bytes. Other formats
       // retain Incur's materializing behavior.
@@ -294,7 +298,17 @@ export const createCliResultOutput = (
         }
       }
       if (characters <= constants.MAX_STRING_LENGTH) {
-        const count = estimateTokenCount(Formatter.format(tokenValue, format));
+        const text =
+          format === "jsonl"
+            ? [...jsonOutputParts(tokenValue, "jsonl", false)].join("")
+            : Formatter.format(tokenValue, format);
+        const count = estimateTokenCount(
+          format === "jsonl"
+            ? text.endsWith("\n")
+              ? text.slice(0, -1)
+              : text
+            : text,
+        );
         handled = true;
         try {
           await writeOutputText(destination, `${count}\n`);
