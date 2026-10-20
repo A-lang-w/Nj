@@ -4,6 +4,7 @@ import {
   mkdir,
   realpath,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -137,8 +138,10 @@ describe("reference source selected symlink paths", () => {
         "not-directory.js",
         "directory-intent.js",
       ];
+      // Native lookup rejects these targets even when macOS realpath drops
+      // a non-directory parent step or trailing separator.
       for (const name of ambiguous)
-        await expect(realpath(join(root, name))).rejects.toMatchObject({
+        await expect(stat(join(root, name))).rejects.toMatchObject({
           code: expect.stringMatching(/^(?:ENOENT|ENOTDIR)$/u),
         });
 

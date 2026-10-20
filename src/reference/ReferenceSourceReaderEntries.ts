@@ -1,5 +1,5 @@
 import type { BigIntStats, Dir, Dirent } from "node:fs";
-import { opendir, readlink, realpath } from "node:fs/promises";
+import { opendir, readlink, realpath, stat } from "node:fs/promises";
 import { join, normalize, sep } from "node:path";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type { ArtifactCleanupAttempt } from "../artifacts/ArtifactResourceScope.js";
@@ -365,6 +365,9 @@ const readSymlinkTarget = async (
   }
   let canonicalTarget: string;
   try {
+    // macOS realpath can discard a non-directory parent step or trailing
+    // separator. Validate native target lookup before canonicalizing it.
+    await stat(absolute);
     // Resolve the observed link itself: normalizing its target first can change
     // both the selected file and whether it lies inside the reference root.
     // This observes metadata only; traversal never reads a symlink's contents.
