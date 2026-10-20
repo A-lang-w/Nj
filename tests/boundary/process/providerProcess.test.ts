@@ -500,6 +500,7 @@ describe("provider process host injection", () => {
       captureBaseline?: (signal?: AbortSignal) => Promise<unknown>;
     };
     const baseline = host.captureBaseline;
+    let dispatched = false;
     delete host.captureBaseline;
     try {
       await expect(
@@ -509,10 +510,14 @@ describe("provider process host injection", () => {
           runId: "provider-process-android-run",
           platform: "android",
           sweepTokenOwnedProcesses: true,
+          onDispatch: () => {
+            dispatched = true;
+          },
         }),
       ).rejects.toThrow(
         "Token-owned process cleanup requires a host ownership baseline",
       );
+      expect(dispatched).toBe(false);
     } finally {
       if (baseline === undefined) delete host.captureBaseline;
       else host.captureBaseline = baseline;
@@ -583,12 +588,17 @@ describe("provider startup cancellation", () => {
 describe("provider process spawning primitives", () => {
   it("spawns an owned process group with exact identity coordinates", async () => {
     const runId = "provider-process-run";
+    let dispatches = 0;
     const spawned = await spawnOwnedProviderProcess({
       command: process.execPath,
       arguments: [processFixturePath, "graceful"],
       runId,
+      onDispatch: () => {
+        dispatches += 1;
+      },
     });
     try {
+      expect(dispatches).toBe(1);
       expect(spawned.ownership).toMatchObject({
         runId,
         leaderPid: spawned.process.pid,

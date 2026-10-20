@@ -50,6 +50,8 @@ export interface OwnedProviderProcessSpawnOptions {
   readonly memoryLimitBytes?: number;
   /** Sweep exact run-token descendants during POSIX cleanup. */
   readonly sweepTokenOwnedProcesses?: boolean;
+  /** Notify the caller after ownership preflight and immediately before launch. */
+  readonly onDispatch?: () => void;
   /** Cancels native ownership preparation before provider process creation. */
   readonly signal?: AbortSignal;
 }
@@ -269,6 +271,7 @@ export const spawnOwnedProviderProcess = async (
     REA_PROCESS_RUN_ID: options.runId,
   };
   if (platform === "win32" && process.platform === "win32") {
+    options.onDispatch?.();
     const child = new WindowsOwnedProcess(
       options.command,
       options.arguments,
@@ -297,6 +300,7 @@ export const spawnOwnedProviderProcess = async (
     throw new Error(
       "Owned process memory limits require the Windows Job Object launcher; no limit can be enforced on this host.",
     );
+  options.onDispatch?.();
   const child = spawn(options.command, [...options.arguments], {
     shell: false,
     windowsHide: true,
