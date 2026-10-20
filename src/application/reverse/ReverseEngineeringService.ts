@@ -437,7 +437,11 @@ export class ReverseEngineeringService {
       profile = await prepare(signal);
     } catch (cause) {
       if (signal?.aborted)
-        return err(new AnalysisCancelledError(operation, { cause }));
+        return err(
+          new AnalysisCancelledError(operation, {
+            cause: callerCancellationCause(signal, cause),
+          }),
+        );
       if (
         cause instanceof Error &&
         Reflect.get(cause, "code") === "ETIMEDOUT"

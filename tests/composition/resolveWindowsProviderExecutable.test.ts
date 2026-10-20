@@ -362,6 +362,27 @@ describe("bounded Windows PATH probes", () => {
 });
 
 describe("drive-relative Windows provider lookup", () => {
+  it("rejects a cross-drive drive-relative PATH entry before probing", async () => {
+    const isFile = vi.fn(() => false);
+
+    await expect(
+      resolveWindowsProviderExecutable(
+        "objdump",
+        { PATH: "C:tools", PATHEXT: ".EXE" },
+        { cwd: "D:\\work", isFile },
+      ),
+    ).rejects.toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [
+        {
+          path: ["PATH"],
+          reason: "invalid_format",
+        },
+      ],
+    });
+    expect(isFile).not.toHaveBeenCalled();
+  });
+
   it("rejects a drive-relative provider on another drive after prepare waits", async () => {
     const cwd = vi.spyOn(process, "cwd").mockReturnValue("D:\\original");
     let releasePrepare!: () => void;

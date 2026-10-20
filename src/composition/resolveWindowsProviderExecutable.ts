@@ -44,6 +44,36 @@ const isUncPath = (value: string): boolean => /^[\\/]{2}(?![\\/])/u.test(value);
 const isDriveRootedPath = (value: string): boolean =>
   /^[a-z]:[\\/]/iu.test(value);
 
+const rejectCrossDriveRelativePath = (
+  value: string,
+  cwd: string,
+  operation: WindowsExecutableLookup["operation"] | undefined,
+  field: "executable" | "PATH",
+): void => {
+  const drive = /^([a-z]):(?=[^\\/]|$)/iu.exec(value)?.[1];
+  if (
+    drive === undefined ||
+    `${drive}:`.toLowerCase() ===
+      win32.parse(cwd).root.slice(0, 2).toLowerCase()
+  )
+    return;
+  throw new AnalysisInputError(
+    operation ?? "provider_command_resolution",
+    {
+      userMessage:
+        "A drive-relative provider path cannot be resolved from a different working drive. Set an absolute provider executable path.",
+    },
+    [
+      {
+        path: [field],
+        reason: "invalid_format",
+        message:
+          "Use an absolute path or a drive-relative path on the invocation working drive.",
+      },
+    ],
+  );
+};
+
 const splitWindowsPath = (value: string): readonly string[] => {
   const entries: string[] = [];
   let start = 0;
@@ -267,27 +297,7 @@ export const resolveWindowsProviderExecutable = async (
   // A UNC selection is already absolute. Return it verbatim instead of
   // re-rooting it against the process drive through win32.resolve(cwd, ...).
   if (isUncPath(executable)) return executable;
-  const driveRelative = /^([a-z]):[^\\/]/iu.exec(executable);
-  if (driveRelative !== null) {
-    const selectedDrive = `${driveRelative[1]}:`.toLowerCase();
-    const workingDrive = win32.parse(cwd).root.slice(0, 2).toLowerCase();
-    if (selectedDrive !== workingDrive)
-      throw new AnalysisInputError(
-        lookup.operation ?? "provider_command_resolution",
-        {
-          userMessage:
-            "A drive-relative provider path cannot be resolved from a different working drive. Set an absolute provider executable path.",
-        },
-        [
-          {
-            path: ["executable"],
-            reason: "invalid_format",
-            message:
-              "Use an absolute path or a drive-relative path on the invocation working drive.",
-          },
-        ],
-      );
-  }
+  rejectCrossDriveRelativePath(executable, cwd, lookup.operation, "executable");
   if (
     win32.isAbsolute(executable) ||
     executable.includes("/") ||
@@ -299,6 +309,8 @@ export const resolveWindowsProviderExecutable = async (
   const pathValue = environment.PATH ?? environment.Path ?? environment.path;
   if (pathValue === undefined) return executable;
   const pathEntries = splitWindowsPath(pathValue);
+  for (const entry of pathEntries)
+    rejectCrossDriveRelativePath(entry, cwd, lookup.operation, "PATH");
   const explicitExtension = win32.extname(executable).toLowerCase();
   if (explicitExtension !== "" && ![".com", ".exe"].includes(explicitExtension))
     return executable;
