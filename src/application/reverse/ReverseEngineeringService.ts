@@ -751,7 +751,7 @@ export class ReverseEngineeringService {
           provider_executable: command,
           command_arguments: [...args],
         },
-        rawResult: result,
+        rawResult: null,
         result,
         limitations,
         ...(absolutePath === undefined

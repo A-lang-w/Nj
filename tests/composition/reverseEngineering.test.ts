@@ -219,7 +219,8 @@ it.each([
         ...(symbol === undefined ? {} : { symbol }),
       });
       expect(result.value.parameters.command_arguments).toEqual(calls[0]);
-      expect(result.value.raw_result).toMatchObject({
+      expect(result.value.raw_result).toBeNull();
+      expect(result.value.normalized_result).toMatchObject({
         stdout: "captured stdout",
         stderr: "captured stderr",
         exit_code: 0,
@@ -392,7 +393,8 @@ describe("Rizin command service", () => {
           args: ["-N", "-q", "-e", "scr.color=0", "-c", command, lookupPath],
         },
       ]);
-      expect(result.value.raw_result).toMatchObject({
+      expect(result.value.raw_result).toBeNull();
+      expect(result.value.normalized_result).toMatchObject({
         stdout: "\u001b[31mpartial data\u001b[0m\n",
         stderr: "command error",
         exit_code: 2,

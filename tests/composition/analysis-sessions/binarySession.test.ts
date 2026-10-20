@@ -24,14 +24,7 @@ import {
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import {
-  copyFile,
-  link,
-  mkdir,
-  realpath,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { copyFile, link, mkdir, realpath, writeFile } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
@@ -176,7 +169,7 @@ describe("detached provider and target metadata", () => {
 it("drains session calls and retires analysis after an admitted external mutation", async () => {
   const [target] = await createBinarySessionTargets();
   const alias = join(dirname(target), "first-alias.hop");
-  await symlink(target, alias);
+  await link(target, alias);
   const calls: string[] = [];
   const clients: { closed: number; targetSha256: string }[] = [];
   const base = createCacheProvider(calls);
