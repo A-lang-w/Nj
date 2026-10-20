@@ -28,9 +28,13 @@ it.each([false, true])(
       {
         execute: async () =>
           ok(
-            createAnalysisExecution("observed", provider, (transient && calls++ === 0
+            createAnalysisExecution(
+              "observed",
+              provider,
+              transient && calls++ === 0
                 ? { cachePolicy: "live" as const }
-                : {})),
+                : {},
+            ),
           ),
       },
       async (observed) => {
