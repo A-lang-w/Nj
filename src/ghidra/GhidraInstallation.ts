@@ -1017,7 +1017,16 @@ const stableInstallRoot = (
     void cause;
     return undefined;
   }
-  const declared = dirname(path.resolve(dirname(launcherPath), target));
+  // A relative target resolves against the physical directory that contains
+  // the launcher, which differs when the PATH entry is itself a symlink.
+  let physicalParent: string;
+  try {
+    physicalParent = realpathSync(dirname(launcherPath));
+  } catch (cause: unknown) {
+    void cause;
+    return undefined;
+  }
+  const declared = dirname(path.resolve(physicalParent, target));
   if (declared === root) return undefined;
   try {
     return realpathSync(declared) === root ? declared : undefined;

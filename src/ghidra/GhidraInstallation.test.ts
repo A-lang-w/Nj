@@ -79,6 +79,44 @@ afterEach(() => {
 });
 
 it.skipIf(process.platform === "win32")(
+  "resolves a stable spelling through a symlinked PATH entry's physical parent",
+  async () => {
+    const root = await createTestTempDirectory("rea-ghidra-linked-bin-");
+    const physical = join(root, "real");
+    const keg = join(physical, "Cellar", "ghidra", "12.1.4", "libexec");
+    const opt = join(physical, "opt", "ghidra");
+    const bin = join(physical, "bin");
+    const linked = join(root, "links", "bin");
+    const launcher = join(keg, "ghidraRun");
+    await mkdir(join(keg, "Ghidra"), { recursive: true });
+    await mkdir(join(keg, "support"), { recursive: true });
+    await mkdir(join(physical, "opt"), { recursive: true });
+    await mkdir(bin, { recursive: true });
+    await mkdir(join(root, "links"), { recursive: true });
+    await writeFile(
+      join(keg, "Ghidra", "application.properties"),
+      "application.version=12.1.4\n",
+    );
+    await writeFile(launcher, "#!/bin/sh\nexit 0\n");
+    await writeFile(
+      join(keg, "support", "analyzeHeadless"),
+      "#!/bin/sh\nexit 0\n",
+    );
+    await chmod(launcher, 0o700);
+    await chmod(join(keg, "support", "analyzeHeadless"), 0o700);
+    await symlink("../Cellar/ghidra/12.1.4", opt);
+    await symlink("../opt/ghidra/libexec/ghidraRun", join(bin, "ghidra"));
+    // The PATH entry is a symlink to the physical launcher directory, so the
+    // launcher's relative target resolves from that physical parent.
+    await symlink("../real/bin", linked);
+
+    expect(
+      discoverGhidraInstallationOnPath({ PATH: linked }, process.platform),
+    ).toBe(join(physical, "opt", "ghidra", "libexec"));
+  },
+);
+
+it.skipIf(process.platform === "win32")(
   "publishes the stable launcher spelling only when it resolves to the validated root",
   async () => {
     const root = await createTestTempDirectory("rea-ghidra-stable-");
