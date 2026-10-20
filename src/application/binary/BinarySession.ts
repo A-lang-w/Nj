@@ -360,7 +360,9 @@ export class BinarySession
       return err(
         await this.#restoreAfterFailedOpen(
           previous,
-          new AnalysisCancelledError("open_binary"),
+          new AnalysisCancelledError("open_binary", {
+            cause: options.signal?.reason,
+          }),
         ),
       );
     const runId = randomUUID();
