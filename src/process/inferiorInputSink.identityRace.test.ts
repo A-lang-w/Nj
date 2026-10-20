@@ -25,35 +25,43 @@ const characterDevice = (rdev: number): Stats =>
     rdev,
   }) as Stats;
 
+const linuxIt = it.skipIf(process.platform !== "linux");
+
 afterEach(() => {
   filesystem.readlink.mockReset();
   filesystem.stat.mockReset();
 });
 
-it("does not combine a stale /dev/null link with another character device", async () => {
-  filesystem.readlink.mockResolvedValue("/dev/null");
-  filesystem.stat.mockImplementation(async (path: string) =>
-    path === "/dev/null" ? characterDevice(3) : characterDevice(9),
-  );
+linuxIt(
+  "does not combine a stale /dev/null link with another character device",
+  async () => {
+    filesystem.readlink.mockResolvedValue("/dev/null");
+    filesystem.stat.mockImplementation(async (path: string) =>
+      path === "/dev/null" ? characterDevice(3) : characterDevice(9),
+    );
 
-  await expect(
-    verifyInferiorInputSink("123", {
-      path: "/dev/pts/none",
-      dev: 0,
-      ino: 0,
-    }),
-  ).rejects.toThrow(/unverified/u);
-});
+    await expect(
+      verifyInferiorInputSink("123", {
+        path: "/dev/pts/none",
+        dev: 0,
+        ino: 0,
+      }),
+    ).rejects.toThrow(/unverified/u);
+  },
+);
 
-it("accepts fd 0 only when its character device matches /dev/null", async () => {
-  filesystem.readlink.mockResolvedValue("/dev/null");
-  filesystem.stat.mockResolvedValue(characterDevice(3));
+linuxIt(
+  "accepts fd 0 only when its character device matches /dev/null",
+  async () => {
+    filesystem.readlink.mockResolvedValue("/dev/null");
+    filesystem.stat.mockResolvedValue(characterDevice(3));
 
-  await expect(
-    verifyInferiorInputSink("123", {
-      path: "/dev/pts/none",
-      dev: 0,
-      ino: 0,
-    }),
-  ).resolves.toBe("not-inherited");
-});
+    await expect(
+      verifyInferiorInputSink("123", {
+        path: "/dev/pts/none",
+        dev: 0,
+        ino: 0,
+      }),
+    ).resolves.toBe("not-inherited");
+  },
+);
