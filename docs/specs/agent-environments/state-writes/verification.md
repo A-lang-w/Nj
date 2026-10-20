@@ -167,9 +167,14 @@ not modelled.
 ## After merging the base branches and main
 
 The branch then merged the serving branch at 5a61853a, the coverage branch at
-b4b7ebc7 (their review fixes) and main at edbd291a. The gates above ran again
+b4b7ebc7 (their review fixes) and main at edbd291a, then main at 17f581ff
+(the analysis-view tool description string, which main changes often). The gates above ran again
 and passed: `npm run jscpd` 3.44% over 3579 files; domain and services 7442
 passed with 5 pre-existing skips; the focused boundary set 72 passed. The
 write verdicts over the 51 captures were unchanged plan by plan, and the
 in-process smoke again applied all 33 served write tools. The AgentEnv runs
 and the live comparison above ran on cbb7b613, before these merges.
+After the second main merge: `npm run check:fast`, `npm run format:check`,
+`npm run docs:check` and `npm run mcp-catalog:check` passed; the contracts,
+analysis-view and environment tests 857 passed with 3 pre-existing skips; the
+analysis-view and environment MCP and CLI boundaries 53 passed.
