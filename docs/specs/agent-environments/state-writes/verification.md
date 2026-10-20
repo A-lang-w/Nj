@@ -195,3 +195,13 @@ passed. The gate is stricter, but the write verdicts over the 50 captures were
 unchanged plan by plan, and the in-process smoke again applied all 33 served
 write tools. The AgentEnv runs and the live comparison above ran on cbb7b613,
 before these merges and fixes.
+
+A second review round then made the gate and serving agree in five more places
+(reads matched to checked lines as serving matches calls, increments and slugs
+held for every call, insert rules still learned after an item read, the
+document body check in the gate, and decoded parent path values). Each new test
+fails on the previous head and passes here. The same gates passed again
+(domain and services 7468 passed with 5 pre-existing skips, the focused
+boundary set 75, conformance 279, `jscpd` 3.47%), the write verdicts over the 50
+captures were again unchanged plan by plan, and the smoke applied all 33 served
+write tools.
