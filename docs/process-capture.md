@@ -472,8 +472,11 @@ group proven while revalidating another owned group is signaled in the same
 cleanup. Confirmation reads are bounded; a table that keeps producing unreadable
 replacements stays unresolved. That refresh does not retain a ledger
 for a later attempt that never observes the launcher. Lineage reads a row again
-when its parent, group, or launcher-tree membership changes, so an ancestor
-move cannot leave a foreign descendant inside a verified result. The captured run keeps
+when its parent, group, or launcher-tree membership changes, and it reads a
+token again on the next refresh even when those fields are unchanged. An
+ancestor move cannot leave a foreign descendant inside a verified result. A
+group that reappears after cleanup already processed it is revalidated once;
+another appearance stays unresolved. The captured run keeps
 one evidence owner through settlement and cleanup.
 An absent or changed token leaves a previously related generation unresolved;
 current token proof is still required before signaling. Swept cleanup verifies the

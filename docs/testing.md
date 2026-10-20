@@ -278,7 +278,9 @@ an unreadable live token stays unresolved, a replacement that appears only in
 the confirmation table is still token-checked, a group discovered during
 revalidation is signaled before cleanup succeeds, an unbounded confirmation
 chain stays unresolved, lineage reads a row again when its launcher-tree
-membership changes, and lineage does not publish a
+membership changes, a cached lineage token is read again on the next refresh,
+a group that reappears after it was processed is revalidated once, a further
+reappearance stays unresolved, and lineage does not publish a
 verified empty descendant list while that row remains unexamined. A readable token with unavailable
 identity stays unresolved. Native UID facts, rather than an earlier process-table
 row, determine whether a token denial concerns another user. Darwin tests compile

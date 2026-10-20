@@ -598,6 +598,81 @@ describe("identityless exit refresh keeps later confirmation rows", () => {
   });
 });
 
+describe("identityless cleanup revalidates a group that reappears", () => {
+  const leader = (pid: number, command = "fixture"): ProcessTableEntry => ({
+    ...launcher,
+    pid,
+    parentPid: pid === 100 ? 1 : 100,
+    processGroupId: pid,
+    command,
+  });
+
+  it("signals a token-owned group that reappears after it was already processed", async () => {
+    const signalGroup = vi.fn();
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([leader(100), leader(101)])
+      .mockResolvedValueOnce([leader(100)])
+      .mockResolvedValueOnce([leader(100, "[MainThread]")])
+      .mockResolvedValueOnce([leader(102)])
+      .mockResolvedValueOnce([leader(100, "[MainThread]")])
+      .mockResolvedValueOnce([leader(101)])
+      .mockResolvedValue([leader(101)]);
+    await expect(
+      cleanupOwnedProcessGroup(
+        { ...ownership, expectedCommand: "fixture" },
+        {
+          listProcesses,
+          environment: () =>
+            Promise.resolve({ REA_PROCESS_RUN_ID: ownership.runId }),
+          signalGroup,
+        },
+      ),
+    ).resolves.toEqual({ cleaned: true, signaled: true });
+    expect(signalGroup.mock.calls).toEqual([
+      [100, "SIGKILL"],
+      [101, "SIGKILL"],
+    ]);
+  });
+
+  it("stays unresolved when a processed group keeps reappearing", async () => {
+    const signalGroup = vi.fn();
+    const tables = [
+      [leader(100), leader(101)],
+      [leader(100)],
+      [leader(100, "[MainThread]")],
+      [leader(102)],
+      [leader(100, "[MainThread]")],
+      [leader(101)],
+      [leader(100, "[MainThread]")],
+      [leader(102)],
+      [leader(100, "[MainThread]")],
+      [leader(101)],
+    ];
+    let reads = 0;
+    const listProcesses = vi.fn<ProcessOwnershipHost["listProcesses"]>(() => {
+      const table = tables[reads] ?? [leader(101)];
+      reads += 1;
+      return Promise.resolve(table);
+    });
+    await expect(
+      cleanupOwnedProcessGroup(
+        { ...ownership, expectedCommand: "fixture" },
+        {
+          listProcesses,
+          environment: () =>
+            Promise.resolve({ REA_PROCESS_RUN_ID: ownership.runId }),
+          signalGroup,
+        },
+      ),
+    ).resolves.toMatchObject({
+      cleaned: false,
+      reason: "owned process group 101 reappeared after revalidation",
+    });
+    expect(signalGroup.mock.calls).toEqual([[100, "SIGKILL"]]);
+  });
+});
+
 describe("owned process-group cleanup validation: launcher exit races", () => {
   it.each([101, 999])(
     "retains cleanup uncertainty for a detached descendant in group %s after launcher exit",

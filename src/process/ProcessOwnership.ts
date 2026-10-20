@@ -349,10 +349,22 @@ export const cleanupOwnedProcessGroup = async (
   if ("cleaned" in plan) return plan;
   let signaled = false;
   const pendingGroups = [...plan.signalOrder];
-  const scheduledGroups = new Set(pendingGroups);
+  const pending = new Set(pendingGroups);
+  const passes = new Map<number, number>();
   while (pendingGroups.length > 0) {
     const processGroupId = pendingGroups.shift();
     if (processGroupId === undefined) break;
+    pending.delete(processGroupId);
+    const seen = passes.get(processGroupId) ?? 0;
+    if (seen >= OWNED_GROUP_REVALIDATION_LIMIT)
+      return mergeUnverifiedObservations(
+        {
+          cleaned: false,
+          reason: `owned process group ${String(processGroupId)} reappeared after revalidation`,
+        },
+        plan.unverified,
+      );
+    passes.set(processGroupId, seen + 1);
     const revalidation = await revalidateOwnedProcessGroup(
       processGroupId,
       ownership,
@@ -363,8 +375,16 @@ export const cleanupOwnedProcessGroup = async (
     if ("cleaned" in revalidation)
       return mergeUnverifiedObservations(revalidation, plan.unverified);
     for (const groupId of revalidation.escapedProcessGroupIds) {
-      if (scheduledGroups.has(groupId)) continue;
-      scheduledGroups.add(groupId);
+      if (groupId === processGroupId || pending.has(groupId)) continue;
+      if ((passes.get(groupId) ?? 0) >= OWNED_GROUP_REVALIDATION_LIMIT)
+        return mergeUnverifiedObservations(
+          {
+            cleaned: false,
+            reason: `owned process group ${String(groupId)} reappeared after revalidation`,
+          },
+          plan.unverified,
+        );
+      pending.add(groupId);
       pendingGroups.push(groupId);
     }
     if (revalidation.empty) continue;
@@ -585,6 +605,13 @@ const settledProcessTable = (
 
 /** Confirmation tables taken after an unreadable exit-refresh row disappears. */
 const EXIT_REFRESH_CONFIRMATION_LIMIT = 8;
+
+/**
+ * Times one group may be revalidated in a single cleanup. The second pass
+ * covers a group that reappears after it was already processed. Another
+ * appearance stays unresolved instead of reporting success.
+ */
+const OWNED_GROUP_REVALIDATION_LIMIT = 2;
 
 /**
  * Token-check rows that exist only in the post-exit table. A prior PID, group,
