@@ -9,7 +9,10 @@ import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../../../src/process/OwnedCommand.js";
-import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
+import {
+  ProviderProcessSupervisor,
+  spawnOwnedProviderProcess,
+} from "../../../src/process/ProviderProcess.js";
 import {
   cleanupOwnedProcessGroup,
   type ProcessCleanupResult,
@@ -195,6 +198,114 @@ it("retains late cancellation separately from a physical failure with refused cl
     await failure?.cleanupOwner?.stop();
   }
 });
+
+it.each([
+  {
+    exitCode: 7,
+    acceptNonZeroExit: false,
+    diagnosticBytes: 1024,
+    reason: "process",
+  },
+  {
+    exitCode: 7,
+    acceptNonZeroExit: true,
+    diagnosticBytes: 1024,
+    reason: "cancelled",
+  },
+  {
+    exitCode: 0,
+    acceptNonZeroExit: false,
+    diagnosticBytes: 1024,
+    reason: "cancelled",
+  },
+  {
+    exitCode: 0,
+    acceptNonZeroExit: false,
+    diagnosticBytes: 8,
+    reason: "output-limit",
+  },
+] as const)(
+  "preserves $reason when cancellation follows observed exit $exitCode (accepted: $acceptNonZeroExit, budget: $diagnosticBytes)",
+  async ({ exitCode, acceptNonZeroExit, diagnosticBytes, reason }) => {
+    const controller = new AbortController();
+    const callerReason = { request: "cancel after observed output closure" };
+    let finalizing = false;
+    const sink = new Writable({
+      write(_chunk, _encoding, callback) {
+        callback();
+      },
+      final() {
+        finalizing = true;
+      },
+    });
+    const waitForOutputClose =
+      ProviderProcessSupervisor.prototype.waitForOutputClose;
+    const observedClose = vi
+      .spyOn(ProviderProcessSupervisor.prototype, "waitForOutputClose")
+      .mockImplementation(async function (this: ProviderProcessSupervisor) {
+        // Hold classification until the real exit and output closure are observed.
+        const closed = await waitForOutputClose.call(this, 5000);
+        if (closed) controller.abort(callerReason);
+        return closed;
+      });
+    let denied = true;
+    let failure: OwnedCommandFailure | undefined;
+    try {
+      await runOwnedCommand(
+        command(
+          `process.stdout.write("output"); process.stderr.write("authored physical failure"); process.exitCode = ${exitCode}`,
+        ),
+        {
+          timeoutMs: 5000,
+          diagnosticBytes,
+          stdout: sink,
+          acceptNonZeroExit,
+        },
+        {
+          signal: controller.signal,
+          launcher: async (input) => {
+            const acquired = await spawnOwnedProviderProcess(input);
+            return {
+              ...acquired,
+              cleanup: async () =>
+                denied
+                  ? { cleaned: false, reason: "controlled cleanup refusal" }
+                  : (acquired.cleanup?.() ??
+                    cleanupOwnedProcessGroup(acquired.ownership)),
+            };
+          },
+        },
+      ).catch((cause: unknown) => {
+        if (!(cause instanceof OwnedCommandFailure)) throw cause;
+        failure = cause;
+      });
+      expect(finalizing).toBe(true);
+      expect(failure).toMatchObject({
+        reason,
+        snapshot: {
+          exitCode,
+          stderr: {
+            text: "authored physical failure".slice(0, diagnosticBytes),
+          },
+        },
+        cleanupFailure: "controlled cleanup refusal",
+        collectionFailure: false,
+      });
+      expect(failure?.processError).toBeUndefined();
+      expect(failure?.cancellation?.reason).toBe(callerReason);
+      expect(sink.destroyed).toBe(true);
+      denied = false;
+      expect(await failure?.cleanupOwner?.stop()).toEqual({
+        status: "verified-cleanup",
+      });
+    } finally {
+      observedClose.mockRestore();
+      denied = false;
+      await failure?.cleanupOwner?.stop();
+      sink.destroy();
+    }
+  },
+);
 
 it("streams stdout beyond the diagnostic budget into a sink and returns after it finishes", async () => {
   let received = 0;
