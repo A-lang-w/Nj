@@ -183,12 +183,26 @@ export class ReverseEngineeringService {
     }
     if (failure !== undefined && failures.length > 1) {
       const primary = failure;
+      const cleanup = {
+        reason: failures
+          .map((retained) => retained.cleanup?.reason)
+          .filter((reason): reason is string => reason !== undefined)
+          .join("; "),
+        resources: [
+          ...new Set(
+            failures.flatMap(
+              (retained) =>
+                retained.cleanup?.resources ?? retained.cleanupResources,
+            ),
+          ),
+        ],
+      };
       failure = new AnalysisOutputError(
         [...this.#pendingCleanup.values()].find((retained) =>
           retained.failures.has(primary),
         )?.operation ?? operation,
         "Multiple previous provider processes still require cleanup.",
-        { cause: primary, cleanupPrimary: primary },
+        { cause: primary, cleanupPrimary: primary, cleanup },
       ).bindCleanupDependencies(failures);
     }
     return failure === undefined ? ok(null) : err(failure);
@@ -706,6 +720,7 @@ export class ReverseEngineeringService {
         if (commandCancelled(signal, cause, code))
           failure = new AnalysisCancelledError(operation, {
             cause: callerCancellationCause(signal, cause),
+            capturedOutput,
             ...ownedCleanupOptions(cause),
           });
         else if (code === "ETIMEDOUT")
@@ -786,7 +801,18 @@ export class ReverseEngineeringService {
       }
     }
     if (signal?.aborted && failure === undefined) {
-      failure = new AnalysisCancelledError(operation, { cause: signal.reason });
+      failure = new AnalysisCancelledError(operation, {
+        cause: signal.reason,
+        capturedOutput: {
+          stdout,
+          stderr,
+          truncated: outputTruncated,
+          stdout_bytes: stdoutBytes,
+          stderr_bytes: stderrBytes,
+          exit_code: typeof exitCode === "number" ? exitCode : null,
+          signal: signalName,
+        },
+      });
       exitCode = null;
       completionStatus = "unknown";
     }

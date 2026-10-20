@@ -635,16 +635,22 @@ it("preserves provider facts when cancellation interrupts the post-run digest", 
         signal: null,
       });
       expect(result.error.partialObservation).toMatchObject({
-        normalized_result: {
+        raw_result: {
           stdout: "�",
-          exit_code: null,
-          completion_status: "unknown",
-          artifact_sha256_after: null,
+          stderr: "�",
+          stdout_bytes: 1,
+          stderr_bytes: 1,
         },
         limitations: expect.arrayContaining([
           expect.stringContaining("cancellation interrupted the digest"),
         ]),
       });
+      expect(result.error.partialObservation).not.toHaveProperty(
+        "normalized_result.stdout",
+      );
+      expect(result.error.partialObservation).not.toHaveProperty(
+        "normalized_result.stderr",
+      );
     }
   } finally {
     await rm(directory, { recursive: true, force: true });

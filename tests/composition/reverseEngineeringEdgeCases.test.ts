@@ -14,6 +14,7 @@ import { AnalysisCapabilityUnavailableError } from "../../src/domain/analysisErr
 import { ReverseEngineeringService as CoreReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 import { AnalysisResourceConstraintError } from "../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { objdumpCommand } from "../../src/objdump/ObjdumpCommand.js";
 import {
   OwnedCommandFailure,
@@ -667,7 +668,13 @@ it("preserves raw retained byte counts when output text replaces invalid UTF-8",
       ok: false,
       error: {
         _tag: "AnalysisCancelledError",
-        capturedOutput: undefined,
+        capturedOutput: {
+          stdout: "�",
+          stderr: "�",
+          stdout_bytes: 1,
+          stderr_bytes: 2,
+          exit_code: null,
+        },
         partialObservation: {
           raw_result: {
             stdout: "�",
@@ -900,10 +907,19 @@ it("aggregates every retained reverse owner during cleanup retry", async () => {
 
     const bothPending = await service.retryCleanup();
     expect(bothPending.ok).toBe(false);
-    if (!bothPending.ok)
+    if (!bothPending.ok) {
       expect(bothPending.error.cleanupResources).toEqual(
         expect.arrayContaining(["1-run", "pid:1", "2-run", "pid:2"]),
       );
+      expect(projectAnalysisError(bothPending.error)).toMatchObject({
+        details: {
+          cleanup_reason: expect.stringContaining("first still active"),
+        },
+      });
+      expect(
+        projectAnalysisError(bothPending.error).details?.cleanup_reason,
+      ).toContain("second still active");
+    }
 
     firstCanStop = true;
     const secondPending = await service.retryCleanup();
