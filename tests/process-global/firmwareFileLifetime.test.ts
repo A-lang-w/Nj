@@ -630,6 +630,7 @@ it("classifies a deadline before composing failed descriptor cleanup", async () 
       phase: "analysis",
       signal: deadline.signal,
       timeoutMs: 120_000,
+      expiresAtMs: performance.now() + 120_000,
     },
   });
   expect(error.diagnostics?.primary_error).toMatchObject({
@@ -646,6 +647,7 @@ const publication = async (
     phase: "publication" as const,
     signal: new AbortController().signal,
     timeoutMs: 120_000,
+    expiresAtMs: performance.now() + 120_000,
   },
 ) => {
   const root = await createTestTempDirectory(
@@ -757,6 +759,7 @@ it.each(["caller", "deadline"])(
             phase: "publication" as const,
             signal: controller.signal,
             timeoutMs: 120_000,
+            expiresAtMs: performance.now() + 120_000,
           }
         : undefined,
     );

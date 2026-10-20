@@ -55,6 +55,15 @@ const phases = (publicationMs: number = FIRMWARE_LIMITS.timeoutMs) => {
   return { analysis, publication, budgets };
 };
 
+const phaseClock = () => {
+  const now = performance.now.bind(performance);
+  let offset = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => now() + offset);
+  return (elapsedMs: number) => {
+    offset += elapsedMs;
+  };
+};
+
 test("allows publication after the analysis phase expires", async () => {
   const phase = phases();
   const fixture = await firmwareFixture();
@@ -90,35 +99,42 @@ test("allows publication after the analysis phase expires", async () => {
   await assertFirmwareCleanup(fixture.launches);
 });
 
-test("does not revive expired analysis when inventory finishes", async () => {
-  const phase = phases();
-  const fixture = await firmwareFixture();
-  const inventory = firmwareFiles.inventoryFirmwareOutput;
-  vi.spyOn(firmwareFiles, "inventoryFirmwareOutput").mockImplementation(
-    async (...args) => {
-      const entries = await inventory(...args);
-      phase.analysis.abort(
-        new DOMException("inventory deadline", "TimeoutError"),
-      );
-      return entries;
-    },
-  );
-  const result = await fixture.service.execute("extract_firmware", {
-    path: fixture.path,
-    output_directory: fixture.output,
-  });
-  if (result.ok) throw new Error("Expected expired analysis");
-  expect(projectAnalysisError(result.error)).toMatchObject({
-    code: "provider_timeout",
-    details: { timeout_ms: 120_000, diagnostics: { phase: "analysis" } },
-  });
-  expect(phase.budgets).toEqual([120_000]);
-  await expect(access(fixture.output)).rejects.toMatchObject({
-    code: "ENOENT",
-  });
-  await fixture.close();
-  await assertFirmwareCleanup(fixture.launches);
-});
+test.each(["signal", "clock"] as const)(
+  "does not revive expired analysis when inventory finishes: %s",
+  async (expiry) => {
+    const phase = phases();
+    const advance = phaseClock();
+    const fixture = await firmwareFixture();
+    const inventory = firmwareFiles.inventoryFirmwareOutput;
+    vi.spyOn(firmwareFiles, "inventoryFirmwareOutput").mockImplementation(
+      async (...args) => {
+        const entries = await inventory(...args);
+        if (expiry === "clock") advance(120_001);
+        else
+          phase.analysis.abort(
+            new DOMException("inventory deadline", "TimeoutError"),
+          );
+        return entries;
+      },
+    );
+    const result = await fixture.service.execute("extract_firmware", {
+      path: fixture.path,
+      output_directory: fixture.output,
+    });
+    if (result.ok) throw new Error("Expected expired analysis");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "provider_timeout",
+      details: { timeout_ms: 120_000, diagnostics: { phase: "analysis" } },
+    });
+    expect(phase.budgets).toEqual([120_000]);
+    expect(phase.analysis.signal.aborted).toBe(expiry === "signal");
+    await expect(access(fixture.output)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await fixture.close();
+    await assertFirmwareCleanup(fixture.launches);
+  },
+);
 
 test("keeps each queued request's publication budget", async () => {
   const fixture = await firmwareFixture();
@@ -182,13 +198,28 @@ test("keeps each queued request's publication budget", async () => {
   await assertFirmwareCleanup(fixture.launches);
 });
 
-test.each(["none", "caller", "publication"] as const)(
+test.each(["none", "caller", "publication", "clock"] as const)(
   "preserves the selected budget, verified progress and rollback at commit: %s",
   async (interruption) => {
     const phase = phases(654_321);
+    const advance = phaseClock();
     const caller = new AbortController();
     const reason = { stop: "before publication commit" };
     const fixture = await firmwareFixture();
+    if (interruption === "clock") {
+      const publish = firmwareFiles.FirmwareFileAccess.prototype.publish;
+      vi.spyOn(
+        firmwareFiles.FirmwareFileAccess.prototype,
+        "publish",
+      ).mockImplementation(async function (
+        this: firmwareFiles.FirmwareFileAccess,
+        ...args
+      ) {
+        const file = await publish.apply(this, args);
+        advance(654_322);
+        return file;
+      });
+    }
     const commit = SafeOutputTree.prototype.commit;
     vi.spyOn(SafeOutputTree.prototype, "commit").mockImplementation(
       async function (this: SafeOutputTree, signal) {
@@ -220,6 +251,8 @@ test.each(["none", "caller", "publication"] as const)(
       expect(result.error.cause).toBe(
         interruption === "caller" ? reason : phase.publication.signal.reason,
       );
+      if (interruption === "clock")
+        expect(phase.publication.signal.aborted).toBe(false);
       expect(projectAnalysisError(result.error)).toMatchObject(
         interruption === "caller"
           ? { code: "cancelled" }
@@ -247,10 +280,16 @@ test.each(["none", "caller", "publication"] as const)(
   },
 );
 
-test.each([false, true])(
-  "retains committed output and late timeout through workspace cleanup (denied: %s)",
-  async (denied) => {
+test.each([
+  { expiry: "signal", denied: false },
+  { expiry: "signal", denied: true },
+  { expiry: "clock", denied: false },
+  { expiry: "clock", denied: true },
+] as const)(
+  "retains committed output and late timeout through workspace cleanup: $expiry, denied: $denied",
+  async ({ expiry, denied }) => {
     const phase = phases(654_321);
+    const advance = phaseClock();
     const fixture = await firmwareFixture();
     const commit = SafeOutputTree.prototype.commit;
     const close = PrivateRuntimeRoot.prototype.close;
@@ -265,9 +304,11 @@ test.each([false, true])(
     vi.spyOn(PrivateRuntimeRoot.prototype, "close").mockImplementation(
       async function (this: PrivateRuntimeRoot) {
         if (committed) {
-          phase.publication.abort(
-            new DOMException("final cleanup deadline", "TimeoutError"),
-          );
+          if (expiry === "clock") advance(654_322);
+          else
+            phase.publication.abort(
+              new DOMException("final cleanup deadline", "TimeoutError"),
+            );
           if (blocked)
             throw new Error("controlled firmware root cleanup denial");
         }
@@ -280,6 +321,7 @@ test.each([false, true])(
       publication_timeout_ms: 654_321,
     });
     if (result.ok) throw new Error("Expected timeout during final cleanup");
+    expect(phase.publication.signal.aborted).toBe(expiry === "signal");
     const projected = projectAnalysisError(result.error);
     expect(
       denied ? result.error.diagnostics?.primary_error : projected,

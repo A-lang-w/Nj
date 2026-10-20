@@ -15,6 +15,7 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
+import { firmwareDeadlineElapsed } from "./FirmwareDeadline.js";
 import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
 import { z } from "zod";
 
@@ -149,3 +150,16 @@ export const firmwareCancellation = (
   deadline?.signal.aborted && reason === deadline.signal.reason
     ? timeoutFailure(operation, reason, deadline, { publication })
     : new AnalysisCancelledError(operation, { cause: reason });
+
+/** Preserve observed cancellation identity; otherwise enforce the monotonic budget. */
+export const firmwarePhaseInterruption = (
+  operation: string,
+  signal: AbortSignal,
+  deadline: FirmwareDeadline,
+  publication?: FirmwarePublicationProgress,
+): AnalysisError | undefined =>
+  signal.aborted
+    ? firmwareCancellation(operation, signal.reason, deadline, publication)
+    : firmwareDeadlineElapsed(deadline)
+      ? timeoutFailure(operation, undefined, deadline, { publication })
+      : undefined;

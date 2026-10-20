@@ -51,7 +51,10 @@ import {
   normalizeUnblobReport,
 } from "./FirmwareReports.js";
 
-import { firmwareFailure, firmwareCancellation } from "./FirmwareFailures.js";
+import {
+  firmwareFailure,
+  firmwarePhaseInterruption,
+} from "./FirmwareFailures.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 
 type Outcome = Awaited<ReturnType<FirmwareAnalysisPort["execute"]>>;
@@ -482,10 +485,12 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
         );
         // The inventory can finish after its deadline expired; an expired
         // extraction must not publish under the fresh publication budget.
-        if (signal.aborted)
-          throw new AnalysisCancelledError(request.operation, {
-            cause: signal.reason,
-          });
+        const interruption = firmwarePhaseInterruption(
+          request.operation,
+          signal,
+          deadline,
+        );
+        if (interruption !== undefined) throw interruption;
         deadline = startFirmwareDeadline(
           "publication",
           request.input.publication_timeout_ms,
@@ -583,16 +588,19 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
       finished.error.cleanupResources.includes(root.path)
     )
       rootLease.bindCleanupError(finished.error);
-    if (finished.ok && signal.aborted)
-      return err(
-        firmwareCancellation(
-          request.operation,
-          signal.reason,
-          deadline,
-        ).retainPartialObservation(
-          completedFirmwareObservation(finished.value),
-        ),
+    if (finished.ok) {
+      const interruption = firmwarePhaseInterruption(
+        request.operation,
+        signal,
+        deadline,
       );
+      if (interruption !== undefined)
+        return err(
+          interruption.retainPartialObservation(
+            completedFirmwareObservation(finished.value),
+          ),
+        );
+    }
     return finished;
   }
 }
@@ -638,12 +646,10 @@ const finishFirmwareWorkspace = async (
       },
     );
     rootLease?.bindCleanupError(cleanup);
-    if (outcome.ok && signal.aborted) {
-      const primary = firmwareCancellation(
-        request.operation,
-        signal.reason,
-        deadline,
-      );
+    const primary = outcome.ok
+      ? firmwarePhaseInterruption(request.operation, signal, deadline)
+      : undefined;
+    if (outcome.ok && primary !== undefined) {
       primary.retainPartialObservation(
         completedFirmwareObservation(outcome.value),
       );

@@ -165,7 +165,9 @@ tree semantics, vulnerability scanning, emulation or hardware runtime capture.
   timer representation limit). Publication timeouts identify their phase and
   verified file progress; verified writes before atomic commit are not a claim
   that output remains published after rollback. Caller cancellation applies to
-  both phases and final cleanup.
+  both phases and final cleanup. Phase handoff, publication commit and final
+  completion also check monotonic elapsed time, so delayed timer callbacks
+  cannot revive an expired budget.
 - Inherited **1 GiB per-process address-space** limit,
   120 CPU seconds and zero core-dump allowance through `prlimit`.
 - JSON reports: at most **8 MiB** and valid UTF-8; malformed encoding and
