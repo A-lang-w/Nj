@@ -4,26 +4,27 @@ import {
   compositeKey,
 } from "../unicodeCodePointOrder.js";
 import {
-  IDENTITY_NAMES,
+  apiBaseLengths,
   at,
   collectionPathOf,
+  hasPrototypeKey,
   identifies,
+  IDENTITY_NAMES,
   identityCandidates,
   isObject,
   isParam,
   isQueryPost,
   isStateWrite,
   jsonBytes,
-  hasPrototypeKey,
   lastSegmentValue,
   listItems,
-  normalizedPath,
   locateItem,
   locateList,
+  normalizedPath,
   rootOf,
+  same,
   scalarText,
   segmentsOf,
-  apiBaseLengths,
   writeSpanCheck,
   type ExtractedState,
   type JsonObject,
@@ -518,9 +519,8 @@ export class EnvironmentStateExtraction {
     const documents: StateDocument[] = [];
     for (const { tool, item } of candidates) {
       if (item || this.#views.has(tool.name)) continue;
-      const latest = this.#latestPerLine(
-        this.#initRecordings(tool, tool.path_template),
-      );
+      const recordings = this.#initRecordings(tool, tool.path_template);
+      const latest = this.#latestPerLine(recordings);
       if (latest.length !== 1) {
         const paths = new Set(latest.map((record) => record.path));
         this.#recorded(
@@ -534,6 +534,20 @@ export class EnvironmentStateExtraction {
         continue;
       }
       const record = latest[0]!;
+      // A value that changed across a write, even under another root, is not one initial state.
+      if (
+        recordings.some(
+          (after, index) =>
+            index > 0 &&
+            this.#writeWithin(recordings[index - 1]!, after) &&
+            this.#withBody(recordings[index - 1]!.ordinal, (before) =>
+              this.#withBody(after.ordinal, (body) => !same(before, body)),
+            ),
+        )
+      ) {
+        this.#recorded(tool, "fields-differ");
+        continue;
+      }
       const value = this.#withBody(record.ordinal, (body) => body);
       if (value === undefined) {
         this.#recorded(tool, "body-unusable");

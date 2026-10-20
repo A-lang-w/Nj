@@ -326,12 +326,12 @@ records and the evidence ID, and the whole catalog stays within its
 serialization reservation, which the summaries and MCP annotations are charged
 to.
 
-Over MCP, every tool also carries annotations: `readOnlyHint` is true for `GET`
-and `HEAD` tools and for query `POST`s (a path segment such as `search` or
-`query`); `destructiveHint` is true for `DELETE` and left unset for other
+Over MCP, every tool also carries annotations: `readOnlyHint` is true for the
+safe methods (`GET`, `HEAD`, `OPTIONS` and `TRACE`) and for query `POST`s (a
+path segment such as `search` or `query`); `destructiveHint` is true for `DELETE` and left unset for other
 writes, so the MCP default (destructive) applies to them, and read-only tools
-omit it because clients ignore it there; `idempotentHint` is true for `GET`,
-`HEAD`, `PUT` and `DELETE`; and `openWorldHint` is false for every tool,
+omit it because clients ignore it there; `idempotentHint` is true for the safe
+methods, `PUT` and `DELETE`; and `openWorldHint` is false for every tool,
 because answers come from the capture rather than the captured application. The
 hints describe the captured method; replay itself changes nothing. The card
 keeps the `name`, `description` and `inputSchema` of the echo example's tool

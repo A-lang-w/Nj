@@ -521,3 +521,22 @@ describe("environmentCard", () => {
     expect(environmentCard("renamed", definitions).name).toBe("renamed");
   });
 });
+
+describe("environment tool annotations", () => {
+  it("marks OPTIONS and TRACE safe and idempotent, as GET is", () => {
+    const get = tool("get_users_by_id");
+    const hints = environmentToolDefinitions(
+      withTools(
+        (["OPTIONS", "TRACE"] as const).map((method) => ({
+          ...get,
+          name: `${method.toLowerCase()}_users_by_id`,
+          method,
+        })),
+      ),
+    ).map((definition) => definition.annotations);
+    expect(hints).toEqual([
+      { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+      { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    ]);
+  });
+});

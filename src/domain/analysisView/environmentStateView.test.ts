@@ -1097,3 +1097,30 @@ it("reads a sparse list once per candidate field when inferring identity", () =>
   // Each identity name and suffix field stops at the first sparse item.
   expect(reads).toBeLessThanOrEqual(fields + 20);
 });
+
+it("keeps a document out of the state when its value changed across a write under another root", () => {
+  const changed = stateOf(
+    captureOf([
+      ["GET", "/api/me", { credits: 10, plan: "free" }],
+      ["POST", "/api/orders", { id: "o1" }],
+      ["GET", "/api/me", { credits: 9, plan: "free" }],
+    ]),
+  );
+  expect(changed.documents).toEqual([]);
+  expect(changed.views).toContainEqual({
+    tool: "get_me",
+    shape: "recorded",
+    reason: "fields-differ",
+  });
+  // A value the write left unchanged is still one initial state.
+  const unchanged = stateOf(
+    captureOf([
+      ["GET", "/api/me", { credits: 10, plan: "free" }],
+      ["POST", "/api/orders", { id: "o1" }],
+      ["GET", "/api/me", { credits: 10, plan: "free" }],
+    ]),
+  );
+  expect(unchanged.documents).toMatchObject([
+    { tool: "get_me", value: { credits: 10, plan: "free" }, record_ordinal: 2 },
+  ]);
+});
