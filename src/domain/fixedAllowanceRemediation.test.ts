@@ -52,6 +52,12 @@ describe("fixed allowance recovery", () => {
       expect(projected.remediation.action).toContain(allowance);
       for (const pattern of forbidden[kind])
         expect(projected.remediation.action).not.toMatch(pattern);
+      if (kind === "capture") {
+        expect(projected.remediation.action).toContain(
+          "live output may change between requests",
+        );
+        expect(projected.remediation.action).not.toContain("unchanged request");
+      }
     },
   );
 });
