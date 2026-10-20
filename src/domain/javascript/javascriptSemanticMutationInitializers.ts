@@ -2,6 +2,7 @@ import * as t from "@babel/types";
 
 import {
   delayedInstanceFieldValue,
+  semanticComputedMethodKey,
   semanticBranchMayBeSkipped,
   semanticIterationCardinality,
 } from "./javascriptSemanticEvaluationOrder.js";
@@ -133,7 +134,14 @@ const statementPosition = (
   parents: WeakMap<t.Node, t.Node>,
   declarator?: t.VariableDeclarator,
 ): StatementPosition | null => {
-  const parent = parents.get(statement);
+  const directParent = parents.get(statement);
+  const enclosing =
+    (t.isExportNamedDeclaration(directParent) ||
+      t.isExportDefaultDeclaration(directParent)) &&
+    directParent.declaration === statement
+      ? directParent
+      : statement;
+  const parent = parents.get(enclosing);
   if (!t.isProgram(parent) && !t.isBlockStatement(parent)) return null;
   const cache = initializerPositionCache(parents).statementIndices;
   let indices = cache.get(parent.body);
@@ -141,7 +149,7 @@ const statementPosition = (
     indices = new Map(parent.body.map((node, index) => [node, index]));
     cache.set(parent.body, indices);
   }
-  const index = indices.get(statement) ?? -1;
+  const index = indices.get(enclosing) ?? -1;
   return index < 0
     ? null
     : {
@@ -504,6 +512,8 @@ const computeDirectInitializerPosition = (
   node: t.Node,
   parents: WeakMap<t.Node, t.Node>,
 ): StatementPosition | null => {
+  if (t.isClassDeclaration(node) && node.id !== null)
+    return statementPosition(node, parents);
   if (
     (t.isAssignmentExpression(node) &&
       t.isIdentifier(unwrapJavaScriptExpression(node.left).node)) ||
@@ -839,7 +849,7 @@ const bindingReadPosition = (
     }
     if (
       parent === undefined ||
-      t.isFunction(parent) ||
+      (t.isFunction(parent) && !semanticComputedMethodKey(parent, current)) ||
       delayedInstanceFieldValue(parent, current)
     ) {
       result = { position: null, repeating: false };
@@ -1069,6 +1079,17 @@ export const semanticBindingAtRead = (
     binding.referenceInitializers.length === 0
   )
     return { status: "ordered", binding, hasDefiniteInitializer: false };
+  const [soleInitializer] = binding.initializers;
+  if (
+    binding.initializers.length === 1 &&
+    binding.referenceInitializers.length === 0 &&
+    binding.declarationKinds.size === 0 &&
+    binding.definitions.length === 1 &&
+    binding.definitions[0]?.kind === "function" &&
+    soleInitializer !== undefined &&
+    t.isFunctionDeclaration(soleInitializer.node)
+  )
+    return { status: "ordered", binding, hasDefiniteInitializer: true };
   const initializer = binding.initializers[0];
   const reference = binding.referenceInitializers[0];
   const origin = initializer ?? reference;

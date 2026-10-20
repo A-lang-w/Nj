@@ -836,7 +836,8 @@ it("shares concurrent close and retries browser cleanup after failure", async ()
     .mockResolvedValue(undefined);
   const cleanupSettlements: boolean[] = [];
   const cleanup = new PlaywrightScenarioBrowserCleanupOwner({
-    closeBrowser: browserClose,
+    closeBrowser: (disconnectAtBoundary) =>
+      disconnectAtBoundary(() => browserClose()),
     removeProfile,
     onSettled: (browserClosed) => cleanupSettlements.push(browserClosed),
   });
@@ -866,7 +867,8 @@ it("keeps failed event finalization failed across cleanup retries", async () => 
     .fn<() => Promise<void>>()
     .mockResolvedValue(undefined);
   const cleanup = new PlaywrightScenarioBrowserCleanupOwner({
-    closeBrowser,
+    closeBrowser: (disconnectAtBoundary) =>
+      disconnectAtBoundary(() => closeBrowser()),
     removeProfile: undefined,
   });
 
@@ -939,7 +941,8 @@ it.each([false, true])(
     );
     let denied = true;
     const owner = new PlaywrightScenarioBrowserCleanupOwner({
-      closeBrowser: async () => {},
+      closeBrowser: (disconnectAtBoundary) =>
+        disconnectAtBoundary(async () => undefined),
       removeProfile: async () => {
         if (denied) throw new Error("profile removal denied");
       },
@@ -1114,7 +1117,8 @@ it.each([false, true])(
     const caller = new AbortController();
     const reason = { caller: "during final browser close" };
     const owner = new PlaywrightScenarioBrowserCleanupOwner({
-      closeBrowser: () => acknowledgement,
+      closeBrowser: (disconnectAtBoundary) =>
+        disconnectAtBoundary(() => acknowledgement),
       removeProfile: undefined,
     });
     const session = new FakeSession("launch");
