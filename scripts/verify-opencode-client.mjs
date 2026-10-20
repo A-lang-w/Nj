@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import {
@@ -10,6 +10,7 @@ import {
   toolContract,
 } from "../dist/contracts/toolContracts.js";
 import { exec } from "./lib/verify-package-core.mjs";
+import { assertJavaScriptApplicationInputPaths } from "./lib/javascript-application-paths.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
 
@@ -41,6 +42,21 @@ const skillDirectory = join(
   ".agents",
   "skills",
   "reverse-engineer-anything",
+);
+const isManagedSkillTarget = (target) => {
+  const value = relative(skillDirectory, target);
+  return (
+    value === "" ||
+    (value !== ".." && !value.startsWith(`..${sep}`) && !isAbsolute(value))
+  );
+};
+assert.equal(
+  isManagedSkillTarget(`${skillDirectory}-sibling/AGENTS.md`),
+  false,
+);
+assert.equal(
+  isManagedSkillTarget(join(skillDirectory, "..", "outside", "AGENTS.md")),
+  false,
 );
 await Promise.all([mkdir(account), mkdir(profile), mkdir(workspace)]);
 await exec("git", ["init", "--quiet", workspace], { timeout: 30_000 });
@@ -152,7 +168,7 @@ const fixture = await createOpenAiModelFixture({
       const evidence = toolContract(
         "analyze_javascript_application",
       ).outputSchema.parse(observed);
-      assert.equal(evidence.subject.local_path, target);
+      await assertJavaScriptApplicationInputPaths(evidence, target);
       const shape = evidence.normalized_result.graph.nodes
         .flatMap((n) => n.observations)
         .map((o) => o.properties)
@@ -264,8 +280,7 @@ try {
         assert(parsed.plannedActions.some((a) => a.target === skillDirectory));
         assert(
           parsed.plannedActions.every(
-            (a) =>
-              a.target === configPath || a.target.startsWith(skillDirectory),
+            (a) => a.target === configPath || isManagedSkillTarget(a.target),
           ),
         );
       }

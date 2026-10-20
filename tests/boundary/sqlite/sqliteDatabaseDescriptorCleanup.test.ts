@@ -1,7 +1,7 @@
 import { Cli } from "incur";
 import { access, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it, onTestFinished, vi } from "vitest";
 
@@ -267,14 +267,16 @@ it("retains cancellation diagnostics and the interrupt exit code through CLI shu
 it("retains reply-read cancellation and retries the failed reply descriptor close", async () => {
   const selected = await fixture("reply");
   const controller = new AbortController();
-  descriptorCleanup.onOpen = () =>
-    controller.abort(new Error("requested cancellation during reply read"));
+  const reason = { requested: "cancel during reply read" };
+  descriptorCleanup.onOpen = () => controller.abort(reason);
   const result = await selected.provider.inspect(
     { path: selected.database.path },
     { signal: controller.signal },
   );
   if (result.ok) throw new Error("Expected cancelled reply read");
-  expect(projectAnalysisError(result.error)).toMatchObject({
+  expect(result.error).toMatchObject({ _tag: "AnalysisCancelledError" });
+  expect(result.error.cause).toBe(reason);
+  const cancelled = {
     code: "cleanup_incomplete",
     details: {
       execution_failure: "cancelled",
@@ -285,7 +287,20 @@ it("retains reply-read cancellation and retries the failed reply descriptor clos
         truncated: false,
       },
     },
-  });
+  };
+  // Windows cannot remove a private root while the reply descriptor is open;
+  // the retained cancellation is then reported as the root cleanup's cause.
+  expect(projectAnalysisError(result.error)).toMatchObject(
+    process.platform === "win32"
+      ? {
+          code: "cleanup_incomplete",
+          details: {
+            resources: [dirname(descriptorCleanup.path)],
+            diagnostics: { previous_error: cancelled },
+          },
+        }
+      : cancelled,
+  );
   const handle = descriptorCleanup.handles[0];
   if (handle === undefined) throw new Error("Expected owned reply descriptor");
   expect(handle.fd).toBeGreaterThanOrEqual(0);
@@ -295,6 +310,10 @@ it("retains reply-read cancellation and retries the failed reply descriptor clos
   descriptorCleanup.denied = false;
   await selected.provider.close();
   expect(handle.fd).toBe(-1);
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "cancelled",
+  });
   for (const root of selected.roots)
     await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
 });
@@ -361,12 +380,13 @@ it.each(["database", "WAL", "journal"] as const)(
   async (member) => {
     const selected = await fixture(member);
     const controller = new AbortController();
-    descriptorCleanup.onOpen = () =>
-      controller.abort(new Error("requested caller cancellation"));
+    const reason = { requested: `cancel while reading ${member}` };
+    descriptorCleanup.onOpen = () => controller.abort(reason);
     const result = await selected.provider.inspect(
       { path: selected.database.path },
       { signal: controller.signal },
     );
+    if (result.ok) throw new Error("Expected caller cancellation");
     expect(result).toMatchObject({
       ok: false,
       error: {
@@ -374,5 +394,17 @@ it.each(["database", "WAL", "journal"] as const)(
         diagnostics: { previous_error: { code: "cancelled" } },
       },
     });
+    descriptorCleanup.denied = false;
+    await selected.provider.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cancelled",
+    });
+    expect(result.error.cleanupPrimary).toMatchObject({
+      _tag: "AnalysisCancelledError",
+    });
+    expect(result.error.cleanupPrimary?.cause).toBe(reason);
+    for (const root of selected.roots)
+      await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );

@@ -12,7 +12,7 @@ export class GoBinaryFormatFailure extends Error {
 /** Resource boundary exceeded while decoding metadata or native container structure. */
 export class GoBinaryResourceFailure extends Error {
   constructor(
-    readonly boundary: "build-info" | "structure",
+    readonly boundary: "build-info" | "structure" | "search",
     readonly maximum_bytes: number,
     message: string,
   ) {
@@ -44,16 +44,22 @@ export interface GoImageSection {
   readonly compressed: boolean;
 }
 
-/** Native container facts and its producer-defined build-info search area. */
+/** Native container facts and its ordered producer-defined build-info search ranges. */
 export interface GoBinaryContainer {
   readonly format: "elf" | "pe" | "macho";
   readonly architecture: string;
   readonly bits: 32 | 64;
   readonly byte_order: "little" | "big";
+  /** Declared preferred base when the container supplies one (PE). */
+  readonly image_base?: bigint;
+  /** Mach-O load-command observation; omitted for other formats. */
+  readonly macho_chained_fixups?: boolean;
   readonly mappings: readonly GoFileMapping[];
+  /** File-backed ranges the native loader marks executable; omitted if unobserved. */
+  readonly executable_mappings?: readonly GoFileMapping[];
   readonly zero_fills: readonly GoZeroFillMapping[];
   readonly sections: readonly GoImageSection[];
-  readonly search: GoFileMapping | null;
+  readonly search: readonly GoFileMapping[];
 }
 
 /** Reader that checks every structural range before decoding numeric fields. */

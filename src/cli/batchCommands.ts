@@ -13,6 +13,7 @@ export const registerBatchCommands = (
   cli: CliInstance,
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
+  onStdoutCancellation: () => void,
 ): void => {
   cli.command(CLI_COMMANDS.batch, {
     description:
@@ -57,6 +58,7 @@ export const registerBatchCommands = (
     }),
     mcp: false,
     run: async (context) => {
+      let abandonedOutput = false;
       const outcome = await withCommandCancellation((signal) =>
         logCliCommand(
           logger,
@@ -78,16 +80,24 @@ export const registerBatchCommands = (
               environment,
               logger,
               signal,
+              onStdoutCancellation: () => {
+                abandonedOutput = true;
+                onStdoutCancellation();
+              },
             });
           },
           (result) => result.failed,
         ),
       );
-      if ("code" in outcome)
+      if ("code" in outcome && !abandonedOutput)
         await writeJsonOutput(
           { id: null, tool: "batch", status: "error", error: outcome },
           process.stdout,
           "jsonl",
+        );
+      else if ("code" in outcome && abandonedOutput)
+        process.stderr.write(
+          `${JSON.stringify({ id: null, tool: "batch", status: "error", error: outcome })}\n`,
         );
       // Batch owns its streamed output. Do not append Incur's empty result document.
       return context.ok(undefined);

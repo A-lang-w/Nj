@@ -4,6 +4,7 @@ import canonicalize from "canonicalize";
 
 import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
+import { decodePaddedBase64 } from "../domain/paddedBase64.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { CdpConnection } from "./CdpConnection.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
@@ -301,7 +302,10 @@ const addIndexedDbRecords = async (
     for (const entry of entries) {
       const key = stableValue(entry.key);
       const primaryKey = stableValue(entry.primaryKey);
-      const value = stableValue(entry.value);
+      // A missing remote object is an omission, not the JavaScript value
+      // "undefined". Keep the unavailable digest null and coverage partial.
+      const value =
+        entry.value === undefined ? undefined : stableValue(entry.value);
       addFingerprint(run.state, {
         scope: "indexed_db_record",
         identity: {
@@ -410,13 +414,13 @@ const addCacheEntry = async (
     run.limitations,
   );
   const body = cdpStringValue(recordValue(recordValue(raw)?.response)?.body);
-  const decoded = body === undefined ? null : decodeBase64(body);
-  const complete = decoded !== null;
+  const decoded = body === undefined ? undefined : decodePaddedBase64(body);
+  const complete = decoded !== undefined;
   if (!complete) run.state.complete = false;
   addFingerprint(run.state, {
     scope: "cache_entry",
     identity: { cache: cache.name, requestURL, requestMethod, requestHeaders },
-    value: decoded ?? undefined,
+    value: decoded,
     complete,
   });
 };
@@ -537,15 +541,4 @@ const remoteObjectComplete = (value: unknown): boolean => {
     default:
       return false;
   }
-};
-
-const decodeBase64 = (value: string): Buffer | null => {
-  if (
-    value.length % 4 !== 0 ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(
-      value,
-    )
-  )
-    return null;
-  return Buffer.from(value, "base64");
 };

@@ -14,6 +14,7 @@ import type { BinarySessionPort } from "../application/binary/BinarySessionPort.
 import { EnhancedTools } from "../application/EnhancedTools.js";
 import type { ValidatedEnhancedCall } from "../application/EnhancedToolTypes.js";
 import {
+  executeComposedWorkflow,
   createWorkflowEvidence,
   workflowSnapshotRecord,
   recordWorkflowUnknowns,
@@ -36,7 +37,9 @@ export interface EnhancedToolRegistration {
   readonly logger: Logger;
   readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
   readonly analysisProfile:
-    | (() => AnalysisProfileCommitment | undefined)
+    | ((
+        operation: ValidatedEnhancedCall["name"],
+      ) => AnalysisProfileCommitment | undefined)
     | undefined;
   readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
   readonly recordUnknown: UnknownRegistryPort["recordUnknown"] | undefined;
@@ -231,15 +234,20 @@ const executeEnhancedTool = async (
           context,
           parameters,
         });
-      const services = new EnhancedTools({
+      const analysis: AnalysisOperationPort = {
         execute: (operation, operationParameters, executionOptions) =>
           admittedAnalysis.execute(operation, operationParameters, {
             ...executionOptions,
             progress,
           }),
-      });
+      };
       const result = await logToolExecution(registration.logger, name, () =>
-        services.executeValidated(validatedCall, context.mcpReq.signal),
+        executeComposedWorkflow(analysis, (observed) =>
+          new EnhancedTools(observed).executeValidated(
+            validatedCall,
+            context.mcpReq.signal,
+          ),
+        ),
       );
       await progress.report({
         phase: name,
@@ -253,8 +261,9 @@ const executeEnhancedTool = async (
           target: registration.activeTarget?.(),
           operation: name,
           parameters,
-          result: result.value,
-          upstreamProfile: registration.analysisProfile?.(),
+          result: result.value.result,
+          upstreamProfile: registration.analysisProfile?.(name),
+          upstreamLimitations: result.value.limitations,
         });
         const recorded = registration.recordEvidence?.(evidence);
         if (recorded !== undefined && !recorded.ok)
@@ -263,7 +272,12 @@ const executeEnhancedTool = async (
           name !== "trace_native_ui_action" &&
           registration.allowsSnapshotReplay?.(name) === true
         ) {
-          const workflowRecord = workflowSnapshotRecord(evidence, name);
+          const workflowRecord = workflowSnapshotRecord(
+            evidence,
+            name,
+            registration.analysisProfile?.(name),
+            result.value.cachePolicy,
+          );
           if (workflowRecord !== undefined) {
             const snapshot =
               registration.recordWorkflowSnapshot?.(workflowRecord);
@@ -273,7 +287,7 @@ const executeEnhancedTool = async (
         }
         const unknowns = recordWorkflowUnknowns({
           name,
-          result: result.value,
+          result: result.value.result,
           evidenceId: evidence.evidence_id,
           recordUnknown: registration.recordUnknown,
         });

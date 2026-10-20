@@ -2,16 +2,21 @@ import {
   SUPPORTED_NODE_VERSION_PROSE,
   supportsNodeVersion,
 } from "../domain/runtimeVersion.js";
-import { linuxHopperLauncherPath, supportsReaHost } from "./LinuxHopper.js";
+import { providerStartupTimeoutSchema } from "../config/providerStartupTimeout.js";
+import {
+  linuxHopperLauncherCandidates,
+  systemLinuxHopperLauncherCandidates,
+  supportsReaHost,
+} from "./LinuxHopper.js";
+import {
+  MAC_HOPPER_SYSTEM_LAUNCHER,
+  macHopperCanonicalLauncherCandidates,
+} from "./MacHopperPaths.js";
 import type {
   DoctorCheck,
   DoctorHost,
   DoctorProviderInspection,
 } from "./Doctor.js";
-
-const DEFAULT_HOPPER =
-  "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper";
-const SYSTEM_LINUX_HOPPER = "/opt/hopper/bin/Hopper";
 
 /** Ordered environment diagnostics consumed by the Doctor report assembler. */
 export interface DoctorDiagnostics {
@@ -30,6 +35,8 @@ export const collectDoctorDiagnostics = async (
 
   const hopperPath = await findHopper(host);
   checks.push(hopperCheck(host, hopperPath));
+  const hopperTimeoutCheck = optionalHopperStartupTimeoutCheck(host);
+  if (hopperTimeoutCheck !== undefined) checks.push(hopperTimeoutCheck);
   const hopperVersionCheck = await optionalHopperVersionCheck(host, hopperPath);
   if (hopperVersionCheck !== undefined) checks.push(hopperVersionCheck);
 
@@ -76,6 +83,8 @@ export const doctorHealthy = (
     .every(({ ok }) => ok);
   const configuredProvidersHealthy = providerChecks
     .filter(({ name }) => {
+      // Validate the supplied setting independently of provider discovery.
+      if (name === "hopper-startup-timeout") return true;
       if (name.startsWith("hopper")) return providers.hopperConfigured;
       return providers.providerInspections?.some(
         (inspection) =>
@@ -147,9 +156,17 @@ const findHopper = async (host: DoctorHost): Promise<string | undefined> => {
   const candidates =
     host.configuredHopperPath === undefined
       ? [
-          DEFAULT_HOPPER,
-          SYSTEM_LINUX_HOPPER,
-          linuxHopperLauncherPath(host.homeDirectory),
+          ...(host.platform === "darwin"
+            ? macHopperCanonicalLauncherCandidates(host.homeDirectory)
+            : [MAC_HOPPER_SYSTEM_LAUNCHER]),
+          ...(host.platform === "linux"
+            ? linuxHopperLauncherCandidates(host.homeDirectory)
+            : [...systemLinuxHopperLauncherCandidates]),
+          ...(host.platform === "darwin"
+            ? []
+            : macHopperCanonicalLauncherCandidates(host.homeDirectory).slice(
+                1,
+              )),
           ...(await host.manualHopperPaths()),
         ]
       : [host.configuredHopperPath];
@@ -192,22 +209,60 @@ const hopperCheck = (
     },
   );
 
+const optionalHopperStartupTimeoutCheck = (
+  host: DoctorHost,
+): DoctorCheck | undefined => {
+  if (host.configuredHopperStartupTimeout === undefined) return undefined;
+  const parsed = providerStartupTimeoutSchema.safeParse(
+    host.configuredHopperStartupTimeout,
+  );
+  return check(
+    "hopper-startup-timeout",
+    parsed.success,
+    parsed.success
+      ? `REA_HOPPER_STARTUP_TIMEOUT_MS=${String(parsed.data)}`
+      : `REA_HOPPER_STARTUP_TIMEOUT_MS: ${parsed.error.issues.map(({ message }) => message).join("; ")}`,
+    {
+      classification: "config_drift",
+      remediation:
+        "Unset REA_HOPPER_STARTUP_TIMEOUT_MS to use the default, or set it to a positive decimal integer from 1 to 2147483647 milliseconds.",
+    },
+  );
+};
+
 const optionalHopperVersionCheck = async (
   host: DoctorHost,
   hopperPath: string | undefined,
 ): Promise<DoctorCheck | undefined> => {
   if (host.platform !== "linux" || hopperPath === undefined) return undefined;
-  return check(
-    "hopper-version",
-    await host.supportedLinuxHopper(hopperPath),
-    hopperPath,
-    {
-      remediation: unsupportedHopperRemediation(
-        host.configuredHopperPath === hopperPath,
-      ),
-      classification: "config_drift",
-    },
-  );
+  const inspected = await host.inspectLinuxHopper(hopperPath);
+  const buildCheck = check("hopper-version", inspected.ok, hopperPath, {
+    remediation: unsupportedHopperRemediation(
+      host.configuredHopperPath === hopperPath,
+    ),
+    classification:
+      !inspected.ok &&
+      [
+        "release_metadata",
+        "download",
+        "verification_unavailable",
+        "cancelled",
+        "cleanup_failed",
+      ].includes(inspected.error.reason)
+        ? "unknown"
+        : "config_drift",
+  });
+  return {
+    ...buildCheck,
+    details: inspected.ok
+      ? {
+          reported_release_version: inspected.value.version,
+          launcher_sha256: inspected.value.sha256,
+          primary_fingerprint: inspected.value.primaryFingerprint,
+          source: inspected.value.source,
+        }
+      : { reason: inspected.error.reason, message: inspected.error.message },
+  };
 };
 
 const optionalHopperDemoCheck = async (
@@ -280,12 +335,13 @@ const providerDoctorChecks = (
     ...(candidate.remediation === null
       ? {}
       : { remediation: candidate.remediation }),
+    ...(candidate.details === undefined ? {} : { details: candidate.details }),
   }));
 
 const unsupportedHopperRemediation = (configured: boolean): string =>
   configured
-    ? "Unset or update HOPPER_LAUNCHER_PATH, install the Hopper build supported by this REA release, or update REA."
-    : "Install the Hopper build supported by this REA release, or update REA for a newer Hopper build.";
+    ? "Check HOPPER_LAUNCHER_PATH and its publisher verification evidence. Run rea setup to install and retain an authenticated official Hopper package for offline use."
+    : "Run rea setup to install and retain an authenticated official Hopper package for offline use.";
 
 const parseMajor = (version: string | undefined): number =>
   Number.parseInt(version?.split(".")[0] ?? "0", 10);

@@ -72,25 +72,20 @@ export const runBatchSession = async (input: {
       InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
     await client.connect(clientTransport);
-    for (const call of calls) {
-      if (signal.aborted) throw new AnalysisCancelledError("batch");
-      const record = await callBatchTool({
-        client,
-        call,
-        signal,
-        timeout:
-          options.timeoutMs ??
-          Math.max(
-            config.value.ghidraStartupTimeoutMs,
-            config.value.hopperStartupTimeoutMs,
-          ),
-      });
-      await emit(record);
-      if (record.status === "error") {
-        failed = true;
-        if (!options.continue || signal.aborted) break;
-      }
-    }
+    failed = await runOrderedBatchCalls({
+      client,
+      server,
+      calls,
+      signal,
+      emit,
+      continueOnError: options.continue,
+      timeout:
+        options.timeoutMs ??
+        Math.max(
+          config.value.ghidraStartupTimeoutMs,
+          config.value.hopperStartupTimeoutMs,
+        ),
+    });
     if (options.snapshot !== undefined && !signal.aborted) {
       const saved = await session.closeWithSnapshot(options.snapshot, false);
       if (!saved.ok) throw saved.error;
@@ -116,7 +111,43 @@ export const runBatchSession = async (input: {
       : analysisErrorWithCleanupFailure(primary, cleanup, "batch");
   }
   if (failure !== undefined) throw failure.cause;
+  if (signal.aborted)
+    throw new AnalysisCancelledError("batch", { cause: signal.reason });
   return { failed };
+};
+
+/** Client completion and server-handler settlement are distinct lifecycle facts. */
+export const runOrderedBatchCalls = async (input: {
+  readonly client: Client;
+  readonly server: Pick<
+    ReturnType<typeof createServer>,
+    "enableRequestTracking" | "drainRequests"
+  >;
+  readonly calls: readonly BatchCall[];
+  readonly signal: AbortSignal;
+  readonly timeout: number;
+  readonly continueOnError: boolean;
+  readonly emit: (record: BatchRecord) => Promise<void>;
+}): Promise<boolean> => {
+  input.server.enableRequestTracking();
+  let failed = false;
+  for (const call of input.calls) {
+    if (input.signal.aborted)
+      throw new AnalysisCancelledError("batch", { cause: input.signal.reason });
+    let record: BatchRecord;
+    const started = performance.now();
+    try {
+      record = await callBatchTool({ ...input, call });
+    } finally {
+      await input.server.drainRequests();
+    }
+    await input.emit({ ...record, duration_ms: performance.now() - started });
+    if (record.status === "error") {
+      failed = true;
+      if (!input.continueOnError || input.signal.aborted) break;
+    }
+  }
+  return failed;
 };
 
 const closeBatchResources = async (input: {

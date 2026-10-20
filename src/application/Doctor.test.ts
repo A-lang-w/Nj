@@ -3,7 +3,104 @@ import { describe, expect, it } from "vitest";
 import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import { createDoctorHostFixture as host } from "./Doctor.fixture.js";
-import { runDoctor } from "./Doctor.js";
+import { runDoctor, systemDoctorHost, type DoctorHost } from "./Doctor.js";
+import { err } from "../domain/result.js";
+import { HopperReleaseError } from "./HopperReleaseFeed.js";
+
+describe("doctor Hopper startup timeout", () => {
+  const timeoutHost = (
+    value: string | undefined,
+    overrides: Partial<DoctorHost> = {},
+  ): DoctorHost => ({
+    ...systemDoctorHost({
+      environment:
+        value === undefined ? {} : { REA_HOPPER_STARTUP_TIMEOUT_MS: value },
+    }),
+    ...host({
+      installationPaths: () => Promise.resolve([]),
+      clientRegistrations: () => Promise.resolve([]),
+      ...overrides,
+    }),
+  });
+
+  it.each([
+    ["0", true, false],
+    ["120000", true, true],
+    ["0", false, false],
+    ["120000", false, true],
+    [undefined, false, true],
+  ] as const)(
+    "checks timeout %s with Hopper present=%s and an available peer",
+    async (value, hopperPresent, healthy) => {
+      const selectedHost = timeoutHost(value, {
+        executable: () => Promise.resolve(hopperPresent),
+        providerInspections: () =>
+          Promise.resolve([
+            {
+              id: "ghidra",
+              configured: true,
+              available: true,
+              providerVersion: null,
+              registrationEnvironment: {},
+              checks: [],
+            },
+          ]),
+      });
+      const result = await runDoctor(undefined, selectedHost);
+      expect(result.healthy).toBe(healthy);
+      expect(result.environment_healthy).toBe(healthy);
+      const timeoutCheck = result.checks.find(
+        ({ name }) => name === "hopper-startup-timeout",
+      );
+      if (value === undefined) expect(timeoutCheck).toBeUndefined();
+      else expect(timeoutCheck).toMatchObject({ ok: value !== "0" });
+    },
+  );
+
+  it.each(["", "0", "-1", "1.5", "1e3", "invalid", "2147483648"])(
+    "rejects invalid Hopper startup timeout %j in the selected provider scope",
+    async (value) => {
+      const selectedHost = timeoutHost(value);
+      const result = await runDoctor(undefined, selectedHost, {
+        providers: ["hopper"],
+      });
+
+      expect(result.healthy).toBe(false);
+      expect(result.scope_checks).toContainEqual(
+        expect.objectContaining({
+          name: "hopper-startup-timeout",
+          ok: false,
+          classification: "config_drift",
+          detail: expect.stringContaining("REA_HOPPER_STARTUP_TIMEOUT_MS"),
+          remediation: expect.stringContaining("REA_HOPPER_STARTUP_TIMEOUT_MS"),
+        }),
+      );
+    },
+  );
+
+  it.each([undefined, "1", "120000", "2147483647"])(
+    "keeps Hopper ready with the valid startup timeout %j",
+    async (value) => {
+      const selectedHost = timeoutHost(value);
+      expect(
+        (await runDoctor(undefined, selectedHost, { providers: ["hopper"] }))
+          .healthy,
+      ).toBe(true);
+    },
+  );
+
+  it("keeps an invalid Hopper timeout informational outside the Hopper scope", async () => {
+    const selectedHost = timeoutHost("0");
+    const result = await runDoctor(undefined, selectedHost, { providers: [] });
+    expect(result.healthy).toBe(true);
+    expect(result.informational_checks).toContainEqual(
+      expect.objectContaining({
+        name: "hopper-startup-timeout",
+        ok: false,
+      }),
+    );
+  });
+});
 
 describe("doctor runtime check", () => {
   it("reports Node 25 as unsupported", async () => {
@@ -330,7 +427,7 @@ describe("doctor scoped readiness", () => {
         client: "cursor",
         config_path: "/home/user/.cursor/mcp.json",
         command: ["/old/rea", "mcp"],
-        state: "stale",
+        state: "unknown",
         remediation: "Run rea setup to refresh this registration.",
       },
     ];
@@ -349,7 +446,11 @@ describe("doctor scoped readiness", () => {
       expect.objectContaining({ name: "registration:codex", ok: true }),
     );
     expect(scoped.informational_checks).toContainEqual(
-      expect.objectContaining({ name: "registration:cursor", ok: false }),
+      expect.objectContaining({
+        name: "registration:cursor",
+        ok: false,
+        classification: "unknown",
+      }),
     );
 
     const staleSelected = await runDoctor(
@@ -358,6 +459,38 @@ describe("doctor scoped readiness", () => {
       { clients: ["cursor"] },
     );
     expect(staleSelected.healthy).toBe(false);
+  });
+
+  it("keeps a caller-selected short timeout healthy and reports its advisory as informational", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        clientRegistrations: () =>
+          Promise.resolve([
+            {
+              client: "kimi",
+              config_path: "/home/user/.kimi-code/mcp.json",
+              command: ["/current/rea", "mcp"],
+              state: "aligned",
+              remediation: null,
+              advisory: "The configured toolTimeoutMs is shorter than startup.",
+            },
+          ]),
+      }),
+      { clients: ["kimi"] },
+    );
+
+    expect(result.healthy).toBe(true);
+    expect(result.scope_checks).toContainEqual(
+      expect.objectContaining({ name: "registration:kimi", ok: true }),
+    );
+    expect(result.informational_checks).toContainEqual(
+      expect.objectContaining({
+        name: "registration_timeout:kimi",
+        ok: true,
+        detail: "The configured toolTimeoutMs is shorter than startup.",
+      }),
+    );
   });
 });
 
@@ -581,13 +714,46 @@ describe("doctor Linux and Hopper discovery", () => {
             hopperSetupSupported: true,
           }),
         executable: (candidate) => Promise.resolve(candidate === path),
-        supportedLinuxHopper: () => Promise.resolve(false),
+        inspectLinuxHopper: () =>
+          Promise.resolve(
+            err(
+              new HopperReleaseError(
+                "unsupported_hopper_build",
+                "Unverified fixture build",
+              ),
+            ),
+          ),
       }),
     );
     expect(
       result.checks.find(({ name }) => name === "hopper-version")?.remediation,
-    ).toContain("Unset or update HOPPER_LAUNCHER_PATH");
+    ).toContain("Check HOPPER_LAUNCHER_PATH");
   });
+});
+
+describe("doctor installed Hopper discovery", () => {
+  it("checks the canonical user install after the system launcher", async () => {
+    const userPath =
+      "/fixture/home/Applications/Hopper Disassembler.app/Contents/MacOS/hopper";
+    const checked: string[] = [];
+    const result = await runDoctor(
+      undefined,
+      host({
+        homeDirectory: "/fixture/home",
+        executable: (candidate) => {
+          checked.push(candidate);
+          return Promise.resolve(candidate === userPath);
+        },
+      }),
+    );
+
+    expect(result.hopperPath).toBe(userPath);
+    expect(checked.slice(0, 2)).toEqual([
+      "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper",
+      userPath,
+    ]);
+  });
+
   it("detects a Homebrew cask installed outside /Applications", async () => {
     const path =
       "/opt/homebrew/Caskroom/hopper/Hopper Disassembler.app/Contents/MacOS/hopper";
@@ -612,7 +778,9 @@ describe("doctor Linux and Hopper discovery", () => {
     );
     expect(result.hopperPath).toBe(path);
   });
+});
 
+describe("doctor target admission on Linux", () => {
   it("uses shared app target validation when a target is supplied", async () => {
     const result = await runDoctor(
       "/Applications/Notes.app",
@@ -650,6 +818,30 @@ describe("doctor Linux and Hopper discovery", () => {
       }),
     );
   });
+});
+
+describe("doctor standard Linux Hopper paths", () => {
+  it.each(["/opt/hopper-v4/bin/hopper", "/usr/bin/hopper"])(
+    "detects Hopper at the standard path %s",
+    async (path) => {
+      const result = await runDoctor(
+        undefined,
+        host({
+          platform: "linux",
+          macosVersion: () => Promise.resolve(undefined),
+          linuxDistribution: () =>
+            Promise.resolve({
+              id: "ubuntu",
+              versionId: "24.04",
+              packageFamily: "deb",
+              hopperSetupSupported: true,
+            }),
+          executable: (candidate) => Promise.resolve(candidate === path),
+        }),
+      );
+      expect(result.hopperPath).toBe(path);
+    },
+  );
 });
 
 describe("doctor target admission diagnostics", () => {

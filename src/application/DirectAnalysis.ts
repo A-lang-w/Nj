@@ -10,7 +10,10 @@ import type { Logger } from "pino";
 import { createEvidence } from "../domain/evidence.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
-import type { ArtifactAnalysisOperation } from "../contracts/artifactToolContracts.js";
+import {
+  ARTIFACT_ANALYSIS_OPERATIONS,
+  type ArtifactAnalysisOperation,
+} from "../contracts/artifactToolContracts.js";
 import {
   isManagedToolName,
   type ManagedToolName,
@@ -31,17 +34,20 @@ import {
   snapshotMatchesTarget,
 } from "../domain/analysisSnapshot.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
+import { profilelessNativeDispatchProfile } from "./binary/ProfilelessNativeWorkflowSnapshot.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
 import type {
   AnalysisExecution,
   ProviderIdentity,
 } from "./AnalysisProvider.js";
+import { createAnalysisExecutionEvidence } from "./AnalysisProvider.js";
 import {
   REA_WORKFLOW_PROVIDER,
   workflowAnalysisProfile,
 } from "./InvestigationProviders.js";
 import {
+  executeComposedWorkflow,
   createWorkflowEvidence,
   workflowSnapshotRecord,
   recordWorkflowUnknowns,
@@ -77,6 +83,20 @@ type DirectAnalysisTool =
   | "trace_feature"
   | "trace_native_ui_action"
   | "trace_native_values";
+
+// These one-shot CLI questions require native utilities, not a deep engine.
+// Runtime observation retains the ordinary session and authority checks.
+const NATIVE_INSPECTION_OPERATIONS: ReadonlySet<string> = new Set([
+  "inspect_macho",
+  "inspect_signature",
+  "list_architectures",
+  "inspect_plist",
+  "demangle_swift",
+] satisfies readonly NativeToolName[]);
+
+const ARTIFACT_ANALYSIS_OPERATION_SET: ReadonlySet<string> = new Set(
+  ARTIFACT_ANALYSIS_OPERATIONS,
+);
 
 /**
  * Open one binary, execute one tool, and always release provider resources.
@@ -128,16 +148,28 @@ export const runProviderAnalysis = async (
     logger?: Logger,
     signal?: AbortSignal,
   ]
-): Promise<JsonValue> =>
-  isManagedToolName(tool)
-    ? runManagedProviderAnalysis(dependencies, path, tool, arguments_, signal)
-    : withProcessCancellation(signal, (operationSignal) =>
-        runAnalysis(dependencies, path, tool, arguments_, {
-          logger,
-          snapshotPath: undefined,
-          signal: operationSignal,
-        }),
-      );
+): Promise<JsonValue> => {
+  if (isManagedToolName(tool))
+    return runManagedProviderAnalysis(
+      dependencies,
+      path,
+      tool,
+      arguments_,
+      signal,
+    );
+  return withProcessCancellation(signal, (operationSignal) =>
+    runAnalysis(dependencies, path, tool, arguments_, {
+      logger,
+      snapshotPath: undefined,
+      signal: operationSignal,
+      ...(ARTIFACT_ANALYSIS_OPERATION_SET.has(tool)
+        ? { createSession: dependencies.createArtifactBinarySession }
+        : NATIVE_INSPECTION_OPERATIONS.has(tool)
+          ? { createSession: dependencies.createNativeBinarySession }
+          : {}),
+    }),
+  );
+};
 
 /** Execute managed metadata inspection in an isolated managed-only session. */
 export const runManagedProviderExecution = async (
@@ -178,17 +210,7 @@ const runManagedProviderAnalysis = async (
   );
   if (!execution.ok) return cliError(execution.error);
   const value = execution.value;
-  return createEvidence(value.subject ?? undefined, value.provider, {
-    operation: tool,
-    parameters: arguments_,
-    result: value.result,
-    rawResult: value.rawResult,
-    limitations: value.limitations,
-    ...(value.relationshipCoverage === undefined
-      ? {}
-      : { relationshipCoverage: value.relationshipCoverage }),
-    locations: value.locations,
-  });
+  return createAnalysisExecutionEvidence(tool, arguments_, value, "observed");
 };
 
 const runAnalysis = async (
@@ -204,6 +226,7 @@ const runAnalysis = async (
     readonly logger: Logger;
     readonly snapshotPath: string | undefined;
     readonly signal: AbortSignal;
+    readonly createSession?: () => BinarySession | Promise<BinarySession>;
     readonly providerId?: AnalysisProviderSelector;
     readonly formatHint?: ExecutableFormatHint;
     readonly architecture?: BinaryArchitecture;
@@ -211,9 +234,18 @@ const runAnalysis = async (
   },
 ): Promise<JsonValue> => {
   const { logger, signal, snapshotPath } = options;
-  const config = dependencies.readConfiguration();
-  if (!config.ok) return cliError(config.error);
-  const session = await dependencies.createBinarySession(config.value, logger);
+  let session: BinarySession;
+  if (options.createSession !== undefined) {
+    session = await options.createSession();
+  } else {
+    const config = dependencies.readConfiguration();
+    if (!config.ok) return cliError(config.error);
+    session = await (
+      tool === "inspect_native_dispatch_metadata" && snapshotPath === undefined
+        ? dependencies.createNativeDispatchBinarySession
+        : dependencies.createBinarySession
+    )(config.value, logger);
+  }
   return withSessionCleanup(
     session,
     async () => {
@@ -254,7 +286,8 @@ const runAnalysis = async (
         if (!preview.ok) return cliError(preview.error);
         resolvedTarget = preview.value;
         const route = preview.value.route;
-        const bindingProfile = route.profile ?? undefined;
+        const bindingProfile =
+          route.profile ?? nativeDispatchBindingProfile(route, tool);
         const evidenceProfile = analysisProfileForRoute(route, tool);
         // A parsed Windows path does not prove Ghidra's native snapshot owner
         // admitted the selected source; CLI replay must wait for that client.
@@ -301,7 +334,7 @@ const runAnalysis = async (
           : await session.openResolvedTarget(resolvedTarget, openOptions);
       if (!opened.ok) return cliError(opened.error);
       const evidenceProfile = analysisProfileForEvidence(session, tool);
-      const { output, evidence } = await executeAnalysisTool({
+      const { output, evidence, cachePolicy } = await executeAnalysisTool({
         session,
         openedTarget: opened.value,
         tool,
@@ -331,7 +364,12 @@ const runAnalysis = async (
         evidence !== undefined &&
         session.allowsSnapshotReplay(tool)
       ) {
-        const workflowRecord = workflowSnapshotRecord(evidence, tool);
+        const workflowRecord = workflowSnapshotRecord(
+          evidence,
+          tool,
+          evidenceProfile,
+          cachePolicy,
+        );
         if (workflowRecord !== undefined) {
           const recorded = session.recordWorkflowSnapshot(workflowRecord);
           if (!recorded.ok)
@@ -377,7 +415,11 @@ const executeAnalysisTool = async (input: {
   readonly arguments: Readonly<Record<string, JsonValue>>;
   readonly signal: AbortSignal;
   readonly evidenceProfile: AnalysisProfileCommitment | undefined;
-}): Promise<{ readonly output: JsonValue; readonly evidence?: Evidence }> => {
+}): Promise<{
+  readonly output: JsonValue;
+  readonly evidence?: Evidence;
+  readonly cachePolicy?: "live";
+}> => {
   const { session, tool, signal, evidenceProfile } = input;
   if (tool === "analyze_function") {
     const { executeFunctionAnalysisEvidence } =
@@ -401,20 +443,25 @@ const executeAnalysisTool = async (input: {
     tool === "trace_native_ui_action"
   ) {
     const { EnhancedTools } = await import("./EnhancedTools.js");
-    const result = await new EnhancedTools(session).execute(
-      tool,
-      input.arguments,
-      signal,
+    const result = await executeComposedWorkflow(session, (observed) =>
+      new EnhancedTools(observed).execute(tool, input.arguments, signal),
     );
     if (!result.ok) return { output: cliError(result.error) };
     const evidence = createWorkflowEvidence({
       target: input.openedTarget,
       operation: tool,
       parameters: input.arguments,
-      result: result.value,
+      result: result.value.result,
       upstreamProfile: evidenceProfile,
+      upstreamLimitations: result.value.limitations,
     });
-    return { output: evidence, evidence };
+    return {
+      output: evidence,
+      evidence,
+      ...(result.value.cachePolicy === undefined
+        ? {}
+        : { cachePolicy: result.value.cachePolicy }),
+    };
   }
   let result = await session.execute(tool, input.arguments, { signal });
   if (
@@ -556,11 +603,28 @@ const analysisProfileForRoute = (
     | DirectAnalysisTool,
 ): AnalysisProfileCommitment | undefined => {
   const profile = route.profile;
-  if (profile === null || profile === undefined) return undefined;
+  const nativeDispatchProfile =
+    profile === null || profile === undefined
+      ? nativeDispatchBindingProfile(route, tool)
+      : undefined;
+  if (profile === null || profile === undefined) {
+    if (nativeDispatchProfile === undefined) return undefined;
+    return isWorkflowEvidenceTool(tool)
+      ? workflowAnalysisProfile(nativeDispatchProfile, tool)
+      : nativeDispatchProfile;
+  }
   if (isWorkflowEvidenceTool(tool))
     return workflowAnalysisProfile(profile, tool);
   const provider = providerIdentityForRoute(route, tool);
   return provider.id === profile.provider.id ? profile : undefined;
+};
+
+const nativeDispatchBindingProfile = (
+  route: SessionProviderRoute,
+  operation: string,
+): AnalysisProfileCommitment | undefined => {
+  if (operation !== "inspect_native_dispatch_metadata") return undefined;
+  return profilelessNativeDispatchProfile(route);
 };
 
 /** Mirror BinarySession.providerIdentity for a route not opened yet. */
@@ -579,7 +643,7 @@ const analysisProfileForEvidence = (
     | DirectAnalysisTool,
 ): AnalysisProfileCommitment | undefined => {
   if (!isWorkflowEvidenceTool(tool)) return session.analysisProfile(tool);
-  return session.analysisProfile();
+  return session.analysisProfile() ?? session.analysisProfile(tool);
 };
 
 const isWorkflowEvidenceTool = (

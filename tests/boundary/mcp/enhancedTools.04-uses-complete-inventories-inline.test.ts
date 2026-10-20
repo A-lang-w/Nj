@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   closeEnhancedToolResources,
-  connect,
+  connect as connectTool,
   jsonResult,
 } from "./enhancedToolsHarness.js";
 import type {
@@ -19,6 +19,23 @@ import { err, type Result } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 
 afterEach(closeEnhancedToolResources);
+
+// These fixtures exercise composition for providers without a native overview.
+const connect = (analysis: AnalysisOperationPort) =>
+  connectTool({
+    execute: (operation, parameters, options) =>
+      operation === "read_binary_inventory_summary"
+        ? Promise.resolve(
+            err(
+              new AnalysisCapabilityUnavailableError(
+                "fixture",
+                operation,
+                "No native overview",
+              ),
+            ),
+          )
+        : analysis.execute(operation, parameters, options),
+  });
 
 it("discovers declarations without counting duplicates or compiler bookkeeping", async () => {
   const client = await connect({
@@ -82,60 +99,113 @@ it("discovers declarations without counting duplicates or compiler bookkeeping",
   });
 });
 
-describe("enhanced MCP tools", () => {
+it("discovers stripped Hopper class labels through MCP with literal filtering", async () => {
+  const names = [
+    "__objc_class_HuntRoot_class",
+    "__objc_class_HuntSub_class",
+    "__objc_class_HuntWorker_class",
+    "__objc_class_HuntModel_class",
+    "__objc_class_HuntLegacy_class",
+    "prefix__objc_class_HuntForeign_class",
+    "__objc_class__class",
+    "__objc_class_HuntMissingSuffix",
+  ];
+  const client = await connect({
+    execute: (name) => {
+      expect(name).toBe("list_names");
+      return Promise.resolve(
+        ok(
+          names.map((value, index) => ({
+            address: `0x${index + 1}`,
+            value,
+            ...(index < 5
+              ? { objc_class_label: "hopper_legacy_class_object" }
+              : {}),
+          })),
+        ),
+      );
+    },
+  });
+
+  const all = jsonResult(
+    await client.callTool({ name: "get_objc_classes", arguments: {} }),
+  );
+  expect(all).toMatchObject({
+    count: 5,
+    classes: names.slice(0, 5).map((name, index) => ({
+      address: `0x${index + 1}`,
+      name,
+    })),
+  });
+
+  const filtered = jsonResult(
+    await client.callTool({
+      name: "get_objc_classes",
+      arguments: { pattern: "__objc_class_HuntRoot_class" },
+    }),
+  );
+  expect(filtered).toMatchObject({
+    count: 1,
+    classes: [{ address: "0x1", name: "__objc_class_HuntRoot_class" }],
+  });
+});
+
+const completeOverviewPort: AnalysisOperationPort = {
+  execute: (name) => {
+    switch (name) {
+      case "list_segments":
+        return Promise.resolve(
+          ok([
+            {
+              name: "__TEXT",
+              start: "0x1000",
+              end: "0x1800",
+              image_base: "0x1000",
+              readable: null,
+              writable: null,
+              executable: null,
+            },
+            {
+              name: "__DATA",
+              start: "0x1800",
+              end: "0x2000",
+              image_base: "0x1000",
+              readable: null,
+              writable: null,
+              executable: null,
+            },
+          ]),
+        );
+      case "current_document":
+        return Promise.resolve(ok("fixture"));
+      case "list_documents":
+        return Promise.resolve(ok(["New Document", "fixture"]));
+      case "list_strings":
+        return Promise.resolve(
+          ok(
+            Array.from({ length: 700 }, (_, index) => ({
+              address: `0x${(0x30 + index).toString(16)}`,
+              value: `string-${index}`,
+            })),
+          ),
+        );
+      case "list_procedures": {
+        return Promise.resolve(
+          ok([
+            { address: "0x1", value: "first" },
+            { address: "0x2", value: "last" },
+          ]),
+        );
+      }
+      default:
+        throw new Error(`Unexpected analysis operation: ${name}`);
+    }
+  },
+};
+
+describe("enhanced MCP binary overview", () => {
   it("returns the complete overview inline with exhaustive totals", async () => {
-    const client = await connect({
-      execute: (name) => {
-        switch (name) {
-          case "list_segments":
-            return Promise.resolve(
-              ok([
-                {
-                  name: "__TEXT",
-                  start: "0x1000",
-                  end: "0x1800",
-                  image_base: "0x1000",
-                  readable: null,
-                  writable: null,
-                  executable: null,
-                },
-                {
-                  name: "__DATA",
-                  start: "0x1800",
-                  end: "0x2000",
-                  image_base: "0x1000",
-                  readable: null,
-                  writable: null,
-                  executable: null,
-                },
-              ]),
-            );
-          case "current_document":
-            return Promise.resolve(ok("fixture"));
-          case "list_documents":
-            return Promise.resolve(ok(["New Document", "fixture"]));
-          case "list_strings":
-            return Promise.resolve(
-              ok(
-                Array.from({ length: 700 }, (_, index) => ({
-                  address: `0x${(0x30 + index).toString(16)}`,
-                  value: `string-${index}`,
-                })),
-              ),
-            );
-          case "list_procedures": {
-            return Promise.resolve(
-              ok([
-                { address: "0x1", value: "first" },
-                { address: "0x2", value: "last" },
-              ]),
-            );
-          }
-          default:
-            throw new Error(`Unexpected analysis operation: ${name}`);
-        }
-      },
-    });
+    const client = await connect(completeOverviewPort);
     const result = jsonResult(
       await client.callTool({
         name: "binary_overview",
@@ -167,6 +237,50 @@ describe("enhanced MCP tools", () => {
     });
   });
 
+  it("returns binary counts while omitting unavailable segment coverage", async () => {
+    const client = await connect({
+      execute: (name) => {
+        if (name === "current_document")
+          return Promise.resolve(
+            err(
+              new AnalysisCapabilityUnavailableError(
+                "fixture",
+                name,
+                "the provider has one bound document",
+              ),
+            ),
+          );
+        if (name === "list_documents")
+          return Promise.resolve(ok(["/tmp/fixture.bin"]));
+        if (name === "list_segments")
+          return Promise.resolve(
+            err(
+              new AnalysisCapabilityUnavailableError(
+                "fixture",
+                name,
+                "segment enumeration is unsupported",
+              ),
+            ),
+          );
+        if (name === "list_procedures" || name === "list_strings")
+          return Promise.resolve(ok([]));
+        throw new Error(`Unexpected analysis operation: ${name}`);
+      },
+    });
+
+    expect(
+      jsonResult(
+        await client.callTool({ name: "binary_overview", arguments: {} }),
+      ),
+    ).toEqual({
+      document: "/tmp/fixture.bin",
+      procedure_count: 0,
+      string_count: 0,
+    });
+  });
+});
+
+describe("enhanced MCP inventory validation", () => {
   it("rejects paginated provider output", async () => {
     const client = await connect({
       execute: () =>
@@ -216,6 +330,38 @@ describe("enhanced MCP tools", () => {
     expect(result.content).toContainEqual({
       type: "text",
       text: JSON.stringify(parseMcpToolError(result)),
+    });
+  });
+
+  it("preserves unknown length for malformed segment coordinates", async () => {
+    const client = await connect({
+      execute: (name) => {
+        if (name === "list_segments")
+          return Promise.resolve(
+            ok([
+              {
+                name: "__TEXT",
+                start: "unparsed-start",
+                end: "0x2000",
+                readable: null,
+                writable: null,
+                executable: null,
+              },
+            ]),
+          );
+        if (name === "current_document") return Promise.resolve(ok("fixture"));
+        if (name === "list_procedures" || name === "list_strings")
+          return Promise.resolve(ok([]));
+        throw new Error(`Unexpected analysis operation: ${name}`);
+      },
+    });
+    expect(
+      jsonResult(
+        await client.callTool({ name: "binary_overview", arguments: {} }),
+      ),
+    ).toMatchObject({
+      segments: [{ name: "__TEXT", start: "unparsed-start", length: null }],
+      segment_count: 1,
     });
   });
 });
@@ -347,4 +493,38 @@ describe("overview document identity through MCP", () => {
       },
     });
   });
+});
+
+it("refuses document fallback while the current-selection owner reports incomplete cleanup", async () => {
+  const failure = new AnalysisCapabilityUnavailableError(
+    "fixture",
+    "current_document",
+    "Selection unavailable during cleanup",
+    {
+      cleanup: {
+        reason: "controlled live selection resource",
+        resources: ["selection owner"],
+      },
+    },
+  );
+  const calls: string[] = [];
+  const client = await connect({
+    execute: async (operation) => {
+      calls.push(operation);
+      return operation === "current_document"
+        ? err(failure)
+        : ok(["must-not-be-selected"]);
+    },
+  });
+  const response = await client.callTool({
+    name: "binary_overview",
+    arguments: {},
+  });
+  expect(response.isError).toBe(true);
+  expect(parseMcpToolError(response).error).toMatchObject({
+    code: "cleanup_incomplete",
+    details: { operation: "current_document" },
+  });
+  expect(calls).toEqual(["current_document"]);
+  expect(failure.cleanupIncomplete).toBe(true);
 });

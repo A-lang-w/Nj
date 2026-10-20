@@ -1,20 +1,14 @@
 import { z } from "zod";
-import { isAbsolute } from "node:path";
 import { digestSchema } from "../digests.js";
 import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 const bytes = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const range = z.strictObject({ offset: bytes, length: bytes.positive() });
 const target = {
-  path: localPathStringSchema
-    .refine(isAbsolute, {
-      message:
-        "path must be an absolute local filesystem path (for example /tmp/firmware.bin or C:\\firmware\\firmware.bin)",
-    })
-    .describe(
-      "Absolute local firmware file; never executed. Relative paths are rejected.",
-    ),
+  path: absoluteLocalPathStringSchema.describe(
+    "Absolute local firmware file; never executed. Relative paths are rejected.",
+  ),
 };
 
 /** Explicit firmware inspection and extraction intent, independent of engines. */
@@ -22,11 +16,9 @@ export const firmwareInputSchemas = {
   inspect_firmware_regions: z.strictObject(target),
   extract_firmware: z.strictObject({
     ...target,
-    output_directory: localPathStringSchema
-      .refine(isAbsolute, {
-        message: "output_directory must be an absolute local filesystem path",
-      })
-      .describe("Absolute, absent output directory; parent must exist"),
+    output_directory: absoluteLocalPathStringSchema.describe(
+      "Absolute, absent output directory; parent must exist",
+    ),
     range: range
       .optional()
       .describe("Explicit file-byte interval; omit to extract the whole file"),
@@ -53,6 +45,16 @@ export const firmwareInputSchemas = {
       .max(100_000)
       .default(10_000)
       .describe("Staging entry budget, including directories and links"),
+    publication_timeout_ms: z
+      .number()
+      .int()
+      .min(1)
+      // Node timers cannot represent longer delays without overflow.
+      .max(2_147_483_647)
+      .default(120_000)
+      .describe(
+        "Publication and final cleanup budget in milliseconds, started after extraction and inventory; increase for a slow destination",
+      ),
   }),
 } as const;
 
@@ -93,6 +95,32 @@ const chunk = z.strictObject({
   handler: z.string().nullable(),
   encrypted: z.boolean().nullable(),
   root_file_range: range.nullable(),
+  /** The producer reported extraction problems for this chunk. */
+  extraction_failed: z.boolean(),
+});
+/** One unextracted region or failing task/stage, with a supported continuation
+ * using already configured capabilities when one exists. */
+export const extractionGap = z.strictObject({
+  kind: z.enum([
+    "missing-extractor-dependency",
+    "unknown-chunk-handler",
+    "encrypted-chunk",
+    "depth-limited",
+    "extractor-failure",
+    "unpublished-entry",
+  ]),
+  /** Logical task path from the producer report; `$output/…` for unpublished entries. */
+  input_path: z.string(),
+  relative_path: z.string().nullable(),
+  handler: z.string().nullable(),
+  /** Reported chunk or multi-file stage identity; it does not imply a byte range. */
+  provider_id: z.string().nullable(),
+  range: range.nullable(),
+  root_file_range: range.nullable(),
+  /** Extractor executables named by the producer; empty when it named none. */
+  dependencies: z.array(z.string()),
+  /** Lookup key in the result's extraction_continuations table. */
+  continuation_id: z.string(),
 });
 
 /** Completed firmware result retained when private-runtime cleanup cannot be confirmed. */
@@ -158,6 +186,11 @@ export const firmwareResultSchemas = {
     ),
     depth_limited_paths: z.array(z.string()),
     diagnostics: z.array(jsonValueSchema),
+    extraction_gaps: z.array(extractionGap),
+    /** Each distinct recovery instruction is serialized once, shared by gap ID. */
+    extraction_continuations: z.array(
+      z.strictObject({ id: z.string(), instruction: z.string() }),
+    ),
     published_bytes: bytes,
   }),
 } as const;

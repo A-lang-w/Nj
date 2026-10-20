@@ -1,4 +1,3 @@
-import { constants } from "node:buffer";
 import { mkdir, access } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { addAbortListener } from "node:events";
@@ -7,6 +6,8 @@ import type { Logger } from "pino";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { readJsonFile, writeTextParts } from "../application/JsonFiles.js";
 import { parseUtf8Json } from "../application/Utf8JsonInput.js";
+import { nativeJsonParseRequiredBytes } from "../application/JsonInputFile.js";
+import { sealOwnedJsonInput } from "../application/OwnedJsonInput.js";
 import {
   batchCallsSchema,
   type BatchCall,
@@ -29,6 +30,7 @@ export const runBatchCommand = async (input: {
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly logger: Logger;
   readonly signal: AbortSignal;
+  readonly onStdoutCancellation: () => void;
 }): Promise<{ readonly failed: boolean }> => {
   const { path, options, environment, logger, signal } = input;
   const resources = new ArtifactResourceScope();
@@ -36,7 +38,7 @@ export const runBatchCommand = async (input: {
     const value =
       path === "-"
         ? await readStdin(signal)
-        : await readJsonFile(path, signal, resources);
+        : await readJsonFile(path, signal, resources, true);
     if (!value.ok) throw value.error;
     const parsed = batchCallsSchema.safeParse(value.value);
     if (!parsed.success)
@@ -64,24 +66,37 @@ export const runBatchCommand = async (input: {
     ];
     const directory =
       options.out === undefined ? undefined : resolve(options.out);
-    await preflightOutput(calls, directory);
-    if (directory !== undefined) await mkdir(directory, { recursive: true });
+    const snapshot =
+      options.snapshot === undefined ? undefined : resolve(options.snapshot);
+    await preflightOutput(calls, directory, snapshot);
+    if (directory !== undefined) {
+      try {
+        await mkdir(directory, { recursive: true });
+      } catch (cause: unknown) {
+        throw new EvidenceFileError("write", "io", { path: directory, cause });
+      }
+    }
     const { runBatchSession } = await import("../composition/batchSession.js");
     const outcome = await runBatchSession({
       calls,
       options: {
         ...options,
-        ...(options.snapshot === undefined
-          ? {}
-          : { snapshot: resolve(options.snapshot) }),
+        ...(snapshot === undefined ? {} : { snapshot }),
       },
       environment,
       logger,
       signal,
       emit: async (record) => {
-        if (directory === undefined)
-          await writeJsonOutput(record, process.stdout, "jsonl");
-        else {
+        if (directory === undefined) {
+          try {
+            await writeJsonOutput(record, process.stdout, "jsonl", signal);
+          } catch (cause: unknown) {
+            if (signal.aborted) {
+              input.onStdoutCancellation();
+            }
+            throw cause;
+          }
+        } else {
           const written = await writeTextParts(
             jsonParts(record),
             join(directory, `${String(record.id)}.json`),
@@ -102,11 +117,6 @@ export const runBatchCommand = async (input: {
 const readStdin = async (signal: AbortSignal) => {
   const chunks: Buffer[] = [];
   let size = 0;
-  // Bound the retained bytes and decoding copies by the runtime's available heap.
-  const maximum = Math.min(
-    constants.MAX_LENGTH,
-    Math.floor(getHeapStatistics().total_available_size / 4),
-  );
   const cancellation = addAbortListener(signal, () =>
     process.stdin.destroy(new AnalysisCancelledError("batch")),
   );
@@ -117,12 +127,18 @@ const readStdin = async (signal: AbortSignal) => {
         ? chunk
         : Buffer.from(chunk as string);
       size += bytes.length;
-      if (size > maximum)
+      const required = nativeJsonParseRequiredBytes(size, true);
+      const available = getHeapStatistics().total_available_size;
+      if (required > available)
         throw new AnalysisResourceConstraintError(
           "batch",
           "memory",
           "Stdin input exceeds the available retained-input budget",
-          { input_bytes_at_least: size, max_input_bytes: maximum },
+          {
+            input_bytes_at_least: size,
+            required_heap_bytes: required,
+            available_heap_bytes: available,
+          },
         );
       chunks.push(bytes);
     }
@@ -133,7 +149,8 @@ const readStdin = async (signal: AbortSignal) => {
         : new AnalysisInputError("batch", {
             userMessage: "Batch stdin must contain one valid UTF-8 JSON array.",
           });
-    return { ok: true as const, value: parsed.value };
+    // Immutable JSON arguments bypass the domain schema's recursive copy.
+    return await sealOwnedJsonInput(parsed.value, "batch", signal);
   } finally {
     cancellation[Symbol.dispose]();
   }
@@ -142,6 +159,7 @@ const readStdin = async (signal: AbortSignal) => {
 const preflightOutput = async (
   calls: readonly BatchCall[],
   directory: string | undefined,
+  snapshot: string | undefined,
 ): Promise<void> => {
   const seen = new Set<string | number>();
   const filenames = new Set<string>();
@@ -166,6 +184,12 @@ const preflightOutput = async (
             "File-output IDs must be unique portable basenames, including on case-insensitive filesystems.",
         });
       filenames.add(id.toLowerCase());
+      if (
+        snapshot?.toLowerCase() === join(directory, `${id}.json`).toLowerCase()
+      )
+        throw new AnalysisInputError("batch", {
+          userMessage: "Snapshot and per-call result paths must be distinct.",
+        });
       try {
         await access(join(directory, `${id}.json`));
         throw new EvidenceFileError("write", "exists", {
@@ -180,8 +204,28 @@ const preflightOutput = async (
             cause.code === "ENOENT"
           )
         )
-          throw cause;
+          throw cause instanceof EvidenceFileError
+            ? cause
+            : new EvidenceFileError("write", "io", { path: directory, cause });
       }
+    }
+  }
+  if (snapshot !== undefined) {
+    try {
+      await access(snapshot);
+      throw new EvidenceFileError("write", "exists", { path: snapshot });
+    } catch (cause: unknown) {
+      if (
+        !(
+          typeof cause === "object" &&
+          cause !== null &&
+          "code" in cause &&
+          cause.code === "ENOENT"
+        )
+      )
+        throw cause instanceof EvidenceFileError
+          ? cause
+          : new EvidenceFileError("write", "io", { path: snapshot, cause });
     }
   }
 };

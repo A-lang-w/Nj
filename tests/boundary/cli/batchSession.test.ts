@@ -6,6 +6,7 @@ import { UNKNOWN_CONTRACT_EXAMPLES } from "../../../src/contracts/unknownContrac
 import { peResourceFixture } from "../../../src/native/pe/PeResources.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { waitForExit } from "../../support/process/processFixture.js";
 
 const record = {
   id: "record",
@@ -82,16 +83,130 @@ cliTest(
       ["--token-count"],
       ["--full-output"],
     ]) {
+      for (const arguments_ of [
+        ["batch", "-", ...controls],
+        [...controls, "batch", "-"],
+      ]) {
+        const result = await cli.run({
+          arguments: arguments_,
+          input: "not JSON",
+        });
+        expect(result.exitCode).toBe(1);
+        expect(result.json).toMatchObject({
+          ok: false,
+          error: { code: "UNSUPPORTED_OUTPUT_COMBINATION" },
+        });
+      }
+    }
+  },
+);
+
+cliTest(
+  "preflights snapshot collisions and retains typed filesystem setup errors",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-batch-destinations-");
+    const existing = join(root, "existing.json");
+    await writeFile(existing, "caller owned");
+    for (const options of [
+      ["--snapshot", existing],
+      [
+        "--out",
+        join(root, "out"),
+        "--snapshot",
+        join(root, "out", "list.json"),
+      ],
+      ["--out", existing],
+      ["--out", join(existing, "nested")],
+    ]) {
       const result = await cli.run({
-        arguments: ["batch", "-", ...controls],
-        input: "not JSON",
+        arguments: ["batch", "-", ...options],
+        input: JSON.stringify([list]),
       });
       expect(result.exitCode).toBe(1);
-      expect(result.json).toMatchObject({
-        ok: false,
-        error: { code: "UNSUPPORTED_OUTPUT_COMBINATION" },
+      expect(lines(result.stdout)).toHaveLength(1);
+      expect(lines(result.stdout)[0]).toMatchObject({
+        id: null,
+        tool: "batch",
+        status: "error",
       });
+      expect(await readdir(root)).toEqual(["existing.json"]);
+      expect(await readFile(existing, "utf8")).toBe("caller owned");
     }
+  },
+);
+
+cliTest.runIf(process.platform !== "win32")(
+  "cancels an actual blocked stdout pipe and completes session cleanup",
+  async ({ processes }) => {
+    const runner = `
+    import { createCli } from ${JSON.stringify(new URL("../../../dist/cli.js", import.meta.url).href)};
+    const write = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (_part, callback) => {
+      const writable = write("x".repeat(4 * 1024 * 1024), callback);
+      if (!writable) process.stderr.write("OUTPUT_BLOCKED\\n");
+      return writable;
+    };
+    await createCli({}).serve(["batch", "-"], { exit: code => {
+      process.stderr.write("BATCH_CLEANUP_COMPLETED\\n");
+      process.exit(code);
+    } });
+  `;
+    const child = processes.spawn(
+      process.execPath,
+      ["--input-type=module", "-e", runner],
+      { env: { PATH: process.env.PATH } },
+    );
+    let stderr = "";
+    child.stderr.on("data", (bytes: Buffer) => {
+      stderr += bytes.toString();
+    });
+    const closed = once(child, "close");
+    child.stdin.end(JSON.stringify([list]));
+    await once(child.stderr, "data");
+    expect(stderr).toContain("OUTPUT_BLOCKED");
+    child.kill("SIGTERM");
+    // Do not drain stdout: cancellation must release its own blocked write.
+    try {
+      expect(await waitForExit(child, 10_000)).toBe(true);
+    } finally {
+      child.stdout.destroy();
+    }
+    await closed;
+    expect(child.exitCode).toBe(143);
+    expect(stderr).toContain("BATCH_CLEANUP_COMPLETED");
+  },
+);
+
+cliTest(
+  "rejects dense stdin before heap exhaustion using canonical parser admission",
+  async ({ processes }) => {
+    const child = processes.spawn(
+      process.execPath,
+      ["--max-old-space-size=192", "scripts/rea.mjs", "batch", "-"],
+      { env: { PATH: process.env.PATH } },
+    );
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on("data", (bytes: Buffer) => stdout.push(bytes));
+    child.stderr.on("data", (bytes: Buffer) => stderr.push(bytes));
+    child.stdin.on("error", (cause: NodeJS.ErrnoException) => {
+      if (cause.code !== "EPIPE") throw cause;
+    });
+    const closed = once(child, "close");
+    child.stdin.end(
+      JSON.stringify(
+        Array.from({ length: 35000 }, (_, id) => ({ ...list, id })),
+      ),
+    );
+    await closed;
+    expect(child.exitCode).toBe(1);
+    expect(lines(Buffer.concat(stdout).toString())[0]).toMatchObject({
+      id: null,
+      error: { category: "resource_constraint" },
+    });
+    expect(Buffer.concat(stderr).toString()).not.toContain(
+      "heap out of memory",
+    );
   },
 );
 
@@ -143,7 +258,12 @@ cliTest(
         status: "error",
         result: { isError: true },
       });
-      expect(responses[1].result.content[0].text).toContain("Input validation");
+      expect(JSON.parse(responses[1].result.content[0].text)).toMatchObject({
+        error: {
+          code: "invalid_request",
+          details: { operation: "record_unknown" },
+        },
+      });
     }
   },
 );

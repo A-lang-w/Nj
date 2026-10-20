@@ -1,7 +1,11 @@
+import {
+  artifactIntegrityPairOf,
+  artifactSha256PairSchema,
+  artifactMd5PairSchema,
+} from "./artifactIntegrity.js";
 import { z } from "zod";
 
 import {
-  artifactInventoryOutputSchema,
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
 } from "./artifactGraph.js";
@@ -31,14 +35,18 @@ const inspectionHypothesisSchema = z.strictObject({
   limitation: textSchema,
 });
 
-const inspectionContradictionSchema = z.strictObject({
+const inspectionContradictionBaseSchema = z.strictObject({
   contradiction_id: prefixedDigestSchema("aic"),
   statement: textSchema,
   occurrence_id: prefixedDigestSchema("occ"),
-  declared_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-  observed_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+
   evidence_id: evidenceIdSchema,
 });
+
+const inspectionContradictionSchema = z.union([
+  inspectionContradictionBaseSchema.extend(artifactSha256PairSchema.shape),
+  inspectionContradictionBaseSchema.extend(artifactMd5PairSchema.shape),
+]);
 
 const nextProbeSchema = z.strictObject({
   operation: textSchema,
@@ -75,7 +83,10 @@ export const artifactInspectionResultSchema = z.strictObject({
         operation: z.literal("inventory_artifact"),
         status: z.literal("completed"),
         evidence_id: evidenceIdSchema,
-        evidence: evidenceSchema,
+        evidence: evidenceSchema.safeExtend({
+          operation: z.literal("inventory_artifact"),
+          normalized_result: artifactInventoryResultSchema,
+        }),
       }),
     )
     .min(1),
@@ -86,7 +97,7 @@ export const artifactInspectionResultSchema = z.strictObject({
   next_probes: z.array(nextProbeSchema),
   coverage: z.strictObject({
     status: z.enum(["complete-within-substeps", "partial", "truncated"]),
-    substeps_completed: z.literal(1),
+    substeps_completed: z.number().int().min(1),
     observations_retained: z.number().int().min(0),
     observations_omitted: z.number().int().min(0),
     hypotheses_retained: z.number().int().min(0),
@@ -103,24 +114,6 @@ export const artifactInspectionResultSchema = z.strictObject({
 export type ArtifactInspectionResult = z.infer<
   typeof artifactInspectionResultSchema
 >;
-
-/**
- * The current producer guarantees a concrete inventory payload. Specialize
- * its output without narrowing the historical inspection/Evidence input
- * parser or applying inventory defaults inside an authenticated imported record.
- */
-export const artifactInspectionOutputSchema =
-  artifactInspectionResultSchema.safeExtend({
-    substeps: z
-      .array(
-        artifactInspectionResultSchema.shape.substeps.element.safeExtend({
-          evidence: evidenceSchema.safeExtend({
-            normalized_result: artifactInventoryOutputSchema,
-          }),
-        }),
-      )
-      .min(1),
-  });
 
 /** Project one successful inventory Evidence record into an inspection report. */
 export const createArtifactInspection = (
@@ -285,8 +278,7 @@ const contradictions = (
     const semantic = {
       statement: `Declared integrity for ${value.logical_path} contradicts observed bytes.`,
       occurrence_id: value.occurrence_id,
-      declared_sha256: value.declared_sha256,
-      observed_sha256: value.observed_sha256,
+      ...artifactIntegrityPairOf(value),
       evidence_id: evidenceId,
     };
     return {
@@ -299,7 +291,53 @@ const probesFor = (
   inventory: ArtifactInventoryResult,
 ): ArtifactInspectionResult["next_probes"] => {
   const format = inventory.manifest.root_format;
-  if (["asar", "javascript-bundle", "directory"].includes(format))
+  return format === "directory"
+    ? directoryProbes(inventory)
+    : probesForFormat(format);
+};
+
+// An application bundle directory is only a container, so its probes follow
+// the formats it holds: a bundle of Mach-O executables is not a JavaScript tree.
+// Formats are ordered so a repeated operation keeps its most general rationale.
+const DIRECTORY_MEMBER_FORMATS: readonly ArtifactInventoryResult["manifest"]["root_format"][] =
+  [
+    "asar",
+    "javascript-bundle",
+    "mach-o-universal",
+    "mach-o",
+    "elf",
+    "pe",
+    "plist",
+  ];
+
+const directoryProbes = (
+  inventory: ArtifactInventoryResult,
+): ArtifactInspectionResult["next_probes"] => {
+  // JavaScript acquisition does not follow symlinks. Other probes retain
+  // their own applicability rules; plist inspection follows readable links.
+  const present = new Set(
+    inventory.occurrences
+      .filter(
+        ({ entry_kind, artifact_format }) =>
+          entry_kind !== "symlink" || artifact_format !== "javascript-bundle",
+      )
+      .map(({ artifact_format }) => artifact_format),
+  );
+  const members = DIRECTORY_MEMBER_FORMATS.filter((memberFormat) =>
+    present.has(memberFormat),
+  );
+  const probes = members.flatMap(probesForFormat);
+  return probes.filter(
+    (probe, index) =>
+      probes.findIndex(({ operation }) => operation === probe.operation) ===
+      index,
+  );
+};
+
+const probesForFormat = (
+  format: ArtifactInventoryResult["manifest"]["root_format"],
+): ArtifactInspectionResult["next_probes"] => {
+  if (["asar", "javascript-bundle"].includes(format))
     return [
       {
         operation: "analyze_javascript_application",
