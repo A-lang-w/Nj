@@ -1018,22 +1018,28 @@ const stableInstallRoot = (
     return undefined;
   }
   // A relative target resolves against the physical directory that contains
-  // the launcher, which differs when the PATH entry is itself a symlink.
-  let physicalParent: string;
+  // the launcher, so a PATH entry that is itself a symlink still resolves. The
+  // lexical spelling is tried first because it keeps a stable ancestor alias
+  // (`current -> releases/12.1.4`) as the published path.
+  const declaredCandidates = [
+    dirname(path.resolve(dirname(launcherPath), target)),
+  ];
   try {
-    physicalParent = realpathSync(dirname(launcherPath));
+    declaredCandidates.push(
+      dirname(path.resolve(realpathSync(dirname(launcherPath)), target)),
+    );
   } catch (cause: unknown) {
     void cause;
-    return undefined;
   }
-  const declared = dirname(path.resolve(physicalParent, target));
-  if (declared === root) return undefined;
-  try {
-    return realpathSync(declared) === root ? declared : undefined;
-  } catch (cause: unknown) {
-    void cause;
-    return undefined;
+  for (const declared of declaredCandidates) {
+    if (declared === root) return undefined;
+    try {
+      if (realpathSync(declared) === root) return declared;
+    } catch (cause: unknown) {
+      void cause;
+    }
   }
+  return undefined;
 };
 
 /** Find a PATH launcher whose real target is inside a complete Ghidra tree. */
