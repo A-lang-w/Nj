@@ -1,11 +1,27 @@
 ---
 name: reverse-engineer-anything
-description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA. Deconstruct UI/UX systems, design tokens, component states, motion, navigation, and accessibility into evidence-backed specifications. Use shipped artifacts or requested runtime evidence to explain features, compare versions, decompile code, or guide reconstruction. Skip REA engine setup for ordinary source-only analysis.
+description: Reverse engineer a selected app, website, source tree, or software artifact into evidence-backed product, architecture, and UI/UX specifications. Route research, code and runtime analysis, requested reconstruction, and verification through one workflow. Use REA engines for shipped artifacts when needed; skip engine setup for source-only or supplied-capture work.
 metadata:
-  version: "45"
+  version: "46"
 ---
 
 # REA
+
+## Start from the requested outcome
+
+Use this skill as the entry point; the user supplies the target and desired
+result, not a list of helper skills. Read [workflow routing](references/workflow-routing.md)
+to select product research, code/artifact analysis, UI/UX specification,
+requested reconstruction, or verification. Combine only the routes needed for
+the task and carry one evidence index through them. Resolve the target from the
+request and active task context; if neither selects one, ask for it before
+investigating an app.
+
+An analysis or specification request ends with findings and acceptance criteria.
+A build request continues through implementation and verification. Optional
+specialist skills support the selected route when available; they are not
+required installations, and reading this skill does not execute them. Report
+which routes actually ran and which results remain unverified.
 
 Use REA when a claim depends on a shipped binary or package, decompilation,
 passive application runtime evidence, or comparison with
@@ -403,6 +419,8 @@ as complete while required questions remain open.
 
 ## Read only the relevant guide
 
+- Outcome selection, optional specialist routing, and a shared handoff:
+  [references/workflow-routing.md](references/workflow-routing.md)
 - UI/UX discovery, visual systems, states, motion, flows, and accessibility:
   [references/ui-ux-deconstruction.md](references/ui-ux-deconstruction.md)
   and its [specification template](references/ui-ux-spec-template.md)
