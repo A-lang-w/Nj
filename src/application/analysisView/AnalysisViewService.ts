@@ -150,6 +150,8 @@ export const inspectAnalysisViewValidated = (
     {
       evidenceId: parent.evidence_id,
       operation: parent.operation,
+      provider: parent.provider,
+      analysisProfileDigest: parent.analysis_profile?.digest ?? null,
       normalizedResult:
         immutableJsonSnapshotMember(parent, "normalized_result") ??
         parent.normalized_result,
@@ -176,11 +178,11 @@ export const inspectAnalysisViewValidated = (
   if (!projected.ok) return projected;
   if (
     parent.subject !== null &&
-    parent.subject.digest.sha256 !== projected.value.artifact.sha256
+    parent.subject.digest.sha256 !== projected.value.artifact?.sha256
   )
     return err(
       new EvidenceIntegrityError(
-        `Parent subject SHA-256 ${parent.subject.digest.sha256} differs from analysis artifact SHA-256 ${projected.value.artifact.sha256}.`,
+        `Parent subject SHA-256 ${parent.subject.digest.sha256} differs from analysis artifact SHA-256 ${projected.value.artifact?.sha256 ?? "unknown"}.`,
       ),
     );
   return ok(createAnalysisViewEvidence(input, parent, projected.value));
@@ -344,7 +346,7 @@ const createAnalysisViewEvidence = (
       ? { relationshipCoverage: parent.relationship_coverage }
       : {}),
     locations: [
-      ...(result.artifact.path.length > 0
+      ...(result.artifact != null && result.artifact.path.length > 0
         ? [{ kind: "artifact-path" as const, path: result.artifact.path }]
         : []),
       ...(result.kind === "native" &&
