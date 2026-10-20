@@ -95,7 +95,10 @@ naming the exemplar's collection.
   (transformed), or one it did not show. A call that sends such a member is a
   tool error naming the accepted members.
 
-**Updates.** Body members follow the same accepted and not-accepted rules.
+**Updates.** Body members follow the same accepted and not-accepted rules,
+except that a member the application stored differently is accepted only with
+the value a recorded call sent it with, and then stores the value that call
+recorded (its `constant` rule carries it).
 `PUT` requires every member the exemplar sent; `PATCH` and `POST` require at
 least one. A field the exemplar's update changed without sending it is
 explained as one of:
@@ -111,7 +114,8 @@ response, with the entity re-rendered when the response carries it.
 
 **Documents.** A document write merges the body's members (replaces them, for
 `PUT`) into the document object that holds most of them: the root or one
-member.
+member. Document reads answer only on their recorded line, so a write is
+served only at the path the state holds the document at.
 
 **Responses.** A write answers with the status and content type of one
 recorded response:
@@ -137,12 +141,13 @@ recorded list shows. With no evidence, the rule is `last`.
 The view replays every primary-origin record in timeline order on a copy of
 the initial state.
 
-**Writes.** A modelled write applies its effect, using the values it recorded
+**Writes.** Only a 2xx write is modelled. A modelled write applies its effect, using the values it recorded
 for generated fields and the stored values for fields it transformed. A
 modelled write whose call the plan does not explain brings its entity to the
 recorded outcome instead, without attribution.
 
-Any other successful write is unmodelled, and what it may have changed
+Any other write that may have changed state, including a redirected or
+unanswered one, is unmodelled, and what it may have changed
 depends on where its path lies relative to each type's collection paths
 (segment-prefix related, parameters matching any segment):
 
@@ -162,8 +167,11 @@ from the state:
 - an item read of a state-backed item view;
 - a list or document read on one of its view's checked request lines.
 
-**Comparison.** The read's answer is rendered from the copy and compared with
-the recording, as the read gate compares, with volatile fields taking the
+**Comparison.** The read's answer is the full response serving would give from
+the copy: an item read's entity rendered into its item view's base recording,
+or a list read's members as serving would list them (so a member the copy no
+longer holds fails the check) rendered into its line's base recording. It is
+compared with the recording, as the read gate compares, with volatile fields taking the
 observed values. A recorded 400, 404 or 410, or a 2xx with a JSON `null`
 body, for an entity the copy does not hold agrees with it.
 
@@ -221,9 +229,16 @@ changes it atomically, so every MCP session and `data/get` see one state.
 - a body that is not an object;
 - a missing required member;
 - a member that is not accepted;
-- a value of another JSON type than the exemplar's;
+- a value of another JSON type than the exemplar's, for documents as well as
+  entities;
 - an update or delete of an entity the state does not hold;
 - a create in another collection when the plan is tied to its own;
+- a document write at a path other than the one the state holds it at;
+- a body member or a resulting value `data/add` would refuse (a number not
+  exact as `data/get` writes it, a `__proto__` member, nesting past the
+  limit), increments included, so `data/get` always loads back;
+- a create, update or document write that would take what `data/get` reports
+  past the 32 MiB `data/add` intake limit, as a `resource_constraint` error;
 - a rendered response missing a recorded field.
 
 When the tool, or else an item view of the type, recorded a 400, 404 or 410
@@ -252,7 +267,9 @@ them, so the read gate's `membership: "all"` also covers a line that only pages
 its list (`limit`, `offset`, `page`, `per_page`, `perpage`, `page_size`,
 `pagesize`, `size`, `start`, `_start`, `_end`) when its recording listed the
 whole collection. A list call with no query argument answers from such a line
-of an `all` view, with `replay.exact_match` false. A call that asks for a page
+of an `all` view of the collection its path arguments name, with
+`replay.exact_match` false; a collection with no such line answers from its
+recording. A call that asks for a page
 still answers from its recording.
 
 **Provenance.** Write answers carry `state: {source: "state", view: "create" |
