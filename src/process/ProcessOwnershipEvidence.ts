@@ -84,6 +84,8 @@ export class ProcessOwnershipEvidenceOwner {
       readonly scopeFacts?: readonly ProcessOwnershipFact[];
       /** Native exit settled before candidate selection; these PIDs have no facts. */
       readonly nativeExitedPids?: ReadonlySet<number>;
+      /** False disables disproven capture anchors without discarding token-owned ancestry. */
+      readonly allowCapturedScope?: boolean;
       /** Caller-selected lineage links preserve uncertain scope, never ownership proof. */
       readonly unverifiedLineageRelations?: ReadonlyMap<
         number,
@@ -160,7 +162,10 @@ export class ProcessOwnershipEvidenceOwner {
         unverifiedRelation ? ("unverified-table-relation" as const) : evidence;
       const relation = relationFor(pid);
       if (relation === undefined) return undefined;
-      if (options.processGroupIds.has(relation.processGroupId))
+      if (
+        options.allowCapturedScope !== false &&
+        options.processGroupIds.has(relation.processGroupId)
+      )
         return scoped("captured-process-group-id");
       const visited = new Set<number>([pid]);
       let parentPid = relation.parentPid;
@@ -174,7 +179,10 @@ export class ProcessOwnershipEvidenceOwner {
               parent.identity === previousParent.identity))
         )
           return scoped("current-token-owned-parent");
-        if (parentPid === options.leaderPid)
+        if (
+          options.allowCapturedScope !== false &&
+          parentPid === options.leaderPid
+        )
           return scoped("capture-leader-pid");
         visited.add(parentPid);
         const parentRelation = relationFor(parentPid);
@@ -244,8 +252,7 @@ export class ProcessOwnershipEvidenceOwner {
         (previous.identity !== undefined &&
           fact.identityAfter.state === "readable" &&
           fact.identityAfter.identity !== previous.identity) ||
-        (fact.state === "same-generation" &&
-          processIdentityHasExited(fact.identityAfter))
+        processIdentityHasExited(fact.identityAfter)
       ) {
         this.#candidates.delete(pid);
         retiredPids.add(pid);
@@ -304,20 +311,30 @@ export class ProcessOwnershipEvidenceOwner {
 
     for (const fact of facts) {
       const pid = fact.process.pid;
+      const matched =
+        fact.token.state === "readable" && fact.token.runId === options.runId;
+      const unresolvedReplacement = fact.state === "replaced" && matched;
       // A replacement's token cannot be attributed to either generation.
-      // Keep the snapshot's ancestry links for descendants, but require fresh
-      // same-generation evidence before enrolling the new lifetime itself.
+      // A matching token preserves uncertainty for another native observation,
+      // without carrying the retired generation's identity or signal authority.
       if (
         this.#candidates.has(pid) ||
-        (retiredPids.has(pid) && fact.state !== "same-generation") ||
+        (retiredPids.has(pid) &&
+          fact.state !== "same-generation" &&
+          !unresolvedReplacement) ||
         fact.state === "absent" ||
-        fact.state === "replaced" ||
-        (fact.state === "same-generation" &&
-          processIdentityHasExited(fact.identityAfter))
+        (fact.state === "replaced" && !matched) ||
+        processIdentityHasExited(fact.identityAfter)
       )
         continue;
       const identity = fact.identityAfter;
       if (fact.state !== "same-generation" || identity.state !== "readable") {
+        if (
+          options.allowCapturedScope === false &&
+          !matched &&
+          related(pid) === undefined
+        )
+          continue;
         this.#candidates.set(pid, {
           pid,
           identity: undefined,
@@ -333,8 +350,6 @@ export class ProcessOwnershipEvidenceOwner {
         uncertainPids.add(pid);
         continue;
       }
-      const matched =
-        fact.token.state === "readable" && fact.token.runId === options.runId;
       const unresolvedScope = matched ? undefined : related(pid);
       if (!matched && unresolvedScope === undefined) continue;
       const relation =

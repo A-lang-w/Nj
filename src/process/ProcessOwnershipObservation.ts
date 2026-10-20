@@ -290,6 +290,18 @@ const observeNativeOwnedProcessLineage = async (
 ): Promise<ProcessLineageObservation> => {
   const initialIdentities = await readNativeProcessIdentityMap(processes, host);
   const launcher = processes.find(({ pid }) => pid === ownership.leaderPid);
+  const launcherIdentity =
+    launcher === undefined ? undefined : initialIdentities.get(launcher.pid);
+  const nativeLauncher =
+    launcher !== undefined &&
+    launcherIdentity?.state === "readable" &&
+    !processIdentityHasExited(launcherIdentity)
+      ? processWithNativeRelation(launcher, launcherIdentity)
+      : undefined;
+  const identityFailure =
+    nativeLauncher === undefined
+      ? null
+      : launcherIdentityFailure(nativeLauncher, ownership);
   // Missing native facts leave table ancestry as candidate scope only. Keep
   // unresolved and exited intermediates as discovery bridges to descendants;
   // only validated live native facts may authorize the published lineage.
@@ -332,6 +344,10 @@ const observeNativeOwnedProcessLineage = async (
       ownership.processGroupId,
       ...(ownership.sampledProcessGroupIds ?? []),
     ]),
+    // A readable mismatching launcher disproves the captured anchors. Keep
+    // independent token evidence, existing candidates, and unknown/exit bridges.
+    // Later same-generation movement cannot erase valid initial scope.
+    allowCapturedScope: identityFailure === null,
     nativeExitedPids,
     unverifiedLineageRelations: new Map(
       lineageRows.map(({ pid, parentPid, processGroupId }) => [
@@ -344,7 +360,6 @@ const observeNativeOwnedProcessLineage = async (
   // ownership evidence already observed for this run's descendants.
   if (launcher === undefined)
     return unavailableLineage(ownership, "owned launcher is not live");
-  const launcherIdentity = initialIdentities.get(launcher.pid);
   if (launcherIdentity?.state === "absent")
     return unavailableLineage(ownership, "owned launcher is not live");
   if (launcherIdentity?.state !== "readable")
@@ -354,13 +369,11 @@ const observeNativeOwnedProcessLineage = async (
     );
   if (processIdentityHasExited(launcherIdentity))
     return unavailableLineage(ownership, "owned launcher is not live");
-  const nativeLauncher = processWithNativeRelation(launcher, launcherIdentity);
   if (nativeLauncher === undefined)
     return unavailableLineage(
       ownership,
       "owned launcher native parent/group relation was unavailable",
     );
-  const identityFailure = launcherIdentityFailure(nativeLauncher, ownership);
   if (identityFailure !== null)
     return unavailableLineage(ownership, identityFailure);
   const factsByPid = new Map(facts.map((fact) => [fact.process.pid, fact]));

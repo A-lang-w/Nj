@@ -43,6 +43,224 @@ const nativeIdentity = (
   },
 });
 
+it.each(
+  (["parent", "group", "command"] as const).flatMap((mismatch) =>
+    (
+      ["foreign", "missing", "unavailable", "identity-unavailable"] as const
+    ).map((token) => ({ mismatch, token })),
+  ),
+)(
+  "does not enroll a $token descendant through a launcher with mismatching $mismatch identity",
+  async ({ mismatch, token }) => {
+    const foreign = { ...child, processGroupId: child.pid };
+    const independentlyOwned = {
+      ...grandchild,
+      parentPid: launcher.pid,
+      processGroupId: grandchild.pid,
+    };
+    const listedLauncher = {
+      ...launcher,
+      command: mismatch === "command" ? "foreign-launcher" : launcher.command,
+    };
+    const nativeLauncher = {
+      ...listedLauncher,
+      parentPid: mismatch === "parent" ? 999 : launcher.parentPid,
+      processGroupId: mismatch === "group" ? 999 : launcher.processGroupId,
+    };
+    const evidenceOwner = new ProcessOwnershipEvidenceOwner();
+    const ownership = {
+      runId: "run",
+      leaderPid: launcher.pid,
+      processGroupId: launcher.processGroupId,
+      expectedParentPid: launcher.parentPid,
+      expectedCommand: launcher.command,
+      sweepTokenOwnedProcesses: true as const,
+      evidenceOwner,
+    };
+    let observing = true;
+    const signalGroup = vi.fn();
+    const host: ProcessOwnershipHost = {
+      listProcesses: async () =>
+        observing
+          ? [listedLauncher, foreign, independentlyOwned]
+          : [{ ...foreign, parentPid: 1 }],
+      environment: async () => ({}),
+      runTokens: async (rows) =>
+        new Map(
+          rows.map(({ pid }) => [
+            pid,
+            observing &&
+            pid === foreign.pid &&
+            (token === "unavailable" || token === "identity-unavailable")
+              ? { state: "unavailable" as const, reason: "token denied" }
+              : {
+                  state: "readable" as const,
+                  runId:
+                    pid === independentlyOwned.pid
+                      ? ownership.runId
+                      : observing && pid === foreign.pid && token === "missing"
+                        ? undefined
+                        : "foreign",
+                },
+          ]),
+        ),
+      processIdentities: async (rows) =>
+        new Map(
+          rows.map((row): [number, ProcessIdentityObservation] => {
+            if (!observing && row.pid !== foreign.pid)
+              return [row.pid, { state: "absent", reason: "not-in-snapshot" }];
+            if (
+              observing &&
+              row.pid === foreign.pid &&
+              token === "identity-unavailable"
+            )
+              return [
+                row.pid,
+                { state: "unavailable", reason: "identity denied" },
+              ];
+            return [
+              row.pid,
+              nativeIdentity(row.pid === launcher.pid ? nativeLauncher : row),
+            ];
+          }),
+        ),
+      signalGroup,
+    };
+
+    await expect(
+      observeOwnedProcessLineage(ownership, host),
+    ).resolves.toMatchObject({ status: "unavailable" });
+    const retained = evidenceOwner.candidates;
+    observing = false;
+
+    // The child remains alive with readable foreign identity/token evidence
+    // after the reused launcher exits. Its stale relation must not block cleanup.
+    await expect(cleanupOwnedProcessGroup(ownership, host)).resolves.toEqual({
+      cleaned: true,
+      signaled: false,
+    });
+    expect(retained).toEqual([
+      expect.objectContaining({
+        pid: independentlyOwned.pid,
+        applicability: "token-verified",
+      }),
+    ]);
+    expect(evidenceOwner.candidates).toEqual([]);
+    expect(signalGroup).not.toHaveBeenCalled();
+  },
+);
+
+it("preserves independently token-owned ancestry when the launcher identity mismatches", async () => {
+  const ownedParent = { ...child, processGroupId: child.pid };
+  const unreadableChild = { ...grandchild, processGroupId: grandchild.pid };
+  const foreignLauncher = { ...launcher, command: "foreign-launcher" };
+  const evidenceOwner = new ProcessOwnershipEvidenceOwner();
+  const host: ProcessOwnershipHost = {
+    listProcesses: async () => [foreignLauncher, ownedParent, unreadableChild],
+    environment: async () => ({}),
+    runTokens: async (rows) =>
+      new Map(
+        rows.map(({ pid }) => [
+          pid,
+          pid === unreadableChild.pid
+            ? { state: "unavailable" as const, reason: "token denied" }
+            : {
+                state: "readable" as const,
+                runId: pid === ownedParent.pid ? "run" : "foreign",
+              },
+        ]),
+      ),
+    processIdentities: async (rows) =>
+      new Map(rows.map((row) => [row.pid, nativeIdentity(row)])),
+    signalGroup: vi.fn(),
+  };
+
+  await expect(
+    observeOwnedProcessLineage(
+      {
+        runId: "run",
+        leaderPid: launcher.pid,
+        processGroupId: launcher.processGroupId,
+        expectedCommand: launcher.command,
+        evidenceOwner,
+      },
+      host,
+    ),
+  ).resolves.toMatchObject({ status: "unavailable" });
+  expect(evidenceOwner.candidates).toEqual([
+    expect.objectContaining({
+      pid: ownedParent.pid,
+      applicability: "token-verified",
+    }),
+    expect.objectContaining({
+      pid: unreadableChild.pid,
+      applicability: "related-ownership-unresolved",
+      scopeEvidence: "current-token-owned-parent",
+    }),
+  ]);
+});
+
+it.each(["parent", "group"] as const)(
+  "preserves observed scope when the same launcher changes its %s during validation",
+  async (mismatch) => {
+    const detached = { ...child, processGroupId: child.pid };
+    const evidenceOwner = new ProcessOwnershipEvidenceOwner();
+    let identityReads = 0;
+    const host: ProcessOwnershipHost = {
+      listProcesses: async () => [launcher, detached],
+      environment: async () => ({}),
+      runTokens: async (rows) =>
+        new Map(
+          rows.map(({ pid }) => [
+            pid,
+            pid === detached.pid
+              ? { state: "unavailable" as const, reason: "token denied" }
+              : { state: "readable" as const, runId: "foreign" },
+          ]),
+        ),
+      processIdentities: async (rows) => {
+        identityReads += 1;
+        return new Map(
+          rows.map((row) => [
+            row.pid,
+            nativeIdentity(
+              row.pid === launcher.pid && identityReads > 1
+                ? {
+                    ...row,
+                    parentPid: mismatch === "parent" ? 999 : row.parentPid,
+                    processGroupId:
+                      mismatch === "group" ? 999 : row.processGroupId,
+                  }
+                : row,
+            ),
+          ]),
+        );
+      },
+      signalGroup: vi.fn(),
+    };
+
+    await expect(
+      observeOwnedProcessLineage(
+        {
+          runId: "run",
+          leaderPid: launcher.pid,
+          processGroupId: launcher.processGroupId,
+          expectedParentPid: launcher.parentPid,
+          evidenceOwner,
+        },
+        host,
+      ),
+    ).resolves.toMatchObject({ status: "unavailable" });
+    expect(evidenceOwner.candidates).toContainEqual(
+      expect.objectContaining({
+        pid: detached.pid,
+        applicability: "related-ownership-unresolved",
+        scopeEvidence: "capture-leader-pid",
+      }),
+    );
+  },
+);
+
 it.each([
   { missing: "identity", token: "matching" },
   { missing: "relation", token: "matching" },
