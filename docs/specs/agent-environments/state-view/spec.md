@@ -34,9 +34,11 @@ later increments.
   latest values win over list views', differing views keep their own values,
   and a value that changed between repeats of one request line with no recorded
   write is volatile and keeps the latest; a change across a write under another
-  root leaves every tool of the type recorded.
-- A list has `all` membership only when no `total` or `count` envelope member
-  differs from the number of entities it lists.
+  root, including between two tools of the type, leaves every tool of the type
+  recorded.
+- A list has `all` membership only when no item-total envelope member (`total`,
+  `count` and their compounds, not page counts) differs from the number of
+  entities it lists and no `has_more`, `next` or next-page token is set.
 - Keep an item or list plan only when it reproduces each request line's latest
   initial recording from the state, comparing JSON values without regard to
   member order; otherwise record the tool with a reason. Parse bodies only when

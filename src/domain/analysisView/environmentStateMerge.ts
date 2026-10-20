@@ -69,3 +69,57 @@ export const mergeObservedEntity = (entity: ObservedEntity): StateEntity => {
     ],
   };
 };
+
+/**
+ * How observed values changed, per entity in timeline order. A shared field that differs from the
+ * previous repeat of the same request line is volatile, unless a recorded write lies between them;
+ * a field that differs from the previous observation of another line across a write rewrites the
+ * type. Either across a write means the reads do not agree on one initial state.
+ */
+export const classifyEntityChanges = (
+  entities: Iterable<ObservedEntity>,
+  lineOf: (observation: StateObservation) => readonly string[],
+  writeBetween: (earlier: StateObservation, later: StateObservation) => boolean,
+): {
+  readonly rewritten: ReadonlySet<string>;
+  readonly volatile: ReadonlyMap<string, Set<string>>;
+} => {
+  const rewritten = new Set<string>();
+  const volatile = new Map<string, Set<string>>();
+  const changed = (before: StateObservation, after: StateObservation) =>
+    Object.keys(after.object).filter(
+      (name) =>
+        Object.hasOwn(before.object, name) &&
+        !same(before.object[name], after.object[name]),
+    );
+  for (const entity of entities) {
+    const timeline = [...entity.observations].sort(
+      (left, right) => left.position - right.position,
+    );
+    const lastOfLine = new Map<string, StateObservation>();
+    timeline.forEach((after, index) => {
+      const line = JSON.stringify(lineOf(after));
+      const repeat = lastOfLine.get(line);
+      const differs = repeat === undefined ? [] : changed(repeat, after);
+      if (repeat !== undefined && differs.length > 0) {
+        if (writeBetween(repeat, after)) rewritten.add(entity.type);
+        else
+          for (const name of differs)
+            volatile.set(
+              entity.type,
+              (volatile.get(entity.type) ?? new Set()).add(name),
+            );
+      }
+      const previous = timeline[index - 1];
+      if (
+        previous !== undefined &&
+        JSON.stringify(lineOf(previous)) !== line &&
+        changed(previous, after).length > 0 &&
+        writeBetween(previous, after)
+      )
+        rewritten.add(entity.type);
+      lastOfLine.set(line, after);
+    });
+  }
+  return { rewritten, volatile };
+};

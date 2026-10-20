@@ -510,3 +510,46 @@ it("does not take a later recording that is itself an entity as the list", () =>
   );
   expect(state.entities).toEqual([]);
 });
+
+it("leaves a type recorded when two of its tools read different values across a write", () => {
+  const state = stateOf(
+    captureOf([
+      ["GET", "/api/search", [{ id: 1, title: "Granite Ledger" }]],
+      ["POST", "/api/dashboards/db", { id: 9 }],
+      ["GET", "/api/search/1", { id: 1, title: "Saltmarsh Depot" }],
+    ]),
+  );
+  expect(state.types).toEqual([]);
+  expect(state.entities).toEqual([]);
+  expect(
+    state.views.map((view) =>
+      view.shape === "recorded" ? [view.tool, view.reason] : view.tool,
+    ),
+  ).toEqual([
+    ["get_search", "fields-differ"],
+    ["get_search_by_id", "fields-differ"],
+  ]);
+});
+
+it("reads only item totals and next-page markers as signs of a partial list", () => {
+  const membership = (body: JsonValue) =>
+    stateOf(captureOf([["GET", "/api/items", body]])).views.map((view) =>
+      view.shape === "list" ? [view.membership, view.counters] : view.shape,
+    );
+  // Page and id numbers are not item totals, so a complete page stays whole.
+  expect(
+    membership({
+      page: 1,
+      total: 2,
+      total_pages: 1,
+      account_id: 77,
+      items: [{ id: 1 }, { id: 2 }],
+    }),
+  ).toEqual([["all", ["total"]]]);
+  expect(membership({ has_more: true, items: [{ id: 1 }, { id: 2 }] })).toEqual(
+    [["recorded", []]],
+  );
+  expect(membership({ total: "50", items: [{ id: 1 }] })).toEqual([
+    ["recorded", []],
+  ]);
+});

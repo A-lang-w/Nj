@@ -21,7 +21,6 @@ import {
   locateList,
   rootOf,
   rootsRelated,
-  same,
   scalarText,
   segmentsOf,
   apiBaseLengths,
@@ -40,9 +39,11 @@ import {
 } from "./environmentStateRules.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 import {
+  classifyEntityChanges,
   compareObservedEntities,
   mergeObservedEntity,
   type ObservedEntity,
+  type StateObservation,
 } from "./environmentStateMerge.js";
 import {
   checkItemPlan,
@@ -114,6 +115,7 @@ export class EnvironmentStateExtraction {
       for (const candidate of candidates.filter((entry) => !entry.item))
         this.#planList(candidate);
       for (const plan of this.#plans) this.#observePlan(plan);
+      this.#classifyChanges();
       this.#merge();
       const gate = this.#gateContext();
       for (const plan of this.#plans)
@@ -376,29 +378,6 @@ export class EnvironmentStateExtraction {
       if (position < first || (position === first && index < at))
         entity.order = [position, index];
     }
-    // Only a repeated request line shows a value changing; other lines may differ by query.
-    const line = requestLine(record);
-    const earlier = entity.observations.findLast(
-      (observation) =>
-        observation.tool === plan.tool.name &&
-        requestLine(this.#byOrdinal.get(observation.ordinal)!) === line,
-    );
-    const changed = Object.keys(object).filter(
-      (name) =>
-        earlier !== undefined &&
-        Object.hasOwn(earlier.object, name) &&
-        !same(earlier.object[name], object[name]),
-    );
-    if (earlier !== undefined && changed.length > 0) {
-      // A change across any recorded write, even under another root, is not evidence of volatility.
-      if (this.#writeWithin(this.#byOrdinal.get(earlier.ordinal)!, record))
-        this.#rewritten.add(plan.type);
-      else
-        this.#volatile.set(
-          plan.type,
-          new Set([...(this.#volatile.get(plan.type) ?? []), ...changed]),
-        );
-    }
     this.#retain(ENTRY_BYTES + jsonBytes(object));
     entity.observations.push({
       position,
@@ -407,6 +386,20 @@ export class EnvironmentStateExtraction {
       item: plan.item,
       object,
     });
+  }
+
+  /** A change across any recorded write rewrites the type; one between repeats of a line with no write is volatile. */
+  #classifyChanges(): void {
+    const recordOf = (observation: StateObservation): StateRecordFacts =>
+      this.#byOrdinal.get(observation.ordinal)!;
+    const changes = classifyEntityChanges(
+      this.#entities.values(),
+      (observation) => [observation.tool, requestLine(recordOf(observation))],
+      (earlier, later) => this.#writeWithin(recordOf(earlier), recordOf(later)),
+    );
+    for (const type of changes.rewritten) this.#rewritten.add(type);
+    for (const [type, names] of changes.volatile)
+      this.#volatile.set(type, names);
   }
 
   #merge(): void {
