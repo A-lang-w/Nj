@@ -10,8 +10,17 @@ import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("MZ artifact classification", () => {
-  it("rejects a Windows header pointer overlapping the DOS header", () => {
-    expect(classifyArtifactContent("invalid.exe", peFixture(32))).toEqual({
+  it("classifies a signature-confirmed PE whose header overlaps the DOS header", () => {
+    expect(classifyArtifactContent("overlapped.exe", peFixture(32))).toEqual({
+      kind: "executable",
+      format: "pe",
+    });
+  });
+
+  it("keeps a low Windows header pointer unknown without a PE signature", () => {
+    const bytes = peFixture(32);
+    bytes.write("XXXX", 32, "latin1");
+    expect(classifyArtifactContent("invalid.exe", bytes)).toEqual({
       kind: "unknown",
       format: "unknown",
     });
