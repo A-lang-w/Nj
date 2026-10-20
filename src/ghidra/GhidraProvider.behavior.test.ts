@@ -254,6 +254,51 @@ it("carries the inspected release identity into the production launcher", async 
   await client.close();
 });
 
+it("gives each client its own staging slot for a shared profile", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-ghidra-provider-cache-"));
+  onTestFinished(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+  const config = parseConfig({
+    GHIDRA_INSTALL_DIR: INSTALL,
+    REA_GHIDRA_PROJECT_CACHE: "on",
+    REA_GHIDRA_PROJECT_CACHE_DIR: root,
+  });
+  if (!config.ok) throw config.error;
+  const stagingPaths: (string | undefined)[] = [];
+  const ghidra = new GhidraProvider(
+    config.value,
+    silentLogger,
+    {},
+    installationHost(),
+    (options) => {
+      stagingPaths.push(options.projectPersistence?.reservation.stagingPath);
+      return {
+        start: () => Promise.resolve(ok(sessionInfo())),
+        callTool: () => Promise.resolve(ok(null)),
+        close: () => Promise.resolve(ok(null)),
+      };
+    },
+  );
+  const target = executableTarget("elf", "x86_64");
+  const resolved = await ghidra.resolveAnalysisProfile(target);
+  if (!resolved.ok || resolved.value.profile === null)
+    throw new Error("Expected a bound Ghidra profile");
+  // Two clients can share one profile digest. Each must get its own staging
+  // slot so one client's failed publish cannot discard the other's copy.
+  const first = ghidra.createClient(target, resolved.value.profile);
+  const second = ghidra.createClient(target, resolved.value.profile);
+  await first.execute("health", {});
+  await second.execute("health", {});
+  expect(stagingPaths).toHaveLength(2);
+  expect(stagingPaths[0]).toBeDefined();
+  expect(stagingPaths[1]).toBeDefined();
+  expect(stagingPaths[0]).not.toBe(stagingPaths[1]);
+  await first.close();
+  await second.close();
+  await ghidra.closeOwnedResources();
+});
+
 describe("Ghidra provider", () => {
   it("commits DOS loader and real-mode language while retaining the CPU family", async () => {
     const ghidra = provider();
