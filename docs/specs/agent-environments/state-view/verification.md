@@ -37,3 +37,82 @@ environment manifest view refuses them on unchanged main.
 
 Not covered here: serving tool calls from the state, the AgentEnv data plane
 and write effects, which are later increments.
+
+## Linux follow-up (2026-10-20)
+
+Node 24.18.0 / npm 11.16.0, with the author's `47f8a27a9` main integration
+preserved and main `d72021b0d` integrated. Eight regression cases failed across
+two pre-fix runs: membership additions/removals across a write, field presence,
+sparse field observations, and compact compound totals. The fixes compare
+membership before selecting latest recordings, retain each field's observation
+across sparse reads, and recognize `totalcount`/`itemcount`. API-base grouping
+appends to its owned arrays; identity intersection uses a set and skips the
+first response's self-intersection.
+
+Executed checks:
+
+- Relevant domain, application and contract suites: 39 files, 493 passed,
+  3 existing skips. Includes empty/stable lists, query variants, field additions
+  and removals, sparse reads, identity proof and deferred document paths.
+- Broader compiled CLI/MCP/environment, compact schema and qlog acceptance:
+  7 files, 65 passed, 1 existing skip. After the final state fixes, both selected
+  compiled state CLI/MCP cases passed again (36 other cases deselected).
+- Final serial static/build/artifact gate: 11 tasks passed. Typecheck, lint,
+  format, knip, package metadata and runtime/catalog generation all ran.
+- Final documentation/catalog/format validation: 9 tasks passed; architecture
+  guards passed across 1,602 source files; README consistency: 5 tests passed.
+
+Real Gitea 28.2.0 used an isolated SQLite database. An owned Node fetch HAR
+recorder captured actual API exchanges, omitting transport credentials:
+
+- Three exchanges: empty repository search, creation through `/user/repos`,
+  then the same search. On exactly the same authenticated Evidence, pre-fix
+  `29e745923` published one created repository as initial state; the final
+  source publishes none and keeps the search recorded with `fields-differ`.
+- Eleven exchanges: initial issue list/details and topics, PATCH, PUT and
+  DELETE, then subsequent reads. The state keeps the two original issues
+  before ordinal 4 and the original topics document at ordinal 3. File CLI and
+  default stdio MCP agree; six HTTP SDK replays reproduce original responses.
+- Actual Chromium `capture_browser_scenario`: two transactions, eight events,
+  zero dropped. The state uses record order, extracts one issue, and keeps list
+  and item plans; file CLI and default stdio MCP agree. The earlier 12.6 MB
+  real browser capture also projects, keeping oversized bodies recorded with
+  `body-unusable` rather than parsing them into state. Owned servers and browser
+  processes were stopped.
+
+### Resource and performance measurements
+
+One CPU and one worker. Process-family RSS sums were sampled every 50 ms and
+may count shared pages twice. Final source suites: 39.669 s wall / 39.486 CPU s /
+898.42 MiB peak; broader boundaries: 270.171 s / 267.136 CPU s / 2,130.78 MiB;
+final static/build: 199.683 s / 199.523 CPU s / 4,689.07 MiB; final live HAR
+workflow: 22.836 s / 19.880 CPU s / 1,072.43 MiB; actual browser-state workflow:
+12.734 s / 10.941 CPU s / 1,549.80 MiB. The qlog acceptance lane intentionally
+exhausts an isolated decoder heap and verifies that MCP remains usable; no
+workspace OOM occurred.
+
+Before/after used immutable pre-fix `29e745923` and the final source, the same
+completed Evidence files, Node and CPU affinity. One fresh process per revision,
+with a first call and two warm repeats; filesystem caches were not cleared.
+Complete normalized output digests matched for both synthetic projection tasks.
+
+| Work                                            | Before: first / warm (ms) | After: first / warm (ms) |
+| ----------------------------------------------- | ------------------------- | ------------------------ |
+| Group 8,000 templates (helper only)             | 320.08 / 81.01–81.46      | 11.89 / 3.88–4.33        |
+| File-to-state projection, 2,000 collections     | 1,321.57 / 732.00–939.57  | 1,268.76 / 781.34–811.05 |
+| File-to-state projection, one 15,001-field item | 657.05 / 494.82–501.19    | 377.78 / 347.62–380.87   |
+
+Combined benchmark processes, including imports, three helper calls, six
+projections and the live-capture comparison: before 6.536 s wall / 6.496 CPU s /
+370.82 MiB peak; after 5.077 s / 5.056 CPU s / 386.53 MiB. Grouping and wide
+identity inference improved; the 2,000-collection projection has overlapping
+warm timings, and peak memory did not decrease. These few runs do not establish
+a general speedup. Model token usage was not measured; no model-task scoring
+was run. Initial external probe attempts had incorrect CLI positional arguments
+and assumed coverage counted records rather than grouped tools; those driver
+errors were corrected before the successful complete runs.
+
+No new macOS/Windows runtime, state serving, AgentEnv data-plane or write-effects
+claim is made. A type first observed only after an unrelated-root write may
+still lack the earlier observation needed to detect its effect. Item-shaped
+and delete-only document paths remain recorded, as specified.

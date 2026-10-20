@@ -53,11 +53,16 @@ export interface StateGateContext {
 /** Ordered key union and always-present keys, grown one object at a time. */
 class FieldUnion {
   readonly fields: string[] = [];
+  /** Membership beside the ordered list, so a wide object is not scanned per key. */
+  readonly #seen = new Set<string>();
   #required: Set<string> | undefined;
 
   add(object: JsonObject): void {
     for (const key of Object.keys(object))
-      if (!this.fields.includes(key)) this.fields.push(key);
+      if (!this.#seen.has(key)) {
+        this.#seen.add(key);
+        this.fields.push(key);
+      }
     const keys = new Set(Object.keys(object));
     this.#required =
       this.#required === undefined
@@ -168,19 +173,76 @@ const listFacts = (
         body === undefined ? undefined : listItems(body, plan.pointer);
       if (body === undefined || items === undefined) return;
       items.forEach((item) => union.add(item));
-      const ids = items.map((item) => scalarText(item[field]) ?? "");
-      const expected = context
-        .inCollection(plan.type, collectionPathOf(record, false))
-        .map((entity) => entity.id);
-      if (record.query !== undefined || !same(ids, expected)) all = false;
+      // Once a list cannot be the whole collection, its membership is not compared again.
+      if (all && record.query === undefined) {
+        const ids = items.map((item) => scalarText(item[field]) ?? "");
+        const expected = context
+          .inCollection(plan.type, collectionPathOf(record, false))
+          .map((entity) => entity.id);
+        if (!same(ids, expected)) all = false;
+      } else all = false;
       const parent = plan.pointer === "" || !isObject(body) ? {} : body;
-      const names = Object.keys(parent).filter(
-        (name) => /total|count/iu.test(name) && parent[name] === items.length,
+      const counted = Object.keys(parent).filter(
+        (name) => isItemTotal(name) && countOf(parent[name]) !== undefined,
       );
+      // A total that differs from the number listed, or a next page, shows the list is partial.
+      if (
+        counted.some((name) => countOf(parent[name]) !== items.length) ||
+        Object.keys(parent).some((name) => continues(name, parent[name]))
+      )
+        all = false;
+      const names = counted.filter((name) => parent[name] === items.length);
       counters = (counters ?? names).filter((name) => names.includes(name));
     });
   return { all, counters: (counters ?? []).sort(compare) };
 };
+
+const nameTokens = (name: string): string[] =>
+  name
+    .split(/[_\-\s]|(?<=[a-z0-9])(?=[A-Z])/u)
+    .map((token) => token.toLowerCase());
+
+/** Item totals, including compact `totalcount`/`itemcount`; page counts and account IDs are excluded. */
+const isItemTotal = (name: string): boolean => {
+  const tokens = nameTokens(name);
+  return (
+    tokens.some(
+      (token) =>
+        token === "total" ||
+        token === "count" ||
+        token === "totalcount" ||
+        token === "itemcount",
+    ) &&
+    !tokens.some(
+      (token) => token === "page" || token === "pages" || token === "per",
+    )
+  );
+};
+
+/** A count recorded as a number or as a string of digits. */
+const countOf = (value: JsonValue | undefined): number | undefined =>
+  typeof value === "number"
+    ? value
+    : typeof value === "string" && /^\d+$/u.test(value)
+      ? Number(value)
+      : undefined;
+
+const CONTINUATION_NAMES = new Set([
+  "hasmore",
+  "next",
+  "nextcursor",
+  "nextpage",
+  "nextpagetoken",
+  "nexttoken",
+]);
+
+/** A top-level `has_more`, `next` or next-page token member that says more items follow. */
+const continues = (name: string, value: JsonValue | undefined): boolean =>
+  CONTINUATION_NAMES.has(nameTokens(name).join("")) &&
+  value !== undefined &&
+  value !== null &&
+  value !== false &&
+  value !== "";
 
 /** Whether one latest list recording renders from its own envelope and the listed entities' state. */
 const listReproduces = (

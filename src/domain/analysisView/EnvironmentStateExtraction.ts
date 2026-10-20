@@ -22,10 +22,10 @@ import {
   locateList,
   rootOf,
   rootsRelated,
-  same,
   scalarText,
   segmentsOf,
   apiBaseLengths,
+  writeSpanCheck,
   type ExtractedState,
   type JsonObject,
   type RecordedViewReason,
@@ -40,9 +40,11 @@ import {
 } from "./environmentStateRules.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 import {
+  classifyEntityChanges,
   compareObservedEntities,
   mergeObservedEntity,
   type ObservedEntity,
+  type StateObservation,
 } from "./environmentStateMerge.js";
 import {
   checkItemPlan,
@@ -54,6 +56,12 @@ import {
 class StateBudgetExhausted extends Error {}
 
 type Candidate = Pick<StatePlan, "tool" | "item" | "type">;
+
+interface ObservedMembership {
+  record: StateRecordFacts;
+  readonly ids: Set<string>;
+  capacity: number;
+}
 
 const entityKey = (type: string, collection: string, id: string): string =>
   compositeKey([type, collection, id]);
@@ -69,6 +77,7 @@ export class EnvironmentStateExtraction {
   readonly #position: ReadonlyMap<number, number>;
   readonly #byOrdinal: ReadonlyMap<number, StateRecordFacts>;
   readonly #writes: readonly StateRecordFacts[];
+  readonly #writeWithin: ReturnType<typeof writeSpanCheck>;
   readonly #bases: ReadonlyMap<string, number>;
   readonly #identity = new Map<
     string,
@@ -78,7 +87,11 @@ export class EnvironmentStateExtraction {
   readonly #plans: StatePlan[] = [];
   readonly #entities = new Map<string, ObservedEntity>();
   readonly #volatile = new Map<string, Set<string>>();
+  /** Types with a value that changed across a recorded write, which may be that write's effect. */
+  readonly #rewritten = new Set<string>();
   readonly #merged = new Map<string, StateEntity>();
+  /** Merged entities by type and collection, built once on first use after merging. */
+  #collections: Map<string, StateEntity[]> | undefined;
 
   constructor(input: {
     readonly tools: readonly StateToolFacts[];
@@ -96,6 +109,7 @@ export class EnvironmentStateExtraction {
       input.records.map((record) => [record.ordinal, record]),
     );
     this.#writes = input.records.filter(isStateWrite);
+    this.#writeWithin = writeSpanCheck(this.#writes);
     this.#bases = apiBaseLengths(input.tools.map((tool) => tool.path_template));
   }
 
@@ -108,13 +122,17 @@ export class EnvironmentStateExtraction {
       for (const candidate of candidates.filter((entry) => !entry.item))
         this.#planList(candidate);
       for (const plan of this.#plans) this.#observePlan(plan);
+      this.#classifyChanges();
       this.#merge();
       const gate = this.#gateContext();
       for (const plan of this.#plans)
-        this.#views.set(
-          plan.tool.name,
-          plan.item ? checkItemPlan(gate, plan) : checkListPlan(gate, plan),
-        );
+        if (this.#rewritten.has(plan.type))
+          this.#recorded(plan.tool, "fields-differ");
+        else
+          this.#views.set(
+            plan.tool.name,
+            plan.item ? checkItemPlan(gate, plan) : checkListPlan(gate, plan),
+          );
       return this.#result(this.#documents(candidates));
     } catch (cause: unknown) {
       if (cause instanceof StateBudgetExhausted) return null;
@@ -253,7 +271,11 @@ export class EnvironmentStateExtraction {
         return;
       }
       pointer = located.pointer;
-      keys = (keys ?? located.keys).filter((key) => located.keys.includes(key));
+      if (keys === undefined) keys = located.keys;
+      else {
+        const matching = new Set(located.keys);
+        keys = keys.filter((key) => matching.has(key));
+      }
     }
     const field =
       IDENTITY_NAMES.find((name) => keys?.includes(name) === true) ?? keys?.[0];
@@ -293,7 +315,9 @@ export class EnvironmentStateExtraction {
     for (const record of recordings) {
       const found = this.#withBody(record.ordinal, (body) => {
         if (body === undefined) return null;
-        const located = pointer ?? locateList(body, proved);
+        // Every recording must locate the same list, so a later entity envelope is not taken as one.
+        const located = locateList(body, proved);
+        if (pointer !== undefined && located !== pointer) return undefined;
         const items =
           located === undefined ? undefined : listItems(body, located);
         if (items === undefined) return undefined;
@@ -314,9 +338,8 @@ export class EnvironmentStateExtraction {
       );
       if (found.several) for (const name of found.fields) shown.add(name);
     }
-    const field = (
-      names ?? (proved === undefined ? IDENTITY_NAMES : [proved])
-    ).find(
+    // An identity name is only inferred from items that carry it; empty lists prove none.
+    const field = (names ?? (proved === undefined ? [] : [proved])).find(
       (name) =>
         name === proved || IDENTITY_NAMES.includes(name) || shown.has(name),
     );
@@ -327,6 +350,12 @@ export class EnvironmentStateExtraction {
   }
 
   #observePlan(plan: StatePlan): void {
+    // Only lists whose observations span a write need membership snapshots, including empty lists.
+    const memberships =
+      !plan.item &&
+      this.#writeWithin(plan.recordings[0]!, plan.recordings.at(-1)!)
+        ? new Map<string, ObservedMembership>()
+        : undefined;
     for (const record of plan.recordings)
       this.#withBody(record.ordinal, (body) => {
         const located = body === undefined ? undefined : at(body, plan.pointer);
@@ -334,13 +363,47 @@ export class EnvironmentStateExtraction {
           ? isObject(located)
             ? [located]
             : []
-          : Array.isArray(located)
-            ? located.filter(isObject)
-            : [];
+          : body === undefined
+            ? []
+            : (listItems(body, plan.pointer) ?? []);
+        if (memberships !== undefined)
+          this.#observeMembership(plan, record, objects, memberships);
         objects.forEach((object, index) =>
           this.#observe(plan, record, object, index),
         );
       });
+  }
+
+  /** Compare one request line's membership before discarding older recordings; reuse its bounded set. */
+  #observeMembership(
+    plan: StatePlan,
+    record: StateRecordFacts,
+    objects: readonly JsonObject[],
+    memberships: Map<string, ObservedMembership>,
+  ): void {
+    const line = requestLine(record);
+    let previous = memberships.get(line);
+    const earlier = previous?.record;
+    if (previous === undefined) {
+      this.#retain(ENTRY_BYTES * 2 + textBytes(line.length));
+      previous = { record, ids: new Set(), capacity: 0 };
+      memberships.set(line, previous);
+    }
+    // Reserve the peak membership representation before growing the set, including numeric ID text.
+    if (objects.length > previous.capacity) {
+      this.#retain((objects.length - previous.capacity) * ENTRY_BYTES * 4);
+      previous.capacity = objects.length;
+    }
+    const field = this.#identity.get(plan.type)!.field;
+    let changed = previous.ids.size !== objects.length;
+    for (const object of objects)
+      if (!previous.ids.delete(scalarText(object[field])!)) changed = true;
+    if (previous.ids.size > 0) changed = true;
+    if (earlier !== undefined && changed && this.#writeWithin(earlier, record))
+      this.#rewritten.add(plan.type);
+    previous.ids.clear();
+    for (const object of objects) previous.ids.add(scalarText(object[field])!);
+    previous.record = record;
   }
 
   /** Record one observed entity object; a value that changes between one tool's own observations is volatile. */
@@ -355,41 +418,46 @@ export class EnvironmentStateExtraction {
     if (id === undefined) return;
     const collection = collectionPathOf(record, plan.item);
     const key = entityKey(plan.type, collection, id);
-    const order: [number, number] = [
-      this.#position.get(record.ordinal)!,
-      index,
-    ];
+    const position = this.#position.get(record.ordinal)!;
     let entity = this.#entities.get(key);
     if (entity === undefined) {
       this.#retain(ENTRY_BYTES * 4 + textBytes(key.length));
-      entity = { type: plan.type, collection, id, order, observations: [] };
+      entity = {
+        type: plan.type,
+        collection,
+        id,
+        order: [position, index],
+        observations: [],
+      };
       this.#entities.set(key, entity);
-    } else if (
-      order[0] < entity.order[0] ||
-      (order[0] === entity.order[0] && order[1] < entity.order[1])
-    )
-      // Plans observe items before lists, so the earliest sighting may arrive later.
-      entity.order = order;
-    const earlier = entity.observations.findLast(
-      (observation) => observation.tool === plan.tool.name,
-    );
-    for (const name of Object.keys(object))
-      if (
-        earlier !== undefined &&
-        Object.hasOwn(earlier.object, name) &&
-        !same(earlier.object[name], object[name])
-      ) {
-        const fields = this.#volatile.get(plan.type) ?? new Set<string>();
-        this.#volatile.set(plan.type, fields.add(name));
-      }
+    } else {
+      // Plans are observed item tools first, so keep the earliest sighting in timeline order.
+      const [first, at] = entity.order;
+      if (position < first || (position === first && index < at))
+        entity.order = [position, index];
+    }
     this.#retain(ENTRY_BYTES + jsonBytes(object));
     entity.observations.push({
-      position: this.#position.get(record.ordinal)!,
+      position,
       ordinal: record.ordinal,
       tool: plan.tool.name,
       item: plan.item,
       object,
     });
+  }
+
+  /** A change across any recorded write rewrites the type; one between repeats of a line with no write is volatile. */
+  #classifyChanges(): void {
+    const recordOf = (observation: StateObservation): StateRecordFacts =>
+      this.#byOrdinal.get(observation.ordinal)!;
+    const changes = classifyEntityChanges(
+      this.#entities.values(),
+      (observation) => [observation.tool, requestLine(recordOf(observation))],
+      (earlier, later) => this.#writeWithin(recordOf(earlier), recordOf(later)),
+    );
+    for (const type of changes.rewritten) this.#rewritten.add(type);
+    for (const [type, names] of changes.volatile)
+      this.#volatile.set(type, names);
   }
 
   #merge(): void {
@@ -419,9 +487,17 @@ export class EnvironmentStateExtraction {
   }
 
   #inCollection(type: string, collection: string): StateEntity[] {
-    return [...this.#merged.values()].filter(
-      (entity) => entity.type === type && entity.collection === collection,
-    );
+    if (this.#collections === undefined) {
+      this.#retain(ENTRY_BYTES * (this.#merged.size + 1));
+      this.#collections = new Map();
+      for (const entity of this.#merged.values()) {
+        const key = JSON.stringify([entity.type, entity.collection]);
+        const members = this.#collections.get(key);
+        if (members === undefined) this.#collections.set(key, [entity]);
+        else members.push(entity);
+      }
+    }
+    return this.#collections.get(JSON.stringify([type, collection])) ?? [];
   }
 
   /** A list tool without a plan or recorded reason holds one document value: its latest init recording, under one request line. */
