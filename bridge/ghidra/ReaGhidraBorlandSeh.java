@@ -16,7 +16,7 @@ import java.util.Map;
 
 /** Recover only registered Win32 handler gaps, without changing executable bytes. */
 public final class ReaGhidraBorlandSeh {
-    public record Observation(List<String> diagnostics, List<String> omissions) {}
+    public record Observation(List<String> diagnostics, List<String> omissions, List<Address> handlers) {}
 
     public static Map<Address, Observation> analyze(Program program, TaskMonitor monitor,
             boolean allowMutation) throws Exception {
@@ -42,8 +42,9 @@ public final class ReaGhidraBorlandSeh {
                     function.getEntryPoint() + " identifies handler " + handler + ": ";
                 Instruction entry = program.getListing().getInstructionAt(handler);
                 boolean included = function.getBody().contains(handler) &&
-                    (!rtlVeneer(program, function, entry) ||
-                        function.getBody().contains(entry.getMaxAddress().next()));
+                    (!externalJump(program, function, entry) ||
+                        (rtlVeneer(program, function, entry) &&
+                            function.getBody().contains(entry.getMaxAddress().next())));
                 String failure = included ? null :
                     !allowMutation ? "Windows P0 does not admit handler body recovery." :
                     recover(program, function, handler, owned, monitor);
@@ -52,12 +53,15 @@ public final class ReaGhidraBorlandSeh {
                 for (Address nested : registrations(program, function, newlyOwned, monitor))
                     if (!handlers.contains(nested)) handlers.add(nested);
                 if (failure == null) diagnostics.add(prefix +
-                    "handler instructions are included in the Ghidra function body; this is a static registration observation, not proof of runtime execution.");
+                    "handler instructions are included in the Ghidra function body; " +
+                    (rtlVeneer(program, function, entry)
+                        ? "the continuation after its JMP is derived from the supplied/imported Borland RTL symbol; " : "") +
+                    "this is a static registration observation, not proof of runtime execution.");
                 else omissions.add(prefix + failure +
                     " Handler callees, strings and instructions may be excluded from function queries.");
             }
             observations.put(function.getEntryPoint(), new Observation(
-                List.copyOf(diagnostics), List.copyOf(omissions)));
+                List.copyOf(diagnostics), List.copyOf(omissions), List.copyOf(handlers)));
         }
         return observations;
     }
@@ -123,6 +127,9 @@ public final class ReaGhidraBorlandSeh {
         Function owner = program.getFunctionManager().getFunctionContaining(handler);
         if (owner != null && !owner.equals(function))
             return "Handler belongs to an independently identified function.";
+        Instruction entry = program.getListing().getInstructionAt(handler);
+        if (externalJump(program, function, entry) && !rtlVeneer(program, function, entry))
+            return "No supplied Borland RTL identity establishes a continuation after the handler jump.";
         AddressSet allowed = new AddressSet(original.getMinAddress(), original.getMaxAddress());
         for (MemoryBlock region : program.getMemory().getBlocks())
             if (!region.isInitialized() || !region.isExecute()) allowed.delete(region.getStart(), region.getEnd());
@@ -205,6 +212,18 @@ public final class ReaGhidraBorlandSeh {
     }
 
     private static boolean rtlVeneer(Program program, Function function, Instruction instruction) {
+        if (!externalJump(program, function, instruction)) return false;
+        Function target = program.getFunctionManager().getFunctionAt(instruction.getDefaultFlows()[0]);
+        if (target == null) return false;
+        var source = target.getSymbol().getSource();
+        if (source != ghidra.program.model.symbol.SourceType.USER_DEFINED &&
+            source != ghidra.program.model.symbol.SourceType.IMPORTED) return false;
+        String name = target.getName().replaceFirst("(?i)^system\\.", "").replaceFirst("^[@_]+", "");
+        return name.equalsIgnoreCase("HandleAnyException") ||
+            name.equalsIgnoreCase("HandleFinally") || name.equalsIgnoreCase("HandleOnException");
+    }
+
+    private static boolean externalJump(Program program, Function function, Instruction instruction) {
         if (instruction == null) return false;
         // Ghidra can override this original JMP as CALL_RETURN once an RTL
         // destination has a function seed. The registration identifies the

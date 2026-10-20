@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · **Português (Brasil)** · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md)
 
 # REA: Faça engenharia reversa de qualquer coisa
 
@@ -22,11 +22,15 @@
 
 [Início rápido](#início-rápido) · [Como o REA funciona](#como-o-rea-funciona) · [O que você pode analisar](#o-que-você-pode-analisar) · [Casos de uso](#casos-de-uso) · [Perguntas frequentes](#perguntas-frequentes) · [Ferramentas GNU objdump e Rizin](../reverse-engineering-tools.md) · [Documentação](#documentação)
 
+<code>npx rea-agents setup</code>
+
+</div>
+
 > [!IMPORTANT]
 > Fontes oficiais do REA: [morluto/rea](https://github.com/morluto/rea), [rea.tools](https://rea.tools/), [rea-agents](https://www.npmjs.com/package/rea-agents) (npm).
 > Use os links de instalação e de versões dessas fontes oficiais. Um nome de repositório parecido ou um README copiado não comprova que um download seja oficial.
 
-<code>npx rea-agents setup</code>
+<div align="center">
 
 <br />
 
@@ -137,13 +141,14 @@ O REA requer Node.js 22.x (>=22.19), 24.x (>=24.11) ou 26+, além do npm. As fer
 
 | Alvo                        | O que o REA retorna                                                                                                     | Requisitos e guia                                                                                                                 |
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Binários nativos            | Pseudocódigo, assembly, strings, símbolos, chamadas e referências                                                       | Hopper, Ghidra ou IDA; [análise nativa](https://rea.tools/pt-BR/guides/native/)                                                   |
+| Binários nativos            | Pseudocódigo, assembly, strings, símbolos, chamadas e referências                                                       | Hopper, Ghidra ou IDA; [análise nativa](../native-investigation.md)                                                               |
 | Estrutura ELF sem execução  | Seções, segmentos, símbolos/relocações originais e possíveis mecanismos de mitigação identificados por análise estática | pwntools fornecido pelo chamador no Linux x64; [diagnóstico de binários](../binary-diagnostics.md)                                |
 | Bytecode EVM                | Seletores de despacho, offsets de bytes, argumentos inferidos e mutabilidade                                            | Entrada local com bytes brutos ou representação hexadecimal no Linux x64; [guia de EVM sem execução](../evm-bytecode.md)          |
 | Rust binaries               | Embedded cargo-auditable dependency list                                                                                | [Rust binaries](../rust-binaries.md)                                                                                              |
 | Falhas do Linux registradas | Registros note brutos, registradores/sinais de cada thread registrada e candidatos opcionais a mapeamentos              | pwntools fornecido pelo chamador no Linux x64; GDB/pwndbg opcionais; [falhas registradas](../recorded-crashes.md)                 |
-| JavaScript / Electron       | Módulos, importações, source maps, rotas, IPC e relações com complementos nativos                                       | Node.js e npm; [análise de aplicativos](https://rea.tools/pt-BR/guides/javascript/)                                               |
-| Sites                       | Estrutura da página, scripts, observações de rede e capturas de tela solicitadas                                        | Um navegador da família Chrome; [análise do navegador](https://rea.tools/pt-BR/guides/browser/)                                   |
+| Instalações desktop         | Ambientes candidatos, arquivos de evidência, componentes e próximos passos                                              | Inspeção limitada de diretórios e cabeçalhos；[Aplicações desktop](../desktop-applications.md)                                    |
+| JavaScript / Electron       | Módulos, importações, source maps, rotas, IPC e relações com complementos nativos                                       | Node.js e npm; [análise de aplicativos](../javascript-application-workflows.md)                                                   |
+| Sites                       | Estrutura da página, scripts, observações de rede e capturas de tela solicitadas                                        | Um navegador da família Chrome; [análise do navegador](../browser-observation.md)                                                 |
 | Capturas de rede salvas     | Requisições, respostas, payloads acessíveis e localizações de origem                                                    | HAR; mitmdump no Linux para capturas no formato nativo do mitmproxy; [guia de capturas](../web-network-captures.md)               |
 | Capturas de pacotes         | Endpoints, DNS, TLS SNI, distribuição de protocolos e requisições HTTP                                                  | tshark e capinfos fornecidos pelo chamador; [guia pcap](../pcap-analysis.md)                                                      |
 | Assemblies .NET             | Metadados, instruções CIL, dependências nativas declaradas e comparações de builds                                      | Inspeção estática; [guia de código gerenciado](../managed-code-analysis.md)                                                       |
@@ -162,7 +167,7 @@ A inspeção estática de JavaScript e .NET lê os arquivos fornecidos sem execu
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-Os formatos nativos e os sistemas anfitriões compatíveis variam por provedor. Consulte [configuração do Hopper e Ghidra](../installation.md#hopper), o [guia do IDA](../ida-provider.md) e o [suporte experimental ao Ghidra no Windows](../windows-ghidra-p0.md). O Ghidra também oferece [análise de DOS de 16 bits](../ghidra-dos.md). Para selecionar um provedor, consulte o [guia da CLI](../cli.md#choose-a-provider). Verifique a [disponibilidade nas versões](../installation.md#released-package-and-main) das funcionalidades adicionadas após a versão mais recente no npm.
+Os formatos nativos e os sistemas anfitriões compatíveis variam por provedor. Consulte [configuração do Hopper e Ghidra](../installation.md#hopper), o [guia do IDA](../ida-provider.md), [Kuna](../kuna-provider.md) e o [suporte experimental ao Ghidra no Windows](../windows-ghidra-p0.md). O Ghidra também oferece [análise de DOS de 16 bits](../ghidra-dos.md). Para selecionar um provedor, consulte o [guia da CLI](../cli.md#choose-a-provider). Verifique a [disponibilidade nas versões](../installation.md#released-package-and-main) das funcionalidades adicionadas após a versão mais recente no npm.
 
 ## Casos de uso
 
@@ -259,6 +264,7 @@ Comece pelos [guias práticos](https://rea.tools/pt-BR/guides/) do site. Para op
 
 - [Instalação e configuração](../installation.md): registro de agentes, configuração de provedores, atualizações e desinstalação.
 - [Prontidão e solução de problemas](../installation.md#check-readiness-for-your-task): diagnóstico de um agente ou motor de análise específico.
+- [GGUF / safetensors](../model-artifacts.md)
 - [CLI e Evidence](../cli.md): comandos, seleção de provedores, snapshots, importação/exportação e status de saída.
 - [Contratos MCP](../mcp-contracts.md) e [prompts para agentes](../mcp-prompts.md): resultados das ferramentas, sessões e investigações guiadas.
 - [Catálogo de ferramentas](../mcp-contracts.md#generated-catalog): inventário de ferramentas, provedores e comandos da CLI gerado durante o build.
@@ -268,7 +274,7 @@ Relate vulnerabilidades conforme [SECURITY.md](../../SECURITY.md).
 
 ## Histórico de estrelas
 
-🎉 **170.000 estrelas no GitHub — muito obrigado!**
+🎉 **300.000 estrelas no GitHub — muito obrigado!**
 
 Obrigado a todos que usam o REA, relatam bugs, sugerem funcionalidades, testam builds e contribuem com correções.
 

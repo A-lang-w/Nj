@@ -236,6 +236,15 @@ def _name_matches(document, address, name):
     return observed == name or (not name and observed is None)
 
 
+def _bookmark_name(document, address):
+    getter = getattr(document, "getBookmarkName", None)
+    if not callable(getter):
+        raise CapabilityUnavailableError(
+            "Hopper's public Python API does not expose getBookmarkName"
+        )
+    return getter(address)
+
+
 def _address(document, value=None):
     """Keep explicit hexadecimal coordinates distinct from symbol names."""
     if value is None:
@@ -431,10 +440,6 @@ def _procedure_map(document):
     return result
 
 
-def _strings(document):
-    return {address: record["value"] for address, record in _string_inventory(document).items()}
-
-
 def _string_record(segment, address, display):
     """Read one native typed object, retaining its shortened display separately."""
     length = segment.getObjectLength(address)
@@ -521,7 +526,7 @@ def _search_inventory(document, kind):
         if kind == "procedure":
             values = _procedure_map(document)
         elif kind == "string":
-            values = _strings(document)
+            values = _string_inventory(document)
         elif kind == "name":
             values = {_hex(address): value for address, value in _name_map(document).items()}
         else:
@@ -548,23 +553,17 @@ def _search_results(document, kind, params):
     else:
         raise CapabilityUnavailableError("Regex matching requires REA's supervised worker; the native bridge only executes literal searches")
 
-    selected = []
-    for item in _search_inventory(document, kind):
-        if not matches(item[1]):
-            continue
-        selected.append(item)
-    if not selected:
-        return []
     if kind == "string":
-        records = _string_inventory(document)
-        return [{"address": address, **records[address]} for address, _ in selected]
-    return [
-            {
-                "address": address,
-                "value": value,
-            }
-            for address, value in selected
+        return [
+            {"address": address, **record}
+            for address, record in _search_inventory(document, kind)
+            if matches(record["value"])
         ]
+    return [
+        {"address": address, "value": value}
+        for address, value in _search_inventory(document, kind)
+        if matches(value)
+    ]
 
 
 def _unavailable(reason):
@@ -644,7 +643,7 @@ def _analyze_function(document, params):
             "end": _hex(_basic_block_end(procedure, block)),
             "successors": sorted(set(successors), key=lambda value: int(value, 16)),
         })
-    pseudo = _pseudocode(document, procedure) or ""
+    pseudo = _pseudocode(document, procedure)
     assembly_lines = _assembly(procedure).splitlines()
     callers = sorted((_procedure_identity(item) for item in procedure.getAllCallerProcedures()), key=lambda item: int(item["address"], 16))
     callees = sorted((_procedure_identity(item) for item in procedure.getAllCalleeProcedures()), key=lambda item: int(item["address"], 16))
@@ -706,7 +705,7 @@ def _analyze_function(document, params):
             "signature": procedure.signatureString(),
             "locals": _procedure_locals(procedure),
         },
-        "pseudocode": pseudo,
+        "pseudocode": pseudo or "",
         "assembly": assembly_lines,
         "comments": comments,
         "callers": callers, "callees": callees,
@@ -718,6 +717,12 @@ def _analyze_function(document, params):
         "basic_blocks": blocks,
         "native_api": None,
         "native_value_flow": None,
+        "facet_availability": {
+            "pseudocode": {"available": True} if pseudo is not None else _unavailable("Hopper did not supply pseudocode."),
+            **{facet: {"available": True} for facet in (
+                "assembly", "comments", "callers", "callees", "references", "strings_names", "cfg"
+            )},
+        },
         "limitations": [
             "Native CallReference classifications are observed where available; detailed reference flags remain unknown.",
             "Hopper's public Python API does not expose equivalent external or thunk classification in this dossier.",
@@ -730,7 +735,12 @@ def _analyze_function(document, params):
 def _dispatch(method, params):
     """Dispatch only the closed operation set implemented by REA's public tools."""
     if method == "health":
-        return {"name": "REA Hopper bridge", "version": "1.0.0", "run_id": REA_RUN_ID}
+        return {
+            "name": "REA Hopper bridge",
+            "version": "1.0.0",
+            "run_id": REA_RUN_ID,
+            "process_id": os.getpid(),
+        }
     if method in ("shutdown", "shutdown_document"):
         document = _session_document()
         if document is None:
@@ -993,15 +1003,46 @@ def _dispatch(method, params):
         observed = getter(address)
         return observed == comment or (comment == "" and observed is None)
     if method == "list_bookmarks":
-        return [{"address": _hex(item), "name": document.getBookmarkName(item)} for item in document.getBookmarks()]
+        return [{"address": _hex(item), "name": _bookmark_name(document, item)} for item in document.getBookmarks()]
     if method == "set_bookmark":
         address = _address(document, params.get("address"))
         _segment(document, address)
         name = params.get("name")
         if name is not None:
             _api_text(name, "Bookmark name")
-        document.setBookmarkAtAddress(address, name)
-        return document.hasBookmarkAtAddress(address)
+        has_bookmark = getattr(document, "hasBookmarkAtAddress", None)
+        if not callable(has_bookmark):
+            raise CapabilityUnavailableError(
+                "Hopper's public Python API does not expose hasBookmarkAtAddress"
+            )
+        exists = has_bookmark(address)
+        if name is None and exists:
+            # Omission means preserve the existing bookmark and its name.
+            return True
+        if not callable(getattr(document, "getBookmarkName", None)):
+            raise CapabilityUnavailableError(
+                "Hopper's public Python API does not expose getBookmarkName"
+            )
+        if name == "" and exists:
+            rename = getattr(document, "renameBookmarkAtAddress", None)
+            if not callable(rename):
+                raise CapabilityUnavailableError(
+                    "Hopper's public Python API does not expose renameBookmarkAtAddress"
+                )
+            rename(address, name)
+        else:
+            setter = getattr(document, "setBookmarkAtAddress", None)
+            if not callable(setter):
+                raise CapabilityUnavailableError(
+                    "Hopper's public Python API does not expose setBookmarkAtAddress"
+                )
+            setter(address, name)
+        if not has_bookmark(address):
+            return False
+        observed = _bookmark_name(document, address)
+        if name is None:
+            return observed is None or observed == ""
+        return observed == name or (name == "" and observed is None)
     if method == "unset_bookmark":
         address = _address(document, params.get("address"))
         # Permit removing a legacy orphan bookmark, but do not report success
@@ -1046,6 +1087,10 @@ def _serve_connection(connection):
                 ):
                     raise PermissionError("Invalid bridge capability")
                 authenticated = True
+                # The connection grace period only bounds unauthenticated idle
+                # clients. Native analysis and a connected owner's idle time
+                # remain unbounded after capability validation.
+                connection.settimeout(None)
                 _write_message(file, {"id": request_id, "event": {
                     "type": "progress",
                     "phase": "hopper_bridge",
@@ -1137,13 +1182,17 @@ def _run():
     server.bind(REA_SOCKET)
     os.chmod(REA_SOCKET, 0o600)
     server.listen(1)
+    # A bridge can start after its caller's startup/cleanup deadline. Bound
+    # the first accept as well as reconnects so an orphan cannot pin Hopper's
+    # dedicated Python thread and prevent later documents from starting REA.
+    server.settimeout(REA_RECONNECT_TIMEOUT_SECONDS)
     try:
         while True:
             try:
                 connection, _ = server.accept()
             except socket.timeout:
                 break
-            connection.settimeout(None)
+            connection.settimeout(REA_RECONNECT_TIMEOUT_SECONDS)
             if _serve_connection(connection):
                 break
             # Match REA's cleanup handshake budget without pinning Hopper's

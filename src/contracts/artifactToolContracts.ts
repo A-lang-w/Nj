@@ -9,6 +9,7 @@ import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 import { appleAssetCatalogInputSchema } from "../domain/apple/appleAssetCatalog.js";
 import { dylibResolutionInputSchema } from "../domain/apple/dylibResolution.js";
 import { keyedArchiveInputSchema } from "../domain/apple/keyedArchive.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { analysisDetailSchema } from "./analysisDetail.js";
 /** Exact caller boundary for deterministic artifact inventory. */
 export const artifactInventoryInputSchema = z.strictObject({
@@ -34,12 +35,12 @@ export const artifactExtractionInputSchema = z.strictObject({
 /** Provider input containing the destination chosen by the local adapter. */
 export const artifactExtractionExecutionSchema =
   artifactExtractionInputSchema.extend({
-    output_root: z.string().min(1),
+    output_root: localPathStringSchema,
   });
 
 const exampleInputSchema = z.record(z.string(), jsonValueSchema);
 const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
-  inspect_artifact: {},
+  inspect_artifact: { detail: "summary" },
   extract_artifact: {},
   decode_interface_builder: {},
   inspect_asset_catalog: { offset: 0, limit: 1000 },
@@ -79,7 +80,7 @@ const artifact = <
 export const ARTIFACT_TOOL_CONTRACTS = [
   artifact(
     "inspect_artifact",
-    "Inspect an active archive or application package in one call. By default returns the complete content-addressed artifact graph once, as the typed nested inventory Evidence, with root and integrity observations, integrity contradictions, hypotheses, unexplored branches, limitations, and next probes inline. Optional detail summary retains the complete inspection and returns its derived summary view; read exact paths or inventory pages with inspect_analysis_view using parent_evidence_id. This changes delivery, not inventory coverage. Read-only DMG mounting is used automatically on supported macOS hosts. Integrity mismatches fail by default; record-and-continue keeps mismatches explicitly untrusted. It does not extract files; use extract_artifact to materialize its regular contents.",
+    "Inspect an active archive or application package in one call. By default returns the complete content-addressed artifact graph once, as the typed nested inventory Evidence, with root and integrity observations, integrity contradictions, hypotheses, unexplored branches, limitations, and next probes inline. For PCK and large containers prefer detail summary: it retains the complete inspection and returns its derived summary view; read exact paths, batch occurrence/content IDs and selected fields with inspect_analysis_view using parent_evidence_id. This changes delivery, not inventory coverage. Read-only DMG mounting is used automatically on supported macOS hosts. Integrity mismatches fail by default; record-and-continue keeps mismatches explicitly untrusted. It does not extract files; use extract_artifact to materialize its regular contents.",
     artifactInspectionInputSchema,
   ),
   artifact(
@@ -89,11 +90,17 @@ export const ARTIFACT_TOOL_CONTRACTS = [
   ),
   artifact(
     "decode_interface_builder",
-    "Decode compiled storyboard and nib archives inside the active Apple app bundle, including keyed property lists and NIBArchive object tables, into a bounded object, hierarchy, and connection graph. This is static archive parsing; unrecognized archive classes and unresolved code handlers remain explicit unknowns.",
+    "Decode compiled storyboard and nib archives inside the active Apple app bundle, including keyed property lists and NIBArchive object tables, into a bounded object, hierarchy, and connection graph. This is static archive parsing; unrecognized archive classes and unresolved code handlers remain explicit unknowns. A full app graph is often several megabytes; detail summary retains it and returns documents with node, edge and coverage counts, then page rows, optionally one document's, with inspect_analysis_view kind interface-builder.",
     z.strictObject({
       max_documents: z.number().int().min(1).max(64).default(64),
       max_objects: z.number().int().min(1).max(20_000).default(20_000),
       max_connections: z.number().int().min(1).max(40_000).default(40_000),
+      detail: analysisDetailSchema
+        .unwrap()
+        .optional()
+        .describe(
+          "Omitted or complete returns the complete decoded graph Evidence. summary retains that complete Evidence in this session and returns its inspect_analysis_view summary; use normalized_result.parent_evidence_id for interface-builder pages.",
+        ),
     }),
   ),
   artifact(

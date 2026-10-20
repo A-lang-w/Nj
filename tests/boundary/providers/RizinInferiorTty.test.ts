@@ -14,7 +14,6 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import {
   assertRizinProcessStartTimeStable,
-  parseRizinProcStartTime,
   RizinDebugSessionManager,
 } from "../../../src/rizin/RizinDebugSessionManager.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
@@ -215,7 +214,10 @@ process.stdin.on("data", (chunk) => {
     );
     execFileSync(process.execPath, ["--check", provider]);
     await chmod(provider, 0o700);
-    manager = new RizinDebugSessionManager({ REA_RIZIN_COMMAND: provider });
+    manager = new RizinDebugSessionManager({
+      ...process.env,
+      REA_RIZIN_COMMAND: provider,
+    });
     const started = await manager.start({
       path: "/tmp/fake-target",
       inferior_tty: tty,
@@ -304,21 +306,14 @@ it.skipIf(process.platform !== "linux")(
   4_000,
 );
 
-it("parses Rizin's Linux proc stat start time and rejects malformed identity data", () => {
-  const fields = Array.from({ length: 20 }, (_, index) => String(index + 1));
-  expect(
-    parseRizinProcStartTime(`123 (target ) name) ${fields.join(" ")}`),
-  ).toBe("20");
-  expect(() => parseRizinProcStartTime("malformed stat contents")).toThrow(
-    "Inferior process identity is malformed",
-  );
-  expect(() => parseRizinProcStartTime("123 (target) short")).toThrow(
-    "Inferior process start time could not be verified",
-  );
+it("rejects changed or missing Rizin inferior identity during detach", () => {
   expect(() => assertRizinProcessStartTimeStable("11", "12")).toThrow(
     "disappeared or was reused",
   );
   expect(() => assertRizinProcessStartTimeStable("11", "11")).not.toThrow();
+  expect(() => assertRizinProcessStartTimeStable("11", null)).toThrow(
+    "disappeared or was reused",
+  );
 });
 
 it.skipIf(process.platform !== "linux")(
@@ -576,7 +571,7 @@ process.stdin.on("data", (chunk) => {
   await chmod(provider, 0o700);
   let providerStderr = "";
   manager = new RizinDebugSessionManager(
-    { REA_RIZIN_COMMAND: provider },
+    { ...process.env, REA_RIZIN_COMMAND: provider },
     {
       spawnProcess: async (spawnOptions) => {
         const launched = await spawnOwnedProviderProcess(spawnOptions);

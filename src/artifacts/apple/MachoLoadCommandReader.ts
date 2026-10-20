@@ -5,8 +5,10 @@ import type {
 } from "../../domain/apple/dylibResolution.js";
 import { machoCpuSubtypeBase } from "../../domain/apple/machoCpuIdentity.js";
 import {
+  machoLoadCommandAlignment,
   classifyFatContainerIdentity,
   readFatContainerHeader,
+  readMachoHeaderPrefixFacts,
   validateFatSliceIdentity,
   type FatSliceDeclaration,
 } from "../../domain/apple/machoContainer.js";
@@ -141,7 +143,14 @@ export const readMachoImage = async (
         : { status: "not-mach-o" };
     const view = viewOf(head);
     const magic = view.getUint32(0, false);
-    let header = readFatContainerHeader(head, size);
+    let header: ReturnType<typeof readFatContainerHeader>;
+    if (magic === FAT_MAGIC && size <= MAX_LOAD_COMMAND_BYTES) {
+      const complete = await readAt(0, size);
+      header =
+        complete.byteLength === size
+          ? readFatContainerHeader(complete, size)
+          : readFatContainerHeader(head, size);
+    } else header = readFatContainerHeader(head, size);
     if (header.state !== "not-fat") {
       if (header.state === "needs-data") {
         header = readFatContainerHeader(
@@ -169,8 +178,17 @@ export const readMachoImage = async (
         );
       }
       if (identity.state === "not-mach-o") return { status: "not-mach-o" };
-      if (identity.state === "malformed")
+      if (identity.state === "malformed") {
+        // A large CAFEBABE input whose bounded prefix resembles an invalid
+        // known-CPU FAT table remains unknown until its JVM identity can be
+        // checked; do not turn the resource limit into a malformed claim.
+        if (magic === FAT_MAGIC && size > MAX_LOAD_COMMAND_BYTES)
+          throw new MachoFormatIssue(
+            "unsupported",
+            "FAT/JVM identity is unresolved because the class identity scan exceeds the 16 MiB limit",
+          );
         throw new MachoFormatIssue(identity.category, identity.reason);
+      }
       if (identity.state === "needs-slice-header")
         return { status: "not-mach-o" };
       return {
@@ -198,13 +216,27 @@ const readFatSlices = async (
   declarations: readonly FatSliceDeclaration[],
 ): Promise<MachoSlice[]> => {
   const slices: MachoSlice[] = [];
+  // Keep validating after an unsupported slice so a later malformed slice is
+  // reported as malformed whatever the slice order.
+  let unsupported: MachoFormatIssue | undefined;
   for (const declaration of declarations) {
     const { offset, size: length, cpuType, cpuSubtype } = declaration;
-    const slice = await readSlice(readAt, offset, length, {
-      fatCpuType: cpuType,
-      fatCpuSubtype: cpuSubtype,
-      alignmentExponent: declaration.alignmentExponent,
-    });
+    let slice: MachoSlice;
+    try {
+      slice = await readSlice(readAt, offset, length, {
+        fatCpuType: cpuType,
+        fatCpuSubtype: cpuSubtype,
+        alignmentExponent: declaration.alignmentExponent,
+      });
+    } catch (cause: unknown) {
+      if (
+        !(cause instanceof MachoFormatIssue) ||
+        cause.status !== "unsupported"
+      )
+        throw cause;
+      unsupported ??= cause;
+      continue;
+    }
     const identityIssue = validateFatSliceIdentity(declaration, {
       cpuType: slice.cpu_type,
       cpuSubtype: slice.cpu_subtype,
@@ -213,6 +245,7 @@ const readFatSlices = async (
       throw new MachoFormatIssue("malformed", identityIssue);
     slices.push(slice);
   }
+  if (unsupported !== undefined) throw unsupported;
   return slices;
 };
 
@@ -227,8 +260,19 @@ const readSlice = async (
   } | null = null,
 ): Promise<MachoSlice> => {
   const header = viewOf(await readExact(readAt, base, 28, "Mach-O header"));
+  const headerBytes = new Uint8Array(
+    header.buffer,
+    header.byteOffset,
+    header.byteLength,
+  );
+  const identity = readMachoHeaderPrefixFacts(headerBytes).identity;
   const magic = header.getUint32(0, true);
   if (magic === MH_MAGIC_64 || magic === MH_MAGIC) {
+    if (identity === null)
+      throw new MachoFormatIssue(
+        "malformed",
+        `slice at offset ${base} has no Mach-O header`,
+      );
     const wide = magic === MH_MAGIC_64;
     const headerSize = wide ? 32 : 28;
     const commandCount = header.getUint32(16, true);
@@ -251,8 +295,8 @@ const readSlice = async (
     );
     const slice = decodeCommands(commands, {
       wide,
-      cpuType: header.getUint32(4, true),
-      cpuSubtype: header.getUint32(8, true),
+      cpuType: identity.cpuType,
+      cpuSubtype: identity.cpuSubtype,
       fileType: header.getUint32(12, true),
       commandCount,
       sliceOffset: base,
@@ -291,8 +335,6 @@ const decodeCommands = (
     readonly fatAlignmentExponent: number | null;
   },
 ): MachoSlice => {
-  // loader.h: load commands are 8-byte aligned in 64-bit images, 4 in 32-bit.
-  const alignment = header.wide ? 8 : 4;
   const view = viewOf(bytes);
   const slice: MachoSlice = {
     architecture: architectureName(header.cpuType, header.cpuSubtype),
@@ -322,7 +364,11 @@ const decodeCommands = (
       );
     const command = view.getUint32(offset, true);
     const size = view.getUint32(offset + 4, true);
-    if (size < 8 || size % alignment !== 0 || offset + size > bytes.byteLength)
+    if (
+      size < 8 ||
+      size % machoLoadCommandAlignment(header.wide) !== 0 ||
+      offset + size > bytes.byteLength
+    )
       throw new MachoFormatIssue(
         "malformed",
         `load command ${index} at offset ${offset} has invalid cmdsize ${size}`,
@@ -456,7 +502,8 @@ const commandString = (
       `load command ${index} has an unterminated string`,
     );
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(
+    // lc_str contains name/path data, so a leading U+FEFF is part of its identity.
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
       body.subarray(offset, end),
     );
   } catch {

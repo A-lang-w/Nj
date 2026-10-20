@@ -1,10 +1,17 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { access, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { expect, vi } from "vitest";
+import { expect, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { itWithCaptureCapability } from "./processCaptureCapability.js";
 
@@ -17,12 +24,14 @@ import { snapshotRoots } from "../../../src/process/capture/FilesystemSnapshot.j
 import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
 import { expectUnverifiedHostCleanup } from "../../support/hostCleanup.js";
 import {
+  ProcessCaptureResourceScope,
   type ProcessCaptureCleanupHost,
   observeLaunchedExecutable,
   observeSelectedExecutable,
 } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { parseProcessScenario } from "../../../src/domain/process/processScenario.js";
 import { emptyProcessCapture } from "../../../src/domain/process/processCapture.fixture.js";
+import { processSourceTruncated } from "../../../src/domain/process/processCaptureCoverage.js";
 import type { ProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
 
 const processFixture = fileURLToPath(
@@ -124,16 +133,58 @@ const terminateFixtureProcess = async (pid: number): Promise<void> => {
 };
 
 itWithCaptureCapability(
-  "keeps the process deadline bounded when the wall clock moves backward",
+  "retains a deleted observed file when its parent becomes a regular file",
   async () => {
-    const wallStart = Date.now();
-    let wallReads = 0;
-    const now = vi.spyOn(Date, "now").mockImplementation(() => {
-      wallReads += 1;
-      return wallReads === 1 ? wallStart : wallStart - 60_000 + wallReads;
-    });
-    const controller = new AbortController();
-    const fallback = setTimeout(() => controller.abort(), 1_500);
+    const root = await createTestTempDirectory("rea-observed-parent-type-");
+    const payload = '{"result":42}\n';
+    await mkdir(join(root, "reports"));
+    await writeFile(join(root, "reports", "final.json"), payload);
+    const result = await captureProcessScenario(
+      parseProcessScenario({
+        executable: process.execPath,
+        arguments: [
+          "-e",
+          `const fs = require('node:fs');
+           fs.renameSync('reports', 'saved-reports');
+           fs.writeFileSync('reports', 'regular file'); console.log('finished');`,
+        ],
+        working_directory: root,
+        filesystem_observation_paths: [join(root, "reports", "final.json")],
+        timeout_ms: 5_000,
+        idle_timeout_ms: 5_000,
+        settle_ms: 100,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.exit).toMatchObject({ code: 0, reason: "exited" });
+    expect(result.value.filesystem_effects).toContainEqual(
+      expect.objectContaining({
+        path: "root_0:.",
+        status: "deleted",
+        before: expect.objectContaining({
+          type: "file",
+          sha256: createHash("sha256").update(payload).digest("hex"),
+        }),
+        after: null,
+      }),
+    );
+    expect(
+      await readFile(join(root, "saved-reports", "final.json"), "utf8"),
+    ).toBe(payload);
+  },
+);
+
+itWithCaptureCapability(
+  "keeps the process deadline bounded when the wall clock moves backward",
+  async ({ signal }) => {
+    let wallNow = Date.now();
+    const now = vi.spyOn(Date, "now").mockImplementation(() => wallNow);
+    const resources = new ProcessCaptureResourceScope();
+    let reachedRunning = false;
+    onTestFinished(async () => {
+      now.mockRestore();
+      await resources.close();
+    }, 10_000);
     try {
       const result = await captureProcessScenario(
         parseProcessScenario({
@@ -143,13 +194,25 @@ itWithCaptureCapability(
           timeout_ms: 100,
           idle_timeout_ms: 5_000,
         }),
-        controller.signal,
+        signal,
+        process.platform,
+        process.env,
+        undefined,
+        undefined,
+        {
+          async report(update) {
+            if (update.phase === "running" && !reachedRunning) {
+              reachedRunning = true;
+              wallNow -= 60_000;
+            }
+          },
+        },
+        resources,
       );
-      expect(result.ok).toBe(true);
-      if (!result.ok) throw result.error;
-      expect(result.value.exit.reason).toBe("timeout");
+      expect(reachedRunning).toBe(true);
+      const { capture } = captureObservations(result);
+      expect(capture.exit.reason).toBe("timeout");
     } finally {
-      clearTimeout(fallback);
       now.mockRestore();
     }
   },
@@ -304,10 +367,6 @@ itWithCaptureCapability(
     const cleanupHost: ProcessCaptureCleanupHost = {
       platform: process.platform,
       cleanupProcessGroup: async () => ({
-        cleaned: false,
-        reason: "fixture cleanup could not be verified",
-      }),
-      verifyTokenOwnedProcesses: async () => ({
         cleaned: false,
         reason: "fixture cleanup could not be verified",
       }),
@@ -493,7 +552,7 @@ itWithCaptureCapability(
         file.path.endsWith(":escape"),
       );
       expect(escaped?.symlink_target).toBe("/etc/passwd");
-      expect(capture.truncated).toBe(false);
+      expect(processSourceTruncated(capture, "filesystem")).toBe(false);
       expect(JSON.stringify(capture.files_after)).not.toContain(root);
       expect(
         capture.files_after.some((file) => file.path.includes("passwd")),
@@ -534,7 +593,7 @@ itWithCaptureCapability(
     }
 
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 50);
+    let reachedRunning = false;
     const cancelled = await captureProcessScenario(
       parseProcessScenario({
         executable: process.execPath,
@@ -544,9 +603,43 @@ itWithCaptureCapability(
         idle_timeout_ms: 5_000,
       }),
       controller.signal,
+      process.platform,
+      process.env,
+      undefined,
+      undefined,
+      {
+        async report(update) {
+          if (update.phase === "running") {
+            reachedRunning = true;
+            controller.abort();
+          }
+        },
+      },
     );
     if (cancelled.ok) throw new Error("expected cancellation");
-    expect(cancelled.error.message).toContain("cancelled");
+    expect(reachedRunning).toBe(true);
+    if (!(cancelled.error instanceof ProcessCaptureError))
+      throw cancelled.error;
+    if (cancelled.error.cleanupIncomplete)
+      expectUnverifiedHostCleanup(cancelled.error);
+    else
+      expect(cancelled.error.cleanupReport).toMatchObject({
+        owned_process_group: { state: "cleaned" },
+        terminal_renderer: { state: "cleaned" },
+        temporary_root: { state: "cleaned" },
+      });
+    const cancellation = cancelled.error.cleanupIncomplete
+      ? cancelled.error.cause
+      : cancelled.error;
+    expect(cancellation, cancelled.error.message).toMatchObject({
+      reason: "cancelled",
+      userCategory: "cancelled",
+    });
+    expect(cancelled.error.partialObservation).toMatchObject({
+      observations: {
+        exit: { state: "available", value: { reason: "cancelled" } },
+      },
+    });
   },
 );
 

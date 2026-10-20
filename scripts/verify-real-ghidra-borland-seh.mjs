@@ -76,7 +76,7 @@ try {
   await writeFile(target, bytes);
   await writeFile(
     seeds,
-    "0x401080\tfunction\trea_seh_rtl\n0x401090\tfunction\trea_seh_message\n0x4010f0\tfunction\trea_seh_other_string_reference\n",
+    "0x401080\tfunction\t_HandleAnyException\n0x401090\tfunction\trea_seh_message\n0x4010f0\tfunction\trea_seh_other_string_reference\n",
   );
   // Ghidra compiles each script directory as a separate bundle. Copy the exact
   // producer and probe into one private bundle; do not alter the installation.
@@ -177,6 +177,45 @@ try {
       await call("procedure_callees", { procedure: "0x401000" }),
     );
     assert.ok(callees.normalized_result.includes("0x401090"));
+    const references = parseEvidence(
+      await call("procedure_references", {
+        procedure: "0x401000",
+        direction: "outgoing",
+      }),
+    );
+    assert.ok(
+      references.limitations.some(
+        (text) =>
+          text.includes("SEH registration") && text.includes("included"),
+      ),
+    );
+    await call("close_binary", {});
+    await writeFile(
+      seeds,
+      "0x401080\tfunction\tunidentified_shared_handler\n0x401090\tfunction\trea_seh_message\n0x4010f0\tfunction\trea_seh_other_string_reference\n",
+    );
+    await call("open_binary", { path: target, provider_id: "ghidra" });
+    const omitted = parseEvidence(
+      await call("procedure_callees", { procedure: "0x401000" }),
+    );
+    assert.equal(omitted.relationship_coverage.status, "partial");
+    assert.ok(
+      omitted.relationship_coverage.diagnostics.some((text) =>
+        text.includes("indirect calls remain unknown"),
+      ),
+    );
+    assert.ok(!omitted.normalized_result.includes("0x401090"));
+    const omittedReferences = parseEvidence(
+      await call("procedure_references", {
+        procedure: "0x401000",
+        direction: "outgoing",
+      }),
+    );
+    assert.ok(
+      omittedReferences.limitations.some((text) =>
+        text.includes("No supplied Borland RTL identity"),
+      ),
+    );
     await call("close_binary", {});
   } finally {
     try {
@@ -192,6 +231,9 @@ try {
     sha256,
   );
   assert.deepEqual(await readdir(runtime), []);
+  const verifierRun = await completeVerifierRun(run);
+  assert.equal(verifierRun.process_lineage.status, "verified");
+  assert.deepEqual(verifierRun.process_lineage.descendants, []);
   verifiedCleanup = true;
   console.log(
     JSON.stringify({
@@ -201,6 +243,9 @@ try {
       host: `${process.platform}/${process.arch}`,
       checks: [
         "orphan_handler_recovered",
+        "ordinary_jump_continuation_rejected",
+        "procedure_reference_provenance",
+        "partial_coverage_retains_indirect_call_diagnostics",
         "handler_only_string_and_call",
         "containing_procedure",
         "nonzero_fs_rejected",
@@ -211,7 +256,7 @@ try {
       ],
       verification_scope:
         "Real Ghidra on a source-owned PE32; Windows host execution and the issue's full public binary are separate coverage.",
-      verifier_run: await completeVerifierRun(run),
+      verifier_run: verifierRun,
     }),
   );
 } finally {

@@ -1,5 +1,16 @@
 # Implementation plan
 
+## Review revision contract
+
+Before extending a function across a non-fallthrough handler jump, require a
+caller-supplied or imported Borland RTL symbol;
+an arbitrary executable destination is insufficient. Unknown layouts retain
+an explicit omission. Keep SEH provenance on procedure-reference observations,
+merge omission coverage with existing computed-call diagnostics at the Java
+producer, and require verified empty process lineage before verifier success.
+Integrate these facts into main's current boundary-observation/source manifest
+contracts and cover a shared-handler jump followed by unrelated instructions.
+
 1. Add a Ghidra-owned producer that reads decoded instruction encodings and
    tracks exact adjacent zero-offset registration patterns. Use Ghidra's
    disassembler with a restriction set containing only unowned gaps; disable
@@ -20,24 +31,22 @@
 
 ## Executed validation
 
-On upstream `3620074b3`, Node 24.18.0, Ghidra 12.1.4, JDK 21 and darwin/arm64:
+Review revision on upstream `1629266e3`, Node 24.18.0, Ghidra 12.1.4,
+JDK 21 and darwin/arm64:
 
-- Real source-owned PE32 CLI/MCP verification passed: recovered handler,
-  handler-only string/call, containing procedure, nonzero FS rejection,
-  independent owner preservation, immutable target and empty owned runtime.
-  The observe-only policy was exercised on POSIX; a Windows host was not run.
-- 117 function/provider/snapshot/MCP tests and 36 client lifecycle tests
-  passed, including retry after acknowledged shutdown and retained ownership
-  when full group verification still fails. Static checks passed.
-- Static analysis of the public AUTORIZADOR target from issue #2926 used
-  SHA-256 `1398d55a71a9e4ac04f7a12f5f1bec9d0b4343fbd1c0f8635938d261f18fa363`
-  and one function seed at `0x535300`. The program was never executed.
-  Address `0x5355eb` now resolves to `0x535300`; the body is
-  `0x535300..0x5356be`, with handler string references at `0x5355f8` and
-  `0x535643`. Handler `0x5356bf` remains outside that span and explicitly
-  limits callee coverage to partial. This is bounded recovery, not a claim
-  that all Delphi exception patterns are resolved.
-- `docs:check` is blocked by unchanged Greek README link drift tracked in
-  https://github.com/morluto/rea/issues/3022.
-- Full package verification passed, including the shipped Java helper,
-  archive/install, CLI, MCP, setup/uninstall and verified empty process lineage.
+- 354 tests passed across function values, provider behavior, snapshot/MCP,
+  client lifecycle, bridge-source ownership and packed-bridge suites.
+- Real CLI/MCP and producer-probe verification passed, including rejecting an
+  ordinary shared-handler jump followed by unrelated bytes, recovery with a
+  supplied RTL identity, procedure-reference provenance, partial coverage with
+  indirect-call diagnostics, immutable target and verified empty lineage.
+- Static checks and docs checks passed. The old Greek README drift (#3022)
+  is resolved in current main.
+- Full package verification passed, including installation/update, CLI/MCP,
+  setup/uninstall and verified empty process lineage.
+- The public executable reproduction recorded before review used the previous
+  permissive jump heuristic. It has not been rerun with the current RTL-identity
+  gate and does not establish the current branch's public-target recovery.
+  Windows-host execution and full public-target coverage remain unverified.
+- No controlled speed, live-model token or process-family memory comparison was
+  performed for this pass; no performance improvement is claimed.

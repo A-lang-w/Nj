@@ -14,6 +14,11 @@ public class ReaBorlandSehProbe extends GhidraScript {
         require(!original.contains(at(0x401025)), "fixture must contain a real orphan catch gap");
         var owner = currentProgram.getFunctionManager().getFunctionAt(at(0x401080));
         if (owner == null) { disassemble(at(0x401080)); owner = createFunction(at(0x401080), "rea_seh_rtl"); }
+        owner.setName("unidentified_shared_handler", ghidra.program.model.symbol.SourceType.USER_DEFINED);
+        var unverified = ReaGhidraBorlandSeh.analyze(currentProgram, monitor, true);
+        require(!function.getBody().contains(at(0x401025)), "unrelated bytes after a normal JMP were absorbed");
+        require(!unverified.get(function.getEntryPoint()).omissions().isEmpty(), "unverified continuation omission lost");
+        owner.setName("_HandleAnyException", ghidra.program.model.symbol.SourceType.USER_DEFINED);
         disassemble(at(0x401090));
         if (currentProgram.getFunctionManager().getFunctionAt(at(0x401090)) == null)
             createFunction(at(0x401090), "rea_seh_message");
