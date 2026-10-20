@@ -871,6 +871,9 @@ export class GdbSessionManager {
         typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk,
       ),
     );
+    launched.process.stdout?.on("error", (cause: Error) =>
+      this.#failProtocol(session, `GDB stdout stream failed: ${cause.message}`),
+    );
     if (launched.process.stdout === null) settleStdout();
     else launched.process.stdout.once("end", settleStdout);
     launched.process.stdin?.on("error", (cause: Error) =>
@@ -1690,6 +1693,9 @@ export class GdbSessionManager {
       const lineBytes =
         session.bufferBytes - (newline >= 0 && piece.at(-1) === 0x0d ? 1 : 0);
       if (lineBytes > MAX_MI_LINE_BYTES) {
+        session.recentRecordsTruncated = true;
+        for (const pending of session.pending.values())
+          pending.outputTruncated = true;
         this.#failProtocol(
           session,
           "GDB emitted an MI line exceeding the 16 MiB protocol limit.",
@@ -1744,7 +1750,19 @@ export class GdbSessionManager {
       }
       if (line.startsWith("*running")) session.inferiorRunning = true;
       if (line.startsWith("*stopped")) {
-        session.inferiorRunning = false;
+        const stoppedThreads =
+          /(?:^|,)stopped-threads=("all"|\[[^\]]*\])(?:,|$)/u.exec(line)?.[1];
+        const stoppedThreadId = /(?:^|,)thread-id="([^"]+)"(?:,|$)/u.exec(
+          line,
+        )?.[1];
+        const confirmsAllThreadsStopped =
+          stoppedThreads === '"all"' ||
+          (stoppedThreads === undefined && stoppedThreadId === undefined);
+        if (confirmsAllThreadsStopped) session.inferiorRunning = false;
+        // In non-stop mode a stop can identify one thread while peers remain
+        // active. Keep the session running until MI explicitly reports all
+        // threads stopped (or an all-stop event omits per-thread fields).
+        if (session.inferiorRunning) continue;
         for (const [token, pending] of session.pending) {
           if (pending.interrupt) {
             pending.interruptStopObserved = true;
@@ -2529,6 +2547,8 @@ export const commandMayChangeInferiorOutput = (command: string): boolean => {
   const firstToken = /^\s*([^\s;]+)/u.exec(command)?.[1]?.toLowerCase();
   const mayBeTtyCommand =
     firstToken !== undefined && "tty".startsWith(firstToken);
+  const mayBeSourceCommand =
+    firstToken !== undefined && "source".startsWith(firstToken);
   const mayDefineAlias =
     firstToken !== undefined && "alias".startsWith(firstToken);
   const mayRunWithOutputRedirection =
@@ -2538,11 +2558,10 @@ export const commandMayChangeInferiorOutput = (command: string): boolean => {
   return (
     maySetInferiorTty ||
     mayBeTtyCommand ||
+    mayBeSourceCommand ||
     mayDefineAlias ||
     /\binferior-tty\b/iu.test(command) ||
-    /^\s*(?:wit(?:h)?(?:\s|$)|tty(?:\s|$)|source\b|py\w*|define\b)/iu.test(
-      command,
-    ) ||
+    /^\s*(?:wit(?:h)?(?:\s|$)|tty(?:\s|$)|py\w*|define\b)/iu.test(command) ||
     mayRunWithOutputRedirection
   );
 };

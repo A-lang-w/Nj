@@ -140,6 +140,7 @@ it.each([
   ["inferior-tty /tmp/output", true],
   ["tty /dev/pts/2", true],
   ["source commands.gdb", true],
+  ["sourc commands.gdb", true],
   ["python print(1)", true],
   ["define start\nrun", true],
   ["run > /tmp/output", true],
@@ -1239,6 +1240,32 @@ const managerWithFakeSpawner = (
   managers.push(manager);
   return manager;
 };
+
+it("routes GDB stdout stream errors through protocol failure handling", async () => {
+  let commandWritten!: () => void;
+  const written = new Promise<void>((resolve) => {
+    commandWritten = resolve;
+  });
+  const fake = createFakeSpawner((_child, _token, command) => {
+    if (command.includes("auto-load off")) _child.stdout.write("1^done\n");
+    else commandWritten();
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess);
+  const started = await expectGdbSessionStarted(manager);
+  const child = fake.children[0]!;
+  const executing = manager.execute(started.value.session_id, "waiting");
+  await written;
+
+  child.stdout.emit("error", new Error("simulated stdout read failure"));
+
+  await expect(executing).resolves.toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCapabilityUnavailableError",
+      message: expect.stringContaining("simulated stdout read failure"),
+    },
+  });
+});
 
 const startWithVerifiedInferiorTty = async (
   tty: string,
@@ -3110,8 +3137,18 @@ process.stdin.on('data', (chunk) => {
   const failed = await manager.execute(started.value.session_id, "bad-record");
 
   expect(failed.ok).toBe(false);
-  if (!failed.ok)
+  if (!failed.ok) {
     expect(failed.error._tag).toBe("AnalysisCapabilityUnavailableError");
+    expect(failed.error.partialObservation).toMatchObject({
+      normalized_result: {
+        output_truncated: true,
+        completion_status: "unknown",
+      },
+    });
+  }
+  expect(
+    manager.status(started.value.session_id)?.recent_mi_records_truncated,
+  ).toBe(true);
 });
 
 it("rejects a partial MI line that exceeds the protocol limit", async () => {
@@ -3419,6 +3456,63 @@ it.each(["reply-first", "stop-first"] as const)(
     });
   },
 );
+
+it("keeps running threads interruptible after a non-stop partial stop", async () => {
+  let running!: () => void;
+  const observedRun = new Promise<void>((resolve) => {
+    running = resolve;
+  });
+  let interruptSent!: (token: string) => void;
+  const observedInterrupt = new Promise<string>((resolve) => {
+    interruptSent = resolve;
+  });
+  const fake = createFakeSpawner((child, token, command) => {
+    if (command.includes('console "run"')) {
+      child.stdout.write(`${token}^running\n*running,thread-id="all"\n`);
+      running();
+    } else if (command.includes("interrupt")) interruptSent(token);
+    else
+      child.stdout.write(
+        command.includes("list-thread-groups")
+          ? `${token}^done,groups=[]\n`
+          : `${token}^done\n`,
+      );
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    commandTimeoutMs: 500,
+  });
+  const started = await expectGdbSessionStarted(manager);
+  const child = fake.children[0]!;
+  const originalKill = child.kill.bind(child);
+  child.kill = (signal) => {
+    if (signal !== "SIGINT") return originalKill(signal);
+    child.killSignals.push(signal);
+    return true;
+  };
+  const run = manager.execute(started.value.session_id, "run");
+  await observedRun;
+  child.stdout.write(
+    '*stopped,reason="breakpoint-hit",thread-id="1",stopped-threads=["1"]\n',
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  let interruptSettled = false;
+  const interrupt = manager.execute(started.value.session_id, "interrupt");
+  void interrupt.then(() => {
+    interruptSettled = true;
+  });
+  const token = await observedInterrupt;
+  child.stdout.write(`${token}^done\n`);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(interruptSettled).toBe(false);
+
+  child.stdout.write(
+    '*stopped,reason="signal-received",signal-name="SIGINT",stopped-threads="all"\n',
+  );
+  await expect(interrupt).resolves.toMatchObject({ ok: true });
+  await expect(run).resolves.toMatchObject({ ok: true });
+  expect(child.killSignals).toEqual(["SIGINT"]);
+});
 
 it.each(["cancel", "timeout"] as const)(
   "retains a %s running command until async stop before cleanup",
