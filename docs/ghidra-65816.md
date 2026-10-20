@@ -57,6 +57,8 @@ If you load a headered `.smc` at `0x8000` without removing the first 512 bytes, 
 
 ## Limitations
 
+- The real provider path (with a community 65816 extension installed) has not yet been verified end-to-end. Stock Ghidra 12.1.4 has no 65816 language; the launch stops with `Unsupported language: 65816:LE:24:default` until an extension supplies one.
+- Raw 65816 is not supported on Windows hosts. The provider reports `target_format_unsupported` for non-PE raw architectures other than 6502.
 - No automatic memory map / LoROM-HiROM detection. A simple contiguous raw load does not implement SNES banked addressing; addresses beyond the first bank may not match a real cartridge mapping.
 - `0x8000` is not a correct general load base for a full HiROM image.
 - No multi-file or interleaved ROM support.
