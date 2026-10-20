@@ -507,6 +507,13 @@ export class RizinDebugSessionManager {
           }
         }
         if (session.pendingInferiorPids.size > 0) return false;
+        // A complete inventory can remain temporarily incomplete when one of
+        // its PIDs could not be identified. Once every retained PID is proven
+        // absent, the inventory is reconciled; keep that proof across cleanup
+        // retries so retained identities are checked again if they are still
+        // alive on a later attempt.
+        if (session.inferiorInventoryRowsComplete)
+          session.inferiorInventoryComplete = true;
         const ended = await verifyOwnedInferiorsEnded(
           session.knownInferiorIdentities.values(),
           this.#readProcessStartTime,
@@ -725,6 +732,7 @@ export class RizinDebugSessionManager {
       // Arbitrary debugger commands can create or replace inferiors. Discard
       // the prior inventory before any command bytes reach the provider.
       session.inferiorInventoryComplete = false;
+      session.inferiorInventoryRowsComplete = false;
       session.knownInferiorIdentities.clear();
       commandSent = true;
       session.commandCaptureActive = true;

@@ -2265,7 +2265,7 @@ process.stdin.on("data", (chunk) => {
       process.stdout.write(JSON.stringify(rows) + "\\0");
     }
     else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
-    else if (line === "o- 12") process.kill(${detached.pid}, "SIGTERM");
+    else if (line === "o- 12") process.stdout.write("detached\\0");
     else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
     else process.stdout.write("\\0");
   }
@@ -2280,6 +2280,7 @@ process.stdin.on("data", (chunk) => {
     let cleanupAfterDebuggerExit: boolean | undefined;
     let cleanupWhileUnresolvedInferiorAlive: boolean | undefined;
     let cleanupAfterUnresolvedInferiorExit: boolean | undefined;
+    let cleanupAfterKnownInferiorExit: boolean | undefined;
     let stopCalls = 0;
     const manager = new RizinDebugSessionManager(
       { ...process.env, REA_RIZIN_COMMAND: provider },
@@ -2310,6 +2311,9 @@ process.stdin.on("data", (chunk) => {
           if (stopCalls++ > 0) {
             cleanupAfterUnresolvedInferiorExit =
               (await session.verifyInferiorsEndedAfterExit?.()) === true;
+            if (stopCalls > 2)
+              cleanupAfterKnownInferiorExit =
+                cleanupAfterUnresolvedInferiorExit;
             return cleanupAfterUnresolvedInferiorExit
               ? { status: "stopped" }
               : { status: "incomplete", reason: "unresolved inferior remains" };
@@ -2321,11 +2325,6 @@ process.stdin.on("data", (chunk) => {
           }
           inventoryUnknownAfterFailedRead =
             session.inferiorStateUnknown?.() ?? true;
-          // Model the stale-complete state called out by the review. The
-          // pending-PID guard must independently prevent false cleanup success.
-          expect(Reflect.set(session, "inferiorInventoryComplete", true)).toBe(
-            true,
-          );
           session.launched.process.kill("SIGTERM");
           expect(await session.supervisor.waitForExit(1_000)).toBe(true);
           cleanupAfterDebuggerExit =
@@ -2362,10 +2361,20 @@ process.stdin.on("data", (chunk) => {
     );
     unresolved.kill("SIGTERM");
     await unresolvedExit;
+    const unresolvedRetry = await manager.retryCleanupFailures();
+
+    expect(unresolvedRetry.ok).toBe(false);
+    expect(cleanupAfterUnresolvedInferiorExit).toBe(false);
+    expect(detached.exitCode).toBeNull();
+    const knownExit = new Promise<void>((resolveExit) =>
+      detached.once("exit", () => resolveExit()),
+    );
+    detached.kill("SIGTERM");
+    await knownExit;
     const retried = await manager.retryCleanupFailures();
 
     expect(retried).toEqual({ ok: true, value: null });
-    expect(cleanupAfterUnresolvedInferiorExit).toBe(true);
+    expect(cleanupAfterKnownInferiorExit).toBe(true);
     expect(manager.status(started.value.session_id)).toBeUndefined();
   },
 );
