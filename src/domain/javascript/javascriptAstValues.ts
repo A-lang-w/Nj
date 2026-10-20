@@ -86,6 +86,47 @@ export const isPrimitiveJavaScriptExpression = (node: t.Node): boolean => {
   return true;
 };
 
+/** Intrinsic scalar slots on a newly created callable, before external writes. */
+export const isPrimitiveJavaScriptCallableProperty = (
+  node: t.Node,
+  path: readonly unknown[],
+): boolean => {
+  if (!t.isFunction(node) && !t.isClass(node)) return false;
+  if (
+    !(
+      (path.length === 1 && (path[0] === "name" || path[0] === "length")) ||
+      (path.length === 2 && path[0] === "name" && path[1] === "length")
+    )
+  )
+    return false;
+  if (
+    t.isClass(node) &&
+    ((node.decorators?.length ?? 0) > 0 ||
+      node.body.body.some((member) => {
+        if (
+          t.isStaticBlock(member) ||
+          ("decorators" in member && (member.decorators?.length ?? 0) > 0)
+        )
+          return true;
+        if (!("static" in member) || !member.static) return false;
+        if (!t.isClassMethod(member) && !t.isClassProperty(member)) return true;
+        const key = semanticStaticPropertyKey(member.key, member.computed);
+        if (key === null || key === path[0]) return true;
+        // Unrelated method bodies are not executed at class definition. Only
+        // inert field initializers can prove they leave the metadata intact.
+        return (
+          t.isClassProperty(member) &&
+          member.value != null &&
+          !readExactJavaScriptLiteral(member.value).found &&
+          !t.isFunction(member.value)
+        );
+      }))
+  )
+    // Static definitions/initializers or decorators can replace the own slots.
+    return false;
+  return true;
+};
+
 /** Read one syntax-level primitive only when its value is exact. */
 export const readExactJavaScriptLiteral = (
   node: t.Node,

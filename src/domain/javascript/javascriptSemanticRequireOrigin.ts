@@ -17,6 +17,7 @@ import {
 } from "./javascriptSemanticState.js";
 import {
   isPrimitiveJavaScriptExpression,
+  isPrimitiveJavaScriptCallableProperty,
   javaScriptExpressionValue,
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
@@ -1218,12 +1219,15 @@ const writesModuleRequire = (
             readAt,
             ...context,
           });
-      } else if (
-        (!callee && (t.isFunction(value) || t.isClass(value))) ||
-        t.isNewExpression(value)
-      ) {
+      } else if (t.isFunction(value) || t.isClass(value)) {
+        // Binding/member effects above still own overwritten metadata. Resolve
+        // the selected intrinsic scalar before treating the whole callable as
+        // a value that unknown code can invoke.
+        if (isPrimitiveJavaScriptCallableProperty(value, path)) continue;
         // A callable value can expose captures or results when unknown code
         // invokes it. Merely allocating the callable proves neither absent.
+        if (!callee || written) return true;
+      } else if (t.isNewExpression(value)) {
         // Construction can expose instance fields even when an explicit return
         // is primitive or a return branch is skipped. Ordinary function return
         // references cannot prove that the resulting instance is module-free.

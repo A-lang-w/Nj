@@ -90,6 +90,19 @@ const writeReceiverReviewSources = async (root: string): Promise<void> => {
      Object.assign({},()=>module);require('fs').readFileSync('wrong-callback');`,
   );
   await writeFile(
+    join(root, "callable-scalar.cjs"),
+    `const label=function named(){};
+     Object.assign=(t,key)=>{t[key]=1};Object.assign({},label.name);
+     require('fs').readFileSync('callable-name.json');`,
+  );
+  await writeFile(
+    join(root, "callable-property-reference.cjs"),
+    `const label=function named(){};
+     Object.defineProperty(label,'name',{value:module});
+     Object.assign=(t,v)=>{v.require=replacement};Object.assign({},label.name);
+     require('fs').readFileSync('wrong-callable-name');`,
+  );
+  await writeFile(
     join(root, "commonjs-bound-callback.cjs"),
     `Object.assign=(t,get)=>{get().require=replacement};
      const assign=Object.assign.bind(null,{},()=>module);
@@ -254,6 +267,7 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     "before-write.json",
     "before.json",
     "bound-separate.json",
+    "callable-name.json",
     "commonjs-primitive-union.json",
     "constructed-receiver.json",
     "copied-unrelated.json",

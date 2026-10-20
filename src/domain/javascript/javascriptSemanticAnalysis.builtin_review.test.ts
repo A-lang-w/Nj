@@ -8,6 +8,11 @@ import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import { namespaceReceiverCases } from "./javascriptNamespaceReceiver.fixture.js";
 import {
+  callableScalarPropertyCases,
+  callableReferencePropertyCases,
+  opaqueBoundCallablePropertyCase,
+} from "./javascriptCallableProperties.fixture.js";
+import {
   commonJsCallbackExposureCases,
   commonJsPrimitiveReceiverCases,
   commonJsUncertainReceiverCases,
@@ -1874,3 +1879,32 @@ it.each(commonJsPrimitiveReceiverCases)(
     ).toEqual(["kept"]);
   },
 );
+
+it.each(callableScalarPropertyCases)(
+  "preserves scalar properties selected from callable values: %s",
+  (body) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `${body}require('fs').readFileSync('kept');`,
+      ).configurationOperations.map(({ key }) => key),
+    ).toEqual(["kept"]);
+  },
+);
+
+it.each(callableReferencePropertyCases)(
+  "retains module exposure through overridden callable properties: %s",
+  (body) => {
+    expect(
+      analyzeJavaScriptSemantics(`${body}require('fs').readFileSync('wrong');`)
+        .configurationOperations,
+    ).toEqual([]);
+  },
+);
+
+it("retains uncertainty for a bound replacement without argument-capture proof", () => {
+  expect(
+    analyzeJavaScriptSemantics(
+      `${opaqueBoundCallablePropertyCase}require('fs').readFileSync('unproven');`,
+    ).configurationOperations,
+  ).toEqual([]);
+});
