@@ -832,8 +832,24 @@ const clientConfigurationDesired = (
 const codexToolEntry = (
   value: unknown,
 ): Record<string, unknown> | undefined => {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (typeof value !== "object" || value === null) {
     return undefined;
+  }
+  if (Array.isArray(value)) {
+    if (value.length < 1 || value.length > 2) return undefined;
+    const [rawApproval, rawLimit] = value;
+    const entry: Record<string, unknown> = {};
+    const parsedApproval = codexApprovalModeSchema.safeParse(rawApproval);
+    if (parsedApproval.success) {
+      entry.approval_mode = parsedApproval.data;
+    }
+    if (rawLimit !== undefined && !hasTomlFloatProperty(value, "1")) {
+      const parsedLimit = codexToolOutputTokenLimitSchema.safeParse(rawLimit);
+      if (parsedLimit.success) {
+        entry.output_token_limit = parsedLimit.data;
+      }
+    }
+    return Object.keys(entry).length > 0 ? entry : undefined;
   }
   const rawEntries = Object.entries(value);
   if (rawEntries.length === 0) {

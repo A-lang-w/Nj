@@ -441,6 +441,7 @@ describe("Node-wrapped registration policy", () => {
   );
 
   registerCodexClientToolPolicyTests();
+  registerCodexPerToolSequenceTests();
   registerOtherClientToolPolicyTests();
 });
 
@@ -507,6 +508,15 @@ function registerCodexClientToolPolicyTests(): void {
     "[mcp_servers.rea.tools.binary_session]\noutput_token_limit = 1e3",
     'default_tools_approval_mode = "unsupported"',
     "default_tools_approval_mode = 12",
+    "[mcp_servers.rea.tools]\nbinary_session = []",
+    '[mcp_servers.rea.tools]\nbinary_session = ["approve", 12, "extra"]',
+    '[mcp_servers.rea.tools]\nbinary_session = ["unsupported", 12]',
+    "[mcp_servers.rea.tools]\nbinary_session = [12]",
+    '[mcp_servers.rea.tools]\nbinary_session = ["approve", "bad"]',
+    '[mcp_servers.rea.tools]\nbinary_session = ["approve", 0]',
+    '[mcp_servers.rea.tools]\nbinary_session = ["approve", -10]',
+    '[mcp_servers.rea.tools]\nbinary_session = ["approve", 1.0]',
+    '[mcp_servers.rea.tools]\nbinary_session = ["approve", 1e3]',
   ])(
     "reports malformed Codex tools setting %s as invalid",
     async (toolsFragment) => {
@@ -539,6 +549,35 @@ function registerCodexClientToolPolicyTests(): void {
     await writeFile(
       join(home, ".codex/config.toml"),
       `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 450\n\n[mcp_servers.rea.tools.binary_session]\napproval_mode = "approve"\noutput_token_limit = 32000\ncustom_future_flag = true\n`,
+    );
+
+    const statuses = await readClientRegistrationStatuses(home, entry, {
+      environment: {},
+    });
+
+    expect(statuses).toEqual([
+      expect.objectContaining({
+        client: "codex",
+        state: "aligned",
+        remediation: null,
+      }),
+    ]);
+  });
+}
+
+function registerCodexPerToolSequenceTests(): void {
+  it.each([
+    'binary_session = ["approve"]',
+    'binary_session = ["writes"]',
+    'binary_session = ["auto", 32000]',
+    'binary_session = ["prompt", 12]',
+  ])("accepts Codex per-tool sequence setting %s", async (toolSetting) => {
+    const home = await createTestTempDirectory("rea-codex-seq-tool-");
+    await mkdir(join(home, ".codex"));
+    const entry = resolve("scripts/rea.mjs");
+    await writeFile(
+      join(home, ".codex/config.toml"),
+      `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 450\n\n[mcp_servers.rea.tools]\n${toolSetting}\n`,
     );
 
     const statuses = await readClientRegistrationStatuses(home, entry, {
@@ -613,6 +652,38 @@ function registerOtherClientToolPolicyTests(): void {
         client: "opencode",
         state: "invalid",
         command: [],
+      }),
+    ]);
+  });
+
+  it("accepts non-Codex registration containing non-Codex default_tools_approval_mode value", async () => {
+    const home = await createTestTempDirectory(
+      "rea-opencode-custom-default-approval-",
+    );
+    await mkdir(join(home, ".config/opencode"), { recursive: true });
+    const entry = resolve("scripts/rea.mjs");
+    await writeFile(
+      join(home, ".config/opencode/opencode.json"),
+      JSON.stringify({
+        mcp: {
+          rea: {
+            type: "local",
+            command: [process.execPath, entry, "mcp"],
+            default_tools_approval_mode: "custom_opencode_approval_mode",
+          },
+        },
+      }),
+    );
+
+    const statuses = await readClientRegistrationStatuses(home, entry, {
+      environment: {},
+    });
+
+    expect(statuses).toEqual([
+      expect.objectContaining({
+        client: "opencode",
+        state: "aligned",
+        remediation: null,
       }),
     ]);
   });

@@ -82,20 +82,34 @@ const codexServerToolObjectSchema = z
   })
   .passthrough();
 
-/** Codex per-tool configuration entry (`[mcp_servers.<server>.tools.<tool>]`). */
-export const codexServerToolSchema = z
-  .unknown()
-  .refine(
-    (tool) =>
-      typeof tool === "object" &&
-      tool !== null &&
-      !hasTomlFloatProperty(tool, "output_token_limit"),
-    {
+const codexServerToolSequenceSchema = z.union([
+  z.tuple([codexApprovalModeSchema]),
+  z
+    .tuple([codexApprovalModeSchema, codexToolOutputTokenLimitSchema])
+    .refine((seq) => !hasTomlFloatProperty(seq, "1"), {
       message: "Expected output_token_limit to be a TOML integer",
-      path: ["output_token_limit"],
-    },
-  )
-  .pipe(codexServerToolObjectSchema);
+      path: [1],
+    }),
+]);
+
+/** Codex per-tool configuration entry (`[mcp_servers.<server>.tools.<tool>]`). */
+export const codexServerToolSchema = z.union([
+  z
+    .unknown()
+    .refine(
+      (tool) =>
+        typeof tool === "object" &&
+        tool !== null &&
+        !Array.isArray(tool) &&
+        !hasTomlFloatProperty(tool, "output_token_limit"),
+      {
+        message: "Expected output_token_limit to be a TOML integer",
+        path: ["output_token_limit"],
+      },
+    )
+    .pipe(codexServerToolObjectSchema),
+  codexServerToolSequenceSchema,
+]);
 
 /** Codex per-tool configuration table (`[mcp_servers.<server>.tools.<tool>]`). */
 export const codexServerToolsSchema = z.record(
@@ -114,6 +128,29 @@ export const clientConfigurationValuesEqual = (
   );
 
 const normalizeConfigurationValue = (value: unknown): unknown => {
+  if (
+    Array.isArray(value) &&
+    value.length >= 1 &&
+    value.length <= 2 &&
+    typeof value[0] === "string" &&
+    codexApprovalModeSchema.safeParse(value[0]).success &&
+    (value.length === 1 ||
+      (typeof value[1] === "number" && !hasTomlFloatProperty(value, "1")) ||
+      typeof value[1] === "bigint")
+  ) {
+    const parsedLimit =
+      value.length === 2
+        ? codexToolOutputTokenLimitSchema.safeParse(value[1])
+        : undefined;
+    if (value.length === 1 || parsedLimit?.success) {
+      return normalizeConfigurationValue({
+        approval_mode: value[0],
+        ...(parsedLimit?.success
+          ? { output_token_limit: parsedLimit.data }
+          : {}),
+      });
+    }
+  }
   if (Array.isArray(value)) return value.map(normalizeConfigurationValue);
   if (typeof value !== "object" || value === null || value instanceof Date)
     return value;
@@ -174,10 +211,13 @@ const parseClientToml = (text: string): Record<string, unknown> => {
   const pending: unknown[] = [parsed];
   for (let value = pending.pop(); value !== undefined; value = pending.pop()) {
     if (Array.isArray(value)) {
+      const floatKeys = new Set<string>();
       for (let index = 0; index < value.length; index += 1) {
         const element: unknown = value[index];
         if (typeof element === "bigint") {
           value[index] = normalizeTomlInteger(element);
+        } else if (typeof element === "number") {
+          floatKeys.add(String(index));
         } else if (
           typeof element === "object" &&
           element !== null &&
@@ -185,6 +225,7 @@ const parseClientToml = (text: string): Record<string, unknown> => {
         )
           pending.push(element);
       }
+      if (floatKeys.size > 0) tomlFloatProperties.set(value, floatKeys);
     } else if (
       typeof value === "object" &&
       value !== null &&
