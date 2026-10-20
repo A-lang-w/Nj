@@ -89,6 +89,10 @@ export class PcapSnapshot {
       if (signal?.aborted !== true) throw cleanup;
       const cancelled = new AnalysisCancelledError(OPERATION, {
         cause: signal.reason,
+        cleanup: {
+          reason: "Owned snapshot descriptor close failed",
+          resources: [this.path],
+        },
       });
       cancelled
         .retainSecondaryFailure(cleanup)
