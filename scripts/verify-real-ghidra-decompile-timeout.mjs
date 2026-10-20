@@ -177,7 +177,10 @@ try {
     observed.pseudocode_seconds = (performance.now() - started) / 1000;
     assert.equal(pseudocode.ok, false);
     const projected = projectAnalysisError(pseudocode.error);
-    assert.equal(projected.code, "execution_failure");
+    assert.equal(pseudocode.error._tag, "AnalysisTimeoutError");
+    assert.equal(projected.code, "provider_timeout");
+    assert.equal(projected.retryable, true);
+    assert.equal(projected.details.timeout_ms, LIMIT_SECONDS * 1000);
     assert.ok(projected.message.includes(limitText), projected.message);
     assert.ok(
       projected.remediation.action.includes(
@@ -186,6 +189,7 @@ try {
     );
     observed.pseudocode_error = {
       code: projected.code,
+      retryable: projected.retryable,
       message: projected.message,
     };
 
