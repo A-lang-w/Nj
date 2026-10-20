@@ -1,6 +1,5 @@
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { excludeCaptureCoordinates } from "../domain/webNetworkCaptureCoordinates.js";
-import { decodeRecordProtobuf } from "../domain/protobufWire.js";
 import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
@@ -78,6 +77,30 @@ export class WebNetworkCaptureService {
             path: ["record_ordinals"],
             reason: "invalid_format",
             message: "Each requested producer ordinal must occur once.",
+          },
+        ]),
+      );
+    if (input.protobuf !== undefined && input.record_ordinals === undefined)
+      return failure(
+        new AnalysisInputError(OPERATION, undefined, [
+          {
+            path: ["record_ordinals"],
+            reason: "invalid_format",
+            message:
+              "Protobuf options require explicit producer record ordinals.",
+          },
+        ]),
+      );
+    if (
+      input.protobuf?.schema !== undefined &&
+      !isAbsolute(input.protobuf.schema.descriptor_set_path)
+    )
+      return failure(
+        new AnalysisInputError(OPERATION, undefined, [
+          {
+            path: ["protobuf", "schema", "descriptor_set_path"],
+            reason: "invalid_format",
+            message: "Expected an absolute descriptor-set path on this host.",
           },
         ]),
       );
@@ -168,15 +191,9 @@ export class WebNetworkCaptureService {
             },
           ]),
         );
-      // Decoding is gated on explicit selection so default whole-capture output stays small.
-      const protobuf =
-        input.record_ordinals === undefined
-          ? []
-          : decodeRecordProtobuf(record, redactText);
       records.push({
         ...record,
         limitations: record.limitations.map(redactText),
-        ...(protobuf.length === 0 ? {} : { protobuf }),
       });
     }
     const safePath = input.sensitive_values.some((literal) =>
@@ -208,6 +225,30 @@ export class WebNetworkCaptureService {
         ? {}
         : { format: input.format }),
       record_ordinals: selected,
+      ...(input.protobuf === undefined
+        ? {}
+        : {
+            protobuf: {
+              framing: input.protobuf.framing,
+              ...(input.protobuf.body_pointers === undefined
+                ? {}
+                : {
+                    body_pointers: input.protobuf.body_pointers.map(redactText),
+                  }),
+              ...(input.protobuf.schema === undefined
+                ? {}
+                : {
+                    schema: {
+                      descriptor_set_path: redactText(
+                        input.protobuf.schema.descriptor_set_path,
+                      ),
+                      message_type: redactText(
+                        input.protobuf.schema.message_type,
+                      ),
+                    },
+                  }),
+            },
+          }),
       sensitive_value_count: input.sensitive_values.length,
     });
     return ok(

@@ -9,6 +9,9 @@ const CREDENTIAL_HEADERS = new Set([
   "cookie",
   "set-cookie",
 ]);
+/** HTTP credential names apply equally to recorded headers and gRPC-web trailers. */
+export const isCaptureCredentialHeader = (name: string): boolean =>
+  CREDENTIAL_HEADERS.has(name.toLowerCase());
 
 /** Literal redaction and structural authentication exclusions preserve unrelated local evidence. */
 export class CaptureRedaction {
@@ -75,7 +78,7 @@ export class CaptureRedaction {
     return (
       (/^\/(request|response)\/headers\/\d+\/value$/.test(pointer) &&
         typeof parent.name === "string" &&
-        CREDENTIAL_HEADERS.has(parent.name.toLowerCase())) ||
+        isCaptureCredentialHeader(parent.name)) ||
       /^\/(request|response)\/cookies\/\d+\/value$/.test(pointer)
     );
   }

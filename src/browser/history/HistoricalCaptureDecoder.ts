@@ -1,3 +1,5 @@
+import { decodeCaptureProtobuf } from "./protobuf/ProtobufCapture.js";
+import { CaptureFormatError } from "./CaptureFormatError.js";
 import {
   CAPTURE_PROCESS_MEMORY_LIMIT_REASON,
   historicalCaptureFailure,
@@ -29,6 +31,7 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -118,6 +121,7 @@ export class HistoricalCaptureDecoder {
     let runtime: Pick<PrivateRuntimeRoot, "path" | "close"> | undefined;
     let result: Result<WebNetworkCapture, AnalysisError>;
     let phase: "capture-read" | "decoder" = "capture-read";
+    let encodedReplyBytes = 0;
     try {
       const adapter = this.adapters.find(
         (candidate) => candidate.format === input.format,
@@ -186,6 +190,7 @@ export class HistoricalCaptureDecoder {
           undefined,
           this.#resources,
         );
+        encodedReplyBytes = replyFile.bytes.length;
         reply = replySchema.parse(JSON.parse(replyFile.bytes.toString("utf8")));
       } catch (cause: unknown) {
         if (cause instanceof ArtifactReaderFailure) throw cause;
@@ -294,6 +299,45 @@ export class HistoricalCaptureDecoder {
             "Capture decoder supplied inapplicable qlog transport facts.",
           );
         result = ok({ ...reply.value, ...common, format: input.format });
+      }
+      if (result.ok) {
+        try {
+          await decodeCaptureProtobuf(
+            result.value,
+            input,
+            this.#resources,
+            options?.signal,
+            encodedReplyBytes + Buffer.byteLength(JSON.stringify(common)) + 16,
+          );
+        } catch (cause) {
+          const error =
+            cause instanceof CaptureFormatError && cause.reason === "limit"
+              ? new AnalysisResourceConstraintError(
+                  OPERATION,
+                  "capacity",
+                  cause.message,
+                  {
+                    maximum_encoded_capture_bytes:
+                      WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
+                  },
+                  {
+                    retryable: false,
+                    remediationAction:
+                      "Select smaller records, or inspect the retained original source bytes.",
+                  },
+                )
+              : cause instanceof CaptureFormatError
+                ? new AnalysisInputError(OPERATION, undefined, [
+                    {
+                      path: ["protobuf"],
+                      reason: "invalid_format",
+                      message: cause.message,
+                    },
+                  ])
+                : historicalCaptureFailure(input, cause, phase, options);
+          error.retainPartialObservation(result.value);
+          throw error;
+        }
       }
     } catch (cause: unknown) {
       const error = historicalCaptureFailure(input, cause, phase, options);

@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { jsonValueSchema } from "./jsonValue.js";
 import { localPathStringSchema } from "./localPath.js";
-import { protobufDecodingSchema } from "./protobufWire.js";
+import {
+  protobufDecodingSchema,
+  protobufOptionsSchema,
+} from "./protobufWire.js";
 import { qlogCaptureFactsSchema } from "./qlogCapture.js";
 
 /** Complete historical evidence budgets; exceeding a budget returns no partial capture. */
@@ -32,6 +35,7 @@ export const inspectWebNetworkCaptureInputSchema = z.strictObject({
     .describe(
       "Zero-based producer record ordinals, in caller-selected order. Omit to inspect every record.",
     ),
+  protobuf: protobufOptionsSchema.optional(),
   sensitive_values: z
     .array(z.string().min(1))
     .default([])
@@ -132,7 +136,7 @@ export const webNetworkCaptureRecordSchema = z.strictObject({
     .array(protobufDecodingSchema)
     .exactOptional()
     .describe(
-      "Wire-format decoding of retained protobuf/gRPC(-web) bodies, present only for caller-selected record_ordinals. Field offsets are exact; string/nested/packed readings of length-delimited fields are inferred without a schema.",
+      "Flat decoding facts for explicitly selected records. Field indices are local to a body; offset_basis states whether ranges refer to retained or base64-decoded bytes. Interpretations without a caller-supplied schema are candidates.",
     ),
 });
 
@@ -144,7 +148,26 @@ export const webNetworkCaptureDecoderSchema = z.strictObject({
 });
 
 /** Source coverage is shared by every offline decoder. */
+export const protobufCaptureCoverageSchema = z
+  .strictObject({
+    status: z.enum(["complete", "partial"]),
+    selected_records: z.number().int().nonnegative(),
+    inspected_records: z.number().int().nonnegative(),
+  })
+  .superRefine((coverage, context) => {
+    if (
+      coverage.inspected_records > coverage.selected_records ||
+      (coverage.status === "complete" &&
+        coverage.inspected_records !== coverage.selected_records)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["status"],
+        message: "Protobuf coverage contradicts its inspected selection.",
+      });
+  });
 const payloadShape = {
+  protobuf_coverage: protobufCaptureCoverageSchema.exactOptional(),
   decoder: webNetworkCaptureDecoderSchema,
   container: z.strictObject({
     reported: jsonValueSchema,
