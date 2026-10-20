@@ -1,4 +1,12 @@
-import { isMap, isNode, isScalar, isSeq, parseDocument, Document } from "yaml";
+import {
+  isAlias,
+  isMap,
+  isNode,
+  isScalar,
+  isSeq,
+  parseDocument,
+  Document,
+} from "yaml";
 
 /**
  * ggcode reads MCP servers from ~/.ggcode/mcp_servers.yaml, a top-level YAML
@@ -32,6 +40,16 @@ const parseGgcodeDocument = (text: string): Document => {
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+// Reads resolve YAML aliases through toJS(), so an anchored `name: *anchor`
+// entry addresses the server the reader sees; the editors must match the
+// same resolved value or setup would append a duplicate and uninstall would
+// miss the entry entirely.
+const entryName = (item: unknown, document: Document): unknown => {
+  if (!isMap(item)) return undefined;
+  const name = item.get("name");
+  return isAlias(name) ? name.toJS(document) : name;
+};
 
 /** Named entries of one mcp_servers sequence; malformed items fail closed. */
 const sequenceEntries = (
@@ -168,7 +186,7 @@ export const editGgcodeConfigurationYaml = (
     const section = root.get("mcp_servers", true);
     if (isSeq(section)) {
       const index = section.items.findIndex(
-        (item) => isMap(item) && item.get("name") === serverKey,
+        (item) => entryName(item, document) === serverKey,
       );
       if (index >= 0) section.items.splice(index, 1);
     } else if (isMap(section)) {
@@ -181,7 +199,7 @@ export const editGgcodeConfigurationYaml = (
       "The configuration root must be a sequence of named server mappings",
     );
   const index = root.items.findIndex(
-    (item) => isMap(item) && item.get("name") === serverKey,
+    (item) => entryName(item, document) === serverKey,
   );
   if (entry === undefined) {
     if (index >= 0) root.items.splice(index, 1);

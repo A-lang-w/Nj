@@ -134,6 +134,30 @@ describe("ggcode YAML registration", () => {
     ]);
   });
 
+  it("replaces an aliased rea name entry in place", async () => {
+    const { client } = await ggcodeClient();
+    await writeFile(
+      client.configPath,
+      `- model: &reaName rea
+  name: *reaName
+  command: outdated
+`,
+    );
+
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("configured");
+    const servers = await readServers(client.configPath);
+    expect(servers).toEqual([
+      {
+        name: "rea",
+        type: "stdio",
+        command: command[0],
+        args: command.slice(1),
+      },
+    ]);
+  });
+
   it("registers into an empty config file", async () => {
     const { client } = await ggcodeClient();
     await writeFile(client.configPath, "");
@@ -431,5 +455,66 @@ mcp_servers:
       "__proto__",
       "rea",
     ]);
+  });
+});
+
+describe("ggcode aliased entries and reported paths", () => {
+  const ggcodeClient = async () => {
+    const home = await createTestTempDirectory("rea-ggcode-");
+    const client = ggcodePath(home, process.platform);
+    if (client?.markerPath === undefined)
+      throw new Error("missing ggcode client");
+    await mkdir(client.markerPath, { recursive: true });
+    return { home, client };
+  };
+
+  it("removes an aliased rea entry from the legacy file on uninstall", async () => {
+    const { home } = await ggcodeClient();
+    const legacyPath = join(home, ".ggcode", "ggcode.yaml");
+    await writeFile(
+      legacyPath,
+      `model: demo
+mcp_servers:
+  - name: other
+    command: other-cmd
+  - model: &reaName rea
+    name: *reaName
+    type: stdio
+    command: ${JSON.stringify(command[0])}
+    args: ${JSON.stringify(command.slice(1))}
+`,
+    );
+    const host = systemUninstallHost(home);
+    const legacyClient = (await host.clients()).find(
+      (entry) => entry.name === "ggcode" && entry.configPath === legacyPath,
+    );
+    if (legacyClient === undefined)
+      throw new Error("missing legacy ggcode uninstall client");
+
+    expect((await host.removeClient(legacyClient)).status).toBe("removed");
+    expect(parse(await readFile(legacyPath, "utf8")).mcp_servers).toEqual([
+      { name: "other", command: "other-cmd" },
+    ]);
+  });
+
+  it("reports the legacy file the doctor registration was read from", async () => {
+    const { home } = await ggcodeClient();
+    const legacyPath = join(home, ".ggcode", "ggcode.yaml");
+    await writeFile(
+      legacyPath,
+      `model: demo
+mcp_servers:
+  - name: rea
+    type: stdio
+    command: ${JSON.stringify(command[0])}
+    args: ${JSON.stringify(command.slice(1))}
+`,
+    );
+
+    expect(
+      (await registrationStatuses(home)).find(
+        ({ client: name }) => name === "ggcode",
+      ),
+    ).toMatchObject({ config_path: legacyPath });
   });
 });
