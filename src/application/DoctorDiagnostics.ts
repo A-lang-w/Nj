@@ -83,6 +83,8 @@ export const doctorHealthy = (
     .every(({ ok }) => ok);
   const configuredProvidersHealthy = providerChecks
     .filter(({ name }) => {
+      // Validate the supplied setting independently of provider discovery.
+      if (name === "hopper-startup-timeout") return true;
       if (name.startsWith("hopper")) return providers.hopperConfigured;
       return providers.providerInspections?.some(
         (inspection) =>

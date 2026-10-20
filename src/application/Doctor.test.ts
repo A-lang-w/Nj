@@ -24,12 +24,16 @@ describe("doctor Hopper startup timeout", () => {
   });
 
   it.each([
-    ["0", false],
-    ["120000", true],
+    ["0", true, false],
+    ["120000", true, true],
+    ["0", false, false],
+    ["120000", false, true],
+    [undefined, false, true],
   ] as const)(
-    "checks timeout %s in an audit with an available peer",
-    async (value, healthy) => {
+    "checks timeout %s with Hopper present=%s and an available peer",
+    async (value, hopperPresent, healthy) => {
       const selectedHost = timeoutHost(value, {
+        executable: () => Promise.resolve(hopperPresent),
         providerInspections: () =>
           Promise.resolve([
             {
@@ -45,12 +49,11 @@ describe("doctor Hopper startup timeout", () => {
       const result = await runDoctor(undefined, selectedHost);
       expect(result.healthy).toBe(healthy);
       expect(result.environment_healthy).toBe(healthy);
-      expect(result.checks).toContainEqual(
-        expect.objectContaining({
-          name: "hopper-startup-timeout",
-          ok: healthy,
-        }),
+      const timeoutCheck = result.checks.find(
+        ({ name }) => name === "hopper-startup-timeout",
       );
+      if (value === undefined) expect(timeoutCheck).toBeUndefined();
+      else expect(timeoutCheck).toMatchObject({ ok: value !== "0" });
     },
   );
 

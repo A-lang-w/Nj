@@ -274,9 +274,7 @@ const inspectDoctor = async (
       checks
         .filter(({ name }) => name.startsWith("hopper"))
         .every(({ ok }) => ok),
-    hopperConfigured:
-      host.configuredHopperPath !== undefined ||
-      host.configuredHopperStartupTimeout !== undefined,
+    hopperConfigured: host.configuredHopperPath !== undefined,
     providerInspections,
   };
   const environmentHealthy = doctorHealthy(checks, providers);
