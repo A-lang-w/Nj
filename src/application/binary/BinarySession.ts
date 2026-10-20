@@ -193,6 +193,8 @@ export class BinarySession
             cause: options.signal?.reason,
           }),
         );
+      if (this.#externalMutationOwnerPending)
+        return err(this.#externalMutationStillActive("open_bundle_resources"));
       if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true)
         return err(this.#externalMutationCleanupFailure);
       if (this.#bundleResourceFactory === undefined)

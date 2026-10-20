@@ -1256,8 +1256,12 @@ export class GdbSessionManager {
             session.inferiorIdentityCaptureUntrusted = true;
             this.#clearInferiorIdentities(session);
           } else if (isGdbExecutionCommand(command)) {
-            this.#clearInferiorIdentities(session);
+            // Resume/step commands operate on the current inferior. MI does not
+            // emit a new thread-group-started event when that same target runs.
             session.inferiorIdentityCaptureFailed = false;
+          } else if (isGdbTargetDispositionCommand(command)) {
+            // Keep the current inventory until the correlated disposition
+            // result decides whether every known inferior was covered.
           } else {
             this.#clearInferiorIdentities(session);
             session.inferiorIdentityCaptureFailed = true;
@@ -1295,9 +1299,16 @@ export class GdbSessionManager {
             // A successful explicit kill/detach is the disposition proof that
             // a GDB process-exit notification cannot provide for a remote
             // target. Release the owner only after the correlated MI result.
-            session.inferiorDispositionConfirmed = true;
-            this.#clearInferiorIdentities(session);
-            this.#confirmInferiorStopped(session);
+            if (
+              session.inferiorIdentityCaptures.size === 0 &&
+              !session.inferiorIdentityCaptureFailed &&
+              !session.inferiorIdentityCaptureUntrusted &&
+              session.knownInferiorIdentities.size <= 1
+            ) {
+              session.inferiorDispositionConfirmed = true;
+              this.#clearInferiorIdentities(session);
+              this.#confirmInferiorStopped(session);
+            }
           }
           const evidence = createEvidence(
             undefined,

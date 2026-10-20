@@ -981,6 +981,110 @@ it("releases binary open only after an exited GDB inferior is proven ended", asy
   await binarySession.close();
 }, 10_000);
 
+it("retains the inferior identity across continue when GDB exits", async () => {
+  const inferiorPid = "424243";
+  let alive = true;
+  let identityReads = 0;
+  const fake = createFakeSpawner((child, token, command) => {
+    if (command.includes('console "run"'))
+      child.stdout.write(
+        `=thread-group-started,id="i1",pid="${inferiorPid}"\n${token}^running\n*running,thread-id="all"\n`,
+      );
+    else if (command.includes('console "continue"'))
+      child.stdout.write(`${token}^running\n*running,thread-id="all"\n`);
+    else child.stdout.write(`${token}^done\n`);
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    readInferiorProcessStartTime: async (pid) => {
+      identityReads += 1;
+      return pid === inferiorPid && alive ? "continued-inferior" : null;
+    },
+  });
+  const started = await expectGdbSessionStarted(manager);
+  const firstRun = manager.execute(started.value.session_id, "run");
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  const resumed = manager.execute(started.value.session_id, "continue");
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  fake.children[0]?.exitLeader(9);
+  fake.children[0]?.closeInheritedOutput();
+  await Promise.all([firstRun, resumed]);
+
+  alive = false;
+  const closed = await manager.close(started.value.session_id);
+  expect(identityReads).toBeGreaterThan(0);
+  expect(closed.ok).toBe(true);
+}, 10_000);
+
+it("does not release target ownership when kill covers only one known inferior", async () => {
+  const fake = createFakeSpawner((_child, token) => {
+    fake.children[0]?.stdout.write(`${token}^done\n`);
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    readInferiorProcessStartTime: async () => "multi-inferior-start",
+  });
+  const started = await expectGdbSessionStarted(manager);
+  fake.children[0]?.stdout.write(
+    '=thread-group-started,id="i1",pid="424251"\n=thread-group-started,id="i2",pid="424252"\n*running,thread-id="all"\n',
+  );
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  const killed = await manager.execute(started.value.session_id, "kill");
+  expect(killed.ok).toBe(true);
+
+  let settled = false;
+  const owner = manager
+    .waitForInferiorStop(started.value.session_id)
+    .then(() => {
+      settled = true;
+    });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(settled).toBe(false);
+  expect(manager.status(started.value.session_id)).toBeDefined();
+  fake.children[0]?.stdout.write(
+    '*stopped,reason="exited",stopped-threads="all"\n',
+  );
+  await owner;
+}, 10_000);
+
+it("fails closed when target disposition races unresolved inferior identities", async () => {
+  let finishIdentityReads!: () => void;
+  const identityReads = new Promise<void>((resolve) => {
+    finishIdentityReads = resolve;
+  });
+  const fake = createFakeSpawner((_child, token) => {
+    fake.children[0]?.stdout.write(`${token}^done\n`);
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    readInferiorProcessStartTime: async () => {
+      await identityReads;
+      return "pending-multi-inferior";
+    },
+  });
+  const started = await expectGdbSessionStarted(manager);
+  fake.children[0]?.stdout.write(
+    '=thread-group-started,id="i1",pid="424261"\n=thread-group-started,id="i2",pid="424262"\n*running,thread-id="all"\n',
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const ownerSettled = manager.waitForInferiorStop(started.value.session_id);
+  let settled = false;
+  void ownerSettled.then(() => {
+    settled = true;
+  });
+
+  expect((await manager.execute(started.value.session_id, "kill")).ok).toBe(
+    true,
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(settled).toBe(false);
+
+  finishIdentityReads();
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  expect(settled).toBe(false);
+  fake.children[0]?.stdout.write(
+    '*stopped,reason="exited",stopped-threads="all"\n',
+  );
+  await ownerSettled;
+}, 10_000);
+
 it("keeps evaluated remote target unknown after GDB exits despite a local PID collision", async () => {
   const inferiorPid = "424242";
   let identityReads = 0;
