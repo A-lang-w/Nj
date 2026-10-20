@@ -59,17 +59,46 @@ const register = (overrides: {
   };
 };
 
+const savedSnapshotReceipt = {
+  path: "/tmp/analysis.json",
+  bytes: 321,
+  primitive_entries: 2,
+  workflow_entries: 1,
+  evidence_records: 3,
+};
+
+const expectSavedSnapshotReceipt = async (
+  handler: (input?: Record<string, unknown>) => Promise<unknown>,
+  cleanupDiagnostics: Readonly<Record<string, unknown>> = {},
+): Promise<void> => {
+  const result = await handler({
+    snapshot_path: savedSnapshotReceipt.path,
+    overwrite: false,
+  });
+  if (
+    typeof result !== "object" ||
+    result === null ||
+    !("error" in result) ||
+    !(result.error instanceof Error)
+  )
+    throw new Error("Expected a retained cleanup error");
+  expect(
+    projectAnalysisError(result.error as AnalysisOutputError),
+  ).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      diagnostics: {
+        ...cleanupDiagnostics,
+        saved_snapshot: savedSnapshotReceipt,
+      },
+    },
+  });
+};
+
 describe("close lifecycle reverse cleanup ordering", () => {
   it("preserves a successful snapshot receipt when reverse cleanup remains pending", async () => {
-    const receipt = {
-      path: "/tmp/analysis.json",
-      bytes: 321,
-      primitive_entries: 2,
-      workflow_entries: 1,
-      evidence_records: 3,
-    };
     const session = {
-      closeWithSnapshot: async () => ok(receipt),
+      closeWithSnapshot: async () => ok(savedSnapshotReceipt),
     } as unknown as BinarySessionPort;
     const { handler } = register({
       session,
@@ -88,35 +117,12 @@ describe("close lifecycle reverse cleanup ordering", () => {
         ),
     });
 
-    const result = await handler({
-      snapshot_path: receipt.path,
-      overwrite: false,
-    });
-    if (
-      typeof result !== "object" ||
-      result === null ||
-      !("error" in result) ||
-      !(result.error instanceof Error)
-    )
-      throw new Error("Expected a retained cleanup error");
-    expect(
-      projectAnalysisError(result.error as AnalysisOutputError),
-    ).toMatchObject({
-      code: "cleanup_incomplete",
-      details: { diagnostics: { saved_snapshot: receipt } },
-    });
+    await expectSavedSnapshotReceipt(handler);
   });
 
   it("preserves a successful snapshot receipt when reverse cleanup rejects", async () => {
-    const receipt = {
-      path: "/tmp/analysis.json",
-      bytes: 321,
-      primitive_entries: 2,
-      workflow_entries: 1,
-      evidence_records: 3,
-    };
     const session = {
-      closeWithSnapshot: async () => ok(receipt),
+      closeWithSnapshot: async () => ok(savedSnapshotReceipt),
     } as unknown as BinarySessionPort;
     const { handler } = register({
       session,
@@ -127,28 +133,9 @@ describe("close lifecycle reverse cleanup ordering", () => {
       },
     });
 
-    const result = await handler({
-      snapshot_path: receipt.path,
-      overwrite: false,
-    });
-    if (
-      typeof result !== "object" ||
-      result === null ||
-      !("error" in result) ||
-      !(result.error instanceof Error)
-    )
-      throw new Error("Expected a retained cleanup error");
-    expect(
-      projectAnalysisError(result.error as AnalysisOutputError),
-    ).toMatchObject({
-      code: "cleanup_incomplete",
-      details: {
-        diagnostics: {
-          saved_snapshot: receipt,
-          cleanup_error: {
-            details: { resources: ["capture"] },
-          },
-        },
+    await expectSavedSnapshotReceipt(handler, {
+      cleanup_error: {
+        details: { resources: ["capture"] },
       },
     });
   });
