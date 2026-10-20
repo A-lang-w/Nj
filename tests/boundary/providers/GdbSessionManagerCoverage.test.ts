@@ -1326,6 +1326,32 @@ it("returns startup timeout when the MI prompt never arrives", async () => {
   }
 });
 
+it("keeps a startup timeout when the caller aborts during that failure's cleanup", async () => {
+  const provider = await createProvider(
+    "process.stdin.resume(); setInterval(() => {}, 1000);\n",
+  );
+  const controller = new AbortController();
+  const reason = { caller: "late-during-cleanup" };
+  const manager = new GdbSessionManager({
+    platform: "linux",
+    environment: { REA_GDB_COMMAND: provider },
+    startupTimeoutMs: 20,
+    stopProcess: async (session, name) => {
+      controller.abort(reason);
+      return stopOwnedDebuggerProcess(session, name);
+    },
+  });
+  managers.push(manager);
+
+  const started = await manager.start(controller.signal);
+
+  expect(started.ok).toBe(false);
+  if (!started.ok) {
+    expect(started.error._tag).toBe("AnalysisTimeoutError");
+    expect(started.error).toBeInstanceOf(AnalysisTimeoutError);
+  }
+});
+
 it("handles a provider with no MI stdout stream as a startup timeout", async () => {
   const fake = createFakeSpawner(undefined, { stdoutNull: true });
   const manager = managerWithFakeSpawner(fake.spawnProcess, {

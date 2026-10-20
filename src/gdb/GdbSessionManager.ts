@@ -1040,11 +1040,15 @@ export class GdbSessionManager {
           ? {}
           : { partialObservation: startupEvidence }),
       };
+      // A typed startup failure observed before the abort stays primary; only a
+      // cancellation cause (or an untyped abort) becomes cancellation.
+      const abortedWithoutFailure =
+        signal?.aborted === true && !(cause instanceof AnalysisError);
       const error =
-        signal?.aborted || cause instanceof AnalysisCancelledError
+        cause instanceof AnalysisCancelledError || abortedWithoutFailure
           ? new AnalysisCancelledError("start_gdb_session", {
               ...errorDetails,
-              cause: signal?.aborted ? signal.reason : cause,
+              cause: signal?.aborted === true ? signal.reason : cause,
             })
           : cause instanceof AnalysisTimeoutError
             ? new AnalysisTimeoutError(
