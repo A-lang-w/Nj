@@ -1,4 +1,5 @@
 import type { InspectWebPageInput } from "../domain/browserObservation.js";
+import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import {
   allowedSanitizedUrl,
@@ -56,22 +57,20 @@ export const captureFrames = (
     const frame = recordValue(tree.frame);
     const frameId = cdpStringValue(frame?.id);
     const observation = observeCdpFrameUrl(frame);
-    const frameUrl =
-      observation.kind === "observed" ? observation.url : undefined;
     const scopeUrl =
       observation.kind === "missing" ? undefined : observation.scopeUrl;
-    const sanitized = allowedSanitizedUrl(frameUrl, allowedOrigins);
+    const facts = classifyCdpFrameUrl(observation, allowedOrigins);
     if (frame === undefined || frameId === undefined) {
       completeness?.exclude("frames", "invalid_protocol_value");
       continue;
     }
     if (observation.kind === "invalid_fragment") {
       completeness?.exclude("frames", "invalid_protocol_value");
-      if (allowedSanitizedUrl(scopeUrl, allowedOrigins) === undefined)
+      if (facts.scope !== "approved")
         completeness?.exclude("frames", exclusionReasonForUrl(scopeUrl));
       continue;
     }
-    if (sanitized === undefined || sanitized.origin === null) {
+    if (facts.url === undefined || facts.origin === null) {
       completeness?.exclude("frames", exclusionReasonForUrl(scopeUrl));
       continue;
     }
@@ -86,8 +85,8 @@ export const captureFrames = (
     items.push({
       frame_id: frameId,
       parent_frame_id: parentFrameId ?? null,
-      url: sanitized.url,
-      origin: sanitized.origin,
+      url: facts.url,
+      origin: facts.origin,
     });
   }
   return { items };
@@ -124,6 +123,34 @@ export const observeMainFrameUrl = (result: unknown): CdpFrameUrlObservation =>
   observeCdpFrameUrl(
     recordValue(recordValue(requiredRecord(result).frameTree)?.frame),
   );
+
+/** Policy and readable identity are independent facts, including on malformed frames. */
+export const classifyCdpFrameUrl = (
+  observation: CdpFrameUrlObservation,
+  allowedOrigins: ReadonlySet<string>,
+): {
+  readonly scope: "approved" | "outside_policy" | "unsupported" | "unknown";
+  readonly origin: string | null;
+  readonly url: string | undefined;
+} => {
+  if (observation.kind === "missing")
+    return { scope: "unknown", origin: null, url: undefined };
+  const base = sanitizeBrowserUrl(observation.scopeUrl);
+  const scope =
+    base.origin === null
+      ? "unsupported"
+      : allowedOrigins.has(base.origin)
+        ? "approved"
+        : "outside_policy";
+  return {
+    scope,
+    origin: base.origin,
+    url:
+      observation.kind === "observed" && scope === "approved"
+        ? sanitizeBrowserUrl(observation.url).url
+        : undefined,
+  };
+};
 
 /** Read the complete identity only when the protocol established it. */
 export const cdpFrameUrl = (

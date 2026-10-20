@@ -6,6 +6,7 @@ import {
   captureFrames,
   captureResources,
   cdpFrameUrl,
+  classifyCdpFrameUrl,
   observeCdpFrameUrl,
 } from "./CdpCaptureDocuments.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
@@ -24,6 +25,39 @@ it.each([
   [{ url: `${origin}/page`, urlFragment: "missing-hash" }, undefined],
 ])("preserves frame URL fragment semantics: %j", (frame, expected) => {
   expect(cdpFrameUrl(frame)).toBe(expected);
+});
+
+it("keeps source identity and scope independent while redacting transport credentials", () => {
+  const frame = {
+    url: "https://user:password@app.example.test/page?token=local#old",
+    urlFragment: "#new",
+  };
+  const allowed = new Set([origin]);
+  expect(classifyCdpFrameUrl(observeCdpFrameUrl(frame), allowed)).toEqual({
+    scope: "approved",
+    origin,
+    url: `${origin}/page?token=local#new`,
+  });
+  expect(
+    classifyCdpFrameUrl(
+      observeCdpFrameUrl({ ...frame, urlFragment: 7 }),
+      allowed,
+    ),
+  ).toEqual({
+    scope: "approved",
+    origin,
+    url: undefined,
+  });
+  expect(
+    classifyCdpFrameUrl(
+      observeCdpFrameUrl({ urlFragment: "#https://app.example.test" }),
+      allowed,
+    ),
+  ).toEqual({
+    scope: "unknown",
+    origin: null,
+    url: undefined,
+  });
 });
 
 it("does not authorize a foreign origin through its fragment", () => {

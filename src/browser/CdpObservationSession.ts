@@ -22,6 +22,7 @@ import {
   mainFrameUrl,
   observeCdpFrameUrl,
   observeMainFrameUrl,
+  classifyCdpFrameUrl,
 } from "./CdpCaptureDocuments.js";
 import { isMainFrameNavigation } from "./CdpCaptureEventHelpers.js";
 import { cdpTargetEventMatches } from "./CdpTargetEvents.js";
@@ -252,15 +253,13 @@ class TimelineCapture {
     const observation = observeCdpFrameUrl(frame);
     const rawUrl =
       observation.kind === "observed" ? observation.url : undefined;
-    const scopeUrl =
-      observation.kind === "invalid_fragment" ? observation.scopeUrl : rawUrl;
-    const destination = scopedUrl(scopeUrl, this.allowedOrigins);
+    const destination = classifyCdpFrameUrl(observation, this.allowedOrigins);
     this.#add({
       type: this.#pendingReload ? "same_origin_reload" : "navigation_committed",
       params: { ...params, frameId: frame?.id, loaderId: frame?.loaderId },
       rawUrl: rawUrl ?? null,
       destinationScope:
-        observation.kind === "missing" ? null : destination.scope,
+        destination.scope === "unknown" ? null : destination.scope,
       requestId: null,
       detail: safeDetail(frame?.transitionType),
     });
@@ -274,7 +273,8 @@ class TimelineCapture {
       return;
     }
     if (!this.#hasObservedUrl(rawUrl)) return;
-    if (destination.scope === "approved") this.finalUrl = destination.url;
+    if (destination.scope === "approved")
+      this.finalUrl = destination.url ?? null;
     else {
       this.excludeTargetScope("out_of_target_scope");
       this.end("target_left_scope");
@@ -448,24 +448,14 @@ const captureFinalUrl = async (
   );
   if (capture.scopeExcluded) return "target_left_scope";
   const observation = observeMainFrameUrl(result);
-  const url = observation.kind === "observed" ? observation.url : undefined;
-  if (
-    observation.kind === "missing" ||
-    (observation.kind === "invalid_fragment" &&
-      allowedSanitizedUrl(observation.scopeUrl, allowedOrigins) !== undefined)
-  ) {
-    capture.invalidateFinalUrl();
-    return "window_elapsed";
+  const facts = classifyCdpFrameUrl(observation, allowedOrigins);
+  if (observation.kind !== "observed") capture.invalidateFinalUrl();
+  if (facts.scope === "outside_policy" || facts.scope === "unsupported") {
+    capture.excludeTargetScope("out_of_target_scope");
+    return "target_left_scope";
   }
-  if (
-    url !== undefined &&
-    allowedSanitizedUrl(url, allowedOrigins) !== undefined
-  ) {
-    capture.setFinalUrl(url);
-    return "window_elapsed";
-  }
-  capture.excludeTargetScope("out_of_target_scope");
-  return "target_left_scope";
+  if (facts.url !== undefined) capture.setFinalUrl(facts.url);
+  return "window_elapsed";
 };
 
 const frameId = (result: unknown): string | undefined =>

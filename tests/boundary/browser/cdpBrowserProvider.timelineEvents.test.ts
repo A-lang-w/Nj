@@ -174,6 +174,65 @@ it.each(
   },
 );
 
+it.each(
+  [7, "bad-fragment"].flatMap((fragment) =>
+    ["allowed", "foreign", "missing"].map((scope) => ({ fragment, scope })),
+  ),
+)(
+  "retains final-probe identity and scope without an event: $scope/$fragment",
+  async ({ fragment, scope }) => {
+    const browser = await startFakeCdpBrowser({
+      commandResult: ({ method }, origin, reads) =>
+        method === "Page.getFrameTree" && reads > 1
+          ? {
+              frameTree: {
+                frame: {
+                  id: "frame-main",
+                  ...(scope === "missing"
+                    ? {}
+                    : {
+                        url:
+                          scope === "foreign"
+                            ? "https://foreign.test/"
+                            : `${origin}/app`,
+                      }),
+                  urlFragment: fragment,
+                },
+              },
+            }
+          : undefined,
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().observeSession(
+      observeWebSessionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 1,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.target.final_url).toBeNull();
+    expect(result.value.window.end_reason).toBe(
+      scope === "foreign" ? "target_left_scope" : "window_elapsed",
+    );
+    expect(result.value.completeness.excluded).toContainEqual({
+      section: "timeline",
+      reason: "invalid_protocol_value",
+      count: 1,
+    });
+    expect(
+      result.value.completeness.policy_filtered_sections.includes("timeline"),
+    ).toBe(scope === "foreign");
+    if (scope === "foreign")
+      expect(result.value.completeness.excluded).toContainEqual({
+        section: "timeline",
+        reason: "out_of_target_scope",
+        count: 1,
+      });
+  },
+);
+
 describe("CdpBrowserProvider navigation timeline", () => {
   it.each(["outside_policy", "target_detached"] as const)(
     "settles and releases a long wait after %s",

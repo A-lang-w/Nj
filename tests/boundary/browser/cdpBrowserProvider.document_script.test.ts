@@ -300,7 +300,7 @@ it.each(["after-replay", "before-replay", "replacement", "malformed"])(
 );
 
 it.each(
-  ["foreign", "allowed", "missing"].flatMap((scope) =>
+  ["foreign", "allowed", "missing", "opaque", "unparseable"].flatMap((scope) =>
     [false, true].flatMap((blankFirst) =>
       [7, "not-a-fragment"].map((fragment) => ({
         scope,
@@ -354,7 +354,11 @@ it.each(
                   url:
                     scope === "foreign"
                       ? "https://foreign.invalid/child"
-                      : `${origin}/child`,
+                      : scope === "opaque"
+                        ? "about:blank"
+                        : scope === "unparseable"
+                          ? "not-a-url"
+                          : `${origin}/child`,
                 }),
             urlFragment: fragment,
           }),
@@ -393,6 +397,105 @@ it.each(
         reason: "out_of_target_scope",
         count: 1,
       });
+  },
+);
+
+it.each(
+  ["allowed", "foreign", "missing", "opaque", "unparseable"].flatMap((scope) =>
+    (scope === "opaque" || scope === "unparseable"
+      ? [7, "bad-fragment"]
+      : [7, "bad-fragment", "#valid"]
+    ).map((fragment) => ({ scope, fragment })),
+  ),
+)(
+  "preserves initial child scope through WebMCP replay: $scope/$fragment",
+  async ({ scope, fragment }) => {
+    const browser = await startFakeCdpBrowser({
+      eventsBeforeReply: ["WebMCP.enable"],
+      commandResult: ({ method }, origin) =>
+        method === "Page.getFrameTree"
+          ? {
+              frameTree: {
+                frame: { id: "frame-main", url: `${origin}/app` },
+                childFrames: [
+                  {
+                    frame: {
+                      id: "child",
+                      parentId: "frame-main",
+                      ...(scope === "missing"
+                        ? {}
+                        : {
+                            url:
+                              scope === "foreign"
+                                ? "https://foreign.test/child"
+                                : scope === "opaque"
+                                  ? "about:blank"
+                                  : scope === "unparseable"
+                                    ? "not-a-url"
+                                    : `${origin}/child`,
+                          }),
+                      urlFragment: fragment,
+                    },
+                  },
+                ],
+              },
+            }
+          : undefined,
+      commandEvents: ({ method, sessionId }) =>
+        method === "WebMCP.enable"
+          ? [
+              {
+                method: "WebMCP.toolsAdded",
+                ...(sessionId === undefined ? {} : { sessionId }),
+                params: {
+                  tools: [
+                    { name: "child_tool", inputSchema: {}, frameId: "child" },
+                  ],
+                },
+              },
+            ]
+          : undefined,
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().discoverWebMcpTools(
+      discoverWebMcpToolsInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    const valid = scope === "allowed" && fragment === "#valid";
+    expect(result.value.tools.items.map(({ name }) => name)).toEqual(
+      valid ? ["child_tool"] : [],
+    );
+    if (valid)
+      expect(result.value.tools.items[0]?.frame_url).toBe(
+        `${browser.allowedOrigin}/child#valid`,
+      );
+    const uncertain =
+      scope === "missing" ||
+      scope === "opaque" ||
+      scope === "unparseable" ||
+      (scope === "allowed" && !valid);
+    expect(
+      result.value.completeness.attach_limited_sections.includes(
+        "webmcp_tools",
+      ),
+    ).toBe(uncertain);
+    expect(
+      result.value.completeness.policy_filtered_sections.includes(
+        "webmcp_tools",
+      ),
+    ).toBe(scope === "foreign");
+    if (uncertain || fragment !== "#valid")
+      expect(result.value.completeness.excluded).toContainEqual(
+        expect.objectContaining({
+          section: "webmcp_tools",
+          reason: "invalid_protocol_value",
+        }),
+      );
   },
 );
 
@@ -473,11 +576,11 @@ describe("CdpBrowserProvider: transient WebMCP frames", () => {
     expect(result.value.tools.items.map(({ name }) => name)).not.toContain(
       "child_tool",
     );
-    expect(
-      result.value.completeness.excluded.find(
-        ({ section }) => section === "webmcp_tools",
-      )?.count,
-    ).toBe(1);
+    // The initial foreign frame and the excluded foreign replay declaration
+    // are separate observed exclusions; replacing an allowed child adds none.
+    expect(result.value.completeness.excluded).toEqual([
+      { section: "webmcp_tools", reason: "out_of_target_scope", count: 2 },
+    ]);
   });
 });
 
@@ -1064,5 +1167,46 @@ it.each(["initial", "final"])(
       ok: false,
       error: { reason: "protocol_error" },
     });
+  },
+);
+
+it.each([undefined, 7, ""])(
+  "retains initial child ancestry uncertainty: %s",
+  async (parentId) => {
+    const browser = await startFakeCdpBrowser({
+      commandResult: ({ method }, origin) =>
+        method === "Page.getFrameTree"
+          ? {
+              frameTree: {
+                frame: { id: "frame-main", url: `${origin}/app` },
+                childFrames: [
+                  {
+                    frame: {
+                      id: "child",
+                      url: `${origin}/child`,
+                      ...(parentId === undefined ? {} : { parentId }),
+                    },
+                  },
+                ],
+              },
+            }
+          : undefined,
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().discoverWebMcpTools(
+      discoverWebMcpToolsInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.completeness.excluded).toContainEqual({
+      section: "webmcp_tools",
+      reason: "invalid_protocol_value",
+      count: 1,
+    });
+    expect(result.value.completeness.policy_filtered_sections).toEqual([]);
   },
 );

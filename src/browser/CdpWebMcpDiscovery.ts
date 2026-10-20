@@ -15,7 +15,6 @@ import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
-import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import {
   allowedSanitizedUrl,
   delayWithCancellation,
@@ -26,7 +25,7 @@ import {
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
 import {
-  captureFrames,
+  classifyCdpFrameUrl,
   observeCdpFrameUrl,
   mainFrameUrl,
   observeMainFrameUrl,
@@ -67,13 +66,7 @@ export const discoverWebMcp = async (
     context.signal,
   );
   const initialUrl = requiredDiscoveryFrameUrl(frameTree, origins);
-  const frames = captureFrames(
-    frameTree,
-    origins,
-    undefined,
-    completeness,
-  ).items;
-  const frameUrls = initialFrameScope(frameTree, frames, completeness);
+  const frameUrls = new Map<string, FrameScopeFrame>();
   const tools = new Map<string, WebMcpDiscovery["tools"]["items"][number]>();
   const frameScope = {
     origins,
@@ -83,6 +76,7 @@ export const discoverWebMcp = async (
     transientFrames: new Set<string>(),
     resolvedTransientFrames: new Set<string>(),
   };
+  ingestInitialFrameTree(frameTree, frameScope);
   const removeListener = context.connection.onEvent((event) => {
     if (event.sessionId !== context.sessionId) return;
     if (ingestFrameScopeEvent(event, frameScope)) return;
@@ -158,36 +152,32 @@ interface FrameScopeFrame {
   readonly loaderId?: string | undefined;
 }
 
-const initialFrameScope = (
+const ingestInitialFrameTree = (
   frameTree: unknown,
-  frames: ReturnType<typeof captureFrames>["items"],
-  completeness: CdpCaptureCompleteness,
-): Map<string, FrameScopeFrame> => {
-  const scoped = new Map<string, FrameScopeFrame>(
-    frames.map((frame) => [
-      frame.frame_id,
-      {
-        url: frame.url,
-        origin: frame.origin,
-        parentFrameId: frame.parent_frame_id,
-      },
-    ]),
-  );
+  state: FrameScopeState,
+): void => {
   const root = recordValue(recordValue(frameTree)?.frameTree);
-  if (root === undefined) return scoped;
-  for (const tree of walkFrameTrees(root, () =>
-    completeness.exclude("webmcp_tools", "invalid_protocol_value"),
+  if (root === undefined) {
+    state.completeness.exclude("webmcp_tools", "invalid_protocol_value");
+    return;
+  }
+  for (const tree of walkFrameTrees(root, (omittedCount) =>
+    state.completeness.exclude(
+      "webmcp_tools",
+      "invalid_protocol_value",
+      omittedCount,
+    ),
   )) {
     const frame = recordValue(tree.frame);
-    const frameId = cdpStringValue(frame?.id);
-    const prior = frameId === undefined ? undefined : scoped.get(frameId);
-    if (frameId !== undefined && prior !== undefined)
-      scoped.set(frameId, {
-        ...prior,
-        loaderId: cdpStringValue(frame?.loaderId),
-      });
+    const parent = cdpStringValue(frame?.parentId);
+    if (
+      frame !== undefined &&
+      (tree !== root || Object.hasOwn(frame, "parentId")) &&
+      (parent === undefined || parent === "")
+    )
+      state.completeness.exclude("webmcp_tools", "invalid_protocol_value");
+    handleFrameUpdate(frame, state, true);
   }
-  return scoped;
 };
 
 const ingestFrameScopeEvent = (
@@ -239,16 +229,13 @@ const handleFrameUpdate = (
   }
   const observation = observeCdpFrameUrl(frame);
   const rawUrl = observation.kind === "observed" ? observation.url : undefined;
-  if (frame.urlFragment !== undefined && observation.kind !== "observed") {
+  const facts = classifyCdpFrameUrl(observation, state.origins);
+  if (observation.kind !== "observed") {
     removeFrameTools(frameId, state.tools);
     state.frames.delete(frameId);
     state.resolvedTransientFrames.delete(frameId);
     state.completeness.exclude("webmcp_tools", "invalid_protocol_value");
-    const scopeOrigin =
-      observation.kind === "invalid_fragment"
-        ? sanitizeBrowserUrl(observation.scopeUrl).origin
-        : null;
-    if (scopeOrigin !== null && !state.origins.has(scopeOrigin)) {
+    if (facts.scope === "outside_policy") {
       state.transientFrames.delete(frameId);
       state.completeness.exclude("webmcp_tools", "out_of_target_scope");
     } else state.transientFrames.add(frameId);
@@ -266,33 +253,34 @@ const handleFrameUpdate = (
     }
     return true;
   }
-  updateFrameScope(frame, frameId, rawUrl, state, documentCommitted);
+  updateFrameScope(frame, frameId, facts, state, documentCommitted);
   return true;
 };
 
 const updateFrameScope = (
   frame: UnknownRecord,
   frameId: string,
-  rawUrl: string | undefined,
+  facts: ReturnType<typeof classifyCdpFrameUrl>,
   state: FrameScopeState,
   documentCommitted: boolean,
 ): void => {
-  const url = allowedSanitizedUrl(rawUrl, state.origins);
-  if (url === undefined || url.origin === null) {
+  if (facts.url === undefined || facts.origin === null) {
     removeFrameTools(frameId, state.tools);
     state.frames.delete(frameId);
+    state.transientFrames.delete(frameId);
+    state.resolvedTransientFrames.delete(frameId);
     state.completeness.exclude("webmcp_tools", "out_of_target_scope");
     return;
   }
   const previous = state.frames.get(frameId);
   const loaderId = cdpStringValue(frame?.loaderId);
-  if (hasNewDocument(documentCommitted, previous, url.url, loaderId))
+  if (hasNewDocument(documentCommitted, previous, facts.url, loaderId))
     removeFrameTools(frameId, state.tools);
   if (documentCommitted && state.transientFrames.has(frameId))
     state.resolvedTransientFrames.add(frameId);
   state.frames.set(frameId, {
-    url: url.url,
-    origin: url.origin,
+    url: facts.url,
+    origin: facts.origin,
     ...(loaderId === undefined ? {} : { loaderId }),
     parentFrameId:
       (cdpStringValue(frame?.parentId) ??
@@ -366,15 +354,12 @@ const requiredDiscoveryFrameUrl = (
   origins: ReadonlySet<string>,
 ): string => {
   const observed = observeMainFrameUrl(result);
-  if (
-    observed.kind === "invalid_fragment" &&
-    allowedSanitizedUrl(observed.scopeUrl, origins) !== undefined
-  )
+  const facts = classifyCdpFrameUrl(observed, origins);
+  if (facts.scope === "outside_policy" || facts.scope === "unsupported")
+    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
+  if (observed.kind !== "observed")
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
-  if (
-    observed.kind !== "observed" ||
-    allowedSanitizedUrl(observed.url, origins) === undefined
-  )
+  if (facts.url === undefined)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   return observed.url;
 };

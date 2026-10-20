@@ -8,14 +8,11 @@ import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { isMainFrameNavigation } from "./CdpCaptureEventHelpers.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
-import {
-  allowedSanitizedUrl,
-  recordValue,
-  cdpStringValue,
-} from "./CdpCaptureValues.js";
+import { recordValue, cdpStringValue } from "./CdpCaptureValues.js";
 import {
   observeCdpFrameUrl,
   observeMainFrameUrl,
+  classifyCdpFrameUrl,
   captureFrames,
 } from "./CdpCaptureDocuments.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
@@ -56,16 +53,21 @@ export const captureCdpScreenshot = async (
     context.signal,
   );
   const beforeObservation = observeMainFrameUrl(before);
+  const beforeFacts = classifyCdpFrameUrl(beforeObservation, origins);
   if (
-    beforeObservation.kind === "invalid_fragment" &&
-    allowedSanitizedUrl(beforeObservation.scopeUrl, origins) !== undefined
+    beforeFacts.scope === "outside_policy" ||
+    beforeFacts.scope === "unsupported"
   )
+    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
+  if (beforeObservation.kind !== "observed")
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
-  const beforeUrl =
-    beforeObservation.kind === "observed" ? beforeObservation.url : undefined;
-  const authorized = allowedSanitizedUrl(beforeUrl, origins);
+  const beforeUrl = beforeFacts.url;
   const mainFrame = captureFrames(before, origins, 1).items[0];
-  if (authorized === undefined || mainFrame === undefined)
+  if (
+    beforeUrl === undefined ||
+    beforeFacts.origin === null ||
+    mainFrame === undefined
+  )
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   const initialFrame = recordValue(
     recordValue(recordValue(before)?.frameTree)?.frame,
@@ -112,19 +114,16 @@ export const captureCdpScreenshot = async (
   if (navigation.leftScope)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   const afterObservation = observeMainFrameUrl(after);
+  const afterFacts = classifyCdpFrameUrl(afterObservation, origins);
   if (
-    navigation.invalidIdentity ||
-    (afterObservation.kind === "invalid_fragment" &&
-      allowedSanitizedUrl(afterObservation.scopeUrl, origins) !== undefined)
+    afterFacts.scope === "outside_policy" ||
+    afterFacts.scope === "unsupported"
   )
+    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
+  if (navigation.invalidIdentity || afterObservation.kind !== "observed")
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
-  const afterUrl =
-    afterObservation.kind === "observed" ? afterObservation.url : undefined;
-  if (
-    navigation.changed ||
-    afterUrl !== beforeUrl ||
-    allowedSanitizedUrl(afterUrl, origins) === undefined
-  )
+  const afterUrl = afterFacts.url;
+  if (navigation.changed || afterUrl !== beforeUrl || afterUrl === undefined)
     throw new BrowserObservationError("inspect_web_page", "target_changed");
   await context.progress?.report({
     phase: "browser_observation",
@@ -137,8 +136,8 @@ export const captureCdpScreenshot = async (
     browser: context.discovery.version,
     target: {
       target_id: context.target.id,
-      url: authorized.url,
-      origin: authorized.origin ?? "",
+      url: beforeUrl,
+      origin: beforeFacts.origin,
     },
     captured_at: new Date().toISOString(),
     viewport: dimensions,
@@ -172,7 +171,8 @@ const observeScreenshotNavigation = (
   const frame =
     event.method === "Page.frameNavigated" ? recordValue(params.frame) : params;
   const observed = observeCdpFrameUrl(frame);
-  const frameUrl = observed.kind === "observed" ? observed.url : undefined;
+  const facts = classifyCdpFrameUrl(observed, origins);
+  const frameUrl = facts.url;
   if (
     event.method === "Page.navigatedWithinDocument" &&
     state.loaderId !== undefined &&
@@ -190,8 +190,7 @@ const observeScreenshotNavigation = (
     return;
 
   state.changed = true;
-  if (observed.kind === "missing") state.invalidIdentity = true;
-  else if (allowedSanitizedUrl(observed.scopeUrl, origins) === undefined)
+  if (facts.scope === "outside_policy" || facts.scope === "unsupported")
     state.leftScope = true;
-  else if (observed.kind === "invalid_fragment") state.invalidIdentity = true;
+  if (observed.kind !== "observed") state.invalidIdentity = true;
 };

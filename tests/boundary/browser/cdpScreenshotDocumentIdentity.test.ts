@@ -152,11 +152,17 @@ describe("screenshot committed document identity", () => {
 
 it.each(
   [7, "missing-hash"].flatMap((fragment) =>
-    ["initial", "event", "final"].map((phase) => ({ fragment, phase })),
+    ["initial", "event", "final"].flatMap((phase) =>
+      ["allowed", "foreign", "missing"].map((scope) => ({
+        fragment,
+        phase,
+        scope,
+      })),
+    ),
   ),
 )(
-  "keeps malformed screenshot fragments distinct from scope exits: $phase/$fragment",
-  async ({ fragment, phase }) => {
+  "keeps malformed screenshot fragments distinct from scope exits: $phase/$scope/$fragment",
+  async ({ fragment, phase, scope }) => {
     const browser = await startFakeCdpBrowser({
       commandResult: ({ method }, origin, reads) =>
         method === "Page.getFrameTree" &&
@@ -166,7 +172,14 @@ it.each(
                 frame: {
                   id: "frame-main",
                   loaderId: "loader-main",
-                  url: `${origin}/app?token=frame-secret`,
+                  ...(scope === "missing"
+                    ? {}
+                    : {
+                        url:
+                          scope === "foreign"
+                            ? "https://foreign.test/"
+                            : `${origin}/app?token=frame-secret`,
+                      }),
                   urlFragment: fragment,
                 },
               },
@@ -182,7 +195,14 @@ it.each(
                   frame: {
                     id: "frame-main",
                     loaderId: "loader-main",
-                    url: `${origin}/app?token=frame-secret`,
+                    ...(scope === "missing"
+                      ? {}
+                      : {
+                          url:
+                            scope === "foreign"
+                              ? "https://foreign.test/"
+                              : `${origin}/app?token=frame-secret`,
+                        }),
                     urlFragment: fragment,
                   },
                 },
@@ -200,7 +220,9 @@ it.each(
     );
     expect(result).toMatchObject({
       ok: false,
-      error: { reason: "protocol_error" },
+      error: {
+        reason: scope === "foreign" ? "target_not_allowed" : "protocol_error",
+      },
     });
   },
 );
