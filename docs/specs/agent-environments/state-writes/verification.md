@@ -178,3 +178,20 @@ After the second main merge: `npm run check:fast`, `npm run format:check`,
 `npm run docs:check` and `npm run mcp-catalog:check` passed; the contracts,
 analysis-view and environment tests 857 passed with 3 pre-existing skips; the
 analysis-view and environment MCP and CLI boundaries 53 passed.
+
+## After the review round
+
+The branch then merged the serving branch at c00fde41, the coverage branch at
+f6c756aa and main at 1629266e, and took the review fixes (82556cd5, 138ea4b1,
+6d21b62e). The coverage branch quotes field names in response summaries, so the
+replay card pinned by the serve MCP boundary is now 12,818 bytes; removing
+those quotes gives back the previous 12,618-byte digest exactly. The gates ran
+again and passed: `npm run check:fast`, `npm run format:check`, `npx knip`,
+`npm run scan:todos`, `npm run docs:check`, `npm run verify:test-discovery`,
+`npm run verify:module-boundaries` and `npm run mcp-catalog:check`;
+`npm run jscpd` 3.47% over 3601 files; domain and services 7463 passed with 5
+pre-existing skips; the focused boundary set 75 passed; conformance 279
+passed. The gate is stricter, but the write verdicts over the 50 captures were
+unchanged plan by plan, and the in-process smoke again applied all 33 served
+write tools. The AgentEnv runs and the live comparison above ran on cbb7b613,
+before these merges and fixes.
