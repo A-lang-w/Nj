@@ -598,6 +598,25 @@ const directMutationPosition = (
   return computed;
 };
 
+/** Prove that an unconditional member replacement precedes this read. */
+export const semanticDefiniteEffectPrecedesReference = (
+  effect: t.Node,
+  reference: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  const before = directMutationPosition(effect, parents);
+  const after = bindingReadPosition(reference, parents);
+  if (before === null || after.position === null || after.repeating)
+    return false;
+  if (positionPrecedes(before, after.position)) return true;
+  return (
+    before.body === after.position.body &&
+    before.index === after.position.index &&
+    before.declaratorIndex === after.position.declaratorIndex &&
+    expressionEvaluationOrder(effect, reference, parents) === "before"
+  );
+};
+
 const computeReferenceInitializerPosition = (
   node: t.Node,
   parents: WeakMap<t.Node, t.Node>,
@@ -608,6 +627,11 @@ const computeReferenceInitializerPosition = (
     const direct = directInitializerPosition(current, parents);
     if (direct !== null) return direct;
     const parent = parents.get(current);
+    if (
+      t.isAssignmentExpression(parent, { operator: "=" }) &&
+      (t.isObjectPattern(parent.left) || t.isArrayPattern(parent.left))
+    )
+      return directMutationPosition(parent, parents);
     if (t.isFunction(parent))
       return t.isBlockStatement(parent.body)
         ? { body: parent.body.body, index: -1, declaratorIndex: -1 }
@@ -1086,8 +1110,16 @@ export const semanticBindingAtRead = (
   // can cover entry even when another write's order remains unknown.
   const hasDefiniteInitializer =
     position !== null &&
-    binding.initializers.some((initializer) => {
-      const source = initializerInBody(initializer, parents, position?.body);
+    [
+      ...binding.initializers,
+      ...binding.referenceInitializers.filter(({ assignment }) => assignment),
+    ].some((initializer) => {
+      const source = initializerInBody(
+        initializer,
+        parents,
+        position?.body,
+        binding.referenceInitializers.includes(initializer),
+      );
       return (
         source !== null &&
         positionPrecedes(source, position) &&
@@ -1191,7 +1223,8 @@ const selectInitializers = (
           parent.right === origin.initializer.node) ||
           (t.isVariableDeclarator(parent) &&
             parent.init === origin.initializer.node)) &&
-        readInsideInitializer(read, origin.initializer.node, parents)
+        readInsideInitializer(read, origin.initializer.node, parents) &&
+        semanticTopLevelEffectIsOrderable(parent, parents)
       )
         continue;
       const order = expressionEvaluationOrder(

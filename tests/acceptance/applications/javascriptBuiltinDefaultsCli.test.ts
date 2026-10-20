@@ -110,7 +110,6 @@ const writeReceiverReviewSources = async (root: string): Promise<void> => {
   for (const [index, source] of sources.entries())
     await writeFile(join(root, `receiver-review-${index}.ts`), source);
   for (const [name, source] of Object.entries({
-    ...opaqueMutatorSources,
     "commonjs-callback.cjs": `Object.assign=(t,get)=>{get().require=replacement};
      Object.assign({},()=>module);require('fs').readFileSync('wrong-callback');`,
     "callable-scalar.cjs": `const label=function named(){};
@@ -332,8 +331,6 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     "nested-write-kept.json",
     "null-prototype-kept.json",
     "omitted-key.json",
-    "opaque-saved-key.json",
-    "opaque-saved-receiver.json",
     "opaque-unrelated.json",
     "ordered-kept.json",
     "outer-before-nested.json",
@@ -351,7 +348,6 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     "sequence-one.json",
     "sequence-two.json",
     "sibling.json",
-    "suspended-primitive.json",
     "timeline-first.json",
     "timeline-second.json",
     "wrapped-kept.json",
@@ -365,6 +361,39 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
       ({ relation }) => relation === "releases",
     ),
   ).toHaveLength(2);
+  const { client, call } = await connectLocalToolsMcp();
+  const response = await call("analyze_javascript_application", {
+    input_path: root,
+    format: "auto",
+  });
+  expect(response.isError, JSON.stringify(response)).not.toBe(true);
+  expect(response.structuredContent).toEqual(evidence);
+  await client.ping();
+}, 60000);
+
+it("preserves opaque-write and suspension boundaries through CLI and MCP", async () => {
+  const root = await createTestTempDirectory("rea-builtin-opaque-");
+  for (const [name, source] of Object.entries(opaqueMutatorSources))
+    await writeFile(join(root, name), source);
+  const { stdout } = await execute(
+    process.execPath,
+    ["scripts/rea.mjs", "analyze-javascript-application", root, "--json"],
+    { cwd: process.cwd(), maxBuffer: 16 * 1024 * 1024 },
+  );
+  const evidence = parseEvidence(JSON.parse(stdout));
+  const result = javascriptApplicationAnalysisResultSchema.parse(
+    evidence.normalized_result,
+  );
+  expect(
+    result.semantic_graph.nodes
+      .filter(({ kind }) => kind === "config-source")
+      .map(({ properties }) => properties.key)
+      .sort(),
+  ).toEqual([
+    "opaque-saved-key.json",
+    "opaque-saved-receiver.json",
+    "suspended-primitive.json",
+  ]);
   const { client, call } = await connectLocalToolsMcp();
   const response = await call("analyze_javascript_application", {
     input_path: root,
