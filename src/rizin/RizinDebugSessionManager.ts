@@ -492,10 +492,7 @@ export class RizinDebugSessionManager {
       inferiorInventoryComplete: false,
       inferiorStateUnknown: () => !session.inferiorInventoryComplete,
       verifyInferiorsEndedAfterExit: async () => {
-        const hadPendingInferiors = session.pendingInferiorPids.size > 0;
         if (!session.inferiorInventoryRowsComplete) return false;
-        if (!session.inferiorInventoryComplete && !hadPendingInferiors)
-          return false;
         for (const pid of session.pendingInferiorPids) {
           try {
             const first = await this.#readProcessStartTime(pid);
@@ -1622,13 +1619,13 @@ export class RizinDebugSessionManager {
       return resolved(identity);
     }
     if (
-      previous !== undefined &&
-      previous.startTime !== startTime &&
+      (previous === undefined || previous.startTime !== startTime) &&
       !(await this.#replacementIsTracedByOwnedDebugger(session, pid, startTime))
     ) {
-      // Rizin may keep a ptrace IO row after the old PID exits. Linux's
-      // TracerPid identifies whether that row could still affect a replacement;
-      // only a fresh debugger policy readback makes a stale row ignorable.
+      // A first-seen or reused PID may be an unrelated process behind a stale
+      // Rizin row. Linux's TracerPid identifies whether it belongs to this
+      // debugger; only a fresh exit-policy readback makes an unowned row safe
+      // to ignore.
       await this.#verifyDebuggerExitPolicy(session);
       return resolved(undefined);
     }

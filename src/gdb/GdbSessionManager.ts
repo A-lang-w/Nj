@@ -2362,11 +2362,27 @@ export const commandMayChangeInferiorOutput = (command: string): boolean => {
   // stdout/stderr, which are independently verified from the live process at
   // close time. Keep the exception narrow: compound commands and any output
   // redirection still revoke the startup proof.
-  const inputOnlyRunRedirection =
-    runCommand &&
-    /^\s+(?:(?:[^<>;&|\r\n]+\s+)?0?|[^<>;&|\r\n]*[^\d\s<>;&|])<\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s<>;&|]+)\s*$/u.test(
-      runTail,
+  const inputOnlyRunRedirection = (() => {
+    if (
+      !runCommand ||
+      /[>;&|\r\n]/u.test(runTail) ||
+      runTail.indexOf("<") < 0 ||
+      runTail.indexOf("<") !== runTail.lastIndexOf("<")
+    )
+      return false;
+    const inputIndex = runTail.indexOf("<");
+    const argumentsAndFd = runTail.slice(0, inputIndex);
+    const inputPath = runTail.slice(inputIndex + 1);
+    if (!/^\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s<>;&|]+)\s*$/u.test(inputPath))
+      return false;
+    // Only a standalone decimal token attached to `<` is an IO descriptor.
+    // `arg2<input.txt` ends in an argument named `arg2`, so it still uses fd 0.
+    const descriptor = /(?:^|\s)(\d+)$/u.exec(argumentsAndFd)?.[1];
+    return (
+      (descriptor === undefined || descriptor === "0") &&
+      !/[<>;&|\r\n]/u.test(argumentsAndFd)
     );
+  })();
   const mayRunWithOutputRedirection =
     runCommand && /[<>]{1,2}|&>/u.test(runTail) && !inputOnlyRunRedirection;
   return (

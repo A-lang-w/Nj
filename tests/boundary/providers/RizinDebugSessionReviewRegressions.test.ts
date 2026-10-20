@@ -60,12 +60,17 @@ const startRizinWithProvider = async (
   };
 };
 
-const startRizinWithOwnedStop = async (provider: string) => {
+const startRizinWithOwnedStop = async (
+  provider: string,
+  readProcessTracerPid: (pid: string) => Promise<number> = async () => 777,
+) => {
   let debuggerProcess: ProviderProcessHandle | undefined;
   const manager = new RizinDebugSessionManager(
     { ...process.env, REA_RIZIN_COMMAND: provider },
     {
       platform: "linux",
+      readProcessTracerPid,
+      readProcessTaskIds: async () => new Set(["777"]),
       spawnProcess: async (options) => {
         const launched = await spawnOwnedProviderProcess(options);
         debuggerProcess = launched.process;
@@ -879,6 +884,8 @@ it.skipIf(process.platform !== "linux")(
       { ...process.env, REA_RIZIN_COMMAND: provider },
       {
         platform: "linux",
+        readProcessTracerPid: async () => 777,
+        readProcessTaskIds: async () => new Set(["777"]),
         onInferiorDetachVerified: (result: { readonly status: string }) =>
           resolveDetachVerified(result.status === "detached"),
         spawnProcess: async (options) => {
@@ -933,18 +940,19 @@ it.skipIf(process.platform !== "linux")(
       directory,
       commandsPath,
     );
+    const identitySequence = ["100", "100"];
     const identityObservations: string[] = [];
     const manager = new RizinDebugSessionManager(
       { ...process.env, REA_RIZIN_COMMAND: provider },
       {
         platform: "linux",
         readProcessStartTime: async () => {
-          const observed = identityObservations.length === 0 ? "100" : "200";
+          const observed = identitySequence.shift() ?? "200";
           identityObservations.push(observed);
           return observed;
         },
         readProcessTracerPid: async () => 0,
-        readProcessTaskIds: async () => new Set(),
+        readProcessTaskIds: async () => new Set(["777"]),
         spawnProcess: async (options) => {
           const launched = await spawnOwnedProviderProcess(options);
           ownedProviderProcesses.push(launched.process);
@@ -961,7 +969,6 @@ it.skipIf(process.platform !== "linux")(
     if (!started.ok) return;
 
     expect((await manager.close(started.value.session_id)).ok).toBe(false);
-    expect((await manager.retryCleanupFailures()).ok).toBe(false);
     expect(await manager.retryCleanupFailures()).toEqual({
       ok: true,
       value: null,
@@ -969,9 +976,44 @@ it.skipIf(process.platform !== "linux")(
 
     expect(identityObservations[0]).toBe("100");
     expect(
-      identityObservations.slice(1).every((value) => value === "200"),
+      identityObservations.slice(2).every((value) => value === "200"),
     ).toBe(true);
     expect(await readFile(commandsPath, "utf8")).not.toContain("o- 12");
+    expect(manager.status(started.value.session_id)).toBeUndefined();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "does not retain a first-seen Rizin PID row owned by a foreign tracer",
+  async () => {
+    const stalePid = 45_680;
+    directory = await mkdtemp(join(tmpdir(), "rea-rizin-foreign-first-row-"));
+    const provider = await createRetryEmptyInventoryProvider(stalePid);
+    const manager = new RizinDebugSessionManager(
+      { ...process.env, REA_RIZIN_COMMAND: provider },
+      {
+        platform: "linux",
+        readProcessStartTime: async () => "200",
+        readProcessTracerPid: async () => 777,
+        readProcessTaskIds: async () => new Set(),
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          ownedProviderProcesses.push(launched.process);
+          return launched;
+        },
+      },
+    );
+    managers.push(manager);
+    const started = await manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: await rizinTestInferiorTty(),
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    const closed = await manager.close(started.value.session_id);
+
+    expect(closed.ok, closed.ok ? "" : closed.error.message).toBe(true);
     expect(manager.status(started.value.session_id)).toBeUndefined();
   },
 );
@@ -1039,7 +1081,16 @@ it.skipIf(process.platform !== "linux")(
       additionalPid,
       commandsPath,
     );
-    const { manager, sessionId } = await startRizinWithOwnedStop(provider);
+    const selectedTracerReads = new Map<string, number>();
+    const { manager, sessionId } = await startRizinWithOwnedStop(
+      provider,
+      async (pid) => {
+        if (pid !== String(selectedPid)) return 777;
+        const reads = selectedTracerReads.get(pid) ?? 0;
+        selectedTracerReads.set(pid, reads + 1);
+        return reads === 0 ? 777 : 0;
+      },
+    );
 
     expect((await manager.close(sessionId)).ok).toBe(false);
     expect((await manager.retryCleanupFailures()).ok).toBe(false);
@@ -1156,19 +1207,21 @@ it.skipIf(process.platform !== "linux")(
       livePid,
       commandsPath,
     );
-    const staleIdentityReads: string[] = [];
+    const staleIdentityReads = ["100", "100", "200", "200"];
     const manager = new RizinDebugSessionManager(
       { ...process.env, REA_RIZIN_COMMAND: provider },
       {
         platform: "linux",
         readProcessStartTime: async (pid) => {
           if (pid !== String(stalePid)) return "300";
-          const observed = staleIdentityReads.length === 0 ? "100" : "200";
-          staleIdentityReads.push(observed);
-          return observed;
+          return staleIdentityReads.shift() ?? "200";
         },
-        readProcessTracerPid: async () => 0,
-        readProcessTaskIds: async () => new Set(),
+        readProcessTracerPid: async (pid) => {
+          if (pid !== String(livePid)) return 0;
+          const commands = await readFile(commandsPath, "utf8").catch(() => "");
+          return commands.includes("o- 13\n") ? 0 : 777;
+        },
+        readProcessTaskIds: async () => new Set(["777"]),
         spawnProcess: async (options) => {
           const launched = await spawnOwnedProviderProcess(options);
           ownedProviderProcesses.push(launched.process);
@@ -1184,11 +1237,7 @@ it.skipIf(process.platform !== "linux")(
     expect(started.ok).toBe(true);
     if (!started.ok) return;
 
-    expect((await manager.close(started.value.session_id)).ok).toBe(false);
-    expect(await manager.retryCleanupFailures()).toEqual({
-      ok: true,
-      value: null,
-    });
+    expect((await manager.close(started.value.session_id)).ok).toBe(true);
 
     const commands = await readFile(commandsPath, "utf8");
     expect(commands.match(/^o- 13$/gm)).toHaveLength(1);
@@ -1215,6 +1264,7 @@ it.skipIf(process.platform !== "linux")(
     );
     const staleIdentityReads: Array<string | null> = [
       "100", // first observed identity
+      "100", // stable identity check for the stale first row
       "200", // reused PID during retry inventory
       "200", // replacement identity recheck
       null, // transient disappearance in post-detach inventory
@@ -1231,7 +1281,8 @@ it.skipIf(process.platform !== "linux")(
           const next = staleIdentityReads.shift();
           return next === undefined ? "300" : next;
         },
-        readProcessTracerPid: async () => tracerPids.shift() ?? 777,
+        readProcessTracerPid: async (pid) =>
+          pid === String(livePid) ? 777 : (tracerPids.shift() ?? 777),
         readProcessTaskIds: async () => new Set(["777"]),
         spawnProcess: async (options) => {
           const launched = await spawnOwnedProviderProcess(options);
@@ -1310,6 +1361,8 @@ process.stdin.on("data", (chunk) => {
       { ...process.env, REA_RIZIN_COMMAND: provider },
       {
         platform: "linux",
+        readProcessTracerPid: async () => 777,
+        readProcessTaskIds: async () => new Set(["777"]),
         readProcessStartTime: async (pid) => {
           if (pid === String(selected.pid))
             return selected.exitCode === null && selected.signalCode === null
@@ -1417,11 +1470,13 @@ process.stdin.on("data", (chunk) => {
     await chmod(provider, 0o700);
 
     let detachResult: string | undefined;
+    let identityReads = 0;
     const manager = new RizinDebugSessionManager(
       { ...process.env, REA_RIZIN_COMMAND: provider },
       {
         platform: "linux",
-        readProcessTracerPid: async () => 0,
+        readProcessTracerPid: async () => (identityReads++ === 0 ? 777 : 0),
+        readProcessTaskIds: async () => new Set(["777"]),
         spawnProcess: async (options) => {
           const launched = await spawnOwnedProviderProcess(options);
           ownedProviderProcesses.push(launched.process);
@@ -1635,6 +1690,8 @@ it.skipIf(process.platform !== "linux")(
       { ...process.env, REA_RIZIN_COMMAND: provider },
       {
         platform: "linux",
+        readProcessTracerPid: async () => 777,
+        readProcessTaskIds: async () => new Set(["777"]),
         spawnProcess: async (options) => {
           const launched = await spawnOwnedProviderProcess(options);
           ownedProviderProcesses.push(launched.process);
@@ -2079,6 +2136,8 @@ it.skipIf(process.platform !== "linux")(
       { ...process.env, REA_RIZIN_COMMAND: provider },
       {
         platform: "linux",
+        readProcessTracerPid: async () => 777,
+        readProcessTaskIds: async () => new Set(["777"]),
         spawnProcess: async (options) => {
           const launched = await spawnOwnedProviderProcess(options);
           ownedProviderProcesses.push(launched.process);
@@ -2147,6 +2206,8 @@ it.skipIf(process.platform !== "linux")(
       { ...process.env, REA_RIZIN_COMMAND: provider },
       {
         platform: "linux",
+        readProcessTracerPid: async () => 777,
+        readProcessTaskIds: async () => new Set(["777"]),
         spawnProcess: async (options) => {
           const launched = await spawnOwnedProviderProcess(options);
           ownedProviderProcesses.push(launched.process);
@@ -2233,6 +2294,106 @@ it.skipIf(process.platform !== "linux")(
 );
 
 it.skipIf(process.platform !== "linux")(
+  "releases Rizin cleanup after complete rows reject detach and all known inferiors end",
+  async () => {
+    const tty = await rizinTestInferiorTty();
+    const inferior = await spawnTestInferiorOnTty(tty);
+    const pid = inferior.pid;
+    expect(pid).toBeDefined();
+    if (pid === undefined) return;
+    directory = await mkdtemp(
+      join(tmpdir(), "rea-rizin-ended-after-row-reject-"),
+    );
+    const provider = join(directory, "fake-rizin-ended-after-row-reject.mjs");
+    await writeFile(
+      provider,
+      `#!/usr/bin/env node
+process.stdout.write("\\0");
+let input = "";
+let detached = false;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n"); if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    if (line === "olj") process.stdout.write(JSON.stringify([{ fd: detached ? 13 : 12, raised: true, uri: "ptrace://${pid}" }]) + "\\0");
+    else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
+    else if (line === "o- 12") detached = true;
+    else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
+    else process.stdout.write("\\0");
+  }
+});
+`,
+    );
+    await chmod(provider, 0o700);
+
+    let debuggerProcess: ProviderProcessHandle | undefined;
+    let stopCalls = 0;
+    let stateAfterDebuggerExit: boolean | undefined;
+    const manager = new RizinDebugSessionManager(
+      { ...process.env, REA_RIZIN_COMMAND: provider },
+      {
+        platform: "linux",
+        readProcessTracerPid: async () => 777,
+        readProcessTaskIds: async () => new Set(["777"]),
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          debuggerProcess = launched.process;
+          ownedProviderProcesses.push(launched.process);
+          return launched;
+        },
+        stopProcess: async (session) => {
+          if (stopCalls++ === 0) {
+            await expect(session.detachInferior?.()).rejects.toThrow(
+              "did not confirm that the selected inferior FD was detached",
+            );
+            debuggerProcess!.kill("SIGTERM");
+            expect(await session.supervisor.waitForExit(1_000)).toBe(true);
+            stateAfterDebuggerExit =
+              (await session.verifyInferiorsEndedAfterExit?.()) === true;
+            return { status: "incomplete", reason: "inferior remains active" };
+          }
+          stateAfterDebuggerExit =
+            (await session.verifyInferiorsEndedAfterExit?.()) === true;
+          return stateAfterDebuggerExit
+            ? { status: "stopped" }
+            : { status: "incomplete", reason: "inferior remains active" };
+        },
+      },
+    );
+    managers.push(manager);
+    const started = await manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: tty,
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    const sessionId = started.value.session_id;
+
+    expect((await manager.close(sessionId)).ok).toBe(false);
+    expect(stateAfterDebuggerExit).toBe(false);
+    expect(manager.status(sessionId)).toBeDefined();
+    expect(inferior.exitCode).toBeNull();
+
+    expect((await manager.retryCleanupFailures()).ok).toBe(false);
+    expect(stateAfterDebuggerExit).toBe(false);
+    const inferiorExit = new Promise<void>((resolveExit) =>
+      inferior.once("exit", () => resolveExit()),
+    );
+    inferior.kill("SIGTERM");
+    await inferiorExit;
+
+    expect(await manager.retryCleanupFailures()).toEqual({
+      ok: true,
+      value: null,
+    });
+    expect(stateAfterDebuggerExit).toBe(true);
+    expect(manager.status(sessionId)).toBeUndefined();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
   "does not release Rizin cleanup after a later inventory leaves a reported PID unresolved",
   async () => {
     const tty = await rizinTestInferiorTty();
@@ -2286,6 +2447,8 @@ process.stdin.on("data", (chunk) => {
       { ...process.env, REA_RIZIN_COMMAND: provider },
       {
         platform: "linux",
+        readProcessTracerPid: async () => 777,
+        readProcessTaskIds: async () => new Set(["777"]),
         readProcessStartTime: async (pid) => {
           if (pid === String(unresolved.pid)) {
             unresolvedReadFailed = true;
