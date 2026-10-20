@@ -367,6 +367,41 @@ it.each([
   },
 );
 
+it.each([7, null, "", "claimed-parent"])(
+  "does not promote children when the enclosing root has a parent: %s",
+  async (parentId) => {
+    const root = await mkdtemp(join(tmpdir(), "rea-electron-root-role-"));
+    temporary.push(root);
+    const main = join(root, "index.html");
+    await writeFile(main, "main");
+    const completeness = new CdpCaptureCompleteness();
+    const frames = await captureFrames(
+      {
+        frameTree: {
+          frame: { id: "main", url: pathToFileURL(main).href, parentId },
+          childFrames: [
+            {
+              frame: {
+                id: "child",
+                parentId: "main",
+                url: pathToFileURL(main).href,
+              },
+            },
+          ],
+        },
+      },
+      completeness,
+    );
+    expect(frames).toEqual([]);
+    expect(completeness.snapshot().excluded).toContainEqual({
+      section: "frames",
+      reason: "invalid_protocol_value",
+      count: 2,
+    });
+    expect(completeness.snapshot().policy_filtered_sections).toEqual([]);
+  },
+);
+
 describe("Electron frame capture", () => {
   it.each([7, undefined])(
     "classifies a malformed child frame ID as unavailable: %s",

@@ -13,6 +13,8 @@ import {
   delayWithCancellation,
   resourceContentSize,
   recordValue,
+  recordsValue,
+  type UnknownRecord,
   requiredRecord,
   cdpStringValue,
 } from "./CdpCaptureValues.js";
@@ -524,13 +526,30 @@ export const captureFrames = async (
   if (frameTree === undefined)
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   const frames: ElectronPageInspection["frames"] = [];
-  for (const tree of walkFrameTrees(frameTree, () =>
-    completeness.exclude("frames", "invalid_protocol_value"),
+  const admittedParents = new Map<UnknownRecord, string>();
+  for (const tree of walkFrameTrees(frameTree, (count) =>
+    completeness.exclude("frames", "invalid_protocol_value", count),
   )) {
     throwIfElectronInspectionCancelled(signal);
     const frame = recordValue(tree.frame);
     const frameId = cdpStringValue(frame?.id);
-    if (frame === undefined || frameId === undefined) {
+    const parentId = cdpStringValue(frame?.parentId);
+    // Only the enclosing tree root may omit its parent. Children must agree
+    // with an admitted enclosing frame; malformed ancestry cannot grant proof
+    // to that frame or to any of its descendants.
+    const ancestryKnown =
+      tree === frameTree
+        ? frame !== undefined && !Object.hasOwn(frame, "parentId")
+        : parentId !== undefined &&
+          parentId !== "" &&
+          parentId !== frameId &&
+          parentId === admittedParents.get(tree);
+    if (
+      frame === undefined ||
+      frameId === undefined ||
+      frameId === "" ||
+      !ancestryKnown
+    ) {
       completeness.exclude("frames", "invalid_protocol_value");
       continue;
     }
@@ -545,9 +564,11 @@ export const captureFrames = async (
     }
     frames.push({
       frame_id: frameId,
-      parent_frame_id: cdpStringValue(frame?.parentId) ?? null,
+      parent_frame_id: parentId ?? null,
       file_path: path,
     });
+    for (const child of recordsValue(tree.childFrames))
+      admittedParents.set(child, frameId);
   }
   return frames;
 };

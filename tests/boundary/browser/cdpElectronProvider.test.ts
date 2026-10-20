@@ -890,3 +890,130 @@ const electronFixture = async (): Promise<string> => {
   await writeFile(join(root, "child.html"), "<div>child</div>");
   return root;
 };
+
+it.each(
+  ["initial", "refreshed"].flatMap((phase) =>
+    ["missing", "number", "null", "empty", "foreign", "cycle", "valid"].map(
+      (parent) => ({ phase, parent }),
+    ),
+  ),
+)(
+  "does not authorize unproved nested Electron ancestry: $phase/$parent",
+  async ({ phase, parent }) => {
+    const root = await electronFixture();
+    const main = pathToFileURL(join(root, "index.html")).href;
+    const child = pathToFileURL(join(root, "child.html")).href;
+    const script = pathToFileURL(join(root, "app.js")).href;
+    const parentValue =
+      parent === "number"
+        ? 7
+        : parent === "null"
+          ? null
+          : parent === "empty"
+            ? ""
+            : parent === "foreign"
+              ? "other"
+              : parent === "cycle"
+                ? "child"
+                : "frame-main";
+    let eventFrameReads = 0;
+    const browser = await startFakeCdpBrowser({
+      electronFileUrl: main,
+      eventsBeforeReply: ["Debugger.enable", "Page.getFrameTree"],
+      commandResult: ({ method }, _origin, reads) =>
+        method === "Page.getFrameTree"
+          ? {
+              frameTree: {
+                frame: { id: "frame-main", url: main },
+                childFrames:
+                  phase === "refreshed" && reads === 1
+                    ? []
+                    : [
+                        {
+                          frame: {
+                            id: "child",
+                            url: child,
+                            ...(parent === "missing"
+                              ? {}
+                              : { parentId: parentValue }),
+                          },
+                          childFrames: [
+                            {
+                              frame: {
+                                id: "grandchild",
+                                parentId: "child",
+                                url: child,
+                              },
+                            },
+                          ],
+                        },
+                      ],
+              },
+            }
+          : undefined,
+      commandEvents: ({ method, sessionId }) => {
+        if (method === "Page.getFrameTree") eventFrameReads++;
+        if (
+          !(phase === "initial"
+            ? method === "Debugger.enable"
+            : method === "Page.getFrameTree" && eventFrameReads === 2)
+        )
+          return method === "Runtime.enable" || method === "Debugger.enable"
+            ? []
+            : undefined;
+        const scope = sessionId === undefined ? {} : { sessionId };
+        return ["child", "grandchild"].flatMap((id, index) => [
+          {
+            method: "Runtime.executionContextCreated",
+            ...scope,
+            params: { context: { id: 70 + index, auxData: { frameId: id } } },
+          },
+          {
+            method: "Debugger.scriptParsed",
+            ...scope,
+            params: {
+              scriptId: id,
+              url: script,
+              executionContextId: 70 + index,
+              hash: id,
+              length: 7,
+              scriptLanguage: "JavaScript",
+            },
+          },
+        ]);
+      },
+    });
+    browsers.push(browser);
+    const result = await new CdpElectronProvider().inspectPage(
+      inspectElectronPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        target_id: "electron-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.frames.map((f) => f.frame_id)).toEqual(
+      parent === "valid"
+        ? ["frame-main", "child", "grandchild"]
+        : ["frame-main"],
+    );
+    for (const id of ["child", "grandchild"])
+      expect(result.value.scripts.items).toContainEqual(
+        expect.objectContaining({
+          cdp_hash: id,
+          frame_id: parent === "valid" ? id : null,
+        }),
+      );
+    if (parent !== "valid") {
+      expect(result.value.completeness.unavailable_sections).toContain(
+        "frames",
+      );
+      expect(result.value.completeness.attach_limited_sections).toContain(
+        "scripts",
+      );
+      expect(result.value.completeness.policy_filtered_sections).not.toContain(
+        "frames",
+      );
+    }
+  },
+);
