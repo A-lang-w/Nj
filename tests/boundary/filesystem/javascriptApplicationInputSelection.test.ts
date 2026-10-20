@@ -35,7 +35,7 @@ describe("JavaScript application input selection", () => {
             path: ["input_path"],
             reason: "invalid_value",
             message: expect.stringContaining(
-              `Selected input path exceeds the host filename length limit (ENAMETOOLONG): ${longPath}`,
+              `Selected input path exceeds the host path or component length limit (ENAMETOOLONG): ${longPath}`,
             ),
           },
         ],
