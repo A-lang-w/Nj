@@ -7,8 +7,13 @@ import type {
   DoctorProviderInspection,
 } from "../application/Doctor.js";
 import { readKunaConfiguration } from "./KunaConfiguration.js";
+import type { FileCloseResourceOwner } from "../application/AnalysisProvider.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
   inspectKunaInstallation,
+  kunaInstallationCancellation,
+  kunaInstallationFailureDiagnostics,
   type KunaReadinessFailure,
 } from "./KunaInstallation.js";
 import {
@@ -33,10 +38,50 @@ const REGISTRATION_SETTINGS = [
 export const inspectKunaProvider = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform = process.platform,
+  options: {
+    readonly fileCloseResources: FileCloseResourceOwner;
+    readonly signal?: AbortSignal;
+  },
 ): Promise<DoctorProviderInspection> => {
-  const installation = await inspectKunaInstallation(environment, {
-    platform,
-  });
+  let installation: Awaited<ReturnType<typeof inspectKunaInstallation>>;
+  try {
+    installation = await inspectKunaInstallation(environment, {
+      platform,
+      fileCloseResources: options.fileCloseResources,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+  } catch (cause: unknown) {
+    if (!(cause instanceof RegularFileCleanupFailure)) {
+      const cancellation = kunaInstallationCancellation(cause);
+      if (cancellation !== undefined)
+        throw new AnalysisCancelledError("doctor", {
+          cause: cancellation.reason,
+          diagnostics: cancellation.diagnostics,
+        });
+      throw cause;
+    }
+    return {
+      id: KUNA_PROVIDER_ID,
+      configured: environment.REA_KUNA_COMMAND !== undefined,
+      available: false,
+      providerVersion: null,
+      registrationEnvironment: {},
+      checks: [
+        {
+          name: "installation",
+          ok: false,
+          code: "cleanup_incomplete",
+          detail: `Kuna installation inspection could not confirm file cleanup: ${cause instanceof Error ? cause.message : String(cause)}`,
+          remediation: null,
+          classification: "config_drift",
+          details: {
+            cleanup_incomplete: true,
+            ...kunaInstallationFailureDiagnostics(cause),
+          },
+        },
+      ],
+    };
+  }
   const configured =
     environment.REA_KUNA_COMMAND !== undefined &&
     environment.REA_KUNA_COMMAND.length > 0;

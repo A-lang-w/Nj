@@ -275,6 +275,7 @@ it.each([
   "tests/boundary/providers/RizinDebugSessionReviewRegressions.test.ts",
   "tests/boundary/mcp/gdbCancellationMcp.test.ts",
   "tests/boundary/mcp/rizinDebuggerCancellationMcp.test.ts",
+  "tests/boundary/mcp/rizinPendingOutput.test.ts",
   "tests/composition/reverseEngineeringAdmission.test.ts",
   "tests/support/reverseEngineeringMcpHarness.ts",
   "tests/support/reverseEngineeringCompositionEdgeCases.ts",
@@ -653,8 +654,34 @@ it.each([
     },
   ],
   [
+    "scripts/verify-ghidra-bridge-sources.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "src/ghidra/GhidraBridgeSources.ts",
+    { code: true, ghidra_bridge: true, runtime: true, package: true },
+  ],
+  [
+    "src/ghidra/GhidraJavaProperties.ts",
+    { code: true, ghidra_bridge: true, runtime: true, package: false },
+  ],
+  [
+    "src/ghidra/GhidraReleasePolicy.ts",
+    { code: true, ghidra_bridge: true, runtime: true },
+  ],
+  [
+    ".github/workflows/ghidra-bridge-sources.yml",
+    { code: false, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "bridge/ghidra/Example.java",
-    { code: true, runtime: true, package: false, apple: false },
+    {
+      code: true,
+      runtime: true,
+      ghidra_bridge: true,
+      package: false,
+      apple: false,
+    },
   ],
   [
     "src/native/AppleExample.ts",
@@ -698,6 +725,87 @@ it.each([
     { code: true, package: true, runtime: true, apple: false },
   ],
   [
+    "tests/boundary/filesystem/clientConfigurationEnvironment.test.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "tests/boundary/filesystem/clientConfigurationLayeredEnvironment.test.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "tests/acceptance/setup/registrationRuntimeEnvironmentCli.test.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/ClientRegistrationEnvironment.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/ClientRegistrationStatus.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/ClientRegistrationIdentity.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/ClientConfigurationDocument.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/ClientConfigurationFiles.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/ClientConfigurationPublication.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/ClientConfigurationCleanup.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/DshCordisPatch.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/DshCordisYaml.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "scripts/verify-packed-bridge.mjs",
+    {
+      code: true,
+      package: true,
+      runtime: true,
+      apple: false,
+      evm: false,
+      browser: false,
+    },
+  ],
+  [
+    "scripts/verify-packed-bridge.d.mts",
+    {
+      code: true,
+      package: true,
+      runtime: true,
+      apple: false,
+      evm: false,
+      browser: false,
+    },
+  ],
+  [
+    "tests/boundary/process/packedBridgeVerification.test.ts",
+    {
+      code: true,
+      package: true,
+      runtime: true,
+      apple: false,
+      evm: false,
+      browser: false,
+    },
+  ],
+  [
     "src/process/ProcessOwnership.test.ts",
     { code: true, package: true, apple: false, evm: false, browser: false },
   ],
@@ -732,7 +840,56 @@ it.each([
     "src/domain/analysisErrorProjection.ts",
     { code: true, sqlite: true, runtime: true },
   ],
-  ["src/domain/javascript/example.ts", { code: true, sqlite: false }],
+  [
+    "src/application/environment/environmentExport.ts",
+    {
+      code: true,
+      runtime: true,
+      agentenv: true,
+      browser: false,
+      package: false,
+    },
+  ],
+  [
+    "scripts/verify-agentenv-environment.mjs",
+    { code: true, agentenv: true, runtime: false, package: false },
+  ],
+  [
+    "src/domain/analysisView/scenarioCaptureRecords.ts",
+    { code: true, agentenv: true, runtime: true, package: false },
+  ],
+  [
+    "src/domain/analysisView/WebNetworkProjectionAccumulator.ts",
+    { code: true, agentenv: true, runtime: true, package: false },
+  ],
+  [
+    "src/domain/analysisView/analysisViewDataAdmission.ts",
+    { code: true, agentenv: true, runtime: true, package: false },
+  ],
+  [
+    "src/application/OwnedJsonInput.ts",
+    { code: true, agentenv: true, runtime: true, package: false },
+  ],
+  [
+    "src/artifacts/SafeOutputTree.ts",
+    { code: true, agentenv: true, runtime: true },
+  ],
+  [
+    "src/cliJsonInput.ts",
+    { code: true, agentenv: true, runtime: true, package: false },
+  ],
+  [
+    "tests/boundary/process/agentenvVerifierIdentity.test.ts",
+    { code: true, agentenv: false, runtime: false, package: false },
+  ],
+  [
+    ".github/workflows/real-agentenv.yml",
+    { code: false, agentenv: true, workflows: true, package: false },
+  ],
+  [
+    "src/domain/javascript/example.ts",
+    { code: true, sqlite: false, ghidra_bridge: false, agentenv: false },
+  ],
 ])("selects the appropriate lanes for %s", async (path, expected) => {
   const { directory, base } = await fixture();
   const head = await change(directory, [path]);
@@ -830,7 +987,9 @@ it.each([
   ["web_network", "real-web-network-captures"],
   ["web_runtime", "real-web-runtime"],
   ["web_source_map", "real-web-source-map"],
+  ["agentenv", "real-agentenv"],
   ["nativeaot", "nativeaot-fixtures"],
+  ["ghidra_bridge", "ghidra-bridge-sources"],
   ["website", "website-check"],
 ])(
   "routes %s through the selector without a duplicate PR trigger",

@@ -174,6 +174,7 @@ export const inspectNativeMacho = async (
             ?.file_offset ?? undefined);
   const normalized = normalizeMacho(
     captures,
+    format,
     context.invocation,
     limitations,
     load,
@@ -205,6 +206,7 @@ export const inspectNativeMacho = async (
 
 const normalizeMacho = (
   captures: readonly NativeCommandCapture[],
+  containerFormat: "thin" | "fat",
   toInvocation: (capture: NativeCommandCapture) => NativeCommandInvocation,
   additionalLimitations: readonly string[],
   load: ReturnType<typeof parseOtoolLoadCommands>,
@@ -237,7 +239,15 @@ const normalizeMacho = (
     load.commands,
     dwarfdump.stdout,
     artifactPath,
-    selectedArchitecture.name,
+    selectedArchitecture.name === null
+      ? null
+      : {
+          name: selectedArchitecture.name,
+          dwarfdumpName: toolArchitectureName(
+            "dwarfdump",
+            selectedArchitecture.name,
+          ),
+        },
   );
   const provenance = captures.map(toInvocation);
   // A thread-state command carries the entrypoint in architecture-specific
@@ -268,7 +278,7 @@ const normalizeMacho = (
       : []),
   ];
   return inspectMachoSchema.parse({
-    format: "mach-o",
+    format: containerFormat === "fat" ? "mach-o-universal" : "mach-o",
     selected_architecture: selectedArchitecture,
     endian: load.endian,
     word_size: load.wordSize,

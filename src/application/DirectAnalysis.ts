@@ -40,6 +40,7 @@ import type {
   AnalysisExecution,
   ProviderIdentity,
 } from "./AnalysisProvider.js";
+import { createAnalysisExecutionEvidence } from "./AnalysisProvider.js";
 import {
   REA_WORKFLOW_PROVIDER,
   workflowAnalysisProfile,
@@ -81,6 +82,16 @@ type DirectAnalysisTool =
   | "trace_feature"
   | "trace_native_ui_action"
   | "trace_native_values";
+
+// These one-shot CLI questions require native utilities, not a deep engine.
+// Runtime observation retains the ordinary session and authority checks.
+const NATIVE_INSPECTION_OPERATIONS: ReadonlySet<string> = new Set([
+  "inspect_macho",
+  "inspect_signature",
+  "list_architectures",
+  "inspect_plist",
+  "demangle_swift",
+] satisfies readonly NativeToolName[]);
 
 const ARTIFACT_ANALYSIS_OPERATION_SET: ReadonlySet<string> = new Set(
   ARTIFACT_ANALYSIS_OPERATIONS,
@@ -152,7 +163,9 @@ export const runProviderAnalysis = async (
       signal: operationSignal,
       ...(ARTIFACT_ANALYSIS_OPERATION_SET.has(tool)
         ? { createSession: dependencies.createArtifactBinarySession }
-        : {}),
+        : NATIVE_INSPECTION_OPERATIONS.has(tool)
+          ? { createSession: dependencies.createNativeBinarySession }
+          : {}),
     }),
   );
 };
@@ -196,17 +209,7 @@ const runManagedProviderAnalysis = async (
   );
   if (!execution.ok) return cliError(execution.error);
   const value = execution.value;
-  return createEvidence(value.subject ?? undefined, value.provider, {
-    operation: tool,
-    parameters: arguments_,
-    result: value.result,
-    rawResult: value.rawResult,
-    limitations: value.limitations,
-    ...(value.relationshipCoverage === undefined
-      ? {}
-      : { relationshipCoverage: value.relationshipCoverage }),
-    locations: value.locations,
-  });
+  return createAnalysisExecutionEvidence(tool, arguments_, value, "observed");
 };
 
 const runAnalysis = async (
@@ -236,7 +239,11 @@ const runAnalysis = async (
   } else {
     const config = dependencies.readConfiguration();
     if (!config.ok) return cliError(config.error);
-    session = await dependencies.createBinarySession(config.value, logger);
+    session = await (
+      tool === "inspect_native_dispatch_metadata" && snapshotPath === undefined
+        ? dependencies.createNativeDispatchBinarySession
+        : dependencies.createBinarySession
+    )(config.value, logger);
   }
   return withSessionCleanup(
     session,
@@ -325,7 +332,7 @@ const runAnalysis = async (
           : await session.openResolvedTarget(resolvedTarget, openOptions);
       if (!opened.ok) return cliError(opened.error);
       const evidenceProfile = analysisProfileForEvidence(session, tool);
-      const { output, evidence } = await executeAnalysisTool({
+      const { output, evidence, cachePolicy } = await executeAnalysisTool({
         session,
         openedTarget: opened.value,
         tool,
@@ -355,7 +362,11 @@ const runAnalysis = async (
         evidence !== undefined &&
         session.allowsSnapshotReplay(tool)
       ) {
-        const workflowRecord = workflowSnapshotRecord(evidence, tool);
+        const workflowRecord = workflowSnapshotRecord(
+          evidence,
+          tool,
+          cachePolicy,
+        );
         if (workflowRecord !== undefined) {
           const recorded = session.recordWorkflowSnapshot(workflowRecord);
           if (!recorded.ok)
@@ -401,7 +412,11 @@ const executeAnalysisTool = async (input: {
   readonly arguments: Readonly<Record<string, JsonValue>>;
   readonly signal: AbortSignal;
   readonly evidenceProfile: AnalysisProfileCommitment | undefined;
-}): Promise<{ readonly output: JsonValue; readonly evidence?: Evidence }> => {
+}): Promise<{
+  readonly output: JsonValue;
+  readonly evidence?: Evidence;
+  readonly cachePolicy?: "live";
+}> => {
   const { session, tool, signal, evidenceProfile } = input;
   if (tool === "analyze_function") {
     const { executeFunctionAnalysisEvidence } =
@@ -437,7 +452,13 @@ const executeAnalysisTool = async (input: {
       upstreamProfile: evidenceProfile,
       upstreamLimitations: result.value.limitations,
     });
-    return { output: evidence, evidence };
+    return {
+      output: evidence,
+      evidence,
+      ...(result.value.cachePolicy === undefined
+        ? {}
+        : { cachePolicy: result.value.cachePolicy }),
+    };
   }
   let result = await session.execute(tool, input.arguments, { signal });
   if (
