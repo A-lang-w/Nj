@@ -66,7 +66,9 @@ interface ReverseEngineeringCommandRunner {
   (
     command: string,
     arguments_: readonly string[],
-    options?: Parameters<typeof execFileOutput>[2],
+    options?: NonNullable<Parameters<typeof execFileOutput>[2]> & {
+      readonly onDispatch?: () => void;
+    },
     /** Operation that launches this provider process, recorded with its owner. */
     operation?: ReverseEngineeringOperation,
   ): Promise<{
@@ -453,7 +455,6 @@ export class ReverseEngineeringService {
     let earlyFailure: AnalysisError | undefined;
     if (signal?.aborted) return err(new AnalysisCancelledError(operation));
     try {
-      onDispatch?.();
       const output = await this.#run(
         command,
         args,
@@ -466,6 +467,7 @@ export class ReverseEngineeringService {
           timeout: DEFAULT_TIMEOUT_MS,
           stopSignal: "SIGTERM",
           maxBuffer: MAX_COMBINED_OUTPUT_BYTES,
+          ...(onDispatch === undefined ? {} : { onDispatch }),
         },
         operation,
       );
@@ -896,6 +898,9 @@ const runOwnedCommandOutput =
           env: spawnEnv,
           hostEnvironment: {},
           sweepTokenOwnedProcesses: true,
+          ...(options.onDispatch === undefined
+            ? {}
+            : { onDispatch: options.onDispatch }),
         },
         {
           timeoutMs: DEFAULT_TIMEOUT_MS,

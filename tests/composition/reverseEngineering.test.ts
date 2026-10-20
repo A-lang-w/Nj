@@ -15,6 +15,36 @@ import { createReverseEngineeringService } from "../../src/composition/reverseEn
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
 
+describe("reverse engineering dispatch ownership preflight", () => {
+  it("does not report Rizin dispatch when ownership preflight fails", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-rizin-preflight-"));
+    const path = join(directory, "fixture.bin");
+    await writeFile(path, Buffer.from([0x7f, 0x45, 0x4c, 0x46]));
+    let dispatches = 0;
+    let callbackWasForwarded = false;
+    const service = new ReverseEngineeringService({
+      run: async (_command, _args, options) => {
+        callbackWasForwarded =
+          typeof (options as { readonly onDispatch?: unknown } | undefined)
+            ?.onDispatch === "function";
+        throw new Error("process ownership baseline unavailable");
+      },
+    });
+
+    try {
+      const result = await service.executeRizinCommand(
+        { path, command: "iI" },
+        { onDispatch: () => dispatches++ },
+      );
+      expect(result.ok).toBe(false);
+      expect(callbackWasForwarded).toBe(true);
+      expect(dispatches).toBe(0);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("reverse engineering command services", () => {
   it("documents the shared combined capture limit for both command tools", () => {
     for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS)
