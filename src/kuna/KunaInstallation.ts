@@ -2,9 +2,8 @@ import {
   assertRegularFileActive,
   RegularFileOperationCancelled,
 } from "../filesystem/RegularFile.js";
-import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { access, readFile, realpath, stat } from "node:fs/promises";
+import { access, realpath, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
@@ -213,13 +212,21 @@ export const inspectKunaInstallation = async (
 
   let preProbeHash: string;
   try {
-    preProbeHash = createHash("sha256")
-      .update(await readFile(executable))
-      .digest("hex");
+    ({ sha256: preProbeHash } = await hashStableFile(executable, {
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      retainFailedClose: (owner) =>
+        options.fileCloseResources.retain(owner, executable),
+    }));
   } catch (cause: unknown) {
+    if (
+      cause instanceof Error &&
+      (cause instanceof RegularFileCleanupFailure ||
+        regularFileCancellation(cause) !== undefined)
+    )
+      throw cause;
     return failure(
       "executable_missing",
-      `Cannot fingerprint ${executable}: ${message(cause)}`,
+      `Cannot fingerprint ${executable}: ${message(stableFileHashCause(cause))}`,
       { command, executable },
     );
   }
