@@ -31,6 +31,17 @@ after the last source change, in this order.
   `serveEnvironmentState`, `environmentCapacity` and `stateIntake` adapters
   tests: 11 files, 89 tests passed.
 
+After merging the environment state view's review fixes (its branch at
+6ad63bcc) into this branch, every gate ran again on the merged tree:
+`npm run check:fast`, `npm run format:check`, `npx knip`,
+`npm run scan:todos` and `npm run docs:check` passed; `npm run jscpd`: 3.38%
+duplicated lines over 3372 files; `npx vitest run --project domain --project
+services`: 346 files, 5928 tests passed, 5 pre-existing skips; `npm run
+build:cached`, then `npm run test:focused --` the serve CLI, MCP and process
+boundaries, the `serveEnvironment` and `serveEnvironmentState` adapters, the
+export CLI boundary and the analysis-view CLI and MCP boundaries: 8 files, 81
+tests passed.
+
 Not covered here: a real AgentEnv framework run against a state-served
 environment, a real `https://` download (tests inject the fetcher or stub
 `fetch`), write effects and exporting the state, which are later increments.
