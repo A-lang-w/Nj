@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { expect, it } from "vitest";
+import { SafeOutputSourceFailure } from "../../../src/artifacts/SafeOutputSourceFailure.js";
 import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { withArtifactRegularFile } from "../../../src/artifacts/ArtifactFileOperation.js";
@@ -262,7 +263,7 @@ it.each(
     [false, true].map((failDestroy) => ({ emitClose, failDestroy })),
   ),
 )(
-  "observes cancellation during source finalization without replacing a source error: %j",
+  "retains cancellation and source finalization failures in observed order: %j",
   async ({ emitClose, failDestroy }) => {
     const root = await createTestTempDirectory("rea-source-final-cancel-");
     const input = join(root, "input");
@@ -291,8 +292,15 @@ it.each(
       const result = await tree
         .write("file", source, expected, controller.signal)
         .catch((cause: unknown) => cause);
-      if (failDestroy) expect(result).toBe(failure);
-      else {
+      if (failDestroy) {
+        // Readback can observe cancellation before the deferred destroy error.
+        // Either primary is valid, but a later source failure must survive.
+        if (result instanceof SafeOutputSourceFailure) {
+          expect(result.reason).toBe("cancelled");
+          expect(result.cancellation?.reason).toBe(cancellation);
+          expect(result.sourceFailures).toContain(failure);
+        } else expect(result).toBe(failure);
+      } else {
         expect(result).toBeInstanceOf(ArtifactReaderFailure);
         expect((result as ArtifactReaderFailure).reason).toBe("cancelled");
         expect((result as ArtifactReaderFailure).cancellation?.reason).toBe(

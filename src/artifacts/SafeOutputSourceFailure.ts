@@ -50,7 +50,8 @@ export class SafeOutputSourceFailure extends ArtifactReaderFailure {
       projected.reason,
       projected.message,
       {
-        cause: normalizedPrimary,
+        // Classification fields are snapshots; the primary retains its live owner.
+        cause: primary,
         cancellation: projected.cancellation,
         cleanup: projected.cleanup,
         cleanupLeases: projected.cleanupLeases,
