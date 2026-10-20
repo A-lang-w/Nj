@@ -178,6 +178,8 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   #currentId: string;
   #activeStarts = 0;
   readonly #startQueue: Array<() => void> = [];
+  /** The retained cleanup retry that is in flight. */
+  #retainedCleanupRetry: Promise<void> | undefined;
 
   constructor(
     router: SessionProviderRouter,
@@ -1681,6 +1683,13 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   ): Promise<Result<undefined, AnalysisError>> {
     if (signal?.aborted === true)
       return err(new AnalysisCancelledError(operation));
+    if (this.#activeStarts >= this.#limits.maxConcurrentAnalyses) {
+      // A provider a forced close could not release keeps the permit this
+      // start would wait for, and the cleanup that owns that permit is
+      // retried inside the open. Waiting first would wait for an open that
+      // never begins, so the retained cleanup is retried before the wait.
+      await this.#retryRetainedCleanups();
+    }
     if (this.#activeStarts < this.#limits.maxConcurrentAnalyses) {
       this.#activeStarts += 1;
       permit.held = true;
@@ -1761,6 +1770,49 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     if (permit === undefined) return;
     slot.retainedPermit = undefined;
     this.#releaseStartPermit(permit);
+  }
+
+  /**
+   * Retry the cleanup of the providers a forced close could not release.
+   *
+   * A retained cleanup keeps the start permit, so a later start waits for it.
+   * The wait would never end: the open retries the cleanup, and the open is
+   * queued behind the permit the cleanup owns. The cleanup is retried before
+   * the permit is taken instead, and a successful retry gives the permit back.
+   *
+   * One retry runs at a time, so two overlapping opens do not close the same
+   * provider twice.
+   */
+  async #retryRetainedCleanups(): Promise<void> {
+    const inFlight = this.#retainedCleanupRetry;
+    if (inFlight !== undefined) return inFlight;
+    const retry = this.#runRetainedCleanupRetry();
+    this.#retainedCleanupRetry = retry;
+    void retry.then(
+      () => {
+        if (this.#retainedCleanupRetry === retry)
+          this.#retainedCleanupRetry = undefined;
+      },
+      () => {
+        if (this.#retainedCleanupRetry === retry)
+          this.#retainedCleanupRetry = undefined;
+      },
+    );
+    return retry;
+  }
+
+  /** Retry every retained cleanup and release the permits they own. */
+  async #runRetainedCleanupRetry(): Promise<void> {
+    const slots = new Set<TargetSlot>([...this.#slots.values(), this.#primary]);
+    for (const slot of slots) {
+      if (slot.retainedPermit === undefined) continue;
+      const released = await slot.session.releasePendingProvider();
+      if (!released.ok) continue;
+      // The provider is gone, so the analysis cap stops counting it and the
+      // slot is no longer reported as a target whose cleanup failed.
+      this.#releaseRetainedPermit(slot);
+      this.#retainedSlots.delete(slot.id);
+    }
   }
 
   #emitAvailabilityChanged(): void {

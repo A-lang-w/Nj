@@ -265,6 +265,22 @@ export const createCacheProvider = (
   };
 };
 
+/**
+ * A provider whose start never settles and whose abort is ignored.
+ *
+ * The session's transition chain stays parked on this start, so a forced
+ * close has to retire the chain instead of waiting behind it.
+ */
+export class WedgedAnalysisClient implements AnalysisClient {
+  execute(): Promise<ReturnType<typeof observed>> {
+    return new Promise<ReturnType<typeof observed>>(() => undefined);
+  }
+
+  close(): Promise<Result<null, AnalysisError>> {
+    return Promise.resolve(resultOk(null));
+  }
+}
+
 /** Controllable client used to observe session replacement and cancellation. */
 export class ControllableAnalysisClient implements AnalysisClient {
   closed = 0;

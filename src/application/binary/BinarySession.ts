@@ -51,6 +51,10 @@ import {
   externalMutationRefusal,
   refusesExternalMutation,
 } from "./ExternalMutationAdmission.js";
+import {
+  createTransitionRetirement,
+  type TransitionRetirement,
+} from "./TransitionRetirement.js";
 const OFFICIAL_OPERATIONS: ReadonlySet<string> = new Set(
   OFFICIAL_TOOL_CONTRACTS.map(({ name }) => name),
 );
@@ -62,7 +66,7 @@ interface SessionRun {
   readonly client: AnalysisClient;
   readonly route: SessionProviderRoute;
   readonly runId: string;
-  /** Set once a forced close released this client, so it is never closed twice. */
+  /** Set once the client was closed, so it is never closed twice. */
   released: boolean;
 }
 
@@ -87,7 +91,7 @@ interface TransitionAdmission {
   /** The epoch the chain belongs to. */
   readonly epoch: number;
   /** Settles when the epoch is retired. */
-  readonly retirement: Promise<void>;
+  readonly retirement: TransitionRetirement;
 }
 
 /**
@@ -125,13 +129,14 @@ export class BinarySession
    * against the target that replaces it.
    */
   #transitionEpoch = 0;
-  /** Resolves when the current epoch is retired. */
-  #epochRetirement = createRetirement();
+  /** Settles when the current epoch is retired. */
+  #epochRetirement: TransitionRetirement;
   /** The requests that have not settled in the current epoch. */
   #transitionPending = 0;
   readonly #calls = new Map<Promise<unknown>, number>();
   readonly #promptCompletionControllers = new Set<AbortController>();
   readonly #providerRouter: SessionProviderRouter;
+  readonly #createRetirement: () => TransitionRetirement;
   readonly #runtimeUnavailability = new Map<
     string,
     { readonly reason: string }
@@ -141,9 +146,18 @@ export class BinarySession
   constructor(
     providerRouter: SessionProviderRouter,
     records: InvestigationRecords = new InvestigationRecords(),
+    /**
+     * Create the retirement of an epoch.
+     *
+     * The retirement holds the requests that wait for the epoch, so the
+     * factory lets a caller observe the waiters an epoch still holds.
+     */
+    createRetirement: () => TransitionRetirement = createTransitionRetirement,
   ) {
     super(records);
     this.#providerRouter = providerRouter;
+    this.#createRetirement = createRetirement;
+    this.#epochRetirement = createRetirement();
   }
 
   /**
@@ -764,7 +778,6 @@ export class BinarySession
     // retry.
     this.#pendingCleanup = { run, retainDocument: false };
     const closed = await this.#retryPendingCleanup();
-    if (closed.ok) run.released = true;
     return closed;
   }
 
@@ -786,8 +799,29 @@ export class BinarySession
         ...(pending.retainDocument ? { retainDocument: true } : {}),
       },
     );
-    if (closed.ok) this.#pendingCleanup = undefined;
+    if (closed.ok) {
+      // The client is closed, so the run owns no cleanup any more and it is
+      // never closed a second time.
+      this.#pendingCleanup = undefined;
+      pending.run.released = true;
+    }
     return closed;
+  }
+
+  /**
+   * Release the provider a close could not release.
+   *
+   * A close that could not stop the provider keeps the cleanup pending, so
+   * the provider that may still be running stays owned by this session. A
+   * caller that waits for that provider retries the cleanup here: the open
+   * that would retry it waits for the permit the cleanup owns, so the retry
+   * has to happen before that wait.
+   *
+   * The retry answers whether the provider is gone. A slot without a pending
+   * cleanup owns no provider, so it answers that the provider is gone.
+   */
+  releasePendingProvider(): Promise<Result<null, AnalysisError>> {
+    return this.#retryPendingCleanup();
   }
 
   async #failedOpen(
@@ -1117,7 +1151,7 @@ export class BinarySession
     return {
       promise: this.#transition,
       epoch: this.#transitionEpoch,
-      retirement: this.#epochRetirement.promise,
+      retirement: this.#epochRetirement,
     };
   }
 
@@ -1130,17 +1164,15 @@ export class BinarySession
     for (const controller of this.#promptCompletionControllers)
       controller.abort();
     const epoch = this.#transitionEpoch;
-    const retirement = this.#epochRetirement.promise;
     this.#transitionPending += 1;
     // Later calls wait for this transition and must not be included in its drain.
     const admittedThrough = this.#transitionGeneration++;
-    const result = Promise.race([
-      this.#transition.then(
-        () => undefined,
-        () => undefined,
-      ),
-      retirement,
-    ]).then(() =>
+    const { settled } = waitForAdmission({
+      promise: this.#transition,
+      epoch,
+      retirement: this.#epochRetirement,
+    });
+    const result = settled.then(() =>
       this.#admit(epoch, operationName, operation, admittedThrough),
     );
     this.#transition = result.then(
@@ -1200,7 +1232,7 @@ export class BinarySession
     this.#transitionEpoch += 1;
     this.#transitionPending = 0;
     this.#epochRetirement.retire();
-    this.#epochRetirement = createRetirement();
+    this.#epochRetirement = this.#createRetirement();
     this.#transition = Promise.resolve();
   }
 
@@ -1289,23 +1321,20 @@ export class BinarySession
       return err(new AnalysisCancelledError(operation));
     // A retired transition settles the wait: the request it carried is
     // rejected instead of waiting for a chain that will never settle.
-    const settled = Promise.race([
-      admission.promise.then(
-        () => undefined,
-        () => undefined,
-      ),
-      admission.retirement,
-    ]);
+    const { settled, detach } = waitForAdmission(admission);
     if (signal === undefined) {
       await settled;
       return this.#transitionOutcome(operation, admission);
     }
     return new Promise((resolve) => {
       const onAbort = (): void => {
+        // The request stops waiting, so it leaves the epoch behind.
+        detach();
         resolve(err(new AnalysisCancelledError(operation)));
       };
       signal.addEventListener("abort", onAbort, { once: true });
       void settled.then(() => {
+        detach();
         signal.removeEventListener("abort", onAbort);
         resolve(
           signal.aborted
@@ -1333,23 +1362,33 @@ export class BinarySession
   }
 }
 
-/** A promise that a later action resolves. */
-interface Retirement {
-  readonly promise: Promise<void>;
-  /** Resolve the promise, so the requests that wait on it are released. */
-  retire(): void;
-}
-
-/** Create a promise that a later action resolves. */
-const createRetirement = (): Retirement => {
-  let retire: (() => void) | undefined;
-  const promise = new Promise<void>((resolve) => {
-    retire = resolve;
+/**
+ * Wait for the transition chain of an epoch or for the retirement of the epoch.
+ *
+ * The retirement is shared by every request of the epoch, so the wait
+ * attaches a listener and detaches it when the wait finishes. A request that
+ * settled for another reason leaves nothing attached to the retirement, so a
+ * long-lived epoch does not retain the requests that already finished.
+ */
+const waitForAdmission = (
+  admission: TransitionAdmission,
+): { readonly settled: Promise<void>; readonly detach: () => void } => {
+  let detach: () => void = () => undefined;
+  const settled = new Promise<void>((resolve) => {
+    const detachListener = admission.retirement.subscribe(() => resolve());
+    detach = detachListener;
+    void admission.promise.then(
+      () => {
+        detachListener();
+        resolve();
+      },
+      () => {
+        detachListener();
+        resolve();
+      },
+    );
   });
-  return {
-    promise,
-    retire: () => retire?.(),
-  };
+  return { settled, detach: () => detach() };
 };
 
 const isAborted = (signal: AbortSignal | undefined): boolean =>

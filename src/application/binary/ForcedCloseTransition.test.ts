@@ -1,30 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { ok as resultOk, type Result } from "../../domain/result.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { err, ok as resultOk } from "../../domain/result.js";
 import { observed } from "../../../tests/fixtures/analysisExecution.js";
 import {
   createBinarySessionTargets,
+  createDeferred,
   createTestBinarySession,
+  WedgedAnalysisClient,
 } from "../../../tests/fixtures/binarySession.js";
 import type { AnalysisClient } from "../AnalysisProvider.js";
-
-/**
- * A provider whose start never settles and whose abort is ignored.
- *
- * The session's transition promise stays parked on this start, so a forced
- * close has to retire the chain instead of waiting behind it.
- */
-class WedgedAnalysisClient implements AnalysisClient {
-  execute(): Promise<ReturnType<typeof observed>> {
-    return new Promise<ReturnType<typeof observed>>(() => undefined);
-  }
-
-  close(): Promise<Result<null, AnalysisError>> {
-    return Promise.resolve(resultOk(null));
-  }
-}
 
 /** A provider that answers at once, including the reads that need no provider. */
 const healthyClient = (): AnalysisClient => ({
@@ -158,5 +144,63 @@ describe("a request rejected by a retired transition", () => {
     expect(settled.ok).toBe(false);
     if (settled.ok) return;
     expect(settled.error).toBeInstanceOf(AnalysisCancelledError);
+  });
+});
+
+/**
+ * A provider that a retry released is not closed a second time.
+ *
+ * The cleanup of a provider a close could not release is retried by the
+ * caller that waits for it. The client is closed then, so the run that owns
+ * it owns no cleanup any more: the start that never unwound must not close
+ * it again when it finally unwinds.
+ */
+describe("a provider that a retry released", () => {
+  it("is not closed again when the abandoned start unwinds", async () => {
+    const [first] = await createBinarySessionTargets();
+    const health = createDeferred<ReturnType<typeof observed>>();
+    let clients = 0;
+    let closes = 0;
+    let refuseClose = true;
+    const session = createTestBinarySession(() => {
+      clients += 1;
+      return {
+        execute: () => health.promise,
+        close: () => {
+          closes += 1;
+          return Promise.resolve(
+            refuseClose
+              ? err(
+                  new ProviderCleanupError("fixture", ["provider-client"], {
+                    reason: "fixture close refused",
+                  }),
+                )
+              : resultOk(null),
+          );
+        },
+      };
+    });
+
+    const opening = session.open(first);
+    await vi.waitFor(() => expect(clients).toBe(1));
+
+    // The forced close cannot release the provider.
+    const closed = await session.closeWithoutTransition(
+      {},
+      { clearRecords: true, closeOwnedProviderResources: true },
+    );
+    expect(closed.ok).toBe(false);
+    expect(closes).toBe(1);
+
+    // The provider is released by the retry.
+    refuseClose = false;
+    expect((await session.releasePendingProvider()).ok).toBe(true);
+    expect(closes).toBe(2);
+
+    // The abandoned start unwinds, and the client it started is already closed.
+    health.resolve(observed(null));
+    const settled = await opening;
+    expect(settled.ok).toBe(false);
+    expect(closes).toBe(2);
   });
 });
