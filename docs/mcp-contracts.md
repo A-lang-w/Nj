@@ -131,6 +131,10 @@ inline response, supply `offset` and `limit`, then follow `next_offset` until it
 is null. `total` counts all matching heads; each page preserves complete records
 in stable unknown ID order. Filters apply before paging. Pages reflect current
 session state, so keep the unknown ledger unchanged while traversing it.
+`record_unknown` rejects an existing identity even when non-identity fields
+such as severity differ; this is a deterministic, non-retryable conflict.
+Use `list_unknowns` to find the existing head, then submit a complete
+`update_unknown` with its current revision only when you intend to change it.
 
 For a portable exported bundle, the CLI shares this projection:
 `rea inspect-evidence-bundle '{"path":"/tmp/evidence.json","detail":"summary","filters":{"operation":"analyze_function"}}' --format json`.
