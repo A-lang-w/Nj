@@ -3,6 +3,7 @@ import {
   chmod,
   lstat,
   mkdir,
+  open,
   readdir,
   rename,
   rm,
@@ -28,6 +29,27 @@ const createdRuntimeSchema = z
 
 /** Name of the durable directory created inside a native runtime root. */
 const DURABLE_ROOT_LEAF = "root";
+
+/**
+ * Suffix of the file beside the cache root that serialises a repair.
+ *
+ * The lock lives beside the root because the repair replaces the root itself,
+ * so a lock inside it would not survive the replacement.
+ */
+const REPAIR_LOCK_SUFFIX = ".repair";
+
+/**
+ * Name of the directory that holds the copies of the preserved projects until
+ * each one is published at its final path.
+ */
+const REPAIR_STAGING_DIRECTORY = "repair";
+
+/**
+ * A repair lock that has been silent for longer than this belongs to a
+ * session that died, and is taken over so one crash does not disable the
+ * cache for good.
+ */
+const REPAIR_LOCK_STALE_MS = 10 * 60 * 1000;
 
 /** Native operations that establish and verify a durable private cache root. */
 export interface GhidraProjectCacheRootHost {
@@ -114,6 +136,12 @@ const isNotFound = (cause: unknown): boolean =>
   "code" in cause &&
   cause.code === "ENOENT";
 
+const isAlreadyExists = (cause: unknown): boolean =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "code" in cause &&
+  cause.code === "EEXIST";
+
 const rootError = (
   message: string,
   path: string,
@@ -189,13 +217,18 @@ const quarantineRoot = async (root: string): Promise<string> => {
  * parent. A copy created inside the private root inherits the root's
  * owner-only DACL, so the preserved projects are private like the root that
  * holds them.
+ *
+ * `keepAlive` runs before every child, so a repair that holds a lock for a
+ * long copy can keep the lock from looking abandoned.
  */
 const copyDirectoryContent = async (
   from: string,
   to: string,
+  keepAlive: () => Promise<void>,
 ): Promise<number> => {
   const names = await readdir(from);
   for (const name of names) {
+    await keepAlive();
     await copyCacheEntry(join(from, name), join(to, name));
   }
   return names.length;
@@ -228,6 +261,129 @@ const copyCacheEntry = async (from: string, to: string): Promise<void> => {
   await utimes(to, stats.atime, stats.mtime);
 };
 
+/**
+ * Name of the directory that holds the copied projects until they are
+ * published.
+ *
+ * The name avoids the children of the set-aside root, because every one of
+ * them is copied into it.
+ */
+const repairStagingName = async (previous: string): Promise<string> => {
+  const names = new Set(await readdir(previous).catch(() => []));
+  for (let attempt = 0; attempt < 64; attempt += 1) {
+    const candidate =
+      attempt === 0
+        ? REPAIR_STAGING_DIRECTORY
+        : `${REPAIR_STAGING_DIRECTORY}-${attempt}`;
+    if (!names.has(candidate)) return candidate;
+  }
+  throw rootError(
+    "Ghidra project cache root could not be staged for repair",
+    previous,
+  );
+};
+
+/**
+ * Publish every copied project at its final path inside the private root.
+ *
+ * A copy is renamed into place, so a session never finds an unfinished
+ * project at the path it reads: a repair that stops part-way leaves the
+ * copied projects in the staging directory instead of publishing a truncated
+ * one. A name a concurrent publisher already took keeps the published entry
+ * and discards the copy, so a repair never replaces a project a live session
+ * stored.
+ */
+const publishPreservedProjects = async (
+  staging: string,
+  root: string,
+): Promise<void> => {
+  for (const name of await readdir(staging)) {
+    const copied = join(staging, name);
+    const published = join(root, name);
+    try {
+      await rename(copied, published);
+    } catch (cause: unknown) {
+      const existing = await lstat(published).catch(() => undefined);
+      if (existing === undefined) throw cause;
+      // A concurrent publisher won the name; its entry is the live one.
+      await rm(copied, { recursive: true, force: true });
+    }
+  }
+};
+
+/** Path of the file that serialises a root repair between sessions. */
+const repairLockPath = (root: string): string =>
+  join(dirname(root), `${basename(root)}${REPAIR_LOCK_SUFFIX}`);
+
+/** A held repair lock and what taking it proved about the root. */
+interface RepairLock {
+  /** The file that serialises the repair. */
+  readonly path: string;
+  /**
+   * Another session held the lock, so the root may have been created or
+   * rebuilt while this session waited for it.
+   */
+  readonly contended: boolean;
+}
+
+/**
+ * Take the repair lock, so only one session changes the cache root.
+ *
+ * A lock a live session holds is not stolen: the caller reports the root as
+ * busy instead of changing a root another session is rebuilding, so no
+ * session can read or discard a project while it is still being copied. A
+ * lock that has been silent for longer than any plausible repair belongs to a
+ * session that died, and is taken over so one crash does not disable the
+ * cache for good.
+ */
+const acquireRepairLock = async (root: string): Promise<RepairLock> => {
+  const path = repairLockPath(root);
+  const take = async (): Promise<void> => {
+    const handle = await open(path, "wx", 0o600);
+    await handle.close();
+  };
+  try {
+    await take();
+    return { path, contended: false };
+  } catch (cause: unknown) {
+    if (!isAlreadyExists(cause)) throw cause;
+  }
+  const age = await lstat(path).then(
+    (stats) => Date.now() - stats.mtimeMs,
+    () => Number.POSITIVE_INFINITY,
+  );
+  if (age < REPAIR_LOCK_STALE_MS)
+    throw new GhidraProjectCacheError(
+      "busy",
+      "Another session is rebuilding the Ghidra project cache root",
+      path,
+    );
+  await rm(path, { force: true });
+  try {
+    await take();
+  } catch (cause: unknown) {
+    if (!isAlreadyExists(cause)) throw cause;
+    throw new GhidraProjectCacheError(
+      "busy",
+      "Another session is rebuilding the Ghidra project cache root",
+      path,
+      { cause },
+    );
+  }
+  return { path, contended: true };
+};
+
+/** Release the repair lock so another session can rebuild the root. */
+const releaseRepairLock = async (path: string): Promise<void> => {
+  await rm(path, { force: true }).catch(() => undefined);
+};
+
+/** Keep the repair lock alive while the preserved projects are copied. */
+const keepRepairLockAlive = async (lock: string): Promise<void> => {
+  const now = new Date();
+  await utimes(lock, now, now).catch(() => undefined);
+};
+
 /** What rebuilding a root that was not owner-only achieved. */
 interface WindowsRootRepair {
   /** The stored children copied into the private replacement. */
@@ -244,10 +400,15 @@ interface WindowsRootRepair {
  * children are copied into a private root that replaces it, so the cache
  * keeps working instead of being disabled for the whole session, and the
  * copies are private like the root that holds them.
+ *
+ * The copies are made in a staging directory inside the private root and
+ * published one at a time, so a repair that stops part-way never leaves an
+ * unfinished project at the path a session reads.
  */
 const replaceWindowsRoot = async (
   root: string,
   host: GhidraProjectCacheRootHost,
+  lock: string,
 ): Promise<WindowsRootRepair> => {
   const previous = await quarantineRoot(root);
   try {
@@ -278,13 +439,20 @@ const replaceWindowsRoot = async (
       verification,
     );
   }
+  const staging = join(root, await repairStagingName(previous));
   let preserved: number;
   try {
-    preserved = await copyDirectoryContent(previous, root);
+    await mkdir(staging, { recursive: true, mode: 0o700 });
+    preserved = await copyDirectoryContent(previous, staging, () =>
+      keepRepairLockAlive(lock),
+    );
+    await publishPreservedProjects(staging, root);
   } catch (failure: unknown) {
     throw await rebuildFailure(root, previous, failure);
+  } finally {
+    await rm(staging, { recursive: true, force: true }).catch(() => undefined);
   }
-  // The set-aside root is redundant once every stored project is copied into
+  // The set-aside root is redundant once every stored project is published in
   // the private replacement. A root that survives the removal still holds a
   // copy the principals it admits can read, so its path is reported.
   return { preserved, leftover: await removeQuarantinedRoot(previous) };
@@ -368,40 +536,40 @@ const removeQuarantinedRoot = async (
   return removed ? undefined : previous;
 };
 
-const ensureWindowsRoot = async (
+/**
+ * What the cache root is now: a verified private root, a root that has to be
+ * rebuilt as a private directory, or a root that does not exist yet.
+ */
+const inspectWindowsRoot = async (
   root: string,
   host: GhidraProjectCacheRootHost,
-): Promise<GhidraProjectCacheRootPreparation> => {
-  // Only the leaf is private. Its protected, inheritable DACL covers every
-  // staging copy, entry, lease, and lock created beneath it.
-  await mkdir(dirname(root), { recursive: true });
+): Promise<"ready" | "rebuild" | "missing"> => {
   const existing = await lstat(root).catch((cause: unknown) => {
     if (isNotFound(cause)) return undefined;
     throw cause;
   });
-  if (existing !== undefined) {
-    if (!existing.isDirectory() || existing.isSymbolicLink())
-      throw rootError(
-        "Ghidra project cache root must be a directory, not a link",
-        root,
-      );
-    try {
-      host.verifyPrivateDirectory(root);
-      return { status: "ready" };
-    } catch {
-      // POSIX tightens a widened root in place. Windows cannot express an
-      // owner-only DACL, so the root is rebuilt as a private directory and the
-      // stored projects are copied into it.
-      const repair = await replaceWindowsRoot(root, host);
-      return {
-        status: "repaired",
-        preservedEntries: repair.preserved,
-        ...(repair.leftover === undefined
-          ? {}
-          : { leftoverRoot: repair.leftover }),
-      };
-    }
+  if (existing === undefined) return "missing";
+  if (!existing.isDirectory() || existing.isSymbolicLink())
+    throw rootError(
+      "Ghidra project cache root must be a directory, not a link",
+      root,
+    );
+  try {
+    host.verifyPrivateDirectory(root);
+    return "ready";
+  } catch {
+    // POSIX tightens a widened root in place. Windows cannot express an
+    // owner-only DACL, so the root is rebuilt as a private directory and the
+    // stored projects are copied into it.
+    return "rebuild";
   }
+};
+
+/** Create the cache root through the native private-DACL boundary. */
+const createWindowsRoot = async (
+  root: string,
+  host: GhidraProjectCacheRootHost,
+): Promise<void> => {
   try {
     await host.createPrivateDirectory(root);
   } catch (cause: unknown) {
@@ -425,7 +593,43 @@ const ensureWindowsRoot = async (
       cause,
     );
   }
-  return { status: "ready" };
+};
+
+const ensureWindowsRoot = async (
+  root: string,
+  host: GhidraProjectCacheRootHost,
+): Promise<GhidraProjectCacheRootPreparation> => {
+  // Only the leaf is private. Its protected, inheritable DACL covers every
+  // staging copy, entry, lease, and lock created beneath it.
+  await mkdir(dirname(root), { recursive: true });
+  const initial = await inspectWindowsRoot(root, host);
+  if (initial === "ready") return { status: "ready" };
+  // Creating or replacing the root changes what every other session sees, so
+  // it happens under the repair lock. A session that finds the lock held does
+  // not change a root another session is rebuilding.
+  const lock = await acquireRepairLock(root);
+  try {
+    // Another session held the lock, so it may have created or rebuilt the
+    // root while this one waited for it.
+    const state = lock.contended
+      ? await inspectWindowsRoot(root, host)
+      : initial;
+    if (state === "ready") return { status: "ready" };
+    if (state === "rebuild") {
+      const repair = await replaceWindowsRoot(root, host, lock.path);
+      return {
+        status: "repaired",
+        preservedEntries: repair.preserved,
+        ...(repair.leftover === undefined
+          ? {}
+          : { leftoverRoot: repair.leftover }),
+      };
+    }
+    await createWindowsRoot(root, host);
+    return { status: "ready" };
+  } finally {
+    await releaseRepairLock(lock.path);
+  }
 };
 
 /**

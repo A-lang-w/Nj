@@ -269,7 +269,10 @@ statement; needs CONTRIBUTING.md contribution-scope sign-off).
   before any read or write. The rebuild copies the stored projects into the
   private replacement so they carry its owner-only DACL, and it keeps the
   previous root until every project is copied, so a rebuild that cannot
-  complete leaves the stored projects where they were.
+  complete leaves the stored projects where they were. Each project is copied
+  into a staging directory and published by an atomic rename, so no session
+  reads a half-copied project, and a lock beside the root keeps one session
+  from rebuilding the root while another reads or discards a project.
 - Admission mirrors existing-project rules; entries are derived data, never
   executed. Corrupt/foreign entry: rebuild as a miss **but always record the
   typed integrity failure** and never present a rebuilt entry as an untouched

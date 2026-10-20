@@ -9,6 +9,7 @@ import {
   readdir,
   rm,
   symlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -292,6 +293,194 @@ describe("Windows cache root repair", () => {
       }),
     ).rejects.toMatchObject({ reason: "io", path: root });
     expect(verified).toBe(false);
+  });
+});
+
+describe("Windows cache root repair coordination", () => {
+  it("publishes a preserved project only after it is copied", async () => {
+    const parent = await tempRoot();
+    const root = join(parent, "cache");
+    await mkdir(root);
+    const entry = join(root, "entry");
+    await mkdir(entry);
+    // A stored project with enough files that the copy runs long enough to
+    // be observed while it is in progress.
+    const files = 200;
+    for (let index = 0; index < files; index += 1)
+      await writeFile(join(entry, `file-${index}`), "stored");
+    let rebuilt = false;
+    const repair = ensureGhidraProjectCacheRoot(root, {
+      platform: "win32",
+      host: privateRootHost({
+        async createPrivateDirectory(path) {
+          rebuilt = true;
+          await mkdir(path, { recursive: true });
+          return path;
+        },
+        verifyPrivateDirectory() {
+          // The root that was already there is not owner-only; the rebuilt
+          // one passes the same native verification.
+          if (!rebuilt)
+            throw new Error("Private object owner is not the current user");
+          return { privateDacl: true };
+        },
+      }),
+    });
+    let settled = false;
+    void repair.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    // A project that is published at its final path must be complete: a
+    // session that finds a half-copied project there would read it as a
+    // cache hit.
+    let incomplete: string | undefined;
+    let locked = false;
+    while (!settled) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      const beside = await readdir(parent).catch((): string[] => []);
+      if (beside.includes("cache.repair")) locked = true;
+      const names = await readdir(root).catch((): string[] => []);
+      if (!names.includes("entry")) continue;
+      const published = await readdir(join(root, "entry")).catch(() => []);
+      if (published.length !== files)
+        incomplete = `a published project held ${published.length} of ${files} files`;
+    }
+    await expect(repair).resolves.toEqual({
+      status: "repaired",
+      preservedEntries: 1,
+    });
+    expect(incomplete).toBeUndefined();
+    // The repair holds a lock while it runs, so another session cannot read
+    // or discard the projects it is copying.
+    expect(locked).toBe(true);
+    await expect(readdir(join(root, "entry"))).resolves.toHaveLength(files);
+  });
+
+  it("keeps a project a concurrent publisher already stored", async () => {
+    const parent = await tempRoot();
+    const root = join(parent, "cache");
+    await mkdir(root);
+    await writeFile(join(root, "entry"), "stored");
+    let rebuilt = false;
+    const outcome = await ensureGhidraProjectCacheRoot(root, {
+      platform: "win32",
+      host: privateRootHost({
+        async createPrivateDirectory(path) {
+          rebuilt = true;
+          await mkdir(path, { recursive: true });
+          // A concurrent publisher stored a project under the same name while
+          // the rebuild was running.
+          await mkdir(join(path, "entry"), { recursive: true });
+          await writeFile(join(path, "entry", "project"), "published");
+          return path;
+        },
+        verifyPrivateDirectory() {
+          if (!rebuilt)
+            throw new Error("Private object owner is not the current user");
+          return { privateDacl: true };
+        },
+      }),
+    });
+    expect(outcome).toEqual({ status: "repaired", preservedEntries: 1 });
+    // The project a live session stored is kept, and the copy is discarded.
+    await expect(
+      readFile(join(root, "entry", "project"), "utf8"),
+    ).resolves.toBe("published");
+  });
+});
+
+describe("Windows cache root repair locking", () => {
+  it("refuses to rebuild a root another session is rebuilding", async () => {
+    const parent = await tempRoot();
+    const root = join(parent, "cache");
+    await mkdir(root);
+    await writeFile(join(root, "entry"), "stored");
+    // Another session holds the repair lock.
+    await writeFile(join(parent, "cache.repair"), "held");
+    const created: string[] = [];
+    await expect(
+      ensureGhidraProjectCacheRoot(root, {
+        platform: "win32",
+        host: privateRootHost({
+          async createPrivateDirectory(path) {
+            created.push(path);
+            await mkdir(path, { recursive: true });
+            return path;
+          },
+          verifyPrivateDirectory() {
+            throw new Error("Private object owner is not the current user");
+          },
+        }),
+      }),
+    ).rejects.toMatchObject({
+      reason: "busy",
+      message: expect.stringContaining("Another session is rebuilding"),
+    });
+    // The root another session is rebuilding is left exactly as it was.
+    expect(created).toEqual([]);
+    await expect(readFile(join(root, "entry"), "utf8")).resolves.toBe("stored");
+  });
+
+  it("takes over a repair lock a dead session left behind", async () => {
+    const parent = await tempRoot();
+    const root = join(parent, "cache");
+    await mkdir(root);
+    await writeFile(join(root, "entry"), "stored");
+    const lock = join(parent, "cache.repair");
+    await writeFile(lock, "abandoned");
+    // The lock is older than any plausible repair, so the session that left
+    // it behind is gone.
+    const abandoned = new Date(Date.now() - 60 * 60 * 1000);
+    await utimes(lock, abandoned, abandoned);
+    let rebuilt = false;
+    const outcome = await ensureGhidraProjectCacheRoot(root, {
+      platform: "win32",
+      host: privateRootHost({
+        async createPrivateDirectory(path) {
+          rebuilt = true;
+          await mkdir(path, { recursive: true });
+          return path;
+        },
+        verifyPrivateDirectory() {
+          if (!rebuilt)
+            throw new Error("Private object owner is not the current user");
+          return { privateDacl: true };
+        },
+      }),
+    });
+    expect(outcome).toEqual({ status: "repaired", preservedEntries: 1 });
+    await expect(readFile(join(root, "entry"), "utf8")).resolves.toBe("stored");
+    // The lock is released once the repair completes.
+    await expect(access(lock)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("releases the repair lock when the repair cannot complete", async () => {
+    const parent = await tempRoot();
+    const root = join(parent, "cache");
+    await mkdir(root);
+    await writeFile(join(root, "entry"), "stored");
+    await expect(
+      ensureGhidraProjectCacheRoot(root, {
+        platform: "win32",
+        host: privateRootHost({
+          async createPrivateDirectory() {
+            throw new Error("the native boundary is unavailable");
+          },
+          verifyPrivateDirectory() {
+            throw new Error("Private object owner is not the current user");
+          },
+        }),
+      }),
+    ).rejects.toMatchObject({ reason: "io", path: root });
+    // The lock does not outlive the repair, so the next session can retry.
+    await expect(access(join(parent, "cache.repair"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 });
 

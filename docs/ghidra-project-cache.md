@@ -59,6 +59,17 @@ replays in the later session.
   gave them. The rebuild keeps the previous root until every project is
   copied, and a rebuild that cannot complete leaves the stored projects where
   they were.
+- The rebuild copies each stored project into a staging directory inside the
+  private root and publishes it by an atomic rename, so a project is never
+  visible at its final path while it is still being copied. A rebuild that
+  stops part-way therefore leaves no half-copied project that a later session
+  could read as a cache hit; the next session imports the target again and
+  rebuilds it.
+- One session rebuilds the root at a time. The rebuild holds a lock beside the
+  root, and a session that finds the lock held reports the root as busy
+  instead of reading or discarding a project another session is copying. A
+  lock left behind by a session that died is taken over once it has been
+  silent for longer than any plausible rebuild.
 - **Miss** imports writable into a private runtime project; when the session
   closes after a clean, complete, mutation-free analysis the saved project is
   copied into the cache and published by an atomic rename under a per-key lock.
