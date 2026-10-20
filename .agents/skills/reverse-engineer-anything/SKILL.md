@@ -262,7 +262,7 @@ slow, ask for a bounded wait instead of an unbounded block.
   The live-session navigation tools (`current_address`, `current_procedure`,
   `current_document`, `goto_address`, `list_bookmarks`, `list_documents`)
   observe the provider session rather than the analysed program, so they take
-  no wait budget.
+  no wait budget and report the state at once.
 - A call that finds the target still starting returns the retryable
   `analysis_in_progress` error with the elapsed time. It is not a failure:
   retry the same target, or raise `wait_ms` within its cap.
@@ -282,9 +282,10 @@ falls back to another target. `REA_MAX_OPEN_TARGETS` bounds how many targets
 stay open and `REA_MAX_CONCURRENT_ANALYSES` bounds how many starts overlap;
 a start beyond the second limit is queued, not refused.
 
-`close_binary` cancels a running job through the same forced stop, so a
-cancelled analysis leaves no cache entry behind. A completed analysis is
-published to the project cache when the target closes normally.
+`close_binary` cancels a running job. A job that is still starting is aborted
+and its provider released, so a cancelled analysis leaves no cache entry behind.
+A completed analysis is published to the project cache when the target closes
+normally.
 
 The one-shot CLI cannot host a background job: it exits with the command. A
 CLI request for `analysis_mode: "background"` fails with

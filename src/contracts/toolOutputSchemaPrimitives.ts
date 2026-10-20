@@ -486,6 +486,7 @@ export const sessionProvider = z
     cleanup_pending: z.boolean(),
     target_id: z.string().nullable().optional(),
     open_target_ids: z.array(z.string()).optional(),
+    retained_target_ids: z.array(z.string()).optional(),
     analysis: analysisJobState.optional(),
     capabilities: z.array(providerCapabilitySet),
     analysis_run: analysisRun,

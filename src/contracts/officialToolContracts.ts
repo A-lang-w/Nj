@@ -19,7 +19,13 @@ import { functionInstructionInputSchema } from "./functionInstructionContract.js
 import { HOPPER_MEMORY_TOOL_DEFINITIONS } from "./hopperMemoryContracts.js";
 import { analysisSearchInput } from "./analysisSearchContract.js";
 
-/** Bounded wait a target-bound analysis tool offers while a target starts. */
+/**
+ * Bounded wait a target-bound analysis tool offers while a target starts.
+ *
+ * The metadata marks this argument as the shared wait budget. An adapter that
+ * consumes it must look for the marker rather than for the argument name, so a
+ * tool that grows a parameter of its own with the same name keeps it.
+ */
 const waitBudget = z
   .number()
   .int()
@@ -28,7 +34,28 @@ const waitBudget = z
   .optional()
   .describe(
     "Maximum milliseconds to wait for a starting target before returning analysis_in_progress. Default 180000; maximum 290000.",
-  );
+  )
+  .meta({ reaWaitBudget: true });
+
+/** Metadata key that marks the shared wait budget on a tool's input schema. */
+export const REA_WAIT_BUDGET_META = "reaWaitBudget";
+
+/**
+ * Whether a tool's input schema declares the shared wait budget.
+ *
+ * A tool that declares no budget must not consume one: the adapter passes it
+ * an explicit zero so a call on a starting target reports its state at once
+ * instead of blocking for the default budget.
+ */
+export const declaresWaitBudget = (shape: Record<string, unknown>): boolean => {
+  const field = shape.wait_ms;
+  if (field === undefined || typeof field !== "object" || field === null)
+    return false;
+  const meta = (
+    field as { meta?: () => Record<string, unknown> | undefined }
+  ).meta?.();
+  return meta?.[REA_WAIT_BUDGET_META] === true;
+};
 
 /** Opaque handle of the target a call addresses. */
 const targetSelector = { target_id: targetId.optional() };

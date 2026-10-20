@@ -23,6 +23,7 @@ import type {
   SavedAnalysisSnapshot,
 } from "./BinarySessionPort.js";
 import { binaryTargetSummary } from "./BinaryTargetSummary.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { SessionProviderRouter } from "./SessionProviderRouter.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import type {
@@ -50,18 +51,26 @@ export interface BinaryTargetLimits {
   readonly maxOpenTargets: number;
   readonly maxConcurrentAnalyses: number;
   readonly autoBackgroundAfterMs: number;
+  /**
+   * Bound on how long a close waits for an interrupted start to unwind.
+   *
+   * A provider start that ignores its abort holds the session's transition
+   * promise, and the ordinary close serializes behind it. The close stops
+   * waiting after this bound and releases the pending client through the
+   * owner that stops the provider.
+   */
+  readonly jobSettleTimeoutMs: number;
 }
 
 const DEFAULT_LIMITS: BinaryTargetLimits = {
   maxOpenTargets: 4,
   maxConcurrentAnalyses: 2,
   autoBackgroundAfterMs: 120_000,
+  jobSettleTimeoutMs: 30_000,
 };
 
 const DEFAULT_WAIT_MS = 180_000;
 const MAX_WAIT_MS = 290_000;
-/** Bound on how long a close waits for an interrupted start to unwind. */
-const JOB_SETTLE_TIMEOUT_MS = 30_000;
 
 interface TargetSlot {
   readonly id: string;
@@ -103,6 +112,8 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   readonly #limits: BinaryTargetLimits;
   readonly #slots = new Map<string, TargetSlot>();
   readonly #jobs = new Map<string, AnalysisJob>();
+  /** Slot handles whose provider cleanup failed and still owns its resource. */
+  readonly #retainedSlots = new Set<string>();
   readonly #availabilityListeners = new Set<() => void | Promise<void>>();
   readonly #snapshotListeners = new Set<() => void | Promise<void>>();
   #primary: TargetSlot;
@@ -129,6 +140,10 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       autoBackgroundAfterMs: Math.max(
         1,
         limits.autoBackgroundAfterMs ?? DEFAULT_LIMITS.autoBackgroundAfterMs,
+      ),
+      jobSettleTimeoutMs: Math.max(
+        1,
+        limits.jobSettleTimeoutMs ?? DEFAULT_LIMITS.jobSettleTimeoutMs,
       ),
     };
     this.#primary = this.#createSlot();
@@ -169,7 +184,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
         ? {}
         : {
             error: {
-              code: job.error._tag,
+              code: projectAnalysisError(job.error).code,
               message: job.error.message,
             },
           }),
@@ -235,7 +250,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   ): Promise<Result<BinaryTarget, AnalysisError>> {
     const existing = this.#slotForPath(path);
     if (existing !== undefined) {
-      const job = this.#jobs.get(existing.id);
+      const job = this.#blockingJob(existing);
       if (job !== undefined) return this.#jobOpenResult(job, options);
       const active = existing.session.activeTarget();
       if (active !== undefined) {
@@ -271,7 +286,12 @@ export class BinaryTargetRegistry implements BinarySessionPort {
         ? {}
         : { providerId: options.providerId }),
     });
-    if (!preview.ok) return preview;
+    if (!preview.ok) {
+      // The slot never became usable, so it is dropped rather than left
+      // registered against a target it never opened.
+      this.#removeSlot(slot.value, "primary");
+      return preview;
+    }
     return this.#startJob(
       slot.value,
       parsed.value,
@@ -291,7 +311,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   ): Promise<Result<BinaryTarget, AnalysisError>> {
     const existing = this.#slotForPath(resolved.target.path);
     if (existing !== undefined) {
-      const job = this.#jobs.get(existing.id);
+      const job = this.#blockingJob(existing);
       if (job !== undefined) return this.#jobOpenResult(job, options);
       const active = existing.session.activeTarget();
       if (active !== undefined) {
@@ -526,7 +546,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     path: string,
     options: OpenOptions,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
-    const job = this.#jobs.get(slot.id);
+    const job = this.#blockingJob(slot);
     if (job !== undefined) {
       await job.promise;
       return job.state === "ready"
@@ -551,7 +571,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     resolved: Pick<ResolvedSessionOpen, "target" | "route">,
     options: OpenResolvedOptions,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
-    const job = this.#jobs.get(slot.id);
+    const job = this.#blockingJob(slot);
     if (job !== undefined) {
       await job.promise;
       return job.state === "ready"
@@ -595,8 +615,11 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   close(
     options: Parameters<BinarySessionPort["close"]>[0] = {},
   ): Promise<Result<null, AnalysisError>> {
-    return this.#closeSlotFor(options, (slot, behavior) =>
-      slot.session.closeAsSlot(options, behavior),
+    return this.#closeSlotFor(
+      options,
+      (slot, behavior) => slot.session.closeAsSlot(options, behavior),
+      (slot, behavior) =>
+        this.#closeSlotWithoutTransition(slot, options, behavior),
     );
   }
 
@@ -619,20 +642,36 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       });
       if (!closed.ok) {
         failure ??= closed.error;
+        this.#retainedSlots.add(slot.id);
         continue;
       }
+      this.#retainedSlots.delete(slot.id);
       this.#removeSlot(slot, "first-open");
     }
     const final = await this.#closeSlot(this.#primary, options, {
       clearRecords: true,
       closeOwnedProviderResources: true,
     });
-    if (!final.ok) failure ??= final.error;
-    else this.#removeSlot(this.#primary, "first-open");
+    if (!final.ok) {
+      failure ??= final.error;
+      this.#retainedSlots.add(this.#primary.id);
+    } else {
+      this.#retainedSlots.delete(this.#primary.id);
+      this.#removeSlot(this.#primary, "first-open");
+    }
     return failure === undefined ? ok(null) : err(failure);
   }
 
-  /** Abort a slot's job, wait for it to unwind, and close the slot session. */
+  /**
+   * Abort a slot's job, wait for it to unwind, and close the slot session.
+   *
+   * The wait is bounded. A provider start that ignores its abort keeps the
+   * session's transition promise unsettled, and the ordinary close serializes
+   * behind that promise, so waiting for it forever would hang the close and
+   * the server shutdown with it. When the bound expires the close escalates
+   * to the path that releases the pending client without the transition
+   * chain; the cleanup still runs through the owner that stops the provider.
+   */
   async #closeSlot(
     slot: TargetSlot,
     options: Pick<ExecutionOptions, "progress">,
@@ -641,8 +680,27 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       readonly closeOwnedProviderResources: boolean;
     },
   ): Promise<Result<null, AnalysisError>> {
-    await this.#abortJobAndWait(slot);
-    return slot.session.closeAsSlot(options, behavior);
+    const settled = await this.#abortJobAndWait(slot);
+    if (settled) return slot.session.closeAsSlot(options, behavior);
+    return this.#closeSlotWithoutTransition(slot, options, behavior);
+  }
+
+  /** Retire a slot whose provider start did not unwind in time. */
+  async #closeSlotWithoutTransition(
+    slot: TargetSlot,
+    options: Pick<ExecutionOptions, "progress"> & {
+      readonly retainProviderDocuments?: boolean;
+      readonly targetId?: string;
+    },
+    behavior: {
+      readonly clearRecords: boolean;
+      readonly closeOwnedProviderResources: boolean;
+    },
+  ): Promise<Result<null, AnalysisError>> {
+    const escalate = slot.session.closeWithoutTransition;
+    if (escalate === undefined)
+      return slot.session.closeAsSlot(options, behavior);
+    return escalate.call(slot.session, options, behavior);
   }
 
   closeWithSnapshot(
@@ -650,8 +708,27 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     overwrite: boolean,
     options: Parameters<BinarySessionPort["closeWithSnapshot"]>[2] = {},
   ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>> {
-    return this.#closeSlotFor(options, (slot, behavior) =>
-      slot.session.closeWithSnapshotAsSlot(path, overwrite, options, behavior),
+    return this.#closeSlotFor(
+      options,
+      (slot, behavior) =>
+        slot.session.closeWithSnapshotAsSlot(
+          path,
+          overwrite,
+          options,
+          behavior,
+        ),
+      () =>
+        Promise.resolve(
+          err(
+            new AnalysisCancelledError("close_binary", {
+              diagnostics: {
+                reason:
+                  "the provider start did not unwind within the settle bound, so no analysis snapshot was taken",
+                settle_bound_ms: this.#limits.jobSettleTimeoutMs,
+              },
+            }),
+          ),
+        ),
     );
   }
 
@@ -664,16 +741,35 @@ export class BinaryTargetRegistry implements BinarySessionPort {
         readonly closeOwnedProviderResources: boolean;
       },
     ) => Promise<Result<Value, AnalysisError>>,
+    escalate: (
+      slot: TargetSlot,
+      behavior: {
+        readonly clearRecords: boolean;
+        readonly closeOwnedProviderResources: boolean;
+      },
+    ) => Promise<Result<Value, AnalysisError>>,
   ): Promise<Result<Value, AnalysisError>> {
     const slot = this.#resolveCloseSlot(options.targetId);
     if (!slot.ok) return slot;
     const last = this.#openSlotCount() <= 1;
-    await this.#abortJobAndWait(slot.value);
-    const closed = await close(slot.value, {
-      clearRecords: last,
-      closeOwnedProviderResources: last,
-    });
-    if (closed.ok) this.#removeSlot(slot.value, "first-open");
+    const settled = await this.#abortJobAndWait(slot.value);
+    const closed = await (settled
+      ? close(slot.value, {
+          clearRecords: last,
+          closeOwnedProviderResources: last,
+        })
+      : escalate(slot.value, {
+          clearRecords: last,
+          closeOwnedProviderResources: last,
+        }));
+    if (closed.ok) {
+      this.#retainedSlots.delete(slot.value.id);
+      this.#removeSlot(slot.value, "first-open");
+    } else {
+      // The slot keeps its registration and its retained resource. Its
+      // handle stays reported so a later close can retry the cleanup.
+      this.#retainedSlots.add(slot.value.id);
+    }
     return closed;
   }
 
@@ -682,22 +778,28 @@ export class BinaryTargetRegistry implements BinarySessionPort {
    *
    * The wait keeps the interrupted provider start and the close from
    * interleaving over the same client: the start owns its own cleanup, and the
-   * close reports that outcome instead of racing past it. A start that never
-   * unwinds cannot hold the close open forever.
+   * close reports that outcome instead of racing past it. The wait is bounded,
+   * and it reports whether the start unwound. A start that ignores its abort
+   * holds the session transition, so the caller escalates rather than waiting
+   * for a close that would never begin.
    */
-  async #abortJobAndWait(slot: TargetSlot): Promise<void> {
+  async #abortJobAndWait(slot: TargetSlot): Promise<boolean> {
     const job = this.#jobs.get(slot.id);
-    if (job === undefined) return;
+    if (job === undefined) return true;
     job.controller.abort();
     let timer: NodeJS.Timeout | undefined;
+    let settled = false;
     await Promise.race([
-      job.promise,
+      job.promise.then(() => {
+        settled = true;
+      }),
       new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, JOB_SETTLE_TIMEOUT_MS);
+        timer = setTimeout(resolve, this.#limits.jobSettleTimeoutMs);
         timer.unref?.();
       }),
     ]);
     if (timer !== undefined) clearTimeout(timer);
+    return settled;
   }
 
   async status(
@@ -707,9 +809,11 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     if (!slot.ok) throw slot.error;
     const job = this.#jobForSlot(slot.value);
     if (job?.state === "starting")
+      // Without a declared budget the status reports the current state at
+      // once. A caller that wants to wait names its own budget.
       await this.#waitForAnalysis(slot.value, "binary_session", {
         ...(options.signal === undefined ? {} : { signal: options.signal }),
-        ...(options.waitMs === undefined ? {} : { waitMs: options.waitMs }),
+        waitMs: options.waitMs ?? 0,
       });
     const base = await slot.value.session.status(options);
     if (typeof base !== "object" || base === null || Array.isArray(base))
@@ -726,7 +830,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
               ? {}
               : {
                   error: {
-                    code: job.error._tag,
+                    code: projectAnalysisError(job.error).code,
                     message: job.error.message,
                   },
                 }),
@@ -746,6 +850,9 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       ...targetFields,
       target_id: slot.value.id,
       open_target_ids: this.targets().map(({ target_id }) => target_id),
+      ...(this.#retainedSlots.size === 0
+        ? {}
+        : { retained_target_ids: [...this.#retainedSlots] }),
       ...(analysis === undefined ? {} : { analysis }),
     };
   }
@@ -1017,6 +1124,14 @@ export class BinaryTargetRegistry implements BinarySessionPort {
    * target. Only a successful close or a failed open removes a slot; a failed
    * close keeps the slot, its job entry, and the resource it still owns.
    */
+  /**
+   * Remove a slot that no longer owns a target.
+   *
+   * `primary` is the fallback for a slot that never became usable, so the
+   * server keeps addressing the slot every request addresses by default.
+   * `first-open` is the fallback for a slot that was closed, so the server
+   * keeps addressing a slot that still holds an open target.
+   */
   #removeSlot(slot: TargetSlot, fallback: "primary" | "first-open"): void {
     this.#jobs.get(slot.id)?.controller.abort();
     this.#jobs.delete(slot.id);
@@ -1055,6 +1170,25 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     return this.#jobs.get(slot.id);
   }
 
+  /**
+   * The job that binds a slot, or undefined when the slot may open again.
+   *
+   * A job that failed or was cancelled left the slot with no target, so the
+   * next open must be able to try again instead of replaying the stale
+   * failure. A job that is still starting, or that reached `ready`, keeps the
+   * slot bound to it: the target really is open, and reopening it returns the
+   * same handle.
+   */
+  #blockingJob(slot: TargetSlot): AnalysisJob | undefined {
+    const job = this.#jobs.get(slot.id);
+    if (job === undefined) return undefined;
+    if (job.state === "failed" || job.state === "cancelled") {
+      this.#jobs.delete(slot.id);
+      return undefined;
+    }
+    return job;
+  }
+
   #cancelJob(slot: TargetSlot): void {
     const job = this.#jobs.get(slot.id);
     if (job === undefined) return;
@@ -1075,10 +1209,21 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       return err(new AnalysisCancelledError(operation));
     if (isAborted(options?.signal))
       return err(new AnalysisCancelledError(operation));
-    const waitMs = Math.min(
-      MAX_WAIT_MS,
-      Math.max(1, options?.waitMs ?? DEFAULT_WAIT_MS),
-    );
+    // A caller that declares no wait budget passes zero, and a call that
+    // declares none must not block for the default budget. A budget that is
+    // not a finite number is not a budget; it falls back to the default.
+    const requested = options?.waitMs ?? DEFAULT_WAIT_MS;
+    const waitMs = Number.isFinite(requested)
+      ? Math.min(MAX_WAIT_MS, Math.max(0, requested))
+      : DEFAULT_WAIT_MS;
+    if (waitMs === 0)
+      return err(
+        new AnalysisInProgressError(
+          operation,
+          slot.id,
+          this.#jobElapsedMs(job),
+        ),
+      );
     const outcome = await new Promise<
       "ready" | "failed" | "aborted" | "timeout"
     >((resolve) => {

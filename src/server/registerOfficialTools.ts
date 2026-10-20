@@ -8,6 +8,7 @@ import type {
 } from "../application/AnalysisProvider.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
+import { declaresWaitBudget as contractDeclaresWaitBudget } from "../contracts/officialToolContracts.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createEvidence } from "../domain/evidence.js";
@@ -69,14 +70,17 @@ const registerOfficialTool = (
           : undefined;
       // The wait budget belongs to the tools whose schema declares it. An
       // adapter never consumes an argument its own contract does not accept.
-      const declaresWaitBudget = Object.hasOwn(
+      // A tool that declares no budget is told not to wait, so a call on a
+      // starting target reports its state at once instead of blocking for the
+      // default budget.
+      const declaresWaitBudget = contractDeclaresWaitBudget(
         contract.inputSchema.shape,
-        "wait_ms",
       );
-      const waitMs =
-        declaresWaitBudget && typeof parsedInput.wait_ms === "number"
+      const waitMs = declaresWaitBudget
+        ? typeof parsedInput.wait_ms === "number"
           ? parsedInput.wait_ms
-          : undefined;
+          : undefined
+        : 0;
       const { target_id: _targetId, ...arguments_ } = parsedInput;
       const toolArguments = declaresWaitBudget
         ? Object.fromEntries(
