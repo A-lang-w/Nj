@@ -9,5 +9,5 @@
 - [x] Derive the served state with the manifest's sessions and refuse a state with others.
 - [x] Add domain and service coverage.
 - [x] Document recording sessions.
-- [ ] Record training and held-out sessions on the six applications and measure the three builds.
-- [ ] Run static, formatting, duplication, documentation and test gates.
+- [x] Record training and held-out sessions on the six applications and measure the three builds.
+- [x] Run static, formatting, duplication, documentation and test gates.
