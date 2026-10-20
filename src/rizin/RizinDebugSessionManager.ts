@@ -197,6 +197,7 @@ interface RizinDebugSession {
         readonly fd: string;
         readonly identity: OwnedInferiorIdentity;
         readonly readbackDisproved?: true;
+        readonly readbackDisprovedPids?: readonly string[];
       }
     | undefined;
   verifiedDetachResult: OwnedDebuggerDetachResult | undefined;
@@ -1314,6 +1315,7 @@ export class RizinDebugSessionManager {
       readonly fd: string;
       readonly identity: OwnedInferiorIdentity;
       readonly readbackDisproved?: true;
+      readonly readbackDisprovedPids?: readonly string[];
     },
   ): Promise<OwnedDebuggerDetachResult> {
     const after = parseRizinPtraceRows(
@@ -1326,15 +1328,22 @@ export class RizinDebugSessionManager {
     if (selectedRow !== undefined) {
       const [activeFd, activePid] = selectedRow;
       if (activeFd === completed.fd && activePid === completed.identity.pid) {
+        // The completed `o-` is the provenance for this exact PID. Install
+        // that proof before interpreting the still-present row so a zero
+        // TracerPid can reconcile it as stale in this immediate readback.
+        session.confirmedDetachedInferiorIdentity = completed.identity;
         const activeIdentity = await this.#resolveInferiorRowIdentity(
           session,
           activePid,
         );
         if (activeIdentity === undefined) {
-          // A verified stale row no longer represents the completed target.
-          // Drop only the command receipt. The retained detach confirmation is
-          // checked against a complete inventory before its fast path succeeds.
+          // The row is no longer traced by this debugger. Retain the detach
+          // confirmation and reconcile the full inventory before proceeding.
           session.completedDetachCommand = undefined;
+          return this.#verifyConfirmedDetachedInferior(
+            session,
+            completed.identity,
+          );
         } else {
           // A definitive live inventory disproves this detach attempt. Recheck
           // ownership and issue a fresh detach command on retry. Malformed or
@@ -1350,16 +1359,37 @@ export class RizinDebugSessionManager {
         // A reused FD or PID cannot confirm which inferior survived `o-`.
         // Retain that contradiction so a later empty inventory cannot turn it
         // into detach proof while the originally selected process is alive.
+        const readbackDisprovedPids = [
+          ...new Set([
+            ...(completed.readbackDisprovedPids ?? []),
+            ...after.map(([, observedPid]) => observedPid),
+          ]),
+        ];
         session.completedDetachCommand = {
           ...completed,
           readbackDisproved: true,
+          readbackDisprovedPids,
         };
+        // Preserve every identity visible in this contradictory inventory
+        // before a retry can observe a partial or empty row set.
+        for (const [, observedPid] of after)
+          await this.#resolveInferiorRowIdentity(session, observedPid);
       }
       throw new Error(
         "Rizin did not confirm that the selected inferior FD was detached.",
       );
     }
     if (completed.readbackDisproved === true) {
+      const unresolvedPids = new Set(completed.readbackDisprovedPids ?? []);
+      for (const pid of unresolvedPids) {
+        await this.#resolveInferiorRowIdentity(session, pid);
+        unresolvedPids.delete(pid);
+        session.completedDetachCommand = {
+          ...completed,
+          readbackDisproved: true,
+          readbackDisprovedPids: [...unresolvedPids],
+        };
+      }
       for (const [, activePid] of after) {
         if (
           (await this.#resolveInferiorRowIdentity(session, activePid)) !==
@@ -1410,9 +1440,16 @@ export class RizinDebugSessionManager {
           activePid,
         );
       } catch (cause) {
+        const readbackDisprovedPids = [
+          ...new Set([
+            ...(completed.readbackDisprovedPids ?? []),
+            ...after.map(([, observedPid]) => observedPid),
+          ]),
+        ];
         session.completedDetachCommand = {
           ...completed,
           readbackDisproved: true,
+          readbackDisprovedPids,
         };
         throw cause;
       }

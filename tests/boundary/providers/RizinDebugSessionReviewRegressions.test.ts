@@ -1102,7 +1102,27 @@ it.skipIf(process.platform !== "linux")(
     directory = await mkdtemp(join(tmpdir(), "rea-rizin-retryable-detach-"));
     const commandsPath = join(directory, "commands");
     const provider = await createRetryableDetachProvider(pid, commandsPath);
-    const { manager, sessionId } = await startRizinWithOwnedStop(provider);
+    const manager = new RizinDebugSessionManager(
+      { ...process.env, REA_RIZIN_COMMAND: provider },
+      {
+        platform: "linux",
+        readProcessTracerPid: async () => 777,
+        readProcessTaskIds: async () => new Set(["777"]),
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          ownedProviderProcesses.push(launched.process);
+          return launched;
+        },
+      },
+    );
+    managers.push(manager);
+    const started = await manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: tty,
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    const sessionId = started.value.session_id;
 
     expect((await manager.close(sessionId)).ok).toBe(false);
     expect(manager.status(sessionId)).toBeDefined();
@@ -1234,6 +1254,214 @@ it.skipIf(process.platform !== "linux")(
     const commands = await readFile(commandsPath, "utf8");
     expect(commands.match(/^o- 13$/gm)).toHaveLength(1);
     expect(manager.status(started.value.session_id)).toBeDefined();
+    expect(inferior.exitCode).toBeNull();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "retains every mismatched post-detach ptrace row identity across retries",
+  async () => {
+    const tty = await rizinTestInferiorTty();
+    const selected = await spawnTestInferiorOnTty(tty);
+    const mismatched = await spawnTestInferiorOnTty(tty);
+    expect(selected.pid).toBeDefined();
+    expect(mismatched.pid).toBeDefined();
+    if (selected.pid === undefined || mismatched.pid === undefined) return;
+
+    directory = await mkdtemp(join(tmpdir(), "rea-rizin-mismatched-row-"));
+    const commandsPath = join(directory, "commands");
+    const provider = join(directory, "fake-rizin-mismatched-row.mjs");
+    await writeFile(
+      provider,
+      `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+process.stdout.write("\\0");
+let input = "";
+let inventoryReads = 0;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n"); if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    appendFileSync(${JSON.stringify(commandsPath)}, line + "\\n");
+    if (line === "olj") {
+      inventoryReads += 1;
+      const rows = inventoryReads === 1
+        ? [{ fd: 12, raised: true, uri: "ptrace://${selected.pid}" }]
+        : inventoryReads === 2
+          ? [{ fd: 12, raised: true, uri: "ptrace://${mismatched.pid}" }]
+          : [];
+      process.stdout.write(JSON.stringify(rows) + "\\0");
+    }
+    else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
+    else if (line === "o- 12") process.kill(${selected.pid}, "SIGTERM");
+    else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
+    else process.stdout.write("\\0");
+  }
+});
+`,
+    );
+    await chmod(provider, 0o700);
+
+    const detachOutcomes: string[] = [];
+    let failMismatchedIdentityRead = true;
+    const manager = new RizinDebugSessionManager(
+      { ...process.env, REA_RIZIN_COMMAND: provider },
+      {
+        platform: "linux",
+        readProcessStartTime: async (pid) => {
+          if (pid === String(selected.pid))
+            return selected.exitCode === null && selected.signalCode === null
+              ? "100"
+              : null;
+          if (pid === String(mismatched.pid)) {
+            if (failMismatchedIdentityRead) {
+              failMismatchedIdentityRead = false;
+              throw new Error("injected transient identity read failure");
+            }
+            return mismatched.exitCode === null &&
+              mismatched.signalCode === null
+              ? "200"
+              : null;
+          }
+          throw new Error(`unexpected PID ${pid}`);
+        },
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          ownedProviderProcesses.push(launched.process);
+          return launched;
+        },
+        stopProcess: async (session) => {
+          if (session.detachInferior === undefined) {
+            detachOutcomes.push("missing-detach");
+            return { status: "incomplete", reason: "missing-detach" };
+          }
+          try {
+            detachOutcomes.push(
+              (await session.detachInferior())?.status ?? "missing-detach",
+            );
+          } catch (cause) {
+            detachOutcomes.push(
+              cause instanceof Error ? cause.message : String(cause),
+            );
+          }
+          return { status: "incomplete", reason: "injected retained debugger" };
+        },
+      },
+    );
+    managers.push(manager);
+    const started = await manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: tty,
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    const selectedExit = new Promise<void>((resolve) =>
+      selected.once("exit", () => resolve()),
+    );
+    expect((await manager.close(started.value.session_id)).ok).toBe(false);
+    await selectedExit;
+    expect((await manager.retryCleanupFailures()).ok).toBe(false);
+    expect(detachOutcomes.at(-1)).toContain(
+      `omitted retained inferior PID ${mismatched.pid}`,
+    );
+    expect(mismatched.exitCode).toBeNull();
+    expect(
+      (await readFile(commandsPath, "utf8")).match(/^o- 12$/gm),
+    ).toHaveLength(1);
+
+    const mismatchedExit = new Promise<void>((resolve) =>
+      mismatched.once("exit", () => resolve()),
+    );
+    mismatched.kill("SIGTERM");
+    await mismatchedExit;
+    expect((await manager.retryCleanupFailures()).ok).toBe(false);
+    expect(detachOutcomes.at(-1)).toBe("no-inferior");
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "reconciles an immediate untraced selected row without repeating detach",
+  async () => {
+    const tty = await rizinTestInferiorTty();
+    const inferior = await spawnTestInferiorOnTty(tty);
+    expect(inferior.pid).toBeDefined();
+    if (inferior.pid === undefined) return;
+
+    directory = await mkdtemp(join(tmpdir(), "rea-rizin-immediate-untraced-"));
+    const commandsPath = join(directory, "commands");
+    const provider = join(directory, "fake-rizin-immediate-untraced.mjs");
+    await writeFile(
+      provider,
+      `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+process.stdout.write("\\0");
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n"); if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    appendFileSync(${JSON.stringify(commandsPath)}, line + "\\n");
+    if (line === "olj") process.stdout.write(JSON.stringify([{ fd: 12, raised: true, uri: "ptrace://${inferior.pid}" }]) + "\\0");
+    else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
+    else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
+    else process.stdout.write("\\0");
+  }
+});
+`,
+    );
+    await chmod(provider, 0o700);
+
+    let detachResult: string | undefined;
+    const manager = new RizinDebugSessionManager(
+      { ...process.env, REA_RIZIN_COMMAND: provider },
+      {
+        platform: "linux",
+        readProcessTracerPid: async () => 0,
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          ownedProviderProcesses.push(launched.process);
+          return launched;
+        },
+        stopProcess: async (session) => {
+          if (session.detachInferior === undefined) {
+            detachResult = "missing-detach";
+            return { status: "incomplete", reason: detachResult };
+          }
+          try {
+            const result = await session.detachInferior();
+            detachResult = result?.status ?? "missing-detach";
+            return result?.status === "detached"
+              ? { status: "stopped" }
+              : { status: "incomplete", reason: "detach was not confirmed" };
+          } catch (cause) {
+            detachResult =
+              cause instanceof Error ? cause.message : String(cause);
+            return { status: "incomplete", reason: detachResult };
+          }
+        },
+      },
+    );
+    managers.push(manager);
+    const started = await manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: tty,
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    expect(await manager.close(started.value.session_id)).toEqual({
+      ok: true,
+      value: { target_state: "unknown" },
+    });
+    expect(detachResult).toBe("detached");
+    expect(
+      (await readFile(commandsPath, "utf8")).match(/^o- 12$/gm),
+    ).toHaveLength(1);
     expect(inferior.exitCode).toBeNull();
   },
 );
