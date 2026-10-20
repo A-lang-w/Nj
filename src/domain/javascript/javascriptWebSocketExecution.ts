@@ -386,7 +386,7 @@ const webSocketStoredCallTarget = (
         !webSocketInvocationHelperIntact(
           current.object,
           method,
-          capture,
+          current,
           state,
           parameters,
         )

@@ -8481,4 +8481,12 @@ describe("web bundle invocation and descriptor review follow-ups", () => {
       socketEndpoints(source).map((items) => items.map((item) => item.value)),
     ).toEqual([[endpoint], [endpoint]]);
   });
+
+  it("orders helper selection before argument writes in both consumers", () => {
+    const source =
+      'const connect=()=>new Socket("wss://example.test/helper-read");connect.call(null,connect.call=()=>{});const Socket=globalThis.WebSocket;';
+    expect(
+      socketEndpoints(source).map((items) => items.map((item) => item.value)),
+    ).toEqual([[], []]);
+  });
 });

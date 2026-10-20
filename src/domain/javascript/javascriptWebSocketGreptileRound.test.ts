@@ -58,3 +58,13 @@ it.each([
 ] as const)("%s", (_name, source, endpoint) => {
   expect(endpoints(source)).toEqual([endpoint]);
 });
+
+it("orders helper selection before argument writes", () => {
+  expect(
+    endpoints(`
+      const connect = () => new Socket("wss://example.test/helper-read");
+      connect.call(null, connect.call = () => {});
+      const Socket = globalThis.WebSocket;
+    `),
+  ).toEqual([]);
+});

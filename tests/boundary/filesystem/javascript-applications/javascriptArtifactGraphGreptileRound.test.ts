@@ -35,6 +35,11 @@ const sources = [
     source:
       '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/disposer")})()){await using r={set[Symbol.asyncDispose](value){},[Symbol.dispose](){}}}})();const Socket=globalThis.WebSocket;',
   },
+  {
+    file: "helper-read.js",
+    source:
+      'const connect=()=>new Socket("wss://example.test/helper-read");connect.call(null,connect.call=()=>{});const Socket=globalThis.WebSocket;',
+  },
 ] as const;
 
 it("retains reviewed callback and descriptor endpoints with source provenance", async () => {
@@ -53,8 +58,9 @@ it("retains reviewed callback and descriptor endpoints with source provenance", 
     const observations = graph.nodes
       .filter(({ kind }) => kind === "endpoint")
       .flatMap(({ observations }) => observations);
-    expect(observations).toHaveLength(sources.length);
-    for (const fixture of sources)
+    const expected = sources.filter((fixture) => "endpoint" in fixture);
+    expect(observations).toHaveLength(expected.length);
+    for (const fixture of expected)
       expect(observations).toContainEqual(
         expect.objectContaining({
           properties: expect.objectContaining({ value: fixture.endpoint }),
