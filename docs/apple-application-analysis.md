@@ -190,7 +190,9 @@ dyld's scan. Distinct payload bytes and payload-range lookups stay within the 16
 limit, and a file range already read is reused. String scanning and UTF-8
 checks count every reference, including repeats and overlaps, and stop at that
 same aggregate. A slice retains at most 1024 of these commands; further copies are
-unsupported instead of becoming one traced edge each.
+unsupported instead of becoming one traced edge each. Symbol references,
+including repeats, stop at 65536 per slice. A larger table is unsupported
+instead of caching one string per offset.
 Nothing is executed and no Apple tool is required, so the tool also works off
 macOS.
 

@@ -25,6 +25,7 @@ import {
 } from "./MachoImage.fixture.js";
 import {
   MAX_LAZY_INFO_DEPENDENCIES,
+  MAX_LAZY_INFO_SYMBOL_REFERENCES,
   MAX_LOAD_COMMAND_BYTES,
   hasMachoMagic,
   readMachoImage,
@@ -834,6 +835,87 @@ describe("LC_LAZY_LOAD_DYLIB_INFO string bounds", () => {
     expect(await read(imageFor(over, 1))).toMatchObject({
       status: "unsupported",
       reason: expect.stringContaining("string validation"),
+    });
+  });
+});
+
+const lazyInfoPayloadWithSymbolCount = (
+  symbolCount: number,
+  pathText: string,
+): Uint8Array => {
+  const path = new TextEncoder().encode(pathText);
+  const pathOffset = 24 + symbolCount * 4;
+  // One byte after the path NUL, because a load-path terminator in the
+  // payload's final byte is unterminated.
+  const payload = new Uint8Array(pathOffset + path.length + 2);
+  const view = new DataView(payload.buffer);
+  view.setUint32(0, pathOffset, true);
+  view.setUint32(16, symbolCount, true);
+  view.setUint32(20, 24, true);
+  payload.set(path, pathOffset);
+  const emptySymbol = pathOffset + path.length;
+  for (let symbol = 0; symbol < symbolCount; symbol += 1)
+    view.setUint32(24 + symbol * 4, emptySymbol, true);
+  return payload;
+};
+
+const imageWithLazyPayload = (payload: Uint8Array): Uint8Array => {
+  const image = machoImage({
+    commands: [lazyLoadDylibInfoCommand(0, payload.length)],
+  });
+  const bytes = new Uint8Array(image.length + payload.length);
+  bytes.set(image);
+  bytes.set(payload, image.length);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(32 + 8, image.length, true);
+  view.setUint32(32 + 12, payload.length, true);
+  return bytes;
+};
+
+describe("LC_LAZY_LOAD_DYLIB_INFO symbol cardinality", () => {
+  it("stops before caching one string for every symbol offset", async () => {
+    const atLimit = lazyInfoPayloadWithSymbolCount(
+      MAX_LAZY_INFO_SYMBOL_REFERENCES,
+      "@rpath/libl.dylib",
+    );
+    expect(await read(imageWithLazyPayload(atLimit))).toMatchObject({
+      status: "parsed",
+      slices: [{ dependencies: [{ install_name: "@rpath/libl.dylib" }] }],
+    });
+    const overLimit = lazyInfoPayloadWithSymbolCount(
+      MAX_LAZY_INFO_SYMBOL_REFERENCES + 1,
+      "@rpath/libl.dylib",
+    );
+    expect(await read(imageWithLazyPayload(overLimit))).toMatchObject({
+      status: "unsupported",
+      reason: expect.stringContaining("65536-reference limit"),
+    });
+  });
+
+  it("counts symbol references across distinct lazy-info payloads", async () => {
+    const first = lazyInfoPayloadWithSymbolCount(
+      MAX_LAZY_INFO_SYMBOL_REFERENCES,
+      "@rpath/libl.dylib",
+    );
+    const second = lazyInfoPayloadWithSymbolCount(1, "@rpath/libm.dylib");
+    const image = machoImage({
+      commands: [
+        lazyLoadDylibInfoCommand(0, first.length),
+        lazyLoadDylibInfoCommand(0, second.length),
+      ],
+    });
+    const bytes = new Uint8Array(image.length + first.length + second.length);
+    bytes.set(image);
+    bytes.set(first, image.length);
+    bytes.set(second, image.length + first.length);
+    const view = new DataView(bytes.buffer);
+    view.setUint32(32 + 8, image.length, true);
+    view.setUint32(32 + 12, first.length, true);
+    view.setUint32(48 + 8, image.length + first.length, true);
+    view.setUint32(48 + 12, second.length, true);
+    expect(await read(bytes)).toMatchObject({
+      status: "unsupported",
+      reason: expect.stringContaining("65536-reference limit"),
     });
   });
 });

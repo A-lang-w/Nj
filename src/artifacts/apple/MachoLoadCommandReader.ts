@@ -24,6 +24,12 @@ export const MAX_LOAD_COMMAND_BYTES = 16 * 1024 * 1024;
  * those results are kept or traced.
  */
 export const MAX_LAZY_INFO_DEPENDENCIES = 1024;
+/**
+ * Symbol names are validated and then discarded. Distinct one-byte strings
+ * stay under the 16 MiB byte budgets while retaining one cache entry per
+ * offset, so stop before that map and those decodes grow.
+ */
+export const MAX_LAZY_INFO_SYMBOL_REFERENCES = 64 * 1024;
 const MH_MAGIC = 0xfeedface;
 const MH_MAGIC_64 = 0xfeedfacf;
 const MH_CIGAM = 0xcefaedfe;
@@ -511,6 +517,8 @@ interface LazyPayloadWork {
   payloadBytes: number;
   /** Scanned string bytes. Repeats and overlaps each count in full. */
   stringBytes: number;
+  /** Symbol-string references. Repeats each count. */
+  symbolReferences: number;
   rangeChecks: number;
 }
 
@@ -555,6 +563,7 @@ const appendDependencies = async (
     strings: new Map(),
     payloadBytes: 0,
     stringBytes: 0,
+    symbolReferences: 0,
     rangeChecks: 0,
   };
   for (const dependency of dependencies) {
@@ -785,6 +794,13 @@ const decodeLazyLoadDylibInfoPayload = (
     work,
     true,
   );
+  const symbolReferences = work.symbolReferences + symbolCount;
+  if (symbolReferences > MAX_LAZY_INFO_SYMBOL_REFERENCES)
+    throw new MachoFormatIssue(
+      "unsupported",
+      `LC_LAZY_LOAD_DYLIB_INFO symbol validation exceeds the ${MAX_LAZY_INFO_SYMBOL_REFERENCES}-reference limit`,
+    );
+  work.symbolReferences = symbolReferences;
   for (let symbol = 0; symbol < symbolCount; symbol += 1) {
     const offset = view.getUint32(symbolArrayOffset + symbol * 4, true);
     payloadString(
