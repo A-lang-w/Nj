@@ -7,7 +7,7 @@ import { servedCatalog, type PreparedState } from "./environmentState.js";
 import {
   environmentToolAnswer,
   type EnvironmentToolAnswer,
-} from "./environmentStateAnswer.js";
+} from "./environmentToolAnswer.js";
 import { EnvironmentStateStore } from "./environmentStateStore.js";
 import type { EnvironmentToolDefinition } from "./environmentTools.js";
 
@@ -332,7 +332,7 @@ export const planEnvironmentBundle = (
   // The catalog and answers the bundle's server will have, so the verifier and README predict them.
   const catalog = servedCatalog(
     source,
-    state !== undefined,
+    state,
     name,
     ENVIRONMENT_EXPORT_OPERATION,
   );

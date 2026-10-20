@@ -1,5 +1,7 @@
 import { canonicalJson } from "../comparisonSemantics.js";
+import { parseUrlQueryParameterNames } from "../recordedTransportUrl.js";
 import type { JsonValue } from "../jsonValue.js";
+import type { StateWritePlan } from "./environmentStateWriteRules.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 
 /** How records are ordered: by recorded start time, or by record order when any start time is missing. */
@@ -33,6 +35,10 @@ export type ParsedBody =
 /** Budgeted access the accumulator lends extraction; null and false mean the budget is exhausted. */
 export interface StateBudget {
   readonly body: (ordinal: number) => ParsedBody | null;
+  /** A record's request body, admitted as response bodies are. */
+  readonly requestBody: (ordinal: number) => ParsedBody | null;
+  /** Whether a record's response had no body. */
+  readonly emptyResponse: (ordinal: number) => boolean;
   readonly retain: (bytes: number) => boolean;
   /** Drop the temporary work of the body just read. */
   readonly release: () => void;
@@ -117,6 +123,9 @@ export interface ExtractedState {
   readonly entities: StateEntity[];
   readonly documents: StateDocument[];
   readonly views: StateView[];
+  readonly writes: StateWritePlan[];
+  /** The instant a served clock starts from: the end of the capture's last timed record, or null without times. */
+  readonly write_clock: string | null;
 }
 
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
@@ -135,6 +144,28 @@ const QUERY_SEGMENTS = new Set([
   "_count",
   "_msearch",
 ]);
+/** Query parameters that page or bound a list without filtering it. */
+const PAGING_PARAMETERS = new Set([
+  "limit",
+  "offset",
+  "page",
+  "per_page",
+  "perpage",
+  "page_size",
+  "pagesize",
+  "size",
+  "start",
+  "_start",
+  "_end",
+]);
+
+/** Whether a query only pages its list: no parameters, or paging parameters alone. */
+export const pagesOnly = (query: string | undefined): boolean =>
+  query === undefined ||
+  [...parseUrlQueryParameterNames(query)].every((name) =>
+    PAGING_PARAMETERS.has(name.toLowerCase()),
+  );
+
 /** Identity field names tried, in order, when no path parameter proves one. */
 export const IDENTITY_NAMES = [
   "id",

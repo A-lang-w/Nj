@@ -3,6 +3,7 @@ import type {
   StateType,
 } from "../../domain/analysisView/environmentStateRules.js";
 import type { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import { ok, type Result } from "../../domain/result.js";
 import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
 import type { EnvironmentState } from "./environmentState.js";
@@ -35,25 +36,115 @@ export class EnvironmentStateStore {
   #documents: ReadonlyMap<string, HeldDocument> = new Map();
   #content: StateContent = { entities: [], documents: [] };
   readonly #types: ReadonlyMap<string, StateType>;
+  readonly #clockStart: number;
+  /** Served writes since the state was last reset or loaded: the clock's seconds and the generators' counter. */
+  #writes = 0;
+  /** The largest value each sequence has generated since the last reset or load, so a deleted entity's value is not reused. */
+  readonly #sequences = new Map<string, number>();
 
   constructor(readonly state: EnvironmentState) {
     this.#types = new Map(
       state.types.map((type) => [type.collection_template, type]),
     );
+    this.#clockStart =
+      state.writeClock === null ? 0 : Date.parse(state.writeClock);
     this.reset();
   }
 
-  /** Restore the initial state the Evidence holds. */
+  /** Restore the initial state the Evidence holds; the clock and counter start again. */
   reset(): void {
     this.#install(this.state);
+    this.#restart();
   }
 
-  /** Validate a `rea-state/v1` document and, only when it is valid, make it the whole state. */
+  /** Validate a `rea-state/v1` document and, only when it is valid, make it the whole state; the clock and counter start again. */
   replace(document: unknown): Result<void, AnalysisInputError> {
     const content = parseStateDocument(this.state, document);
     if (!content.ok) return content;
     this.#install(content.value);
+    this.#restart();
     return ok(undefined);
+  }
+
+  /** Count one served write: its number since the last reset or load, and its clock instant one second per write after the state's start. */
+  nextWrite(): { readonly count: number; readonly clockMs: number } {
+    this.#writes += 1;
+    return {
+      count: this.#writes,
+      clockMs: this.#clockStart + this.#writes * 1000,
+    };
+  }
+
+  /** The next value of a sequence: one past both the largest held value and the largest it generated. */
+  nextSequence(key: string, held: number): number {
+    const value = Math.max(held, (this.#sequences.get(key) ?? 0) + 1);
+    this.#sequences.set(key, value);
+    return value;
+  }
+
+  #restart(): void {
+    this.#writes = 0;
+    this.#sequences.clear();
+  }
+
+  /** Every held entity of a type, in state order. */
+  ofType(type: string): readonly StateEntity[] {
+    return this.#content.entities.filter((entity) => entity.type === type);
+  }
+
+  /** Add an entity at `index` of its collection's order. */
+  insert(entity: StateEntity, index: number): void {
+    const entities = this.#content.entities;
+    const members = this.inCollection(entity.type, entity.collection);
+    const anchor =
+      index < members.length
+        ? entities.indexOf(members[index]!)
+        : members.length > 0
+          ? entities.indexOf(members.at(-1)!) + 1
+          : entities.length;
+    this.#install({
+      ...this.#content,
+      entities: [
+        ...entities.slice(0, anchor),
+        entity,
+        ...entities.slice(anchor),
+      ],
+    });
+  }
+
+  /** Replace a held entity's values in place. */
+  update(entity: StateEntity): void {
+    const key = compositeKey([entity.type, entity.collection, entity.id]);
+    this.#install({
+      ...this.#content,
+      entities: this.#content.entities.map((held) =>
+        compositeKey([held.type, held.collection, held.id]) === key
+          ? entity
+          : held,
+      ),
+    });
+  }
+
+  remove(entity: StateEntity): void {
+    const key = compositeKey([entity.type, entity.collection, entity.id]);
+    this.#install({
+      ...this.#content,
+      entities: this.#content.entities.filter(
+        (held) => compositeKey([held.type, held.collection, held.id]) !== key,
+      ),
+    });
+  }
+
+  /** Set a held document's value; a value that is not the Evidence's cites no record. */
+  setDocument(tool: string, value: JsonValue): void {
+    this.#install({
+      ...this.#content,
+      documents: this.#content.documents.map((document) =>
+        document.tool === tool
+          ? { tool: document.tool, path: document.path, value }
+          : document,
+      ),
+    });
   }
 
   type(collectionTemplate: string): StateType | undefined {

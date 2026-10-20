@@ -22,7 +22,7 @@ import {
 } from "./environmentBundle.js";
 import type { EnvironmentSource } from "./environmentSource.js";
 import { prepareServedState } from "./environmentState.js";
-import { environmentToolAnswer } from "./environmentStateAnswer.js";
+import { environmentToolAnswer } from "./environmentToolAnswer.js";
 import { EnvironmentStateStore } from "./environmentStateStore.js";
 
 const fixture = environmentServeFixture();
