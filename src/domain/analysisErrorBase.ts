@@ -196,6 +196,7 @@ export abstract class AnalysisError extends Error {
       this.#cleanupResourceProjection = resourceProjection;
     this.#addCleanupDependencies(dependencies);
     if (pending.size === 0) this.resolveCleanup();
+    else this.cleanupIncomplete = true;
     return this;
   }
 
