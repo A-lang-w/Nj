@@ -167,11 +167,13 @@ const visitArtifactEntries = async (
   const stack: Array<{
     readonly reader: ArtifactReader;
     readonly prefix: string;
+    readonly containerId: string | null;
     readonly iterator: AsyncIterator<ArtifactEntry>;
   }> = [
     {
       reader: currentReader,
       prefix,
+      containerId: null,
       iterator: inventoryEntries(context, currentReader, prefix),
     },
   ];
@@ -202,7 +204,7 @@ const visitArtifactEntries = async (
       const occurrence = createOccurrence(
         entry,
         logicalPath,
-        null,
+        entry.kind === "metadata" ? frame.containerId : null,
         duplicateOrdinal,
       );
       let digested:
@@ -254,6 +256,7 @@ const visitArtifactEntries = async (
         stack.push({
           reader: nested,
           prefix: logicalPath,
+          containerId: occurrence.occurrence_id,
           iterator: inventoryEntries(context, nested, logicalPath),
         });
       }

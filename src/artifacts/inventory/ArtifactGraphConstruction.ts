@@ -433,6 +433,9 @@ export const resolveOccurrenceParents = (
   const limitations = new Set<string>();
   const unknownParentOccurrences = new Set<MutableOccurrence>();
   for (const occurrence of occurrences) {
+    // Query paths do not imply filesystem containment. The scanner records
+    // the declaring container for metadata instead.
+    if (occurrence.entry_kind === "metadata") continue;
     const path = occurrence.logical_path;
     let branch = root;
     let parent: MutableOccurrence | undefined;

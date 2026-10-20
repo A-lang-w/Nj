@@ -16,6 +16,180 @@ import {
 import { readPyzArchive } from "./PyzArchive.js";
 import type { ArtifactEntry } from "../ArtifactReader.js";
 
+for (const typeCode of ["o", "d"] as const) {
+  it.each(["stored", "compressed", "flag-only"])(
+    `rejects local payload/compression on ${typeCode} declarations (%s)`,
+    async (mode) => {
+      const bytes = cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 309,
+        members: [
+          {
+            name: typeCode === "d" ? "../owner:member" : "pyi-option",
+            typeCode,
+            payload:
+              mode === "flag-only"
+                ? Buffer.alloc(0)
+                : Buffer.from("local payload"),
+            compress: mode === "compressed",
+          },
+        ],
+      });
+      if (mode === "flag-only") {
+        const archiveStart = 64;
+        const toc = bytes.readUInt32BE(bytes.length - 88 + 12);
+        bytes[archiveStart + toc + 16] = 1;
+      }
+      await withPyInstallerReader(bytes, async (_reader, _handle, path) => {
+        await expect(
+          scanCanonicalArtifactInventory(path),
+        ).rejects.toMatchObject({
+          reason: "integrity",
+          message: expect.stringContaining("declaration"),
+        });
+      });
+    },
+  );
+  it(`does not claim a destination case collision for a ${typeCode} query path`, async () => {
+    const logical = `__pyinstaller__/${typeCode === "o" ? "runtime-options" : "dependencies"}/0`;
+    const realPath = logical.toUpperCase();
+    const payload = Buffer.from("real file");
+    await withPyInstallerReader(
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 309,
+        members: [
+          {
+            name: typeCode === "d" ? "../owner:member" : "pyi-option",
+            typeCode,
+            payload: Buffer.alloc(0),
+            compress: false,
+          },
+          { name: realPath, typeCode: "x", payload, compress: false },
+        ],
+      }),
+      async (_reader, _handle, path) => {
+        const inventory = await scanCanonicalArtifactInventory(path);
+        expect(
+          [
+            ...inventory.limitations,
+            ...inventory.occurrences.flatMap((row) => row.limitations),
+          ].some((note) => note.includes("case-insensitive destination")),
+        ).toBe(false);
+        const output = join(dirname(path), "extracted");
+        await materializeArtifactInventory(
+          {
+            inputPath: path,
+            inputFormat: "elf",
+            outputRoot: output,
+            environment: process.env,
+            integrityPolicy: "fail",
+          },
+          path,
+          inventory,
+        );
+        expect(await readFile(join(output, realPath))).toEqual(payload);
+      },
+    );
+  });
+}
+
+it("keeps genuine destination collisions on files without annotating same-path metadata", async () => {
+  const logical = "__pyinstaller__/runtime-options/0";
+  await withPyInstallerReader(
+    cArchiveExecutable({
+      layout: "2.1",
+      pythonVersion: 309,
+      members: [
+        {
+          name: "pyi-option",
+          typeCode: "o",
+          payload: Buffer.alloc(0),
+          compress: false,
+        },
+        ...[logical, logical.toUpperCase()].map((name) => ({
+          name,
+          typeCode: "x",
+          payload: Buffer.from(name),
+          compress: false,
+        })),
+      ],
+    }),
+    async (_reader, _handle, path) => {
+      const inventory = await scanCanonicalArtifactInventory(path);
+      expect(
+        inventory.limitations.some((note) =>
+          note.includes("case-insensitive destination"),
+        ),
+      ).toBe(true);
+      const metadata = inventory.occurrences.find(
+        (row) => row.entry_kind === "metadata",
+      );
+      expect(
+        metadata?.limitations.some((note) =>
+          note.includes("case-insensitive destination"),
+        ),
+      ).toBe(false);
+      expect(
+        inventory.occurrences
+          .filter(
+            (row) => row.entry_kind === "file" && row.logical_path !== ".",
+          )
+          .every((row) =>
+            row.limitations.some((note) =>
+              note.includes("case-insensitive destination"),
+            ),
+          ),
+      ).toBe(true);
+    },
+  );
+});
+
+it("anchors declarations to their source container rather than a same-named directory", async () => {
+  await withPyInstallerReader(
+    cArchiveExecutable({
+      layout: "2.1",
+      pythonVersion: 309,
+      members: [
+        {
+          name: "../owner:member",
+          typeCode: "d",
+          payload: Buffer.alloc(0),
+          compress: false,
+        },
+        {
+          name: "__pyinstaller__",
+          typeCode: "z",
+          compress: false,
+          payload: pyzArchive({
+            magic: PYTHON_39_MAGIC,
+            modules: [
+              { name: "dependencies", typeCode: 3, body: Buffer.alloc(0) },
+            ],
+          }),
+        },
+      ],
+    }),
+    async (_reader, _handle, path) => {
+      const inventory = await scanCanonicalArtifactInventory(path);
+      const root = inventory.occurrences.find(
+        (row) => row.logical_path === ".",
+      );
+      const directory = inventory.occurrences.find(
+        (row) => row.logical_path === "__pyinstaller__/dependencies",
+      );
+      const metadata = inventory.occurrences.find(
+        (row) => row.entry_kind === "metadata",
+      );
+      expect(directory).toBeDefined();
+      expect(root).toBeDefined();
+      expect(metadata).toBeDefined();
+      expect(metadata?.parent_occurrence_id).toBe(root?.occurrence_id);
+      expect(metadata?.parent_occurrence_id).not.toBe(directory?.occurrence_id);
+    },
+  );
+});
+
 it.each(["x", "s", "empty-module"])(
   "does not treat a same-named %s as a crypto-key module",
   async (kind) => {

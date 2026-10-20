@@ -1,6 +1,6 @@
 import type { FileHandle } from "node:fs/promises";
 import { copyArtifactEntry, type ArtifactEntry } from "../ArtifactReader.js";
-import type { CArchiveEntry } from "./CArchiveLayout.js";
+import { isCArchiveDeclaration, type CArchiveEntry } from "./CArchiveLayout.js";
 import type { PyzArchive, PyzEntry } from "./PyzArchive.js";
 import {
   RECONSTRUCTED_PYTHON_HEADER_LIMITATION,
@@ -50,7 +50,7 @@ export const projectStoredMember = (
   archiveStart: number,
   pythonMagic: Buffer | undefined,
 ): PyInstallerMember => {
-  if (entry.typeCode === "o" || entry.typeCode === "d")
+  if (isCArchiveDeclaration(entry))
     return {
       entry: fileEntry({
         path: `__pyinstaller__/${entry.typeCode === "o" ? "runtime-options" : "dependencies"}/${String(entry.index)}`,

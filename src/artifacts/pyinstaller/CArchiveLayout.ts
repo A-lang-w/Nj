@@ -52,6 +52,12 @@ export interface CArchiveEntry {
   readonly compressionFlag: number;
 }
 
+/** Runtime options and external dependencies are declarations, never local blobs. */
+export const isCArchiveDeclaration = (
+  entry: CArchiveEntry,
+): entry is CArchiveEntry & { readonly typeCode: "o" | "d" } =>
+  entry.typeCode === "o" || entry.typeCode === "d";
+
 /** True when a native executable has a structurally valid CArchive cookie. */
 export const containsPyInstallerArchive = async (
   handle: FileHandle,
@@ -316,7 +322,19 @@ const validateCArchiveMembers = (
 ): Result<null, PyInstallerFailure> => {
   const names = new Set<string>();
   for (const entry of entries) {
-    if (entry.typeCode !== "o" && entry.typeCode !== "d") {
+    if (isCArchiveDeclaration(entry)) {
+      if (
+        entry.compressedSize !== 0 ||
+        entry.uncompressedSize !== 0 ||
+        entry.compressionFlag !== 0
+      )
+        return err(
+          pyInstallerFailure(
+            "integrity",
+            `CArchive declaration has local payload or compression: ${entry.name}`,
+          ),
+        );
+    } else {
       if (names.has(entry.name))
         return err(
           pyInstallerFailure(
