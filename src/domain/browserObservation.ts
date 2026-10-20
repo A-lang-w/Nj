@@ -62,17 +62,32 @@ const DEFAULT_PORT_BY_PROTOCOL: Record<string, string> = {
 
 /**
  * True when the caller spelled a port, including default ports that the URL
- * API clears from `url.port` (for example `http://127.0.0.1:80`).
+ * API clears from `url.port` (for example `http://127.0.0.1:80`). Only the
+ * authority is inspected, so a default-port marker inside the path (for
+ * example `ws://127.0.0.1/devtools/browser/127.0.0.1:80`) does not count.
  */
 const urlDeclaresExplicitPort = (raw: string, url: URL): boolean => {
   if (url.port !== "") return true;
   const defaultPort = DEFAULT_PORT_BY_PROTOCOL[url.protocol];
   if (defaultPort === undefined) return false;
-  const marker = `${url.hostname}:${defaultPort}`;
-  const idx = raw.indexOf(marker);
-  if (idx < 0) return false;
-  const after = raw[idx + marker.length];
-  return after === undefined || after === "/" || after === "?" || after === "#";
+  const schemeEnd = raw.indexOf("://");
+  if (schemeEnd < 0) return false;
+  const rest = raw.slice(schemeEnd + 3);
+  const authorityEnd = rest.search(/[/?#]/);
+  const authority = authorityEnd < 0 ? rest : rest.slice(0, authorityEnd);
+  return authority.endsWith(`${url.hostname}:${defaultPort}`);
+};
+
+/**
+ * Authority with an explicitly spelled default port preserved, so recorded
+ * endpoints stay valid for reconciliation (#5178).
+ */
+const explicitPortAuthority = (url: URL, raw: string): string => {
+  if (url.port !== "") return url.host;
+  const defaultPort = DEFAULT_PORT_BY_PROTOCOL[url.protocol];
+  if (defaultPort === undefined || !urlDeclaresExplicitPort(raw, url))
+    return url.host;
+  return `${url.hostname}:${defaultPort}`;
 };
 
 /** Normalized origin of an accepted loopback CDP HTTP discovery endpoint. */
@@ -84,7 +99,7 @@ const httpDiscoveryOrigin = (url: URL, raw: string): string | undefined =>
   url.password === "" &&
   url.pathname === "/" &&
   !urlDeclaresQueryOrFragment(url)
-    ? url.origin
+    ? `${url.protocol}//${explicitPortAuthority(url, raw)}`
     : undefined;
 
 /** Scheme and authority of an accepted loopback CDP browser WebSocket. */
@@ -99,7 +114,7 @@ const browserSocketAuthority = (url: URL, raw: string): string | undefined => {
     url.pathname.startsWith(BROWSER_SOCKET_PATH) &&
     id.length > 0 &&
     !id.includes("/")
-    ? `${url.protocol}//${url.host}`
+    ? `${url.protocol}//${explicitPortAuthority(url, raw)}`
     : undefined;
 };
 
