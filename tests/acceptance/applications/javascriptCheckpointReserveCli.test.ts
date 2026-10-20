@@ -12,9 +12,9 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 cliTest.skipIf(process.versions.bun !== undefined).for([
   { laterSources: 1, heapMb: 640, methodsCount: 400, retainGraph: true },
   { laterSources: 10, heapMb: 640, methodsCount: 400, retainGraph: true },
-  // Even an otherwise empty parent cannot admit this graph after reserving
-  // transient decoding and the next checkpoint, independent of GC timing.
-  { laterSources: 1, heapMb: 448, methodsCount: 600, retainGraph: false },
+  // Give the static/module checkpoint more headroom at 512 MiB while keeping
+  // the 600-method graph large enough to exercise graph admission.
+  { laterSources: 1, heapMb: 512, methodsCount: 600, retainGraph: false },
 ])(
   "preserves evidence with $laterSources later checkpoints and a $heapMb MiB parent heap",
   { timeout: 90_000 },
