@@ -1,4 +1,4 @@
-import Ajv from "ajv";
+import { Ajv } from "ajv";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it } from "vitest";
 import { z } from "zod";
@@ -43,8 +43,7 @@ it.each(["draft-2020-12", "draft-07"] as const)(
               .slice(2)
               .split("/")
               .reduce<unknown>(
-                (value, key) =>
-                  (value as Record<string, unknown>)[key],
+                (value, key) => (value as Record<string, unknown>)[key],
                 projected,
               )
           : literalProperty;

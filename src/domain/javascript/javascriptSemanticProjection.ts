@@ -43,6 +43,7 @@ import {
   type CommonJsExportReceiverEffect,
   type CommonJsExportSite,
 } from "./javascriptCommonJsExportReceivers.js";
+import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
 
 interface CollectCallableInput {
   readonly node: t.Node;
@@ -483,6 +484,7 @@ const collectCommonJsExport = (
       state,
       exported.exportedName,
       receiverEffect === "uncertain" ? null : exported.value,
+      exported.projection,
     );
 };
 
@@ -491,6 +493,7 @@ const addCommonJsExport = (
   state: JavaScriptSemanticAnalysisState,
   exportedName: string,
   exported: t.Node | null,
+  projection?: JavaScriptSemanticPropertyPath,
 ): void => {
   // Simple assignment chains yield their rightmost assigned value.
   let value = exported;
@@ -498,21 +501,41 @@ const addCommonJsExport = (
     value = value.right;
   const required =
     value === null ? undefined : semanticRequireOrigin(value, state);
-  const origin = required?.origin;
+  // Copies retain their module provenance, but do not export the source object
+  // itself. A wildcard with exclusions cannot express one module link.
+  const origin = projection?.some(
+    (key) =>
+      typeof key === "object" && key !== null && key.excludedKeys.length > 0,
+  )
+    ? undefined
+    : required?.origin;
+  const selectedName = projection?.at(-1);
   addModuleLink(
     state,
     {
       kind: "commonjs-export",
       specifier: origin?.specifier ?? null,
-      importedName: origin?.importedPath.at(-1) ?? null,
-      localName: value !== null && t.isIdentifier(value) ? value.name : null,
+      importedName:
+        origin === undefined
+          ? null
+          : typeof selectedName === "string" || typeof selectedName === "number"
+            ? String(selectedName)
+            : (origin.importedPath.at(-1) ?? null),
+      localName:
+        projection === undefined && value !== null && t.isIdentifier(value)
+          ? value.name
+          : null,
       exportedName,
-      callableId: value === null ? null : semanticCallableIdForNode(value),
+      callableId:
+        projection !== undefined || value === null
+          ? null
+          : semanticCallableIdForNode(value),
       location: range(node),
     },
     node,
   );
-  if (required !== undefined) state.linkedRequireCalls.add(required.call);
+  if (origin !== undefined && required !== undefined)
+    state.linkedRequireCalls.add(required.call);
 };
 
 const addModuleLink = (

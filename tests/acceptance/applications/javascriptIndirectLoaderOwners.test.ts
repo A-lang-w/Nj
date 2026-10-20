@@ -43,6 +43,18 @@ const cases = [
     possible: true,
   },
   {
+    name: "conditional opaque factory retains competing loader ownership",
+    mainFile: "main.mjs",
+    load: 'import {createRequire as native} from "node:module";const make=flag?native:getFactory();const load=make(import.meta.url);load("./window.cjs");',
+    possible: true,
+  },
+  {
+    name: "only local returned factory stays inert",
+    mainFile: "main.mjs",
+    load: 'const getFactory=()=>()=>()=>({});const make=getFactory();const load=make(import.meta.url);load("../shared/window.cjs");',
+    possible: false,
+  },
+  {
     name: "local createRequire name stays inert",
     mainFile: "main.mjs",
     load: 'const createRequire=()=>()=>{};const load=createRequire(import.meta.url);load("../shared/window.cjs");',
@@ -216,6 +228,8 @@ cliTest.for(
       [`a/${mainFile}`]: `throw new Error('Static fixture must never execute');${load}`,
       "a/inert.cjs":
         "throw new Error('Static inert decoy must never execute');",
+      "a/window.cjs":
+        "throw new Error('Static factory-base decoy must never execute');",
       "a/index.html": "possible page",
       "b/package.json": '{"main":"main.cjs"}',
       "b/main.cjs": `throw new Error('Static fixture must never execute');require('../shared/window.cjs');`,

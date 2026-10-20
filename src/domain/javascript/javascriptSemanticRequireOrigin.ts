@@ -377,7 +377,7 @@ const selectedRequireSourcesAt = (
       }
       const binding = resolveSemanticBindingState(state, node, node.name);
       if (binding === undefined) {
-        unknown ||= current.path.length === 0;
+        unknown = true;
         continue;
       }
       // Eligibility is separate from the selected value: replacing a known
@@ -439,24 +439,29 @@ const selectedRequireSourcesAt = (
             ),
           ),
         );
-      } else
+      } else {
+        unknown ||=
+          facts.sources.length === 0 &&
+          !(
+            target === "factory" &&
+            facts.retainsOrigin &&
+            binding.directOrigins.length > 0
+          );
         pending.push(
           ...inheritLoaderSourceContext(
             current,
             projectedLoaderSources(current, facts.sources),
           ),
         );
+      }
     } else if (t.isObjectExpression(node) || t.isArrayExpression(node)) {
       if (current.path.length === 0) {
         local = true;
         continue;
       }
-      pending.push(
-        ...inheritLoaderSourceContext(
-          current,
-          loaderObjectPropertySources(current, node, state),
-        ),
-      );
+      const sources = loaderObjectPropertySources(current, node, state);
+      unknown ||= sources.length === 0;
+      pending.push(...inheritLoaderSourceContext(current, sources));
     } else if (t.isSequenceExpression(node)) {
       const last = node.expressions.at(-1);
       if (last !== undefined) pending.push({ ...current, node: last });
@@ -483,7 +488,7 @@ const selectedRequireSourcesAt = (
         ) {
           found = true;
           selectedLoader = "create-require";
-        }
+        } else unknown = true;
       } else if (current.path.length === 0 || genericMember) {
         const factory = createRequireFactoryCallAt(
           node,
@@ -512,13 +517,18 @@ const selectedRequireSourcesAt = (
               state,
             );
           }
-        } else local ||= factory?.loader === "local";
-      }
+        } else if (factory?.loader === "local") local = true;
+        else unknown = true;
+      } else unknown = true;
     } else if (
       current.path.length === 0 &&
       (t.isFunction(node) || t.isClassExpression(node) || t.isLiteral(node))
     ) {
       local = true;
+    } else {
+      // Every selected expression contributes a possible value. An opaque
+      // alternative cannot leave another factory as the sole proven origin.
+      unknown = true;
     }
   }
   return found || local || (loaderBinding && unknown)
@@ -1430,13 +1440,25 @@ export const semanticRequireOrigin = (
       };
 };
 
-/** Node's fs.promises export and fs/promises require share one object. */
+/** Node's exported child objects retain their direct builtin-module identity. */
 export const semanticRequireExportsIdentity = <Key>(
   specifier: string,
   path: readonly Key[],
 ): { readonly specifier: string; readonly path: readonly (Key | string)[] } => {
   const name = specifier.replace(/^node:/u, "");
   if (name === "fs/promises") return { specifier: name, path };
+  if (["path", "path/posix", "path/win32"].includes(name)) {
+    let selected = name;
+    let remaining = path;
+    while (
+      remaining.length > 1 &&
+      (remaining[0] === "posix" || remaining[0] === "win32")
+    ) {
+      selected = `path/${remaining[0]}`;
+      remaining = remaining.slice(1);
+    }
+    return { specifier: selected, path: remaining };
+  }
   return name === "fs" && path[0] === "promises" && path.length > 1
     ? { specifier: "fs/promises", path: path.slice(1) }
     : { specifier: name, path };
@@ -1449,6 +1471,10 @@ const MUTABLE_BUILTIN_DEFAULTS = new Set([
   "child_process",
   "timers",
   "process",
+  "path",
+  "path/posix",
+  "path/win32",
+  "url",
 ]);
 
 /** Mutable default/object selections share CommonJS identity; namespace slots do not. */

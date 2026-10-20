@@ -8,12 +8,18 @@ import {
 } from "./javascriptAstValues.js";
 import {
   isUnshadowedGlobal,
+  resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
 import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
+import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
+import { semanticProjectedSourcesAtRead } from "./javascriptSemanticProjectedSources.js";
+import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
+import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 
 const exportInvocations = new WeakMap<
   JavaScriptSemanticAnalysisState,
@@ -52,6 +58,111 @@ export type CommonJsExportReceiverEffect =
 
 /** A CommonJS export assignment or `Object.defineProperty` export call. */
 export type CommonJsExportSite = t.AssignmentExpression | t.CallExpression;
+
+interface CopiedOwnFields {
+  readonly definite: ReadonlySet<string>;
+  readonly complete: boolean;
+}
+
+/** Definite own fields survive aliases, but not a possible prior shape change. */
+const copiedOwnFields = (
+  source: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): CopiedOwnFields => {
+  const unknown = { definite: new Set<string>(), complete: false };
+  const pending = [source];
+  const seen = new Set<t.Node>();
+  let common: Set<string> | undefined;
+  let complete = true;
+  while (pending.length > 0) {
+    const node = unwrapJavaScriptExpression(pending.pop()!).node;
+    if (seen.has(node)) continue;
+    if (seen.size >= SEMANTIC_ALIAS_SELECTION_LIMIT) {
+      state.valueResourceLimits.add("alias-selections");
+      return unknown;
+    }
+    seen.add(node);
+    if (t.isIdentifier(node)) {
+      const binding = resolveSemanticBindingState(state, node, node.name);
+      if (binding === undefined) return unknown;
+      if (
+        binding.memberWrites.some(
+          (effect) =>
+            semanticEffectTiming(source, effect.node, state) !== "after",
+        ) ||
+        binding.escapedPaths.some(
+          (effect) =>
+            effect.node !== undefined &&
+            !(
+              (effect.node.start ?? -1) <= (source.start ?? -1) &&
+              (effect.node.end ?? -1) >= (source.end ?? -1)
+            ) &&
+            semanticEffectTiming(source, effect.node, state) !== "after",
+        )
+      )
+        return unknown;
+      const selected = semanticProjectedSourcesAtRead(
+        binding,
+        node,
+        [],
+        state,
+        false,
+        source,
+      );
+      if (
+        selected === undefined ||
+        selected.length === 0 ||
+        selected.some((value) => value.path.length !== 0)
+      )
+        return unknown;
+      if (
+        seen.size + pending.length + selected.length >
+        SEMANTIC_ALIAS_SELECTION_LIMIT
+      ) {
+        state.valueResourceLimits.add("alias-selections");
+        return unknown;
+      }
+      for (const value of selected) pending.push(value.node);
+      continue;
+    }
+    // A getter can remove a later own slot while Object.assign is copying.
+    // Its initial presence cannot prove an earlier source was overwritten.
+    if (
+      t.isObjectExpression(node) &&
+      node.properties.some(
+        (property) => t.isObjectMethod(property) && property.kind !== "method",
+      )
+    )
+      return unknown;
+    const selected = evaluateSemanticExpression(node, state, source);
+    const fields =
+      selected.status === "object"
+        ? selected.properties
+        : selected.status === "array"
+          ? selected.items
+          : [];
+    const own = new Set(
+      fields
+        .filter((field) => field.presence === "present")
+        .map((field) => field.name),
+    );
+    const exact =
+      selected.status === "object"
+        ? !selected.unknownProperties
+        : selected.status === "array"
+          ? !selected.unknownItems
+          : selected.status === "literal" && selected.value === null;
+    complete &&=
+      exact &&
+      (common === undefined ||
+        (common.size === own.size && [...common].every((key) => own.has(key))));
+    common =
+      common === undefined
+        ? own
+        : new Set([...common].filter((key) => own.has(key)));
+  }
+  return { definite: common ?? new Set(), complete };
+};
 
 const isCommonJsModuleExports = (
   node: t.Node,
@@ -166,6 +277,9 @@ export const commonJsRuntimeExportValues = (
 ): readonly {
   readonly exportedName: string;
   readonly value: t.Node | null;
+  /** Own enumerable fields copied at this source, after later-source overwrites. */
+  readonly projection?: JavaScriptSemanticPropertyPath;
+  readonly ownEnumerable?: true;
 }[] => {
   if (t.isAssignmentExpression(node)) {
     const exportedName = commonJsExportName(node.left, state);
@@ -174,8 +288,35 @@ export const commonJsRuntimeExportValues = (
       : [{ exportedName, value: node.operator === "=" ? node.right : null }];
   }
   const assigned = commonJsAssignedExports(node, state);
-  if (assigned !== undefined)
-    return assigned.sources.map((value) => ({ exportedName: "*", value }));
+  if (assigned !== undefined) {
+    const exported: ReturnType<typeof commonJsRuntimeExportValues>[number][] =
+      [];
+    const overwritten = new Set<string>();
+    for (let index = assigned.sources.length - 1; index >= 0; index--) {
+      const value = assigned.sources[index]!;
+      const fields = copiedOwnFields(value, state);
+      if (fields.complete) {
+        for (const name of fields.definite)
+          if (!overwritten.has(name))
+            exported.push({
+              exportedName: name,
+              value,
+              projection: [name],
+              ownEnumerable: true,
+            });
+      } else
+        exported.push({
+          exportedName: "*",
+          value,
+          projection: [{ excludedKeys: [...overwritten] }],
+          ownEnumerable: true,
+        });
+      // Copy applicability belongs to the shared own-slot inventory. Unknown
+      // later fields cannot prove that an earlier native field was replaced.
+      for (const field of fields.definite) overwritten.add(field);
+    }
+    return exported;
+  }
   const defined = commonJsDefinedExport(node, state);
   if (defined === undefined) return [];
   const descriptor = unwrapJavaScriptExpression(defined.descriptor).node;

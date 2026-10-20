@@ -45,6 +45,23 @@ cliTest.for(
         mainFile: "main.mjs",
       },
       {
+        name: "separate default path write",
+        declaration:
+          'import changed from "node:path";import path from "path";changed.resolve=first=>first;',
+        expression: 'path.resolve(runtimePath,__dirname,"decoy.cjs")',
+        preload: null,
+        mainFile: "main.mjs",
+      },
+      {
+        name: "separate default URL write",
+        declaration:
+          'import changed from "node:url";import url from "url";import path from "node:path";changed.fileURLToPath=()=>"/changed/main.mjs";',
+        expression:
+          'path.resolve(runtimePath,path.dirname(url.fileURLToPath(import.meta.url)),"decoy.cjs")',
+        preload: null,
+        mainFile: "main.mjs",
+      },
+      {
         name: "shadowed directory",
         declaration: 'const path=require("node:path");',
         expression: 'path.resolve(runtimePath,__dirname,"decoy.cjs")',

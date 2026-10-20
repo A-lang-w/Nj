@@ -80,7 +80,12 @@ export const createSemanticElectronAppPathChangeQuery = (
   let commonJsReceivers:
     | ReadonlyMap<CommonJsExportSite, CommonJsExportReceiverEffect>
     | undefined;
-  const possiblePath = (root: t.Node, escaping = false): boolean => {
+  const possiblePath = (
+    root: t.Node,
+    escaping = false,
+    projection: SemanticAliasSelectionPath = [],
+    ownEnumerable = false,
+  ): boolean => {
     const pending: Candidate[] = [];
     const seen = new WeakMap<t.Node, Set<string>>();
     let scheduled = 0;
@@ -126,9 +131,16 @@ export const createSemanticElectronAppPathChangeQuery = (
     };
     enqueue({
       node: root,
-      path: [],
+      path: projection,
       awaitDepths: [],
       ...(escaping ? { escaping: true as const } : {}),
+      ...(ownEnumerable
+        ? {
+            capturedSelections: [
+              { at: root, depth: 1, ownEnumerable: true as const },
+            ],
+          }
+        : {}),
     });
     while (pending.length > 0) {
       const current = pending.pop()!;
@@ -163,6 +175,21 @@ export const createSemanticElectronAppPathChangeQuery = (
         )
           ? exportPath(node)
           : undefined;
+      if (
+        current.escaping &&
+        path?.length === 0 &&
+        exported !== undefined &&
+        (exported.length === 0 ||
+          (exported.length === 1 && exported[0] === "app"))
+      ) {
+        // Publishing the app (or its namespace) lets an importer select the
+        // setter. Re-enter the same projected-source proof so a definite local
+        // method replacement still suppresses that native alternative.
+        enqueue({
+          ...current,
+          path: exported.length === 0 ? ["app", "setAppPath"] : ["setAppPath"],
+        });
+      }
       if (
         exported !== undefined &&
         // The retained app identity alone cannot prove its selected method
@@ -286,32 +313,40 @@ export const createSemanticElectronAppPathChangeQuery = (
             ? semanticObjectPropertyReferences(node, [choice], state)
             : semanticArrayPropertyReferences(node, [choice]);
           for (const source of sources)
-            enqueue({
-              ...current,
-              node: source.node,
-              path:
-                path === undefined ? undefined : [...source.path, ...remaining],
-              awaitDepths: current.awaitDepths.filter(
-                (depth) => depth !== path?.length,
-              ),
-              capturedSelections: [
-                ...(semanticShiftCapturedSelections(
-                  current.capturedSelections,
-                  source.path.length - 1,
-                ) ?? []),
-                ...(source.capturedSelectionAt === undefined
-                  ? []
-                  : [
-                      {
-                        at: source.capturedSelectionAt,
-                        depth: source.path.length,
-                        ...(source.ownEnumerable
-                          ? { ownEnumerable: true as const }
-                          : {}),
-                      },
-                    ]),
-              ],
-            });
+            if (
+              !source.inherited ||
+              !current.capturedSelections?.some(
+                (capture) => capture.depth === 1 && capture.ownEnumerable,
+              )
+            )
+              enqueue({
+                ...current,
+                node: source.node,
+                path:
+                  path === undefined
+                    ? undefined
+                    : [...source.path, ...remaining],
+                awaitDepths: current.awaitDepths.filter(
+                  (depth) => depth !== path?.length,
+                ),
+                capturedSelections: [
+                  ...(semanticShiftCapturedSelections(
+                    current.capturedSelections,
+                    source.path.length - 1,
+                  ) ?? []),
+                  ...(source.capturedSelectionAt === undefined
+                    ? []
+                    : [
+                        {
+                          at: source.capturedSelectionAt,
+                          depth: source.path.length,
+                          ...(source.ownEnumerable
+                            ? { ownEnumerable: true as const }
+                            : {}),
+                        },
+                      ]),
+                ],
+              });
         }
       }
     }
@@ -345,7 +380,11 @@ export const createSemanticElectronAppPathChangeQuery = (
     );
     return (
       commonJsReceivers.get(node) !== "detached" &&
-      exported.some(({ value }) => value !== null && possiblePath(value, true))
+      exported.some(
+        ({ value, projection, ownEnumerable }) =>
+          value !== null &&
+          possiblePath(value, true, projection, ownEnumerable),
+      )
     );
   };
 };
