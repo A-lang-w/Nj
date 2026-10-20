@@ -19,6 +19,54 @@ import { ggufFixture, safetensorsFixture } from "../fixtures/model/model.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
+it("keeps generated headline keys and imported compound metadata out of compact summaries", async () => {
+  const root = await createTestTempDirectory("rea-model-headlines-");
+  const path = join(root, "model");
+  const architecture = "a".repeat(12000);
+  const { text, u32 } = ggufFixture();
+  await writeFile(
+    path,
+    ggufFixture({
+      tensors: [],
+      metadata: [
+        { key: "general.architecture", type: 8, value: text(architecture) },
+        { key: `${architecture}.context_length`, type: 4, value: u32(2048) },
+      ],
+    }).bytes,
+  );
+  const { call } = await connectLocalToolsMcp();
+  const compact = await call("inspect_model_artifact", { path });
+  expect(compact.isError, JSON.stringify(compact)).not.toBe(true);
+  const summary = modelArtifactSummaryViewResultSchema.parse(
+    parseEvidence(compact.structuredContent).normalized_result,
+  );
+  expect(summary.summary.headlines).toEqual([]);
+  const full = parseEvidence(
+    (await call("inspect_model_artifact", { path, detail: "complete" }))
+      .structuredContent,
+  );
+  const report = modelArtifactSchema.parse(full.normalized_result);
+  expect(report.metadata.map(({ key, value }) => ({ key, value }))).toEqual([
+    { key: "general.architecture", value: architecture },
+    { key: `${architecture}.context_length`, value: 2048 },
+  ]);
+  report.metadata[0]!.value = { future: architecture };
+  const imported = createEvidence(undefined, full.provider, {
+    operation: "inspect_model_artifact",
+    parameters: full.parameters,
+    result: report,
+  });
+  const page = await call("inspect_analysis_view", {
+    source: { kind: "inline", evidence: imported },
+    view: { kind: "summary" },
+  });
+  expect(page.isError, JSON.stringify(page)).not.toBe(true);
+  const importedSummary = modelArtifactSummaryViewResultSchema.parse(
+    parseEvidence(page.structuredContent).normalized_result,
+  );
+  expect(importedSummary.summary.headlines).toEqual([]);
+});
+
 it("rejects noncanonical imported model indexes and duplicate identities through public MCP", async () => {
   const root = await createTestTempDirectory("rea-model-import-");
   const path = join(root, "model");

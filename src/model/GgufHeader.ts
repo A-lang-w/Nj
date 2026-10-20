@@ -293,15 +293,13 @@ export class GgufHeader {
       if (names.has(name)) rejectModel(`Duplicate GGUF tensor name ${name}`);
       names.add(name);
       const dimensions = await this.#unsigned(4);
-      if (dimensions < 1 || dimensions > 4)
-        rejectModel("GGUF tensor dimension count must be 1 through 4");
+      if (dimensions > 4)
+        rejectModel("GGUF tensor dimension count must be at most 4");
       const shape: string[] = [];
       let parameters = 1n;
       for (let d = 0; d < dimensions; d++) {
         const b = await this.reader.take(8);
         const value = this.#little ? b.readBigUInt64LE() : b.readBigUInt64BE();
-        if (value === 0n)
-          rejectModel("GGUF tensor dimensions must be positive");
         shape.push(value.toString());
         parameters *= value;
       }
@@ -312,7 +310,7 @@ export class GgufHeader {
       const type = ggmlType(id);
       let length: number | null = null;
       if (type !== undefined) {
-        if (BigInt(shape[0] ?? "0") % BigInt(type[1]) !== 0n)
+        if (BigInt(shape[0] ?? "1") % BigInt(type[1]) !== 0n)
           rejectModel(
             `GGUF tensor ${name} first dimension is not divisible by the quantization block size`,
           );

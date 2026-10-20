@@ -84,6 +84,74 @@ it.each([false, true])(
   },
 );
 
+it.each([false, true])(
+  "preserves GGUF empty extents, quantized empty rows and scalars, endian=%s",
+  async (bigEndian) => {
+    const declarations = [
+      { name: "empty_first", type: 0, shape: [0n, 7n], offset: 0n, bytes: 0 },
+      { name: "empty_later", type: 0, shape: [3n, 0n], offset: 0n, bytes: 0 },
+      {
+        name: "empty_quant_first",
+        type: 2,
+        shape: [0n, 32n],
+        offset: 0n,
+        bytes: 0,
+      },
+      {
+        name: "empty_quant_later",
+        type: 2,
+        shape: [32n, 0n],
+        offset: 0n,
+        bytes: 0,
+      },
+      { name: "scalar", type: 0, shape: [], offset: 0n, bytes: 4 },
+    ];
+    const fixture = ggufFixture({ bigEndian, tensors: declarations });
+    const { provider, path } = await providerAt(fixture.bytes);
+    const result = await provider.inspect({ path, hash: "header" });
+    if (!result.ok) throw result.error;
+    expect(
+      result.value.tensors.map(
+        ({ name, shape, byte_length, parameter_count }) => ({
+          name,
+          shape,
+          byte_length,
+          parameter_count,
+        }),
+      ),
+    ).toEqual(
+      declarations.map(({ name, shape, bytes }) => ({
+        name,
+        shape: shape.map(String),
+        byte_length: bytes,
+        parameter_count: name === "scalar" ? "1" : "0",
+      })),
+    );
+    expect(result.value.totals).toMatchObject({
+      parameter_count: "1",
+      tensor_bytes: 4,
+    });
+    expect(result.value.artifact.bytes_read).toBe(fixture.header.length);
+  },
+);
+
+it.each([
+  { name: "excess rank", type: 0, shape: [1n, 1n, 1n, 1n, 1n], bytes: 4 },
+  { name: "quantized scalar", type: 2, shape: [], bytes: 0 },
+])(
+  "rejects GGUF $name without relaxing representation constraints",
+  async (tensor) => {
+    const fixture = ggufFixture({ tensors: [{ ...tensor, offset: 0n }] });
+    const { provider, path } = await providerAt(fixture.bytes);
+    const result = await provider.inspect({ path, hash: "header" });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected format refusal");
+    expect(result.error).toMatchObject({
+      constraint: "file_format_rejected",
+    });
+  },
+);
+
 it.each([8, 24, 40])(
   "accepts format-valid GGUF alignment %s and preserves exact offsets",
   async (alignment) => {

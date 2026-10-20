@@ -29,6 +29,8 @@ import {
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 
+const HEADLINE_TEXT_LIMIT = 512;
+
 export const modelArtifactSummarySchema = modelArtifactObjectSchema
   .omit({ metadata: true, tensors: true, totals: true })
   .extend({
@@ -67,7 +69,10 @@ const summarizeModel = (
   const architecture = metadata.find(
     (row) => row.key === "general.architecture",
   )?.value;
-  if (typeof architecture === "string")
+  if (
+    typeof architecture === "string" &&
+    architecture.length <= HEADLINE_TEXT_LIMIT - ".context_length".length
+  )
     headlineKeys.add(`${architecture}.context_length`);
   return {
     ...identity,
@@ -82,7 +87,13 @@ const summarizeModel = (
         (row) =>
           headlineKeys.has(row.key) &&
           row.element_count === null &&
-          (typeof row.value !== "string" || row.value.length <= 512),
+          row.element_type === null &&
+          row.type.length <= HEADLINE_TEXT_LIMIT &&
+          (row.value === null ||
+            typeof row.value === "boolean" ||
+            typeof row.value === "number" ||
+            (typeof row.value === "string" &&
+              row.value.length <= HEADLINE_TEXT_LIMIT)),
       )
       .map(
         ({

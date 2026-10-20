@@ -67,10 +67,14 @@ weights are not deduplicated. GGUF dimensions retain their original fastest-firs
 order; safetensors shapes retain JSON order. Safetensors tensor rows use name
 order; GGUF rows use directory order. An index identifies a declaration within
 its collection and header digest, not tensor contents or a cross-version match.
+GGUF supports zero extents and scalar shapes, with at most four dimensions;
+known quantized types still require complete blocks in the first dimension.
 
 MCP defaults to a compact summary with counts, selected short headline metadata,
 chat-template presence and derived totals. The full type histogram and all rows
-remain in complete Evidence. Use the returned `parent_evidence_id`:
+remain in complete Evidence. Headline metadata uses short keys/types and scalar
+values; long or compound values remain available through explicit metadata
+queries. Use the returned `parent_evidence_id`:
 
 ```json
 {
