@@ -1,38 +1,41 @@
-import { observeMzWindowsHeader, parseDosMzHeader } from "../domain/dosMz.js";
+import {
+  observeMzWindowsHeader,
+  parseDosMzHeader,
+} from "../../domain/dosMz.js";
 import {
   declaredFileRange,
-  GoBinaryFormatFailure,
-  GoBinaryReader,
-  type GoBinaryContainer,
-  type GoFileMapping,
-  type GoImageSection,
-  type GoZeroFillMapping,
-} from "./GoBinaryContainer.js";
+  BinaryFormatFailure,
+  BinaryReader,
+  type BinaryContainer,
+  type FileMapping,
+  type ImageSection,
+  type ZeroFillMapping,
+} from "./BinaryContainer.js";
 
-const peHeaderOffset = (reader: GoBinaryReader): number => {
+const peHeaderOffset = (reader: BinaryReader): number => {
   const windowsHeader = observeMzWindowsHeader(reader.bytes);
   if (windowsHeader.state !== "declared") {
     const dos = parseDosMzHeader(reader.bytes);
-    if (!dos.ok) throw new GoBinaryFormatFailure("malformed", dos.error);
-    throw new GoBinaryFormatFailure(
+    if (!dos.ok) throw new BinaryFormatFailure("malformed", dos.error);
+    throw new BinaryFormatFailure(
       "unsupported",
       "DOS MZ images are outside the supported ELF, PE and thin Mach-O formats",
     );
   }
   const { offset: pe } = windowsHeader;
   if (pe < 64)
-    throw new GoBinaryFormatFailure(
+    throw new BinaryFormatFailure(
       "malformed",
       "PE signature overlaps the DOS header",
     );
   reader.range(pe, 24, "PE signature and COFF header");
   if (["NE", "LE", "LX"].includes(windowsHeader.signature))
-    throw new GoBinaryFormatFailure(
+    throw new BinaryFormatFailure(
       "unsupported",
       `${windowsHeader.signature} images are outside the supported ELF, PE and thin Mach-O formats`,
     );
   if (windowsHeader.signature !== "PE")
-    throw new GoBinaryFormatFailure(
+    throw new BinaryFormatFailure(
       "malformed",
       "PE signature is invalid or overlaps the DOS header",
     );
@@ -40,13 +43,13 @@ const peHeaderOffset = (reader: GoBinaryReader): number => {
 };
 
 const optionalHeaderMagic = (
-  reader: GoBinaryReader,
+  reader: BinaryReader,
   offset: number,
   size: number,
 ): number => {
   reader.range(offset, size, "PE optional header");
   if (size < 2)
-    throw new GoBinaryFormatFailure(
+    throw new BinaryFormatFailure(
       "malformed",
       "PE optional header is missing its complete magic field",
     );
@@ -54,27 +57,27 @@ const optionalHeaderMagic = (
 };
 
 /** Read PE32/PE32+ native image mappings and the linker data section. */
-export const readGoPeImage = (bytes: Buffer): GoBinaryContainer => {
-  const reader = new GoBinaryReader(bytes, true);
+export const readPeImage = (bytes: Buffer): BinaryContainer => {
+  const reader = new BinaryReader(bytes, true);
   const pe = peHeaderOffset(reader);
   const optional = pe + 24;
   const optionalSize = reader.u16(pe + 20);
   const magic = optionalHeaderMagic(reader, optional, optionalSize);
   const bits = magic === 0x10b ? 32 : magic === 0x20b ? 64 : null;
   if (bits === null)
-    throw new GoBinaryFormatFailure(
+    throw new BinaryFormatFailure(
       "unsupported",
       "Only PE32 and PE32+ image optional headers are supported",
     );
   if (optionalSize < (bits === 64 ? 112 : 96))
-    throw new GoBinaryFormatFailure(
+    throw new BinaryFormatFailure(
       "malformed",
       "PE optional header is truncated",
     );
   const directoriesOffset = bits === 64 ? 112 : 96;
   const directories = reader.u32(optional + directoriesOffset - 4);
   if (directories * 8 > optionalSize - directoriesOffset)
-    throw new GoBinaryFormatFailure(
+    throw new BinaryFormatFailure(
       "malformed",
       "PE data directories extend beyond the optional header",
     );
@@ -86,11 +89,11 @@ export const readGoPeImage = (bytes: Buffer): GoBinaryContainer => {
     40,
     "PE sections",
   );
-  const mappings: GoFileMapping[] = [];
-  const executableMappings: GoFileMapping[] = [];
-  const zeroFills: GoZeroFillMapping[] = [];
-  const sections: GoImageSection[] = [];
-  let search: GoFileMapping | null = null;
+  const mappings: FileMapping[] = [];
+  const executableMappings: FileMapping[] = [];
+  const zeroFills: ZeroFillMapping[] = [];
+  const sections: ImageSection[] = [];
+  let search: FileMapping | null = null;
   for (let index = 0; index < count; index++) {
     const entry = start + index * 40;
     const sectionName = peSectionName(
@@ -115,7 +118,7 @@ export const readGoPeImage = (bytes: Buffer): GoBinaryContainer => {
       );
     const address = imageBase + BigInt(virtualAddress);
     if (address + BigInt(Math.max(size, virtualSize)) > 1n << BigInt(bits))
-      throw new GoBinaryFormatFailure(
+      throw new BinaryFormatFailure(
         "malformed",
         "PE section virtual address overflows its address width",
       );
@@ -164,7 +167,7 @@ export const readGoPeImage = (bytes: Buffer): GoBinaryContainer => {
     executable_mappings: executableMappings,
     zero_fills: zeroFills,
     sections,
-    search: search === null ? [] : [search],
+    data_ranges: search === null ? [] : [search],
   };
 };
 
@@ -180,12 +183,12 @@ const peImageSection = ({
   offset,
   characteristics,
 }: {
-  readonly reader: GoBinaryReader;
+  readonly reader: BinaryReader;
   readonly name: string;
   readonly size: number;
   readonly offset: number;
   readonly characteristics: number;
-}): GoImageSection => {
+}): ImageSection => {
   const range = declaredFileRange(
     reader.bytes.length,
     BigInt(offset),
@@ -197,5 +200,11 @@ const peImageSection = ({
     (characteristics & 0x80000000) === 0 &&
     (characteristics & 0x20000000) === 0 &&
     (characteristics & 0x40) !== 0;
-  return { name, ...range, read_only: readOnly, compressed: false };
+  return {
+    format: "pe",
+    name,
+    ...range,
+    read_only: readOnly,
+    compressed: false,
+  };
 };
