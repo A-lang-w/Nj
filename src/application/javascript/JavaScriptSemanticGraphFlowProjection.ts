@@ -196,10 +196,7 @@ interface ObjectReadIndex {
   readonly nodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>;
 }
 
-const objectReadIndexes = new WeakMap<
-  JavaScriptSemanticIr,
-  ObjectReadIndex
->();
+const objectReadIndexes = new WeakMap<JavaScriptSemanticIr, ObjectReadIndex>();
 
 const objectReadRangeKey = (location: JavaScriptSourceRange): string =>
   `${String(location.start.line)}:${String(location.start.column)}:${String(location.end.line)}:${String(location.end.column)}`;
@@ -213,7 +210,8 @@ const objectReadOccurrences = (
   context: SemanticFlowProjectionContext,
 ): ReadonlyMap<string, JavaScriptSemanticGraphNode> => {
   const cached = objectReadIndexes.get(context.ir);
-  if (cached !== undefined && cached.state === context.state) return cached.nodes;
+  if (cached !== undefined && cached.state === context.state)
+    return cached.nodes;
   const nodes = new Map<string, JavaScriptSemanticGraphNode>();
   for (const operation of context.ir.objectOperations) {
     if (operation.kind !== "read") continue;

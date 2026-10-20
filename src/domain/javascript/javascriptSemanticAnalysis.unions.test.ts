@@ -510,8 +510,9 @@ describe("semantic expression depth bounds", () => {
     const statement = t.isFunctionDeclaration(declaration)
       ? declaration.body.body[0]
       : undefined;
-    const argument =
-      t.isReturnStatement(statement) ? statement.argument : undefined;
+    const argument = t.isReturnStatement(statement)
+      ? statement.argument
+      : undefined;
     if (parsed === null || !t.isReturnStatement(statement) || argument == null)
       throw new Error("Expected a returned value");
     let expression = argument;
