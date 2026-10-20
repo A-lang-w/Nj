@@ -1833,6 +1833,7 @@ it.each([
 
 it("retains ownership when descriptor readback omits input confirmation", async () => {
   const commands: string[] = [];
+  let inferiorAlive = true;
   const fake = createFakeSpawner((child, token, command) => {
     commands.push(command);
     const response = command.includes("inferior-tty-show")
@@ -1844,7 +1845,12 @@ it("retains ownership when descriptor readback omits input confirmation", async 
   });
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
     // Exercise malformed output from the injected descriptor boundary.
-    verifyInferiorOutputSink: async () => undefined as never,
+    verifyInferiorOutputSink: async (pid, _tty, rememberIdentity) => {
+      rememberIdentity({ pid, startTime: "controlled-inferior" });
+      return undefined as never;
+    },
+    readInferiorProcessStartTime: async () =>
+      inferiorAlive ? "controlled-inferior" : null,
   });
   const started = await expectGdbSessionStarted(manager, undefined, {
     inferiorTty: "/dev/pts/42",
@@ -1856,6 +1862,19 @@ it("retains ownership when descriptor readback omits input confirmation", async 
   expect(manager.status(started.value.session_id)).toBeDefined();
   expect(commands).not.toContain("-target-detach");
   expect(fake.children[0]?.killSignals).toEqual([]);
+
+  const gdb = fake.children[0];
+  if (gdb === undefined) throw new Error("Fake GDB did not spawn");
+  gdb.exitLeader(0);
+  gdb.closeInheritedOutput();
+  inferiorAlive = false;
+  const retried = await manager.close(started.value.session_id);
+
+  expect(retried).toMatchObject({
+    ok: true,
+    value: { target_state: "unknown" },
+  });
+  expect(manager.status(started.value.session_id)).toBeUndefined();
 });
 
 it("detaches a live inferior before the shared stop helper signals GDB", async () => {
