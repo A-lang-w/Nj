@@ -236,7 +236,9 @@ cache rather than on disk, so REA does not check them against the host.
   `LC_LAZY_LOAD_DYLIB` and `LC_LAZY_LOAD_DYLIB_INFO` dependencies are resolved
   but not traversed, because dyld loads them on first use; an unresolved one is
   not a launch failure. `LC_LAZY_LOAD_DYLIB_INFO` has no compatibility version,
-  so those fields are null. Its may-be-missing flag is reported as `weak`.
+  so those fields are null. Its may-be-missing flag is reported as `weak`, and
+  an unresolved dependency with that flag is not a first-use failure: dyld
+  continues if the image is absent.
 - `earlier-rpath-candidate-absent`: a compatible Mach-O placed at an earlier
   modeled search path could take precedence, subject to unmodeled search inputs
   and code-signing library validation. These findings do not establish which

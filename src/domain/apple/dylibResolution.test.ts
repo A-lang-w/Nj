@@ -887,6 +887,45 @@ describe("lazily loaded dependencies", () => {
     expect(trace.findings.map(({ kind }) => kind)).toEqual([
       "lazy-load-unresolved",
     ]);
+    expect(trace.findings[0]?.explanation).toContain(
+      "which would fail unless the image is supplied elsewhere",
+    );
+  });
+
+  it("treats a missing may-be-missing lazy image as optional", async () => {
+    const trace = await traceDylibLoading(
+      memoryView({
+        [MAIN]: executable({
+          rpaths: ["@executable_path/../Frameworks"],
+          dependencies: [
+            dependency("@rpath/liboptional.dylib", {
+              command: "LC_LAZY_LOAD_DYLIB_INFO",
+              encoding: "lazy_load_dylib_info",
+              weak: true,
+              current_version: null,
+              compatibility_version: null,
+            }),
+            dependency("@rpath/libweaklazy.dylib", {
+              command: "LC_LAZY_LOAD_DYLIB",
+              weak: true,
+            }),
+          ],
+        }),
+      }),
+      { roots: [MAIN] },
+    );
+    expect(trace.findings).toMatchObject([
+      {
+        kind: "lazy-load-unresolved",
+        explanation:
+          "No candidate for lazily loaded weak dependency @rpath/liboptional.dylib exists in the analyzed root; dyld loads it on first use and continues if it is absent.",
+      },
+      {
+        kind: "lazy-load-unresolved",
+        explanation:
+          "No candidate for lazily loaded weak dependency @rpath/libweaklazy.dylib exists in the analyzed root; dyld loads it on first use and continues if it is absent.",
+      },
+    ]);
   });
 });
 
