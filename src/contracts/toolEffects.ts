@@ -125,7 +125,9 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     executesForeignCode: true,
     idempotent: false,
   }),
+  inspect_desktop_application: evidence,
   inspect_go_binary: evidence,
+  inspect_il2cpp_metadata: evidence,
   inspect_rust_binary: evidence,
   inspect_sqlite_database: effects({
     mutatesSession: true,
@@ -231,7 +233,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     accessesNetwork: true,
     idempotent: false,
   }),
-  frida_session_status: effects(),
+  frida_session_status: evidence,
   close_frida_session: effects({
     mutatesTarget: true,
     mutatesSession: true,
@@ -647,7 +649,11 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   }),
   list_javascript_runtime_targets: browserEvidence,
   observe_javascript_runtime: browserEvidence,
-  analyze_javascript_application: evidence,
+  analyze_javascript_application: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+  }),
   inspect_electron_fuses: evidence,
   export_web_scripts: effects({
     mutatesSession: true,

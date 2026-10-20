@@ -1,7 +1,7 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { expect } from "vitest";
-import { stringify } from "yaml";
+import { Scalar, stringify } from "yaml";
 
 import {
   effectiveClientServer,
@@ -10,6 +10,14 @@ import {
 } from "../../../src/application/ClientConfigurationDocument.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+
+// Registration configuration tests must not discover installed providers or
+// plan provider-environment edits based on the machine running the suite.
+const missingHopperAndGhidraEnvironment = (home: string) => ({
+  HOPPER_LAUNCHER_PATH: join(home, "missing-hopper"),
+  GHIDRA_INSTALL_DIR: join(home, "missing-ghidra"),
+  JAVA_HOME: join(home, "missing-java"),
+});
 
 const scenarios = [
   {
@@ -33,6 +41,155 @@ const scenarios = [
   },
 ] as const;
 
+cliTest.for([
+  {
+    client: "cursor",
+    format: "json",
+    path: ".cursor/mcp.json",
+    position: "value",
+  },
+  {
+    client: "cursor",
+    format: "json",
+    path: ".cursor/mcp.json",
+    position: "name",
+  },
+  {
+    client: "dsh",
+    format: "dsh",
+    path: ".dsh/cordis.patch.yml",
+    position: "value",
+  },
+  {
+    client: "dsh",
+    format: "dsh",
+    path: ".dsh/cordis.patch.yml",
+    position: "name",
+  },
+  {
+    client: "dsh",
+    format: "dsh",
+    path: ".dsh/cordis.patch.yml",
+    position: "expression name",
+  },
+] as const)(
+  "refuses a NUL environment $position in $client before setup writes",
+  async (scenario, { cli }) => {
+    const home = await createTestTempDirectory("rea-registration-nul-");
+    const config = join(home, scenario.path);
+    await mkdir(dirname(config), { recursive: true });
+    const environment = {
+      HOME: home,
+      USERPROFILE: home,
+      XDG_CONFIG_HOME: join(home, ".config"),
+      DSH_HOME: join(home, ".dsh"),
+      ...missingHopperAndGhidraEnvironment(home),
+    };
+    const registration = (env: Readonly<Record<string, string>>) => {
+      const entry = clientRegistrationEntry(
+        scenario.format,
+        [process.execPath, resolve("scripts/rea.mjs"), "mcp"],
+        env,
+      );
+      if (scenario.position === "expression name")
+        entry.env = Object.fromEntries(
+          Object.entries(env).map(([key, value]) => {
+            if (!key.includes("\0")) return [key, value];
+            const expression = new Scalar("process.env.CALLER_SETTING");
+            expression.tag = "tag:yaml.org,2002:js";
+            return [key, expression];
+          }),
+        );
+      return scenario.format === "dsh"
+        ? stringify([
+            {
+              insert: [
+                {
+                  id: "rea-mcp",
+                  name: "@deepseek-ai/dsh-mcp-client",
+                  config: entry,
+                },
+              ],
+            },
+          ])
+        : JSON.stringify({ mcpServers: { rea: entry } });
+    };
+    const valueMarker = "reaNulFixtureValue_6c04e2";
+    const original = registration(
+      scenario.position === "value"
+        ? { CALLER_SETTING: `${valueMarker}\0value` }
+        : { ["CALLER\0SETTING"]: `${valueMarker} value` },
+    );
+    await writeFile(config, original);
+    const doctor = await cli.run({
+      arguments: [
+        "doctor",
+        "--client",
+        scenario.client,
+        "--skill=false",
+        "--json",
+      ],
+      cwd: home,
+      environment,
+    });
+    expect(doctor.exitCode).toBe(1);
+    expect(doctor.json).toMatchObject({
+      scope_checks: expect.arrayContaining([
+        expect.objectContaining({
+          name: `registration:${scenario.client}`,
+          ok: false,
+          classification: "config_drift",
+          remediation: expect.stringContaining("NUL"),
+        }),
+      ]),
+    });
+    const setup = await cli.run({
+      arguments: [
+        "setup",
+        "--client",
+        scenario.client,
+        "--skill=false",
+        "--yes",
+        "--json",
+      ],
+      cwd: home,
+      environment,
+    });
+    expect(setup.exitCode).toBe(1);
+    expect(setup.json).toMatchObject({
+      status: "needs_human",
+      plannedActions: [],
+      appliedActions: [],
+      remediation: expect.stringContaining("NUL"),
+    });
+    expect(setup.stdout + doctor.stdout).not.toContain(valueMarker);
+    expect(await readFile(config, "utf8")).toBe(original);
+    await expect(access(`${config}.rea.backup`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+
+    const repaired = registration({
+      CALLER_SETTING: "ordinary\nvalue=二\t",
+      EMPTY_SETTING: "",
+    });
+    await writeFile(config, repaired);
+    const healthy = await cli.run({
+      arguments: [
+        "doctor",
+        "--client",
+        scenario.client,
+        "--skill=false",
+        "--json",
+      ],
+      cwd: home,
+      environment,
+    });
+    expect(healthy.exitCode, healthy.stdout).toBe(0);
+    expect(healthy.json).toMatchObject({ healthy: true });
+    expect(await readFile(config, "utf8")).toBe(repaired);
+  },
+);
+
 for (const scenario of scenarios)
   cliTest(
     `setup and doctor reject ${scenario.client} overrides rejected by MCP startup`,
@@ -45,6 +202,7 @@ for (const scenario of scenarios)
         USERPROFILE: home,
         XDG_CONFIG_HOME: join(home, ".config"),
         DSH_HOME: join(home, ".dsh"),
+        ...missingHopperAndGhidraEnvironment(home),
       };
       const registration = (env: Readonly<Record<string, string>>) => {
         const server = {
@@ -175,9 +333,7 @@ cliTest(
       HOME: home,
       USERPROFILE: home,
       XDG_CONFIG_HOME: join(home, ".config"),
-      // Select an absent launcher so host-installed Hopper cannot make this
-      // configuration merge test plan an unrelated provider-environment edit.
-      HOPPER_LAUNCHER_PATH: join(home, "missing-hopper"),
+      ...missingHopperAndGhidraEnvironment(home),
     };
     const run = (args: readonly string[]) =>
       cli.run({ arguments: [...args, "--json"], cwd: home, environment });
@@ -254,7 +410,7 @@ cliTest(
       XDG_CONFIG_HOME: join(home, ".config"),
       CODEX_HOME: codexHome,
       KIMI_CODE_HOME: kimiHome,
-      HOPPER_LAUNCHER_PATH: join(home, "missing-hopper"),
+      ...missingHopperAndGhidraEnvironment(home),
       REA_ANALYSIS_PROVIDER: "auto",
       REA_GHIDRA_STARTUP_TIMEOUT_MS: "2700001",
       REA_HOPPER_STARTUP_TIMEOUT_MS: "2800002",
@@ -352,7 +508,7 @@ for (const [client, provider] of [
         XDG_CONFIG_HOME: join(home, ".config"),
         CODEX_HOME: clientHome,
         KIMI_CODE_HOME: clientHome,
-        HOPPER_LAUNCHER_PATH: join(home, "missing-hopper"),
+        ...missingHopperAndGhidraEnvironment(home),
       };
       const setupArguments = [
         "setup",
@@ -477,7 +633,7 @@ for (const invalidSetting of [
         USERPROFILE: home,
         XDG_CONFIG_HOME: join(home, ".config"),
         KIMI_CODE_HOME: kimiHome,
-        HOPPER_LAUNCHER_PATH: join(home, "missing-hopper"),
+        ...missingHopperAndGhidraEnvironment(home),
         [invalidSetting.setting]: invalidSetting.value,
       };
       const result = await cli.run({

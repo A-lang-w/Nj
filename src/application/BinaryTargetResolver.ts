@@ -1,3 +1,4 @@
+import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { constants, type Stats } from "node:fs";
 import { createHash } from "node:crypto";
 import {
@@ -7,7 +8,7 @@ import {
   stat,
   type FileHandle,
 } from "node:fs/promises";
-import { extname, isAbsolute, resolve } from "node:path";
+import { extname } from "node:path";
 
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import {
@@ -37,6 +38,7 @@ import {
   hasBinaryPlistSignature,
   MAX_XML_PLIST_PROBE_BYTES,
 } from "../domain/apple/appleArchiveFormat.js";
+import { hasGodotPckHeader } from "../domain/godotPckFormat.js";
 import {
   hasZipSignature,
   isZipPackageFormat,
@@ -52,6 +54,7 @@ import {
   type ExecutableMetadata,
 } from "../domain/binaryTarget.js";
 import type { PeCodeViewRecord } from "../domain/binaryTargetTypes.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
 const XML_PLIST_PROBE_CHUNK_BYTES = 64 * 1024;
 
@@ -80,7 +83,7 @@ export const parseBinaryTarget = async (
   const cwd = options.cwd ?? process.cwd();
   const hostArchitecture = options.hostArchitecture ?? process.arch;
   const { targetKind, formatHint, signal, architecture, entryPoint } = options;
-  const candidate = isAbsolute(input) ? input : resolve(cwd, input);
+  const candidate = absoluteCallerPath(input, { cwd });
   try {
     throwIfTargetResolutionCancelled(signal);
     await access(candidate, constants.R_OK);
@@ -223,6 +226,13 @@ export const parseBinaryTarget = async (
     }
   } catch (cause: unknown) {
     if (cause instanceof AnalysisCancelledError) return err(cause);
+    const cancellation = regularFileCancellation(cause);
+    if (cancellation !== undefined)
+      return err(
+        new AnalysisCancelledError("resolve_binary_target", {
+          cause: cancellation.reason,
+        }),
+      );
     if (signal?.aborted === true && cause === signal.reason)
       return err(
         new AnalysisCancelledError("resolve_binary_target", { cause }),
@@ -316,6 +326,8 @@ const detectArtifactFormat = async (
     if (lower.endsWith(".app")) return "app-pack";
     return zipPackageFormatForPath(lower) ?? "zip";
   }
+  if (hasGodotPckHeader(magic.subarray(0, observed.bytesRead)))
+    return "godot-pck";
   // Binary plists, including keyed archives, often use other extensions.
   if (hasBinaryPlistSignature(magic.subarray(0, observed.bytesRead)))
     return "plist";
@@ -395,7 +407,8 @@ const isArchiveFormat = (
     | "raw-binary"
   >,
 ): format is Extract<BinaryTarget, { kind: "archive" }>["format"] =>
-  isZipPackageFormat(format) || ["asar", "dmg", "pkg"].includes(format);
+  isZipPackageFormat(format) ||
+  ["asar", "godot-pck", "dmg", "pkg"].includes(format);
 
 const sha256Handle = async (
   handle: FileHandle,

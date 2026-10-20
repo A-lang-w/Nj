@@ -1,3 +1,7 @@
+import {
+  isClientConfigurationCleanupFailure,
+  retryClientConfigurationCleanup,
+} from "./ClientConfigurationCleanup.js";
 import { access } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -20,8 +24,10 @@ import {
   LinuxHopperTemporaryCleanupOwner,
   readLinuxDistribution,
   systemLinuxHopperInstallHost,
+  type LinuxHopperInstallHost,
 } from "./LinuxHopper.js";
 import { installMacHopper, systemMacHopperInstallHost } from "./MacHopper.js";
+import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperPublisher.js";
 import {
   clientEvidencePaths,
   supportedClients,
@@ -41,10 +47,7 @@ import {
 } from "./SetupClientConfiguration.js";
 import { failedConfigurationMessage } from "./SetupClients.js";
 import { setupInstallFailure } from "./SetupInstallFailure.js";
-import {
-  RegularFileCleanupFailure,
-  retryRegularFileCleanup,
-} from "./RegularFileRead.js";
+import { RegularFileCleanupFailure } from "./RegularFileRead.js";
 import {
   explicitSetupRegistrationEnvironment,
   providerRegistrationEnvironment,
@@ -156,6 +159,12 @@ export const systemSetupHost = (
   return {
     platform,
     homeDirectory,
+    ...(platform === "linux"
+      ? {
+          linuxHopperReleaseCache:
+            linuxHopperReleaseCacheDirectory(environment),
+        }
+      : {}),
     skillDestinations: (clientIds) =>
       skillDestinations(homeDirectory, clientIds, environment, platform),
     ...setupRegistration(platform, homeDirectory, environment),
@@ -164,7 +173,7 @@ export const systemSetupHost = (
     linuxDistribution: readLinuxDistribution,
     close: () =>
       closeSetupResources(resources, macHopperHost, doctorHost, () =>
-        pendingLinuxHopperCleanup.retry(linuxHopperHost.cleanup),
+        closeLinuxHopperInstallHost(linuxHopperHost, pendingLinuxHopperCleanup),
       ),
     initialSetupState: async (
       scope?: DoctorScope,
@@ -206,9 +215,22 @@ export const systemSetupHost = (
         const result = await installLinuxHopper(linuxHopperHost);
         if (result.cleanupFailure !== undefined)
           pendingLinuxHopperCleanup.retain(result.cleanupFailure);
-        return result.status === "installed"
-          ? { status: "installed", launcherPath: result.launcherPath }
-          : setupInstallFailure(result.reason, result.packageFailure);
+        if (result.status === "installed")
+          return { status: "installed", launcherPath: result.launcherPath };
+        const failure = setupInstallFailure(
+          result.reason,
+          result.packageFailure,
+          "linux",
+        );
+        const detail =
+          result.verificationFailure?.message ??
+          result.pythonRuntimeFailure?.message;
+        return detail !== undefined
+          ? {
+              ...failure,
+              remediation: `${detail} ${failure.remediation}`,
+            }
+          : failure;
       }
       if (macHopperHost === undefined)
         return setupInstallFailure("unsupported_host");
@@ -385,18 +407,18 @@ const runClientConfigurationOperation = async <Value>(
       try {
         return await operation();
       } catch (cause: unknown) {
-        if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
-        const cleanup = await retryRegularFileCleanup(cause, resources);
-        const primary =
-          cleanup.outcome.kind === "failed"
-            ? cleanup.outcome.cause
-            : cause.cleanupCause;
+        if (!isClientConfigurationCleanupFailure(cause)) throw cause;
+        const cleanup = await retryClientConfigurationCleanup(cause, resources);
+        const rollback = cleanup.failures.find(
+          (failure) =>
+            failure instanceof ClientConfigurationCleanupRollbackFailure,
+        );
         const rollbackMessage =
-          cause instanceof ClientConfigurationCleanupRollbackFailure
-            ? ` ${failedConfigurationMessage(cause.configurationFailure)}`
+          rollback instanceof ClientConfigurationCleanupRollbackFailure
+            ? ` ${failedConfigurationMessage(rollback.configurationFailure)}`
             : "";
         throw configurationCleanupError(
-          `Could not safely access client configuration at ${cause.path}: ${errorMessage(primary)}.${rollbackMessage}`,
+          `Could not safely access client configuration at ${cause.path}: ${errorMessage(cleanup.primary)}.${rollbackMessage}`,
           cause,
           cleanup.cleanup,
         );
@@ -424,6 +446,23 @@ const configurationCleanupError = (
 
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
+
+const closeLinuxHopperInstallHost = async (
+  host: LinuxHopperInstallHost,
+  temporaryOwner: LinuxHopperTemporaryCleanupOwner,
+): Promise<string | undefined> => {
+  const reasons: string[] = [];
+  const temporary = await temporaryOwner.retry(host.cleanup);
+  if (temporary !== undefined) reasons.push(temporary);
+  try {
+    await host.close?.();
+  } catch (cause: unknown) {
+    reasons.push(
+      `Linux Hopper publisher cleanup failed: ${errorMessage(cause)}`,
+    );
+  }
+  return reasons.length === 0 ? undefined : reasons.join("; ");
+};
 
 /** Detect supported agents from their config files or stable installation markers. */
 export const detectClients = async (
