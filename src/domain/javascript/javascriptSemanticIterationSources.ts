@@ -4,6 +4,7 @@ import {
   semanticObjectPatternKeys,
   runtimeFunctionParameters,
   semanticStaticPropertyKey,
+  unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
   semanticArrayIndex,
@@ -119,6 +120,7 @@ const visit = (
   source: PatternSource | undefined,
   guards: SourceGuards = {},
 ): void => {
+  pattern = unwrapJavaScriptExpression(pattern).node;
   const { sources, mutation } = context;
   if (t.isMemberExpression(pattern)) {
     // Property stores have no lexical alias binding. Preserve the selected

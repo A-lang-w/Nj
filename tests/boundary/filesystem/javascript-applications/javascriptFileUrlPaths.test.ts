@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { staticPath } from "../../../../src/domain/javascript/javascriptStaticAnalysisHelpers.js";
+import { analyzeJavaScriptStaticSource } from "../../../../src/domain/javascript/javascriptStaticAnalysis.js";
 import { analyzeJavaScriptApplication } from "../../../support/javascriptApplicationScope.js";
 
 const urlCases = [
@@ -129,9 +130,15 @@ describe("JavaScript file URL paths", () => {
   });
 
   it("does not URL-decode literal filesystem punctuation", () => {
-    const expression = 'path.join(__dirname, "preload%20?#.cjs")';
-    expect(
-      staticPath(parseExpression(expression, { sourceType: "module" })),
-    ).toBe("preload%20?#.cjs");
+    const analysis = analyzeJavaScriptStaticSource(`
+      const path = require('node:path');
+      const {BrowserWindow} = require('electron');
+      new BrowserWindow({webPreferences:{preload:path.join(__dirname,"preload%20?#.cjs")}});
+    `);
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.electron.browser_windows).toHaveLength(1);
+    expect(analysis.electron.browser_windows[0]?.preload_path).toBe(
+      "preload%20?#.cjs",
+    );
   });
 });

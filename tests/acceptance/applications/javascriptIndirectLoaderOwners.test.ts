@@ -7,6 +7,18 @@ import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js
 
 const cases = [
   {
+    name: "typed member store retains returned module ownership",
+    mainFile: "main.ts",
+    load: 'const box={make:()=>({require(){}})};(box.make as any)=()=>module;box.make().require("../shared/window.cjs");',
+    possible: true,
+  },
+  {
+    name: "typed local member store stays inert",
+    mainFile: "main.ts",
+    load: 'const box={make:()=>module};(box.make as any)=()=>({require(){}});box.make().require("../shared/window.cjs");',
+    possible: false,
+  },
+  {
     name: "assignment result retains module receiver",
     load: 'let holder;(holder=module).require("../shared/window.cjs");',
     possible: true,
