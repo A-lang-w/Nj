@@ -193,7 +193,11 @@ interface RizinDebugSession {
   readonly knownInferiorIdentities: Map<string, OwnedInferiorIdentity>;
   confirmedDetachedInferiorIdentity: OwnedInferiorIdentity | undefined;
   completedDetachCommand:
-    | { readonly fd: string; readonly identity: OwnedInferiorIdentity }
+    | {
+        readonly fd: string;
+        readonly identity: OwnedInferiorIdentity;
+        readonly readbackDisproved?: true;
+      }
     | undefined;
   verifiedDetachResult: OwnedDebuggerDetachResult | undefined;
   inferiorInventoryComplete: boolean;
@@ -1309,6 +1313,7 @@ export class RizinDebugSessionManager {
     completed: {
       readonly fd: string;
       readonly identity: OwnedInferiorIdentity;
+      readonly readbackDisproved?: true;
     },
   ): Promise<OwnedDebuggerDetachResult> {
     const after = parseRizinPtraceRows(
@@ -1341,23 +1346,77 @@ export class RizinDebugSessionManager {
             "Rizin still reports the selected inferior after the detach command completed.",
           );
         }
+      } else {
+        // A reused FD or PID cannot confirm which inferior survived `o-`.
+        // Retain that contradiction so a later empty inventory cannot turn it
+        // into detach proof while the originally selected process is alive.
+        session.completedDetachCommand = {
+          ...completed,
+          readbackDisproved: true,
+        };
       }
       throw new Error(
         "Rizin did not confirm that the selected inferior FD was detached.",
       );
     }
+    if (completed.readbackDisproved === true) {
+      for (const [, activePid] of after) {
+        if (
+          (await this.#resolveInferiorRowIdentity(session, activePid)) !==
+          undefined
+        )
+          throw new Error(
+            "Rizin reported another active inferior after an ambiguous detach readback.",
+          );
+      }
+      for (const [pid, identity] of session.knownInferiorIdentities) {
+        if (pid === completed.identity.pid) continue;
+        if (
+          !(await verifyOwnedInferiorsEnded(
+            [identity],
+            this.#readProcessStartTime,
+          ))
+        )
+          throw new Error(
+            `Rizin omitted retained inferior PID ${pid} from the ambiguous detach inventory while it is still active.`,
+          );
+      }
+      if (
+        !(await verifyOwnedInferiorsEnded(
+          [completed.identity],
+          this.#readProcessStartTime,
+        ))
+      )
+        throw new Error(
+          "Rizin did not confirm that the selected inferior was detached after an ambiguous readback.",
+        );
+      session.completedDetachCommand = undefined;
+      session.confirmedDetachedInferiorIdentity = undefined;
+      session.inferiorInventoryComplete = false;
+      return { status: "no-inferior" };
+    }
     // The selected FD's absence is useful durable proof even when another
     // active inferior makes it unsafe to stop the debugger. Retain both facts:
     // its detach confirmation and the completed command awaiting clean inventory.
     session.confirmedDetachedInferiorIdentity = completed.identity;
-    for (const [activeFd, activePid] of after) {
+    for (const [, activePid] of after) {
       // Rizin can retain an unrelated ptrace row after its original process
       // ended. Reuse the same identity/tracer reconciliation as the initial
       // inventory; any row that still names an active inferior remains fatal.
-      if (
-        (await this.#resolveInferiorRowIdentity(session, activePid)) !==
-        undefined
-      )
+      let activeIdentity: OwnedInferiorIdentity | undefined;
+      try {
+        activeIdentity = await this.#resolveInferiorRowIdentity(
+          session,
+          activePid,
+        );
+      } catch (cause) {
+        session.completedDetachCommand = {
+          ...completed,
+          readbackDisproved: true,
+        };
+        throw cause;
+      }
+      if (activeIdentity !== undefined)
         throw new Error(
           "Rizin reported another active inferior after detaching the selected FD.",
         );

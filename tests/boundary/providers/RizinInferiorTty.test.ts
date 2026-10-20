@@ -641,6 +641,7 @@ async function expectCloseRejectedAndReleased(
   expect((await manager!.close(sessionId)).ok).toBe(false);
   expect(manager!.status(sessionId)?.state).toBe("closed");
   if (inferiorPid !== undefined) {
+    expect(() => process.kill(inferiorPid!, 0)).not.toThrow();
     await expect(manager!.closeAll()).rejects.toThrow();
     await stopFakeInferior();
   }
