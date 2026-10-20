@@ -1,4 +1,5 @@
 import {
+  bodyProblem,
   createdFields,
   updatedEntity,
   updatedFields,
@@ -22,6 +23,7 @@ import {
   spelledLike,
 } from "../../domain/analysisView/environmentStateWriteValues.js";
 import {
+  at,
   isObject,
   scalarText,
   type JsonObject,
@@ -49,6 +51,11 @@ import {
   type StateProvenance,
   type StateServing,
 } from "./environmentStateAnswer.js";
+import {
+  isLoadableValue,
+  unloadableMember,
+  type HeldDocument,
+} from "./environmentStateDocument.js";
 import { environmentToolArguments } from "./environmentTools.js";
 
 /** Attempts at a generated UUID or token before a collision with held values is refused. */
@@ -79,7 +86,17 @@ const pathValues = (
   return values;
 };
 
-/** The call's body: an object, nothing, or a refusal for any other value. */
+/** A refusal for a value `data/add` would refuse, so `data/get` always reports a state that loads back. */
+const unloadable = (
+  tool: EnvironmentManifestTool,
+  holder: string,
+): AnalysisError =>
+  refused(
+    tool,
+    `${holder} would hold a value that is not exactly representable JSON, which data/add could not load back.`,
+  );
+
+/** The call's body: an object, nothing, or a refusal for any other value or one holding a value the state cannot hold. */
 const callBody = ({
   tool,
   args,
@@ -87,9 +104,12 @@ const callBody = ({
   const name = environmentToolArguments(tool).body;
   const value = name === undefined ? undefined : args[name];
   if (value === undefined) return ok(undefined);
-  return isObject(value as JsonValue)
+  if (!isObject(value as JsonValue))
+    return err(refused(tool, `Tool ${tool.name} takes a JSON object body.`));
+  const member = unloadableMember(value as JsonObject);
+  return member === undefined
     ? ok(value as JsonObject)
-    : err(refused(tool, `Tool ${tool.name} takes a JSON object body.`));
+    : err(unloadable(tool, `Member ${member}`));
 };
 
 /** The entity a recorded observation shows: the values a create keeps and an update's constants. */
@@ -257,6 +277,8 @@ const answerCreate = (
   });
   const fields = createdFields(plan, observed, call, values.generate);
   if (!fields.ok) return err(refused(tool, fields.error));
+  const field = unloadableMember(fields.value);
+  if (field !== undefined) return err(unloadable(tool, `Field ${field}`));
   const id = scalarText(fields.value[idField]);
   if (
     id === undefined ||
@@ -282,7 +304,7 @@ const answerCreate = (
     state,
   );
   if (!answer.ok) return answer;
-  serving.store.insert(
+  const inserted = serving.store.insert(
     {
       type,
       collection,
@@ -297,6 +319,7 @@ const answerCreate = (
       fields.value,
     ),
   );
+  if (!inserted.ok) return inserted;
   serving.store.commitWrite(values.taken);
   return answer;
 };
@@ -346,6 +369,9 @@ const answerUpdate = (
     values.generate,
   );
   if (!written.ok) return err(refused(tool, written.error));
+  // An increment can pass the exact integers.
+  const field = unloadableMember(written.value);
+  if (field !== undefined) return err(unloadable(tool, `Field ${field}`));
   const answer = writeAnswer(
     serving,
     request,
@@ -358,10 +384,10 @@ const answerUpdate = (
       id: entity.id,
     },
   );
-  if (answer.ok) {
-    serving.store.update(updatedEntity(entity, written.value));
-    serving.store.commitWrite(values.taken);
-  }
+  if (!answer.ok) return answer;
+  const updated = serving.store.update(updatedEntity(entity, written.value));
+  if (!updated.ok) return updated;
+  serving.store.commitWrite(values.taken);
   return answer;
 };
 
@@ -391,19 +417,56 @@ const answerDelete = (
   return answer;
 };
 
+/** The held document a call changes: only at the path the state holds it, with members the capture sent as the JSON types the document holds. */
+const documentTarget = (
+  serving: StateServing,
+  { tool, plan, args }: WriteRequest,
+  call: WriteCall,
+): Result<HeldDocument, AnalysisError> => {
+  const held = serving.store.document(plan.target ?? "");
+  const segments = callSegments(tool, args);
+  if (held === undefined || plan.body === null)
+    return err(
+      refused(tool, `The state holds no document for ${plan.target ?? ""}.`),
+    );
+  if (segments === undefined)
+    return err(refused(tool, `Tool ${tool.name} needs every path argument.`));
+  // Document reads answer only on their recorded line, so a write elsewhere has no document to change.
+  if (collectionMatch(held.path, segments) === undefined)
+    return err(
+      refused(
+        tool,
+        `The state holds this document only at ${held.path}; the environment models writes to it only there.`,
+      ),
+    );
+  const pointer = plan.observation?.pointer ?? "";
+  const members = (value: JsonValue | undefined): JsonObject => {
+    const object = value === undefined ? undefined : at(value, pointer);
+    return isObject(object) ? object : {};
+  };
+  const initial = serving.store.state.documents.find(
+    (document) => document.tool === held.tool,
+  );
+  // A member a replacing write dropped keeps the type the capture showed.
+  const problem = bodyProblem(plan.body, call, {
+    entity: { ...members(initial?.value), ...members(held.value) },
+  });
+  return problem === undefined ? ok(held) : err(refused(tool, problem));
+};
+
 const answerDocument = (
   serving: StateServing,
   request: WriteRequest,
   call: WriteCall,
 ): Result<StateAnswer, AnalysisError> => {
   const { tool, plan } = request;
-  const held = serving.store.document(plan.target ?? "");
-  if (held === undefined)
-    return err(
-      refused(tool, `The state holds no document for ${plan.target ?? ""}.`),
-    );
+  const target = documentTarget(serving, request, call);
+  if (!target.ok) return target;
+  const held = target.value;
   const written = writtenDocument(plan, held.value, call);
   if (!written.ok) return err(refused(tool, written.error));
+  if (!isLoadableValue(written.value))
+    return err(unloadable(tool, "The document"));
   const state = {
     source: "state",
     view: "document-write",
@@ -423,10 +486,10 @@ const answerDocument = (
               );
         })()
       : writeAnswer(serving, request, { fields: undefined, id: "" }, state);
-  if (answer.ok) {
-    serving.store.setDocument(plan.target ?? "", written.value);
-    serving.store.commitWrite(new Map());
-  }
+  if (!answer.ok) return answer;
+  const set = serving.store.setDocument(held.tool, written.value);
+  if (!set.ok) return set;
+  serving.store.commitWrite(new Map());
   return answer;
 };
 

@@ -1,13 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  timedCaptureEvidence,
-  type TimedCaptureRow,
-} from "../../../tests/fixtures/analysisView.js";
-import {
-  environmentStateServeFixture,
-  environmentStateServeInputs,
-} from "../../../tests/fixtures/environmentServe.js";
+  servedFrom,
+  type Served,
+} from "../../../tests/fixtures/environmentStateServing.js";
 import {
   BOOK_INIT_ROWS,
   BOOK_NOT_FOUND,
@@ -21,51 +17,13 @@ import {
   renamedBook,
   type Book,
 } from "../../../tests/fixtures/environmentStateWrites.js";
-import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { ReplayArguments } from "./environmentReplay.js";
 import { servedCatalog } from "./environmentState.js";
-import { EnvironmentStateStore } from "./environmentStateStore.js";
-import { environmentToolAnswer } from "./environmentToolAnswer.js";
 import { environmentToolDefinitions } from "./environmentTools.js";
-
-/** A served environment over the state derived from a capture of `rows`, answering tool calls as the server does. */
-const servedFrom = (rows: readonly TimedCaptureRow[] = BOOK_ROWS) => {
-  const { source, state } = environmentStateServeInputs(
-    environmentStateServeFixture(timedCaptureEvidence(rows)),
-  );
-  const store = new EnvironmentStateStore(state);
-  const respond = environmentToolAnswer(source, store);
-  const call = (name: string, args: ReplayArguments) => {
-    const tool = source.manifest.tools.find(
-      (candidate) => candidate.name === name,
-    );
-    if (tool === undefined) throw new Error(`The manifest lacks ${name}`);
-    return respond(tool, args);
-  };
-  return {
-    source,
-    state,
-    store,
-    answer: (name: string, args: ReplayArguments = {}) => {
-      const result = call(name, args);
-      if (!result.ok) throw result.error;
-      return result.value;
-    },
-    refusal: (name: string, args: ReplayArguments = {}) => {
-      const result = call(name, args);
-      if (result.ok) throw new Error(`Expected ${name} to be refused`);
-      return projectAnalysisError(result.error);
-    },
-    /** What data/get reports, as text, so whole states compare byte for byte. */
-    snapshot: () => JSON.stringify(store.snapshot()),
-  };
-};
 
 /** The book the first served create of "New Book" makes: the next id, one second past the served clock's start. */
 const NEW_BOOK = book(3, "New Book", bookClock(13));
 const CREATE_NEW_BOOK = { body: { name: "New Book" } };
-
-type Served = ReturnType<typeof servedFrom>;
 
 const entityOf = (books: Served, id: string) =>
   books.store.snapshot().rea_state.entities.find((entity) => entity.id === id);

@@ -2,13 +2,18 @@ import type {
   StateEntity,
   StateType,
 } from "../../domain/analysisView/environmentStateRules.js";
-import type { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisResourceConstraintError,
+  type AnalysisInputError,
+} from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
-import { ok, type Result } from "../../domain/result.js";
+import { err, ok, type Result } from "../../domain/result.js";
 import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
+import { ENVIRONMENT_SERVE_OPERATION } from "./environmentSource.js";
 import type { EnvironmentState } from "./environmentState.js";
 import {
   parseStateDocument,
+  STATE_INTAKE_LIMIT_BYTES,
   type HeldDocument,
   type StateContent,
 } from "./environmentStateDocument.js";
@@ -24,10 +29,20 @@ export interface StateSnapshot {
   };
 }
 
+const jsonBytes = (value: unknown): number =>
+  Buffer.byteLength(JSON.stringify(value), "utf8");
+
+/** The bytes JSON writes for these array items and the commas between them. */
+const itemsBytes = (items: readonly unknown[]): number =>
+  items.reduce<number>((sum, item) => sum + jsonBytes(item), 0) +
+  Math.max(0, items.length - 1);
+
 /**
  * The live state one served environment answers from, shared by every MCP
  * session and the data plane. Mutations are synchronous and swap the whole
- * state, so every answer reads one consistent state.
+ * state, so every answer reads one consistent state. A mutation that would take
+ * what `data/get` reports past the size `data/add` loads is refused, so that
+ * report always loads back.
  */
 export class EnvironmentStateStore {
   #entities: ReadonlyMap<string, StateEntity> = new Map();
@@ -37,6 +52,11 @@ export class EnvironmentStateStore {
   #content: StateContent = { entities: [], documents: [] };
   readonly #types: ReadonlyMap<string, StateType>;
   readonly #clockStart: number;
+  /** What `data/get` writes for the current state, in UTF-8 bytes; kept by each mutation rather than reserialized. */
+  #bytes = 0;
+  /** The bytes of `data/get` with no entities or documents. */
+  readonly #frameBytes: number;
+  readonly #initialBytes: number;
   /** Served writes since the state was last reset or loaded: the clock's seconds and the generators' counter. */
   #writes = 0;
   /** The largest value each sequence has generated since the last reset or load, so a deleted entity's value is not reused. */
@@ -48,12 +68,14 @@ export class EnvironmentStateStore {
     );
     this.#clockStart =
       state.writeClock === null ? 0 : Date.parse(state.writeClock);
+    this.#frameBytes = jsonBytes(this.#snapshotOf([], []));
+    this.#initialBytes = this.#contentBytes(state);
     this.reset();
   }
 
   /** Restore the initial state the Evidence holds; the clock and counter start again. */
   reset(): void {
-    this.#install(this.state);
+    this.#install(this.state, this.#initialBytes);
     this.#restart();
   }
 
@@ -61,7 +83,7 @@ export class EnvironmentStateStore {
   replace(document: unknown): Result<void, AnalysisInputError> {
     const content = parseStateDocument(this.state, document);
     if (!content.ok) return content;
-    this.#install(content.value);
+    this.#install(content.value, this.#contentBytes(content.value));
     this.#restart();
     return ok(undefined);
   }
@@ -94,9 +116,16 @@ export class EnvironmentStateStore {
     return this.#content.entities.filter((entity) => entity.type === type);
   }
 
-  /** Add an entity at `index` of its collection's order. */
-  insert(entity: StateEntity, index: number): void {
+  /** Add an entity at `index` of its collection's order, unless the state would outgrow what `data/add` loads. */
+  insert(
+    entity: StateEntity,
+    index: number,
+  ): Result<void, AnalysisResourceConstraintError> {
     const entities = this.#content.entities;
+    const bytes = this.#grown(
+      jsonBytes(entity) + (entities.length > 0 ? 1 : 0),
+    );
+    if (!bytes.ok) return bytes;
     const members = this.inCollection(entity.type, entity.collection);
     const anchor =
       index < members.length
@@ -104,49 +133,92 @@ export class EnvironmentStateStore {
         : members.length > 0
           ? entities.indexOf(members.at(-1)!) + 1
           : entities.length;
-    this.#install({
-      ...this.#content,
-      entities: [
-        ...entities.slice(0, anchor),
-        entity,
-        ...entities.slice(anchor),
-      ],
-    });
+    this.#install(
+      {
+        ...this.#content,
+        entities: [
+          ...entities.slice(0, anchor),
+          entity,
+          ...entities.slice(anchor),
+        ],
+      },
+      bytes.value,
+    );
+    return ok(undefined);
   }
 
-  /** Replace a held entity's values in place. */
-  update(entity: StateEntity): void {
+  /** Replace a held entity's values in place, unless the state would outgrow what `data/add` loads. */
+  update(entity: StateEntity): Result<void, AnalysisResourceConstraintError> {
     const key = compositeKey([entity.type, entity.collection, entity.id]);
-    this.#install({
-      ...this.#content,
-      entities: this.#content.entities.map((held) =>
-        compositeKey([held.type, held.collection, held.id]) === key
-          ? entity
-          : held,
-      ),
-    });
+    const held = this.#entities.get(key);
+    if (held === undefined) return ok(undefined);
+    const bytes = this.#grown(jsonBytes(entity) - jsonBytes(held));
+    if (!bytes.ok) return bytes;
+    this.#install(
+      {
+        ...this.#content,
+        entities: this.#content.entities.map((candidate) =>
+          candidate === held ? entity : candidate,
+        ),
+      },
+      bytes.value,
+    );
+    return ok(undefined);
   }
 
   remove(entity: StateEntity): void {
-    const key = compositeKey([entity.type, entity.collection, entity.id]);
-    this.#install({
-      ...this.#content,
-      entities: this.#content.entities.filter(
-        (held) => compositeKey([held.type, held.collection, held.id]) !== key,
-      ),
-    });
+    const held = this.#entities.get(
+      compositeKey([entity.type, entity.collection, entity.id]),
+    );
+    if (held === undefined) return;
+    const entities = this.#content.entities.filter(
+      (candidate) => candidate !== held,
+    );
+    this.#install(
+      { ...this.#content, entities },
+      this.#bytes - jsonBytes(held) - (entities.length > 0 ? 1 : 0),
+    );
   }
 
-  /** Set a held document's value; a value that is not the Evidence's cites no record. */
-  setDocument(tool: string, value: JsonValue): void {
-    this.#install({
-      ...this.#content,
-      documents: this.#content.documents.map((document) =>
-        document.tool === tool
-          ? { tool: document.tool, path: document.path, value }
-          : document,
+  /** Set a held document's value, unless the state would outgrow what `data/add` loads; a value that is not the Evidence's cites no record. */
+  setDocument(
+    tool: string,
+    value: JsonValue,
+  ): Result<void, AnalysisResourceConstraintError> {
+    const held = this.#documents.get(tool);
+    if (held === undefined) return ok(undefined);
+    const written = { tool: held.tool, path: held.path, value };
+    const bytes = this.#grown(jsonBytes(written) - jsonBytes(held));
+    if (!bytes.ok) return bytes;
+    this.#install(
+      {
+        ...this.#content,
+        documents: this.#content.documents.map((document) =>
+          document === held ? written : document,
+        ),
+      },
+      bytes.value,
+    );
+    return ok(undefined);
+  }
+
+  /** The state's bytes after a change of `delta`, or a refusal when a change that grows it would pass the intake limit. */
+  #grown(delta: number): Result<number, AnalysisResourceConstraintError> {
+    const bytes = this.#bytes + delta;
+    if (delta <= 0 || bytes <= STATE_INTAKE_LIMIT_BYTES) return ok(bytes);
+    return err(
+      new AnalysisResourceConstraintError(
+        ENVIRONMENT_SERVE_OPERATION,
+        "capacity",
+        "The write would take the served state past the size data/add loads",
+        { max_state_bytes: STATE_INTAKE_LIMIT_BYTES, state_bytes: bytes },
+        {
+          retryable: false,
+          remediationAction:
+            "Delete entities, or restore a smaller state with data/reset or data/add.",
+        },
       ),
-    });
+    );
   }
 
   type(collectionTemplate: string): StateType | undefined {
@@ -176,19 +248,40 @@ export class EnvironmentStateStore {
   }
 
   snapshot(): StateSnapshot {
+    return this.#snapshotOf(this.#content.entities, this.#content.documents);
+  }
+
+  /** What `data/get` writes for the current state, in UTF-8 bytes. */
+  byteLength(): number {
+    return this.#bytes;
+  }
+
+  #snapshotOf(
+    entities: readonly StateEntity[],
+    documents: readonly HeldDocument[],
+  ): StateSnapshot {
     return {
       rea_state: {
         version: 1,
         state_evidence_id: this.state.evidenceId,
         types: this.state.types,
-        entities: this.#content.entities,
-        documents: this.#content.documents,
+        entities,
+        documents,
       },
     };
   }
 
+  /** What `data/get` writes for some content, summed item by item so the whole state is never one string. */
+  #contentBytes(content: StateContent): number {
+    return (
+      this.#frameBytes +
+      itemsBytes(content.entities) +
+      itemsBytes(content.documents)
+    );
+  }
+
   /** Build every index before assigning any, so a reader never sees half a state. */
-  #install(content: StateContent): void {
+  #install(content: StateContent, bytes: number): void {
     const entities = new Map<string, StateEntity>();
     const collections = new Map<string, StateEntity[]>();
     const typeCollections = new Map<string, string[]>();
@@ -216,5 +309,6 @@ export class EnvironmentStateStore {
       content.documents.map((document) => [document.tool, document]),
     );
     this.#content = content;
+    this.#bytes = bytes;
   }
 }
