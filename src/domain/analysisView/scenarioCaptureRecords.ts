@@ -293,7 +293,7 @@ const derivedTextBytes = (value: unknown): number => {
   return 64 + largestBody * 2 + requestText;
 };
 
-/** Admit a scenario with response media types; the state view also requires response bodies. */
+/** Admit a capture_browser_scenario parent whose network content identifies response media types; state also needs bodies. */
 export const admitScenarioCaptureParent = (
   parent: AnalysisViewParent,
   viewKind: "environment-manifest" | "environment-state",
