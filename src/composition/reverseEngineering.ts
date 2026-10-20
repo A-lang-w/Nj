@@ -48,6 +48,9 @@ export const createReverseEngineeringCommandPort = (
       ),
       arguments: objdumpCommand(input),
       identity: OBJDUMP_PROVIDER_IDENTITY,
+      ...(platform === "win32" && commandOptions?.cwd !== undefined
+        ? { cwd: commandOptions.cwd }
+        : {}),
       environmentOverrides: { DEBUGINFOD_URLS: "" },
     }),
     rizin: async (input, commandOptions) => ({
@@ -62,6 +65,9 @@ export const createReverseEngineeringCommandPort = (
       ),
       arguments: rizinCommand(input),
       identity: RIZIN_PROVIDER_IDENTITY,
+      ...(platform === "win32" && commandOptions?.cwd !== undefined
+        ? { cwd: commandOptions.cwd }
+        : {}),
     }),
   };
 };

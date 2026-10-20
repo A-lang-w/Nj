@@ -14,6 +14,11 @@ export interface WindowsExecutableLookup {
     path: string,
     signal?: AbortSignal,
   ) => boolean | Promise<boolean>;
+  /** Test seam proving drive-rooted probes use a terminable owned helper. */
+  readonly isOwnedFile?: (
+    path: string,
+    signal?: AbortSignal,
+  ) => boolean | Promise<boolean>;
   readonly signal?: AbortSignal | undefined;
   /** Total startup lookup budget, including stalled network filesystem probes. */
   readonly timeoutMs?: number;
@@ -28,6 +33,9 @@ type WindowsFileProbe = NonNullable<WindowsExecutableLookup["isFile"]>;
  * are malformed rather than UNC, so neither may take this branch.
  */
 const isUncPath = (value: string): boolean => /^[\\/]{2}(?![\\/])/u.test(value);
+
+const isDriveRootedPath = (value: string): boolean =>
+  /^[a-z]:[\\/]/iu.test(value);
 
 const splitWindowsPath = (value: string): readonly string[] => {
   const entries: string[] = [];
@@ -175,7 +183,16 @@ export const resolveWindowsProviderExecutable = async (
             [".com", ".exe"].includes(extension.toLowerCase()),
           );
 
-  const isFile = lookup.isFile ?? isRegularFile;
+  const isFile =
+    lookup.isFile ??
+    ((path: string, signal?: AbortSignal) => {
+      if (isUncPath(path) || isDriveRootedPath(path))
+        return (lookup.isOwnedFile ?? isRegularFileInOwnedProcess)(
+          path,
+          signal,
+        );
+      return isRegularFile(path, signal);
+    });
   const deadline = new ProviderStartupDeadline(
     lookup.timeoutMs ?? 120_000,
     lookup.signal,

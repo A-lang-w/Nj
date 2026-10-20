@@ -12,6 +12,8 @@ export const PROVIDER_COMMAND_RESOLUTION_CAPACITY_ERROR_CODE =
 export interface ReverseEngineeringProviderCommand {
   readonly executable: string;
   readonly arguments: readonly string[];
+  /** Invocation directory used when the Windows executable remains a bare name. */
+  readonly cwd?: string;
   readonly identity: EvidenceProvider;
   readonly environmentOverrides?: Readonly<NodeJS.ProcessEnv>;
 }

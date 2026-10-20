@@ -447,6 +447,15 @@ export class BinarySession
       const pendingCleanup = await this.#retryPendingCleanup();
       if (!pendingCleanup.ok) return pendingCleanup;
 
+      // Earlier admitted reads may have retained provider owners while this
+      // mutation waited for them to drain. Recover those owners under the
+      // session admission lock before the mutation can reach its dispatch
+      // boundary and invalidate the active analysis binding.
+      if (cleanupRecovery !== undefined) {
+        const recovered = await cleanupRecovery(undefined);
+        if (!recovered.ok) return recovered;
+      }
+
       const activeAtDispatch = this.#active;
       if (activeAtDispatch?.route.binding?.identity.id === "ghidra")
         return err(

@@ -409,6 +409,7 @@ export class ReverseEngineeringService {
             },
           ),
         );
+      if (cause instanceof AnalysisError) return err(cause);
       return err(
         new AnalysisOutputError(
           operation,
@@ -513,6 +514,7 @@ export class ReverseEngineeringService {
           timeout: DEFAULT_TIMEOUT_MS,
           stopSignal: "SIGTERM",
           maxBuffer: MAX_COMBINED_OUTPUT_BYTES,
+          ...(profile.cwd === undefined ? {} : { cwd: profile.cwd }),
           ...(onDispatch === undefined ? {} : { onDispatch }),
         },
         operation,
@@ -941,6 +943,7 @@ const runOwnedCommandOutput =
           runId: randomUUID(),
           expectedCommand: null,
           env: spawnEnv,
+          ...(typeof options.cwd === "string" ? { cwd: options.cwd } : {}),
           hostEnvironment: {},
           sweepTokenOwnedProcesses: true,
           ...(options.onDispatch === undefined

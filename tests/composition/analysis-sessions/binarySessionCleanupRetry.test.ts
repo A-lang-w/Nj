@@ -222,6 +222,69 @@ it("retries reverse cleanup after draining earlier provider calls", async () => 
   expect(cleanupChecks).toBe(1);
 });
 
+it("recovers reverse owners created by drained calls before Rizin dispatch", async () => {
+  const fixture = await retryFixture();
+  const [target] = fixture.targets;
+  expect((await fixture.session.open(target)).ok).toBe(true);
+  fixture.allowCleanup();
+  const started = createDeferred<void>();
+  const release = createDeferred<void>();
+  let priorOwnerPending = false;
+  let recoveryCalls = 0;
+  const ownerFailure = new ProviderCleanupError("objdump", ["owned-read"], {
+    reason: "previous read-only process still requires cleanup",
+  });
+  const recoverPreviousOwner = async () => {
+    recoveryCalls += 1;
+    return priorOwnerPending ? err(ownerFailure) : resultOk(null);
+  };
+  // The handler's preliminary recovery happens before it is queued behind the
+  // active inspection, so it cannot see an owner that inspection later retains.
+  expect((await recoverPreviousOwner()).ok).toBe(true);
+
+  const inspection = fixture.session.withAdmittedAnalysis(
+    "inspect_with_objdump",
+    undefined,
+    async () => {
+      started.resolve();
+      await release.promise;
+      priorOwnerPending = true;
+      return "inspection complete";
+    },
+  );
+  await started.promise;
+  const mutation = vi.fn(async (onDispatch: () => void) => {
+    onDispatch();
+    return resultOk("rizin finished");
+  });
+  const admitMutation = () =>
+    fixture.session.withAdmittedExternalMutation(
+      target,
+      undefined,
+      mutation,
+      (_value, error) => error,
+      "execute_rizin_command",
+      recoverPreviousOwner,
+      "provider-dispatch",
+    );
+  const pendingMutation = admitMutation();
+  release.resolve();
+  await inspection;
+
+  expect(await pendingMutation).toEqual(err(ownerFailure));
+  expect(recoveryCalls).toBe(2);
+  expect(mutation).not.toHaveBeenCalled();
+  expect(fixture.session.activeTarget()?.path).toBe(target);
+
+  ownerFailure.resolveCleanup();
+  priorOwnerPending = false;
+  const retried = await admitMutation();
+  expect(retried).toEqual(resultOk(resultOk("rizin finished")));
+  expect(mutation).toHaveBeenCalledOnce();
+  expect(fixture.session.activeTarget()).toBeUndefined();
+  await fixture.session.close();
+});
+
 it("keeps recorded unknowns when a target switch cannot retire the previous provider", async () => {
   const fixture = await retryFixture();
   const [first, second] = fixture.targets;
