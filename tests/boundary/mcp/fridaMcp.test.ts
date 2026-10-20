@@ -11,6 +11,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { fridaSessionStatusSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { fridaSessionStatusSchema } from "../../../src/domain/fridaSessionStatus.js";
+import { evidenceBundleSummarySchema } from "../../../src/domain/evidenceRecordSummary.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 
 const createFridaTestProvider = (
@@ -199,6 +200,26 @@ it.each([false, true])(
     });
     expect(retained.structuredContent).toEqual(evidence);
     expect(reads).toBe(3);
+    const discovered = await client.callTool({
+      name: "get_evidence_bundle",
+      arguments: {
+        detail: "summary",
+        filters: { evidence_id: parent.evidence_id },
+      },
+    });
+    expect(discovered.isError).not.toBe(true);
+    const discovery = evidenceBundleSummarySchema.parse(
+      toolContract("get_evidence_bundle").outputSchema.parse(
+        discovered.structuredContent,
+      ).result,
+    );
+    expect(discovery.matching_records).toBe(1);
+    expect(discovery.records.map((record) => record.evidence_id)).toEqual([
+      parent.evidence_id,
+    ]);
+    expect(JSON.stringify(discovered.structuredContent)).not.toContain(
+      "caller-selected-nonsecret",
+    );
     const bundle = await client.callTool({
       name: "get_evidence_bundle",
       arguments: {},

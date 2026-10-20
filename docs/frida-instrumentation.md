@@ -20,7 +20,7 @@ A summary's selected fields look like this (excerpt):
 }
 ```
 
-Use `get_evidence_bundle` with an exact Evidence-ID filter or `export_evidence_bundle` to read the complete parent. The existing CLI `inspect-analysis-view` also accepts that parent as an Evidence-file source with `view={"kind":"summary"}`. Reading retained Evidence does not refresh a live session or verify a process after exit or PID reuse.
+Use `get_evidence_bundle` with `detail="summary"` and `filters={"evidence_id":"PARENT_ID"}` to discover parent metadata without message payloads. Filters apply only to summary delivery. Use `export_evidence_bundle` for the complete canonical bundle, then select the record whose `evidence_id` matches `normalized_result.parent_evidence_id` from the status summary. To use the existing CLI `inspect-analysis-view`, extract that record into a standalone Evidence JSON file and select it as an Evidence-file source with `view={"kind":"summary"}`. Reading retained Evidence does not refresh a live session or verify a process after exit or PID reuse.
 
 Failed startup cleanup retains acquired Frida handles, including a paused spawn that has not attached, for later cleanup retries. Its remote connection stays leased until session detach and target resume complete. CLI commands await provider cleanup before returning; MCP retains these resources for cleanup when its server closes. Server shutdown stops admitting new Frida operations and waits for admitted startup, discovery, and queued work before releasing their resources. A failed cleanup remains reported and can be retried by closing the server again, rather than treating an unregistered session as fully released.
 
