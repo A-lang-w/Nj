@@ -393,3 +393,41 @@ it("does not call a value volatile when it differs between request lines", () =>
     ),
   ).toEqual([["get_items_by_id", "fields-differ"]]);
 });
+
+it("orders entities by their earliest sighting, so a complete list keeps all membership", () => {
+  const state = stateOf(
+    captureOf([
+      [
+        "GET",
+        "/api/items",
+        [
+          { id: 1, title: "Granite Ledger" },
+          { id: 2, title: "Blue Heron" },
+        ],
+      ],
+      ["GET", "/api/items/2", { id: 2, title: "Blue Heron" }],
+      ["GET", "/api/items/1", { id: 1, title: "Granite Ledger" }],
+    ]),
+  );
+  expect(state.entities.map((entity) => entity.id)).toEqual(["1", "2"]);
+  expect(state.views).toContainEqual(
+    expect.objectContaining({ tool: "get_items", membership: "all" }),
+  );
+});
+
+it("does not take a later recording that is itself an entity as the list", () => {
+  const state = stateOf(
+    captureOf([
+      ["GET", "/api/items", { items: [{ id: 1, title: "Granite Ledger" }] }],
+      [
+        "GET",
+        "/api/items",
+        { id: 99, items: [{ id: 2, title: "Blue Heron" }] },
+      ],
+    ]),
+  );
+  expect(state.views).toContainEqual(
+    expect.objectContaining({ tool: "get_items", shape: "recorded" }),
+  );
+  expect(state.entities).toEqual([]);
+});

@@ -286,7 +286,9 @@ export class EnvironmentStateExtraction {
     for (const record of recordings) {
       const found = this.#withBody(record.ordinal, (body) => {
         if (body === undefined) return null;
-        const located = pointer ?? locateList(body, proved);
+        // Every recording must locate the same list, so a later entity envelope is not taken as one.
+        const located = locateList(body, proved);
+        if (pointer !== undefined && located !== pointer) return undefined;
         const items =
           located === undefined ? undefined : listItems(body, located);
         if (items === undefined) return undefined;
@@ -359,6 +361,12 @@ export class EnvironmentStateExtraction {
         observations: [],
       };
       this.#entities.set(key, entity);
+    } else {
+      // Plans are observed item tools first, so keep the earliest sighting in timeline order.
+      const position = this.#position.get(record.ordinal)!;
+      const [first, at] = entity.order;
+      if (position < first || (position === first && index < at))
+        entity.order = [position, index];
     }
     // Only a repeated request line shows a value changing; other lines may differ by query.
     const line = requestLine(record);

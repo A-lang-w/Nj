@@ -21,7 +21,8 @@ export interface ObservedEntity {
   readonly collection: string;
   readonly id: string;
   /** Timeline position of the first observation, then its index within that body. */
-  readonly order: readonly [number, number];
+  /** The earliest recorded sighting: timeline position, then position in its list. */
+  order: readonly [number, number];
   readonly observations: StateObservation[];
 }
 

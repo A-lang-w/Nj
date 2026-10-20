@@ -53,11 +53,16 @@ export interface StateGateContext {
 /** Ordered key union and always-present keys, grown one object at a time. */
 class FieldUnion {
   readonly fields: string[] = [];
+  /** Membership beside the ordered list, so a wide object is not scanned per key. */
+  readonly #seen = new Set<string>();
   #required: Set<string> | undefined;
 
   add(object: JsonObject): void {
     for (const key of Object.keys(object))
-      if (!this.fields.includes(key)) this.fields.push(key);
+      if (!this.#seen.has(key)) {
+        this.#seen.add(key);
+        this.fields.push(key);
+      }
     const keys = new Set(Object.keys(object));
     this.#required =
       this.#required === undefined
