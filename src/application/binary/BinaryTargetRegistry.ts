@@ -23,6 +23,7 @@ import type {
   SavedAnalysisSnapshot,
 } from "./BinarySessionPort.js";
 import { binaryTargetSummary } from "./BinaryTargetSummary.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { SessionProviderRouter } from "./SessionProviderRouter.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import type {
@@ -111,6 +112,8 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   readonly #limits: BinaryTargetLimits;
   readonly #slots = new Map<string, TargetSlot>();
   readonly #jobs = new Map<string, AnalysisJob>();
+  /** Slot handles whose provider cleanup failed and still owns its resource. */
+  readonly #retainedSlots = new Set<string>();
   readonly #availabilityListeners = new Set<() => void | Promise<void>>();
   readonly #snapshotListeners = new Set<() => void | Promise<void>>();
   #primary: TargetSlot;
@@ -181,7 +184,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
         ? {}
         : {
             error: {
-              code: job.error._tag,
+              code: projectAnalysisError(job.error).code,
               message: job.error.message,
             },
           }),
@@ -247,7 +250,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   ): Promise<Result<BinaryTarget, AnalysisError>> {
     const existing = this.#slotForPath(path);
     if (existing !== undefined) {
-      const job = this.#jobs.get(existing.id);
+      const job = this.#blockingJob(existing);
       if (job !== undefined) return this.#jobOpenResult(job, options);
       const active = existing.session.activeTarget();
       if (active !== undefined) {
@@ -283,7 +286,12 @@ export class BinaryTargetRegistry implements BinarySessionPort {
         ? {}
         : { providerId: options.providerId }),
     });
-    if (!preview.ok) return preview;
+    if (!preview.ok) {
+      // The slot never became usable, so it is dropped rather than left
+      // registered against a target it never opened.
+      this.#removeSlot(slot.value, "primary");
+      return preview;
+    }
     return this.#startJob(
       slot.value,
       parsed.value,
@@ -303,7 +311,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   ): Promise<Result<BinaryTarget, AnalysisError>> {
     const existing = this.#slotForPath(resolved.target.path);
     if (existing !== undefined) {
-      const job = this.#jobs.get(existing.id);
+      const job = this.#blockingJob(existing);
       if (job !== undefined) return this.#jobOpenResult(job, options);
       const active = existing.session.activeTarget();
       if (active !== undefined) {
@@ -538,7 +546,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     path: string,
     options: OpenOptions,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
-    const job = this.#jobs.get(slot.id);
+    const job = this.#blockingJob(slot);
     if (job !== undefined) {
       await job.promise;
       return job.state === "ready"
@@ -563,7 +571,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     resolved: Pick<ResolvedSessionOpen, "target" | "route">,
     options: OpenResolvedOptions,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
-    const job = this.#jobs.get(slot.id);
+    const job = this.#blockingJob(slot);
     if (job !== undefined) {
       await job.promise;
       return job.state === "ready"
@@ -634,16 +642,23 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       });
       if (!closed.ok) {
         failure ??= closed.error;
+        this.#retainedSlots.add(slot.id);
         continue;
       }
+      this.#retainedSlots.delete(slot.id);
       this.#removeSlot(slot, "first-open");
     }
     const final = await this.#closeSlot(this.#primary, options, {
       clearRecords: true,
       closeOwnedProviderResources: true,
     });
-    if (!final.ok) failure ??= final.error;
-    else this.#removeSlot(this.#primary, "first-open");
+    if (!final.ok) {
+      failure ??= final.error;
+      this.#retainedSlots.add(this.#primary.id);
+    } else {
+      this.#retainedSlots.delete(this.#primary.id);
+      this.#removeSlot(this.#primary, "first-open");
+    }
     return failure === undefined ? ok(null) : err(failure);
   }
 
@@ -747,7 +762,14 @@ export class BinaryTargetRegistry implements BinarySessionPort {
           clearRecords: last,
           closeOwnedProviderResources: last,
         }));
-    if (closed.ok) this.#removeSlot(slot.value, "first-open");
+    if (closed.ok) {
+      this.#retainedSlots.delete(slot.value.id);
+      this.#removeSlot(slot.value, "first-open");
+    } else {
+      // The slot keeps its registration and its retained resource. Its
+      // handle stays reported so a later close can retry the cleanup.
+      this.#retainedSlots.add(slot.value.id);
+    }
     return closed;
   }
 
@@ -787,9 +809,11 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     if (!slot.ok) throw slot.error;
     const job = this.#jobForSlot(slot.value);
     if (job?.state === "starting")
+      // Without a declared budget the status reports the current state at
+      // once. A caller that wants to wait names its own budget.
       await this.#waitForAnalysis(slot.value, "binary_session", {
         ...(options.signal === undefined ? {} : { signal: options.signal }),
-        ...(options.waitMs === undefined ? {} : { waitMs: options.waitMs }),
+        waitMs: options.waitMs ?? 0,
       });
     const base = await slot.value.session.status(options);
     if (typeof base !== "object" || base === null || Array.isArray(base))
@@ -806,7 +830,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
               ? {}
               : {
                   error: {
-                    code: job.error._tag,
+                    code: projectAnalysisError(job.error).code,
                     message: job.error.message,
                   },
                 }),
@@ -826,6 +850,9 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       ...targetFields,
       target_id: slot.value.id,
       open_target_ids: this.targets().map(({ target_id }) => target_id),
+      ...(this.#retainedSlots.size === 0
+        ? {}
+        : { retained_target_ids: [...this.#retainedSlots] }),
       ...(analysis === undefined ? {} : { analysis }),
     };
   }
@@ -1097,6 +1124,14 @@ export class BinaryTargetRegistry implements BinarySessionPort {
    * target. Only a successful close or a failed open removes a slot; a failed
    * close keeps the slot, its job entry, and the resource it still owns.
    */
+  /**
+   * Remove a slot that no longer owns a target.
+   *
+   * `primary` is the fallback for a slot that never became usable, so the
+   * server keeps addressing the slot every request addresses by default.
+   * `first-open` is the fallback for a slot that was closed, so the server
+   * keeps addressing a slot that still holds an open target.
+   */
   #removeSlot(slot: TargetSlot, fallback: "primary" | "first-open"): void {
     this.#jobs.get(slot.id)?.controller.abort();
     this.#jobs.delete(slot.id);
@@ -1135,6 +1170,25 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     return this.#jobs.get(slot.id);
   }
 
+  /**
+   * The job that binds a slot, or undefined when the slot may open again.
+   *
+   * A job that failed or was cancelled left the slot with no target, so the
+   * next open must be able to try again instead of replaying the stale
+   * failure. A job that is still starting, or that reached `ready`, keeps the
+   * slot bound to it: the target really is open, and reopening it returns the
+   * same handle.
+   */
+  #blockingJob(slot: TargetSlot): AnalysisJob | undefined {
+    const job = this.#jobs.get(slot.id);
+    if (job === undefined) return undefined;
+    if (job.state === "failed" || job.state === "cancelled") {
+      this.#jobs.delete(slot.id);
+      return undefined;
+    }
+    return job;
+  }
+
   #cancelJob(slot: TargetSlot): void {
     const job = this.#jobs.get(slot.id);
     if (job === undefined) return;
@@ -1155,10 +1209,21 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       return err(new AnalysisCancelledError(operation));
     if (isAborted(options?.signal))
       return err(new AnalysisCancelledError(operation));
-    const waitMs = Math.min(
-      MAX_WAIT_MS,
-      Math.max(1, options?.waitMs ?? DEFAULT_WAIT_MS),
-    );
+    // A caller that declares no wait budget passes zero, and a call that
+    // declares none must not block for the default budget. A budget that is
+    // not a finite number is not a budget; it falls back to the default.
+    const requested = options?.waitMs ?? DEFAULT_WAIT_MS;
+    const waitMs = Number.isFinite(requested)
+      ? Math.min(MAX_WAIT_MS, Math.max(0, requested))
+      : DEFAULT_WAIT_MS;
+    if (waitMs === 0)
+      return err(
+        new AnalysisInProgressError(
+          operation,
+          slot.id,
+          this.#jobElapsedMs(job),
+        ),
+      );
     const outcome = await new Promise<
       "ready" | "failed" | "aborted" | "timeout"
     >((resolve) => {

@@ -71,19 +71,25 @@ const targetId = (result: { readonly structuredContent?: unknown }): string => {
 const connectBackground = async () => {
   const [first] = await createBinarySessionTargets();
   const health = createDeferred<ReturnType<typeof observed>>();
-  const registry = createTestBinaryTargetRegistry((target) => ({
-    execute: (operation) =>
-      operation === "health"
-        ? health.promise
-        : Promise.resolve(
-            resultOk(
-              createAnalysisExecution(operation, FIXTURE_PROVIDER, {
-                subject: target,
-              }),
+  const registry = createTestBinaryTargetRegistry(
+    (target) => ({
+      execute: (operation) =>
+        operation === "health"
+          ? health.promise
+          : Promise.resolve(
+              resultOk(
+                createAnalysisExecution(operation, FIXTURE_PROVIDER, {
+                  subject: target,
+                }),
+              ),
             ),
-          ),
-    close: () => Promise.resolve(resultOk(null)),
-  }));
+      close: () => Promise.resolve(resultOk(null)),
+    }),
+    {},
+    // The fixture's start ignores its abort, so the close must not wait long
+    // for it to unwind.
+    { jobSettleTimeoutMs: 100 },
+  );
   const server = createServer(
     { kind: "session", session: registry },
     { logger: silentLogger },
@@ -250,6 +256,33 @@ describe("multi-target MCP session", () => {
 });
 
 describe("multi-target MCP session contracts", () => {
+  it("answers a tool that declares no wait budget at once while the target starts", async () => {
+    const harness = await connectBackground();
+    try {
+      const opened = await harness.client.callTool({
+        name: "open_binary",
+        arguments: { path: harness.first, analysis_mode: "background" },
+      });
+      expect(opened.isError).not.toBe(true);
+
+      // The live-session tools declare no budget, so they must not block for
+      // the default budget while the target is still starting.
+      const started = Date.now();
+      const answered = await harness.client.callTool({
+        name: "list_documents",
+        arguments: {},
+      });
+      const elapsed = Date.now() - started;
+
+      expect(answered.isError).toBe(true);
+      expect(JSON.stringify(answered)).toContain("analysis_in_progress");
+      expect(elapsed).toBeLessThan(5_000);
+    } finally {
+      harness.health.resolve(observed(null));
+      await harness.close();
+    }
+  });
+
   it("refuses an unknown target handle without naming another target", async () => {
     const harness = await connect();
     try {
