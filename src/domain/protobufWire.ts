@@ -52,8 +52,15 @@ export const protobufFieldSchema = z.strictObject({
     .array(z.strictObject({ number: z.string(), names: z.array(z.string()) }))
     .exactOptional(),
   schema_status: z
-    .enum(["decoded", "unknown-field", "wire-type-mismatch", "unsupported"])
+    .enum([
+      "decoded",
+      "unknown-field",
+      "wire-type-mismatch",
+      "invalid-message",
+      "unsupported",
+    ])
     .exactOptional(),
+  schema_error: issueSchema.exactOptional(),
 });
 
 export const protobufFrameSchema = z.strictObject({

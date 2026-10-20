@@ -4,6 +4,7 @@ import { FileDescriptorSetSchema } from "@bufbuild/protobuf/wkt";
 import { decodeProtobufWire, ProtobufBudget } from "./ProtobufWire.js";
 import { decodeProtobufBody } from "./ProtobufBody.js";
 import { ProtobufSchema } from "./ProtobufSchema.js";
+import { protobufCaptureDescriptor } from "../../../../tests/fixtures/protobufCapture.js";
 
 const same = (value: string) => value;
 const wire = (hex: string) => {
@@ -392,4 +393,130 @@ it("stops before exhausting fact capacity and yields for caller cancellation", a
   );
   setImmediate(() => abort.abort(reason));
   await expect(task).rejects.toBe(reason);
+});
+
+it("preserves a leading Unicode BOM in both the wire string and schema interpretation", async () => {
+  const budget = new ProtobufBudget();
+  const schema = await ProtobufSchema.read(
+    protobufCaptureDescriptor(),
+    "capture.Message",
+    budget,
+    same,
+  );
+  const bytes = Buffer.from("0a08efbbbf68656c6c6f", "hex");
+  const result = await decodeProtobufWire(
+    bytes,
+    0,
+    bytes.length,
+    0,
+    budget,
+    same,
+    schema,
+  );
+  expect(result.fields[0]).toMatchObject({
+    text: "\uFEFFhello",
+    schema_value: "\uFEFFhello",
+  });
+});
+
+it("keeps bad nested schema interpretations local and preserves subsequent outer fields", async () => {
+  const descriptor = toBinary(
+    FileDescriptorSetSchema,
+    create(FileDescriptorSetSchema, {
+      file: [
+        {
+          name: "nested.proto",
+          package: "nested",
+          syntax: "proto3",
+          messageType: [
+            {
+              name: "Child",
+              field: [{ name: "value", number: 1, type: 13, label: 1 }],
+            },
+            {
+              name: "Message",
+              field: [
+                {
+                  name: "child",
+                  number: 1,
+                  type: 11,
+                  label: 1,
+                  typeName: ".nested.Child",
+                },
+                { name: "value", number: 2, type: 13, label: 1 },
+              ],
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  const budget = new ProtobufBudget();
+  const schema = await ProtobufSchema.read(
+    descriptor,
+    "nested.Message",
+    budget,
+    same,
+  );
+  const bytes = Buffer.from("0a01ff1001", "hex");
+  const result = await decodeProtobufWire(
+    bytes,
+    0,
+    bytes.length,
+    0,
+    budget,
+    same,
+    schema,
+  );
+  expect(result.error).toBeUndefined();
+  expect(result.examined_bytes).toBe(bytes.length);
+  expect(result.fields).toMatchObject([
+    {
+      number: 1,
+      schema_status: "invalid-message",
+      schema_error: { offset: 2 },
+    },
+    { number: 2, value: "1", schema_value: "1", parent_field_id: null },
+  ]);
+});
+
+it("yields and preserves the cancellation reason inside one large packed interpretation", async () => {
+  const abort = new AbortController();
+  const budget = new ProtobufBudget(abort.signal);
+  const schema = await ProtobufSchema.read(
+    protobufCaptureDescriptor(),
+    "capture.Message",
+    budget,
+    same,
+  );
+  // Field 2, length 100000, followed by 100000 independently expected uint32 ones.
+  const bytes = Buffer.concat([
+    Buffer.from([18, 160, 141, 6]),
+    Buffer.alloc(100000, 1),
+  ]);
+  const parsed = await decodeProtobufWire(
+    bytes,
+    0,
+    bytes.length,
+    0,
+    new ProtobufBudget(),
+    same,
+  );
+  const field = parsed.fields[0];
+  if (field === undefined) throw new Error("Expected the packed wire field");
+  const task = schema.annotate(field, bytes, undefined);
+  const reason = new Error("stop during packed annotation");
+  setImmediate(() => abort.abort(reason));
+  await expect(task).rejects.toBe(reason);
+});
+
+it("rejects malformed descriptor wire even when the SDK would skip the unknown field", async () => {
+  // File t.proto defines empty M, then unknown field 99 carries an overflowing uint64.
+  const bytes = Buffer.from(
+    "0a1a0a07742e70726f746f22030a014d980680808080808080808002",
+    "hex",
+  );
+  await expect(
+    ProtobufSchema.read(bytes, "M", new ProtobufBudget(), same),
+  ).rejects.toThrow("Malformed FileDescriptorSet wire format");
 });

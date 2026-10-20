@@ -41,7 +41,7 @@ export const readProtobufVarint = (
   return undefined;
 };
 
-const utf8 = new TextDecoder("utf-8", { fatal: true });
+const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const textOf = (bytes: Uint8Array): string | undefined => {
   try {
     return utf8.decode(bytes);
@@ -104,7 +104,7 @@ export interface WireSchema {
     field: ProtobufField,
     bytes: Uint8Array,
     parent: ProtobufField | undefined,
-  ): void;
+  ): void | Promise<void>;
   nested(field: ProtobufField): boolean;
 }
 
@@ -233,7 +233,7 @@ export const decodeProtobufWire = async (
         ];
         if (text !== undefined) field.text = redact(text);
       }
-      schema?.annotate(field, bytes, parent);
+      if (schema !== undefined) await schema.annotate(field, bytes, parent);
       if (type === 3) {
         const nested = await walk(tag.end, until, field, depth + 1, number);
         field.bytes = nested.end - at;
@@ -241,12 +241,20 @@ export const decodeProtobufWire = async (
         if (nested.error !== undefined) return nested;
         next = nested.end;
       } else if (type === 2 && schema?.nested(field)) {
-        if (depth >= WEB_NETWORK_CAPTURE_LIMITS.depth)
-          return fail(
-            "Schema message nesting exceeds the 64-level decoder budget",
-          );
-        const nested = await walk(payloadOffset, next, field, depth + 1);
-        if (nested.error !== undefined) return nested;
+        const error =
+          depth >= WEB_NETWORK_CAPTURE_LIMITS.depth
+            ? {
+                offset: payloadOffset,
+                reason:
+                  "Schema message nesting exceeds the 64-level decoder budget",
+              }
+            : (await walk(payloadOffset, next, field, depth + 1)).error;
+        // The outer length is an observed boundary. A bad interpretation of its
+        // payload must never hide valid fields following that boundary.
+        if (error !== undefined) {
+          field.schema_status = "invalid-message";
+          field.schema_error = error;
+        }
       }
       at = next;
     }

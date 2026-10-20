@@ -2,10 +2,14 @@ import { isAbsolute } from "node:path";
 import { CaptureFormatError } from "../CaptureFormatError.js";
 import {
   CaptureRedaction,
-  isCaptureCredentialHeader,
+  isCaptureCredentialHeaderBytes,
 } from "../CaptureRedaction.js";
 import { createHash } from "node:crypto";
 import { readStableArtifact } from "../../../artifacts/readStableArtifact.js";
+import {
+  historicalCaptureFailure,
+  withCaptureReaderCleanup,
+} from "../CaptureFailures.js";
 import type { ArtifactResourceScope } from "../../../artifacts/ArtifactResourceScope.js";
 import { AnalysisInputError } from "../../../domain/analysisErrorCore.js";
 import { redactExplicitText } from "../../../domain/explicitSensitiveValues.js";
@@ -23,6 +27,10 @@ import {
   PROTOBUF_LIMITATIONS,
   decodeProtobufBody,
 } from "./ProtobufBody.js";
+import {
+  prepareProtobufBody,
+  type PreparedProtobufBody,
+} from "./ProtobufFraming.js";
 import type { ProtobufDecoding } from "../../../domain/protobufWire.js";
 
 const object = (
@@ -164,32 +172,174 @@ const bodyMetadata = (
   };
 };
 
-/** Enrich selected records once, inside the capture adapter's owned operation. */
-export const decodeCaptureProtobuf = async (
+type RetainedBody = Extract<
+  WebNetworkCaptureRecord["binary_fields"][number],
+  { state: "retained" }
+>;
+interface PreparedBody {
+  readonly field: RetainedBody;
+  readonly body: Buffer;
+  readonly contentType: string | undefined;
+  readonly framing: ProtobufDecoding["framing"];
+  readonly prepared: PreparedProtobufBody;
+}
+export interface PreparedProtobufCapture {
+  readonly records: readonly {
+    record: WebNetworkCaptureRecord;
+    bodies: readonly PreparedBody[];
+  }[];
+  readonly incomplete: boolean;
+}
+
+/** Sanitize every selected body before any schema acquisition or field-expansion failure.
+ * Until this stage completes, the caller must not publish the original source as partial Evidence.
+ */
+export const prepareCaptureProtobuf = async (
   capture: WebNetworkCapture,
   input: InspectWebNetworkCaptureInput,
-  resources: ArtifactResourceScope,
   signal?: AbortSignal,
-  encodedSourceBytes = 0,
-): Promise<void> => {
-  if (input.record_ordinals === undefined) return;
+): Promise<PreparedProtobufCapture | undefined> => {
+  if (input.record_ordinals === undefined) return undefined;
   capture.protobuf_coverage = {
     status: "partial",
     selected_records: input.record_ordinals.length,
     inspected_records: 0,
   };
+  capture.limitations.push(...PROTOBUF_LIMITATIONS);
   let incomplete = false;
+  const records: { record: WebNetworkCaptureRecord; bodies: PreparedBody[] }[] =
+    [];
+  const options = input.protobuf;
+  const pointers =
+    options?.body_pointers === undefined
+      ? undefined
+      : new Set(options.body_pointers);
+  const redactions = new CaptureRedaction(input.sensitive_values);
+  const work = new ProtobufBudget(signal);
+  for (const ordinal of input.record_ordinals) {
+    await work.checkpoint();
+    const record = capture.records[ordinal];
+    if (record === undefined) continue;
+    const bodies: PreparedBody[] = [];
+    records.push({ record, bodies });
+    const binaryByPointer = new Map(
+      record.binary_fields.map((field) => [field.pointer, field]),
+    );
+    for (const field of record.binary_fields) {
+      await work.checkpoint();
+      if (pointers !== undefined && !pointers.has(field.pointer)) continue;
+      const metadata = bodyMetadata(
+        record,
+        field.pointer,
+        input.format,
+        binaryByPointer,
+      );
+      // Framing overrides interpret bodies; header and extension bytes remain their own facts.
+      if (metadata === undefined) continue;
+      if (field.state !== "retained") {
+        incomplete = true;
+        continue;
+      }
+      const contentType = metadata.contentType;
+      const essence = contentType?.split(";", 1)[0]?.trim().toLowerCase();
+      const automatic =
+        essence === undefined
+          ? undefined
+          : PROTOBUF_FRAMING[essence as keyof typeof PROTOBUF_FRAMING];
+      const framing =
+        options?.framing === undefined || options.framing === "auto"
+          ? automatic
+          : options.framing;
+      if (framing === undefined) continue;
+      if (metadata.encoded) {
+        incomplete = true;
+        record.limitations.push(
+          "Selected protobuf body still has HTTP content/transfer encoding; its exact stored bytes remain opaque.",
+        );
+        continue;
+      }
+      if (
+        field.bytes > WEB_NETWORK_CAPTURE_LIMITS.inputBytes ||
+        field.content_base64.length >
+          Math.ceil(WEB_NETWORK_CAPTURE_LIMITS.inputBytes / 3) * 4
+      )
+        throw new CaptureFormatError(
+          "limit",
+          "Protobuf body exceeds the admitted 32 MiB source bound",
+        );
+      const body = Buffer.from(field.content_base64, "base64");
+      if (
+        body.length !== field.bytes ||
+        createHash("sha256").update(body).digest("hex") !== field.sha256
+      )
+        throw new AnalysisInputError("inspect_web_network_capture", undefined, [
+          {
+            path: ["capture_path"],
+            reason: "invalid_format",
+            message:
+              "Retained protobuf bytes contradict their source descriptor",
+          },
+        ]);
+      const exclusions = {
+        decoded: (data: Uint8Array) =>
+          redactions.sensitiveBytes(
+            Buffer.from(data.buffer, data.byteOffset, data.byteLength),
+          ),
+        header: isCaptureCredentialHeaderBytes,
+      };
+      const prepared = await prepareProtobufBody(
+        body,
+        framing,
+        exclusions,
+        signal,
+      );
+      // Caller overrides do not turn off exclusions for the transport declared by the source.
+      const declared =
+        prepared.excluded === undefined &&
+        automatic !== undefined &&
+        automatic !== framing
+          ? await prepareProtobufBody(body, automatic, exclusions, signal)
+          : prepared;
+      const excluded = prepared.excluded ?? declared.excluded;
+      if (excluded !== undefined) {
+        excludeBody(record, field.pointer, excluded);
+        binaryByPointer.delete(field.pointer);
+        incomplete = true;
+        continue;
+      }
+      bodies.push({ field, body, contentType, framing, prepared });
+    }
+  }
+  return { records, incomplete };
+};
+
+/** Interpret the sanitized source once, inside the capture adapter's owned operation. */
+export const decodeCaptureProtobuf = async (
+  capture: WebNetworkCapture,
+  input: InspectWebNetworkCaptureInput,
+  resources: ArtifactResourceScope,
+  prepared: PreparedProtobufCapture | undefined,
+  signal?: AbortSignal,
+  encodedSourceBytes = 0,
+): Promise<void> => {
+  if (prepared === undefined || capture.protobuf_coverage === undefined) return;
+  let incomplete = prepared.incomplete;
   const budget = new ProtobufBudget(signal);
   budget.charge(
     encodedSourceBytes +
       256 +
       Buffer.byteLength(JSON.stringify(PROTOBUF_LIMITATIONS)),
   );
-  capture.limitations.push(...PROTOBUF_LIMITATIONS);
-  const redactions = new CaptureRedaction(input.sensitive_values);
+  for (const entry of prepared.records)
+    for (const item of entry.bodies)
+      budget.charge(
+        item.body.length +
+          (item.prepared.data === item.body
+            ? 0
+            : (item.prepared.data?.length ?? 0)),
+      );
   const redact = (text: string) => {
     if (input.sensitive_values.length === 0) return text;
-    // A literal replacement can expand one UTF-16 unit to ten; reserve JSON escaping before allocation.
     if (input.sensitive_values.some((literal) => text.includes(literal)))
       budget.charge(text.length * 60);
     return redactExplicitText(text, input.sensitive_values);
@@ -213,7 +363,17 @@ export const decodeCaptureProtobuf = async (
       signal,
       undefined,
       resources,
-    );
+    ).catch((cause: unknown) => {
+      throw withCaptureReaderCleanup(
+        historicalCaptureFailure(
+          input,
+          cause,
+          "descriptor-read",
+          signal === undefined ? undefined : { signal },
+        ),
+        cause,
+      );
+    });
     const { ProtobufSchema } = await import("./ProtobufSchema.js");
     try {
       schema = await ProtobufSchema.read(
@@ -242,54 +402,16 @@ export const decodeCaptureProtobuf = async (
       message_type: redact(options.schema.message_type),
     };
   }
-  const pointers =
-    options?.body_pointers === undefined
-      ? undefined
-      : new Set(options.body_pointers);
-  for (const ordinal of input.record_ordinals) {
-    const record = capture.records[ordinal];
-    if (record === undefined) continue; // The shared application reports invalid ordinals.
+  for (const { record, bodies } of prepared.records) {
     const decoded: ProtobufDecoding[] = [];
-    const binaryByPointer = new Map(
-      record.binary_fields.map((field) => [field.pointer, field]),
-    );
-    for (const field of record.binary_fields) {
+    for (const {
+      field,
+      body,
+      contentType,
+      framing,
+      prepared: bodySource,
+    } of bodies) {
       await budget.checkpoint();
-      if (pointers !== undefined && !pointers.has(field.pointer)) continue;
-      if (field.state !== "retained") {
-        if (
-          /^\/(request|response)\/(body|content|postData\/text|content\/text)$/.test(
-            field.pointer,
-          )
-        )
-          incomplete = true;
-        continue;
-      }
-      const metadata = bodyMetadata(
-        record,
-        field.pointer,
-        input.format,
-        binaryByPointer,
-      );
-      const contentType = metadata?.contentType;
-      const essence = contentType?.split(";", 1)[0]?.trim().toLowerCase();
-      const automatic =
-        essence === undefined
-          ? undefined
-          : PROTOBUF_FRAMING[essence as keyof typeof PROTOBUF_FRAMING];
-      const framing =
-        options?.framing === undefined || options.framing === "auto"
-          ? automatic
-          : options.framing;
-      if (framing === undefined) continue;
-      if (metadata?.encoded) {
-        incomplete = true;
-        record.limitations.push(
-          "Selected protobuf body still has HTTP content/transfer encoding; its exact stored bytes remain opaque.",
-        );
-        continue;
-      }
-      // Explicit coordinate/digest exclusions must not acquire a second decoding sidecar.
       if (
         input.sensitive_values.some(
           (value) =>
@@ -301,19 +423,6 @@ export const decodeCaptureProtobuf = async (
         incomplete = true;
         continue;
       }
-      const body = Buffer.from(field.content_base64, "base64");
-      if (
-        body.length !== field.bytes ||
-        createHash("sha256").update(body).digest("hex") !== field.sha256
-      )
-        throw new AnalysisInputError("inspect_web_network_capture", undefined, [
-          {
-            path: ["capture_path"],
-            reason: "invalid_format",
-            message:
-              "Retained protobuf bytes contradict their source descriptor",
-          },
-        ]);
       budget.charge(
         2048 +
           8 *
@@ -323,10 +432,6 @@ export const decodeCaptureProtobuf = async (
               (schemaSource?.message_type.length ?? 0)),
       );
       schema?.reset();
-      let exclusion:
-        | "explicit-sensitive-value"
-        | "transport-credential"
-        | undefined;
       const result = await decodeProtobufBody(
         body,
         framing,
@@ -338,30 +443,8 @@ export const decodeCaptureProtobuf = async (
         redact,
         budget,
         schema,
-        {
-          decoded: (data) => {
-            if (
-              !redactions.sensitiveBytes(
-                Buffer.from(data.buffer, data.byteOffset, data.byteLength),
-              )
-            )
-              return false;
-            exclusion = "explicit-sensitive-value";
-            return true;
-          },
-          header: (name) => {
-            if (!isCaptureCredentialHeader(name)) return false;
-            exclusion = "transport-credential";
-            return true;
-          },
-        },
+        bodySource,
       );
-      if (exclusion !== undefined) {
-        excludeBody(record, field.pointer, exclusion);
-        binaryByPointer.delete(field.pointer);
-        incomplete = true;
-        continue;
-      }
       if (schemaSource !== undefined) result.schema = schemaSource;
       if (
         result.status !== "complete" ||

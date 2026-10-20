@@ -1,9 +1,13 @@
-import { decodeCaptureProtobuf } from "./protobuf/ProtobufCapture.js";
+import {
+  decodeCaptureProtobuf,
+  prepareCaptureProtobuf,
+} from "./protobuf/ProtobufCapture.js";
 import { CaptureFormatError } from "./CaptureFormatError.js";
 import {
   CAPTURE_PROCESS_MEMORY_LIMIT_REASON,
   historicalCaptureFailure,
   captureMemoryFailure,
+  withCaptureReaderCleanup,
 } from "./CaptureFailures.js";
 import {
   NODE_CAPTURE_HEAP_ENFORCED,
@@ -19,7 +23,6 @@ import { z } from "zod";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
 import {
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
@@ -107,7 +110,7 @@ export class HistoricalCaptureDecoder {
       );
       return err(
         redactExplicitFailure(
-          this.withReaderCleanup(error, cause),
+          withCaptureReaderCleanup(error, cause),
           input.sensitive_values,
         ),
       );
@@ -301,11 +304,19 @@ export class HistoricalCaptureDecoder {
         result = ok({ ...reply.value, ...common, format: input.format });
       }
       if (result.ok) {
+        let safePartialSource = false;
         try {
+          const prepared = await prepareCaptureProtobuf(
+            result.value,
+            input,
+            options?.signal,
+          );
+          safePartialSource = true;
           await decodeCaptureProtobuf(
             result.value,
             input,
             this.#resources,
+            prepared,
             options?.signal,
             encodedReplyBytes + Buffer.byteLength(JSON.stringify(common)) + 16,
           );
@@ -335,7 +346,7 @@ export class HistoricalCaptureDecoder {
                     },
                   ])
                 : historicalCaptureFailure(input, cause, phase, options);
-          error.retainPartialObservation(result.value);
+          if (safePartialSource) error.retainPartialObservation(result.value);
           throw error;
         }
       }
@@ -343,7 +354,7 @@ export class HistoricalCaptureDecoder {
       const error = historicalCaptureFailure(input, cause, phase, options);
       result = err(
         redactExplicitFailure(
-          this.withReaderCleanup(error, cause),
+          withCaptureReaderCleanup(error, cause),
           input.sensitive_values,
         ),
       );
@@ -401,41 +412,6 @@ export class HistoricalCaptureDecoder {
     if (!result.ok && completedCapture !== undefined)
       result.error.retainPartialObservation(completedCapture);
     return result;
-  }
-
-  private withReaderCleanup(
-    primary: AnalysisError,
-    cause: unknown,
-  ): AnalysisError {
-    if (
-      !(cause instanceof ArtifactReaderFailure) ||
-      cause.cleanup === undefined
-    )
-      return primary;
-    if (cause.reason === "unavailable") {
-      const cleanup = new ProviderCleanupError(
-        "web-network-capture",
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { operation: OPERATION, cause },
-      );
-      bindArtifactFileCleanup(cause, cleanup);
-      return cleanup;
-    }
-    const cleanup = new ProviderCleanupError(
-      "web-network-capture",
-      cause.cleanup.resources,
-      { reason: cause.cleanup.reason },
-      { operation: OPERATION, cause },
-    );
-    bindArtifactFileCleanup(cause, cleanup);
-    const composed = analysisErrorWithCleanupFailure(
-      primary,
-      cleanup,
-      OPERATION,
-    ).bindCleanupDependencies([primary, cleanup]);
-    bindArtifactFileCleanup(cause, composed);
-    return composed;
   }
 }
 

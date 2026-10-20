@@ -41,44 +41,43 @@ export const protobufCaptureDescriptor = () =>
 export const protobufHar = (
   body: Buffer = protobufCaptureBody(),
   mimeType = "application/grpc-web+proto",
+  additionalBodies: readonly Buffer[] = [],
 ) =>
   JSON.stringify({
     log: {
       version: "1.2",
       creator: { name: "REA original fixture", version: "1" },
-      entries: [
-        {
-          startedDateTime: "2026-10-20T00:00:00Z",
-          time: 1,
-          request: {
-            method: "POST",
-            url: "https://example.invalid/api",
-            httpVersion: "HTTP/1.1",
-            cookies: [],
-            headers: [],
-            queryString: [],
-            headersSize: -1,
-            bodySize: 0,
-          },
-          response: {
-            status: 200,
-            statusText: "OK",
-            httpVersion: "HTTP/1.1",
-            cookies: [],
-            headers: [],
-            redirectURL: "",
-            headersSize: -1,
-            bodySize: body.length,
-            content: {
-              size: body.length,
-              mimeType,
-              text: body.toString("base64"),
-              encoding: "base64",
-            },
-          },
-          cache: {},
-          timings: { send: 0, wait: 1, receive: 0 },
+      entries: [body, ...additionalBodies].map((body) => ({
+        startedDateTime: "2026-10-20T00:00:00Z",
+        time: 1,
+        request: {
+          method: "POST",
+          url: "https://example.invalid/api",
+          httpVersion: "HTTP/1.1",
+          cookies: [],
+          headers: [],
+          queryString: [],
+          headersSize: -1,
+          bodySize: 0,
         },
-      ],
+        response: {
+          status: 200,
+          statusText: "OK",
+          httpVersion: "HTTP/1.1",
+          cookies: [],
+          headers: [],
+          redirectURL: "",
+          headersSize: -1,
+          bodySize: body.length,
+          content: {
+            size: body.length,
+            mimeType,
+            text: body.toString("base64"),
+            encoding: "base64",
+          },
+        },
+        cache: {},
+        timings: { send: 0, wait: 1, receive: 0 },
+      })),
     },
   });

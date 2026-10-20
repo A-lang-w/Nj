@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { readFile, unlink, writeFile } from "node:fs/promises";
+import { readFile, unlink, writeFile, mkdir, truncate } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -121,6 +121,7 @@ async function verifyPartialCaptureSources(
 ): Promise<void> {
   const missing = await call("inspect_web_network_capture", {
     ...args,
+    sensitive_values: ["unrelated fixture exclusion"],
     protobuf: {
       schema: {
         descriptor_set_path: descriptor,
@@ -170,6 +171,7 @@ async function verifyPartialCaptureSources(
     capture_path: capacityPath,
     format: "har",
     record_ordinals: [0],
+    sensitive_values: ["unrelated fixture exclusion"],
   });
   const capacityError = parseMcpToolError(capacity).error;
   expect(capacityError.code).toBe("resource_constraint");
@@ -194,6 +196,152 @@ async function verifyPartialCaptureSources(
     },
   });
   expect(JSON.stringify(capacity)).not.toContain("content_base64");
+}
+
+async function verifyCredentialPreflight(
+  call: CaptureCall,
+  root: string,
+  descriptor: string,
+): Promise<void> {
+  const repeated = Buffer.alloc(200000);
+  for (let index = 0; index < repeated.length; index += 2) {
+    repeated[index] = 8;
+    repeated[index + 1] = 1;
+  }
+  const large = protobufFrame(repeated);
+  const credential = protobufFrame(
+    Buffer.from(
+      "grpc-status: 0\r\nauthorization: fixture-only-trailer-credential\r\n",
+    ),
+    128,
+  );
+  const small = protobufFrame(Buffer.from([8, 1]));
+  for (const [name, body, mimeType, framing] of [
+    [
+      "large",
+      Buffer.concat([large, credential]),
+      "application/grpc-web+proto",
+      "auto",
+    ],
+    [
+      "malformed",
+      Buffer.concat([
+        small,
+        protobufFrame(
+          Buffer.from(
+            "malformed\r\nauthorization: fixture-only-trailer-credential\r\n",
+          ),
+          128,
+        ),
+      ]),
+      "application/grpc-web+proto",
+      "auto",
+    ],
+    [
+      "text-override",
+      Buffer.from(Buffer.concat([small, credential]).toString("base64")),
+      "application/grpc-web-text",
+      "raw",
+    ],
+  ] as const) {
+    const path = join(root, `credential-${name}.har`);
+    await writeFile(path, protobufHar(body, mimeType));
+    const response = await call("inspect_web_network_capture", {
+      capture_path: path,
+      format: "har",
+      record_ordinals: [0],
+      protobuf: { framing },
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    const capture = webNetworkCaptureSchema.parse(
+      parseEvidence(response.structuredContent).normalized_result,
+    );
+    expect(capture.records[0]?.binary_fields[0]).toMatchObject({
+      state: "redacted",
+      content_base64: null,
+      sha256: null,
+    });
+    expect(capture.records[0]?.protobuf).toBeUndefined();
+    expect(capture.protobuf_coverage?.status).toBe("partial");
+  }
+  const path = join(root, "credential-later-record.har");
+  await writeFile(
+    path,
+    protobufHar(large, "application/grpc-web+proto", [
+      Buffer.concat([small, credential]),
+    ]),
+  );
+  for (const schema of [
+    undefined,
+    { descriptor_set_path: descriptor, message_type: "capture.Missing" },
+  ]) {
+    const response = await call("inspect_web_network_capture", {
+      capture_path: path,
+      format: "har",
+      record_ordinals: [0, 1],
+      sensitive_values: ["unrelated fixture exclusion"],
+      ...(schema === undefined ? {} : { protobuf: { schema } }),
+    });
+    const error = parseMcpToolError(response).error;
+    expect(error.code).toBe(
+      schema === undefined ? "resource_constraint" : "invalid_request",
+    );
+    const source = retainedCaptureDetailsSchema.parse(
+      error.details,
+    ).partial_observation;
+    const retained = await call("inspect_analysis_view", {
+      source,
+      view: { kind: "capture", detail: "complete", offset: 0, limit: 2 },
+    });
+    expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
+    const view = analysisViewResultSchema.parse(
+      parseEvidence(retained.structuredContent).normalized_result,
+    );
+    expect(view).toMatchObject({
+      items: [
+        expect.anything(),
+        {
+          binary_fields: [
+            { state: "redacted", content_base64: null, sha256: null },
+          ],
+        },
+      ],
+    });
+  }
+}
+
+async function verifyDescriptorReadFailures(
+  call: CaptureCall,
+  args: CaptureRequest,
+  root: string,
+): Promise<void> {
+  const directory = join(root, "descriptor-directory");
+  const oversized = join(root, "oversized.pb");
+  await mkdir(directory);
+  await writeFile(oversized, "");
+  await truncate(oversized, 32 * 1024 * 1024 + 1);
+  for (const [path, reason] of [
+    [join(root, "missing.pb"), "invalid_value"],
+    [directory, "invalid_format"],
+    [oversized, "out_of_range"],
+  ] as const) {
+    const response = await call("inspect_web_network_capture", {
+      ...args,
+      sensitive_values: ["unrelated fixture exclusion"],
+      protobuf: {
+        schema: { descriptor_set_path: path, message_type: "capture.Message" },
+      },
+    });
+    const error = parseMcpToolError(response).error;
+    expect(error.code).toBe("invalid_request");
+    expect(error.details).toMatchObject({
+      issues: [{ path: ["protobuf", "schema", "descriptor_set_path"], reason }],
+    });
+    expect(
+      retainedCaptureDetailsSchema.parse(error.details).partial_observation
+        .kind,
+    ).toBe("retained-evidence");
+  }
 }
 
 cliTest(
@@ -335,6 +483,8 @@ cliTest(
     expect(parseEvidence(cliResult.json).evidence_id).toBe(parent.evidence_id);
     await verifyCaptureExclusions(call, args, root);
     await verifyPartialCaptureSources(call, args, root, descriptor);
+    await verifyCredentialPreflight(call, root, descriptor);
+    await verifyDescriptorReadFailures(call, args, root);
     const summary = await call("inspect_web_network_capture", {
       ...args,
       detail: "summary",

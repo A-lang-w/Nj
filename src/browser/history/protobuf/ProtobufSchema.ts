@@ -142,7 +142,10 @@ export class ProtobufSchema implements WireSchema {
       redact,
       new ProtobufSchema(FileDescriptorSetSchema, budget, redact),
     );
-    if (checked.error !== undefined)
+    if (
+      checked.error !== undefined ||
+      checked.fields.some((field) => field.schema_status === "invalid-message")
+    )
       throw new Error("Malformed FileDescriptorSet wire format");
     const descriptor = fromBinary(FileDescriptorSetSchema, bytes, {
       readUnknownFields: false,
@@ -167,11 +170,11 @@ export class ProtobufSchema implements WireSchema {
     return this.#messages.has(field.index);
   }
 
-  annotate(
+  async annotate(
     field: ProtobufField,
     bytes: Uint8Array,
     parent: ProtobufField | undefined,
-  ): void {
+  ): Promise<void> {
     const message =
       parent === undefined ? this.message : this.#messages.get(parent.index);
     if (message === undefined) return;
@@ -231,10 +234,12 @@ export class ProtobufSchema implements WireSchema {
     try {
       if (scalar === ScalarType.BYTES) return; // Exact bytes already have an accessible source range.
       if (scalar === ScalarType.STRING) {
-        this.budget.charge(payload.length * 8);
-        field.schema_value = this.redact(
-          new TextDecoder("utf-8", { fatal: true }).decode(payload),
-        );
+        // Wire decoding owns UTF-8 (including BOM) and literal exclusions.
+        // Reuse that fact; charge only its additional serialized representation.
+        this.budget.charge(payload.length * 6);
+        if (field.text === undefined)
+          field.schema_status = "wire-type-mismatch";
+        else field.schema_value = field.text;
         return;
       }
       const reader = new BinaryReader(payload);
@@ -273,6 +278,7 @@ export class ProtobufSchema implements WireSchema {
       if (packed) {
         const values: string[] = [];
         while (reader.pos < reader.len) {
+          await this.budget.checkpoint();
           this.budget.charge(192);
           values.push(this.redact(read()));
         }
@@ -285,6 +291,8 @@ export class ProtobufSchema implements WireSchema {
         }));
     } catch (cause) {
       if (cause instanceof CaptureFormatError) throw cause;
+      if (this.budget.signal?.aborted && cause === this.budget.signal.reason)
+        throw cause;
       field.schema_status = "wire-type-mismatch";
     }
   }

@@ -151,6 +151,9 @@ version remain in the body facts. Scalars, repeated numeric packing and nested
 messages are interpreted alongside the unchanged wire facts; disagreements
 remain explicit. Map semantics, extensions and required-field validation are
 unsupported. A supplied schema does not establish the sender's actual schema.
+An invalid nested interpretation records `schema_status: "invalid-message"`
+and `schema_error` locally; later outer fields remain available. Valid string
+contents, including a leading U+FEFF, are preserved.
 
 ```bash
 # Compile your own schema with your existing protoc, including local imports:
@@ -169,6 +172,12 @@ when MIME metadata is unavailable. CLI exposes `--protobuf-body-pointer` and
 base64 layer also checks explicit exclusions; newly recognized trailer
 credentials exclude the entire affected binary sidecar and its reported
 encoding, preserving a redaction coordinate instead of a credential digest.
+Credential inspection covers every selected body before descriptor reads or
+field expansion. Later capacity or schema failures can therefore retain the
+sanitized source even with explicit sensitivity options. If that source pass
+is interrupted, unchecked bodies are not published as partial Evidence.
+Framing overrides apply only to format-owned body coordinates and preserve
+exclusions for the transport declared in MIME metadata.
 
 Use `detail: "summary"`, then `inspect_analysis_view` with its retained parent:
 

@@ -1,3 +1,8 @@
+import {
+  readGrpcFrame,
+  prepareProtobufBody,
+  type PreparedProtobufBody,
+} from "./ProtobufFraming.js";
 import { CaptureFormatError } from "../CaptureFormatError.js";
 import type {
   ProtobufDecoding,
@@ -27,43 +32,6 @@ export const PROTOBUF_LIMITATIONS = [
   "Schema values are interpretations of the caller-supplied descriptor, not proof that the sender used that schema. Map semantics, extensions, required-field validation and unknown schema fields are not reconstructed.",
 ] as const;
 
-/** Accept independently padded stream chunks without allocating an unbounded match array. */
-const decodeText = (
-  body: Uint8Array,
-  budget: ProtobufBudget,
-): Uint8Array | undefined => {
-  budget.charge(body.length * 3);
-  const text = Buffer.from(body.buffer, body.byteOffset, body.byteLength)
-    .toString("latin1")
-    .replace(/[ \r\n\t]/g, "");
-  if (/[^A-Za-z0-9+/=]/.test(text)) return undefined;
-  const chunks: Uint8Array[] = [];
-  let at = 0;
-  while (at < text.length) {
-    budget.charge(192);
-    let end = text.indexOf("=", at);
-    if (end < 0) end = text.length;
-    else {
-      end++;
-      if (text[end] === "=") end++;
-    }
-    const chunk = text.slice(at, end);
-    if (
-      chunk.length % 4 === 1 ||
-      (chunk.includes("=") && chunk.length % 4 !== 0)
-    )
-      return undefined;
-    const bytes = Buffer.from(chunk, "base64");
-    if (
-      bytes.toString("base64").replace(/=+$/, "") !== chunk.replace(/=+$/, "")
-    )
-      return undefined;
-    chunks.push(bytes);
-    at = end;
-  }
-  return Buffer.concat(chunks);
-};
-
 export const decodeProtobufBody = async (
   body: Uint8Array,
   framing: ProtobufDecoding["framing"],
@@ -71,10 +39,7 @@ export const decodeProtobufBody = async (
   redact: (value: string) => string,
   budget: ProtobufBudget,
   schema?: WireSchema,
-  exclusions?: {
-    decoded?: (bytes: Uint8Array) => boolean;
-    header?: (name: string) => boolean;
-  },
+  prepared?: PreparedProtobufBody,
 ): Promise<ProtobufDecoding> => {
   const result: ProtobufDecoding = {
     ...source,
@@ -94,17 +59,26 @@ export const decodeProtobufBody = async (
     result.error = { offset, reason: redact(reason) };
     return result;
   };
-  const data = framing === "grpc-web-text" ? decodeText(body, budget) : body;
+  // The production source pass already decoded text. Charge representation expansion
+  // here only after that pass made the retained source safe on failure.
+  if (framing === "grpc-web-text") budget.charge(body.length * 6);
+  const data =
+    prepared === undefined
+      ? (
+          await prepareProtobufBody(
+            body,
+            framing,
+            { decoded: () => false, header: () => false },
+            budget.signal,
+          )
+        ).data
+      : prepared.data;
   if (data === undefined)
     return stop(
       0,
       "gRPC-web text is not canonical base64 or independently padded base64 chunks",
     );
   result.decoded_bytes = data.length;
-  if (exclusions?.decoded?.(data) === true) {
-    result.status = "unknown";
-    return result;
-  }
   let at = 0;
   const addMessage = async (frame: ProtobufFrame) => {
     if (frame.compressed) {
@@ -155,20 +129,9 @@ export const decodeProtobufBody = async (
     await budget.checkpoint();
     if (trailerSeen)
       return stop(at, "A gRPC-web trailer frame must terminate the body");
-    if (data.length - at < 5) return stop(at, "Truncated gRPC frame header");
-    const flags = data[at]!;
-    if (
-      (framing === "grpc" && flags !== 0 && flags !== 1) ||
-      (flags & ~0x81) !== 0
-    )
-      return stop(at, "Invalid flags for the selected gRPC framing");
-    const length =
-      data[at + 1]! * 2 ** 24 +
-      data[at + 2]! * 2 ** 16 +
-      data[at + 3]! * 256 +
-      data[at + 4]!;
-    if (length > data.length - at - 5)
-      return stop(at, "gRPC frame exceeds the retained body");
+    const parsed = readGrpcFrame(data, at, framing);
+    if (!parsed.ok) return stop(parsed.error.offset, parsed.error.reason);
+    const { flags, bytes: length } = parsed.value;
     budget.charge(1024);
     const frame: ProtobufFrame = {
       index: result.frames.length,
@@ -193,9 +156,10 @@ export const decodeProtobufBody = async (
       } else {
         budget.charge(length * 8);
         try {
-          const text = new TextDecoder("utf-8", { fatal: true }).decode(
-            data.subarray(at + 5, at + 5 + length),
-          );
+          const text = new TextDecoder("utf-8", {
+            fatal: true,
+            ignoreBOM: true,
+          }).decode(data.subarray(at + 5, at + 5 + length));
           frame.trailers = [];
           for (const line of text.split("\r\n")) {
             if (line === "") continue;
@@ -206,15 +170,6 @@ export const decodeProtobufBody = async (
             )
               throw new Error("Malformed trailer header");
             budget.charge(512);
-            if (exclusions?.header?.(line.slice(0, colon)) === true) {
-              frame.status = "unknown";
-              frame.error = {
-                offset: at + 5,
-                reason:
-                  "A transport credential was excluded from the trailer block",
-              };
-              continue;
-            }
             frame.trailers.push({
               name: redact(line.slice(0, colon)),
               value: redact(line.slice(colon + 1).replace(/^[ \t]+/, "")),
