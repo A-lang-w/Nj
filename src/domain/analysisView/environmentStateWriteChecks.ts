@@ -7,7 +7,6 @@ import {
 import {
   at,
   collectionPathOf,
-  decodedSegment,
   isObject,
   lastSegmentValue,
   listItems,
@@ -16,7 +15,6 @@ import {
   replaceAt,
   same,
   scalarText,
-  segmentsOf,
   type JsonObject,
   type StateDocument,
   type StateEntity,
@@ -28,15 +26,16 @@ import {
 } from "./environmentStateRules.js";
 
 /**
- * A read's request line as serving names one: its path segments and query values decoded, the
- * query in any order. A query repeating a name is no call's arguments, so it keeps its spelling.
+ * A read's request line as serving names one: its path as spelled, since replay prefers a
+ * verbatim spelling, and its query values decoded in any order, as replay compares them. A
+ * query repeating a name is no call's arguments, so it keeps its spelling.
  */
 export const requestLine = (record: StateRecordFacts): string => {
   const query = [...iterateUrlQueryParameters(record.query ?? "")];
   if (new Set(query.map(([name]) => name)).size !== query.length)
     return compositeKey([record.path, record.query ?? ""]);
   return compositeKey([
-    segmentsOf(record.path).map(decodedSegment),
+    record.path,
     query.sort(([left], [right]) => compare(left, right)),
   ]);
 };

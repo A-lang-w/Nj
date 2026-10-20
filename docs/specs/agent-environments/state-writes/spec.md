@@ -110,8 +110,9 @@ explained as one of:
 - a slug of an echoed member.
 
 Any other change is `unexplained-change`. An increment or a slug applies to
-every call that could take it, so a call that leaves such a field as it was
-while another call of the tool changes it is also `unexplained-change`.
+every call that could take it, so the plan is also `unexplained-change` when
+such a rule would give a call of the tool another value than the one it
+recorded.
 
 **Deletes.** A delete removes the entity. Its response is the exemplar's
 response, with the entity re-rendered when the response carries it.
@@ -172,8 +173,9 @@ from the state:
 
 - an item read of a state-backed item view;
 - a list or document read on one of its view's checked request lines,
-  matched as serving matches a call to a line: path and query values
-  decoded, the query in any order.
+  matched as serving matches a call to a line: the path as spelled, since
+  replay prefers a verbatim spelling, and the query values decoded, in any
+  order.
 
 **Comparison.** The read's answer is the full response serving would give from
 the copy: an item read's entity rendered into its item view's base recording,
