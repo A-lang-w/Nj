@@ -45,14 +45,20 @@ rules.
 
 Each session is replayed on its own copy of the initial state, with its own taint, its own unmodelled writes and its
 own record of what was checked, and a later observation of a written entity is searched for only within the write's
-session. Plans are built once, from each tool's first successful call in timeline order, and every session's
-confirmations and contradictions count toward the verdict: a plan is served when a read in some session confirms it
-and no read in any session contradicts it.
+session. Plans are built once, and every session's confirmations and contradictions count toward the verdict: a plan is served
+when a read in some session confirms it and no read in any session contradicts it.
+
+A plan is built from the first successful call, in timeline order, that can build it. Before, a first call whose
+request body was unusable or whose written entity no read showed fixed the plan's reason, and every later call was
+only observed. Now such a call leaves its effect unknown (it taints, as any unmodelled write does) and the next call
+may build the plan; its reason stands only when no call does. This is what lets a later session supply the read a
+capture's own call lacked: a recipe create whose response is only a slug, read back in another session.
 
 ## Acceptance
 
-- Domain tests: a create repeated after a reset is confirmed, and read as one session it is contradicted; a write one
-  session confirms and another contradicts is withheld; a later session's reads before its own writes back an item
+- Domain tests: a create repeated after a reset is confirmed, and read as one session it is contradicted; a plan the
+  first session's call cannot build is built from a later session's call; a write one session confirms and another
+  contradicts is withheld; a later session's reads before its own writes back an item
   view; a value the sessions' initial reads disagree on is volatile, and `fields-differ` when the later session wrote
   first; sessions that overlap in time stay together; request validation.
 - A service test: the state derived from a manifest with sessions is the state view requested with them, and a state

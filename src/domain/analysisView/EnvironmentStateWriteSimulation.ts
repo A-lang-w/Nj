@@ -35,6 +35,7 @@ import {
   applyDelete,
   applyDocument,
   applyUpdate,
+  built,
   type EffectContext,
   type EffectResult,
   type WriteDraft,
@@ -64,6 +65,12 @@ export interface WriteSimulationInput {
   readonly sessionOf?: (record: StateRecordFacts) => number;
   readonly io: WriteIo;
 }
+
+/** Reasons that leave a plan unbuilt only until a later call can build it. */
+const UNBUILT_REASONS: ReadonlySet<string> = new Set([
+  "body-unusable",
+  "no-observation",
+]);
 
 const APPLY = {
   create: applyCreate,
@@ -181,14 +188,14 @@ export class EnvironmentStateWriteSimulation {
       this.#unmodelled(record.path, index);
       return;
     }
-    const observeOnly = draft.plan.reason !== null;
+    // A plan an earlier call could not build is built from the first call that can.
+    const retry = !built(draft) && UNBUILT_REASONS.has(draft.plan.reason ?? "");
+    const observeOnly = draft.plan.reason !== null && !retry;
     if (!observeOnly) draft.calls += 1;
     const step: WriteStep = { record, index, tool, observeOnly };
-    this.#settle(APPLY[effect](this.#context(), draft, step), {
-      index,
-      tool: tool.name,
-      path: record.path,
-    });
+    const result = APPLY[effect](this.#context(), draft, step);
+    if (retry && built(draft)) draft.plan.reason = null;
+    this.#settle(result, { index, tool: tool.name, path: record.path });
   }
 
   /** Attribute an applied effect to its tool; a recorded outcome is the state's new baseline; an unknown one taints. */

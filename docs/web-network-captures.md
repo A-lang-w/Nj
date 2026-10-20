@@ -625,10 +625,12 @@ order. Its `effect` is `create` for a `POST` to a type's
 `collection_template`, `update` for a `PUT`, `PATCH` or `POST` to that template
 plus one trailing parameter, `delete` for a `DELETE` to it, `document` for a
 `PUT`, `PATCH` or `POST` to a document's path, and otherwise `none` with reason
-`no-state-target`. A plan is built from the tool's first successful call: its
-request body must be a usable JSON object (as response bodies are usable), and
-the written entity must show in that call's response or in a later read before
-the next write. Each field of a created entity gets the first rule that
+`no-state-target`. A plan is built from the tool's first successful call whose
+request body is a usable JSON object (as response bodies are usable) and whose
+written entity shows in that call's response or in a later read before the next
+write; an earlier call that cannot build it leaves its effect unknown, and its
+reason (`body-unusable` or `no-observation`) stands only when no call builds
+the plan. Each field of a created entity gets the first rule that
 explains it: generated `identity` (a sequence, UUID or token, by the recorded
 value's shape), `echo` of a body member, `copy` of a body string of 8 or more
 characters, a `path` value, a `slug` of a body member, a `clock` value within 10

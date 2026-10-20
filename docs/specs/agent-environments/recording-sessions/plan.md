@@ -10,7 +10,8 @@ The branch builds on the write-plan branch.
    (write cutoffs per session), and make the write-span check session-aware for change classification, membership
    and documents.
 4. **Write gate.** Move a session's replay state into its own module and replay each session from the initial state,
-   keeping the drafts, their confirmations and contradictions across sessions.
+   keeping the drafts, their confirmations and contradictions across sessions. Let a plan whose first call could not
+   be built (`body-unusable`, `no-observation`) be built from a later call.
 5. **Serving.** Derive the state with the manifest's `session_starts` and refuse a supplied state with others.
 6. **Tests and documentation.** Domain and service tests as the spec's acceptance lists; document sessions in the
    environment-state and manifest sections and in the agent-environment guide.

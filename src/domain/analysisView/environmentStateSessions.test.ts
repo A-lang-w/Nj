@@ -99,6 +99,40 @@ describe("recording sessions' writes", () => {
     });
   });
 
+  it("builds a plan from a later session's call when the first call shows no written entity", () => {
+    const queued: TimedCaptureRow = [
+      "POST",
+      "/api/books",
+      { status: "queued" },
+      201,
+      { name: "Third Book" },
+    ];
+    const third = book(3, "Third Book", bookClock(4));
+    const capture = sessions(
+      [
+        ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+        ["GET", "/api/books/1", FIRST_BOOK],
+        queued,
+      ],
+      [
+        ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+        queued,
+        ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK, third]],
+        ["GET", "/api/books/3", third],
+      ],
+    );
+    expect(planOf(stateOf(capture), "post_books")).toMatchObject({
+      served: true,
+      exemplar_ordinal: 4,
+      observation: { ordinal: 5 },
+      checked_record_ordinals: [6],
+    });
+    // The first session alone never shows the entity its create wrote.
+    expect(
+      planOf(stateOf(sessions(capture.rows.slice(0, 3))), "post_books"),
+    ).toMatchObject({ served: false, reason: "no-observation" });
+  });
+
   it("withholds a write that one session contradicts and another confirms", () => {
     const renamed = renamedBook(FIRST_BOOK, "Renamed Book", 3);
     const confirmed: TimedCaptureRow[] = [

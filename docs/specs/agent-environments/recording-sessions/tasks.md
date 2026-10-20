@@ -5,6 +5,7 @@
 - [x] Cut each session's initial recordings at its own first related write.
 - [x] Classify changes across sessions as starting from the initial state.
 - [x] Replay each session's writes from the initial state and gather every session's verdicts.
+- [x] Build a plan from the first call that can build it, not only the first call.
 - [x] Derive the served state with the manifest's sessions and refuse a state with others.
 - [x] Add domain and service coverage.
 - [x] Document recording sessions.
