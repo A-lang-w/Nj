@@ -141,6 +141,13 @@ same task with an injected transcript-write failure exits 1, preserves its
 answer and failure receipt, and verifies that the process family was cleaned.
 These qualification runs do not replace the frozen performance measurements.
 
+A second review found that a valid external parent could disagree with its
+report's architecture. Go domain now owns the existing architecture-to-subject
+mapping; both Evidence production and every Go view use it. The view checks
+mapped architecture as well as path, digest and format, including `null` for
+unrecognized report names. All 213 focused tests pass, including authenticated
+inline/file conflicts and known-alias/unknown-architecture cases.
+
 CI also exposes two existing baseline failures. On unmodified `c374c2fe7`,
 `src/cliJsonPaths.test.ts` has the same three URL-message assertion failures.
 The duplication gate is already above its 3.5% threshold: 31,737 / 899,602 lines

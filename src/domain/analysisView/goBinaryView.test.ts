@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { AnalysisInputError } from "../analysisErrorCore.js";
 import { createEvidence } from "../evidence.js";
 import type { GoBinary } from "../go/goBinary.js";
 import {
@@ -21,6 +22,7 @@ const parent = (): AnalysisViewParent => {
       path: report.artifact.path,
       sha256: report.artifact.sha256,
       format: "elf",
+      architecture: "x86_64",
     },
     {
       id: "go-build-info",
@@ -90,5 +92,37 @@ it.each(["path", "digest", "format"] as const)(
       { kind: "summary" },
     );
     expect(result.ok).toBe(false);
+  },
+);
+
+it.each([
+  ["386", "x86", true],
+  ["x86", "x86", true],
+  ["amd64", "x86_64", true],
+  ["x86_64", "x86_64", true],
+  ["arm64", "arm64", true],
+  ["future-cpu", null, true],
+  ["", null, true],
+  ["amd64", "arm64", false],
+  ["amd64", null, false],
+  ["future-cpu", "arm64", false],
+] as const)(
+  "checks report architecture %j against subject %j for every Go view",
+  (architecture, subjectArchitecture, accepted) => {
+    const input = parent();
+    if (input.subject == null) throw new Error("Expected artifact subject");
+    const subject = { ...input.subject, architecture: subjectArchitecture };
+    const normalizedResult = { ...report, architecture };
+    for (const view of [
+      { kind: "summary" },
+      { kind: "go", collection: "dependencies", offset: 0, limit: 64 },
+    ] as const) {
+      const result = projectAnalysisView(
+        { ...input, subject, normalizedResult },
+        view,
+      );
+      expect(result.ok).toBe(accepted);
+      if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisInputError);
+    }
   },
 );

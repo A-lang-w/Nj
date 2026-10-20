@@ -1,7 +1,22 @@
 import { z } from "zod";
+import { BINARY_ARCHITECTURES } from "../binaryTargetTypes.js";
 import { digestSchema } from "../digests.js";
 import { localPathStringSchema } from "../localPath.js";
 import { canonicalBase64Schema } from "../stringPatterns.js";
+
+/** Map reader architecture names into Evidence identity; unknown names stay unknown. */
+export const goArchitectureForSubject = (architecture: string) => {
+  switch (architecture) {
+    case "386":
+      return "x86";
+    case "amd64":
+      return "x86_64";
+    default:
+      return BINARY_ARCHITECTURES.find(
+        (supported) => supported === architecture,
+      );
+  }
+};
 
 const sourceRangeSchema = z.strictObject({
   offset: z.number().int().nonnegative(),

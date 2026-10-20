@@ -1116,6 +1116,13 @@
       },
       "threshold": 3.5
     },
-    "timing_cohort": "unchanged; these are separate qualification runs"
+    "timing_cohort": "unchanged; these are separate qualification runs",
+    "architecture_identity": {
+      "owner": "shared Go domain mapping used by Evidence production and all Go views",
+      "focused_tests": 213,
+      "full_check": "passed",
+      "real_sdk_selected_query_full_export": "passed after architecture validation; original parent identity and all165 dependencies preserved",
+      "unknown_architecture": "only an unknown/null subject agrees with an unrecognized report architecture"
+    }
   }
 }

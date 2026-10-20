@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import {
+  goArchitectureForSubject,
   goBinarySchema,
   goBuildInfoSchema,
   goModuleMetadataSchema,
@@ -161,7 +162,9 @@ export const projectGoBinaryView = (
     parent.subject?.local_path !== report.artifact.path ||
     parent.subject.digest.sha256 !== report.artifact.sha256 ||
     parent.subject.format !==
-      (report.format === "macho" ? "mach-o" : report.format)
+      (report.format === "macho" ? "mach-o" : report.format) ||
+    parent.subject.architecture !==
+      (goArchitectureForSubject(report.architecture) ?? null)
   )
     return err(
       analysisViewInputError([

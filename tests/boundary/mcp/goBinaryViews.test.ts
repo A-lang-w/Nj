@@ -4,7 +4,11 @@ import { expect } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
 import type { Client } from "@modelcontextprotocol/client";
-import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
+import {
+  createEvidence,
+  parseEvidence,
+  type Evidence,
+} from "../../../src/domain/evidence.js";
 import { goBinarySchema } from "../../../src/domain/go/goBinary.js";
 import {
   analysisViewResultSchema,
@@ -99,6 +103,52 @@ const goPage = (evidence: Evidence) => {
   if (view.kind !== "go") throw new Error("Expected a Go row page");
   return view;
 };
+
+goViewTest(
+  "rejects authenticated inline and file parents with conflicting architecture",
+  async ({ goViews: { client, root, path, call } }) => {
+    const complete = await call("inspect_go_binary", { path });
+    const report = goBinarySchema.parse(complete.normalized_result);
+    const conflicting = createEvidence(
+      {
+        path,
+        sha256: report.artifact.sha256,
+        format: "elf",
+        architecture: "arm64",
+      },
+      { id: "go-build-info", name: "Go metadata test fixture", version: "1" },
+      {
+        operation: "inspect_go_binary",
+        parameters: { path },
+        result: report,
+        confidence: "observed",
+      },
+    );
+    const evidencePath = join(root, "conflicting.json");
+    await writeFile(evidencePath, JSON.stringify(conflicting));
+    for (const source of [
+      { kind: "inline", evidence: conflicting },
+      { kind: "evidence-file", path: evidencePath },
+    ]) {
+      for (const view of [
+        { kind: "summary" },
+        { kind: "go", collection: "dependencies" },
+      ]) {
+        const reply = await client.callTool({
+          name: "inspect_analysis_view",
+          arguments: { source, view },
+        });
+        expect(parseMcpToolError(reply).error).toMatchObject({
+          code: "invalid_request",
+          details: {
+            operation: "inspect_analysis_view",
+            issues: [{ path: ["source", "subject"], reason: "invalid_value" }],
+          },
+        });
+      }
+    }
+  },
+);
 
 goViewTest(
   "retains exact Go rows and complete Evidence after source removal",
