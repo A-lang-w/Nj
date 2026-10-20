@@ -144,13 +144,26 @@ it.each([
   },
 );
 
-it.each(["control", "SIGINT", "SIGTERM"] as const)(
-  "preserves the analysis-view exit status after bundle close and logging: %s",
-  async (signal) => {
+it.each([
+  ["bundle", "control"],
+  ["bundle", "SIGINT"],
+  ["bundle", "SIGTERM"],
+  ["evidence-file", "control"],
+  ["evidence-file", "SIGINT"],
+  ["evidence-file", "SIGTERM"],
+] as const)(
+  "preserves the analysis-view exit status after %s close and logging: %s",
+  async (source, signal) => {
     const root = await createTestTempDirectory("rea-analysis-view-signal-");
     const parent = analysisViewLayoutEvidence();
-    const path = join(root, "bundle.json");
-    await writeFile(path, JSON.stringify(createEvidenceBundle([parent])));
+    const filename = source === "bundle" ? "bundle.json" : "evidence.json";
+    const path = join(root, filename);
+    await writeFile(
+      path,
+      JSON.stringify(
+        source === "bundle" ? createEvidenceBundle([parent]) : parent,
+      ),
+    );
     const originalClose = OwnedFileHandle.prototype.close;
     const close = vi
       .spyOn(OwnedFileHandle.prototype, "close")
@@ -172,14 +185,13 @@ it.each(["control", "SIGINT", "SIGTERM"] as const)(
         [
           "inspect-analysis-view",
           JSON.stringify({
-            source: {
-              kind: "retained-evidence",
-              evidence_id: parent.evidence_id,
-            },
+            source:
+              source === "bundle"
+                ? { kind: "retained-evidence", evidence_id: parent.evidence_id }
+                : { kind: "evidence-file", path },
             view: { kind: "summary" },
           }),
-          "--evidence-bundle",
-          path,
+          ...(source === "bundle" ? ["--evidence-bundle", path] : []),
           "--json",
         ],
         {
@@ -191,7 +203,7 @@ it.each(["control", "SIGINT", "SIGTERM"] as const)(
       );
       expect(close).toHaveBeenCalledOnce();
       expect(host.listeners.size).toBe(0);
-      expect(await readdir(root)).toEqual(["bundle.json"]);
+      expect(await readdir(root)).toEqual([filename]);
       expect(JSON.parse(output)).toMatchObject(
         signal === "control"
           ? { operation: "inspect_analysis_view" }
