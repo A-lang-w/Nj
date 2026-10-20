@@ -538,4 +538,3 @@ const inlineEvidence = (
 ): Record<string, unknown> => {
   return parseEvidence(value);
 };
-

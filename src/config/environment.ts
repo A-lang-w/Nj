@@ -70,9 +70,8 @@ const environmentSchema = z.object({
   REA_GHIDRA_STARTUP_TIMEOUT_MS: providerStartupTimeoutSchema.default(
     DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
   ),
-  REA_GHIDRA_AUTO_BACKGROUND_AFTER_MS: providerStartupTimeoutSchema.default(
-    120_000,
-  ),
+  REA_GHIDRA_AUTO_BACKGROUND_AFTER_MS:
+    providerStartupTimeoutSchema.default(120_000),
   REA_HOPPER_STARTUP_TIMEOUT_MS: providerStartupTimeoutSchema.default(
     DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
   ),

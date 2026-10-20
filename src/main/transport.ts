@@ -219,4 +219,3 @@ export const startMcpTransport = async (
     closeOptionalProviders,
   };
 };
-

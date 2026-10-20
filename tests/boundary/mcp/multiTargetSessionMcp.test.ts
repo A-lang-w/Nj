@@ -104,7 +104,8 @@ const connectBackground = async () => {
   };
 };
 
-describe("multi-target MCP session", () => {  it("opens two targets and routes an analysis call by target_id", async () => {
+describe("multi-target MCP session", () => {
+  it("opens two targets and routes an analysis call by target_id", async () => {
     const harness = await connect();
     try {
       const openedFirst = await harness.client.callTool({
@@ -126,7 +127,9 @@ describe("multi-target MCP session", () => {  it("opens two targets and routes a
         name: "binary_session",
         arguments: {},
       });
-      expect((status.structuredContent as { result?: unknown } | undefined)?.result).toMatchObject({
+      expect(
+        (status.structuredContent as { result?: unknown } | undefined)?.result,
+      ).toMatchObject({
         target_id: secondId,
         open_target_ids: expect.arrayContaining([firstId, secondId]),
       });
@@ -176,7 +179,9 @@ describe("multi-target MCP session", () => {  it("opens two targets and routes a
         name: "binary_session",
         arguments: {},
       });
-      expect((status.structuredContent as { result?: unknown } | undefined)?.result).toMatchObject({
+      expect(
+        (status.structuredContent as { result?: unknown } | undefined)?.result,
+      ).toMatchObject({
         target_id: secondId,
         open_target_ids: [secondId],
       });
@@ -196,7 +201,9 @@ describe("multi-target MCP session", () => {  it("opens two targets and routes a
         },
       });
       expect(opened.isError).not.toBe(true);
-      expect((opened.structuredContent as { result?: unknown }).result).toMatchObject({
+      expect(
+        (opened.structuredContent as { result?: unknown }).result,
+      ).toMatchObject({
         analysis: { state: "starting", mode: "background" },
       });
 
@@ -218,6 +225,51 @@ describe("multi-target MCP session", () => {  it("opens two targets and routes a
       await harness.close();
     }
   });
+
+  it("offers the wait budget only on target-bound analysis tools", async () => {
+    const harness = await connect();
+    try {
+      const advertised = (await harness.client.listTools()).tools;
+      const documents = advertised.find(
+        ({ name }) => name === "list_documents",
+      );
+      const address = advertised.find(({ name }) => name === "address_name");
+      expect(JSON.stringify(documents?.inputSchema)).not.toContain("wait_ms");
+      expect(JSON.stringify(address?.inputSchema)).toContain("wait_ms");
+
+      // A tool that declares no wait budget does not consume one.
+      const refused = await harness.client.callTool({
+        name: "list_documents",
+        arguments: { wait_ms: 10 },
+      });
+      expect(refused.isError).toBe(true);
+    } finally {
+      await harness.close();
+    }
+  });
 });
 
+describe("multi-target MCP session contracts", () => {
+  it("refuses an unknown target handle without naming another target", async () => {
+    const harness = await connect();
+    try {
+      const opened = await harness.client.callTool({
+        name: "open_binary",
+        arguments: { path: harness.first, keep_others_open: true },
+      });
+      expect(opened.isError).not.toBe(true);
+      expect(targetId(opened)).toBeDefined();
 
+      const refused = await harness.client.callTool({
+        name: "address_name",
+        arguments: { address: "0x1000", target_id: "missing-target" },
+      });
+      expect(refused.isError).toBe(true);
+      expect(JSON.stringify(refused)).toContain("target_not_open");
+      // The refusal names the open handles, never the target path.
+      expect(JSON.stringify(refused)).not.toContain(harness.first);
+    } finally {
+      await harness.close();
+    }
+  });
+});

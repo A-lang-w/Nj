@@ -131,7 +131,10 @@ export class BinarySession
   }
 
   /** Identify the provider producing evidence for this session. */
-  providerIdentity(operation?: AnalysisOperation, _targetId?: string): ProviderIdentity {
+  providerIdentity(
+    operation?: AnalysisOperation,
+    _targetId?: string,
+  ): ProviderIdentity {
     const route = this.#currentRoute();
     let selected = route.binding?.identity ?? route.identity;
     if (operation !== undefined) {
@@ -242,7 +245,10 @@ export class BinarySession
   /** Open a previewed target without repeating parsing or provider profile discovery. */
   openResolvedTarget(
     resolved: Pick<ResolvedSessionOpen, "target" | "route">,
-    options: Pick<BinarySessionOpenOptions, "signal" | "snapshot"> = {},
+    options: Pick<
+      BinarySessionOpenOptions,
+      "signal" | "snapshot" | "loadSnapshot"
+    > = {},
   ): Promise<Result<BinaryTarget, AnalysisError>> {
     return this.#open(
       () =>
@@ -644,10 +650,12 @@ export class BinarySession
   }
 
   /** Describe the active binary session. */
-  status(options: {
-    readonly signal?: AbortSignal;
-    readonly targetId?: string;
-  } = {}): Promise<JsonValue> {
+  status(
+    options: {
+      readonly signal?: AbortSignal;
+      readonly targetId?: string;
+    } = {},
+  ): Promise<JsonValue> {
     const run = this.#active ?? this.#pendingCleanup?.run;
     const client = run?.client;
     return binarySessionStatus({

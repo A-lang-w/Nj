@@ -182,9 +182,7 @@ const registerOpenLifecycleTool = (
       const opened = await logToolExecution(logger, openContract.name, () =>
         session.open(input.path, {
           signal: context.mcpReq.signal,
-          ...(input.keep_others_open === true
-            ? { keepOthersOpen: true }
-            : {}),
+          ...(input.keep_others_open === true ? { keepOthersOpen: true } : {}),
           ...(input.analysis_mode === "foreground"
             ? {}
             : { analysisMode: input.analysis_mode }),

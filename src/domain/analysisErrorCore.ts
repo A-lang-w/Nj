@@ -65,19 +65,21 @@ export class AnalysisTargetNotOpenError extends AnalysisError {
     readonly requestedTargetId: string,
     readonly openTargetIds: readonly string[],
   ) {
-    super(
-      `Target ${requestedTargetId} is not open for ${operation}`,
-      {
-        diagnostics: {
-          target_id: requestedTargetId,
-          open_target_ids: [...openTargetIds],
-        },
+    super(`Target ${requestedTargetId} is not open for ${operation}`, {
+      diagnostics: {
+        target_id: requestedTargetId,
+        open_target_ids: [...openTargetIds],
       },
-    );
+    });
   }
 }
 
-/** A bounded wait expired while the selected target was still starting. */
+/**
+ * A bounded wait expired while the selected target was still starting.
+ *
+ * The error reports elapsed time only. No provider streams a phase line into
+ * the application layer yet, so the contract does not promise progress.
+ */
 export class AnalysisInProgressError extends AnalysisError {
   readonly _tag = "AnalysisInProgressError";
 
@@ -85,7 +87,6 @@ export class AnalysisInProgressError extends AnalysisError {
     readonly operation: string,
     readonly targetId: string,
     readonly elapsedMs: number,
-    readonly progress: string | undefined,
   ) {
     super(
       `Analysis for target ${targetId} is still in progress after ${elapsedMs} ms`,
@@ -93,7 +94,6 @@ export class AnalysisInProgressError extends AnalysisError {
         diagnostics: {
           target_id: targetId,
           elapsed_ms: elapsedMs,
-          ...(progress === undefined ? {} : { progress }),
         },
       },
     );

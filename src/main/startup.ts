@@ -31,4 +31,3 @@ export const openInitialTarget = async (
     writeStderr(`${projectAnalysisError(closed.error).message}\n`);
   return { ok: false, exitCode: 1 };
 };
-

@@ -85,6 +85,8 @@ export interface BinarySessionPort
     options?: {
       readonly signal?: AbortSignal;
       readonly snapshot?: AnalysisSnapshot;
+      /** Load the staged snapshot inside the open's turn. */
+      readonly loadSnapshot?: AnalysisSnapshotLoader;
       readonly keepOthersOpen?: boolean;
       readonly analysisMode?: "foreground" | "background" | "auto";
       readonly autoBackgroundAfterMs?: number;

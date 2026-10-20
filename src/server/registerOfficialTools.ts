@@ -22,7 +22,9 @@ import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 /** Optional session services used by direct tool registration. */
 export interface OfficialToolRegistration {
   readonly logger: Logger;
-  readonly activeTarget: ((targetId?: string) => BinaryTarget | undefined) | undefined;
+  readonly activeTarget:
+    | ((targetId?: string) => BinaryTarget | undefined)
+    | undefined;
   readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
   readonly withAdmittedAnalysis: WithAdmittedAnalysis;
 }
@@ -47,7 +49,9 @@ const registerOfficialTool = (
   contract: (typeof OFFICIAL_TOOL_CONTRACTS)[number],
   registration: {
     readonly logger: Logger;
-    readonly activeTarget: ((targetId?: string) => BinaryTarget | undefined) | undefined;
+    readonly activeTarget:
+      | ((targetId?: string) => BinaryTarget | undefined)
+      | undefined;
     readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
     readonly withAdmittedAnalysis: WithAdmittedAnalysis;
   },
@@ -63,15 +67,22 @@ const registerOfficialTool = (
         typeof parsedInput.target_id === "string"
           ? parsedInput.target_id
           : undefined;
+      // The wait budget belongs to the tools whose schema declares it. An
+      // adapter never consumes an argument its own contract does not accept.
+      const declaresWaitBudget = Object.hasOwn(
+        contract.inputSchema.shape,
+        "wait_ms",
+      );
       const waitMs =
-        typeof parsedInput.wait_ms === "number"
+        declaresWaitBudget && typeof parsedInput.wait_ms === "number"
           ? parsedInput.wait_ms
           : undefined;
-      const {
-        target_id: _targetId,
-        wait_ms: _waitMs,
-        ...arguments_
-      } = parsedInput;
+      const { target_id: _targetId, ...arguments_ } = parsedInput;
+      const toolArguments = declaresWaitBudget
+        ? Object.fromEntries(
+            Object.entries(arguments_).filter(([key]) => key !== "wait_ms"),
+          )
+        : arguments_;
       const admitted = await registration.withAdmittedAnalysis(
         contract.name,
         context.mcpReq.signal,
@@ -80,7 +91,7 @@ const registerOfficialTool = (
           const result = await runOfficialOperation(
             admittedAnalysis,
             contract,
-            arguments_,
+            toolArguments,
             {
               logger: registration.logger,
               signal: context.mcpReq.signal,
@@ -98,7 +109,7 @@ const registerOfficialTool = (
             result.value.provider,
             {
               operation: contract.name,
-              parameters: arguments_,
+              parameters: toolArguments,
               result: result.value.result,
               ...(result.value.analysisProfile === undefined
                 ? {}
@@ -161,4 +172,3 @@ const runOfficialOperation = async (
   });
   return result;
 };
-

@@ -417,4 +417,3 @@ const deferred = <Value>(): Deferred<Value> => {
     },
   };
 };
-

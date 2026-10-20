@@ -360,4 +360,3 @@ describe("application workflow MCP parity", () => {
     }
   });
 });
-
