@@ -62,6 +62,18 @@ export async function readTestDurations(
 
 type TimedItem<T> = { item: T; key: string; duration: number | undefined };
 
+// process-boundary runs its files one at a time. Other projects overlap up to
+// the runner worker cap, so equal file-duration sums are not equal wall time.
+const PARALLEL_TEST_WORKERS = 2;
+
+export function estimatedShardCost(
+  project: string,
+  durationMs: number,
+): number {
+  if (project === "process-boundary") return durationMs;
+  return durationMs / PARALLEL_TEST_WORKERS;
+}
+
 /** Distribute the longest files first, retaining every discovered specification. */
 export function allocateByDuration<T>(
   items: readonly TimedItem<T>[],
@@ -109,10 +121,14 @@ export class CiTestSequencer extends BaseSequencer {
       const path = relative(root, resolve(root, item.moduleId))
         .split(sep)
         .join("/");
+      const duration = durations.get(path);
       return {
         item,
         key: path + "\0" + item.project.name + "\0" + item.pool,
-        duration: durations.get(path),
+        duration:
+          duration === undefined
+            ? undefined
+            : estimatedShardCost(item.project.name, duration),
       };
     });
     const shards = allocateByDuration(weighted, shard.count);

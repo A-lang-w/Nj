@@ -12,6 +12,8 @@ permissions:
   contents: read
 env:
   HUSKY: "0"
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
 jobs:
   real-web-runtime:
     runs-on: ubuntu-latest

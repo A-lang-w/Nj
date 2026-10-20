@@ -156,6 +156,7 @@ it("holds native and provider fan-out behind static validation while portable fe
   const earlyJobs = new Set([
     "changes",
     "static",
+    "static-deep",
     "build",
     "test-shard",
     "test-source",
@@ -171,6 +172,36 @@ it("holds native and provider fan-out behind static validation while portable fe
     expect(job.if).not.toMatch(/always\(|cancelled\(/u);
   }
   expect(jobs["test-shard"]?.needs).not.toContain("static");
+  const stepRuns = z.array(z.object({ run: z.string().optional() }));
+  expect(jobs["static-deep"]?.needs).toBe("changes");
+  expect(String(jobs["static-deep"]?.if)).toContain("tier == 'full'");
+  expect(String(jobs["static-deep"]?.if)).toContain("code == 'true'");
+  const staticRuns = stepRuns.parse(jobs.static?.steps);
+  const deepRuns = stepRuns.parse(jobs["static-deep"]?.steps);
+  expect(staticRuns.some((step) => step.run === "npm run check:ci:fast")).toBe(
+    true,
+  );
+  expect(
+    staticRuns.some(
+      (step) =>
+        step.run === "npm run check:ci:deep" ||
+        step.run === "npm run test:python",
+    ),
+  ).toBe(false);
+  expect(deepRuns.some((step) => step.run === "npm run check:ci:deep")).toBe(
+    true,
+  );
+  for (const [name, job] of Object.entries(jobs)) {
+    if (
+      name === "required" ||
+      name === "static-deep" ||
+      job.needs === undefined
+    )
+      continue;
+    expect(job.needs, `${name} must not wait for deep static`).not.toContain(
+      "static-deep",
+    );
+  }
 });
 
 it("binds provider build reuse to the current run while keeping standalone dispatches independent", async () => {

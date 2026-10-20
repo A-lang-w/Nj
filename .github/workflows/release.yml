@@ -21,6 +21,9 @@ on:
 
 env:
   HUSKY: "0"
+  # Remote cache stays local when either value is empty.
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
 
 concurrency:
   group: release-${{ inputs.release_branch || github.event.pull_request.merge_commit_sha || github.ref_name }}

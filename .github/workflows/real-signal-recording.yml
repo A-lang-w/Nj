@@ -13,21 +13,14 @@ on:
       - "src/composition/signals.ts"
       - "src/cli/signalCommands.ts"
       - "src/server/registerSignalTools.ts"
-      - "src/server/createServer.ts"
-      - "src/server/sessionAvailabilityPolicy.ts"
-      - "src/application/CapabilityInventory.ts"
-      - "src/contracts/toolContracts.ts"
-      - "src/contracts/toolEffects.ts"
-      - "src/cli.ts"
-      - "src/cliCommandNames.ts"
-      - "src/process/**"
-      - "src/artifacts/readStableArtifact.ts"
       - "scripts/verify-signal-recording.mjs"
       - ".github/workflows/real-signal-recording.yml"
-      - "package*.json"
-      - ".nvmrc"
 permissions:
   contents: read
+env:
+  HUSKY: "0"
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
 concurrency:
   group: real-signal-recording-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true

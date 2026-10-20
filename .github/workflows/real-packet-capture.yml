@@ -20,21 +20,14 @@ on:
       - "src/composition/captures.ts"
       - "src/cli/captureCommands.ts"
       - "src/server/registerCaptureTools.ts"
-      - "src/server/createServer.ts"
-      - "src/server/sessionAvailabilityPolicy.ts"
-      - "src/application/CapabilityInventory.ts"
-      - "src/contracts/toolContracts.ts"
-      - "src/contracts/toolEffects.ts"
-      - "src/cli.ts"
-      - "src/cliCommandNames.ts"
-      - "src/process/**"
-      - "src/artifacts/readStableArtifact.ts"
       - "scripts/verify-packet-capture.mjs"
       - ".github/workflows/real-packet-capture.yml"
-      - "package*.json"
-      - ".nvmrc"
 permissions:
   contents: read
+env:
+  HUSKY: "0"
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
 concurrency:
   group: real-packet-capture-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true

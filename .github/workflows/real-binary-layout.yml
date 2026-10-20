@@ -21,6 +21,8 @@ permissions:
 env:
   NODE_OPTIONS: --max-old-space-size=768
   HUSKY: "0"
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
   REA_VERIFY_LARGE_ELF_MCP: ${{ inputs.large_mcp && '1' || '0' }}
 
 jobs:

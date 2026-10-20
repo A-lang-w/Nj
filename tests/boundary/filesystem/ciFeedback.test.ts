@@ -268,7 +268,10 @@ it("records the actual static task graph with explicit source identity and no am
   const head = await execute("git", ["rev-parse", "HEAD"]);
   expect(context.sourceSha).toBe(head.stdout.trim());
   expect(context.taskHashes["lint:built"]).toMatch(/^[a-f0-9]{16}$/u);
-  expect(context.taskHashes.jscpd).toMatch(/^[a-f0-9]{16}$/u);
+  expect(context.taskHashes.typecheck).toMatch(/^[a-f0-9]{16}$/u);
+  expect(context.taskHashes["format:check"]).toMatch(/^[a-f0-9]{16}$/u);
+  expect(context.taskHashes).not.toHaveProperty("jscpd");
+  expect(context.taskHashes).not.toHaveProperty("knip");
   expect(context).not.toHaveProperty("environmentVariables");
   expect(context).not.toHaveProperty("env");
   expect(

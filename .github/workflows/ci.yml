@@ -29,6 +29,11 @@ concurrency:
 
 env:
   HUSKY: "0"
+  # Remote cache stays local when either value is empty. Set Actions secret
+  # TURBO_TOKEN and variable TURBO_TEAM. OIDC can mint TURBO_TOKEN via
+  # vercel/setup-turborepo-remote-cache-action; do not commit a token.
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
 
 jobs:
   changes:
@@ -153,12 +158,7 @@ jobs:
           CI_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: npm run ci:static-context
       - if: needs.changes.outputs.code == 'true'
-        run: npm run check:ci
-      - if: needs.changes.outputs.code == 'true'
-        run: npm run verify:test-discovery
-      - name: Check LLDB producer retention and launch contracts
-        if: needs.changes.outputs.code == 'true'
-        run: npm run test:python
+        run: npm run check:ci:fast
       - if: needs.changes.outputs.code != 'true'
         run: npm run format:check
       - name: Save validated static task cache
@@ -179,6 +179,55 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
+
+  static-deep:
+    name: Deep static checks
+    needs: changes
+    # Full qualification only. Provider lanes wait on fast static, not this job.
+    if: needs.changes.outputs.tier == 'full' && needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Cache npm package downloads
+        id: npm-cache
+        uses: ./.github/actions/npm-cache
+      - run: npm ci
+      - name: Restore deep static task cache
+        id: static-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .turbo/cache/
+          key: rea-static-deep-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-${{ github.sha }}
+          restore-keys: rea-static-deep-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-
+      - name: Restore Knip analysis cache
+        id: knip-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: node_modules/.cache/knip
+          key: knip-meta-v1-${{ runner.os }}-${{ hashFiles('knip.json', 'tsconfig.json', 'package.json', 'package-lock.json') }}
+          restore-keys: knip-meta-v1-${{ runner.os }}-
+      - name: Run deep static checks
+        run: npm run check:ci:deep
+      - name: Save validated deep static task cache
+        if: >-
+          success() && steps.npm-cache.outputs.can-save == 'true' &&
+          steps.static-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .turbo/cache/
+          key: ${{ steps.static-cache.outputs.cache-primary-key }}
+      - name: Save Knip analysis cache
+        if: >-
+          success() && steps.npm-cache.outputs.can-save == 'true' &&
+          steps.knip-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: node_modules/.cache/knip
+          key: knip-meta-v1-${{ runner.os }}-${{ hashFiles('knip.json', 'tsconfig.json', 'package.json', 'package-lock.json') }}
 
   test-source:
     name: Source tests
@@ -373,10 +422,12 @@ jobs:
           retention-days: 7
 
   sqlite-runtime:
-    # Preserve all selected coverage, but admit expensive host/provider work
-    # only after static validation. Portable tests still provide early feedback.
+    # Admit expensive host/provider work after fast static validation
+    # (typecheck, lint, format). Deep static does not gate these lanes.
+    # Portable tests still provide early feedback.
     needs: [changes, static, build]
     if: needs.changes.outputs.sqlite == 'true'
+    secrets: inherit
     uses: ./.github/workflows/sqlite-runtime.yml
 
   test:
@@ -858,9 +909,11 @@ jobs:
             skills/reverse-engineer-anything
           if-no-files-found: error
 
+  # Provider lanes wait for fast static and the portable build, not deep static.
   browser:
     needs: [changes, static, build]
     if: needs.changes.outputs.browser == 'true'
+    secrets: inherit
     uses: ./.github/workflows/real-browser.yml
     with:
       build_cache_artifact: rea-build-cache
@@ -868,6 +921,7 @@ jobs:
   binary_layout:
     needs: [changes, static, build]
     if: needs.changes.outputs.binary_layout == 'true'
+    secrets: inherit
     uses: ./.github/workflows/real-binary-layout.yml
     with:
       build_cache_artifact: rea-build-cache
@@ -875,6 +929,7 @@ jobs:
   evm:
     needs: [changes, static, build]
     if: needs.changes.outputs.evm == 'true'
+    secrets: inherit
     uses: ./.github/workflows/real-evm-interface.yml
     with:
       build_cache_artifact: rea-build-cache
@@ -882,6 +937,7 @@ jobs:
   javascript_recovery:
     needs: [changes, static, build]
     if: needs.changes.outputs.javascript_recovery == 'true'
+    secrets: inherit
     uses: ./.github/workflows/real-javascript-recovery.yml
     with:
       build_cache_artifact: rea-build-cache
@@ -889,6 +945,7 @@ jobs:
   recorded_crash:
     needs: [changes, static, build]
     if: needs.changes.outputs.recorded_crash == 'true'
+    secrets: inherit
     uses: ./.github/workflows/real-recorded-crash.yml
     with:
       build_cache_artifact: rea-build-cache
@@ -896,6 +953,7 @@ jobs:
   web_network:
     needs: [changes, static, build]
     if: needs.changes.outputs.web_network == 'true'
+    secrets: inherit
     uses: ./.github/workflows/real-web-network-captures.yml
     with:
       build_cache_artifact: rea-build-cache
@@ -903,6 +961,7 @@ jobs:
   web_runtime:
     needs: [changes, static, build]
     if: needs.changes.outputs.web_runtime == 'true'
+    secrets: inherit
     uses: ./.github/workflows/real-web-runtime.yml
     with:
       build_cache_artifact: rea-build-cache
@@ -910,6 +969,7 @@ jobs:
   web_source_map:
     needs: [changes, static, build]
     if: needs.changes.outputs.web_source_map == 'true'
+    secrets: inherit
     uses: ./.github/workflows/real-web-source-map.yml
     with:
       build_cache_artifact: rea-build-cache
@@ -917,6 +977,7 @@ jobs:
   agentenv:
     needs: [changes, static, build]
     if: needs.changes.outputs.agentenv == 'true'
+    secrets: inherit
     uses: ./.github/workflows/real-agentenv.yml
     with:
       build_cache_artifact: rea-build-cache
@@ -924,16 +985,19 @@ jobs:
   nativeaot:
     needs: [changes, static]
     if: needs.changes.outputs.nativeaot == 'true'
+    secrets: inherit
     uses: ./.github/workflows/nativeaot-fixtures.yml
 
   ghidra_bridge:
     needs: [changes, static]
     if: needs.changes.outputs.ghidra_bridge == 'true'
+    secrets: inherit
     uses: ./.github/workflows/ghidra-bridge-sources.yml
 
   website:
     needs: [changes, static]
     if: needs.changes.outputs.website == 'true'
+    secrets: inherit
     uses: ./.github/workflows/website-check.yml
 
   required:
@@ -944,6 +1008,7 @@ jobs:
       [
         changes,
         static,
+        static-deep,
         build,
         reverse-tools-quality,
         test-shard,

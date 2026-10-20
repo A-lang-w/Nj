@@ -44,7 +44,7 @@ export async function recordStaticTaskContext({
   const [graph, source, status, npmVersion, turbo] = await Promise.all([
     execute(
       process.execPath,
-      [npmCli, "run", "--silent", "check:ci:tasks", "--", "--dry=json"],
+      [npmCli, "run", "--silent", "check:ci:fast", "--", "--dry=json"],
       options,
     ),
     execute("git", ["rev-parse", "HEAD"], options),

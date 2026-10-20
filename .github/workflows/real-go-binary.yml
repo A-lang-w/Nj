@@ -13,20 +13,8 @@ on:
       - "src/composition/go.ts"
       - "src/cli/goCommands.ts"
       - "src/server/registerGoTools.ts"
-      - "src/server/createServer.ts"
-      - "src/cli.ts"
-      - "src/cliCommandNames.ts"
-      - "src/contracts/toolContracts.ts"
-      - "src/contracts/toolEffects.ts"
-      - "src/artifacts/readStableArtifact*.ts"
-      - "src/artifacts/ArtifactReader.ts"
-      - "src/process/PrivateRuntimeRoot.ts"
       - "scripts/verify-go-binary.mjs"
       - "scripts/lib/mcp-verifier-results.mjs"
-      - "scripts/rea.mjs"
-      - "package.json"
-      - "package-lock.json"
-      - ".nvmrc"
 
 permissions:
   contents: read
@@ -38,6 +26,8 @@ concurrency:
 env:
   NODE_OPTIONS: --max-old-space-size=768
   HUSKY: "0"
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
 
 jobs:
   real-go-binary:

@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+env:
+  HUSKY: "0"
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+
 jobs:
   windows-native-artifact:
     name: Build Windows bridge security boundary
