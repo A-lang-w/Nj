@@ -598,6 +598,59 @@ describe("identityless exit refresh keeps later confirmation rows", () => {
   });
 });
 
+describe("identityless exit refresh follows a helper that changes groups", () => {
+  it("signals the group a token-owned member joins during confirmation", async () => {
+    const leader = {
+      ...launcher,
+      pid: 102,
+      parentPid: 1,
+      processGroupId: 102,
+      command: "owned-leader",
+    };
+    const member = {
+      ...launcher,
+      pid: 103,
+      parentPid: 102,
+      processGroupId: 102,
+      command: "owned-member",
+    };
+    const moved = { ...member, parentPid: 1, processGroupId: 103 };
+    const unreadable = {
+      ...launcher,
+      pid: 104,
+      parentPid: 1,
+      processGroupId: 104,
+      command: "unreadable",
+    };
+    const signalGroup = vi.fn();
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([
+        { ...launcher, command: "[MainThread]" },
+        { ...launcher, pid: 101, parentPid: 100 },
+      ])
+      .mockResolvedValueOnce([leader, member, unreadable])
+      .mockResolvedValue([leader, moved]);
+    await expect(
+      cleanupOwnedProcessGroup(
+        { ...ownership, expectedCommand: "fixture" },
+        {
+          listProcesses,
+          environment: (pid) =>
+            pid === 104
+              ? Promise.reject(new Error("environment unavailable"))
+              : Promise.resolve({ REA_PROCESS_RUN_ID: ownership.runId }),
+          signalGroup,
+        },
+      ),
+    ).resolves.toEqual({ cleaned: true, signaled: true });
+    expect(signalGroup.mock.calls).toEqual([
+      [102, "SIGKILL"],
+      [103, "SIGKILL"],
+    ]);
+  });
+});
+
 describe("identityless cleanup revalidates a group that reappears", () => {
   const leader = (pid: number, command = "fixture"): ProcessTableEntry => ({
     ...launcher,
