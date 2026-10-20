@@ -24,6 +24,12 @@ import type {
   MachoEncryptionFacts,
   MachoSliceEncryption,
 } from "../domain/apple/machoEncryption.js";
+import {
+  conflictingUuidCommandEvidence,
+  isMissingUuidDyldFailure,
+  missingUuidLimitation,
+  unusableNativeCommandOutput,
+} from "./NativeMachoCommandDiagnostics.js";
 
 interface NativeMachoObservation {
   readonly result: JsonValue;
@@ -47,6 +53,7 @@ interface NativeMachoInspectionContext {
     tool: string,
     arguments_: readonly string[],
     signal?: AbortSignal,
+    acceptNonZeroIf?: (capture: NativeCommandCapture) => boolean,
   ) => Promise<Result<NativeCommandCapture, AnalysisError>>;
   readonly invocation: (
     capture: NativeCommandCapture,
@@ -114,6 +121,7 @@ export const inspectNativeMacho = async (
         context.target.path,
       ],
       context.signal,
+      tool === "dyld_info" ? isMissingUuidDyldFailure : undefined,
     );
   // vtool knows no variant subtypes, so no spelling selects an arm64e.x1 slice.
   const vtoolSelectsSlice =
@@ -123,11 +131,18 @@ export const inspectNativeMacho = async (
   // Every launch settles before return; declared order fixes provenance and
   // which failure is reported.
   const [required, optional] = await Promise.all([
-    Promise.all(REQUIRED_SLICE_COMMANDS.map(runSliceCommand)),
+    Promise.all(
+      REQUIRED_SLICE_COMMANDS.map((command) => runSliceCommand(command)),
+    ),
     vtoolSelectsSlice ? runSliceCommand(OPTIONAL_VTOOL_COMMAND) : null,
   ]);
   for (const captured of required) {
     if (!captured.ok) return err(captured.error);
+    if (
+      (captured.value.exitCode !== 0 || captured.value.signal !== null) &&
+      !isMissingUuidDyldFailure(captured.value)
+    )
+      return err(unusableNativeCommandOutput(captured.value));
     captures.push(captured.value);
   }
   const limitations: string[] = [];
@@ -146,7 +161,10 @@ export const inspectNativeMacho = async (
   // A stripped symbol table (strip -T) can omit names the export trie keeps.
   // Only then does llvm-nm's dyld-info pass add names, and its exact names
   // disambiguate dyld_info rows, so rerun it rather than lose them.
-  if (!namesEveryExport(captures[nmIndex]!.stdout, dyldExports)) {
+  if (
+    !isMissingUuidDyldFailure(dyldExports) &&
+    !namesEveryExport(captures[nmIndex]!.stdout, dyldExports)
+  ) {
     const withDyldInfo = await runSliceCommand(DYLD_INFO_EXPORTS);
     if (!withDyldInfo.ok) return err(withDyldInfo.error);
     captures[nmIndex] = withDyldInfo.value;
@@ -176,6 +194,12 @@ export const inspectNativeMacho = async (
       ),
     );
   }
+  const uuidlessDyldFailure = captures.find(isMissingUuidDyldFailure);
+  if (
+    uuidlessDyldFailure !== undefined &&
+    load.commands.some(({ kind }) => kind === "LC_UUID")
+  )
+    return err(conflictingUuidCommandEvidence(uuidlessDyldFailure));
   const encryption = await context.readEncryption(context.signal);
   const selectedArchitectureName =
     selectedArchitecture ??
@@ -239,21 +263,26 @@ const normalizeMacho = (
   const { architectures } = slices;
   const encryption = encryptionCoverage(slices);
   const byTool = captureLookup(captures);
-  const imports = parseDyldSymbols(
-    sliceOutput(byTool("dyld_info", 0)),
-    "imports",
-  );
+  const dyldImportsCapture = byTool("dyld_info", 0);
+  const dyldExportsCapture = byTool("dyld_info", 1);
+  const missingImportsUuid = isMissingUuidDyldFailure(dyldImportsCapture);
+  const missingExportsUuid = isMissingUuidDyldFailure(dyldExportsCapture);
+  const imports = missingImportsUuid
+    ? []
+    : parseDyldSymbols(sliceOutput(dyldImportsCapture), "imports");
   const imageBase =
     load.segments.find(
       (segment) => segment.file_offset === 0 && (segment.file_size ?? 0) > 0,
     )?.vm_address ?? null;
   const nmExports = parseNmExports(byTool("nm").stdout);
-  const dyldExports = parseDyldSymbols(
-    sliceOutput(byTool("dyld_info", 1)),
-    "exports",
-    imageBase,
-    new Set(nmExports.map(({ name }) => name)),
-  );
+  const dyldExports = missingExportsUuid
+    ? []
+    : parseDyldSymbols(
+        sliceOutput(dyldExportsCapture),
+        "exports",
+        imageBase,
+        new Set(nmExports.map(({ name }) => name)),
+      );
   const exports = uniqueSymbols([...dyldExports, ...nmExports]);
   const dwarfdump = byTool("dwarfdump");
   const uuid = reconcileMachoUuid(
@@ -289,6 +318,8 @@ const normalizeMacho = (
         ]
       : []),
     ...additionalLimitations,
+    ...(missingImportsUuid ? [missingUuidLimitation("imports")] : []),
+    ...(missingExportsUuid ? [missingUuidLimitation("exports")] : []),
     ...uuid.limitations,
     ...(threadEntrypoint ? [threadEntrypointLimitation] : []),
     ...(imageBase === null &&
@@ -316,12 +347,21 @@ const normalizeMacho = (
     architectures: covered(architectures, true),
     build_metadata: covered(load.builds, true),
     load_commands: covered(load.commands, true),
-    dependencies: covered(load.dependencies, true),
+    dependencies: covered(
+      load.dependencies,
+      load.omittedDependencyCommands.length === 0,
+      dependencyPayloadLimitations(load.omittedDependencyCommands),
+    ),
     imports: covered(imports, false, [
       "dyld_info textual imports may omit chained or toolchain-unsupported metadata.",
+      ...(missingImportsUuid ? [missingUuidLimitation("imports")] : []),
     ]),
     exports: covered(exports, false, [
-      "Merged nm/dyld_info results may be incomplete for stripped binaries.",
+      ...(missingExportsUuid
+        ? [missingUuidLimitation("exports")]
+        : [
+            "Merged nm/dyld_info results may be incomplete for stripped binaries.",
+          ]),
       ...(dyldExports.some(({ sourceSymbol }) => sourceSymbol !== undefined)
         ? [
             "Renamed re-exports are listed under their exported name; the source library's symbol name is not reported.",
@@ -464,6 +504,21 @@ const parseNmExports = (output: string) =>
       reexport: null,
       source: "nm",
     }));
+
+const dependencyPayloadLimitations = (
+  commands: readonly string[],
+): string[] => {
+  if (commands.length === 0) return [];
+  const counts = new Map<string, number>();
+  for (const command of commands)
+    counts.set(command, (counts.get(command) ?? 0) + 1);
+  const described = [...counts].map(
+    ([command, count]) => `${count} ${command}`,
+  );
+  return [
+    `Dependency inventory omits ${described.join(", ")} because otool -l does not print that command's linkedit install name. trace_dylib_resolution reads the payload.`,
+  ];
+};
 
 const covered = <Value>(
   items: readonly Value[],
