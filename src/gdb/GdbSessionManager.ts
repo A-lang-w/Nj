@@ -1859,11 +1859,7 @@ export class GdbSessionManager {
       .then((result) => {
         if (
           generation !== session.executionGeneration ||
-          result.completion_status !== "complete" ||
-          result.output_truncated ||
-          !/^\d+\^done(?:,|$)/u.test(result.mi) ||
-          !/threads=\[/u.test(result.mi) ||
-          /state="running"/u.test(result.mi)
+          !gdbThreadInfoConfirmsAllStopped(result)
         )
           return;
         session.inferiorRunning = false;
@@ -2563,6 +2559,199 @@ const UNAUDITABLE_ONE_SHOT_COMMANDS = [
   "shell",
   "source",
 ];
+
+/** @internal Accept only complete MI thread tuples with explicit terminal states. */
+export const gdbMiThreadInfoConfirmsStopped = (record: string): boolean => {
+  const terminal = /^\d+\^done(?:,(.*))?$/su.exec(record);
+  if (terminal?.[1] === undefined) return false;
+  const fields = splitGdbMiTopLevel(terminal[1]);
+  if (fields === undefined) return false;
+  let threadList: string | undefined;
+  let currentThreadId: string | undefined;
+  for (const field of fields) {
+    const separator = field.indexOf("=");
+    if (separator <= 0) return false;
+    const name = field.slice(0, separator);
+    const value = field.slice(separator + 1);
+    if (!/^[A-Za-z][A-Za-z0-9_-]*$/u.test(name) || !isGdbMiValue(value, 0))
+      return false;
+    if (name === "threads") {
+      if (threadList !== undefined) return false;
+      threadList = value;
+    } else if (name === "current-thread-id") {
+      if (currentThreadId !== undefined || !/^"\d+"$/u.test(value))
+        return false;
+      currentThreadId = value.slice(1, -1);
+    }
+  }
+  if (
+    threadList === undefined ||
+    !threadList.startsWith("[") ||
+    !threadList.endsWith("]")
+  )
+    return false;
+  const entries = splitGdbMiTopLevel(threadList.slice(1, -1));
+  if (entries === undefined) return false;
+  const threadIds = new Set<string>();
+  const allStopped = entries.every((entry) => {
+    const tuple = entry.trim();
+    if (!tuple.startsWith("{") || !tuple.endsWith("}")) return false;
+    const attributes = splitGdbMiTopLevel(tuple.slice(1, -1));
+    if (attributes === undefined || attributes.length === 0) return false;
+    let state: string | undefined;
+    let id: string | undefined;
+    let targetId: string | undefined;
+    const names = new Set<string>();
+    for (const attribute of attributes) {
+      const separator = attribute.indexOf("=");
+      if (separator <= 0) return false;
+      const name = attribute.slice(0, separator);
+      const value = attribute.slice(separator + 1);
+      if (!/^[A-Za-z][A-Za-z0-9_-]*$/u.test(name) || !isGdbMiValue(value, 0))
+        return false;
+      if (names.has(name)) return false;
+      names.add(name);
+      if (name === "id") {
+        if (!/^"\d+"$/u.test(value)) return false;
+        id = value.slice(1, -1);
+      } else if (name === "target-id") {
+        if (!isGdbMiCString(value) || value === '""') return false;
+        targetId = value;
+      }
+      if (name === "state") {
+        if (state !== undefined || !/^"[^"\\]*"$/u.test(value)) return false;
+        state = value.slice(1, -1);
+      }
+    }
+    if (
+      id === undefined ||
+      targetId === undefined ||
+      state !== "stopped" ||
+      threadIds.has(id)
+    )
+      return false;
+    threadIds.add(id);
+    return true;
+  });
+  return (
+    allStopped &&
+    (currentThreadId === undefined || threadIds.has(currentThreadId))
+  );
+};
+
+const splitGdbMiTopLevel = (source: string): string[] | undefined => {
+  if (source.length === 0) return [];
+  const fields: string[] = [];
+  let start = 0;
+  let braces = 0;
+  let brackets = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') quoted = false;
+      continue;
+    }
+    if (character === '"') quoted = true;
+    else if (character === "{") braces += 1;
+    else if (character === "}") braces -= 1;
+    else if (character === "[") brackets += 1;
+    else if (character === "]") brackets -= 1;
+    else if (character === "," && braces === 0 && brackets === 0) {
+      const field = source.slice(start, index).trim();
+      if (field.length === 0) return undefined;
+      fields.push(field);
+      start = index + 1;
+    }
+    if (braces < 0 || brackets < 0) return undefined;
+  }
+  if (quoted || escaped || braces !== 0 || brackets !== 0) return undefined;
+  const finalField = source.slice(start).trim();
+  if (finalField.length === 0) return undefined;
+  fields.push(finalField);
+  return fields;
+};
+
+const isGdbMiValue = (value: string, depth: number): boolean => {
+  if (depth > 64) return false;
+  if (isGdbMiCString(value)) return true;
+  if (
+    (value.startsWith("{") && value.endsWith("}")) ||
+    (value.startsWith("[") && value.endsWith("]"))
+  ) {
+    const isTuple = value.startsWith("{");
+    const elements = splitGdbMiTopLevel(value.slice(1, -1));
+    if (elements === undefined) return false;
+    return elements.every((element) => {
+      if (isTuple) {
+        const separator = element.indexOf("=");
+        return (
+          separator > 0 &&
+          /^[A-Za-z][A-Za-z0-9_-]*$/u.test(element.slice(0, separator)) &&
+          isGdbMiValue(element.slice(separator + 1), depth + 1)
+        );
+      }
+      const separator = element.indexOf("=");
+      if (
+        separator > 0 &&
+        /^[A-Za-z][A-Za-z0-9_-]*$/u.test(element.slice(0, separator))
+      )
+        return isGdbMiValue(element.slice(separator + 1), depth + 1);
+      return isGdbMiValue(element, depth + 1);
+    });
+  }
+  return false;
+};
+
+const isGdbMiCString = (value: string): boolean => {
+  if (value.length < 2 || value[0] !== '"' || value.at(-1) !== '"')
+    return false;
+  for (let index = 1; index < value.length - 1; index += 1) {
+    const character = value[index];
+    const codePoint = value.codePointAt(index) ?? 0;
+    if (
+      character === undefined ||
+      character === '"' ||
+      codePoint < 0x20 ||
+      (codePoint >= 0x7f && codePoint <= 0x9f)
+    )
+      return false;
+    if (codePoint > 0xffff) index += 1;
+    if (character !== "\\") continue;
+    const escaped = value[++index];
+    if (escaped === undefined || index >= value.length - 1) return false;
+    if (/^[\\"'?abfnrtv]$/u.test(escaped)) continue;
+    if (/[0-7]/u.test(escaped)) {
+      for (
+        let count = 1;
+        count < 3 && /[0-7]/u.test(value[index + 1] ?? "");
+        count += 1
+      )
+        index += 1;
+      continue;
+    }
+    if (escaped === "x" && /[\da-f]/iu.test(value[index + 1] ?? "")) {
+      index += 1;
+      while (/[\da-f]/iu.test(value[index + 1] ?? "")) index += 1;
+      continue;
+    }
+    return false;
+  }
+  return true;
+};
+
+/** @internal Validate the complete transport result before trusting thread state. */
+export const gdbThreadInfoConfirmsAllStopped = (
+  result: GdbCommandResult,
+): boolean =>
+  result.completion_status === "complete" &&
+  !result.output_truncated &&
+  !result.output_invalid_utf8 &&
+  /^\d+\^done(?:,|$)/u.test(result.mi) &&
+  gdbMiThreadInfoConfirmsStopped(result.mi);
 
 /** @internal Classify commands that can invalidate the configured output sink. */
 export const gdbOneShotCommandMayInvalidateDetachProof = (

@@ -3541,7 +3541,7 @@ it("finishes interrupt after the last per-thread stop is verified by MI", async 
       if (threadInfoQueries === 1) observedThreadInfo(token);
       else
         child.stdout.write(
-          `${token}^done,threads=[{id="1",state="stopped"}]\n`,
+          `${token}^done,threads=[{id="1",target-id="Thread 1",state="stopped"}]\n`,
         );
     } else
       child.stdout.write(
@@ -3577,7 +3577,7 @@ it("finishes interrupt after the last per-thread stop is verified by MI", async 
     '*stopped,reason="signal-received",signal-name="SIGINT",thread-id="1",stopped-threads=["1"]\n',
   );
   child.stdout.write(
-    `${threadInfoToken}^done,threads=[{id="1",state="running"}]\n`,
+    `${threadInfoToken}^done,threads=[{id="1",target-id="Thread 1",state="running"}]\n`,
   );
   await expect(interrupt).resolves.toMatchObject({ ok: true });
   expect(child.killSignals).toEqual(["SIGINT"]);
