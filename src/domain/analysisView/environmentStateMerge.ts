@@ -20,8 +20,8 @@ export interface ObservedEntity {
   readonly type: string;
   readonly collection: string;
   readonly id: string;
-  /** Timeline position of the first observation, then its index within that body. */
-  readonly order: readonly [number, number];
+  /** The earliest recorded sighting: timeline position, then position in its list. */
+  order: readonly [number, number];
   readonly observations: StateObservation[];
 }
 
@@ -68,4 +68,68 @@ export const mergeObservedEntity = (entity: ObservedEntity): StateEntity => {
       ...new Set(entity.observations.map((observation) => observation.ordinal)),
     ],
   };
+};
+
+/**
+ * How observed values changed, per entity in timeline order. A shared field that differs from the
+ * previous repeat of the same request line is volatile, unless a recorded write lies between them;
+ * a field that differs from its previous observation on another line across a write rewrites the
+ * type. Either across a write means the reads do not agree on one initial state.
+ */
+export const classifyEntityChanges = (
+  entities: Iterable<ObservedEntity>,
+  lineOf: (observation: StateObservation) => readonly string[],
+  writeBetween: (earlier: StateObservation, later: StateObservation) => boolean,
+): {
+  readonly rewritten: ReadonlySet<string>;
+  readonly volatile: ReadonlyMap<string, Set<string>>;
+} => {
+  const rewritten = new Set<string>();
+  const volatile = new Map<string, Set<string>>();
+  const changed = (before: StateObservation, after: StateObservation) =>
+    Object.keys(after.object).filter(
+      (name) =>
+        Object.hasOwn(before.object, name) &&
+        !same(before.object[name], after.object[name]),
+    );
+  for (const entity of entities) {
+    const timeline = [...entity.observations].sort(
+      (left, right) => left.position - right.position,
+    );
+    const lastOfLine = new Map<string, StateObservation>();
+    // Sparse projections do not erase where each field was last observed.
+    const lastOfField = new Map<
+      string,
+      { readonly observation: StateObservation; readonly line: string }
+    >();
+    timeline.forEach((after) => {
+      const line = JSON.stringify(lineOf(after));
+      const repeat = lastOfLine.get(line);
+      if (repeat !== undefined) {
+        if (writeBetween(repeat, after)) {
+          // Key additions/removals are changes too, even when every shared field is unchanged.
+          if (!same(repeat.object, after.object)) rewritten.add(entity.type);
+        } else
+          for (const name of changed(repeat, after))
+            volatile.set(
+              entity.type,
+              (volatile.get(entity.type) ?? new Set()).add(name),
+            );
+      }
+      const sighting = { observation: after, line };
+      for (const name of Object.keys(after.object)) {
+        const previous = lastOfField.get(name);
+        if (
+          previous !== undefined &&
+          previous.line !== line &&
+          !same(previous.observation.object[name], after.object[name]) &&
+          writeBetween(previous.observation, after)
+        )
+          rewritten.add(entity.type);
+        lastOfField.set(name, sighting);
+      }
+      lastOfLine.set(line, after);
+    });
+  }
+  return { rewritten, volatile };
 };

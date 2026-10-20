@@ -24,15 +24,21 @@ later increments.
 - Order primary-origin records by recorded start time, or by record order when
   any start time is missing, and say which. Bound each type's state by the first
   write under its root (API base, version segments, one segment); a query
-  `POST` is not a write, and a read overlapping the write is left out.
+  `POST` is not a write, a read overlapping the write is left out, and a write
+  whose URL was redacted bounds every type, with a limitation counting it.
 - Prove an item type's identity field from the requested path value its
   responses repeat; otherwise infer it from a fixed list of identity names that
-  every listed item carries distinctly. Never treat an envelope that is itself
-  an entity as a list.
+  every listed item carries distinctly, which needs at least one listed item.
+  Never treat an envelope that is itself an entity as a list.
 - Merge observations into one entity per collection and identity: item views'
   latest values win over list views', differing views keep their own values,
-  and a value that changed with no related write is volatile and keeps the
-  latest.
+  and a value that changed between repeats of one request line with no recorded
+  write is volatile and keeps the latest; a change across a write under another
+  root, including between two tools of the type, leaves every tool of the type
+  recorded. Compare list membership, including empty lists, and field presence before selecting each request line's latest recording; a change across a write also leaves the type recorded. Different query strings remain distinct; omitted fields do not erase their earlier observations on other request lines.
+- A list has `all` membership only when no item-total envelope member (`total`,
+  `count` and their compounds, not page counts) differs from the number of
+  entities it lists and no `has_more`, `next` or next-page token is set.
 - Keep an item or list plan only when it reproduces each request line's latest
   initial recording from the state, comparing JSON values without regard to
   member order; otherwise record the tool with a reason. Parse bodies only when
@@ -62,5 +68,7 @@ derived values and cross-type effects are not tied to the state.
 
 Serving tool calls from the state, `data/reset`, `data/add` and `data/get` on
 the environment data plane, exporting the state with a bundle, and write
-effects are later increments of #4933. This PR must reference rather than
+effects are later increments of #4933. So are documents for item-shaped
+written paths (one per identity rather than per template) and for paths that
+are only deleted; until then their reads stay recorded. This PR must reference rather than
 close the issue.

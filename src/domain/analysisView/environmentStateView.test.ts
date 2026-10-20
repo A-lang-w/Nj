@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import {
   analysisViewCaptureEvidence,
+  environmentManifestCaptureFixture,
   environmentStateCaptureFixture,
   timedCaptureEvidence,
   type TimedCaptureRow,
@@ -11,6 +12,7 @@ import {
   scenarioCaptureFixture,
 } from "../../../tests/fixtures/browserScenarioCapture.js";
 import type { Evidence } from "../evidence.js";
+import type { JsonValue } from "../jsonValue.js";
 import {
   projectAnalysisView,
   type AnalysisViewParent,
@@ -171,6 +173,85 @@ it("keeps the latest value of a field that changed with no related write and nam
   );
 });
 
+it("leaves a type recorded when a value changed across a write under another root", () => {
+  const state = stateOf(
+    captureOf([
+      ["GET", "/api/search", [{ id: 1, title: "Granite Ledger" }]],
+      ["POST", "/api/dashboards/db", { id: 1, title: "Saltmarsh Depot" }],
+      ["GET", "/api/search", [{ id: 1, title: "Saltmarsh Depot" }]],
+    ]),
+  );
+  expect(state.types).toEqual([]);
+  expect(state.entities).toEqual([]);
+  expect(viewOf(state, "get_search")).toEqual({
+    tool: "get_search",
+    shape: "recorded",
+    reason: "fields-differ",
+  });
+});
+
+it("leaves a type recorded when a value changed across a write already in flight", () => {
+  const exchange = ([method, path, seconds, time, title]: readonly [
+    string,
+    string,
+    number,
+    number,
+    string,
+  ]) => ({
+    startedDateTime: new Date(
+      Date.parse("2026-10-17T18:00:00.000Z") + seconds * 1000,
+    ).toISOString(),
+    time,
+    request: { method, url: `http://app.example${path}` },
+    response: {
+      status: 200,
+      content: {
+        mimeType: "application/json",
+        text: JSON.stringify([{ id: 1, title }]),
+      },
+    },
+  });
+  const state = stateOf(
+    parentOf(
+      analysisViewCaptureEvidence(
+        environmentManifestCaptureFixture([
+          exchange([
+            "POST",
+            "/api/dashboards/db",
+            0,
+            30_000,
+            "Saltmarsh Depot",
+          ]),
+          exchange(["GET", "/api/search", 10, 5, "Granite Ledger"]),
+          exchange(["GET", "/api/search", 40, 5, "Saltmarsh Depot"]),
+        ]),
+      ),
+    ),
+  );
+  expect(viewOf(state, "get_search")).toEqual({
+    tool: "get_search",
+    shape: "recorded",
+    reason: "fields-differ",
+  });
+});
+
+it("does not list the whole collection when a counter exceeds the number listed", () => {
+  const state = stateOf(
+    captureOf([
+      [
+        "GET",
+        "/api/items",
+        { total: 50, items: [{ id: 1, title: "Ada Finch" }] },
+      ],
+    ]),
+  );
+  expect(viewOf(state, "get_items")).toMatchObject({
+    shape: "list",
+    membership: "recorded",
+    counters: [],
+  });
+});
+
 it("lists the whole collection with its counter only when every recording did", () => {
   const rows: TimedCaptureRow[] = [
     [
@@ -269,6 +350,23 @@ it("holds a written path's non-entity read as a document", () => {
   });
 });
 
+it.each([
+  ["/api/files/123", "PUT", "get_files_by_id"],
+  ["/api/settings", "DELETE", "get_settings"],
+] as const)(
+  "leaves a deferred document path recorded (%s, %s)",
+  (path, method, tool) => {
+    const state = stateOf(
+      captureOf([
+        ["GET", path, { text: "initial document" }],
+        [method, path, null],
+      ]),
+    );
+    expect(state.documents).toEqual([]);
+    expect(viewOf(state, tool)).toMatchObject({ shape: "recorded" });
+  },
+);
+
 it("orders a scenario capture by request order and needs its response bodies", () => {
   const state = stateOf(parentOf(scenarioCaptureEvidence()));
   expect(state.timeline).toBe("record-order");
@@ -321,4 +419,272 @@ it("refuses when extraction would exceed the projection budget", () => {
       message: expect.stringContaining("Environment-state"),
     },
   });
+});
+
+it("ends every type's state at a write whose URL was redacted, and says so", () => {
+  const parent = captureOf([
+    ["GET", "/api/items/1", { id: 1, title: "Granite Ledger" }],
+    ["PUT", "/api/items/1", { id: 1 }],
+    ["GET", "/api/items/1", { id: 1, title: "Saltmarsh Depot" }],
+  ]);
+  const result = structuredClone(parent.normalizedResult) as {
+    records: { reported: { request: { url: string | null } } }[];
+  };
+  // A scenario keeps a redacted URL as null, so the write's target is unknown.
+  result.records[1]!.reported.request.url = null;
+  const state = stateOf({ ...parent, normalizedResult: result });
+  expect(state.types).toMatchObject([{ init_before_ordinal: 1 }]);
+  expect(state.entities).toMatchObject([
+    { fields: { title: "Granite Ledger" }, record_ordinals: [0] },
+  ]);
+  expect(state.limitations).toContain(
+    "1 of the recorded writes had a redacted URL; each ends the initial state of every type, since its target is unknown.",
+  );
+});
+
+it("infers no identity for a list whose recordings held no items", () => {
+  const state = stateOf(captureOf([["GET", "/api/widgets", []]]));
+  expect(state.types).toEqual([]);
+  expect(state.views).toEqual([
+    { tool: "get_widgets", shape: "recorded", reason: "no-identity" },
+  ]);
+});
+
+it("does not call a value volatile when it differs between request lines", () => {
+  const state = stateOf(
+    captureOf([
+      ["GET", "/api/items/1?lang=fr", { id: 1, name: "Bonjour" }],
+      ["GET", "/api/items/1", { id: 1, name: "Hello" }],
+    ]),
+  );
+  expect(state.types).toEqual([]);
+  expect(
+    state.views.map((view) =>
+      view.shape === "recorded" ? [view.tool, view.reason] : view.tool,
+    ),
+  ).toEqual([["get_items_by_id", "fields-differ"]]);
+});
+
+it("orders entities by their earliest sighting, so a complete list keeps all membership", () => {
+  const state = stateOf(
+    captureOf([
+      [
+        "GET",
+        "/api/items",
+        [
+          { id: 1, title: "Granite Ledger" },
+          { id: 2, title: "Blue Heron" },
+        ],
+      ],
+      ["GET", "/api/items/2", { id: 2, title: "Blue Heron" }],
+      ["GET", "/api/items/1", { id: 1, title: "Granite Ledger" }],
+    ]),
+  );
+  expect(state.entities.map((entity) => entity.id)).toEqual(["1", "2"]);
+  expect(state.views).toContainEqual(
+    expect.objectContaining({ tool: "get_items", membership: "all" }),
+  );
+});
+
+it("does not take a later recording that is itself an entity as the list", () => {
+  const state = stateOf(
+    captureOf([
+      ["GET", "/api/items", { items: [{ id: 1, title: "Granite Ledger" }] }],
+      [
+        "GET",
+        "/api/items",
+        { id: 99, items: [{ id: 2, title: "Blue Heron" }] },
+      ],
+    ]),
+  );
+  expect(state.views).toContainEqual(
+    expect.objectContaining({ tool: "get_items", shape: "recorded" }),
+  );
+  expect(state.entities).toEqual([]);
+});
+
+it("leaves a type recorded when two of its tools read different values across a write", () => {
+  const state = stateOf(
+    captureOf([
+      ["GET", "/api/search", [{ id: 1, title: "Granite Ledger" }]],
+      ["POST", "/api/dashboards/db", { id: 9 }],
+      ["GET", "/api/search/1", { id: 1, title: "Saltmarsh Depot" }],
+    ]),
+  );
+  expect(state.types).toEqual([]);
+  expect(state.entities).toEqual([]);
+  expect(
+    state.views.map((view) =>
+      view.shape === "recorded" ? [view.tool, view.reason] : view.tool,
+    ),
+  ).toEqual([
+    ["get_search", "fields-differ"],
+    ["get_search_by_id", "fields-differ"],
+  ]);
+});
+
+it.each(["old", "new"])(
+  "retains field observations through sparse reads across a write (%s)",
+  (title) => {
+    const state = stateOf(
+      captureOf([
+        ["GET", "/api/search", [{ id: 1, title: "old" }]],
+        ["POST", "/api/items", { id: 2 }],
+        ["GET", "/api/search?fields=id", [{ id: 1 }]],
+        ["GET", "/api/search/1", { id: 1, title }],
+      ]),
+    );
+    if (title === "new") {
+      expect(state.types).toEqual([]);
+      expect(state.entities).toEqual([]);
+      expect(
+        state.views.every(
+          (view) =>
+            view.shape === "recorded" && view.reason === "fields-differ",
+        ),
+      ).toBe(true);
+    } else {
+      expect(viewOf(state, "get_search_by_id")).toMatchObject({
+        shape: "item",
+      });
+      expect(state.entities[0]?.fields.title).toBe("old");
+    }
+  },
+);
+
+it("proves the identity field against every item response", () => {
+  const state = stateOf(
+    captureOf([
+      ["GET", "/api/widgets/1", { left: 1, right: 1 }],
+      ["GET", "/api/widgets/2", { right: 2, left: "other" }],
+    ]),
+  );
+  expect(state.types).toMatchObject([
+    { id_field: "right", id_basis: "path-parameter" },
+  ]);
+  expect(state.entities.map((entity) => entity.id)).toEqual(["1", "2"]);
+});
+
+it.each(["totalcount", "itemcount"])(
+  "recognizes a compact compound item total (%s)",
+  (name) => {
+    const state = stateOf(
+      captureOf([["GET", "/api/items", { [name]: 50, items: [{ id: 1 }] }]]),
+    );
+    expect(viewOf(state, "get_items")).toMatchObject({
+      shape: "list",
+      membership: "recorded",
+      counters: [],
+    });
+  },
+);
+
+it.each([
+  [[], [{ id: 1 }]],
+  [[{ id: 1 }], []],
+  [[{ id: 1 }], [{ id: 2 }]],
+] as const)(
+  "keeps changed list membership across another root's write recorded (%j -> %j)",
+  (before, after) => {
+    const state = stateOf(
+      captureOf([
+        ["GET", "/api/search", [...before]],
+        ["POST", "/api/items", { id: 2 }],
+        ["GET", "/api/search", [...after]],
+      ]),
+    );
+    expect(state.types).toEqual([]);
+    expect(state.entities).toEqual([]);
+    expect(viewOf(state, "get_search")).toEqual({
+      tool: "get_search",
+      shape: "recorded",
+      reason: "fields-differ",
+    });
+  },
+);
+
+it("accepts stable membership across another root's write and changes confined before it", () => {
+  const state = stateOf(
+    captureOf([
+      ["GET", "/api/search", []],
+      ["GET", "/api/search", [{ id: 1 }]],
+      ["POST", "/api/items", { id: 2 }],
+      ["GET", "/api/search", [{ id: 1 }]],
+    ]),
+  );
+  expect(viewOf(state, "get_search")).toMatchObject({ shape: "list" });
+  expect(state.entities.map((entity) => entity.id)).toEqual(["1"]);
+});
+
+it("keeps membership checks specific to the full request line", () => {
+  const state = stateOf(
+    captureOf([
+      ["GET", "/api/search?page=1", [{ id: 1 }]],
+      ["POST", "/api/items", { id: 2 }],
+      ["GET", "/api/search?page=2", [{ id: 2 }]],
+    ]),
+  );
+  expect(viewOf(state, "get_search")).toMatchObject({
+    shape: "list",
+    membership: "recorded",
+  });
+});
+
+it("does not treat a first observation as a membership change", () => {
+  const parent = captureOf([
+    ["GET", "/api/search", [{ id: 1 }]],
+    ["POST", "/api/items", { id: 2 }],
+    ["GET", "/api/search", [{ id: 1 }]],
+  ]);
+  const data = structuredClone(parent.normalizedResult) as {
+    records: { reported: { time: number } }[];
+  };
+  data.records[0]!.reported.time = 1500;
+  const state = stateOf({ ...parent, normalizedResult: data });
+  expect(viewOf(state, "get_search")).toMatchObject({ shape: "list" });
+});
+
+it.each([
+  [{ id: 1 }, { id: 1, title: "Created" }],
+  [{ id: 1, title: "Original" }, { id: 1 }],
+])(
+  "keeps fields added or removed across another root's write recorded (%j -> %j)",
+  (before, after) => {
+    const state = stateOf(
+      captureOf([
+        ["GET", "/api/search/1", before],
+        ["POST", "/api/items", { id: 2 }],
+        ["GET", "/api/search/1", after],
+      ]),
+    );
+    expect(state.types).toEqual([]);
+    expect(state.entities).toEqual([]);
+    expect(viewOf(state, "get_search_by_id")).toMatchObject({
+      shape: "recorded",
+      reason: "fields-differ",
+    });
+  },
+);
+
+it("reads only item totals and next-page markers as signs of a partial list", () => {
+  const membership = (body: JsonValue) =>
+    stateOf(captureOf([["GET", "/api/items", body]])).views.map((view) =>
+      view.shape === "list" ? [view.membership, view.counters] : view.shape,
+    );
+  // Page and id numbers are not item totals, so a complete page stays whole.
+  expect(
+    membership({
+      page: 1,
+      total: 2,
+      total_pages: 1,
+      account_id: 77,
+      items: [{ id: 1 }, { id: 2 }],
+    }),
+  ).toEqual([["all", ["total"]]]);
+  expect(membership({ has_more: true, items: [{ id: 1 }, { id: 2 }] })).toEqual(
+    [["recorded", []]],
+  );
+  expect(membership({ total: "50", items: [{ id: 1 }] })).toEqual([
+    ["recorded", []],
+  ]);
 });

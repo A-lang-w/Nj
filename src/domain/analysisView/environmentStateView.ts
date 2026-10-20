@@ -116,7 +116,7 @@ export const environmentStateFields = {
       volatile_fields: z
         .array(z.string())
         .describe(
-          "Fields whose recorded values changed with no related write between; the state keeps the latest.",
+          "Fields whose recorded values changed with no recorded write between; the state keeps the latest.",
         ),
     }),
   ),

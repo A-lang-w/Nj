@@ -16,6 +16,7 @@ import { EnvironmentStateExtraction } from "./EnvironmentStateExtraction.js";
 import type { TemplateRule } from "./environmentManifestRules.js";
 import {
   hasPrototypeKey,
+  isStateWrite,
   type ParsedBody,
   type StateRecordFacts,
   type StateTimeline,
@@ -73,13 +74,18 @@ const timingSchema = z.object({
   startedDateTime: z.string(),
   time: z.number().nonnegative(),
 });
+const redactedWriteSchema = z.object({
+  request: z.object({ method: z.string() }),
+  response: z.object({ status: z.number() }).optional(),
+});
 const contentSchema = z.object({
   response: z.object({ content: z.object({ text: z.string() }) }),
 });
 
 interface RecordEntry {
   readonly facts: StateRecordFacts;
-  readonly origin: string;
+  /** Null for a write whose URL was redacted: its target is unknown, so it bounds every type. */
+  readonly origin: string | null;
   readonly contentType: string;
   readonly timed: boolean;
   readonly record: WebNetworkCaptureRecord;
@@ -125,11 +131,20 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
     try {
       const line = readRecordedRequestLine(record.reported, true, this.scratch);
       if (line === null) return this.overBudget();
-      if (line.kind === "excluded") return ok(undefined);
       const timing = timingSchema.safeParse(record.reported);
       const start = timing.success
         ? Date.parse(timing.data.startedDateTime)
         : Number.NaN;
+      const timed = timing.success && Number.isFinite(start);
+      if (line.kind === "excluded")
+        return line.reason === "url-redacted"
+          ? this.#redactedWrite(
+              record,
+              timing.success && timed
+                ? { start, end: start + timing.data.time }
+                : undefined,
+            )
+          : ok(undefined);
       // The entry keeps the line's strings and a reference to the already admitted record.
       if (
         !this.retain(
@@ -144,7 +159,6 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
         )
       )
         return this.overBudget();
-      const timed = timing.success && Number.isFinite(start);
       this.#entries.set(record.ordinal, {
         facts: {
           ordinal: record.ordinal,
@@ -164,6 +178,36 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
     } finally {
       this.releaseTemporary();
     }
+  }
+
+  /** Keep a successful write whose URL was redacted, with an empty path whose root relates to every type. */
+  #redactedWrite(
+    record: WebNetworkCaptureRecord,
+    timing: { readonly start: number; readonly end: number } | undefined,
+  ): Result<void, AnalysisError> {
+    const parsed = redactedWriteSchema.safeParse(record.reported);
+    if (!parsed.success) return ok(undefined);
+    const status = parsed.data.response?.status ?? 0;
+    const facts: StateRecordFacts = {
+      ordinal: record.ordinal,
+      method: parsed.data.request.method,
+      path: "",
+      query: undefined,
+      status: status > 0 ? status : null,
+      start: timing?.start ?? record.ordinal,
+      end: timing?.end ?? record.ordinal,
+    };
+    if (!isStateWrite(facts)) return ok(undefined);
+    if (!this.retain(ENTRY_BYTES * 8 + textBytes(facts.method.length)))
+      return this.overBudget();
+    this.#entries.set(record.ordinal, {
+      facts,
+      origin: null,
+      contentType: "",
+      timed: timing !== undefined,
+      record,
+    });
+    return ok(undefined);
   }
 
   /** Parse one retained response body as state JSON, charging its decoding and tree as temporary work. */
@@ -192,8 +236,12 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
     const manifest = this.finish();
     if (!manifest.ok) return manifest;
     const entries = [...this.#entries.values()].filter(
-      (entry) => entry.origin === manifest.value.origin,
+      (entry) =>
+        entry.origin === manifest.value.origin || entry.origin === null,
     );
+    const redactedWrites = entries.filter(
+      (entry) => entry.origin === null,
+    ).length;
     const timeline: StateTimeline =
       entries.length > 0 && entries.every((entry) => entry.timed)
         ? "recorded-start-time"
@@ -222,6 +270,11 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
     }).run();
     if (state === null) return this.overBudget();
     const limitations = this.addLimitations([
+      ...(redactedWrites > 0
+        ? [
+            `${String(redactedWrites)} of the recorded writes had a redacted URL; each ends the initial state of every type, since its target is unknown.`,
+          ]
+        : []),
       ...(timeline === "record-order"
         ? [
             "Some records carry no start time, so the state's timeline is record order and overlapping requests are not detected.",
