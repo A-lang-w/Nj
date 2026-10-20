@@ -390,9 +390,15 @@ export class PcapProvider {
     if (retainedCommands.length === 0 && this.snapshots.size === 0)
       return undefined;
     const dependencies = [
-      ...retainedCommands.flatMap((command) =>
-        command.failure === undefined ? [] : [command.failure],
-      ),
+      ...retainedCommands.map((command) => {
+        command.failure ??= new ProviderCleanupError(
+          "pcap",
+          command.resources,
+          { reason: command.reason },
+          { operation },
+        );
+        return command.failure;
+      }),
       ...[...this.snapshotFailures.values()].map(({ snapshot }) => snapshot),
     ];
     const failure = new ProviderCleanupError(
@@ -404,8 +410,7 @@ export class PcapProvider {
       { reason: "Previous packet-capture resources remain owned." },
       { operation },
     );
-    // The command/snapshot may already own live resources while its failure is
-    // still being recorded. An empty dependency list must not clear that owner.
+    // A blocked caller must observe the same owner error that close() resolves.
     if (dependencies.length > 0)
       return failure.bindCleanupDependencies(dependencies);
     return failure;
