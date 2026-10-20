@@ -8,6 +8,7 @@ import type { Result } from "../../domain/result.js";
 import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import type { BinarySessionOpenOptions } from "./BinarySessionOpen.js";
 import type { WorkflowSnapshotRecordInput } from "./BinarySessionRecords.js";
+import type { ResolvedAppBundleResourceRoot } from "../AppBundleExecutable.js";
 
 import type {
   AnalysisExecution,
@@ -71,6 +72,11 @@ export interface BinarySessionPort
     path: string,
     options?: BinarySessionOpenOptions,
   ): Promise<Result<BinaryTarget, AnalysisError>>;
+  /** Open a resource-only app root without selecting or inventing an executable target. */
+  openBundleResources(
+    path: string,
+    options?: Pick<ExecutionOptions, "signal">,
+  ): Promise<Result<ResolvedAppBundleResourceRoot, AnalysisError>>;
   close(
     options?: BinarySessionCloseOptions,
   ): Promise<Result<null, AnalysisError>>;

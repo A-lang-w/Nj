@@ -75,6 +75,39 @@ describe("BinarySession close with snapshot", () => {
   });
 });
 
+it("binds omitted provider subjects to the selected target", async () => {
+  const { session } = openSession();
+  try {
+    const opened = await session.open(process.execPath);
+    expect(opened.ok).toBe(true);
+    const execution = await session.execute("address_name", {});
+    expect(execution.ok).toBe(true);
+    if (!execution.ok || !opened.ok) return;
+    expect(execution.value.subject).toEqual({
+      path: opened.value.path,
+      sha256: opened.value.sha256,
+      format: opened.value.format,
+      ...(opened.value.architecture === undefined
+        ? {}
+        : { architecture: opened.value.architecture }),
+    });
+  } finally {
+    await session.close();
+  }
+});
+
+it("preserves an explicitly unbound provider observation", async () => {
+  const { session } = openSession({ explicitNullSubject: true });
+  try {
+    expect((await session.open(process.execPath)).ok).toBe(true);
+    const execution = await session.execute("address_name", {});
+    expect(execution.ok).toBe(true);
+    if (execution.ok) expect(execution.value.subject).toBeNull();
+  } finally {
+    await session.close();
+  }
+});
+
 describe("BinarySession open liveness", () => {
   it("retires a locally blocked owner even when its native health is idle", async () => {
     const { session, deep } = openSession();
@@ -385,6 +418,7 @@ const openSession = (
     failOperationInitially?: boolean;
     beforeFirstClose?: () => Promise<void>;
     closeFailure?: AnalysisOutputError;
+    explicitNullSubject?: boolean;
   } = {},
 ): {
   session: BinarySession;
@@ -420,6 +454,7 @@ const killableDeepProvider = (options: {
   failOperationInitially?: boolean;
   beforeFirstClose?: () => Promise<void>;
   closeFailure?: AnalysisOutputError;
+  explicitNullSubject?: boolean;
 }): {
   provider: AnalysisProviderCandidate;
   created: KillableChild[];
@@ -471,6 +506,10 @@ const killableDeepProvider = (options: {
                   createAnalysisExecution(
                     operation === "health" ? null : `liveness:${operation}`,
                     deepIdentity,
+                    operation !== "health" &&
+                      options.explicitNullSubject === true
+                      ? { subject: null }
+                      : {},
                   ),
                 ),
               )
