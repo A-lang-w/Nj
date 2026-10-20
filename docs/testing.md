@@ -73,6 +73,10 @@ duplication statistics. Complete reports remain in `.cache/static-checks/`.
 The fast gate uploads them as `static-check-reports`. Full qualification
 uploads duplication diagnostics from the deep job as
 `static-deep-check-reports`, including after that gate fails.
+Task-graph recording runs `check:ci:fast:tasks` and `check:ci:deep:tasks`
+without the artifacts lock, so it can record hashes while `check:pr` or
+`check:test` already holds that lock. The CI jobs still run the locked
+`check:ci:fast` and `check:ci:deep` commands.
 Use `npm run lint:details` or `npm run jscpd:details` for all console diagnostics.
 Both duplicate commands scan production and test code with the same 3% limit;
 the summary commands preserve checker failures and restore reports from cached

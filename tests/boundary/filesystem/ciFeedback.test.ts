@@ -201,8 +201,11 @@ it("starts source feedback before build and requires both groups without waiving
   expect(
     jobs.static?.steps?.find(
       (step) => step.run === "npm run ci:static-context",
-    )?.["continue-on-error"],
-  ).toBe(true);
+    ),
+  ).toMatchObject({
+    "continue-on-error": true,
+    env: { CI_STATIC_CONTEXT_SCRIPT: "check:ci:fast:tasks" },
+  });
   expect(
     jobs["static-deep"]?.steps?.find(
       (step) => step.run === "npm run ci:static-context",
@@ -313,6 +316,12 @@ it("records the actual static task graph with explicit source identity and no am
     recordStaticTaskContext({
       outputDirectory: directory,
       script: "check:ci",
+    }),
+  ).rejects.toThrow("Static context script is not a known check");
+  await expect(
+    recordStaticTaskContext({
+      outputDirectory: directory,
+      script: "check:ci:fast",
     }),
   ).rejects.toThrow("Static context script is not a known check");
   expect(context).not.toHaveProperty("environmentVariables");

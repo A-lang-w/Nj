@@ -168,6 +168,7 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         env:
           CI_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CI_STATIC_CONTEXT_SCRIPT: check:ci:fast:tasks
         run: npm run ci:static-context
       - if: needs.changes.outputs.code == 'true'
         run: npm run check:ci:fast

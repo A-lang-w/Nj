@@ -7,7 +7,7 @@ import { z } from "zod";
 
 const execute = promisify(execFile);
 const STATIC_CONTEXT_SCRIPTS = new Set([
-  "check:ci:fast",
+  "check:ci:fast:tasks",
   "check:ci:deep:tasks",
 ]);
 const contextSchema = z.object({
@@ -34,7 +34,7 @@ export async function recordStaticTaskContext({
   root = process.cwd(),
   npmCli = process.env.npm_execpath,
   outputDirectory = join(root, ".cache/static-checks"),
-  script = process.env.CI_STATIC_CONTEXT_SCRIPT ?? "check:ci:fast",
+  script = process.env.CI_STATIC_CONTEXT_SCRIPT ?? "check:ci:fast:tasks",
 } = {}) {
   if (!STATIC_CONTEXT_SCRIPTS.has(script))
     throw new Error("Static context script is not a known check");
