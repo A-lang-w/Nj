@@ -240,7 +240,11 @@ The shared MCP file alone does not identify an installed surface. Automatic
 selection uses `~/.gemini/antigravity-cli` for the CLI and the separate
 `~/.gemini/config/skills` root for the app/IDE. If only the shared configuration
 exists, select `--client antigravity` explicitly to install the app/IDE skill;
-REA does not infer an app/IDE installation from a CLI-created configuration.
+REA does not infer an app/IDE installation from a CLI-created configuration. Update
+maintenance separately scans existing REA-owned registrations, including
+config-only profiles created with `--skill=false`. This does not make either
+surface automatically detected, enable disabled registrations, or install skills
+that were not already present.
 
 ## Gemini CLI
 

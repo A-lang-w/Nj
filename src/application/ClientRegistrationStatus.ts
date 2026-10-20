@@ -105,6 +105,8 @@ const registrationSchema = z
   .passthrough();
 
 interface ClientRegistrationReadOptions {
+  /** Maintenance may discover existing configuration without claiming installation. */
+  readonly includeRegistrationEvidence?: boolean;
   /** Explicit caller scope may inspect registrations without installation evidence. */
   readonly clientIds?: readonly string[];
   readonly platform?: NodeJS.Platform;
@@ -178,7 +180,10 @@ export const readClientRegistrationInspections = async (
       continue;
     }
     if (options.clientIds?.includes(client.name) !== true) {
-      const presence = await clientEvidencePresent(client);
+      const presence = await clientEvidencePresent(
+        client,
+        options.includeRegistrationEvidence === true,
+      );
       if (!presence.ok) {
         record({
           client: client.name,
@@ -619,13 +624,23 @@ const unavailableStatus = (
 /** Entry presence is independent of whether its target can currently be read. */
 const clientEvidencePresent = async (
   client: SetupClient,
+  includeRegistrationEvidence = false,
 ): Promise<
   Result<boolean, { readonly path: string; readonly detail: string }>
 > => {
   let unavailable:
     | { readonly path: string; readonly detail: string }
     | undefined;
-  for (const path of clientEvidencePaths(client)) {
+  const paths = includeRegistrationEvidence
+    ? [
+        ...new Set([
+          client.configPath,
+          ...(client.configPaths ?? []),
+          ...clientEvidencePaths(client),
+        ]),
+      ]
+    : clientEvidencePaths(client);
+  for (const path of paths) {
     try {
       await lstat(path);
       return ok(true);

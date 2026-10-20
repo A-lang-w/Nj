@@ -11,12 +11,15 @@ const expectCliOnlySelection = async (
   for (const selection of [["--all-detected"], []]) {
     const automatic = await run(["setup", ...selection, "--dry-run", "--json"]);
     expect(automatic.exitCode, automatic.stdout + automatic.stderr).toBe(0);
-    expect(automatic.json).toMatchObject({
-      plannedActions: expect.not.arrayContaining([
-        expect.objectContaining({ id: "install_skill:antigravity" }),
-        expect.objectContaining({ id: "configure_client:antigravity" }),
-      ]),
-    });
+    for (const id of [
+      "install_skill:antigravity",
+      "configure_client:antigravity",
+    ])
+      expect(automatic.json).toMatchObject({
+        plannedActions: expect.not.arrayContaining([
+          expect.objectContaining({ id }),
+        ]),
+      });
     await expect(access(ideSkill)).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -83,12 +86,15 @@ cliTest(
       "--json",
     ]);
     expect(detected.exitCode, detected.stdout + detected.stderr).toBe(0);
-    expect(detected.json).toMatchObject({
-      plannedActions: expect.not.arrayContaining([
-        expect.objectContaining({ id: "configure_client:antigravity_cli" }),
-        expect.objectContaining({ id: "install_skill:antigravity_cli" }),
-      ]),
-    });
+    for (const id of [
+      "configure_client:antigravity_cli",
+      "install_skill:antigravity_cli",
+    ])
+      expect(detected.json).toMatchObject({
+        plannedActions: expect.not.arrayContaining([
+          expect.objectContaining({ id }),
+        ]),
+      });
     await expect(access(cliRoot)).rejects.toMatchObject({ code: "ENOENT" });
     expect(JSON.parse(await readFile(config, "utf8"))).toEqual(unrelated);
 

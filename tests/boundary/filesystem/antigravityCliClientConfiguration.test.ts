@@ -9,6 +9,7 @@ import { npxRegistrationCommand } from "../../../src/application/ClientRegistrat
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
 import { skillDestinations } from "../../../src/application/SetupSkill.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
+import { existingMaintenanceScope } from "../../../src/application/UpdateMaintenance.js";
 import { systemUninstallHost } from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
@@ -268,3 +269,29 @@ describe("Antigravity doctor shared snapshot", () => {
     }
   });
 });
+
+it.each(["disabled", "foreign", "invalid"] as const)(
+  "does not maintain a config-only Antigravity registration that is %s",
+  async (state) => {
+    const home = await createTestTempDirectory(
+      "rea-antigravity-maintenance-scope-",
+    );
+    const client = antigravityCliPath(home, process.platform);
+    if (client === undefined) throw new Error("missing CLI");
+    await mkdir(dirname(client.configPath), { recursive: true });
+    const registration =
+      state === "foreign"
+        ? { command: "node", args: ["foreign-server.js"] }
+        : { command: command[0], args: command.slice(1), disabled: true };
+    await writeFile(
+      client.configPath,
+      state === "invalid"
+        ? "{"
+        : JSON.stringify({ mcpServers: { rea: registration } }),
+    );
+    const scope = await existingMaintenanceScope(home, "/current/rea", {});
+    expect(scope.clients).not.toContain("antigravity");
+    expect(scope.clients).not.toContain("antigravity_cli");
+    expect(scope.skill).toBe(false);
+  },
+);
