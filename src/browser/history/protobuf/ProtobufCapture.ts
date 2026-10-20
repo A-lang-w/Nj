@@ -167,7 +167,9 @@ const bodyMetadata = (
     contentType: headers.get("content-type"),
     encoded: ["content-encoding", "transfer-encoding"].some(
       (name) =>
-        headers.has(name) && headers.get(name)?.toLowerCase() !== "identity",
+        // HTTP OWS is SP/HTAB; require the entire identity token, including EOF.
+        headers.has(name) &&
+        !/^[ \t]*identity[ \t]*(?![\s\S])/i.test(headers.get(name) ?? ""),
     ),
   };
 };
