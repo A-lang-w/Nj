@@ -282,6 +282,7 @@ it("binds provider build reuse to the current run while keeping standalone dispa
     "web_network",
     "web_runtime",
     "web_source_map",
+    "agentenv",
   ];
   const buildTerms = z
     .string()
@@ -345,6 +346,9 @@ it("binds provider build reuse to the current run while keeping standalone dispa
         )?.with,
       ).toEqual({ build_cache_artifact: "${{ inputs.build_cache_artifact }}" });
   }
+});
+
+it("keeps standalone build-cache lookup separate from current-run artifacts", async () => {
   const action = z
     .object({
       runs: z.object({
@@ -511,6 +515,7 @@ it.each([
       ["sqlite", "sqlite-runtime"],
       ["workflows", "static"],
       ["ghidra_bridge", "ghidra_bridge"],
+      ["agentenv", "agentenv"],
     ] as const) {
       // GitHub exposes only direct dependencies in the required job's needs context.
       const needs: Record<
