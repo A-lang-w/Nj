@@ -29,6 +29,7 @@ export function createAgentEvaluationCommands({
         lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
       });
     },
+    run: (work) => resources.run(work),
   };
   const diagnosticBytes = 32_768;
 
@@ -40,7 +41,7 @@ export function createAgentEvaluationCommands({
     limits,
     timeoutMessage,
   ) {
-    return resources.run(async () => {
+    return resourceOwner.run(async () => {
       try {
         // Fresh Darwin helper compilation has its own bounded deadline.
         await prepareOwnedCommand();
