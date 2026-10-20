@@ -478,7 +478,9 @@ session edited, `/api/v1/collections/0RZ576QZQA5KG`, becomes
 `/api/v1/collections/{collection_id}` beside the reads that varied there, and
 so do deeper routes such as `/api/v1/collections/{collection_id}/books`. Its
 parameter is labelled `prefix-variance`, unless a merged tool templated the
-position by its own rule.
+position by its own rule. When parameters of different rules share a position,
+a literal shares the one that observed it, else the earliest one it is spelled
+like.
 
 `sibling-variance`, `sibling-pair-variance` and `prefix-variance` compare routes of at most 32 segments; longer routes keep
 their grouped templates and the manifest says so in a limitation. `body_shape`

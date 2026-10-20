@@ -25,16 +25,20 @@ the parameter another tool already uses at that position, so the write becomes
   other opt-in rules, after the same preceding parts. Parameters in the
   preceding parts compare by the rule that names them, so a position templated
   by `prefix-variance` matches the parameter it shares.
-- The literal qualifies when it is one of the values any such tool observed at
-  that position, when it carries a digit and has the length and character
-  classes (digits, lower case, upper case, each other character) of one of
-  them, or when every observed value has one length of eight or more
-  characters, as generated identifiers often do, and the literal has that
-  length and uses only their character classes, so an identifier that happens
-  to hold no digit still qualifies. An empty literal, a stop word or a
-  `v1`-style version never qualifies.
+- The literal qualifies when it is one of the values such a parameter
+  observed at that position, when it carries a digit and has the length and
+  character classes (digits, lower case, upper case, each other character) of
+  one of them, or when every value the parameter observed, one or more, has one
+  length of eight or more characters, as generated identifiers often do, and
+  the literal has that length and uses only their character classes, so an
+  identifier that happens to hold no digit still qualifies. An empty literal, a
+  stop word or a `v1`-style version never qualifies. Each parameter's spelling
+  is summarised once, so a literal is checked without rescanning its values.
 - Positions templated by the four format rules are never shared, so
   `/api/teams/{numeric}` still absorbs no literal.
+- Values stay with the parameter that observed them: when parameters of
+  different rules share a position, the literal shares the one that observed
+  it, else the earliest one it is spelled like.
 - The parameter takes the name of the parameter it shares (`collection_id`,
   `uid`, a pair's `_namespace` and `_name`) and is labelled `prefix-variance`.
 - Tools whose routes now match, by method and by the rule that names each

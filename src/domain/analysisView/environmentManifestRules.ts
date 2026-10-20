@@ -1,5 +1,9 @@
 import { compositeKey } from "../unicodeCodePointOrder.js";
-import { spelledLikeObserved } from "./environmentManifestSpelling.js";
+import {
+  spelledLikeObserved,
+  spellingSummary,
+  type SpellingSummary,
+} from "./environmentManifestSpelling.js";
 import type { RouteRule } from "./webNetworkRouteTemplates.js";
 
 /** Opt-in template rules applied after the four exact format rules. */
@@ -409,7 +413,8 @@ const nameKey = (part: RoutePart): unknown =>
 const prefixKey = (group: ToolGroup, position: number): string =>
   compositeKey([group.origin, ...group.parts.slice(0, position).map(nameKey)]);
 
-interface SharedPosition {
+/** A parameter a position can share: the earliest tool's parameter of one naming rule, and every value tools named by that rule observed there. */
+interface SharedDonor {
   readonly part: ParamPart & { readonly rule: SharedRule };
   readonly values: Set<string>;
 }
@@ -421,12 +426,17 @@ const isShared = (
   part.rule !== "prefix-variance" &&
   OPT_IN_RULES.has(part.rule);
 
-/** Opt-in parameters at one position by their preceding parts: the earliest tool's parameter and every value any of them observed. */
+/** A position's donors, earliest first, with each one's spelling summarised once for every literal it is compared with. */
+type SharedPosition = readonly (SharedDonor & {
+  readonly spelling: SpellingSummary;
+})[];
+
+/** Opt-in parameters at one position by their preceding parts, one donor per naming rule, so a value stays with the parameter that observed it. */
 const sharedPositions = (
   groups: readonly ToolGroup[],
   position: number,
 ): Map<string, SharedPosition> => {
-  const shared = new Map<string, SharedPosition>();
+  const donors = new Map<string, Map<string, SharedDonor>>();
   const ordered = [...groups].sort(
     (left, right) => (left.positions[0] ?? 0) - (right.positions[0] ?? 0),
   );
@@ -434,23 +444,34 @@ const sharedPositions = (
     const part = group.parts[position];
     if (!isShared(part)) continue;
     const key = prefixKey(group, position);
-    const known = shared.get(key);
+    const byRule = donors.get(key) ?? new Map<string, SharedDonor>();
+    donors.set(key, byRule);
+    const rule = compositeKey([nameKey(part)]);
+    const known = byRule.get(rule);
     if (known === undefined)
-      shared.set(key, { part, values: new Set(part.values) });
+      byRule.set(rule, { part, values: new Set(part.values) });
     else for (const value of part.values) known.values.add(value);
   }
-  return shared;
+  return new Map(
+    [...donors].map(([key, byRule]) => [
+      key,
+      [...byRule.values()].map((donor) => ({
+        ...donor,
+        spelling: spellingSummary(donor.values),
+      })),
+    ]),
+  );
 };
 
-/** One of the observed values or spelled like them; never empty, a stop word or a version. */
-const sharesPosition = (
+/** The donor a literal shares a position with: one that observed it, else one it is spelled like, earliest first; never for an empty literal, a stop word or a version. */
+const donorFor = (
   value: string,
-  observed: ReadonlySet<string>,
-): boolean =>
-  value !== "" &&
-  !STOP_WORDS.has(value) &&
-  !VERSION_TOKEN.test(value) &&
-  (observed.has(value) || spelledLikeObserved(value, observed));
+  donors: SharedPosition,
+): SharedDonor | undefined =>
+  value === "" || STOP_WORDS.has(value) || VERSION_TOKEN.test(value)
+    ? undefined
+    : (donors.find((donor) => donor.values.has(value)) ??
+      donors.find((donor) => spelledLikeObserved(value, donor.spelling)));
 
 /** The bucket's earliest group, with each position's parameter taken from a group that templated it by its own rule when one did. */
 const sharedShape = (bucket: readonly ToolGroup[]): ToolGroup => {
@@ -474,16 +495,15 @@ const mergePrefixVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
     if (shared.size === 0) continue;
     current = current.map((group) => {
       const part = group.parts[position];
-      const known =
+      const donors =
         part?.kind === "literal"
           ? shared.get(prefixKey(group, position))
           : undefined;
-      if (
-        part?.kind !== "literal" ||
-        known === undefined ||
-        !sharesPosition(part.value, known.values)
-      )
-        return group;
+      const known =
+        part?.kind === "literal" && donors !== undefined
+          ? donorFor(part.value, donors)
+          : undefined;
+      if (part?.kind !== "literal" || known === undefined) return group;
       // Copies the shared parameter's pair role; the values are this literal only.
       const templated: ParamPart = {
         ...known.part,

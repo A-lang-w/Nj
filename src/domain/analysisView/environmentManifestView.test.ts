@@ -1374,3 +1374,46 @@ it("templates a digit-free literal only as a member of a fixed-length identifier
     "PATCH /api/workflows/{workflow_id}",
   ]);
 });
+
+it("shares a literal with the parameter that observed it when parameters of different rules share a position", () => {
+  const projected = manifest(
+    ["opaque-token", "sibling-variance", "prefix-variance"],
+    syntheticCapture([
+      ["GET", "https://i.test/api/items/aaaa12bb34cc/details"],
+      ["GET", "https://i.test/api/items/a1"],
+      ["GET", "https://i.test/api/items/b2"],
+      ["PATCH", "https://i.test/api/items/b2", null, "{}"],
+    ]),
+  );
+  // The token parameter is earlier, but only the sibling parameter observed b2.
+  expect(projected.tools.map(line)).toEqual([
+    "GET /api/items/{item_id}",
+    "PATCH /api/items/{item_id}",
+    "GET /api/items/{uid}/details",
+  ]);
+  expect(
+    projected.tools.map((tool) =>
+      tool.params.map((param) => [param.name, param.rule]),
+    ),
+  ).toEqual([
+    [["item_id", "sibling-variance"]],
+    [["item_id", "prefix-variance"]],
+    [["uid", "opaque-token"]],
+  ]);
+});
+
+it("templates a digit-free literal in a fixed-length family that one opt-in parameter observed once", () => {
+  const projected = manifest(
+    ["opaque-token", "prefix-variance"],
+    syntheticCapture([
+      ["GET", "https://w.test/api/workflows/ydr9n16753tzr7zc"],
+      ["PATCH", "https://w.test/api/workflows/fkmwxmxngagvsxfg", null, "{}"],
+      ["DELETE", "https://w.test/api/workflows/notifications", null],
+    ]),
+  );
+  expect(projected.tools.map(line)).toEqual([
+    "DELETE /api/workflows/notifications",
+    "GET /api/workflows/{uid}",
+    "PATCH /api/workflows/{uid}",
+  ]);
+});
