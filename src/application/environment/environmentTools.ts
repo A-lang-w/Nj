@@ -56,9 +56,16 @@ export interface EnvironmentToolDefinition {
   readonly tool: EnvironmentManifestTool;
 }
 
-const IDEMPOTENT_METHODS: ReadonlySet<string> = new Set([
+/** RFC 9110 safe methods: a preflight `OPTIONS` reads, as `GET` does. */
+const SAFE_METHODS: ReadonlySet<string> = new Set([
   "GET",
   "HEAD",
+  "OPTIONS",
+  "TRACE",
+]);
+
+const IDEMPOTENT_METHODS: ReadonlySet<string> = new Set([
+  ...SAFE_METHODS,
   "PUT",
   "DELETE",
 ]);
@@ -67,8 +74,7 @@ const environmentToolAnnotations = ({
   method,
   path_template: path,
 }: EnvironmentManifestTool): EnvironmentToolAnnotations => ({
-  readOnlyHint:
-    method === "GET" || method === "HEAD" || isQueryPost(method, path),
+  readOnlyHint: SAFE_METHODS.has(method) || isQueryPost(method, path),
   ...(method === "DELETE" ? { destructiveHint: true as const } : {}),
   idempotentHint: IDEMPOTENT_METHODS.has(method),
   openWorldHint: false,

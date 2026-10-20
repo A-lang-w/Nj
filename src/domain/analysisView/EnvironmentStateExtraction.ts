@@ -4,10 +4,12 @@ import {
   compositeKey,
 } from "../unicodeCodePointOrder.js";
 import {
-  IDENTITY_NAMES,
+  apiBaseLengths,
   at,
   collectionPathOf,
+  hasPrototypeKey,
   identifies,
+  IDENTITY_NAMES,
   identityCandidates,
   isObject,
   isParam,
@@ -16,13 +18,13 @@ import {
   jsonBytes,
   lastSegmentValue,
   listItems,
-  normalizedPath,
   locateItem,
   locateList,
+  normalizedPath,
   rootOf,
+  same,
   scalarText,
   segmentsOf,
-  apiBaseLengths,
   writeSpanCheck,
   type ExtractedState,
   type JsonObject,
@@ -369,9 +371,13 @@ export class EnvironmentStateExtraction {
         return;
       }
       if (found === true) continue;
-      names = (names ?? found.fields).filter((name) =>
-        found.fields.includes(name),
-      );
+      // The first recording's candidates stand; later ones intersect through a set, so a wide
+      // item costs one pass per recording.
+      if (names === undefined) names = found.fields;
+      else {
+        const matching = new Set(found.fields);
+        names = names.filter((name) => matching.has(name));
+      }
       if (found.several) for (const name of found.fields) shown.add(name);
     }
     // An identity name is only inferred from items that carry it; empty lists prove none.
@@ -541,9 +547,8 @@ export class EnvironmentStateExtraction {
     const documents: StateDocument[] = [];
     for (const { tool, item } of candidates) {
       if (item || this.#views.has(tool.name)) continue;
-      const latest = this.#latestPerLine(
-        this.#initRecordings(tool, tool.path_template),
-      );
+      const recordings = this.#initRecordings(tool, tool.path_template);
+      const latest = this.#latestPerLine(recordings);
       if (latest.length !== 1) {
         const paths = new Set(latest.map((record) => record.path));
         this.#recorded(
@@ -557,6 +562,20 @@ export class EnvironmentStateExtraction {
         continue;
       }
       const record = latest[0]!;
+      // A value that changed across a write, even under another root, is not one initial state.
+      if (
+        recordings.some(
+          (after, index) =>
+            index > 0 &&
+            this.#writeWithin(recordings[index - 1]!, after) &&
+            this.#withBody(recordings[index - 1]!.ordinal, (before) =>
+              this.#withBody(after.ordinal, (body) => !same(before, body)),
+            ),
+        )
+      ) {
+        this.#recorded(tool, "fields-differ");
+        continue;
+      }
       const value = this.#withBody(record.ordinal, (body) => body);
       if (value === undefined) {
         this.#recorded(tool, "body-unusable");

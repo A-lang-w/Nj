@@ -17,7 +17,8 @@ tool, view kind, provider, network activity or write effect.
 - A `GET` list tool (its template does not end in a parameter) that yields no
   item or list plan holds its latest initial value as a `document` when its
   initial reads have one request line, whether or not the capture writes its
-  path. More request lines give `path-varies` when they differ by path (a
+  path, unless its value changed between two of those reads across any
+  recorded write (even under another root), which leaves it `fields-differ`. More request lines give `path-varies` when they differ by path (a
   template with a parameter before its end) and `query-varies` when they share
   one path. With every such read now a document, `path-varies`, `query-varies`
   or `body-unusable`, the unreachable `not-entity` reason leaves the result
@@ -58,10 +59,11 @@ tool, view kind, provider, network activity or write effect.
   One owner in the environment source classifies each retained body as none,
   base64, cut, JSON or text; replay answers from that classification and
   descriptions read only its JSON case.
-- MCP tools carry `readOnlyHint` (true for `GET`, `HEAD` and query `POST`s),
+- MCP tools carry `readOnlyHint` (true for the safe methods `GET`, `HEAD`,
+  `OPTIONS` and `TRACE`, and for query `POST`s),
   `destructiveHint: true` for `DELETE` (unset for other writes, so the MCP
   default applies, and for reads, where clients ignore it), `idempotentHint`
-  (true for `GET`, `HEAD`, `PUT` and `DELETE`) and `openWorldHint: false`. The
+  (true for the safe methods, `PUT` and `DELETE`) and `openWorldHint: false`. The
   tool definitions own the hints and charge them to the catalog reservation;
   the environment card keeps its `name`, `description`, `inputSchema` tool
   shape.
