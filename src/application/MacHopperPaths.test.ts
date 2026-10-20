@@ -44,7 +44,8 @@ describe("macOS Hopper launcher paths", () => {
   it("finds renamed user bundles through the runtime filesystem scan", async () => {
     const temporary = await mkdtemp(join(tmpdir(), "rea-hopper-paths-"));
     const appDirectory = join(temporary, "Applications", "Hopper Preview.app");
-    const macHomeDirectory = temporary.replaceAll("\\\\", "/");
+    const macHomeDirectory = temporary.replaceAll("\\", "/");
+    expect(macHomeDirectory).not.toContain("\\");
     try {
       await mkdir(appDirectory, { recursive: true });
       expect([...macHopperLauncherCandidates(macHomeDirectory)]).toContain(
