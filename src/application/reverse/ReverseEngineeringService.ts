@@ -217,7 +217,8 @@ export class ReverseEngineeringService {
     } else parameters = input;
     return this.#observe(
       "inspect_with_objdump",
-      (signal) => this.#commands.objdump(bound, { signal }),
+      (signal) =>
+        this.#commands.objdump(bound, signal === undefined ? {} : { signal }),
       bound.operation === "architectures" ? undefined : bound.path,
       parameters,
       options.signal,
@@ -737,9 +738,7 @@ export class ReverseEngineeringService {
           provider_executable: command,
           command_arguments: [...args],
         },
-        // The captured command observation is the complete provider result, so
-        // it is recorded once as `normalized_result`. `raw_result` stays null
-        // rather than repeating multi-MiB stdout/stderr a second time.
+        rawResult: result,
         result,
         limitations,
         ...(absolutePath === undefined
