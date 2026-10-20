@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { closeSync, openSync } from "node:fs";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,8 +25,9 @@ import { createInjectedProcess } from "./RizinDebugSessionCoverage.fixtures.js";
 let directory: string | undefined;
 const managers: Array<{ closeAll(): Promise<void> }> = [];
 const inferiorProcesses: ChildProcess[] = [];
+const ownedProviderProcesses: ProviderProcessHandle[] = [];
 
-it("requires retained Rizin inferior identities to be absent before accepting an empty inventory", async () => {
+it("accepts only ended retained identities for an empty Rizin inventory", async () => {
   const identity = { pid: "123", startTime: "100" };
 
   await expect(
@@ -33,7 +35,7 @@ it("requires retained Rizin inferior identities to be absent before accepting an
   ).rejects.toThrow("still active");
   await expect(
     assertRizinEmptyInferiorInventory([identity], async () => "101"),
-  ).rejects.toThrow("changed identity");
+  ).resolves.toBeUndefined();
   await expect(
     assertRizinEmptyInferiorInventory([identity], async () => null),
   ).resolves.toBeUndefined();
@@ -112,6 +114,24 @@ afterEach(async () => {
       .splice(0)
       .map((manager) => manager.closeAll().catch(() => undefined)),
   );
+  for (const provider of ownedProviderProcesses.splice(0)) {
+    if (provider.exitCode !== null || provider.signalCode !== null) continue;
+    const exited = new Promise<void>((resolveExit) =>
+      provider.once("exit", () => resolveExit()),
+    );
+    provider.kill("SIGTERM");
+    await Promise.race([
+      exited,
+      new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 1_000)),
+    ]);
+    if (provider.exitCode === null && provider.signalCode === null) {
+      const killed = new Promise<void>((resolveExit) =>
+        provider.once("exit", () => resolveExit()),
+      );
+      provider.kill("SIGKILL");
+      await killed;
+    }
+  }
   if (directory !== undefined)
     await rm(directory, { recursive: true, force: true });
   directory = undefined;
@@ -125,6 +145,26 @@ const spawnTestInferior = async (): Promise<ChildProcess> => {
       stdio: "ignore",
     },
   );
+  inferiorProcesses.push(inferior);
+  await new Promise<void>((resolveSpawn, rejectSpawn) => {
+    inferior.once("spawn", resolveSpawn);
+    inferior.once("error", rejectSpawn);
+  });
+  return inferior;
+};
+
+const spawnTestInferiorOnTty = async (
+  ttyPath: string,
+): Promise<ChildProcess> => {
+  const ttyFd = openSync(ttyPath, "w");
+  let inferior: ChildProcess;
+  try {
+    inferior = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: [ttyFd, ttyFd, ttyFd],
+    });
+  } finally {
+    closeSync(ttyFd);
+  }
   inferiorProcesses.push(inferior);
   await new Promise<void>((resolveSpawn, rejectSpawn) => {
     inferior.once("spawn", resolveSpawn);
@@ -184,6 +224,55 @@ process.stdin.on("data", (chunk) => {
     }
     else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
     else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
+    else process.stdout.write("\\0");
+  }
+});
+`,
+  );
+  await chmod(provider, 0o700);
+  return provider;
+};
+
+const createLateDetachProvider = async (
+  pid: number,
+  providerDirectory: string,
+  completionPath: string,
+): Promise<string> => {
+  const provider = join(providerDirectory, "fake-rizin-late-detach.mjs");
+  await writeFile(
+    provider,
+    `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+process.stdout.write("\\0");
+let input = "";
+let detached = false;
+let pendingDetach = false;
+let pendingExitPolicyReadback = false;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n"); if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    if (line === "olj") process.stdout.write((detached ? "[]" : JSON.stringify([{ fd: 12, raised: true, uri: "ptrace://${pid}" }])) + "\\0");
+    else if (line === "e dbg.exitkills") pendingExitPolicyReadback = true;
+    else if (line.startsWith("o- ")) {
+      pendingDetach = true;
+      setTimeout(() => { detached = true; }, 700);
+    }
+    else if (line.startsWith("!echo ")) {
+      const marker = line.slice(6);
+      if (pendingExitPolicyReadback) {
+        pendingExitPolicyReadback = false;
+        setTimeout(() => process.stdout.write("false\\0" + marker + "\\0"), 700);
+      } else if (pendingDetach) {
+        pendingDetach = false;
+        setTimeout(() => {
+          writeFileSync(${JSON.stringify(completionPath)}, "done");
+          process.stdout.write(marker + "\\0");
+        }, 700);
+      } else process.stdout.write(marker + "\\0");
+    }
     else process.stdout.write("\\0");
   }
 });
@@ -348,6 +437,72 @@ process.stdin.on("data", (chunk) => {
 );
 
 it.skipIf(process.platform !== "linux")(
+  "reuses a successful Rizin detach that completed after the cleanup timeout",
+  async () => {
+    const tty = await rizinTestInferiorTty();
+    const inferior = await spawnTestInferiorOnTty(tty);
+    const pid = inferior.pid;
+    expect(pid).toBeDefined();
+    if (pid === undefined) return;
+    directory = await mkdtemp(join(tmpdir(), "rea-rizin-late-detach-"));
+    const completionPath = join(directory, "complete");
+    const provider = await createLateDetachProvider(
+      pid,
+      directory,
+      completionPath,
+    );
+    const manager = new RizinDebugSessionManager(
+      { ...process.env, REA_RIZIN_COMMAND: provider },
+      {
+        platform: "linux",
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          ownedProviderProcesses.push(launched.process);
+          return launched;
+        },
+      },
+    );
+    managers.push(manager);
+    const started = await manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: tty,
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    const firstClose = await manager.close(started.value.session_id);
+    expect(firstClose.ok).toBe(false);
+    if (!firstClose.ok)
+      expect(firstClose.error.message).toContain("not verified within 1000 ms");
+
+    const deadline = Date.now() + 3_000;
+    let completed = false;
+    while (Date.now() < deadline) {
+      try {
+        await readFile(completionPath, "utf8");
+        completed = true;
+        break;
+      } catch {
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
+      }
+    }
+    expect(completed).toBe(true);
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
+
+    const retried = await manager.retryCleanupFailures();
+    expect(
+      retried,
+      JSON.stringify(manager.status(started.value.session_id)),
+    ).toEqual({
+      ok: true,
+      value: null,
+    });
+    expect(manager.status(started.value.session_id)).toBeUndefined();
+    expect(inferior.exitCode).toBeNull();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
   "does not forget an active inferior after descriptor failure and an empty retry inventory",
   async () => {
     const inferior = await spawnTestInferior();
@@ -360,7 +515,11 @@ it.skipIf(process.platform !== "linux")(
       { ...process.env, REA_RIZIN_COMMAND: provider },
       {
         platform: "linux",
-        spawnProcess: async (options) => spawnOwnedProviderProcess(options),
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          ownedProviderProcesses.push(launched.process);
+          return launched;
+        },
         stopProcess: async (session) => {
           try {
             const detached = await session.detachInferior?.();

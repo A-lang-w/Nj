@@ -184,6 +184,7 @@ interface RizinDebugSession {
   readonly inferiorTtyDevice: number;
   readonly inferiorTtyInode: number;
   readonly knownInferiorIdentities: Map<string, OwnedInferiorIdentity>;
+  verifiedDetachResult: OwnedDebuggerDetachResult | undefined;
   inferiorInventoryComplete: boolean;
   inferiorStateUnknown: () => boolean;
   verifyInferiorsEndedAfterExit: () => Promise<boolean>;
@@ -428,6 +429,7 @@ export class RizinDebugSessionManager {
       inferiorTtyDevice: ttyDevice,
       inferiorTtyInode: ttyInode,
       knownInferiorIdentities: new Map(),
+      verifiedDetachResult: undefined,
       inferiorInventoryComplete: false,
       inferiorStateUnknown: () => !session.inferiorInventoryComplete,
       verifyInferiorsEndedAfterExit: async () => {
@@ -438,10 +440,17 @@ export class RizinDebugSessionManager {
         if (ended) session.knownInferiorIdentities.clear();
         return ended;
       },
-      detachInferior: () =>
-        session.cleanupCommandTurnHeld
+      detachInferior: () => {
+        if (session.verifiedDetachResult !== undefined)
+          return Promise.resolve(session.verifiedDetachResult);
+        const attempt = session.cleanupCommandTurnHeld
           ? this.#detachInferiorUnlocked(session)
-          : this.#detachInferior(session),
+          : this.#detachInferior(session);
+        return attempt.then((result) => {
+          session.verifiedDetachResult = result;
+          return result;
+        });
+      },
       cleanupCommandTurnHeld: false,
       stopAttempt: undefined,
       cleanupFailures: new Set(),
@@ -1453,13 +1462,13 @@ export const assertRizinEmptyInferiorInventory = async (
   for (const identity of identities) {
     const observed = await readStartTime(identity.pid);
     if (observed === null) continue;
-    if (observed !== identity.startTime)
+    if (observed === identity.startTime)
       throw new Error(
-        `Inferior PID ${identity.pid} changed identity during Rizin session cleanup.`,
+        `Rizin reported no inferior while identified PID ${identity.pid} is still active.`,
       );
-    throw new Error(
-      `Rizin reported no inferior while identified PID ${identity.pid} is still active.`,
-    );
+    // A different start time proves the original process ended and the PID
+    // now belongs to another process. Do not apply the old target's descriptor
+    // requirements to that new identity.
   }
 };
 
