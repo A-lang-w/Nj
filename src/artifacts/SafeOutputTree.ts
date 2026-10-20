@@ -10,6 +10,7 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import type { Readable } from "node:stream";
+import { finished } from "node:stream/promises";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { streamChunkToBuffer } from "./StreamBytes.js";
 
@@ -166,6 +167,16 @@ export class SafeOutputTree {
     expected: { readonly sha256: string; readonly bytes: number },
     signal?: AbortSignal,
   ): Promise<SafeOutputFile> {
+    // Own errors before asynchronous destination setup, without starting reads.
+    // Keep the outcome handled until the consumer or setup-failure path joins it.
+    const sourceCompletion = finished(source, {
+      readable: true,
+      writable: false,
+      cleanup: true,
+    }).then(
+      () => ({ kind: "complete" as const }),
+      (cause: unknown) => ({ kind: "failed" as const, cause }),
+    );
     try {
       this.#assertWritable();
       if (!Number.isSafeInteger(expected.bytes) || expected.bytes < 0)
@@ -226,6 +237,8 @@ export class SafeOutputTree {
         hash.update(chunk);
         await writeAll(ownedHandle.handle, chunk);
       }
+      const completion = await sourceCompletion;
+      if (completion.kind === "failed") throw completion.cause;
       if (bytes !== expected.bytes)
         throw new ArtifactReaderFailure(
           "integrity",
@@ -265,6 +278,7 @@ export class SafeOutputTree {
       } catch {
         // Preserve the write refusal or failure as the caller-visible error.
       }
+      await sourceCompletion;
       throw cause;
     }
   }
