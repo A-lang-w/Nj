@@ -14,6 +14,7 @@ const execute = promisify(execFile);
 
 const writeReceiverReviewSources = async (root: string): Promise<void> => {
   const sources = [
+    "import * as ns from 'node:path';import fs from 'node:fs';const receiver={};Reflect.set(ns,'saved',fs,receiver);receiver.saved.readFileSync=custom;fs.readFileSync('wrong-namespace-stored-value');",
     "let fs=require('fs');const define=Object.defineProperty.bind(null,fs,'readFileSync');fs={};define({value:custom});require('fs').readFileSync('wrong-bound-descriptor-target');",
     "function patch(){Reflect.set=(target,key,value)=>target[key]=value;}patch();const fs=require('fs');Reflect.set(fs,'readFileSync',custom,{});fs.readFileSync('wrong-helper-intrinsic-write');",
     "function Box(){this.owner=module;return 1;}Object.assign=(t,v)=>{v.owner.require=replacement};Object.assign({},new Box());require('fs').readFileSync('wrong-primitive-constructor-return');",

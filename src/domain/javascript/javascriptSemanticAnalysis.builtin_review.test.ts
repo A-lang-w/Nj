@@ -1755,3 +1755,84 @@ it.each([
     ).toEqual([]);
   },
 );
+
+it.each([
+  "Reflect.set(ns,'saved',fs,receiver);",
+  "Reflect.set.call(null,ns,'saved',fs,receiver);",
+  "Reflect.set.apply(null,[ns,'saved',fs,receiver]);",
+  "const set=Reflect.set.bind(null,ns,'saved',fs);set(receiver);",
+  "const set=Reflect.set.bind(null,ns,'saved',fs,receiver);set();",
+  "const alias=receiver;Reflect.set(ns,'saved',fs,alias);",
+])("retains values stored through namespace receivers: %s", (write) => {
+  expect(
+    analyzeJavaScriptSemantics(
+      `import * as ns from 'node:path';import fs from 'node:fs';const receiver={};${write}receiver.saved.readFileSync=custom;fs.readFileSync('wrong');`,
+    ).configurationOperations,
+  ).toEqual([]);
+});
+
+it.each(["ns", "null", "1", "false", "'value'", "void 0"])(
+  "does not expose the value through a rejected namespace receiver: %s",
+  (receiver) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `import * as ns from 'node:path';import fs from 'node:fs';Reflect.set(ns,'saved',fs,${receiver});fs.readFileSync('kept');`,
+      ).configurationOperations.map(({ key }) => key),
+    ).toEqual(["kept"]);
+  },
+);
+
+it.each([true, false])(
+  "uses the captured namespace write value after rebinding: %s",
+  (capturedBuiltin) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `import * as ns from 'node:path';let value=${capturedBuiltin ? "require('fs')" : "{}"};const receiver={};const set=Reflect.set.bind(null,ns,'saved',value);value=${capturedBuiltin ? "{}" : "require('fs')"};set(receiver);receiver.saved.readFileSync=custom;require('fs').readFileSync('kept');`,
+      ).configurationOperations.map(({ key }) => key),
+    ).toEqual(capturedBuiltin ? [] : ["kept"]);
+  },
+);
+
+it("settles copied references without multiplying unrelated descriptor work", () => {
+  const countWork = (depth: number): number => {
+    const source =
+      "import fs from 'node:fs';const copy0={child:fs};" +
+      Array.from(
+        { length: depth },
+        (_, index) => `const {...copy${index + 1}}=copy${index};`,
+      ).join("") +
+      "Reflect.set({x:0},'x',1);".repeat(depth) +
+      `copy${depth}.child.readFileSync=custom;fs.readFileSync('wrong');`;
+    const parsed = parseJavaScriptSource(source);
+    if (parsed === null) throw new Error("Expected parsed copied references");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    let work = 0;
+    for (const _ of index.indexMemberMutationFactsSteps()) work++;
+    const last = parsed.program.body.at(-1);
+    if (!t.isExpressionStatement(last) || !t.isCallExpression(last.expression))
+      throw new Error("Expected final native method call");
+    expect(
+      index.referenceMayHaveChangedAt(last.expression, last.expression.callee),
+    ).toBe(true);
+    return work;
+  };
+  // Count cooperative work, not elapsed time; both runs must propagate the
+  // final shared method write. Four times the input permits five times the work.
+  expect(countWork(256)).toBeLessThanOrEqual(5 * countWork(64));
+});
+
+it("rechecks descriptors after their own effects activate copied references", () => {
+  const copies = Array.from(
+    { length: 16 },
+    (_, index) => `const {...copy${index + 1}}=copy${index};`,
+  ).join("");
+  expect(
+    referenceChanged(
+      `const fs=require('fs');const other={read:known};const copy0={fs};${copies}
+       Reflect.set({x:0},'x',copy16,{});
+       Reflect.set(fs,'statSync',custom,{other});consume(other.read);`,
+    ),
+  ).toBe(true);
+});

@@ -60,6 +60,7 @@ import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
 import {
   javaScriptExpressionValue,
+  isPrimitiveJavaScriptExpression,
   semanticStaticPropertyKey,
   semanticWriteSiteTarget,
   semanticWriteTargets,
@@ -1081,8 +1082,9 @@ export function* collectSemanticMemberMutationsSteps(
               // a distinct ordinary receiver, so retain that receiver's effect.
               if (
                 args[3] !== undefined &&
+                !isPrimitiveJavaScriptExpression(args[3]) &&
                 !targetFacts(javaScriptExpressionValue(args[3])).moduleNamespace
-              )
+              ) {
                 markValue(
                   args[3],
                   path,
@@ -1091,6 +1093,10 @@ export function* collectSemanticMemberMutationsSteps(
                   node,
                   inputReadAt(args[3], node),
                 );
+                // A successful write also exposes the stored value through
+                // the receiver. Keep its original capture clock when bound.
+                markEscaped(args[2]!, node, [], inputReadAt(args[2]!, node));
+              }
               markEscaped(args[1]!, node, [], inputReadAt(args[1]!, node));
               return;
             }
@@ -1219,8 +1225,10 @@ export function* collectSemanticMemberMutationsSteps(
     },
   });
   // Descriptor proof needs every syntactic write, including those after a
-  // function definition. Revisit it with defaults and iterable origins until
-  // their shared mutation facts are stable.
+  // function definition. First settle defaults, copied references and iterable
+  // origins, then revisit descriptors against that completed mutation epoch.
+  // Replaying every descriptor at each individual copied-reference hop would
+  // multiply unrelated calls by the depth of an alias chain.
   while (
     reflectSets.length > 0 ||
     pendingReferences.length > 0 ||
@@ -1231,10 +1239,6 @@ export function* collectSemanticMemberMutationsSteps(
     const escapesBefore = escapedObjectBindings.size;
     const iterablesBefore = iterableReferences.length;
     const iterationBefore: boolean = arrayIterationUnknown;
-    for (const [index, collect] of reflectSets.entries()) {
-      if (index % 64 === 0) yield;
-      collect();
-    }
     for (const [index, reference] of pendingReferences.splice(0).entries()) {
       if (index % 64 === 0) yield;
       const { initializer } = reference;
@@ -1334,6 +1338,19 @@ export function* collectSemanticMemberMutationsSteps(
       deferredMapReceivers.delete(node);
       markReceiver(node.callee, node);
     }
+    if (
+      recordedEffectCount !== effectsBefore ||
+      escapedObjectBindings.size !== escapesBefore ||
+      iterableReferences.length !== iterablesBefore ||
+      arrayIterationUnknown !== iterationBefore
+    )
+      continue;
+    for (const [index, collect] of reflectSets.entries()) {
+      if (index % 64 === 0) yield;
+      collect();
+    }
+    // Descriptor effects may activate more references or revoke another
+    // descriptor proof. Drain those changes before the next descriptor sweep.
     if (
       recordedEffectCount === effectsBefore &&
       escapedObjectBindings.size === escapesBefore &&
