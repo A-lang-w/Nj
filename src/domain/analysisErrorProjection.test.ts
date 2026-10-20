@@ -64,9 +64,13 @@ describe("agent recovery metadata", () => {
       },
       message: expect.stringContaining("server/provider deadline"),
       remediation: {
-        action: expect.stringContaining("MCP client"),
+        action: expect.stringContaining("declared timeout controls"),
       },
     });
+    expect(projected.message).toContain("not a client-side timeout");
+    expect(projected.remediation.action).not.toContain(
+      "raise its tool deadline",
+    );
     expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
   });
 });
