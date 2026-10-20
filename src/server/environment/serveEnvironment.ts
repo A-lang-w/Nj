@@ -249,7 +249,8 @@ const answerBatch = async (
   for (const reply of pending) void reply.catch(() => undefined);
   const encode = replyEncoder();
   const texts: string[] = [];
-  for (const next of pending) {
+  // Taking each settled reply off the queue releases it, and any state it holds, once encoded.
+  for (let next = pending.shift(); next !== undefined; next = pending.shift()) {
     const reply = await next;
     if (reply !== undefined) texts.push(encode(reply));
   }

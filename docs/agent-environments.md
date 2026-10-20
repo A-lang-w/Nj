@@ -535,7 +535,9 @@ calls find entities under the checked line's recorded path. Each document
 names a `document` view once, at its initial document's `path`. The `version`,
 and the `state_evidence_id` and `types` that `data/get` reports, must match
 the served state, so a `data/get` result loads back unchanged. A number without
-an exact native value or a `__proto__` member is refused rather than altered.
+an exact native value, or whose serialized spelling would not be read as exact
+(an integer from 2^53 below 1e21, such as `1e20`, in any spelling), or a
+`__proto__` member is refused rather than altered.
 An invalid document is `-32602` naming the first problem by JSON pointer, as in
 `/rea_state/entities/3/collection` (also in `error.data.path`); a problem
 inside caller data (`fields`, `value`, `types`) is located at that member, so
