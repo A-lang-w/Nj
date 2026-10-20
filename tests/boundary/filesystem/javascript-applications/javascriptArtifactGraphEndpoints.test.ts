@@ -682,6 +682,144 @@ it("preserves partial and exact endpoint identity through graph projection", asy
 
 const completedWriteAndConsumerSources = [
   {
+    file: "r62-21.js",
+    source:
+      'const values=[];values[Symbol.asyncIterator]=()=>{throw 0};(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{for await(const y of values){}}catch{}}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r62-22.js",
+    source:
+      'const values=[];Object.defineProperty(values,Symbol.asyncIterator,{get(){throw 0}});(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{for await(const y of values){}}catch{}}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r62-20.js",
+    source:
+      'Number.prototype[Symbol.iterator]=function*(){throw 0};(async()=>{const[[x],y=await 0]=(function*(){try{yield 1;yield undefined}finally{new Socket("wss://example.test/review-latest")}})()})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r62-0.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){for await(const y of[]){}}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r62-1.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){for await(const y of[1]){}}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r62-2.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{for await(const y of null){}}catch{}}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r62-3.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{for await(const y of{[Symbol.asyncIterator](){throw 0}}){}}catch{}}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r62-4.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{for await(const y of null.x){}}catch{}}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r62-5.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){if(false){for await(const y of[]){}}}})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r62-6.js",
+    source:
+      '(async()=>{for(const x of(function*(){yield 0;new Socket("wss://example.test/review-latest")})()){try{for await(const y of(await 0,null)){}}catch{}}})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r62-7.js",
+    source:
+      '(async()=>{const[[...{0:x=await 0}],next]=(function*(){yield[];new Socket("wss://example.test/review-latest");yield 1})();})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r62-8.js",
+    source:
+      '(async()=>{const[[first,...{0:x=await 0}],next]=(function*(){yield[1];new Socket("wss://example.test/review-latest");yield 1})();})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r62-9.js",
+    source:
+      '(async()=>{const[[first,...{0:x=await 0}],next]=(function*(){yield[1,2];new Socket("wss://example.test/review-latest");yield 1})();})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r62-10.js",
+    source:
+      '(async()=>{const[[...{1:x=await 0}],next]=(function*(){yield[2];new Socket("wss://example.test/review-latest");yield 1})();})();const Socket=globalThis.WebSocket;',
+    present: true,
+  },
+  {
+    file: "r62-11.js",
+    source:
+      '(async()=>{const[[...{length:x=await 0}],next]=(function*(){yield[];new Socket("wss://example.test/review-latest");yield 1})();})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r62-12.js",
+    source:
+      'Array.prototype[0]=7;(async()=>{const[[...{0:x=await 0}],next]=(function*(){yield[];new Socket("wss://example.test/review-latest");yield 1})();})();const Socket=globalThis.WebSocket;',
+    present: false,
+  },
+  {
+    file: "r62-13.js",
+    source:
+      "export{};const options=()=>{};options.__proto__={with:null};const{WebSocket:Socket}=await import('ws',options);new Socket(\"wss://example.test/review-latest\");",
+    present: false,
+  },
+  {
+    file: "r62-14.js",
+    source:
+      "export{};const options=()=>{};const alias=options;alias.__proto__={with:null};const{WebSocket:Socket}=await import('ws',options);new Socket(\"wss://example.test/review-latest\");",
+    present: false,
+  },
+  {
+    file: "r62-15.js",
+    source:
+      "export{};function options(){}options.__proto__={with:null};const{WebSocket:Socket}=await import('ws',options);new Socket(\"wss://example.test/review-latest\");",
+    present: false,
+  },
+  {
+    file: "r62-16.js",
+    source:
+      "export{};const options=()=>{};const{WebSocket:Socket}=await import('ws',options);options.__proto__={with:null};new Socket(\"wss://example.test/review-latest\");",
+    present: true,
+  },
+  {
+    file: "r62-17.js",
+    source:
+      "export{};const options=()=>{};options.extra=null;const{WebSocket:Socket}=await import('ws',options);new Socket(\"wss://example.test/review-latest\");",
+    present: true,
+  },
+  {
+    file: "r62-18.js",
+    source:
+      "export{};function options(){}options.prototype={with:null};const{WebSocket:Socket}=await import('ws',options);new Socket(\"wss://example.test/review-latest\");",
+    present: true,
+  },
+  {
+    file: "r62-19.js",
+    source:
+      "export{};const options=()=>{};options.with=null;const{WebSocket:Socket}=await import('ws',options);new Socket(\"wss://example.test/review-latest\");",
+    present: false,
+  },
+  {
     file: "r61-0.js",
     source:
       'const connect=()=>new Socket("wss://example.test/review-latest");connect``;const Socket=globalThis.WebSocket;',

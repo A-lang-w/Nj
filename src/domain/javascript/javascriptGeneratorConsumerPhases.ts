@@ -26,6 +26,7 @@ import {
 } from "./javascriptSemanticLiteralProjection.js";
 import { semanticAssignmentTargetCompletion } from "./javascriptSemanticExpressionResults.js";
 import type { SemanticExecutionFrame } from "./javascriptSemanticEvaluationOrder.js";
+import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
 
 interface PatternWaitCache {
   readonly effects: JavaScriptSemanticAnalysisState["literalMemberEffects"];
@@ -300,11 +301,37 @@ const patternPropertyValue = (
 ): PatternValue => {
   if (!value.known || value.node === undefined) return { known: false };
   const node = patternValueNode(value.node);
-  if (value.restStartIndex !== undefined && typeof key !== "number")
+  // A fresh rest array has suffix-relative own indices. Object property reads
+  // beyond its length still consult its prototype, unlike iterator exhaustion.
+  const restIndex =
+    value.restStartIndex === undefined ? null : semanticArrayIndex(key);
+  if (value.restStartIndex !== undefined && restIndex === null)
+    return { known: false };
+  if (
+    value.restStartIndex !== undefined &&
+    typeof key === "string" &&
+    restIndex !== null &&
+    t.isArrayExpression(node) &&
+    restIndex >= Math.max(0, node.elements.length - value.restStartIndex) &&
+    ["Array", "Object"].some(
+      (name) =>
+        state.ambientWrites.covers(["global", name, "prototype", key]) ||
+        state.ambientEscapes.covers(["global", name, "prototype", key]) ||
+        state.ambientWrites.covers([
+          "global",
+          name,
+          "prototype",
+          "__proto__",
+        ]) ||
+        state.ambientEscapes.covers(["global", name, "prototype", "__proto__"]),
+    )
+  )
     return { known: false };
   const selected = semanticLiteralProjectionSlot(
     node,
-    typeof key === "number" ? key + (value.restStartIndex ?? 0) : key,
+    value.restStartIndex !== undefined && restIndex !== null
+      ? restIndex + value.restStartIndex
+      : key,
     capture,
     state,
     value.ownedResultEscape === undefined
@@ -520,6 +547,19 @@ const patternCompletedSuspension = (
   if (t.isArrayPattern(pattern)) {
     // GetIterator runs even for an empty pattern, before later slots/defaults.
     if (noniterablePatternValue(value, state, pattern)) return "blocked";
+    if (value.known && value.node !== undefined) {
+      const iterable = patternValueNode(value.node);
+      const literal = readExactJavaScriptLiteral(iterable);
+      // A visible boxed-primitive iterator prevents a definite acquisition
+      // failure, but does not prove that its hooks complete before cleanup.
+      if (
+        (literal.found && typeof literal.value !== "string") ||
+        t.isBigIntLiteral(iterable) ||
+        (t.isUnaryExpression(iterable, { operator: "-" }) &&
+          t.isBigIntLiteral(iterable.argument))
+      )
+        return "unproven";
+    }
     for (const [index, element] of pattern.elements.entries()) {
       if (element === null) continue;
       const completion = patternCompletedSuspension(
@@ -656,6 +696,9 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
     node: t.Node,
   ) => readonly SemanticExecutionFrame[];
 }): boolean => {
+  // Pattern continuation depends on iterator and mutation facts even when its
+  // initial constructor-order query cannot yet establish a candidate endpoint.
+  state.memberMutationFactsPhase ??= "requested";
   const facts = generatorPrefixes(body, ordered, maySuspend, state);
   const count = facts.before.get(unwrapJavaScriptExpression(read).node);
   if (count === undefined || count < 0) return false;

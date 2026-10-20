@@ -1,5 +1,7 @@
 import * as t from "@babel/types";
 import { semanticExpressionCannotThrow } from "./javascriptSemanticExpressionResults.js";
+import { semanticKnownArrayIterationAt } from "./javascriptSemanticReferenceSources.js";
+import { semanticLiteralOwnKeysStable } from "./javascriptSemanticLiteralProjection.js";
 import {
   semanticPatternSuspendsBeforeGeneratorRead,
   semanticPatternSuspendsBeforeTarget,
@@ -1481,7 +1483,26 @@ const webSocketConsumerAlwaysWaits = (
 ): boolean =>
   !syntaxMayCompleteWithoutBoundary(
     body,
-    (node) => {
+    (node, phase) => {
+      if (phase === "iteration" && t.isForOfStatement(node)) {
+        state.memberMutationFactsPhase ??= "requested";
+        if (state.memberMutationFactsPhase !== "indexed") return undefined;
+        if (semanticIteratorAcquisitionAlwaysFails(node.right, state))
+          return "throw";
+        // Unknown iterator hooks can fail synchronously and enter a catch
+        // without waiting. Native array acquisition has no such hook here.
+        const iterable = semanticExactValueIdentity(node.right, state);
+        return iterable !== undefined &&
+          t.isArrayExpression(iterable.node) &&
+          webSocketAliasesInitialized(iterable, state) &&
+          semanticLiteralOwnKeysStable(iterable.node, node, state) &&
+          semanticKnownArrayIterationAt(node.right, state) &&
+          semanticExpressionCannotThrow(node.right, state, (read) =>
+            webSocketExecutionContexts(read, state),
+          )
+          ? "suspension"
+          : undefined;
+      }
       if (
         (t.isAwaitExpression(node) &&
           (exits === "scope"

@@ -353,6 +353,10 @@ interface SyntaxCompletion {
 
 const normalCompletion: SyntaxCompletion = { normal: true, abrupt: [] };
 type CompleteSyntax = (node: t.Node | null | undefined) => SyntaxCompletion;
+type SyntaxBoundary = (
+  node: t.Node,
+  phase?: "iteration",
+) => "suspension" | "throw" | undefined;
 
 /** ToObject happens after receiver evaluation and before entering the with body. */
 const syntaxWithObjectCoercion = (
@@ -468,6 +472,7 @@ const syntaxLabeledCompletion = (
 const syntaxLoopCompletion = (
   node: t.Loop,
   complete: CompleteSyntax,
+  boundary?: SyntaxBoundary,
 ): SyntaxCompletion => {
   // Initializers and the first test execute even if the body never does.
   // Route them through the same completion boundary as the body, so waits and
@@ -483,6 +488,13 @@ const syntaxLoopCompletion = (
     complete,
   );
   if (!prefix.normal) return prefix;
+  // Async iteration awaits its first step even for an empty iterable. The
+  // semantic owner proves acquisition separately, after the iterable prefix.
+  if (t.isForOfStatement(node) && node.await) {
+    const iteration = boundary?.(node, "iteration");
+    if (iteration !== undefined)
+      return { normal: false, abrupt: [...prefix.abrupt, { kind: iteration }] };
+  }
   if (t.isDoWhileStatement(node)) {
     const test = readExactJavaScriptNormalResult(
       node.test,
@@ -684,7 +696,7 @@ const syntaxSwitchCompletion = (
 const syntaxCompletion = (
   node: t.Node | null | undefined,
   depth: number,
-  boundary?: (node: t.Node) => "suspension" | "throw" | undefined,
+  boundary?: SyntaxBoundary,
   orderedOperands?: (node: t.Node) => readonly t.Node[] | undefined,
   evaluationCannotThrow: (
     node: t.Node,
@@ -819,7 +831,7 @@ const syntaxCompletion = (
   }
   if (t.isIfStatement(node)) return syntaxIfCompletion(node, complete);
   if (t.isTryStatement(node)) return syntaxTryCompletion(node, complete);
-  if (t.isLoop(node)) return syntaxLoopCompletion(node, complete);
+  if (t.isLoop(node)) return syntaxLoopCompletion(node, complete, boundary);
   if (t.isSwitchStatement(node)) return syntaxSwitchCompletion(node, complete);
   if (t.isLabeledStatement(node))
     return syntaxLabeledCompletion(node, complete);
@@ -850,7 +862,7 @@ const syntaxCompletion = (
 /** Reuse structured completion ownership while cutting routes at a proven wait. */
 export const syntaxMayCompleteWithoutBoundary = (
   node: t.Node,
-  boundary: (node: t.Node) => "suspension" | "throw" | undefined,
+  boundary: SyntaxBoundary,
   exits: "iteration" | "scope",
   orderedOperands?: (node: t.Node) => readonly t.Node[] | undefined,
   evaluationCannotThrow?: (node: t.Node) => boolean,

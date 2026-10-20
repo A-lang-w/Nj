@@ -26,6 +26,7 @@ import {
 } from "./javascriptSymbolicControlFlow.js";
 import { semanticLiteralOwnKeysStable } from "./javascriptSemanticLiteralProjection.js";
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
+import { semanticPrototypeLookupMayChange } from "./javascriptSemanticPropertyPaths.js";
 
 /** Identity, initialization and prior relevant mutations are separate obligations. */
 const importOptionValue = (
@@ -55,10 +56,8 @@ const importOptionValue = (
           (effect) =>
             effect.node !== capture &&
             semanticEffectTiming(capture, effect.node, state) !== "after" &&
-            (effect.path.length === 0 ||
-              attributes ||
-              effect.path[0] === null ||
-              effect.path[0] === "with"),
+            (attributes ||
+              semanticPrototypeLookupMayChange(effect.path, "with")),
         )
       );
     })

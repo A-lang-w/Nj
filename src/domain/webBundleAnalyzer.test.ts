@@ -4770,6 +4770,121 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "throwing array async iterator cannot prove wait",
+    "const values=[];values[Symbol.asyncIterator]=()=>{throw 0};(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{for await(const y of values){}}catch{}}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "throwing array async iterator getter cannot prove wait",
+    "const values=[];Object.defineProperty(values,Symbol.asyncIterator,{get(){throw 0}});(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{for await(const y of values){}}catch{}}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "throwing numeric iterator cannot prove later default wait",
+    "Number.prototype[Symbol.iterator]=function*(){throw 0};(async()=>{const[[x],y=await 0]=(function*(){try{yield 1;yield undefined}finally{new Socket(URL)}})()})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "empty nested async iteration waits",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){for await(const y of[]){}}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "nonempty nested async iteration waits",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){for await(const y of[1]){}}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "caught null async iterable cannot prove wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{for await(const y of null){}}catch{}}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "throwing async iterator acquisition cannot prove wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{for await(const y of{[Symbol.asyncIterator](){throw 0}}){}}catch{}}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "throwing async iterable expression precedes wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{for await(const y of null.x){}}catch{}}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "unselected async loop cannot prove wait",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){if(false){for await(const y of[]){}}}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "explicit iterable wait survives acquisition failure",
+    "(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{for await(const y of(await 0,null)){}}catch{}}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "empty rest array property default waits",
+    "(async()=>{const[[...{0:x=await 0}],next]=(function*(){yield[];new Socket(URL);yield 1})();})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "suffix rest array property default waits",
+    "(async()=>{const[[first,...{0:x=await 0}],next]=(function*(){yield[1];new Socket(URL);yield 1})();})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "defined suffix property skips default wait",
+    "(async()=>{const[[first,...{0:x=await 0}],next]=(function*(){yield[1,2];new Socket(URL);yield 1})();})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "second rest array property selects suffix position",
+    "(async()=>{const[[...{1:x=await 0}],next]=(function*(){yield[2];new Socket(URL);yield 1})();})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "rest array length skips default wait",
+    "(async()=>{const[[...{length:x=await 0}],next]=(function*(){yield[];new Socket(URL);yield 1})();})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "inherited rest array index skips default wait",
+    "Array.prototype[0]=7;(async()=>{const[[...{0:x=await 0}],next]=(function*(){yield[];new Socket(URL);yield 1})();})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "function options prototype invalidates import",
+    "export{};const options=()=>{};options.__proto__={with:null};const{WebSocket:Socket}=await import('ws',options);new Socket(URL);",
+    false,
+  ],
+  [
+    "aliased function options prototype invalidates import",
+    "export{};const options=()=>{};const alias=options;alias.__proto__={with:null};const{WebSocket:Socket}=await import('ws',options);new Socket(URL);",
+    false,
+  ],
+  [
+    "hoisted function options prototype invalidates import",
+    "export{};function options(){}options.__proto__={with:null};const{WebSocket:Socket}=await import('ws',options);new Socket(URL);",
+    false,
+  ],
+  [
+    "later options prototype write preserves prior capture",
+    "export{};const options=()=>{};const{WebSocket:Socket}=await import('ws',options);options.__proto__={with:null};new Socket(URL);",
+    true,
+  ],
+  [
+    "unrelated function option write preserves capture",
+    "export{};const options=()=>{};options.extra=null;const{WebSocket:Socket}=await import('ws',options);new Socket(URL);",
+    true,
+  ],
+  [
+    "function construction prototype is not option prototype",
+    "export{};function options(){}options.prototype={with:null};const{WebSocket:Socket}=await import('ws',options);new Socket(URL);",
+    true,
+  ],
+  [
+    "own null import attributes stay invalid",
+    "export{};const options=()=>{};options.with=null;const{WebSocket:Socket}=await import('ws',options);new Socket(URL);",
+    false,
+  ],
+  [
     "stored tag before constructor initialization",
     "const connect=()=>new Socket(URL);connect``;const Socket=globalThis.WebSocket;",
     false,
