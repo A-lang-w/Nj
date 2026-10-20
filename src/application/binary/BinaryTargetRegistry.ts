@@ -16,6 +16,7 @@ import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type { ResolvedSessionOpen } from "./BinarySessionOpen.js";
+import { sameSessionTarget } from "./BinarySessionOpen.js";
 import { BinarySession } from "./BinarySession.js";
 import { parseBinaryTarget } from "../BinaryTargetResolver.js";
 import type {
@@ -25,6 +26,10 @@ import type {
 import { binaryTargetSummary } from "./BinaryTargetSummary.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { SessionProviderRouter } from "./SessionProviderRouter.js";
+import {
+  externalMutationRefusal,
+  refusesExternalMutation,
+} from "./ExternalMutationAdmission.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import type {
   AnalysisExecution,
@@ -73,8 +78,17 @@ const DEFAULT_WAIT_MS = 180_000;
 const MAX_WAIT_MS = 290_000;
 
 interface TargetSlot {
-  readonly id: string;
+  /**
+   * The handle that addresses this slot's live target.
+   *
+   * A handle names one live target. A slot that takes on a different target
+   * receives a new handle, so a handle that named the previous target never
+   * selects its replacement.
+   */
+  id: string;
   readonly session: BinarySession;
+  /** The target identity the current handle was minted for. */
+  handleTarget: BinaryTarget | undefined;
 }
 
 type AnalysisJobState = "starting" | "ready" | "failed" | "cancelled";
@@ -90,11 +104,25 @@ interface AnalysisJob {
   readonly controller: AbortController;
   readonly startedAt: number;
   readonly mode: "background" | "auto";
+  /** The shared start permit this job holds, released exactly once. */
+  readonly permit: StartPermit;
   state: AnalysisJobState;
   error: AnalysisError | undefined;
   /** Completion time of a terminal job; undefined while the job is starting. */
   finishedAt: number | undefined;
   promise: Promise<void>;
+}
+
+/**
+ * One shared start permit.
+ *
+ * A permit is taken before a provider start and given back when the start
+ * settles. A start that never settles keeps its permit until the close that
+ * gave up on it releases it, so a later start is never queued behind a start
+ * that will never finish.
+ */
+interface StartPermit {
+  held: boolean;
 }
 
 /**
@@ -114,6 +142,8 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   readonly #jobs = new Map<string, AnalysisJob>();
   /** Slot handles whose provider cleanup failed and still owns its resource. */
   readonly #retainedSlots = new Set<string>();
+  /** Slot handles reserved by an open that has not produced its target yet. */
+  readonly #reservedSlots = new Set<string>();
   readonly #availabilityListeners = new Set<() => void | Promise<void>>();
   readonly #snapshotListeners = new Set<() => void | Promise<void>>();
   #primary: TargetSlot;
@@ -248,16 +278,6 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     path: string,
     options: OpenOptions,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
-    const existing = this.#slotForPath(path);
-    if (existing !== undefined) {
-      const job = this.#blockingJob(existing);
-      if (job !== undefined) return this.#jobOpenResult(job, options);
-      const active = existing.session.activeTarget();
-      if (active !== undefined) {
-        this.#currentId = existing.id;
-        return ok(active);
-      }
-    }
     if (isAborted(options.signal))
       return err(new AnalysisCancelledError("open_binary"));
     const parsed = await parseBinaryTarget(path, {
@@ -276,6 +296,26 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
     if (!parsed.ok) return parsed;
+    const existing = this.#slotForPath(path);
+    const reusable =
+      existing === undefined
+        ? undefined
+        : this.#reusableSlot(existing, parsed.value, options);
+    if (reusable !== undefined) {
+      const job = this.#blockingJob(reusable);
+      if (job !== undefined) {
+        // The reused job answers for its own slot, so that slot becomes the
+        // current one. Otherwise the caller reads the handle and the analysis
+        // state of a different target.
+        this.#currentId = reusable.id;
+        return this.#jobOpenResult(job, options);
+      }
+      const active = reusable.session.activeTarget();
+      if (active !== undefined) {
+        this.#currentId = reusable.id;
+        return ok(active);
+      }
+    }
     const slot = await this.#slotForJob(options);
     if (!slot.ok) return slot;
     // The target is parsed once here; the slot opens the resolved target so
@@ -302,6 +342,9 @@ export class BinaryTargetRegistry implements BinarySessionPort {
         slot.value.session.openResolvedTarget(preview.value, {
           ...options,
           signal,
+          // The job reports the target as started, so the provider it
+          // selected starts inside this job's window, under its start limit.
+          startProvider: true,
         }),
       options,
     );
@@ -311,18 +354,25 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     resolved: Pick<ResolvedSessionOpen, "target" | "route">,
     options: OpenResolvedOptions,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
+    if (isAborted(options.signal))
+      return err(new AnalysisCancelledError("open_binary"));
     const existing = this.#slotForPath(resolved.target.path);
-    if (existing !== undefined) {
-      const job = this.#blockingJob(existing);
-      if (job !== undefined) return this.#jobOpenResult(job, options);
-      const active = existing.session.activeTarget();
+    const reusable =
+      existing === undefined
+        ? undefined
+        : this.#reusableSlot(existing, resolved.target, options);
+    if (reusable !== undefined) {
+      const job = this.#blockingJob(reusable);
+      if (job !== undefined) {
+        this.#currentId = reusable.id;
+        return this.#jobOpenResult(job, options);
+      }
+      const active = reusable.session.activeTarget();
       if (active !== undefined) {
-        this.#currentId = existing.id;
+        this.#currentId = reusable.id;
         return ok(active);
       }
     }
-    if (isAborted(options.signal))
-      return err(new AnalysisCancelledError("open_binary"));
     const slot = await this.#slotForJob(options);
     if (!slot.ok) return slot;
     return this.#startJob(
@@ -330,18 +380,49 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       resolved.target,
       "background",
       (signal) =>
-        slot.value.session.openResolvedTarget(resolved, { ...options, signal }),
+        slot.value.session.openResolvedTarget(resolved, {
+          ...options,
+          signal,
+          // The job reports the target as started, so the provider it
+          // selected starts inside this job's window, under its start limit.
+          startProvider: true,
+        }),
       options,
     );
+  }
+
+  /**
+   * The slot whose live target a background open may reuse.
+   *
+   * A reuse keeps the open target and its analysis only when the request
+   * asks for that same target. A rebuilt binary at the same path is a
+   * different target, an explicit provider switch changes the binding, and a
+   * staged snapshot has to be imported, so none of them reuse the previous
+   * open. A request that replaces the current target only reuses the primary
+   * slot, because the replace path owns every other slot.
+   */
+  #reusableSlot(
+    slot: TargetSlot,
+    requested: BinaryTarget,
+    options: OpenOptions,
+  ): TargetSlot | undefined {
+    if (options.keepOthersOpen !== true && slot !== this.#primary)
+      return undefined;
+    if (options.providerId !== undefined) return undefined;
+    if (options.snapshot !== undefined || options.loadSnapshot !== undefined)
+      return undefined;
+    const live = slot.session.activeTarget() ?? this.#jobs.get(slot.id)?.target;
+    if (live === undefined) return undefined;
+    return sameSessionTarget(live, requested) ? slot : undefined;
   }
 
   async #slotForJob(
     options: OpenOptions,
   ): Promise<Result<TargetSlot, AnalysisError>> {
     if (options.keepOthersOpen === true) {
-      const capacity = this.#checkOpenCapacity("open_binary");
-      if (capacity !== undefined) return capacity;
-      return ok(this.#createSlot());
+      // The slot is reserved before the open waits for anything, so two
+      // overlapping opens cannot both pass the capacity check.
+      return this.#reserveSlot("open_binary");
     }
     const closed = await this.#closeSlotsExcept(this.#primary);
     if (!closed.ok) return closed;
@@ -349,6 +430,67 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     previousJob?.controller.abort();
     this.#jobs.delete(this.#primary.id);
     return ok(this.#primary);
+  }
+
+  /**
+   * Reserve one slot for an open that has not produced its target yet.
+   *
+   * The reservation is counted against the open capacity before the open
+   * waits, so overlapping opens cannot both see room for a target they are
+   * about to create.
+   */
+  #reserveSlot(operation: string): Result<TargetSlot, AnalysisError> {
+    const capacity = this.#checkOpenCapacity(operation);
+    if (capacity !== undefined) return capacity;
+    const slot = this.#createSlot();
+    this.#reservedSlots.add(slot.id);
+    return ok(slot);
+  }
+
+  /** Give back the capacity a reserved slot was holding. */
+  #releaseReservation(slot: TargetSlot): void {
+    this.#reservedSlots.delete(slot.id);
+  }
+
+  /**
+   * Give a replaced target its own handle.
+   *
+   * A handle names one live target. When the slot takes on a different
+   * target, the handle changes with it, so a handle that named the previous
+   * target never selects the replacement.
+   */
+  #syncHandle(slot: TargetSlot, target: BinaryTarget): void {
+    const previous = slot.handleTarget;
+    slot.handleTarget = target;
+    if (previous === undefined) return;
+    if (sameSessionTarget(previous, target)) return;
+    this.#mintHandle(slot);
+  }
+
+  /** Move a slot to a fresh handle without changing the target it holds. */
+  #mintHandle(slot: TargetSlot): void {
+    const previousId = slot.id;
+    const nextId = randomUUID();
+    slot.id = nextId;
+    this.#rekey(this.#slots, previousId, nextId);
+    this.#rekey(this.#jobs, previousId, nextId);
+    if (this.#retainedSlots.delete(previousId)) this.#retainedSlots.add(nextId);
+    if (this.#reservedSlots.delete(previousId)) this.#reservedSlots.add(nextId);
+    if (this.#currentId === previousId) this.#currentId = nextId;
+  }
+
+  /** Rename one map key in place, keeping the order of the other keys. */
+  #rekey<Value>(
+    entries: Map<string, Value>,
+    previousId: string,
+    nextId: string,
+  ): void {
+    if (!entries.has(previousId)) return;
+    const renamed = new Map<string, Value>();
+    for (const [id, value] of entries)
+      renamed.set(id === previousId ? nextId : id, value);
+    entries.clear();
+    for (const [id, value] of renamed) entries.set(id, value);
   }
 
   #startJob(
@@ -370,11 +512,14 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       controller,
       startedAt,
       mode,
+      permit: { held: false },
       state: "starting",
       error: undefined,
       finishedAt: undefined,
       promise: Promise.resolve(),
     };
+    this.#releaseReservation(slot);
+    this.#syncHandle(slot, target);
     this.#slots.set(slot.id, slot);
     this.#jobs.set(slot.id, job);
     this.#currentId = slot.id;
@@ -406,6 +551,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     const permit = await this.#acquireStartPermit(
       "open_binary",
       job.controller.signal,
+      job.permit,
     );
     if (!permit.ok) {
       this.#finishJob(job, "cancelled", permit.error);
@@ -435,7 +581,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
           : new AnalysisCancelledError("open_binary"),
       );
     } finally {
-      this.#releaseStartPermit();
+      this.#releaseStartPermit(job.permit);
     }
   }
 
@@ -529,18 +675,20 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     path: string,
     options: OpenOptions,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
-    const capacity = this.#checkOpenCapacity("open_binary");
-    if (capacity !== undefined) return capacity;
-    return this.#openInSlot(this.#createSlot(), path, options);
+    // The slot is reserved before the open waits, so two overlapping opens
+    // cannot both pass the capacity check.
+    const reserved = this.#reserveSlot("open_binary");
+    if (!reserved.ok) return reserved;
+    return this.#openInSlot(reserved.value, path, options);
   }
 
   async #openResolvedInNewSlot(
     resolved: Pick<ResolvedSessionOpen, "target" | "route">,
     options: OpenResolvedOptions,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
-    const capacity = this.#checkOpenCapacity("open_binary");
-    if (capacity !== undefined) return capacity;
-    return this.#openResolvedInSlot(this.#createSlot(), resolved, options);
+    const reserved = this.#reserveSlot("open_binary");
+    if (!reserved.ok) return reserved;
+    return this.#openResolvedInSlot(reserved.value, resolved, options);
   }
 
   async #openInSlot(
@@ -555,16 +703,21 @@ export class BinaryTargetRegistry implements BinarySessionPort {
         ? ok(job.target)
         : err(job.error ?? new AnalysisCancelledError("open_binary"));
     }
-    const permit = await this.#acquireStartPermit(
+    const permit: StartPermit = { held: false };
+    const acquired = await this.#acquireStartPermit(
       "open_binary",
       options?.signal,
+      permit,
     );
-    if (!permit.ok) return err(permit.error);
+    if (!acquired.ok) {
+      this.#releaseReservation(slot);
+      return err(acquired.error);
+    }
     try {
       const opened = await slot.session.open(path, options);
       return this.#finishOpen(slot, opened);
     } finally {
-      this.#releaseStartPermit();
+      this.#releaseStartPermit(permit);
     }
   }
 
@@ -580,16 +733,21 @@ export class BinaryTargetRegistry implements BinarySessionPort {
         ? ok(job.target)
         : err(job.error ?? new AnalysisCancelledError("open_binary"));
     }
-    const permit = await this.#acquireStartPermit(
+    const permit: StartPermit = { held: false };
+    const acquired = await this.#acquireStartPermit(
       "open_binary",
       options?.signal,
+      permit,
     );
-    if (!permit.ok) return err(permit.error);
+    if (!acquired.ok) {
+      this.#releaseReservation(slot);
+      return err(acquired.error);
+    }
     try {
       const opened = await slot.session.openResolvedTarget(resolved, options);
       return this.#finishOpen(slot, opened);
     } finally {
-      this.#releaseStartPermit();
+      this.#releaseStartPermit(permit);
     }
   }
 
@@ -598,10 +756,13 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     opened: Result<BinaryTarget, AnalysisError>,
   ): Result<BinaryTarget, AnalysisError> {
     if (!opened.ok) {
+      this.#releaseReservation(slot);
       if (slot !== this.#primary && slot.session.activeTarget() === undefined)
         this.#removeSlot(slot, "primary");
       return opened;
     }
+    this.#releaseReservation(slot);
+    this.#syncHandle(slot, opened.value);
     this.#slots.set(slot.id, slot);
     this.#currentId = slot.id;
     return opened;
@@ -705,9 +866,15 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     },
   ): Promise<Result<null, AnalysisError>> {
     const escalate = slot.session.closeWithoutTransition;
-    if (escalate === undefined)
-      return slot.session.closeAsSlot(options, behavior);
-    return escalate.call(slot.session, options, behavior);
+    const closed =
+      escalate === undefined
+        ? await slot.session.closeAsSlot(options, behavior)
+        : await escalate.call(slot.session, options, behavior);
+    // The start that never unwound still holds the shared start permit. The
+    // close gives it back, so a later open is not queued behind a start that
+    // will never finish.
+    this.#releaseJobPermit(slot);
+    return closed;
   }
 
   closeWithSnapshot(
@@ -936,15 +1103,59 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       failure: AnalysisError | undefined,
     ) => Promise<Result<null, AnalysisError>>,
   ): Promise<Result<Result<Value, AnalysisError>, AnalysisError>> {
-    const slot = this.#currentSlot();
-    return slot.session.withAdmittedExternalMutation(
-      path,
-      signal,
-      operation,
-      retirementFailure,
-      operationName,
-      cleanupRecovery,
+    const slots = [...this.#slots.values()].filter(
+      (slot) => this.#targetForSlot(slot) !== undefined,
     );
+    // The explicit-close rule protects every open session. A Ghidra session
+    // holds ephemeral edits that an external mutation would discard, so a
+    // session that is not the current one must not bypass the rule.
+    for (const slot of slots) {
+      if (!refusesExternalMutation(slot.session.providerIdentity().id))
+        continue;
+      return Promise.resolve(err(externalMutationRefusal(operationName)));
+    }
+    const current = this.#currentSlot();
+    return current.session
+      .withAdmittedExternalMutation(
+        path,
+        signal,
+        operation,
+        retirementFailure,
+        operationName,
+        cleanupRecovery,
+      )
+      .then(async (admitted) => {
+        if (!admitted.ok) return admitted;
+        // The command may have changed any open artifact, so every other open
+        // session retires its analysis too. A session that keeps its snapshot
+        // would answer with analysis of bytes that no longer exist.
+        for (const slot of slots) {
+          if (slot === current) continue;
+          const retired = await this.#retireSlotForExternalMutation(slot);
+          if (!retired.ok)
+            return err(retirementFailure(admitted.value, retired.error));
+        }
+        return admitted;
+      });
+  }
+
+  /** Retire one session whose artifact an external mutation may have changed. */
+  async #retireSlotForExternalMutation(
+    slot: TargetSlot,
+  ): Promise<Result<null, AnalysisError>> {
+    slot.session.invalidateSnapshotForExternalMutation();
+    const closed = await this.#closeSlot(
+      slot,
+      {},
+      {
+        clearRecords: false,
+        closeOwnedProviderResources: false,
+      },
+    );
+    if (!closed.ok) return closed;
+    this.#retainedSlots.delete(slot.id);
+    this.#removeSlot(slot, "first-open");
+    return ok(null);
   }
 
   activeTarget(targetId?: string): BinaryTarget | undefined {
@@ -1127,7 +1338,11 @@ export class BinaryTargetRegistry implements BinarySessionPort {
 
   #createSlot(): TargetSlot {
     const session = new BinarySession(this.#router, this.#records);
-    const slot: TargetSlot = { id: randomUUID(), session };
+    const slot: TargetSlot = {
+      id: randomUUID(),
+      session,
+      handleTarget: undefined,
+    };
     session.onAvailabilityChanged(() => this.#emitAvailabilityChanged());
     session.onAnalysisSnapshotChanged(() => this.#emitSnapshotChanged());
     return slot;
@@ -1148,6 +1363,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     this.#jobs.get(slot.id)?.controller.abort();
     this.#jobs.delete(slot.id);
     this.#slots.delete(slot.id);
+    this.#reservedSlots.delete(slot.id);
     if (this.#currentId !== slot.id) return;
     this.#currentId =
       fallback === "primary"
@@ -1162,7 +1378,9 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   }
 
   #openSlotCount(): number {
-    let count = 0;
+    // A reserved slot holds its capacity before it holds a target, so an
+    // overlapping open cannot slip past the limit.
+    let count = this.#reservedSlots.size;
     for (const slot of this.#slots.values())
       if (this.#targetForSlot(slot) !== undefined) count += 1;
     return count;
@@ -1379,16 +1597,19 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   async #acquireStartPermit(
     operation: string,
     signal: AbortSignal | undefined,
+    permit: StartPermit,
   ): Promise<Result<undefined, AnalysisError>> {
     if (signal?.aborted === true)
       return err(new AnalysisCancelledError(operation));
     if (this.#activeStarts < this.#limits.maxConcurrentAnalyses) {
       this.#activeStarts += 1;
+      permit.held = true;
       return ok(undefined);
     }
     return new Promise((resolve) => {
       const grant = (): void => {
         this.#activeStarts += 1;
+        permit.held = true;
         resolve(ok(undefined));
       };
       if (signal === undefined) {
@@ -1409,10 +1630,26 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     });
   }
 
-  #releaseStartPermit(): void {
+  /** Give one start permit back, at most once. */
+  #releaseStartPermit(permit: StartPermit): void {
+    if (!permit.held) return;
+    permit.held = false;
     this.#activeStarts = Math.max(0, this.#activeStarts - 1);
     const next = this.#startQueue.shift();
     next?.();
+  }
+
+  /**
+   * Give back the permit a wedged job still holds.
+   *
+   * A start that ignored its abort never settles, so its permit would never
+   * be released. The close that gave up on the start releases it, so a later
+   * open is not queued behind a start that will never finish.
+   */
+  #releaseJobPermit(slot: TargetSlot): void {
+    const job = this.#jobs.get(slot.id);
+    if (job === undefined) return;
+    this.#releaseStartPermit(job.permit);
   }
 
   #emitAvailabilityChanged(): void {

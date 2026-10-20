@@ -14,6 +14,7 @@ import type {
   AnalysisProfileResolution,
   AnalysisProfileResolutionOptions,
   AnalysisProvider,
+  ProviderIdentity,
 } from "../../src/application/AnalysisProvider.js";
 import { BinarySession } from "../../src/application/binary/BinarySession.js";
 import { BinaryTargetRegistry } from "../../src/application/binary/BinaryTargetRegistry.js";
@@ -36,6 +37,8 @@ type TestBinarySessionOptions = {
     target: BinaryTarget,
     options?: AnalysisProfileResolutionOptions,
   ) => Promise<Result<AnalysisProfileResolution, AnalysisError>>;
+  /** The provider identity the fixture route reports. */
+  readonly identityId?: string;
 };
 
 type FixtureClientFactory = AnalysisProvider["createClient"];
@@ -43,6 +46,12 @@ type FixtureClientFactory = AnalysisProvider["createClient"];
 const FIXTURE_IDENTITY = {
   id: "fixture",
   name: "Fixture analysis provider",
+  version: "1",
+} as const;
+
+const FIXTURE_AUXILIARY_IDENTITY = {
+  id: "fixture-auxiliary",
+  name: "Fixture auxiliary provider",
   version: "1",
 } as const;
 
@@ -54,36 +63,77 @@ const FIXTURE_OPERATIONS: readonly Exclude<AnalysisOperation, "health">[] = [
   ...ARTIFACT_TOOL_CONTRACTS,
 ].map(({ name }) => name);
 
+/** The identity a fixture provider reports. */
+const fixtureIdentity = (identityId: string | undefined): ProviderIdentity =>
+  identityId === undefined
+    ? FIXTURE_IDENTITY
+    : {
+        id: identityId,
+        name: `${identityId} analysis provider`,
+        version: "1",
+      };
+
+/** Declare the fixture provider and the operations its client answers. */
+const declaredFixtureProvider = (
+  provider: AnalysisProvider | FixtureClientFactory,
+  identity: ProviderIdentity,
+): AnalysisProvider =>
+  typeof provider === "function"
+    ? {
+        identity: () => identity,
+        capabilities: () =>
+          FIXTURE_OPERATIONS.map((operation) => ({
+            provider: identity,
+            operation,
+            available: true,
+            reason: null,
+            cachePolicy: "live",
+            effects: {
+              mutatesArtifact: false,
+              launchesProcess: false,
+              mayShowUi: false,
+              mayAccessNetwork: false,
+              mayWriteFilesystem: false,
+              changesPermissions: false,
+              requiresRoot: false,
+            },
+            limitations: [],
+          })),
+        createClient: provider,
+      }
+    : provider;
+
+/** Bind the declared provider in the registry that selects it. */
+const fixtureCandidate = (
+  declared: AnalysisProvider,
+  resolve: NonNullable<AnalysisProviderCandidate["resolveAnalysisProfile"]>,
+): AnalysisProviderCandidate => ({
+  identity: () => declared.identity(),
+  capabilities: () => declared.capabilities(),
+  createClient: (target, profile, context) =>
+    declared.createClient(target, profile, context),
+  resolveAnalysisProfile: resolve,
+  inspectAvailability: () => ({
+    status: "available",
+    code: null,
+    reason: null,
+    diagnostics: {},
+  }),
+  inspectTargetSupport: () => ({
+    status: "supported",
+    code: null,
+    reason: null,
+    diagnostics: {},
+  }),
+});
+
 /** Declare fixture client operations before composing the production registry route. */
 export const createTestProviderRouter = (
   provider: AnalysisProvider | FixtureClientFactory,
   options: TestBinarySessionOptions = {},
 ): SessionProviderRouter => {
-  const declared: AnalysisProvider =
-    typeof provider === "function"
-      ? {
-          identity: () => FIXTURE_IDENTITY,
-          capabilities: () =>
-            FIXTURE_OPERATIONS.map((operation) => ({
-              provider: FIXTURE_IDENTITY,
-              operation,
-              available: true,
-              reason: null,
-              cachePolicy: "live",
-              effects: {
-                mutatesArtifact: false,
-                launchesProcess: false,
-                mayShowUi: false,
-                mayAccessNetwork: false,
-                mayWriteFilesystem: false,
-                changesPermissions: false,
-                requiresRoot: false,
-              },
-              limitations: [],
-            })),
-          createClient: provider,
-        }
-      : provider;
+  const identity = fixtureIdentity(options.identityId);
+  const declared = declaredFixtureProvider(provider, identity);
   const resolve =
     options.resolveAnalysisProfile ??
     declared.resolveAnalysisProfile?.bind(declared);
@@ -91,28 +141,49 @@ export const createTestProviderRouter = (
     return SessionProviderRouter.selectable(new AnalysisProviderRegistry([]), [
       declared,
     ]);
-  const candidate: AnalysisProviderCandidate = {
-    identity: () => declared.identity(),
-    capabilities: () => declared.capabilities(),
-    createClient: (target, profile, context) =>
-      declared.createClient(target, profile, context),
-    resolveAnalysisProfile: resolve,
-    inspectAvailability: () => ({
-      status: "available",
-      code: null,
-      reason: null,
-      diagnostics: {},
-    }),
-    inspectTargetSupport: () => ({
-      status: "supported",
-      code: null,
-      reason: null,
-      diagnostics: {},
-    }),
+  return SessionProviderRouter.selectable(
+    new AnalysisProviderRegistry([fixtureCandidate(declared, resolve)]),
+    [],
+  );
+};
+
+/**
+ * Compose a deep provider with an auxiliary one, like the production route.
+ *
+ * The production route is a composite, so its health probe answers without
+ * touching a child. A fixture that reproduces that shape is the only way to
+ * observe what the production open really starts.
+ */
+export const createTestComposedProviderRouter = (
+  provider: AnalysisProvider | FixtureClientFactory,
+  options: TestBinarySessionOptions = {},
+  auxiliary: FixtureClientFactory = () => ({
+    execute: () => Promise.resolve(observed(null)),
+    close: () => Promise.resolve(resultOk(null)),
+  }),
+): SessionProviderRouter => {
+  const identity = fixtureIdentity(options.identityId);
+  const declared = declaredFixtureProvider(provider, identity);
+  const resolve =
+    options.resolveAnalysisProfile ??
+    declared.resolveAnalysisProfile?.bind(declared) ??
+    (() =>
+      Promise.resolve(
+        resultOk({
+          profile: createAnalysisProfile(
+            { ...identity, version: identity.version ?? "1" },
+            { fixture: true },
+          ),
+        }),
+      ));
+  const auxiliaryProvider: AnalysisProvider = {
+    identity: () => FIXTURE_AUXILIARY_IDENTITY,
+    capabilities: () => [],
+    createClient: auxiliary,
   };
   return SessionProviderRouter.selectable(
-    new AnalysisProviderRegistry([candidate]),
-    [],
+    new AnalysisProviderRegistry([fixtureCandidate(declared, resolve)]),
+    [auxiliaryProvider],
   );
 };
 
@@ -131,6 +202,22 @@ export const createTestBinaryTargetRegistry = (
 ): BinaryTargetRegistry =>
   new BinaryTargetRegistry(
     createTestProviderRouter(provider, options),
+    new InvestigationRecords(),
+    limits,
+  );
+
+/** Create a multi-target registry whose route composes two providers. */
+export const createTestComposedBinaryTargetRegistry = (
+  provider: AnalysisProvider | FixtureClientFactory,
+  options: TestBinarySessionOptions = {},
+  limits: Partial<BinaryTargetLimits> = {},
+  auxiliary: FixtureClientFactory = () => ({
+    execute: () => Promise.resolve(observed(null)),
+    close: () => Promise.resolve(resultOk(null)),
+  }),
+): BinaryTargetRegistry =>
+  new BinaryTargetRegistry(
+    createTestComposedProviderRouter(provider, options, auxiliary),
     new InvestigationRecords(),
     limits,
   );

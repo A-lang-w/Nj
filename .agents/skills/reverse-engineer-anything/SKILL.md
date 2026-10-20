@@ -289,9 +289,11 @@ One server can hold several open targets. `open_binary` with
 and returns its opaque `target_id`. Pass that `target_id` to a later
 target-bound call to address it; without one, a call acts on the current
 target. An unknown or closed `target_id` returns `target_not_open` and never
-falls back to another target. `REA_MAX_OPEN_TARGETS` bounds how many targets
-stay open and `REA_MAX_CONCURRENT_ANALYSES` bounds how many starts overlap;
-a start beyond the second limit is queued, not refused.
+falls back to another target. A handle names one live target: replacing a
+target returns a new handle, and the handle of the replaced target stops
+addressing it. `REA_MAX_OPEN_TARGETS` bounds how many targets stay open and
+`REA_MAX_CONCURRENT_ANALYSES` bounds how many starts overlap; a start beyond
+the second limit is queued, not refused.
 
 `close_binary` cancels a running job. A job that is still starting is aborted;
 the provider is released once the close gives up waiting for the start to
