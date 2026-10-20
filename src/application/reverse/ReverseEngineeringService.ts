@@ -330,7 +330,9 @@ export class ReverseEngineeringService {
     onDispatch?: () => void,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (signal?.aborted)
-      return Promise.resolve(err(new AnalysisCancelledError(operation)));
+      return Promise.resolve(
+        err(new AnalysisCancelledError(operation, { cause: signal.reason })),
+      );
     if (this.#closing)
       return Promise.resolve(
         err(
@@ -396,7 +398,10 @@ export class ReverseEngineeringService {
     signal?: AbortSignal,
     onDispatch?: () => void,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (signal?.aborted) return err(new AnalysisCancelledError(operation));
+    if (signal?.aborted)
+      return err(
+        new AnalysisCancelledError(operation, { cause: signal.reason }),
+      );
     const cleanup = await this.retryCleanup(operation);
     if (!cleanup.ok) return cleanup;
     let profile: ReverseEngineeringProviderCommand;
@@ -434,8 +439,12 @@ export class ReverseEngineeringService {
     } catch (cause) {
       if (cause instanceof AnalysisError) return err(cause);
       const code = commandFailureCode(cause);
-      if (signal?.aborted)
-        return err(new AnalysisCancelledError(operation, { cause }));
+      if (preflightCancelled(signal, cause, code))
+        return err(
+          new AnalysisCancelledError(operation, {
+            cause: callerCancellationCause(signal, cause),
+          }),
+        );
       if (code === "EACCES" || code === "EPERM") {
         const deniedPath = absolutePath === undefined ? command : absolutePath;
         return err(
@@ -587,9 +596,9 @@ export class ReverseEngineeringService {
           code === "ENOENT" ||
           code === "ERR_PROVIDER_LAUNCH")
       ) {
-        if (signal?.aborted || code === "ABORT_ERR")
+        if (commandCancelled(signal, cause, code))
           earlyFailure = new AnalysisCancelledError(operation, {
-            cause,
+            cause: callerCancellationCause(signal, cause),
             ...ownedCleanupOptions(cause),
           });
         else if (code === "ETIMEDOUT")
@@ -646,9 +655,9 @@ export class ReverseEngineeringService {
               : null,
           signal: capture.signal,
         };
-        if (signal?.aborted || code === "ABORT_ERR")
+        if (commandCancelled(signal, cause, code))
           failure = new AnalysisCancelledError(operation, {
-            cause,
+            cause: callerCancellationCause(signal, cause),
             capturedOutput,
             ...ownedCleanupOptions(cause),
           });
@@ -749,6 +758,7 @@ export class ReverseEngineeringService {
     }
     if (signal?.aborted && failure === undefined) {
       failure = new AnalysisCancelledError(operation, {
+        cause: signal.reason,
         capturedOutput: {
           stdout,
           stderr,
@@ -1239,6 +1249,48 @@ const digestFile = async (
   if (!outcome.ok) throw outcome.error;
   return outcome.value;
 };
+
+const PHYSICAL_FAILURE_CODES = new Set([
+  "EACCES",
+  "EPERM",
+  "ETIMEDOUT",
+  "ENOENT",
+  "ENOTDIR",
+  "EINVAL",
+  "ELOOP",
+  "ENAMETOOLONG",
+  "E2BIG",
+  "EBUSY",
+  "ERR_PROVIDER_LAUNCH",
+]);
+
+/**
+ * A late abort does not replace a recognized physical failure. Other rejections
+ * observed while the caller signal is aborted remain cancellation. A bare
+ * `ABORT_ERR` is not cancellation until the command boundary, which already
+ * used that code for an aborted provider process.
+ */
+const preflightCancelled = (
+  signal: AbortSignal | undefined,
+  cause: unknown,
+  code: string | number | undefined,
+): boolean => {
+  if (cause instanceof AnalysisCancelledError) return true;
+  if (signal?.aborted !== true) return false;
+  if (cause === signal.reason) return true;
+  return typeof code !== "string" || !PHYSICAL_FAILURE_CODES.has(code);
+};
+
+const commandCancelled = (
+  signal: AbortSignal | undefined,
+  cause: unknown,
+  code: string | number | undefined,
+): boolean => code === "ABORT_ERR" || preflightCancelled(signal, cause, code);
+
+const callerCancellationCause = (
+  signal: AbortSignal | undefined,
+  cause: unknown,
+): unknown => (signal?.aborted === true ? signal.reason : cause);
 
 const commandFailureCode = (cause: unknown): string | number | undefined => {
   if (typeof cause !== "object" || cause === null) return undefined;
