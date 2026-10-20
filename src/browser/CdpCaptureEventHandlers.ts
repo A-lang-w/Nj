@@ -451,10 +451,14 @@ export const handleConsoleAPICalled = (
     );
     return;
   }
+  const timestamp = numberValue(params.timestamp);
+  if (timestamp === undefined) {
+    state.completeness.exclude("console_events", "invalid_protocol_value");
+  }
   const arguments_ = recordsValue(params.args);
   state.console.push({
     type: cdpStringValue(params.type) ?? "unknown",
-    timestamp: numberValue(params.timestamp) ?? 0,
+    timestamp: timestamp ?? null,
     argument_types: arguments_.map(
       (argument) => cdpStringValue(argument.type) ?? "unknown",
     ),

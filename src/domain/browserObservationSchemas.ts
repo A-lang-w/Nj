@@ -161,7 +161,7 @@ const browserNetworkRequestSchema = z.object({
 });
 const browserConsoleEventSchema = z.object({
   type: z.string(),
-  timestamp: z.number(),
+  timestamp: z.number().nullable(),
   argument_types: z.array(z.string()),
   url: z.string().nullable(),
   line: z.number().int().min(0).nullable(),

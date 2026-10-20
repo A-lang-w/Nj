@@ -90,6 +90,7 @@ describe("CdpBrowserProvider: passive evidence redaction", () => {
       },
     ]);
     expect(result.value.console.events[0]?.argument_types).toEqual(["string"]);
+    expect(result.value.console.events[0]?.timestamp).toBe(123);
     expect(result.value.workers).toHaveLength(1);
     expect(result.value.workers[0]).toMatchObject({
       opener_target_id: "allowed-page",
