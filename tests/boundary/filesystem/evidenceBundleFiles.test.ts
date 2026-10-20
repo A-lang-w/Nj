@@ -226,6 +226,65 @@ describe("evidence bundle export cancellation", () => {
   });
 });
 
+it.each([1, 2])(
+  "reports only unresolved cancellation cleanup after %s failed close attempts",
+  async (failedAttempts) => {
+    const root = await createTestTempDirectory("rea-delivery-cleanup-retry-");
+    const parent = analysisViewLayoutEvidence();
+    const controller = new AbortController();
+    const reason = new Error("cancel before bundle publication");
+    const cleanupCause = new Error("fixture staged-output close failure");
+    const ready = OwnedStagedOutput.prototype.assertReadyForPublication;
+    const close = OwnedStagedOutput.prototype.close;
+    let owner: OwnedStagedOutput | undefined;
+    let attempts = 0;
+    const publication = vi
+      .spyOn(OwnedStagedOutput.prototype, "assertReadyForPublication")
+      .mockImplementationOnce(async function (this: OwnedStagedOutput, staged) {
+        await ready.call(this, staged);
+        controller.abort(reason);
+      });
+    const cleanup = vi
+      .spyOn(OwnedStagedOutput.prototype, "close")
+      .mockImplementation(async function (this: OwnedStagedOutput) {
+        owner = this;
+        if (++attempts <= failedAttempts) throw cleanupCause;
+        await close.call(this);
+      });
+    try {
+      const result = await deliverAnalysisEvidence(
+        parent,
+        join(root, "bundle.json"),
+        "summary",
+        controller.signal,
+      );
+      if (result.ok) throw new Error("Cancelled delivery reported success");
+      expect(attempts).toBe(2);
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.partialObservation).toBe(parent);
+      expect(result.error.cause).toMatchObject({
+        cleanupCause,
+        cause: { cause: reason },
+      });
+      const incomplete = failedAttempts === 2;
+      expect(result.error.cleanupIncomplete).toBe(incomplete);
+      expect(result.error.cleanupResources).toEqual(
+        incomplete ? [owner?.directory] : [],
+      );
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: incomplete ? "cleanup_incomplete" : "cancelled",
+      });
+      expect((await readdir(root)).map((entry) => join(root, entry))).toEqual(
+        incomplete ? [owner?.directory] : [],
+      );
+    } finally {
+      publication.mockRestore();
+      cleanup.mockRestore();
+      await owner?.close();
+    }
+  },
+);
+
 const writeBundle = (
   value: ReturnType<typeof bundle>,
   path: string,

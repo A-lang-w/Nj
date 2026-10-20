@@ -89,29 +89,29 @@ export const registerAnalysisViewCommands = (
         ),
     }),
     run: ({ args, options }) =>
-      logCliCommand(logger, CLI_COMMANDS.inspectAnalysisView, async () => {
-        const input = await parseCliJsonInput(
-          args.inputJson,
-          CLI_COMMANDS.inspectAnalysisView,
-        );
-        if (!input.ok) return input.error;
-        const parsed = inspectAnalysisViewInputSchema.safeParse(input.value);
-        if (!parsed.success)
-          return {
-            error: "Application workflow failed",
-            ...projectAnalysisError(
-              analysisInputErrorFromIssues(
-                CLI_COMMANDS.inspectAnalysisView,
-                parsed.error.issues,
-                input.value,
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.inspectAnalysisView, async () => {
+          const input = await parseCliJsonInput(
+            args.inputJson,
+            CLI_COMMANDS.inspectAnalysisView,
+          );
+          if (!input.ok) return input.error;
+          const parsed = inspectAnalysisViewInputSchema.safeParse(input.value);
+          if (!parsed.success)
+            return {
+              error: "Application workflow failed",
+              ...projectAnalysisError(
+                analysisInputErrorFromIssues(
+                  CLI_COMMANDS.inspectAnalysisView,
+                  parsed.error.issues,
+                  input.value,
+                ),
               ),
-            ),
-          };
-        if (options.evidenceBundle !== undefined) {
-          const resources = new ArtifactResourceScope();
-          const path = options.evidenceBundle;
-          return withCommandCancellation((signal) =>
-            finishAnalysisCommand(
+            };
+          if (options.evidenceBundle !== undefined) {
+            const resources = new ArtifactResourceScope();
+            const path = options.evidenceBundle;
+            return finishAnalysisCommand(
               () =>
                 inspectAnalysisViewFromBundle(
                   parsed.data,
@@ -123,16 +123,16 @@ export const registerAnalysisViewCommands = (
               ANALYSIS_VIEW_PROVIDER.id,
               "inspect_analysis_view",
               signal,
-            ),
-          );
-        }
-        const result = inspectAnalysisViewValidated(parsed.data);
-        return result.ok
-          ? jsonValueSchema.parse(result.value)
-          : {
-              error: "Application workflow failed",
-              ...projectAnalysisError(result.error),
-            };
-      }),
+            );
+          }
+          const result = inspectAnalysisViewValidated(parsed.data);
+          return result.ok
+            ? jsonValueSchema.parse(result.value)
+            : {
+                error: "Application workflow failed",
+                ...projectAnalysisError(result.error),
+              };
+        }),
+      ),
   });
 };
