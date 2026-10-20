@@ -276,11 +276,12 @@ cover a replacement row that is not linked to the prior descendant set: a
 matching token on its own group is signaled, a foreign or absent token is not,
 an unreadable live token stays unresolved, a replacement that appears only in
 the confirmation table is still token-checked, a group discovered during
-revalidation is signaled before cleanup succeeds, an unbounded confirmation
+revalidation is signaled before cleanup succeeds, a member that changes groups
+during confirmation is signaled in its new group, an unbounded confirmation
 chain stays unresolved, lineage reads a row again when its launcher-tree
 membership changes, a cached lineage token is read again on the next refresh,
 a group that reappears after it was processed is revalidated once, a further
-reappearance stays unresolved, and lineage does not publish a
+reappearance stays unresolved, lineage publishes one row per PID, and lineage does not publish a
 verified empty descendant list while that row remains unexamined. A readable token with unavailable
 identity stays unresolved. Native UID facts, rather than an earlier process-table
 row, determine whether a token denial concerns another user. Darwin tests compile

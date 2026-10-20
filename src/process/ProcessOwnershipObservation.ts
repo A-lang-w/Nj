@@ -315,7 +315,9 @@ export const observeOwnedProcessLineage = async (
       processGroupId: launcher.processGroupId,
       descendants: [
         ...verifiedDescendants.filter(
-          ({ pid }) => !suppressedRefreshPids.has(pid),
+          ({ pid }) =>
+            !suppressedRefreshPids.has(pid) &&
+            !refreshDescendants.some((descendant) => descendant.pid === pid),
         ),
         ...refreshDescendants,
       ]

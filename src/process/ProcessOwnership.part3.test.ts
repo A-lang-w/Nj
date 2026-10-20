@@ -395,6 +395,52 @@ describe("identityless lineage refresh follows tree membership", () => {
   });
 });
 
+describe("identityless lineage refresh publishes one row per PID", () => {
+  const row = (
+    pid: number,
+    parentPid: number,
+    processGroupId = pid,
+  ): ProcessTableEntry => ({
+    pid,
+    parentPid,
+    processGroupId,
+    state: "S",
+    command: `pid-${String(pid)}`,
+  });
+
+  it("keeps a single row when a descendant returns to its original group", async () => {
+    const environment = vi.fn((pid: number) =>
+      pid === 101 || pid === 104
+        ? Promise.reject(new Error("process exited during environment read"))
+        : Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" }),
+    );
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([
+        row(100, 1, 100),
+        row(101, 100),
+        row(102, 100, 100),
+        row(104, 100),
+      ])
+      .mockResolvedValueOnce([
+        row(100, 1, 100),
+        row(102, 100, 102),
+        row(104, 100),
+      ])
+      .mockResolvedValue([row(100, 1, 100), row(102, 100, 100)]);
+    const result = await observeOwnedProcessLineage(ownership, {
+      listProcesses,
+      environment,
+      signalGroup: vi.fn(),
+    });
+    expect(result.status).toBe("verified");
+    if (result.status !== "verified") return;
+    expect(result.lineage.descendants).toEqual([
+      { pid: 102, parentPid: 100, processGroupId: 100 },
+    ]);
+  });
+});
+
 describe("owned process-group cleanup discovery", () => {
   it("does not publish lineage when the launcher exits during validation", async () => {
     const launcher = {
