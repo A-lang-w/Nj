@@ -548,6 +548,62 @@ it("leaves a type recorded when two of its tools read different values across a 
   ]);
 });
 
+it.each(["old", "new"])(
+  "retains field observations through sparse reads across a write (%s)",
+  (title) => {
+    const state = stateOf(
+      captureOf([
+        ["GET", "/api/search", [{ id: 1, title: "old" }]],
+        ["POST", "/api/items", { id: 2 }],
+        ["GET", "/api/search?fields=id", [{ id: 1 }]],
+        ["GET", "/api/search/1", { id: 1, title }],
+      ]),
+    );
+    if (title === "new") {
+      expect(state.types).toEqual([]);
+      expect(state.entities).toEqual([]);
+      expect(
+        state.views.every(
+          (view) =>
+            view.shape === "recorded" && view.reason === "fields-differ",
+        ),
+      ).toBe(true);
+    } else {
+      expect(viewOf(state, "get_search_by_id")).toMatchObject({
+        shape: "item",
+      });
+      expect(state.entities[0]?.fields.title).toBe("old");
+    }
+  },
+);
+
+it("proves the identity field against every item response", () => {
+  const state = stateOf(
+    captureOf([
+      ["GET", "/api/widgets/1", { left: 1, right: 1 }],
+      ["GET", "/api/widgets/2", { right: 2, left: "other" }],
+    ]),
+  );
+  expect(state.types).toMatchObject([
+    { id_field: "right", id_basis: "path-parameter" },
+  ]);
+  expect(state.entities.map((entity) => entity.id)).toEqual(["1", "2"]);
+});
+
+it.each(["totalcount", "itemcount"])(
+  "recognizes a compact compound item total (%s)",
+  (name) => {
+    const state = stateOf(
+      captureOf([["GET", "/api/items", { [name]: 50, items: [{ id: 1 }] }]]),
+    );
+    expect(viewOf(state, "get_items")).toMatchObject({
+      shape: "list",
+      membership: "recorded",
+      counters: [],
+    });
+  },
+);
+
 it.each([
   [[], [{ id: 1 }]],
   [[{ id: 1 }], []],

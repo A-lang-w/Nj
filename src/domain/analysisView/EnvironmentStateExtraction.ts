@@ -273,7 +273,11 @@ export class EnvironmentStateExtraction {
         return;
       }
       pointer = located.pointer;
-      keys = (keys ?? located.keys).filter((key) => located.keys.includes(key));
+      if (keys === undefined) keys = located.keys;
+      else {
+        const matching = new Set(located.keys);
+        keys = keys.filter((key) => matching.has(key));
+      }
     }
     const field =
       IDENTITY_NAMES.find((name) => keys?.includes(name) === true) ?? keys?.[0];

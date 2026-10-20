@@ -35,7 +35,7 @@ later increments.
   and a value that changed between repeats of one request line with no recorded
   write is volatile and keeps the latest; a change across a write under another
   root, including between two tools of the type, leaves every tool of the type
-  recorded. Compare list membership, including empty lists, and field presence before selecting each request line's latest recording; a change across a write also leaves the type recorded. Different query strings remain distinct.
+  recorded. Compare list membership, including empty lists, and field presence before selecting each request line's latest recording; a change across a write also leaves the type recorded. Different query strings remain distinct; omitted fields do not erase their earlier observations on other request lines.
 - A list has `all` membership only when no item-total envelope member (`total`,
   `count` and their compounds, not page counts) differs from the number of
   entities it lists and no `has_more`, `next` or next-page token is set.

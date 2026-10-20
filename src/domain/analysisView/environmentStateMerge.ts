@@ -73,7 +73,7 @@ export const mergeObservedEntity = (entity: ObservedEntity): StateEntity => {
 /**
  * How observed values changed, per entity in timeline order. A shared field that differs from the
  * previous repeat of the same request line is volatile, unless a recorded write lies between them;
- * a field that differs from the previous observation of another line across a write rewrites the
+ * a field that differs from its previous observation on another line across a write rewrites the
  * type. Either across a write means the reads do not agree on one initial state.
  */
 export const classifyEntityChanges = (
@@ -97,7 +97,12 @@ export const classifyEntityChanges = (
       (left, right) => left.position - right.position,
     );
     const lastOfLine = new Map<string, StateObservation>();
-    timeline.forEach((after, index) => {
+    // Sparse projections do not erase where each field was last observed.
+    const lastOfField = new Map<
+      string,
+      { readonly observation: StateObservation; readonly line: string }
+    >();
+    timeline.forEach((after) => {
       const line = JSON.stringify(lineOf(after));
       const repeat = lastOfLine.get(line);
       if (repeat !== undefined) {
@@ -111,14 +116,18 @@ export const classifyEntityChanges = (
               (volatile.get(entity.type) ?? new Set()).add(name),
             );
       }
-      const previous = timeline[index - 1];
-      if (
-        previous !== undefined &&
-        JSON.stringify(lineOf(previous)) !== line &&
-        changed(previous, after).length > 0 &&
-        writeBetween(previous, after)
-      )
-        rewritten.add(entity.type);
+      const sighting = { observation: after, line };
+      for (const name of Object.keys(after.object)) {
+        const previous = lastOfField.get(name);
+        if (
+          previous !== undefined &&
+          previous.line !== line &&
+          !same(previous.observation.object[name], after.object[name]) &&
+          writeBetween(previous.observation, after)
+        )
+          rewritten.add(entity.type);
+        lastOfField.set(name, sighting);
+      }
       lastOfLine.set(line, after);
     });
   }

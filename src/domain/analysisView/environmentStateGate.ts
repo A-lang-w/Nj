@@ -202,11 +202,17 @@ const nameTokens = (name: string): string[] =>
     .split(/[_\-\s]|(?<=[a-z0-9])(?=[A-Z])/u)
     .map((token) => token.toLowerCase());
 
-/** `total`, `count`, `totalCount` or `item_count`, but not `total_pages`, `per_page` or `account_id`. */
+/** Item totals, including compact `totalcount`/`itemcount`; page counts and account IDs are excluded. */
 const isItemTotal = (name: string): boolean => {
   const tokens = nameTokens(name);
   return (
-    tokens.some((token) => token === "total" || token === "count") &&
+    tokens.some(
+      (token) =>
+        token === "total" ||
+        token === "count" ||
+        token === "totalcount" ||
+        token === "itemcount",
+    ) &&
     !tokens.some(
       (token) => token === "page" || token === "pages" || token === "per",
     )
