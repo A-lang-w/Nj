@@ -5,6 +5,7 @@ import {
 import {
   ClientConfigurationShapeError,
   parseClientConfiguration,
+  parseGgcodeLegacyConfiguration,
   serializeClientConfiguration,
   clientServerPath,
   legacyClientServerPath,
@@ -360,6 +361,11 @@ export const systemUninstallHost = (
 const uninstallConfigPaths = (client: SetupClient): readonly string[] => [
   ...new Set([
     ...(client.configPaths ?? [client.configPath]),
+    // A legacy fallback file holds the live registration while the write
+    // target is absent; uninstall removes REA's entry from it as well.
+    ...(client.fallbackConfigPath === undefined
+      ? []
+      : [client.fallbackConfigPath]),
     ...(client.msixPackage === undefined
       ? []
       : [
@@ -390,6 +396,18 @@ type ClientConfigurationRead =
       readonly original: string;
       readonly parsed: ClientConfigurationDocument;
     };
+
+/**
+ * Uninstall also targets ggcode's legacy in-main ggcode.yaml, whose mapping
+ * root the strict standalone parser rejects; parse it as the legacy layout.
+ */
+const parseUninstallConfiguration = (
+  client: SetupClient,
+  text: string,
+): ClientConfigurationDocument =>
+  client.format === "ggcode" && client.configPath === client.fallbackConfigPath
+    ? parseGgcodeLegacyConfiguration(text)
+    : parseClientConfiguration(text, client.format);
 
 const readClientConfiguration = async (
   client: SetupClient,
@@ -440,7 +458,7 @@ const readClientConfiguration = async (
     );
   }
   try {
-    const parsed = parseClientConfiguration(original, client.format);
+    const parsed = parseUninstallConfiguration(client, original);
     return { kind: "configuration", transactionPath, original, parsed };
   } catch (cause: unknown) {
     return itemRead(
@@ -449,7 +467,7 @@ const readClientConfiguration = async (
         "failed",
         cause instanceof ClientConfigurationShapeError
           ? `Configuration was not changed: ${cause.message}. Repair it, then rerun uninstall.`
-          : `Configuration is not valid ${client.format === "toml" || client.format === "grok" ? "TOML" : client.format === "opencode" ? "JSONC" : client.format === "hermes" || client.format === "dsh" ? "YAML" : "JSON"} and was not changed. Repair it, then rerun uninstall.`,
+          : `Configuration is not valid ${client.format === "toml" || client.format === "grok" ? "TOML" : client.format === "opencode" ? "JSONC" : client.format === "hermes" || client.format === "ggcode" || client.format === "dsh" ? "YAML" : "JSON"} and was not changed. Repair it, then rerun uninstall.`,
       ),
     );
   }
@@ -657,9 +675,9 @@ const removeClient = async (
   try {
     return await publication.verify(async () => {
       try {
-        const readback = parseClientConfiguration(
+        const readback = parseUninstallConfiguration(
+          client,
           await fileSystem.readText(publication.path),
-          client.format,
         );
         await publication.assertCurrent();
         if (

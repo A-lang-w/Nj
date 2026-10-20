@@ -258,7 +258,9 @@ export const readClientRegistrationInspections = async (
               configPaths: [configPath],
               format: "zcode_fallback",
             }
-          : client;
+          : parsed.dialect === "ggcode" && configPath !== client.configPath
+            ? { ...client, configPath, configPaths: [configPath] }
+            : client;
       const registration = parseRegistration(raw, effectiveClient);
       const registrationEnvironment =
         client.name === "kimi" || client.name === "codex"
@@ -412,7 +414,8 @@ const registrationAligned = ({
   if (
     (client.format === "kimi" ||
       client.format === "omp" ||
-      client.format === "pi") &&
+      client.format === "pi" ||
+      client.format === "ggcode") &&
     registration.type !== undefined &&
     registration.type !== "stdio"
   )
@@ -476,7 +479,13 @@ const parseRegistration = (
       args,
     });
   }
-  const registration = registrationSchema.parse(value);
+  const parsed = registrationSchema.parse(value);
+  // ggcode treats an empty `type` as stdio; normalize before the checks so an
+  // explicit empty marker stays aligned with a stdio registration.
+  const registration =
+    client.format === "ggcode" && parsed.type === ""
+      ? { ...parsed, type: "stdio" as const }
+      : parsed;
   if (
     client.format === "kimi" &&
     registration.transport !== undefined &&
@@ -493,7 +502,8 @@ const parseRegistration = (
   if (
     (client.format === "kimi" ||
       client.format === "omp" ||
-      client.format === "pi") &&
+      client.format === "pi" ||
+      client.format === "ggcode") &&
     registration.type !== undefined &&
     registration.type !== "stdio"
   )
