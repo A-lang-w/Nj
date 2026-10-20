@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   closeEnhancedToolResources,
-  connect,
+  connect as connectTool,
   jsonResult,
 } from "./enhancedToolsHarness.js";
 import type {
@@ -19,6 +19,23 @@ import { err, type Result } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 
 afterEach(closeEnhancedToolResources);
+
+// These fixtures exercise composition for providers without a native overview.
+const connect = (analysis: AnalysisOperationPort) =>
+  connectTool({
+    execute: (operation, parameters, options) =>
+      operation === "read_binary_inventory_summary"
+        ? Promise.resolve(
+            err(
+              new AnalysisCapabilityUnavailableError(
+                "fixture",
+                operation,
+                "No native overview",
+              ),
+            ),
+          )
+        : analysis.execute(operation, parameters, options),
+  });
 
 it("discovers declarations without counting duplicates or compiler bookkeeping", async () => {
   const client = await connect({
@@ -79,6 +96,57 @@ it("discovers declarations without counting duplicates or compiler bookkeeping",
       { address: "0xa", name: "__OBJC_PROTOCOL_$_Delegate" },
       { address: "0xd", name: "_$s4main7ScoringMp" },
     ],
+  });
+});
+
+it("discovers stripped Hopper class labels through MCP with literal filtering", async () => {
+  const names = [
+    "__objc_class_HuntRoot_class",
+    "__objc_class_HuntSub_class",
+    "__objc_class_HuntWorker_class",
+    "__objc_class_HuntModel_class",
+    "__objc_class_HuntLegacy_class",
+    "prefix__objc_class_HuntForeign_class",
+    "__objc_class__class",
+    "__objc_class_HuntMissingSuffix",
+  ];
+  const client = await connect({
+    execute: (name) => {
+      expect(name).toBe("list_names");
+      return Promise.resolve(
+        ok(
+          names.map((value, index) => ({
+            address: `0x${index + 1}`,
+            value,
+            ...(index < 5
+              ? { objc_class_label: "hopper_legacy_class_object" }
+              : {}),
+          })),
+        ),
+      );
+    },
+  });
+
+  const all = jsonResult(
+    await client.callTool({ name: "get_objc_classes", arguments: {} }),
+  );
+  expect(all).toMatchObject({
+    count: 5,
+    classes: names.slice(0, 5).map((name, index) => ({
+      address: `0x${index + 1}`,
+      name,
+    })),
+  });
+
+  const filtered = jsonResult(
+    await client.callTool({
+      name: "get_objc_classes",
+      arguments: { pattern: "__objc_class_HuntRoot_class" },
+    }),
+  );
+  expect(filtered).toMatchObject({
+    count: 1,
+    classes: [{ address: "0x1", name: "__objc_class_HuntRoot_class" }],
   });
 });
 
@@ -425,4 +493,38 @@ describe("overview document identity through MCP", () => {
       },
     });
   });
+});
+
+it("refuses document fallback while the current-selection owner reports incomplete cleanup", async () => {
+  const failure = new AnalysisCapabilityUnavailableError(
+    "fixture",
+    "current_document",
+    "Selection unavailable during cleanup",
+    {
+      cleanup: {
+        reason: "controlled live selection resource",
+        resources: ["selection owner"],
+      },
+    },
+  );
+  const calls: string[] = [];
+  const client = await connect({
+    execute: async (operation) => {
+      calls.push(operation);
+      return operation === "current_document"
+        ? err(failure)
+        : ok(["must-not-be-selected"]);
+    },
+  });
+  const response = await client.callTool({
+    name: "binary_overview",
+    arguments: {},
+  });
+  expect(response.isError).toBe(true);
+  expect(parseMcpToolError(response).error).toMatchObject({
+    code: "cleanup_incomplete",
+    details: { operation: "current_document" },
+  });
+  expect(calls).toEqual(["current_document"]);
+  expect(failure.cleanupIncomplete).toBe(true);
 });

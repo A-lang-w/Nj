@@ -10,7 +10,7 @@ import {
 } from "../../../src/domain/analysisErrorCore.js";
 
 import { JebProvider } from "../../../src/jeb/JebProvider.js";
-import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { JebMcpCleanupFailure } from "../../../src/jeb/JebMcpConnectionOwner.js";
 
 import {
   createStreamableHttpJebMcpConnection,
@@ -30,13 +30,19 @@ const engineToolNames = [
   "decompile_code_item",
 ] as const;
 
-const fixtureResult = (name: string, generation: number) => {
+const fixtureResult = (
+  name: string,
+  generation: number,
+  omitInitialVersion: boolean,
+) => {
   switch (name) {
     case "get_client_information":
       return {
         success: true,
         generation,
-        version: `fixture-${generation}`,
+        ...(omitInitialVersion && generation === 1
+          ? {}
+          : { version: `fixture-${generation}` }),
         gui_client: generation > 1,
       };
     case "open_project":
@@ -52,6 +58,7 @@ const fixtureResult = (name: string, generation: number) => {
 const startEndpoint = async (
   expiredStatus = 200,
   timeouts?: JebMcpConnectionTimeouts,
+  omitInitialVersion = false,
 ) => {
   let generation = 1;
   let handshakes = 0;
@@ -141,7 +148,7 @@ const startEndpoint = async (
             failureText = undefined;
             return;
           }
-          const result = fixtureResult(name, generation);
+          const result = fixtureResult(name, generation, omitInitialVersion);
           reply({
             result: {
               isError: !result.success,
@@ -206,7 +213,11 @@ it.each([200, 404])(
         endpoint.connection.call("open_project", {
           path: "/fixtures/project.jdb2",
         }),
-      ).rejects.toThrow(/Session not found/);
+      ).rejects.toMatchObject({
+        cause: expect.objectContaining({
+          message: expect.stringContaining("Session not found"),
+        }),
+      });
       expect(endpoint.handshakes()).toBe(1);
       const recovered = await Promise.all([
         endpoint.connection.call("get_client_information", {}),
@@ -231,9 +242,11 @@ it("reconnects after a catalog refresh loses its session without replaying the r
   try {
     await endpoint.connection.connect();
     endpoint.restart();
-    await expect(endpoint.connection.listTools()).rejects.toThrow(
-      /Session not found/,
-    );
+    await expect(endpoint.connection.listTools()).rejects.toMatchObject({
+      cause: expect.objectContaining({
+        message: expect.stringContaining("Session not found"),
+      }),
+    });
     expect(endpoint.handshakes()).toBe(1);
     expect(endpoint.catalogs()).toBe(2);
     await expect(endpoint.connection.listTools()).resolves.toEqual([
@@ -271,7 +284,9 @@ it.each(["tools/call", "tools/list"])(
       expect(caller.signal.aborted).toBe(false);
       expect(overlappingFailure).not.toBeInstanceOf(AnalysisCancelledError);
       expect(failure).toMatchObject({
-        message: expect.stringContaining("Session not found"),
+        cause: expect.objectContaining({
+          message: expect.stringContaining("Session not found"),
+        }),
       });
       expect(overlappingFailure).toBe(failure);
       expect(endpoint.handshakes()).toBe(1);
@@ -376,15 +391,14 @@ it("retains the typed timeout when disposal fails and retries owned cleanup befo
     const rejected = pending.catch((cause: unknown) => cause);
     await received;
     const failure = await rejected;
-    expect(failure).toBeInstanceOf(AnalysisTimeoutError);
-    if (!(failure instanceof AnalysisTimeoutError)) throw failure;
+    expect(failure).toBeInstanceOf(JebMcpCleanupFailure);
+    if (!(failure instanceof JebMcpCleanupFailure)) throw failure;
+    expect(failure.primaryFailure).toBeInstanceOf(AnalysisTimeoutError);
+    expect(failure.cleanupIncomplete).toBe(true);
+    expect(failure.cleanupResources).toEqual([
+      `${endpoint.url} (JEB MCP client)`,
+    ]);
     expect(await overlapping).toBe(failure);
-    expect(projectAnalysisError(failure)).toMatchObject({
-      code: "provider_timeout",
-      details: {
-        diagnostics: { cleanup_error: "JEB MCP connection cleanup failed" },
-      },
-    });
     await expect(
       endpoint.connection.call("list_units", {}),
     ).resolves.toMatchObject({
@@ -393,6 +407,8 @@ it("retains the typed timeout when disposal fails and retries owned cleanup befo
     });
     expect(endpoint.handshakes()).toBe(2);
     expect(endpoint.calls).toEqual(["open_project", "list_units"]);
+    expect(failure.cleanupIncomplete).toBe(false);
+    expect(failure.cleanupResources).toEqual([]);
   } finally {
     close.mockRestore();
     await endpoint.close();
@@ -414,29 +430,27 @@ it("retains failed cleanup ownership and does not reuse the invalid session befo
       .mockRejectedValueOnce(cleanupFailure)
       .mockRejectedValueOnce(cleanupFailure);
     endpoint.restart();
+    const failure = await endpoint.connection
+      .call("open_project", {})
+      .catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(JebMcpCleanupFailure);
+    if (!(failure instanceof JebMcpCleanupFailure)) throw failure;
+    expect(failure.primaryFailure).toMatchObject({
+      cause: expect.objectContaining({
+        message: expect.stringContaining("Session not found"),
+      }),
+    });
+    expect(failure.cleanupFailure.cause).toMatchObject({
+      errors: [cleanupFailure],
+    });
+    expect(failure.cleanupIncomplete).toBe(true);
+    expect(failure.cleanupResources).toEqual([
+      `${endpoint.url} (JEB MCP client)`,
+    ]);
+    expect(await overlapping).toBe(failure);
     await expect(
-      endpoint.connection.call("open_project", {}),
-    ).rejects.toMatchObject({
-      cause: expect.objectContaining({
-        message: expect.stringContaining("Session not found"),
-      }),
-      errors: [
-        expect.anything(),
-        expect.objectContaining({ errors: [cleanupFailure] }),
-      ],
-    });
-    expect(await overlapping).toMatchObject({
-      cause: expect.objectContaining({
-        message: expect.stringContaining("Session not found"),
-      }),
-      errors: [
-        expect.anything(),
-        expect.objectContaining({ errors: [cleanupFailure] }),
-      ],
-    });
-    await expect(endpoint.connection.call("list_units", {})).rejects.toThrow(
-      /cleanup failed/,
-    );
+      endpoint.connection.call("list_units", {}),
+    ).rejects.toMatchObject({ cleanupIncomplete: true });
     expect(endpoint.handshakes()).toBe(1);
     expect(endpoint.calls).toEqual([
       "get_client_information",
@@ -450,53 +464,116 @@ it("retains failed cleanup ownership and does not reuse the invalid session befo
       generation: 2,
     });
     expect(endpoint.handshakes()).toBe(2);
+    expect(failure.cleanupIncomplete).toBe(false);
+    expect(failure.cleanupResources).toEqual([]);
   } finally {
     close.mockRestore();
     await endpoint.close();
   }
 });
 
-it("refreshes engine provenance after a session reconnect before reporting a new operation", async () => {
-  const endpoint = await startEndpoint();
-  const provider = new JebProvider({
-    environment: { REA_JEB_MCP_URL: endpoint.url.toString() },
-    connectionFactory: () => endpoint.connection,
-  });
-  const request = {
-    operation: "list_jeb_units",
-    input: { count: 10, index: 0 },
-  } as const;
-  try {
-    const initial = await provider.execute(request);
-    if (!initial.ok) throw initial.error;
-    expect(initial.value).toMatchObject({
-      provider: { version: "fixture-1" },
-      result: { engine: { version: "fixture-1", gui_client: false } },
+it.each([false, true])(
+  "refreshes engine provenance after reconnect (initial version omitted=%s)",
+  async (omitInitialVersion) => {
+    const endpoint = await startEndpoint(200, undefined, omitInitialVersion);
+    const provider = new JebProvider({
+      environment: { REA_JEB_MCP_URL: endpoint.url.toString() },
+      connectionFactory: () => endpoint.connection,
     });
-    const received = endpoint.holdNextRequest();
-    const overlapping = provider.execute(request);
-    await received;
-    endpoint.restart();
-    const failed = await provider.execute(request);
-    for (const result of [failed, await overlapping]) {
-      if (result.ok) throw new Error("Expected session failure");
-      expect(projectAnalysisError(result.error)).toMatchObject({
-        code: "capability_unavailable",
+    const request = {
+      operation: "list_jeb_units",
+      input: { count: 10, index: 0 },
+    } as const;
+    try {
+      const initial = await provider.execute(request);
+      if (!initial.ok) throw initial.error;
+      expect(initial.value).toMatchObject({
+        provider: { version: omitInitialVersion ? null : "fixture-1" },
+        result: {
+          engine: {
+            version: omitInitialVersion ? null : "fixture-1",
+            gui_client: false,
+          },
+        },
       });
-      expect(result.error.message).toContain("Session not found");
+      const cachedInitial = await provider.execute(request);
+      if (!cachedInitial.ok) throw cachedInitial.error;
+      expect(
+        endpoint.calls.filter((name) => name === "get_client_information"),
+      ).toHaveLength(1);
+      const received = endpoint.holdNextRequest();
+      const overlapping = provider.execute(request);
+      await received;
+      endpoint.restart();
+      const failed = await provider.execute(request);
+      for (const result of [failed, await overlapping]) {
+        if (result.ok) throw new Error("Expected session failure");
+        expect(result.error).toMatchObject({
+          _tag: "AnalysisCapabilityUnavailableError",
+        });
+        expect(result.error.message).toContain("Session not found");
+      }
+      const recovered = await provider.execute(request);
+      if (!recovered.ok) throw recovered.error;
+      expect(recovered.value).toMatchObject({
+        provider: { version: "fixture-2" },
+        result: { engine: { version: "fixture-2", gui_client: true } },
+      });
+      const cached = await provider.execute(request);
+      if (!cached.ok) throw cached.error;
+      expect(
+        endpoint.calls.filter((name) => name === "get_client_information"),
+      ).toHaveLength(2);
+    } finally {
+      await endpoint.close();
     }
-    const recovered = await provider.execute(request);
-    if (!recovered.ok) throw recovered.error;
-    expect(recovered.value).toMatchObject({
-      provider: { version: "fixture-2" },
-      result: { engine: { version: "fixture-2", gui_client: true } },
+  },
+);
+
+it("shares a pending invalidation with a new request until owned cleanup completes", async () => {
+  const endpoint = await startEndpoint();
+  const nativeClose = Client.prototype.close;
+  let entered!: () => void;
+  let release!: () => void;
+  const closing = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const close = vi.spyOn(Client.prototype, "close");
+  try {
+    await endpoint.connection.call("get_client_information", {});
+    close.mockImplementationOnce(async function (this: Client) {
+      entered();
+      await gate;
+      await nativeClose.call(this);
     });
-    const cached = await provider.execute(request);
-    if (!cached.ok) throw cached.error;
-    expect(
-      endpoint.calls.filter((name) => name === "get_client_information"),
-    ).toHaveLength(2);
+    endpoint.restart();
+    const failed = endpoint.connection
+      .call("open_project", {})
+      .catch((cause: unknown) => cause);
+    await closing;
+    const overlapping = endpoint.connection
+      .call("list_units", {})
+      .catch((cause: unknown) => cause);
+    release();
+    const failure = await failed;
+    expect(failure).toMatchObject({
+      cause: expect.objectContaining({
+        message: expect.stringContaining("Session not found"),
+      }),
+    });
+    expect(await overlapping).toBe(failure);
+    expect(endpoint.handshakes()).toBe(1);
+    expect(endpoint.calls).toEqual(["get_client_information", "open_project"]);
+    await expect(
+      endpoint.connection.call("list_units", {}),
+    ).resolves.toMatchObject({ success: true, generation: 2 });
+    expect(endpoint.handshakes()).toBe(2);
   } finally {
+    release();
+    close.mockRestore();
     await endpoint.close();
   }
 });
