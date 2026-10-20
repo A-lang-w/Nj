@@ -15,12 +15,22 @@ export class ModelHeaderReader {
   #guaranteedEnd = 0;
   #buffer = Buffer.alloc(0);
   #start = 0;
+  #headerPrefixBytes = 0;
   readonly #hash = createHash("sha256");
   constructor(
     readonly file: FileHandle,
     readonly size: number,
     readonly signal?: AbortSignal,
   ) {}
+
+  /** Safetensors declares JSON bytes separately from its fixed length prefix. */
+  excludeSafetensorsLengthPrefix(): void {
+    if (this.position !== 8)
+      throw new TypeError(
+        "Safetensors header budget must follow its eight-byte length prefix",
+      );
+    this.#headerPrefixBytes = 8;
+  }
 
   /** Minimum bytes implied by the remaining declared header records, never tensor payload. */
   guarantee(bytes: number): void {
@@ -32,7 +42,7 @@ export class ModelHeaderReader {
   #validateEnd(end: number): void {
     if (!Number.isSafeInteger(end) || end < 0 || end > this.size)
       rejectModel("Declared header extent is outside the file");
-    if (end > MODEL_HEADER_BYTES)
+    if (end - this.#headerPrefixBytes > MODEL_HEADER_BYTES)
       throw new ModelFormatFailure(
         "capacity",
         "Model header exceeds 100,000,000 bytes",

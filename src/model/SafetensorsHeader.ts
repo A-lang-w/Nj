@@ -154,6 +154,7 @@ export const readSafetensorsHeader = async (
 }> => {
   const budget = new ModelReportBudget();
   const second = await reader.take(4);
+  reader.excludeSafetensorsLengthPrefix();
   const length =
     BigInt(first.readUInt32LE()) + (BigInt(second.readUInt32LE()) << 32n);
   if (length === 0n || (await reader.take(1))[0] !== 0x7b)

@@ -38,7 +38,10 @@ that defeats filesystem metadata checks.
 
 GGUF reports version, byte order, alignment, typed metadata, and each tensor's
 name, original type ID, dimensions, relative data offset, file offset and derived
-byte length. Scalar metadata is complete. Arrays have declared element types,
+byte length. Alignment accepts every positive UINT32 multiple of eight, including
+non-powers of two. Metadata keys use ASCII lower-snake-case hierarchy components;
+standard numeric components such as `general.base_model.0.name` are preserved.
+Scalar metadata is complete. Arrays have declared element types,
 counts and at most eight preview elements per array, with an explicit
 `preview_complete` flag. This includes tokenizer vocabularies: omitted values
 are not silently represented as a complete array. Strings are UTF-8; 64-bit
@@ -116,7 +119,8 @@ live-file result cache or automatic freshness claim.
 ## Bounds and unsupported inputs
 
 The reader admits one active inspection per provider. It enforces a 100,000,000
-byte header ceiling (the safetensors format ceiling) and a separate 32 MiB
+byte header ceiling (safetensors counts its declared JSON bytes separately from
+the fixed eight-byte length prefix; GGUF counts the complete header) and a separate 32 MiB
 retained representation budget before retaining rows or expanding strings.
 Numeric products use exact integer arithmetic. GGUF follows its four-dimensional
 tensor layout and limits metadata array nesting to 32 frames. Resource refusals

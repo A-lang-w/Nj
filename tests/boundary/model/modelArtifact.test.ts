@@ -84,6 +84,115 @@ it.each([false, true])(
   },
 );
 
+it.each([8, 24, 40])(
+  "accepts format-valid GGUF alignment %s and preserves exact offsets",
+  async (alignment) => {
+    const fixture = ggufFixture({ alignment });
+    const { path, provider } = await providerAt(fixture.bytes);
+    const result = await provider.inspect({ path, hash: "header" });
+    if (!result.ok) throw result.error;
+    expect(result.value.alignment).toBe(alignment);
+    expect(result.value.tensor_data_offset).toBe(fixture.dataOffset);
+    expect(
+      result.value.tensors.every((row) => row.file_offset % alignment === 0),
+    ).toBe(true);
+    expect(result.value.tensors[1]?.file_offset).toBe(
+      fixture.dataOffset + Math.ceil(16 / alignment) * alignment,
+    );
+  },
+);
+
+it.each([0, 1, 2, 4, 12])(
+  "rejects GGUF alignment %s outside positive multiples of eight",
+  async (alignment) => {
+    const base = ggufFixture();
+    const fixture = ggufFixture({
+      metadata: [
+        { key: "general.alignment", type: 4, value: base.u32(alignment) },
+      ],
+    });
+    const { path, provider } = await providerAt(fixture.bytes);
+    const result = await provider.inspect({ path, hash: "header" });
+    if (result.ok) throw new Error("Invalid alignment accepted");
+    expect(result.error).toMatchObject({
+      _tag: "BinaryTargetError",
+      constraint: "file_format_rejected",
+    });
+  },
+);
+
+it.each([
+  "General.name",
+  "general.naïve",
+  "general..name",
+  "general/name",
+  "general.-name",
+  "general.name_",
+  "general.__name",
+])(
+  "rejects invalid GGUF metadata key %s before publishing facts",
+  async (key) => {
+    const fixture = ggufFixture({
+      metadata: [{ key, type: 7, value: Buffer.from([1]) }],
+    });
+    const { path, provider } = await providerAt(fixture.bytes);
+    const result = await provider.inspect({ path, hash: "header" });
+    if (result.ok) throw new Error("Invalid metadata key accepted");
+    expect(result.error).toMatchObject({
+      _tag: "BinaryTargetError",
+      constraint: "file_format_rejected",
+    });
+  },
+);
+
+it("accepts standardized GGUF metadata keys containing numeric hierarchy components", async () => {
+  const base = ggufFixture();
+  const fixture = ggufFixture({
+    metadata: [
+      { key: "general.base_model.0.name", type: 8, value: base.text("parent") },
+    ],
+  });
+  const { path, provider } = await providerAt(fixture.bytes);
+  const result = await provider.inspect({ path, hash: "header" });
+  if (!result.ok) throw result.error;
+  expect(result.value.metadata[0]).toMatchObject({
+    key: "general.base_model.0.name",
+    value: "parent",
+  });
+});
+
+it.each([99_999_993, 100_000_000])(
+  "admits safetensors declared header length %s before its independent representation limit",
+  async (length) => {
+    const bytes = Buffer.alloc(9);
+    bytes.writeBigUInt64LE(BigInt(length));
+    bytes[8] = 0x7b;
+    const { path, provider } = await providerAt(bytes);
+    const file = await open(path, "r+");
+    try {
+      await file.truncate(8 + length);
+    } finally {
+      await file.close();
+    }
+    const result = await provider.inspect({ path, hash: "header" });
+    if (result.ok) throw new Error("Representation limit was bypassed");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      reason: expect.stringContaining("32 MiB"),
+    });
+  },
+);
+
+it("retains the absolute header budget for GGUF without allocating that extent", async () => {
+  const { path } = await providerAt(Buffer.alloc(0));
+  const file = await open(path, "r+");
+  onTestFinished(() => file.close());
+  await file.truncate(100_000_009);
+  const reader = new ModelHeaderReader(file, 100_000_009);
+  expect(() => reader.guarantee(100_000_000)).not.toThrow();
+  expect(() => reader.guarantee(100_000_001)).toThrow("100,000,000 bytes");
+});
+
 it("preserves safetensors scalar, empty and packed tensor declarations and raw string metadata", async () => {
   const fixture = safetensorsFixture();
   const { provider, path } = await providerAt(fixture.bytes);

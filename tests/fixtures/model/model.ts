@@ -3,6 +3,7 @@ export const ggufFixture = (
   options: {
     bigEndian?: boolean;
     version?: number;
+    alignment?: number;
     metadata?: readonly { key: string; type: number; value: Buffer }[];
     tensors?: readonly {
       name: string;
@@ -14,6 +15,7 @@ export const ggufFixture = (
   } = {},
 ) => {
   const big = options.bigEndian ?? false;
+  const alignment = options.alignment ?? 32;
   const u32 = (n: number) => {
     const b = Buffer.alloc(4);
     if (big) b.writeUInt32BE(n);
@@ -45,10 +47,19 @@ export const ggufFixture = (
       ]),
     },
     { key: "tokenizer.chat_template", type: 8, value: text("{{ messages }}") },
+    ...(options.alignment === undefined
+      ? []
+      : [{ key: "general.alignment", type: 4, value: u32(alignment) }]),
   ];
   const tensors = options.tensors ?? [
     { name: "weight", type: 0, shape: [2n, 2n], offset: 0n, bytes: 16 },
-    { name: "quant", type: 2, shape: [32n], offset: 32n, bytes: 18 },
+    {
+      name: "quant",
+      type: 2,
+      shape: [32n],
+      offset: BigInt(Math.ceil(16 / alignment) * alignment),
+      bytes: 18,
+    },
   ];
   const header = Buffer.concat([
     Buffer.from("GGUF"),
@@ -67,7 +78,9 @@ export const ggufFixture = (
     ),
   ]);
   const dataOffset =
-    tensors.length === 0 ? header.length : Math.ceil(header.length / 32) * 32;
+    tensors.length === 0
+      ? header.length
+      : Math.ceil(header.length / alignment) * alignment;
   const length = Math.max(
     dataOffset,
     ...tensors.map((t) => dataOffset + Number(t.offset) + t.bytes),

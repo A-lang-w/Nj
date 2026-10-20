@@ -248,6 +248,13 @@ export class GgufHeader {
       this.reader.guarantee((metadataCount - index) * 13 + tensorCount * 20);
       const start = this.reader.position;
       const key = await this.#text(true, 65535);
+      // Numeric hierarchy components occur in standardized base_model.{id} keys.
+      if (
+        !/^[a-z0-9]+(?:_[a-z0-9]+)*(?:\.[a-z0-9]+(?:_[a-z0-9]+)*)*$/u.test(key)
+      )
+        rejectModel(
+          "GGUF metadata keys require ASCII lower-snake-case hierarchy components",
+        );
       if (keys.has(key)) rejectModel(`Duplicate GGUF metadata key ${key}`);
       keys.add(key);
       const type = await this.#unsigned(4);
@@ -269,10 +276,10 @@ export class GgufHeader {
           type !== 4 ||
           typeof parsed.value !== "number" ||
           parsed.value === 0 ||
-          Math.log2(parsed.value) % 1 !== 0
+          parsed.value % 8 !== 0
         )
           rejectModel(
-            "GGUF general.alignment must be a nonzero UINT32 power of two",
+            "GGUF general.alignment must be a positive UINT32 multiple of eight",
           );
         alignment = parsed.value;
       }
