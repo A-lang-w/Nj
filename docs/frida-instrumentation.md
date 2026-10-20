@@ -8,6 +8,18 @@ MCP exposes `list_frida_devices`, `list_frida_processes`, `start_frida_session`,
 
 For state and capture-coverage checks, pass `{"session_id":"SESSION_ID","detail":"summary"}` to `frida_session_status`. Each call reads the observed session state and retains the complete observation. The reply is an `inspect_analysis_view` Evidence summary with the session identity, state, scripts, `messages_retained`, and `messages_truncated`; message payloads remain in its `parent_evidence_id`. The count covers retained queued messages, not every target event. Omitted `detail` or `detail=complete` preserves the existing complete reply.
 
+A summary's selected fields look like this (excerpt):
+
+```json
+{
+  "summary": {
+    "state": "running",
+    "messages_retained": 50,
+    "messages_truncated": false
+  }
+}
+```
+
 Use `get_evidence_bundle` with an exact Evidence-ID filter or `export_evidence_bundle` to read the complete parent. The existing CLI `inspect-analysis-view` also accepts that parent as an Evidence-file source with `view={"kind":"summary"}`. Reading retained Evidence does not refresh a live session or verify a process after exit or PID reuse.
 
 Failed startup cleanup retains acquired Frida handles, including a paused spawn that has not attached, for later cleanup retries. Its remote connection stays leased until session detach and target resume complete. CLI commands await provider cleanup before returning; MCP retains these resources for cleanup when its server closes. Server shutdown stops admitting new Frida operations and waits for admitted startup, discovery, and queued work before releasing their resources. A failed cleanup remains reported and can be retried by closing the server again, rather than treating an unregistered session as fully released.

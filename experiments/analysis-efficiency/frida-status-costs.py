@@ -57,6 +57,18 @@ for root in sorted(args.lab.glob('sdk-*')):
                 'exported_bundle_bytes': report['exported_bundle_bytes'], 'answer': report['answer'],
                 'status_calls': [c for c in report['calls'] if c['name'] == 'frida_session_status'],
                 'one_catalog_plus_all_sdk_calls_tokens_proxy': tokens(catalog) + sum(tokens({'name': t['name'], 'input': t['input'], 'reply': t['reply']}) for t in transcript), **resources(root)})
+assert len(sdk) == len(wire) == 4, 'A partial cohort cannot qualify a comparison'
+for capture in ['small', 'libc']:
+    pair = [r for r in sdk if r['capture'] == capture]
+    assert len(pair) == 2 and {r['detail'] for r in pair} == {'complete', 'summary'}
+    assert {k: v for k, v in pair[0]['answer'].items() if k != 'pid'} == {k: v for k, v in pair[1]['answer'].items() if k != 'pid'}
+    reports = [json.loads((args.lab / r['case'] / 'report.json').read_text()) for r in pair]
+    assert reports[0]['load']['source_sha256'] == reports[1]['load']['source_sha256']
+completed = [r for r in wire if r['budget'] == 300000]
+assert len(completed) == 2 and all(r['task_completed'] for r in completed)
+answers = [json.loads((args.lab / r['case'] / 'report.json').read_text())['observations']['answers'] for r in completed]
+comparable_answers = [[{k: v for k, v in a.items() if k != 'parent_evidence_id'} for a in run] for run in answers]
+assert comparable_answers[0] == comparable_answers[1]
 result = {
     'scope': 'Real local Frida binding with controlled sleep target and caller-authored libc export inventory. Actual Codex0.163 app-server uses a deterministic local SSE fixture: no AI inference, model usage, quality or billing claim. Whole compact JSON token estimates include all 211 schemas and every request replay. Incomplete default baseline is excluded from completed-task gains. SDK exchange estimates are not model-input measurements. Fresh processes have unflushed OS caches; both status reads query live session observations. Timings include the eight-second target lifetime and cleanup; single pairs establish no general speedup. Payload-exit cgroup counters are verified; final whole-scope counters may be unavailable.',
     'tokenizer': {'package': tiktoken.__version__, 'encoding': enc.name},

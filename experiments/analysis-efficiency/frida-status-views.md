@@ -1,7 +1,8 @@
 # Frida status delivery and runtime-observation audit
 
 Issue: [#5640](https://github.com/morluto/rea/issues/5640). Paired runtime base:
-`17f581ff75d2b6cf643a997275e3e296f6c95760`. Exact package, patch, native input,
+`17f581ff75d2b6cf643a997275e3e296f6c95760`. Final candidate source: `32a4690059907f09fb29e284ad492d94c1722278` (clean tree).
+Exact package, patch, native input,
 script and resource pins are in [the measurement record](frida-status-views.json).
 
 The analyst requests a complete libc export inventory as retained evidence,
@@ -9,6 +10,10 @@ then checks the session's identity/state, script identity, queued message count
 and truncation twice. The caller-authored script enumerates actual native module
 exports in a controlled `/usr/bin/sleep` spawn, in chunks of 64. Both workflows
 retain all captured messages and export the complete Evidence bundle.
+
+Start, status and one-shot contracts share one canonical session envelope.
+Message JSON is validated at the Evidence owner; the summary validates the
+envelope without reinterpreting opaque payloads.
 
 The owning application service now accepts optional `detail=summary` for
 `frida_session_status`. It reads the provider on every call, retains the original
@@ -22,7 +27,7 @@ resource ownership are unchanged.
 
 ## Completed tasks
 
-Native Frida Core/Node binding 17.23.2 captured 2,963 libc exports in 50 queued
+The native Frida Node binding package 17.23.2 captured 2,963 libc exports in 50 queued
 messages. Independent checks establish the test-owned process birthtime, cgroup,
 PID and libc mapping; the selected script digest and contiguous chunks are
 checked against the complete retained parent. This does not independently
@@ -34,12 +39,12 @@ validate every native export address or establish global event coverage.
 | Small-history status reply, bytes per call |    2,643 |   5,595 |
 | Large complete bundle, bytes               |  214,214 | 216,931 |
 | Small complete bundle, bytes               |    2,335 |   5,051 |
-| Large task elapsed, seconds                |   13.455 |  12.850 |
-| Large task CPU, seconds                    |    5.631 |   5.168 |
-| Large family peak, MiB                     |    580.8 |   579.9 |
-| Small task elapsed, seconds                |   12.829 |  12.519 |
-| Small task CPU, seconds                    |    4.764 |   4.537 |
-| Small family peak, MiB                     |    573.5 |   575.9 |
+| Large task elapsed, seconds                |   13.759 |  12.843 |
+| Large task CPU, seconds                    |    6.097 |   5.013 |
+| Large family peak, MiB                     |    578.6 |   579.0 |
+| Small task elapsed, seconds                |   13.039 |  13.533 |
+| Small task CPU, seconds                    |    4.953 |   5.495 |
+| Small family peak, MiB                     |    577.1 |   576.5 |
 
 Each SDK task discovers all 211 tools and executes eight public calls, including
 two status reads and complete export. Small history contains two readiness/
@@ -47,35 +52,36 @@ completion messages. Fresh processes retain unflushed OS caches. The second
 status read is a repeated live observation, not a cache hit. Every task includes
 the controlled target's eight-second lifetime and verified natural exit.
 Single pairs and this fixed wait establish no general latency/CPU advantage.
-The first large summary status call was slower (221.6 versus 136.9 ms).
+Large status calls took 159.2/62.0 ms versus 197.6/108.5 ms. The first small
+summary status was slower (107.8 versus 79.3 ms).
 
 ## Actual client context
 
 Codex app-server 0.163.0 performs the native Frida workflow through the actual
 REA MCP package. A deterministic local Responses/SSE fixture selects the calls;
 there is no AI inference, paid model, model-quality or billing claim. The capture
-contains all 211 schemas on each request and all history replays. `tiktoken`
+contains all 211 tool input schemas on each request and all history replays. `tiktoken`
 0.12.0 `cl100k_base` counts compact JSON as a token estimate, not actual model
 usage. Both completed paths use the same 300,000 tool-output budget.
 
 | Completed client task                  |  Complete | Summary |
 | -------------------------------------- | --------: | ------: |
 | Requests / compactions                 |     8 / 0 |   8 / 0 |
-| Whole request JSON token estimate, sum | 1,065,523 | 515,487 |
-| Elapsed seconds                        |    15.023 |  15.347 |
-| CPU seconds                            |     7.665 |   7.457 |
-| Family peak MiB                        |     840.2 |   828.0 |
+| Whole request JSON token estimate, sum | 1,049,997 | 515,713 |
+| Elapsed seconds                        |    15.418 |  15.439 |
+| CPU seconds                            |     8.027 |   8.372 |
+| Family peak MiB                        |     824.3 |   813.6 |
 
-The completed task uses **51.6% fewer estimated request tokens**, including
-schemas and continuations. It is slightly slower in this pair. At the client's
+The completed task uses **50.9% fewer estimated request tokens**, including
+schemas and continuations. Client elapsed and CPU time increased in this pair. At the client's
 default output budget, complete status JSON is truncated and the task is
 incomplete; summary status is intact and completes. That failed delivery is
 excluded from completed-task gains. Three acceptance tests exercise invalid
 JSON, incorrect counts/state/source linkage, missing chunks and wrong sessions.
 
 The complete catalog plus all SDK exchanges also shrinks for the large case
-(1,178,147 to 885,535 estimated tokens), but grows for the small case (882,286 to
-885,564). These SDK exchange estimates include advertised output schemas and
+(1,186,065 to 885,626 estimated tokens), but grows for the small case (882,323 to
+885,676). These SDK exchange estimates include advertised output schemas and
 are **not** actual model-input measurements. Summary delivery is optional
 because its provenance wrapper costs more than a small complete observation.
 
@@ -124,6 +130,15 @@ stamp to safely wait on an arbitrary later PID. The paired harness instead owns
 the paused spawn and records birthtime/cgroup before resume, then waits for the
 original target's natural exit. No PID-only cleanup or target-kill policy was
 introduced.
+
+The shared-service import also exposed an existing module-mock load-order
+assumption in the Evidence-file cancellation test. That one mocked test now
+runs in the existing isolated `process-global` lane, with an assertion that the
+mocked read actually ran. Other file/service tests keep the shared module graph.
+The final exact ten-file gate passes 225 tests with file parallelism disabled
+under one CPU. An earlier parallel gate hit one existing 30-second MCP lifecycle
+timeout; its serial retry passed without increasing a timeout or changing the
+production lifecycle contract.
 
 ## Reproduction
 

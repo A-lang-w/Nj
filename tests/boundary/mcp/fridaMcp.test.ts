@@ -11,7 +11,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { fridaSessionStatusSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { fridaSessionStatusSchema } from "../../../src/domain/fridaSessionStatus.js";
-import { createEvidence } from "../../../src/domain/evidence.js";
+import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 
 const createFridaTestProvider = (
   overrides: Partial<FridaInstrumentationPort> = {},
@@ -150,8 +150,10 @@ it.each([false, true])(
       arguments: { session_id: id },
     });
     expect(complete.isError).not.toBe(true);
-    const parent = toolContract("frida_session_status").outputSchema.parse(
-      complete.structuredContent,
+    const parent = parseEvidence(
+      toolContract("frida_session_status").outputSchema.parse(
+        complete.structuredContent,
+      ),
     );
     expect(
       fridaSessionStatusSchema.parse(parent.normalized_result).messages,

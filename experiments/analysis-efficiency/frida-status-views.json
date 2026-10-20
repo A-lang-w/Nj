@@ -11,9 +11,9 @@
       "archive_sha256": "cd16ca3e36633459bffc10bb90d1fe4ff5887fdd403729765b9a812969013807"
     },
     "candidate": {
-      "source_base": "17f581ff75d2b6cf643a997275e3e296f6c95760",
-      "patch_sha256": "8740b5d7f4e1e04ef75e010eb26c8be8dfbfc78325f38cb8fab2f3e4b02d428f",
-      "archive_sha256": "5fa7ca50a80ac47ffe238a11fda4f0b76a7f4423577499c878987cb295a7b0c2"
+      "source_base": "32a4690059907f09fb29e284ad492d94c1722278",
+      "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "archive_sha256": "4ac402f1de93f76f71b7ccdb8b8e36d8c8d0a87b1184812f06393bfc6fadccba"
     }
   },
   "native": {
@@ -53,7 +53,7 @@
   },
   "script_pins": {
     "frida_status_delivery.py": "ed19bcd003165c7b522c8cdd4799bcf987178e4b79fc8d5c2442012f3bf60b8d",
-    "frida-status-costs.py": "c15c41487c51be7a97946b73e153a00564465d87900a7b054621e8838742b318",
+    "frida-status-costs.py": "2f3196bcc3198a265f7f4842effc8dce31669723b42f07367f065afee0073906",
     "frida-status-queries.mjs": "c5919ae8bba046909858e92a945b4472645bbacbfcf88dd75c89ba959a986980",
     "frida-status-wire.py": "b4d20e64bf77b7815bd43b52569b3e4756983b254ab44c50ddae874d1964ef69"
   },
@@ -65,52 +65,52 @@
       "budget": "client default",
       "requests": 8,
       "compactions": 0,
-      "whole_json_tokens_proxy": 539028,
+      "whole_json_tokens_proxy": 540065,
       "request_details": [
         {
-          "whole_json_tokens_proxy": 62765,
+          "whole_json_tokens_proxy": 62729,
           "rea_namespace_tokens_proxy": 53518,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 62958,
+          "whole_json_tokens_proxy": 62917,
           "rea_namespace_tokens_proxy": 53518,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 63645,
+          "whole_json_tokens_proxy": 63599,
           "rea_namespace_tokens_proxy": 53518,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 63786,
+          "whole_json_tokens_proxy": 63739,
           "rea_namespace_tokens_proxy": 53518,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 68111,
+          "whole_json_tokens_proxy": 68261,
           "rea_namespace_tokens_proxy": 53518,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 72435,
+          "whole_json_tokens_proxy": 72785,
           "rea_namespace_tokens_proxy": 53518,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 72577,
+          "whole_json_tokens_proxy": 72926,
           "rea_namespace_tokens_proxy": 53518,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 72751,
+          "whole_json_tokens_proxy": 73109,
           "rea_namespace_tokens_proxy": 53518,
           "rea_functions": 211
         }
       ],
-      "wall_seconds": 16.165,
-      "cpu_seconds": 8.291308,
-      "family_peak_mib": 827.4453125,
+      "wall_seconds": 15.993,
+      "cpu_seconds": 8.211179,
+      "family_peak_mib": 830.6484375,
       "payload_cleanup_verified": true,
       "final_whole_scope_counters_verified": false
     },
@@ -121,52 +121,52 @@
       "budget": 300000,
       "requests": 8,
       "compactions": 0,
-      "whole_json_tokens_proxy": 1065523,
+      "whole_json_tokens_proxy": 1049997,
       "request_details": [
         {
-          "whole_json_tokens_proxy": 62713,
+          "whole_json_tokens_proxy": 62715,
           "rea_namespace_tokens_proxy": 53518,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 62906,
+          "whole_json_tokens_proxy": 62903,
           "rea_namespace_tokens_proxy": 53518,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 63595,
+          "whole_json_tokens_proxy": 63577,
           "rea_namespace_tokens_proxy": 53518,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 63735,
+          "whole_json_tokens_proxy": 63714,
           "rea_namespace_tokens_proxy": 53518,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 143331,
+          "whole_json_tokens_proxy": 141108,
           "rea_namespace_tokens_proxy": 53518,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 222928,
+          "whole_json_tokens_proxy": 218504,
           "rea_namespace_tokens_proxy": 53518,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 223069,
+          "whole_json_tokens_proxy": 218646,
           "rea_namespace_tokens_proxy": 53518,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 223246,
+          "whole_json_tokens_proxy": 218830,
           "rea_namespace_tokens_proxy": 53518,
           "rea_functions": 211
         }
       ],
-      "wall_seconds": 15.023,
-      "cpu_seconds": 7.665156,
-      "family_peak_mib": 840.2421875,
+      "wall_seconds": 15.418,
+      "cpu_seconds": 8.026944,
+      "family_peak_mib": 824.28125,
       "payload_cleanup_verified": true,
       "final_whole_scope_counters_verified": false
     },
@@ -177,52 +177,52 @@
       "budget": "client default",
       "requests": 8,
       "compactions": 0,
-      "whole_json_tokens_proxy": 515431,
+      "whole_json_tokens_proxy": 515539,
       "request_details": [
         {
-          "whole_json_tokens_proxy": 62784,
+          "whole_json_tokens_proxy": 62791,
           "rea_namespace_tokens_proxy": 53581,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 62970,
+          "whole_json_tokens_proxy": 62978,
           "rea_namespace_tokens_proxy": 53581,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 63646,
+          "whole_json_tokens_proxy": 63661,
           "rea_namespace_tokens_proxy": 53581,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 63780,
+          "whole_json_tokens_proxy": 63803,
           "rea_namespace_tokens_proxy": 53581,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 64736,
+          "whole_json_tokens_proxy": 64749,
           "rea_namespace_tokens_proxy": 53581,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 65690,
+          "whole_json_tokens_proxy": 65697,
           "rea_namespace_tokens_proxy": 53581,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 65826,
+          "whole_json_tokens_proxy": 65837,
           "rea_namespace_tokens_proxy": 53581,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 65999,
+          "whole_json_tokens_proxy": 66023,
           "rea_namespace_tokens_proxy": 53581,
           "rea_functions": 211
         }
       ],
-      "wall_seconds": 15.336,
-      "cpu_seconds": 7.463327,
-      "family_peak_mib": 828.5234375,
+      "wall_seconds": 15.889,
+      "cpu_seconds": 7.939387,
+      "family_peak_mib": 823.69921875,
       "payload_cleanup_verified": true,
       "final_whole_scope_counters_verified": false
     },
@@ -233,52 +233,52 @@
       "budget": 300000,
       "requests": 8,
       "compactions": 0,
-      "whole_json_tokens_proxy": 515487,
+      "whole_json_tokens_proxy": 515713,
       "request_details": [
         {
-          "whole_json_tokens_proxy": 62785,
+          "whole_json_tokens_proxy": 62804,
           "rea_namespace_tokens_proxy": 53581,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 62973,
+          "whole_json_tokens_proxy": 62990,
           "rea_namespace_tokens_proxy": 53581,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 63654,
+          "whole_json_tokens_proxy": 63677,
           "rea_namespace_tokens_proxy": 53581,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 63794,
+          "whole_json_tokens_proxy": 63815,
           "rea_namespace_tokens_proxy": 53581,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 64743,
+          "whole_json_tokens_proxy": 64772,
           "rea_namespace_tokens_proxy": 53581,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 65694,
+          "whole_json_tokens_proxy": 65731,
           "rea_namespace_tokens_proxy": 53581,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 65834,
+          "whole_json_tokens_proxy": 65870,
           "rea_namespace_tokens_proxy": 53581,
           "rea_functions": 211
         },
         {
-          "whole_json_tokens_proxy": 66010,
+          "whole_json_tokens_proxy": 66054,
           "rea_namespace_tokens_proxy": 53581,
           "rea_functions": 211
         }
       ],
-      "wall_seconds": 15.347,
-      "cpu_seconds": 7.456538,
-      "family_peak_mib": 828.03515625,
+      "wall_seconds": 15.439,
+      "cpu_seconds": 8.371664,
+      "family_peak_mib": 813.6328125,
       "payload_cleanup_verified": true,
       "final_whole_scope_counters_verified": false
     }
@@ -291,7 +291,7 @@
       "tool_calls": 8,
       "exported_bundle_bytes": 214214,
       "answer": {
-        "pid": 450090,
+        "pid": 517427,
         "state": "running",
         "scripts": 1,
         "messages": 50,
@@ -303,28 +303,28 @@
         {
           "name": "frida_session_status",
           "input": {
-            "session_id": "d33cb386-e9a9-4db8-918d-b1c3f850ebf8"
+            "session_id": "ef8982d3-dbf2-43cb-8256-3a4f4bc83cc3"
           },
           "phase": "frida_session_status",
-          "elapsed_ms": 136.91823400000067,
+          "elapsed_ms": 197.58100300000024,
           "reply_bytes": 462831,
           "is_error": false
         },
         {
           "name": "frida_session_status",
           "input": {
-            "session_id": "d33cb386-e9a9-4db8-918d-b1c3f850ebf8"
+            "session_id": "ef8982d3-dbf2-43cb-8256-3a4f4bc83cc3"
           },
           "phase": "frida_session_status",
-          "elapsed_ms": 79.398596,
+          "elapsed_ms": 108.50572199999988,
           "reply_bytes": 462831,
           "is_error": false
         }
       ],
-      "one_catalog_plus_all_sdk_calls_tokens_proxy": 1178147,
-      "wall_seconds": 13.455,
-      "cpu_seconds": 5.630512,
-      "family_peak_mib": 580.78515625,
+      "one_catalog_plus_all_sdk_calls_tokens_proxy": 1186065,
+      "wall_seconds": 13.759,
+      "cpu_seconds": 6.097489,
+      "family_peak_mib": 578.5625,
       "payload_cleanup_verified": true,
       "final_whole_scope_counters_verified": false
     },
@@ -335,7 +335,7 @@
       "tool_calls": 8,
       "exported_bundle_bytes": 2335,
       "answer": {
-        "pid": 448563,
+        "pid": 516970,
         "state": "running",
         "scripts": 1,
         "messages": 2,
@@ -347,28 +347,28 @@
         {
           "name": "frida_session_status",
           "input": {
-            "session_id": "a036a371-b338-4094-8058-8dcc259afcad"
+            "session_id": "3f1f778f-ca18-48ba-a7db-b58afbf4710d"
           },
           "phase": "frida_session_status",
-          "elapsed_ms": 55.72211699999934,
+          "elapsed_ms": 79.25232200000028,
           "reply_bytes": 2643,
           "is_error": false
         },
         {
           "name": "frida_session_status",
           "input": {
-            "session_id": "a036a371-b338-4094-8058-8dcc259afcad"
+            "session_id": "3f1f778f-ca18-48ba-a7db-b58afbf4710d"
           },
           "phase": "frida_session_status",
-          "elapsed_ms": 3.724970000000212,
+          "elapsed_ms": 6.851230000000214,
           "reply_bytes": 2643,
           "is_error": false
         }
       ],
-      "one_catalog_plus_all_sdk_calls_tokens_proxy": 882286,
-      "wall_seconds": 12.829,
-      "cpu_seconds": 4.763961,
-      "family_peak_mib": 573.484375,
+      "one_catalog_plus_all_sdk_calls_tokens_proxy": 882323,
+      "wall_seconds": 13.039,
+      "cpu_seconds": 4.953337,
+      "family_peak_mib": 577.140625,
       "payload_cleanup_verified": true,
       "final_whole_scope_counters_verified": false
     },
@@ -379,7 +379,7 @@
       "tool_calls": 8,
       "exported_bundle_bytes": 216931,
       "answer": {
-        "pid": 450719,
+        "pid": 517901,
         "state": "running",
         "scripts": 1,
         "messages": 50,
@@ -391,30 +391,30 @@
         {
           "name": "frida_session_status",
           "input": {
-            "session_id": "c626bbe0-4133-41b3-959d-fbe958652f76",
+            "session_id": "9af7f188-05f8-4559-b570-98556196090e",
             "detail": "summary"
           },
           "phase": "frida_session_status",
-          "elapsed_ms": 221.64975100000083,
+          "elapsed_ms": 159.16798299999937,
           "reply_bytes": 5597,
           "is_error": false
         },
         {
           "name": "frida_session_status",
           "input": {
-            "session_id": "c626bbe0-4133-41b3-959d-fbe958652f76",
+            "session_id": "9af7f188-05f8-4559-b570-98556196090e",
             "detail": "summary"
           },
           "phase": "frida_session_status",
-          "elapsed_ms": 74.04379700000027,
+          "elapsed_ms": 61.96135099999992,
           "reply_bytes": 5597,
           "is_error": false
         }
       ],
-      "one_catalog_plus_all_sdk_calls_tokens_proxy": 885535,
-      "wall_seconds": 12.85,
-      "cpu_seconds": 5.168118,
-      "family_peak_mib": 579.94140625,
+      "one_catalog_plus_all_sdk_calls_tokens_proxy": 885626,
+      "wall_seconds": 12.843,
+      "cpu_seconds": 5.012703,
+      "family_peak_mib": 579.0,
       "payload_cleanup_verified": true,
       "final_whole_scope_counters_verified": false
     },
@@ -425,7 +425,7 @@
       "tool_calls": 8,
       "exported_bundle_bytes": 5051,
       "answer": {
-        "pid": 449320,
+        "pid": 517162,
         "state": "running",
         "scripts": 1,
         "messages": 2,
@@ -437,30 +437,30 @@
         {
           "name": "frida_session_status",
           "input": {
-            "session_id": "f18807ff-2c76-4cd4-890e-0171dfff2197",
+            "session_id": "1bcda0f5-e3cd-45ee-b82c-5886d8312bc6",
             "detail": "summary"
           },
           "phase": "frida_session_status",
-          "elapsed_ms": 87.16491599999972,
+          "elapsed_ms": 107.78244100000029,
           "reply_bytes": 5595,
           "is_error": false
         },
         {
           "name": "frida_session_status",
           "input": {
-            "session_id": "f18807ff-2c76-4cd4-890e-0171dfff2197",
+            "session_id": "1bcda0f5-e3cd-45ee-b82c-5886d8312bc6",
             "detail": "summary"
           },
           "phase": "frida_session_status",
-          "elapsed_ms": 5.525279999999839,
+          "elapsed_ms": 5.996030000000246,
           "reply_bytes": 5595,
           "is_error": false
         }
       ],
-      "one_catalog_plus_all_sdk_calls_tokens_proxy": 885564,
-      "wall_seconds": 12.519,
-      "cpu_seconds": 4.537429,
-      "family_peak_mib": 575.859375,
+      "one_catalog_plus_all_sdk_calls_tokens_proxy": 885676,
+      "wall_seconds": 13.533,
+      "cpu_seconds": 5.495048,
+      "family_peak_mib": 576.48046875,
       "payload_cleanup_verified": true,
       "final_whole_scope_counters_verified": false
     }
