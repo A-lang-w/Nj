@@ -16,6 +16,7 @@ import {
 } from "../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import type { GdbCommandResult } from "../domain/commandObservation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   ProviderProcessSupervisor,
@@ -96,21 +97,6 @@ interface PendingCommand {
   readonly reject: (error: Error) => void;
   readonly cleanup: () => void;
   timer: ReturnType<typeof setTimeout>;
-}
-
-export interface GdbCommandResult {
-  readonly command: string;
-  readonly mi: string;
-  readonly records: readonly string[];
-  readonly console: string;
-  readonly target: string;
-  readonly log: string;
-  readonly process_exit_observed?: boolean;
-  readonly process_exit_code?: number | null;
-  readonly process_exit_signal?: NodeJS.Signals | null;
-  readonly output_truncated: boolean;
-  readonly completion_status: "complete" | "unknown";
-  readonly output_invalid_utf8?: true;
 }
 
 class GdbCommandTimeoutError extends AnalysisTimeoutError {

@@ -1,6 +1,6 @@
 import type { EvidenceProvider } from "../../domain/evidence.js";
 import type {
-  ObjdumpInput,
+  ObjdumpSelection,
   RizinInput,
 } from "../../domain/reverseEngineering.js";
 
@@ -15,7 +15,7 @@ export interface ReverseEngineeringProviderCommand {
 /** Provider-specific command construction stays outside the application layer. */
 export interface ReverseEngineeringCommandPort {
   objdump(
-    input: ObjdumpInput,
+    input: ObjdumpSelection,
     options?: { readonly signal?: AbortSignal },
   ):
     | ReverseEngineeringProviderCommand

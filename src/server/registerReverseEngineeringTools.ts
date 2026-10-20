@@ -7,6 +7,7 @@ import type {
 import type { Logger } from "pino";
 
 import type { ReverseEngineeringService } from "../application/reverse/ReverseEngineeringService.js";
+import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { Evidence } from "../domain/evidence.js";
 import { toolContract } from "../contracts/toolContracts.js";
@@ -41,6 +42,7 @@ export const registerReverseEngineeringTools = (
     ) => AnalysisError,
   ) => Promise<Result<Result<Value, AnalysisError>, AnalysisError>>,
   registerRizin = true,
+  evidenceById?: EvidenceLookup,
 ): void => {
   const objdump = toolContract("inspect_with_objdump");
   const rizin = toolContract("execute_rizin_command");
@@ -55,9 +57,13 @@ export const registerReverseEngineeringTools = (
         delivery,
         async () => {
           const result = await logToolExecution(logger, objdump.name, () =>
-            service.inspectWithObjdump(input, {
-              signal: context.mcpReq.signal,
-            }),
+            service.inspectWithObjdump(
+              input,
+              {
+                signal: context.mcpReq.signal,
+              },
+              { recordEvidence, evidenceById },
+            ),
           );
           if (!result.ok)
             return deliverFailure(

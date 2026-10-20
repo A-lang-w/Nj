@@ -6,9 +6,14 @@ import {
   type GdbSessionManager,
 } from "../gdb/GdbSessionManager.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
+import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
+import {
+  requireAnalysisViewRetention,
+  summarizeRetainedAnalysis,
+} from "../application/analysisView/AnalysisViewService.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import { evidenceSchema } from "../domain/evidence.js";
-import { err } from "../domain/result.js";
+import { err, ok } from "../domain/result.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import {
   runOwnedCleanupWithExternalMutationAdmission,
@@ -32,6 +37,7 @@ export const registerGdbTools = (
   delivery: ToolResultDelivery,
   recordEvidence?: EvidenceWriter["recordEvidence"],
   session?: ExternalMutationAdmission,
+  evidenceById?: EvidenceLookup,
 ): void => {
   const start = toolContract("start_gdb_session");
   const consoleContract = toolContract("gdb_console");
@@ -73,6 +79,14 @@ export const registerGdbTools = (
     consoleContract.name,
     toolRegistrationOptions(consoleContract),
     async (input, context: ServerContext) => {
+      const retention = { recordEvidence, evidenceById };
+      if (input.detail === "summary") {
+        const ready = requireAnalysisViewRetention(
+          consoleContract.name,
+          retention,
+        );
+        if (!ready.ok) return delivery.toCallToolResult(ready, consoleContract);
+      }
       const execute = () =>
         logToolExecution(logger, consoleContract.name, () =>
           manager.execute(
@@ -81,9 +95,9 @@ export const registerGdbTools = (
             context.mcpReq.signal,
           ),
         );
-      // The provider only admits this control while its original run still owns
-      // mutation admission. Queuing it behind that run would deadlock its stop.
-      const result = isGdbInterruptCommand(input.command)
+      // Interrupt must bypass mutation admission: the provider only admits it
+      // while its original run owns admission, so queuing would deadlock stop.
+      const executed = isGdbInterruptCommand(input.command)
         ? await execute()
         : await runWithExternalMutationAdmission(
             session,
@@ -93,6 +107,11 @@ export const registerGdbTools = (
             (value) => value.evidence,
             () => manager.retryCleanupFailures(),
           );
+      const result = !executed.ok
+        ? executed
+        : input.detail === "summary"
+          ? summarizeRetainedAnalysis(executed.value.evidence, retention)
+          : ok(executed.value.evidence);
       if (!result.ok) {
         const partial = result.error.partialObservation;
         const parsed = evidenceSchema.safeParse(partial);
@@ -108,9 +127,9 @@ export const registerGdbTools = (
         }
         return delivery.toCallToolResult(result, consoleContract);
       }
-      const recorded = recordEvidence?.(result.value.evidence);
+      const recorded = recordEvidence?.(result.value);
       return delivery.toEvidenceToolResult(
-        result.value.evidence,
+        result.value,
         consoleContract,
         recorded,
       );
