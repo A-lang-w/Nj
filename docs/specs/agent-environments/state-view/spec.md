@@ -66,5 +66,7 @@ derived values and cross-type effects are not tied to the state.
 
 Serving tool calls from the state, `data/reset`, `data/add` and `data/get` on
 the environment data plane, exporting the state with a bundle, and write
-effects are later increments of #4933. This PR must reference rather than
+effects are later increments of #4933. So are documents for item-shaped
+written paths (one per identity rather than per template) and for paths that
+are only deleted; until then their reads stay recorded. This PR must reference rather than
 close the issue.

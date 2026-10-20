@@ -497,7 +497,10 @@ plan lists the `checked_record_ordinals`. Otherwise the tool is a recorded view
 with reason `envelope-varies`, `fields-differ` or `list-differs`; the other
 reasons are `query-body` (a query `POST`), `no-init-recording`,
 `body-unusable`, `not-entity`, `no-identity` and `query-varies` (a document
-read under several queries). A body is usable when its content type is
+read under several queries). Documents are held only for list-shaped paths
+that a `POST`, `PUT` or `PATCH` tool writes: a non-entity read of an item path
+such as `/api/files/{id}`, or of a path that is only deleted, stays recorded
+with `no-identity` or `not-entity`. A body is usable when its content type is
 JSON-like, it is UTF-8 text of at most 256 KiB, every number survives native
 conversion exactly, and no member is named `__proto__`.
 
