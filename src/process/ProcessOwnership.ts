@@ -497,6 +497,12 @@ interface OwnedCleanupPlan {
   readonly unverified: readonly OwnershipSweepUnverifiedProcess[];
 }
 
+/** Process table retained after launcher-exit settlement, plus groups proven by token. */
+interface SettledProcessTable {
+  readonly processes: readonly ProcessTableEntry[];
+  readonly escapedProcessGroupIds: readonly number[];
+}
+
 interface ProcessRelationSnapshot {
   readonly currentRelations: readonly ProcessTableEntry[];
   readonly identities: ReadonlyMap<number, ProcessIdentityObservation>;
@@ -561,6 +567,92 @@ const readProcessRelationSnapshot = async (
   return { currentRelations, identities, failures };
 };
 
+const settledProcessTable = (
+  processes: readonly ProcessTableEntry[],
+): SettledProcessTable => ({
+  processes,
+  escapedProcessGroupIds: [],
+});
+
+/**
+ * Token-check rows that exist only in the post-exit table. A prior PID, group,
+ * or ancestry link is handled by the caller; these rows have none of those.
+ * Foreign tokens are not owned. A matching token authorizes only a group whose
+ * leader also carries that token. An unreadable live row stays unresolved.
+ */
+const classifyUnlinkedExitRows = async (
+  ownership: OwnedProcessGroup,
+  refreshed: readonly ProcessTableEntry[],
+  unlinked: readonly ProcessTableEntry[],
+  host: ProcessOwnershipHost,
+): Promise<
+  | { readonly kind: "clear" }
+  | { readonly kind: "uncertain"; readonly reason: string }
+  | { readonly kind: "escaped"; readonly groupIds: readonly number[] }
+> => {
+  if (unlinked.length === 0) return { kind: "clear" };
+  const matched: ProcessTableEntry[] = [];
+  const unreadable: { readonly pid: number; readonly reason: string }[] = [];
+  for await (const { process, observation } of readProcessRunTokens(
+    host,
+    unlinked,
+  )) {
+    if (observation.state === "readable") {
+      if (observation.runId === ownership.runId) matched.push(process);
+      continue;
+    }
+    unreadable.push({ pid: process.pid, reason: observation.reason });
+  }
+  if (unreadable.length > 0) {
+    let live: ReadonlySet<number> | undefined;
+    try {
+      live = new Set(
+        liveProcesses(await host.listProcesses()).map(({ pid }) => pid),
+      );
+    } catch (cause: unknown) {
+      void cause;
+      live = undefined;
+    }
+    const stillLive = unreadable.filter(
+      (candidate) => live === undefined || live.has(candidate.pid),
+    );
+    if (stillLive.length > 0) {
+      const only = stillLive.length === 1 ? stillLive[0] : undefined;
+      const pids = stillLive
+        .map(({ pid }) => pid)
+        .sort((left, right) => left - right);
+      return {
+        kind: "uncertain",
+        reason:
+          only === undefined
+            ? `process ownership could not be revalidated for PID(s): ${pids.join(", ")}`
+            : `process ownership could not be revalidated for PID ${String(only.pid)}: ${only.reason}`,
+      };
+    }
+  }
+  if (matched.length === 0) return { kind: "clear" };
+  const matchedPids = new Set(matched.map(({ pid }) => pid));
+  const groupIds = new Set<number>();
+  for (const process of matched) {
+    const leader = refreshed.find(
+      (candidate) =>
+        candidate.pid === process.processGroupId &&
+        candidate.processGroupId === process.processGroupId,
+    );
+    if (leader === undefined || !matchedPids.has(leader.pid))
+      return {
+        kind: "uncertain",
+        reason:
+          "descendant process-group leader identity could not be verified",
+      };
+    groupIds.add(process.processGroupId);
+  }
+  return {
+    kind: "escaped",
+    groupIds: [...groupIds].sort((left, right) => left - right),
+  };
+};
+
 // A process-table read can race exit and retain the old state with an altered
 // command. Native terminal facts can settle that mismatch; exit-in-progress
 // must be confirmed first. Surviving members still require normal token checks.
@@ -570,11 +662,11 @@ const settleLauncherExit = async (
   host: ProcessOwnershipHost,
   exitSettlement: ProcessExitSettlementBudget,
 ): Promise<
-  | readonly ProcessTableEntry[]
+  | SettledProcessTable
   | Extract<ProcessCleanupResult, { readonly cleaned: false }>
 > => {
   const launcher = processes.find(({ pid }) => pid === ownership.leaderPid);
-  if (launcher === undefined) return processes;
+  if (launcher === undefined) return settledProcessTable(processes);
   let identityCheckedLauncher = launcher;
   if (host.processIdentities !== undefined) {
     const initialIdentities = await readNativeProcessIdentityMap(
@@ -605,7 +697,9 @@ const settleLauncherExit = async (
         reason: "owned launcher exit could not be confirmed",
       };
     if (processIdentityHasExited(identity))
-      return processes.filter(({ pid }) => pid !== launcher.pid);
+      return settledProcessTable(
+        processes.filter(({ pid }) => pid !== launcher.pid),
+      );
     if (
       identity?.state !== "readable" ||
       identity.relation?.state !== "observed"
@@ -621,7 +715,7 @@ const settleLauncherExit = async (
     };
   }
   const reason = launcherIdentityFailure(identityCheckedLauncher, ownership);
-  if (reason === null) return processes;
+  if (reason === null) return settledProcessTable(processes);
   // A native identity read already says that the launcher still exists and
   // supplies its current parent/group relation. Refreshing the process table
   // cannot repair a command or launch-relation mismatch for that generation.
@@ -654,7 +748,28 @@ const settleLauncherExit = async (
       )
     )
       return { cleaned: false, reason };
-    return refreshed.processes;
+    const priorPids = new Set(processes.map(({ pid }) => pid));
+    const unlinked = refreshed.processes.filter(
+      (process) =>
+        !priorPids.has(process.pid) &&
+        process.processGroupId !== ownership.processGroupId &&
+        !descendantPids.has(process.pid) &&
+        !descendantGroupIds.has(process.processGroupId) &&
+        !refreshedDescendantPids.has(process.pid),
+    );
+    const classified = await classifyUnlinkedExitRows(
+      ownership,
+      refreshed.processes,
+      unlinked,
+      host,
+    );
+    if (classified.kind === "uncertain")
+      return { cleaned: false, reason: classified.reason };
+    return {
+      processes: refreshed.processes,
+      escapedProcessGroupIds:
+        classified.kind === "escaped" ? classified.groupIds : [],
+    };
   }
   return { cleaned: false, reason };
 };
@@ -665,13 +780,15 @@ const createOwnedCleanupPlan = async (
   host: ProcessOwnershipHost,
   exitSettlement: ProcessExitSettlementBudget,
 ): Promise<OwnedCleanupPlan | ProcessCleanupResult> => {
-  const processes = await settleLauncherExit(
+  const settled = await settleLauncherExit(
     ownership,
     initialProcesses,
     host,
     exitSettlement,
   );
-  if ("cleaned" in processes) return processes;
+  if ("cleaned" in settled) return settled;
+  const processes = settled.processes;
+  const escapedProcessGroupIds = new Set(settled.escapedProcessGroupIds);
   const relationSnapshot = await readProcessRelationSnapshot(
     ownership,
     processes,
@@ -714,6 +831,7 @@ const createOwnedCleanupPlan = async (
     launcher === undefined &&
     rootMembers.length === 0 &&
     tokenOwned.owned.length === 0 &&
+    escapedProcessGroupIds.size === 0 &&
     !relationSnapshot.currentRelations.some(({ processGroupId }) =>
       sampledProcessGroupIds.has(processGroupId),
     )
@@ -748,6 +866,8 @@ const createOwnedCleanupPlan = async (
     processGroupIds.add(process.processGroupId);
   for (const processGroupId of sampledProcessGroupIds)
     processGroupIds.add(processGroupId);
+  for (const processGroupId of escapedProcessGroupIds)
+    processGroupIds.add(processGroupId);
   const signalableGroups = new Set<number>();
   const unresolved = [...tokenOwned.failures, ...relationSnapshot.failures];
   const unverifiableSampledGroups = new Set<number>();
@@ -757,9 +877,12 @@ const createOwnedCleanupPlan = async (
       ({ pid, processGroupId: observedGroupId }) =>
         pid === processGroupId && observedGroupId === processGroupId,
     );
+    const provenGroup =
+      tokenOwnedGroupIds.has(processGroupId) ||
+      escapedProcessGroupIds.has(processGroupId);
     if (
       (groupLeader === undefined || !descendantPids.has(groupLeader.pid)) &&
-      !tokenOwnedGroupIds.has(processGroupId) &&
+      !provenGroup &&
       !sampledProcessGroupIds.has(processGroupId)
     )
       return {
@@ -769,7 +892,7 @@ const createOwnedCleanupPlan = async (
       };
     if (
       (groupLeader === undefined || !descendantPids.has(groupLeader.pid)) &&
-      !tokenOwnedGroupIds.has(processGroupId)
+      !provenGroup
     )
       unverifiableSampledGroups.add(processGroupId);
   }
@@ -867,13 +990,14 @@ const revalidateOwnedProcessGroup = async (
 ): Promise<{ readonly empty: boolean } | ProcessCleanupResult> => {
   let members: readonly ProcessTableEntry[];
   try {
-    const processes = await settleLauncherExit(
+    const settled = await settleLauncherExit(
       ownership,
       liveProcesses(await host.listProcesses()),
       host,
       exitSettlement,
     );
-    if ("cleaned" in processes) return processes;
+    if ("cleaned" in settled) return settled;
+    const processes = settled.processes;
     const relationSnapshot = await readProcessRelationSnapshot(
       ownership,
       processes,

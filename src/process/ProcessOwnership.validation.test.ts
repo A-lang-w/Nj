@@ -310,6 +310,185 @@ describe("owned process-group cleanup validation: refreshed descendant lineage",
   );
 });
 
+describe("identityless exit refresh signals a token-owned replacement", () => {
+  it("token-checks a reparented grandchild that appears only after the launcher exits", async () => {
+    const child = { ...launcher, pid: 101, parentPid: 100 };
+    const escaped = {
+      ...launcher,
+      pid: 102,
+      parentPid: 1,
+      processGroupId: 102,
+      command: "reparented-grandchild",
+    };
+    const signalGroup = vi.fn();
+    const environment = vi.fn((pid: number) =>
+      Promise.resolve({
+        REA_PROCESS_RUN_ID: pid === 102 ? ownership.runId : "run-token",
+      }),
+    );
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([{ ...launcher, command: "[MainThread]" }, child])
+      .mockResolvedValue([escaped]);
+    await expect(
+      cleanupOwnedProcessGroup(
+        { ...ownership, expectedCommand: "fixture" },
+        { listProcesses, environment, signalGroup },
+      ),
+    ).resolves.toEqual({ cleaned: true, signaled: true });
+    expect(environment).toHaveBeenCalledWith(102);
+    expect(signalGroup.mock.calls).toEqual([[102, "SIGKILL"]]);
+  });
+
+  it("does not token-read rows that were already outside the exited snapshot", async () => {
+    const unrelated = {
+      ...launcher,
+      pid: 50,
+      parentPid: 1,
+      processGroupId: 50,
+      command: "unrelated",
+    };
+    const escaped = {
+      ...launcher,
+      pid: 102,
+      parentPid: 1,
+      processGroupId: 102,
+      command: "reparented-grandchild",
+    };
+    const signalGroup = vi.fn();
+    const environment = vi.fn((pid: number) =>
+      Promise.resolve({
+        REA_PROCESS_RUN_ID: pid === 102 ? ownership.runId : "other-run",
+      }),
+    );
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([
+        { ...launcher, command: "[MainThread]" },
+        { ...launcher, pid: 101, parentPid: 100 },
+        unrelated,
+      ])
+      .mockResolvedValue([unrelated, escaped]);
+    await expect(
+      cleanupOwnedProcessGroup(
+        { ...ownership, expectedCommand: "fixture" },
+        { listProcesses, environment, signalGroup },
+      ),
+    ).resolves.toEqual({ cleaned: true, signaled: true });
+    expect(environment.mock.calls.map(([pid]) => pid)).not.toContain(50);
+    expect(signalGroup.mock.calls).toEqual([[102, "SIGKILL"]]);
+  });
+});
+
+describe("identityless exit refresh leaves unrelated replacements unresolved", () => {
+  it.each([
+    ["foreign", "other-run"],
+    ["absent", undefined],
+  ] as const)(
+    "does not signal a %s replacement row after the launcher exits",
+    async (_label, runId) => {
+      const signalGroup = vi.fn();
+      const environment = vi.fn(() =>
+        Promise.resolve(
+          runId === undefined ? {} : { REA_PROCESS_RUN_ID: runId },
+        ),
+      );
+      const listProcesses = vi
+        .fn<ProcessOwnershipHost["listProcesses"]>()
+        .mockResolvedValueOnce([
+          { ...launcher, command: "[MainThread]" },
+          { ...launcher, pid: 101, parentPid: 100 },
+        ])
+        .mockResolvedValue([
+          {
+            ...launcher,
+            pid: 102,
+            parentPid: 1,
+            processGroupId: 102,
+            command: "foreign-replacement",
+          },
+        ]);
+      await expect(
+        cleanupOwnedProcessGroup(
+          { ...ownership, expectedCommand: "fixture" },
+          { listProcesses, environment, signalGroup },
+        ),
+      ).resolves.toEqual({ cleaned: true, signaled: false });
+      expect(environment).toHaveBeenCalledWith(102);
+      expect(signalGroup).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps cleanup unresolved when a replacement row's token cannot be read", async () => {
+    const signalGroup = vi.fn();
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([
+        { ...launcher, command: "[MainThread]" },
+        { ...launcher, pid: 101, parentPid: 100 },
+      ])
+      .mockResolvedValue([
+        {
+          ...launcher,
+          pid: 102,
+          parentPid: 1,
+          processGroupId: 102,
+          command: "unreadable-replacement",
+        },
+      ]);
+    await expect(
+      cleanupOwnedProcessGroup(
+        { ...ownership, expectedCommand: "fixture" },
+        {
+          listProcesses,
+          environment: () =>
+            Promise.reject(new Error("environment unavailable")),
+          signalGroup,
+        },
+      ),
+    ).resolves.toMatchObject({
+      cleaned: false,
+      reason:
+        "process ownership could not be revalidated for PID 102: environment unavailable",
+    });
+    expect(signalGroup).not.toHaveBeenCalled();
+  });
+
+  it("does not signal a token-owned replacement whose group leader is absent", async () => {
+    const signalGroup = vi.fn();
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([
+        { ...launcher, command: "[MainThread]" },
+        { ...launcher, pid: 101, parentPid: 100 },
+      ])
+      .mockResolvedValue([
+        {
+          ...launcher,
+          pid: 102,
+          parentPid: 1,
+          processGroupId: 999,
+          command: "member-without-leader",
+        },
+      ]);
+    await expect(
+      cleanupOwnedProcessGroup(
+        { ...ownership, expectedCommand: "fixture" },
+        {
+          listProcesses,
+          environment: () =>
+            Promise.resolve({ REA_PROCESS_RUN_ID: ownership.runId }),
+          signalGroup,
+        },
+      ),
+    ).resolves.toMatchObject({
+      cleaned: false,
+      reason: "descendant process-group leader identity could not be verified",
+    });
+    expect(signalGroup).not.toHaveBeenCalled();
+  });
+});
+
 describe("owned process-group cleanup validation: launcher exit races", () => {
   it.each([101, 999])(
     "retains cleanup uncertainty for a detached descendant in group %s after launcher exit",

@@ -461,7 +461,14 @@ selected roots; it is not a per-file allowance. File contents are read in
 
 Ownership inspections bind run-token reads to native start identities and retain
 related generations through reparenting, group changes, omitted rows, and cleanup
-retries. The captured run keeps one evidence owner through settlement and cleanup.
+retries. A host without native identity reads still token-checks process-table
+rows that appear only in a launcher-exit refresh before reporting that group
+clean or publishing an empty lineage. A matching token authorizes a signal only
+for a group whose leader carries the same token. A matching token whose leader
+is absent, or an unreadable token for a still-live new row, stays unresolved. A
+readable foreign token is not signaled. That refresh does not retain a ledger
+for a later attempt that never observes the launcher. The captured run keeps
+one evidence owner through settlement and cleanup.
 An absent or changed token leaves a previously related generation unresolved;
 current token proof is still required before signaling. Swept cleanup verifies the
 remaining family after its group signals. Coverage is bounded by the native

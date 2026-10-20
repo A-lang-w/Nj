@@ -239,6 +239,11 @@ export const observeOwnedProcessLineage = async (
     return unavailableLineage(ownership, identityFailure);
   const descendants = descendantsOf([launcher.pid], processes);
   const verifiedDescendants: ProcessTableEntry[] = [];
+  const originalPids = new Set([
+    launcher.pid,
+    ...descendants.map(({ pid }) => pid),
+  ]);
+  const examinedRefreshPids = new Set<number>();
   for await (const { process: member, observation } of readProcessRunTokens(
     host,
     [launcher, ...descendants],
@@ -251,18 +256,37 @@ export const observeOwnedProcessLineage = async (
         );
       if (member.pid !== launcher.pid) verifiedDescendants.push(member);
     } else {
-      if (await processIsGone(host, member.pid)) {
-        if (member.pid === launcher.pid)
-          return unavailableLineage(
-            ownership,
-            "owned launcher exited during lineage validation",
-          );
-        continue;
+      let refreshed: readonly ProcessTableEntry[];
+      try {
+        refreshed = liveProcesses(await host.listProcesses());
+      } catch (cause: unknown) {
+        void cause;
+        return unavailableLineage(
+          ownership,
+          `process ownership could not be revalidated for PID ${member.pid}: ${observation.reason}`,
+        );
       }
-      return unavailableLineage(
+      if (refreshed.some((process) => process.pid === member.pid))
+        return unavailableLineage(
+          ownership,
+          `process ownership could not be revalidated for PID ${member.pid}: ${observation.reason}`,
+        );
+      if (member.pid === launcher.pid)
+        return unavailableLineage(
+          ownership,
+          "owned launcher exited during lineage validation",
+        );
+      const classified = await classifyIdentitylessLineageRefresh(
         ownership,
-        `process ownership could not be revalidated for PID ${member.pid}: ${observation.reason}`,
+        launcher.pid,
+        originalPids,
+        refreshed,
+        host,
+        examinedRefreshPids,
       );
+      if (classified.status === "unavailable")
+        return unavailableLineage(ownership, classified.reason);
+      verifiedDescendants.push(...classified.descendants);
     }
   }
   return {
@@ -429,6 +453,67 @@ const observeNativeOwnedProcessLineage = async (
         })),
     },
   };
+};
+
+/**
+ * A liveness refresh is a process table, not a boolean. New rows still under
+ * the launcher join the published lineage after a matching token. A matching
+ * token outside that tree, or an unreadable live row, blocks a verified result.
+ * A readable foreign token outside the tree is not part of this run.
+ */
+const classifyIdentitylessLineageRefresh = async (
+  ownership: OwnedProcessGroup,
+  launcherPid: number,
+  originalPids: ReadonlySet<number>,
+  refreshed: readonly ProcessTableEntry[],
+  host: ProcessOwnershipHost,
+  examined: Set<number>,
+): Promise<
+  | {
+      readonly status: "classified";
+      readonly descendants: readonly ProcessTableEntry[];
+    }
+  | { readonly status: "unavailable"; readonly reason: string }
+> => {
+  const newcomers = refreshed.filter(
+    (process) => !originalPids.has(process.pid) && !examined.has(process.pid),
+  );
+  for (const process of newcomers) examined.add(process.pid);
+  if (newcomers.length === 0)
+    return { status: "classified", descendants: [] };
+  const inTree = new Set(
+    descendantsOf([launcherPid], refreshed).map(({ pid }) => pid),
+  );
+  const included: ProcessTableEntry[] = [];
+  const ownedOutside: number[] = [];
+  for await (const { process, observation } of readProcessRunTokens(
+    host,
+    newcomers,
+  )) {
+    if (observation.state !== "readable")
+      return {
+        status: "unavailable",
+        reason: `process ownership could not be revalidated for PID ${String(process.pid)}: ${observation.reason}`,
+      };
+    if (observation.runId !== ownership.runId) {
+      if (inTree.has(process.pid))
+        return {
+          status: "unavailable",
+          reason: "process lineage contains an unowned or PID-reused process",
+        };
+      continue;
+    }
+    if (inTree.has(process.pid)) included.push(process);
+    else ownedOutside.push(process.pid);
+  }
+  if (ownedOutside.length > 0)
+    return {
+      status: "unavailable",
+      reason: `process lineage refresh contained owned PID(s) outside the observed descendants: ${ownedOutside
+        .sort((left, right) => left - right)
+        .join(", ")}`,
+    };
+  return { status: "classified", descendants: included };
 };
 
 const processWithNativeRelation = (

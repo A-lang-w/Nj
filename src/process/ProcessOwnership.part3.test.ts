@@ -106,7 +106,99 @@ describe("owned process-group cleanup discovery", () => {
       },
     });
   });
+});
 
+describe("identityless lineage refresh keeps replacement rows", () => {
+  it("does not publish an empty lineage when exit refresh reveals a token-owned replacement", async () => {
+    const launcher = {
+      pid: 100,
+      parentPid: 1,
+      processGroupId: 100,
+      state: "S",
+      command: "root",
+    };
+    const child = {
+      pid: 101,
+      parentPid: 100,
+      processGroupId: 100,
+      state: "S",
+      command: "child",
+    };
+    const replacement = {
+      pid: 102,
+      parentPid: 1,
+      processGroupId: 102,
+      state: "S",
+      command: "reparented-grandchild",
+    };
+    const environment = vi.fn((pid: number) => {
+      if (pid === 101)
+        return Promise.reject(new Error("process exited during environment read"));
+      return Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" });
+    });
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([launcher, child])
+      .mockResolvedValue([launcher, replacement]);
+    await expect(
+      observeOwnedProcessLineage(ownership, {
+        listProcesses,
+        environment,
+        signalGroup: vi.fn(),
+      }),
+    ).resolves.toMatchObject({
+      status: "unavailable",
+      reason:
+        "process lineage refresh contained owned PID(s) outside the observed descendants: 102",
+    });
+    expect(environment).toHaveBeenCalledWith(102);
+  });
+
+  it("publishes a descendant that appears in the exit refresh and still belongs to the launcher", async () => {
+    const launcher = {
+      pid: 100,
+      parentPid: 1,
+      processGroupId: 100,
+      state: "S",
+      command: "root",
+    };
+    const child = {
+      pid: 101,
+      parentPid: 100,
+      processGroupId: 100,
+      state: "S",
+      command: "child",
+    };
+    const grandchild = {
+      pid: 102,
+      parentPid: 100,
+      processGroupId: 102,
+      state: "S",
+      command: "grandchild",
+    };
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([launcher, child])
+      .mockResolvedValue([launcher, grandchild]);
+    await expect(
+      observeOwnedProcessLineage(ownership, {
+        listProcesses,
+        environment: (pid) =>
+          pid === 101
+            ? Promise.reject(new Error("process exited during environment read"))
+            : Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" }),
+        signalGroup: vi.fn(),
+      }),
+    ).resolves.toMatchObject({
+      status: "verified",
+      lineage: {
+        descendants: [{ pid: 102, parentPid: 100, processGroupId: 102 }],
+      },
+    });
+  });
+});
+
+describe("owned process-group cleanup discovery", () => {
   it("does not publish lineage when the launcher exits during validation", async () => {
     const launcher = {
       pid: 100,
