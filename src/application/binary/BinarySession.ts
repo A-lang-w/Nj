@@ -494,14 +494,25 @@ export class BinarySession
       );
       if (!written.ok) return written;
       const closed = await this.#closeActive(options);
+      const receipt: SavedAnalysisSnapshot = {
+        ...written.value,
+        primitive_entries: snapshot.value.entries.length,
+        workflow_entries: snapshot.value.workflow_entries.length,
+        evidence_records: snapshot.value.evidence_bundle.records.length,
+      };
       return closed.ok
-        ? ok({
-            ...written.value,
-            primitive_entries: snapshot.value.entries.length,
-            workflow_entries: snapshot.value.workflow_entries.length,
-            evidence_records: snapshot.value.evidence_bundle.records.length,
-          })
-        : closed;
+        ? ok(receipt)
+        : err(
+            closed.error.retainDiagnostics({
+              saved_snapshot: {
+                path: receipt.path,
+                bytes: receipt.bytes,
+                primitive_entries: receipt.primitive_entries,
+                workflow_entries: receipt.workflow_entries,
+                evidence_records: receipt.evidence_records,
+              },
+            }),
+          );
     });
   }
 
