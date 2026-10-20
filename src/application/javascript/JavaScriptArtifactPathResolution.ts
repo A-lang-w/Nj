@@ -118,26 +118,30 @@ const encodePackageMetadataUrl = (path: string): URL =>
   );
 // URL identity cannot represent lone UTF-16 surrogates. Use request-local
 // opaque segments only for structural admission, never inventory lookup. A
-// target cannot spell these identities after URL's tab/newline preprocessing.
+// target or capture cannot spell these identities after URL preprocessing.
+interface UnrepresentablePackageMetadataUrl {
+  readonly structuralUrl: URL;
+  readonly structuralSegments: ReadonlySet<string>;
+  readonly limitation: string;
+}
+
 const packageMetadataUrl = (
   path: string,
   relativeTarget: string,
-): Result<
-  URL,
-  {
-    readonly structuralUrl: URL;
-    readonly structuralSegments: ReadonlySet<string>;
-    readonly limitation: string;
-  }
-> => {
+  capture: string | null = null,
+): Result<URL, UnrepresentablePackageMetadataUrl> => {
   try {
     return ok(encodePackageMetadataUrl(path));
   } catch (cause: unknown) {
     if (!(cause instanceof URIError)) throw cause;
+    const expandedTarget =
+      capture === null
+        ? relativeTarget
+        : relativeTarget.replaceAll("*", () => capture);
     const reserved = new Set(
-      `${path}\n${relativeTarget.replace(/[\t\n\r]/gu, "")}`.match(
-        /rea-opaque-\d+/gu,
-      ) ?? [],
+      `${path}\n${relativeTarget}\n${expandedTarget}`
+        .replace(/[\t\n\r]/gu, "")
+        .match(/rea-opaque-\d+/gu) ?? [],
     );
     const structuralSegments = new Set<string>();
     let nextIdentity = 0;
@@ -165,6 +169,19 @@ const packageMetadataUrl = (
   }
 };
 
+// URL normalization can remove an opaque base segment, including after pattern
+// expansion. Only surviving structural identities still prevent file lookup.
+const packageUrlLookupLimitation = (
+  url: URL,
+  unrepresentableBase: UnrepresentablePackageMetadataUrl | undefined,
+): string | undefined =>
+  unrepresentableBase !== undefined &&
+  url.pathname
+    .split("/")
+    .some((segment) => unrepresentableBase.structuralSegments.has(segment))
+    ? unrepresentableBase.limitation
+    : undefined;
+
 interface PackageFileTarget {
   /** Exact source metadata text; expansion must not replace this evidence. */
   readonly value: string;
@@ -172,7 +189,13 @@ interface PackageFileTarget {
   /** Normalized URL retained until loader-specific validation and file lookup. */
   readonly url: URL;
   /** Structural validation remains possible when the inventory base has no URL identity. */
-  readonly lookupLimitation?: string;
+  readonly unrepresentableBase?: UnrepresentablePackageMetadataUrl;
+}
+
+interface PackageTargetContext {
+  readonly packagePath: string;
+  readonly mapKind: "exports" | "imports";
+  readonly capture: string | null;
 }
 
 type CandidateResolution = {
@@ -837,8 +860,11 @@ const resolvePackageImportAlias = (
   const selected = selectExportTarget(
     lookup.target,
     packageExportConditions(input.moduleKind),
-    metadata.path,
-    "imports",
+    {
+      packagePath: metadata.path,
+      mapKind: "imports",
+      capture: lookup.kind === "pattern-found" ? lookup.capture : null,
+    },
   );
   if (selected.kind === "invalid" || selected.kind === "invalid-config")
     return unresolvedCandidate("rejected", [
@@ -996,14 +1022,12 @@ const resolveLegacyEsmSubpath = (
     return unresolvedCandidate("rejected", [
       `ESM package subpath ${JSON.stringify(input.declaredPath)} has URL directory form; directory imports are unsupported and no exact-file, package main or index lookup was attempted.`,
     ]);
-  const unrepresentableBase = metadataUrl.ok ? undefined : metadataUrl.error;
-  if (
-    unrepresentableBase !== undefined &&
-    url.pathname
-      .split("/")
-      .some((segment) => unrepresentableBase.structuralSegments.has(segment))
-  )
-    return unresolvedCandidate("unavailable", [unrepresentableBase.limitation]);
+  const lookupLimitation = packageUrlLookupLimitation(
+    url,
+    metadataUrl.ok ? undefined : metadataUrl.error,
+  );
+  if (lookupLimitation !== undefined)
+    return unresolvedCandidate("unavailable", [lookupLimitation]);
   const file = resolveFileCandidates(input, [candidate]);
   if (file !== null) return file;
   const source = input.files.get(input.sourcePath);
@@ -1103,8 +1127,12 @@ const resolveExportTarget = (
   if (typeof decoded !== "string") return withTargetSource(decoded);
   const candidate = confineCandidate(decoded);
   if (typeof candidate !== "string") return withTargetSource(candidate);
-  if (target.lookupLimitation !== undefined)
-    return unresolvedCandidate("unavailable", [target.lookupLimitation]);
+  const lookupLimitation = packageUrlLookupLimitation(
+    target.url,
+    target.unrepresentableBase,
+  );
+  if (lookupLimitation !== undefined)
+    return unresolvedCandidate("unavailable", [lookupLimitation]);
   if (urlPathIsDirectory(target.url.pathname))
     return withTargetSource(
       unresolvedCandidate(
@@ -1664,7 +1692,7 @@ const selectPackageExport = (
   const selected = selectExportTarget(
     target,
     packageExportConditions(moduleKind),
-    packagePath,
+    { packagePath, mapKind: "exports", capture },
   );
   if (selected.kind === "invalid" || selected.kind === "invalid-config")
     return { status: "rejected", limitation: selected.limitation };
@@ -1680,28 +1708,22 @@ const selectPackageExport = (
       status: "rejected",
       limitation: `The package exports target ${JSON.stringify(selected.value)} must start with "./".`,
     };
-  if (capture === null)
-    return {
-      status: "value",
-      value: selected.value,
-      url: selected.url,
-      ...(selected.lookupLimitation === undefined
-        ? {}
-        : {
-            lookupLimitation: selected.lookupLimitation,
-          }),
-    };
-  const expanded = expandPatternString(selected, capture, "exports");
+  const expanded =
+    capture === null
+      ? selected
+      : expandPatternString(selected, capture, "exports");
   if (expanded.kind === "value")
     return {
       status: "value",
       value: expanded.value,
-      expanded_value: expanded.expanded_value,
+      ...(expanded.expanded_value === undefined
+        ? {}
+        : { expanded_value: expanded.expanded_value }),
       url: expanded.url,
-      ...(selected.lookupLimitation === undefined
+      ...(expanded.unrepresentableBase === undefined
         ? {}
         : {
-            lookupLimitation: selected.lookupLimitation,
+            unrepresentableBase: expanded.unrepresentableBase,
           }),
     };
   return { status: "rejected", limitation: expanded.limitation };
@@ -1751,8 +1773,7 @@ const forbiddenCapturedSegment = (capture: string): string | undefined =>
 
 const selectStringPackageTarget = (
   value: string,
-  packagePath: string,
-  mapKind: "exports" | "imports",
+  { packagePath, mapKind, capture }: PackageTargetContext,
 ): ExportTargetOutcome => {
   if (mapKind === "imports") {
     const target = classifyPackageImportTargetString(value);
@@ -1772,7 +1793,7 @@ const selectStringPackageTarget = (
       `contains forbidden path segment ${JSON.stringify(forbidden)} before URL normalization`,
       mapKind,
     );
-  const metadataUrl = packageMetadataUrl(packagePath, value);
+  const metadataUrl = packageMetadataUrl(packagePath, value, capture);
   const packageUrl = metadataUrl.ok
     ? metadataUrl.value
     : metadataUrl.error.structuralUrl;
@@ -1793,7 +1814,7 @@ const selectStringPackageTarget = (
     ...(metadataUrl.ok
       ? {}
       : {
-          lookupLimitation: metadataUrl.error.limitation,
+          unrepresentableBase: metadataUrl.error,
         }),
   };
 };
@@ -1827,17 +1848,16 @@ const expandPatternString = (
     value: selected.value,
     expanded_value: selected.value.replaceAll("*", () => capture),
     url: new URL(selected.url.href.replaceAll("*", () => capture)),
-    ...(selected.lookupLimitation === undefined
+    ...(selected.unrepresentableBase === undefined
       ? {}
-      : { lookupLimitation: selected.lookupLimitation }),
+      : { unrepresentableBase: selected.unrepresentableBase }),
   };
 };
 
 const selectArrayPackageTarget = (
   value: readonly unknown[],
   conditions: ReadonlySet<string>,
-  packagePath: string,
-  mapKind: "exports" | "imports",
+  context: PackageTargetContext,
 ): ExportTargetOutcome => {
   if (value.length === 0) return { kind: "blocked", cause: "empty-array" };
   let lastRefusal:
@@ -1845,7 +1865,7 @@ const selectArrayPackageTarget = (
     | undefined;
   const declared = new Set<string>();
   for (const entry of value) {
-    const nested = selectExportTarget(entry, conditions, packagePath, mapKind);
+    const nested = selectExportTarget(entry, conditions, context);
     // Node's array fallback catches invalid targets, not invalid configuration.
     if (nested.kind === "invalid-config") return nested;
     if (nested.kind === "unmatched") {
@@ -1871,19 +1891,18 @@ const selectArrayPackageTarget = (
 const selectExportTarget = (
   value: unknown,
   conditions: ReadonlySet<string>,
-  packagePath: string,
-  mapKind: "exports" | "imports" = "exports",
+  context: PackageTargetContext,
 ): ExportTargetOutcome => {
   if (typeof value === "string")
-    return selectStringPackageTarget(value, packagePath, mapKind);
+    return selectStringPackageTarget(value, context);
   if (value === null) return { kind: "blocked", cause: "null" };
   if (Array.isArray(value))
-    return selectArrayPackageTarget(value, conditions, packagePath, mapKind);
+    return selectArrayPackageTarget(value, conditions, context);
   if (typeof value !== "object")
     return invalidExportTarget(
       value,
       "must be a relative string, object, array, or null",
-      mapKind,
+      context.mapKind,
     );
   for (const key of Object.keys(value)) {
     const numeric = Number(key);
@@ -1897,7 +1916,7 @@ const selectExportTarget = (
   for (const [condition, target] of Object.entries(value)) {
     declared.add(condition);
     if (!conditions.has(condition)) continue;
-    const nested = selectExportTarget(target, conditions, packagePath, mapKind);
+    const nested = selectExportTarget(target, conditions, context);
     if (nested.kind !== "unmatched") return nested;
     for (const name of nested.declared) declared.add(name);
   }

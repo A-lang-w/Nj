@@ -3349,6 +3349,144 @@ describe("url-reference JavaScript artifact path resolution", () => {
   });
 });
 
+describe("package URL opaque base identity", () => {
+  // Logical inventory paths can retain lone surrogates that portable filesystem
+  // fixtures cannot preserve. Include replacement-character and placeholder decoys.
+  it.each(["exports", "imports"] as const)(
+    "checks surviving opaque segments after %s target expansion",
+    (mapKind) => {
+      for (const [directory, target, capture, resolvedPath] of [
+        ["app/pkg-\ud800", "./.%*/safe.js", "2e", "app/safe.js"],
+        [
+          "app/pkg-\ud800",
+          "./.%*/safe.js",
+          "2e/rea-opaque-0",
+          "app/rea-opaque-0/safe.js",
+        ],
+        [
+          "app/pkg-\ud800",
+          "./.%*/rea-op\taque-0/safe.js",
+          "2e",
+          "app/rea-opaque-0/safe.js",
+        ],
+        ["app/pkg-\ud800", "./safe-*.js", "2e", null],
+        ["app/pkg-\ud800", "./safe.js", "2e", null],
+        ["app/outer-\ud800/pkg-\udfff", "./.%*/safe.js", "2e", null],
+        [
+          "app/outer-\ud800/pkg-\udfff",
+          "./.%*/.%*/safe.js",
+          "2e",
+          "app/safe.js",
+        ],
+        [
+          "app/rea-opaque-0/pkg-\ud800",
+          "./.%*/safe.js",
+          "2e",
+          "app/rea-opaque-0/safe.js",
+        ],
+      ] as const) {
+        const files = aliasFiles({
+          [`${directory}/package.json`]: JSON.stringify({
+            name: "fixture",
+            [mapKind]: {
+              [mapKind === "imports" ? "#x/*" : "./x/*"]: {
+                default: [target, "./fallback.js"],
+              },
+            },
+          }),
+          [`${directory}/main.js`]: "",
+          [`${directory}/safe.js`]: "",
+          [`${directory}/safe-2e.js`]: "",
+          [`${directory}/fallback.js`]: "",
+          "app/safe.js": "",
+          "app/pkg-\ufffd/safe.js": "",
+          "app/rea-opaque-0/safe.js": "",
+          "app/rea-opaque-0/safe-2e.js": "",
+          "app/rea-opaque-0/fallback.js": "",
+        });
+        const declaredPath = `${mapKind === "imports" ? "#x" : "fixture/x"}/${capture}`;
+        for (const moduleKind of ["import", "require"] as const) {
+          const result = resolve({
+            declaredPath,
+            sourcePath: `${directory}/main.js`,
+            context: "module-specifier",
+            moduleKind,
+            files,
+          });
+          expect(
+            result,
+            JSON.stringify({ directory, target, declaredPath, moduleKind }),
+          ).toMatchObject({
+            declared_path: declaredPath,
+            resolution_status:
+              resolvedPath === null ? "unavailable" : "resolved",
+            resolved_path: resolvedPath,
+          });
+          expect(
+            result.limitations.join(" ").includes("unpaired UTF-16 surrogate"),
+          ).toBe(resolvedPath === null);
+        }
+      }
+    },
+  );
+
+  it("retains opaque-base admission for exact package targets", () => {
+    const directory = "app/pkg-\ud800";
+    const files = aliasFiles({
+      [`${directory}/package.json`]: JSON.stringify({
+        name: "fixture",
+        exports: { ".": "./safe.js" },
+        imports: { "#safe": "./safe.js" },
+      }),
+      [`${directory}/main.js`]: "",
+      "app/pkg-\ufffd/safe.js": "",
+      "app/rea-opaque-0/safe.js": "",
+    });
+    for (const declaredPath of ["fixture", "#safe"])
+      for (const moduleKind of ["import", "require"] as const)
+        expect(
+          resolve({
+            declaredPath,
+            sourcePath: `${directory}/main.js`,
+            context: "module-specifier",
+            moduleKind,
+            files,
+          }),
+        ).toMatchObject({
+          resolution_status: "unavailable",
+          resolved_path: null,
+          limitations: [expect.stringContaining("unpaired UTF-16 surrogate")],
+        });
+  });
+
+  it("shares the survival check with legacy ESM subpaths", () => {
+    const files = aliasFiles({
+      "app/pkg-\ud800/main.js": "",
+      "app/pkg-\ud800/node_modules/legacy/package.json": "{}",
+      "app/safe.js": "",
+      "app/rea-opaque-0/safe.js": "",
+    });
+    for (const [declaredPath, status, path] of [
+      ["legacy/../../../safe.js", "resolved", "app/safe.js"],
+      ["legacy/../../safe.js", "unavailable", null],
+      [
+        "legacy/../../../rea-opaque-0/safe.js",
+        "resolved",
+        "app/rea-opaque-0/safe.js",
+      ],
+    ] as const)
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/pkg-\ud800/main.js",
+          context: "module-specifier",
+          moduleKind: "import",
+          files,
+        }),
+      ).toMatchObject({ resolution_status: status, resolved_path: path });
+  });
+});
+
 describe("package exports pattern keys", () => {
   it.each([
     { mapKind: "exports", target: "./*", request: "fixture/x/feature.js/" },

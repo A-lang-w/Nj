@@ -732,6 +732,13 @@ CommonJS reports a missing exact target. URL decoding, directory-form, and file
 lookup failures for a selected target do not select a later array entry. Rejected references retain the package metadata
 path, original target, failed constraint, and importing source location.
 
+Package metadata paths containing unpaired UTF-16 surrogates retain opaque
+segment identities through URL normalization and pattern expansion. File lookup
+remains unavailable only while an opaque base segment survives in the final URL;
+normalization that removes all such segments can select a representable file.
+Opaque identities never stand in for inventory paths and cannot collide with
+literal target or capture text.
+
 HTML script references resolve to exact inventoried files after applying the
 document base and query/fragment rules. As in a browser, the script URL and base
 href are read without surrounding whitespace or embedded tabs and newlines, and
