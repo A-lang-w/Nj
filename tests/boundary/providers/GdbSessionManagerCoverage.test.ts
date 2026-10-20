@@ -1059,6 +1059,52 @@ it("retains incomplete identity capture across continue and debugger exit", asyn
   expect(manager.status(started.value.session_id)).toBeDefined();
 }, 10_000);
 
+it("retains captured inferior identity across inspection and a later run", async () => {
+  const firstPid = "424246";
+  const secondPid = "424247";
+  let alive = true;
+  let runs = 0;
+  let currentPid = firstPid;
+  let continueWasDispatched!: () => void;
+  const continued = new Promise<void>((resolve) => {
+    continueWasDispatched = resolve;
+  });
+  const fake = createFakeSpawner((child, token, command) => {
+    if (command.includes('console "run"')) {
+      runs += 1;
+      currentPid = runs === 1 ? firstPid : secondPid;
+      child.stdout.write(
+        `=thread-group-started,id="i${runs}",pid="${currentPid}"\n${token}^running\n*running,thread-id="all"\n*stopped,reason="breakpoint-hit",thread-id="1",stopped-threads="all"\n`,
+      );
+    } else if (command.includes('console "continue"')) {
+      continueWasDispatched();
+      child.stdout.write(`${token}^running\n*running,thread-id="all"\n`);
+    } else child.stdout.write(`${token}^done\n`);
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    readInferiorProcessStartTime: async (pid) =>
+      pid === currentPid && alive ? `inferior-${pid}` : null,
+  });
+  const started = await expectGdbSessionStarted(manager);
+  expect((await manager.execute(started.value.session_id, "run")).ok).toBe(
+    true,
+  );
+  expect(
+    (await manager.execute(started.value.session_id, "info registers")).ok,
+  ).toBe(true);
+  expect((await manager.execute(started.value.session_id, "run")).ok).toBe(
+    true,
+  );
+  const resumed = manager.execute(started.value.session_id, "continue");
+  await continued;
+  alive = false;
+  fake.children[0]?.exitLeader(9);
+  fake.children[0]?.closeInheritedOutput();
+  await resumed;
+
+  expect((await manager.close(started.value.session_id)).ok).toBe(true);
+}, 10_000);
+
 it("does not release target ownership when kill covers only one known inferior", async () => {
   const fake = createFakeSpawner((_child, token) => {
     fake.children[0]?.stdout.write(`${token}^done\n`);

@@ -1262,6 +1262,10 @@ export class GdbSessionManager {
           } else if (isGdbTargetDispositionCommand(command)) {
             // Keep the current inventory until the correlated disposition
             // result decides whether every known inferior was covered.
+          } else if (isGdbTargetInspectionCommand(command)) {
+            // Inspection and executable selection do not replace a live
+            // inferior identity. Preserve ownership proof and any uncertainty
+            // already recorded by an earlier target boundary.
           } else if (!isGdbExecutionCommand(command)) {
             // An unrecognized command can change targets without a structured
             // event that safely rebuilds the process identity inventory.
@@ -3057,6 +3061,11 @@ export const isGdbInterruptCommand = (command: string): boolean =>
 /** Only explicit target disposition may run while its debugger retains ownership. */
 export const isGdbTargetDispositionCommand = (command: string): boolean =>
   command.trim() === "kill" || command.trim() === "detach";
+
+const isGdbTargetInspectionCommand = (command: string): boolean =>
+  /^(?:file|exec-file|symbol-file|info|show)(?:\s|$)/u.test(
+    command.trimStart(),
+  );
 
 const isGdbExecutionCommand = (command: string): boolean =>
   /^(?:run|start|continue|step|next|stepi|nexti|finish|advance|until)(?:\s|$)/u.test(
