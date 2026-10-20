@@ -40,21 +40,21 @@ const X86_LDEFS = `<?xml version="1.0" encoding="UTF-8"?>
 
 // Fake installation inspection; the language catalog is a real directory.
 const host: GhidraInstallationHost = {
-  platform: "linux",
+  platform: process.platform === "win32" ? "win32" : "linux",
   architecture: "x64",
   readText: () => "application.version=12.1.4\n",
   executable: () => true,
   probeJava: () => ({
     version: "21.0.11",
     major: 21,
-    home: "/jdk-21",
+    home: process.platform === "win32" ? "C:\\jdk-21" : "/jdk-21",
     bits: 64,
     runtime: "jdk",
   }),
 };
 
 const pe: BinaryTarget = {
-  path: "/fixture.exe",
+  path: process.platform === "win32" ? "C:\\fixture.exe" : "/fixture.exe",
   sha256: "a".repeat(64),
   kind: "executable",
   format: "pe",
