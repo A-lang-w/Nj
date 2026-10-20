@@ -262,6 +262,42 @@ it("leaves analysis unbound when a command returns before its writer finishes", 
   await session.close();
 });
 
+it("returns a retryable close refusal while a debugger still owns the target", async () => {
+  const [target] = await createBinarySessionTargets();
+  const session = createTestBinarySession(createCacheProvider([]));
+  expect((await session.open(target)).ok).toBe(true);
+  const externalCompletion = createDeferred<void>();
+  session.retainExternalMutationOwner(externalCompletion.promise);
+
+  expect(await session.close()).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisResourceConstraintError",
+      retryable: true,
+      remediationAction: expect.stringContaining("close_gdb_session"),
+    },
+  });
+  expect(session.activeTarget()?.path).toBe(target);
+  expect(
+    await session.closeWithSnapshot(
+      join(dirname(target), "blocked.json"),
+      false,
+    ),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisResourceConstraintError",
+      retryable: true,
+    },
+  });
+  expect(session.activeTarget()?.path).toBe(target);
+
+  externalCompletion.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(await session.close()).toEqual(resultOk(null));
+  expect(session.activeTarget()).toBeUndefined();
+});
+
 it.each([false, true])(
   "close retains an external writer until its owner settles (active: %s)",
   async (active) => {

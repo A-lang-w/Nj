@@ -8,6 +8,7 @@ import {
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -84,6 +85,7 @@ export class BinarySession
   #active: SessionBinding | undefined;
   #externalMutationCleanupFailure: AnalysisError | undefined;
   #externalMutationOwner: Promise<void> | undefined;
+  #externalMutationOwnerPending = false;
   #pendingCleanup:
     | {
         readonly run: SessionRun;
@@ -492,10 +494,32 @@ export class BinarySession
       () => new Promise<void>(() => {}),
     );
     const previous = this.#externalMutationOwner;
-    this.#externalMutationOwner =
+    const aggregate =
       previous === undefined
         ? owner
         : Promise.all([previous, owner]).then(() => undefined);
+    this.#externalMutationOwner = aggregate;
+    this.#externalMutationOwnerPending = true;
+    void aggregate.then(() => {
+      if (this.#externalMutationOwner === aggregate)
+        this.#externalMutationOwnerPending = false;
+    });
+  }
+
+  #externalMutationStillActive(
+    operation: string,
+  ): AnalysisResourceConstraintError {
+    return new AnalysisResourceConstraintError(
+      operation,
+      "capacity",
+      "A debugger inferior still owns the target. Stop or close its debugger session, then retry closing the binary session.",
+      null,
+      {
+        retryable: true,
+        remediationAction:
+          "Use gdb_console with an interrupt or target-disposition command, or close_gdb_session, then retry close_binary.",
+      },
+    );
   }
 
   /** Close the active target, if any. */
@@ -503,11 +527,8 @@ export class BinarySession
     options: BinarySessionCloseOptions = {},
   ): Promise<Result<null, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
-      const owner = await this.#waitForExternalMutationOwner(
-        "close_binary",
-        undefined,
-      );
-      if (!owner.ok) return owner;
+      if (this.#externalMutationOwnerPending)
+        return err(this.#externalMutationStillActive("close_binary"));
       await this.#drainCalls(admittedThrough);
       return this.#closeActive(options);
     });
@@ -520,11 +541,8 @@ export class BinarySession
     options: BinarySessionCloseOptions = {},
   ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
-      const owner = await this.#waitForExternalMutationOwner(
-        "close_binary",
-        undefined,
-      );
-      if (!owner.ok) return owner;
+      if (this.#externalMutationOwnerPending)
+        return err(this.#externalMutationStillActive("close_binary"));
       await this.#drainCalls(admittedThrough);
       const snapshot = this.exportAnalysisSnapshot();
       if (!snapshot.ok) return snapshot;
