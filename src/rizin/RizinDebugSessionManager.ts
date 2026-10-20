@@ -191,6 +191,7 @@ interface RizinDebugSession {
   readonly inferiorTtyDevice: number;
   readonly inferiorTtyInode: number;
   readonly knownInferiorIdentities: Map<string, OwnedInferiorIdentity>;
+  confirmedDetachedInferiorIdentity: OwnedInferiorIdentity | undefined;
   verifiedDetachResult: OwnedDebuggerDetachResult | undefined;
   inferiorInventoryComplete: boolean;
   inferiorStateUnknown: () => boolean;
@@ -460,6 +461,7 @@ export class RizinDebugSessionManager {
       inferiorTtyDevice: ttyDevice,
       inferiorTtyInode: ttyInode,
       knownInferiorIdentities: new Map(),
+      confirmedDetachedInferiorIdentity: undefined,
       verifiedDetachResult: undefined,
       inferiorInventoryComplete: false,
       inferiorStateUnknown: () => !session.inferiorInventoryComplete,
@@ -1213,6 +1215,11 @@ export class RizinDebugSessionManager {
       throw new Error(
         "Rizin protocol state is ambiguous; inferior detach is unverified.",
       );
+    if (session.confirmedDetachedInferiorIdentity !== undefined)
+      return this.#verifyConfirmedDetachedInferior(
+        session,
+        session.confirmedDetachedInferiorIdentity,
+      );
     session.inferiorInventoryComplete = false;
     const inferior = parseRizinPtraceRows(
       await this.#runInternalCommand(session, "olj"),
@@ -1318,15 +1325,29 @@ export class RizinDebugSessionManager {
       throw new Error(
         "Rizin did not confirm that the selected inferior FD was detached.",
       );
+    // Preserve this protocol proof before later identity and descriptor checks.
+    // A retry can then revalidate the retained process sinks without issuing
+    // another detach command or treating an empty inventory as contradictory.
+    session.confirmedDetachedInferiorIdentity = identity;
+    return this.#verifyConfirmedDetachedInferior(session, identity);
+  }
+
+  async #verifyConfirmedDetachedInferior(
+    session: RizinDebugSession,
+    identity: OwnedInferiorIdentity,
+  ): Promise<OwnedDebuggerDetachResult> {
     // Protocol readback must never be waived by proof that a process ended.
     await this.#verifyDebuggerExitPolicy(session);
     let inputSink: InferiorInputSink;
     try {
       assertRizinProcessStartTimeStable(
         identity.startTime,
-        await this.#readProcessStartTime(pid),
+        await this.#readProcessStartTime(identity.pid),
       );
-      inputSink = await this.#verifyInferiorOutputDescriptors(session, pid);
+      inputSink = await this.#verifyInferiorOutputDescriptors(
+        session,
+        identity.pid,
+      );
     } catch (cause) {
       // Detach resumes the inferior. Its identity or descriptors may disappear
       // before readback; only a previously identified process can prove its end.
@@ -1337,11 +1358,10 @@ export class RizinDebugSessionManager {
         ))
       )
         throw cause;
-      // Keep the identity while Rizin may still report a stale ptrace row.
-      // A retry can then prove that this exact process ended instead of
-      // treating the stale PID as an unowned, never-identified process.
+      session.confirmedDetachedInferiorIdentity = undefined;
       return { status: "no-inferior" };
     }
+    session.confirmedDetachedInferiorIdentity = undefined;
     return { status: "detached", outputSink: "durable", inputSink };
   }
 

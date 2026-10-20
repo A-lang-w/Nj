@@ -233,6 +233,87 @@ process.stdin.on("data", (chunk) => {
   return provider;
 };
 
+const spawnTestInferiorWithMutableInput = async (
+  ttyPath: string,
+  statePath: string,
+): Promise<ChildProcess> => {
+  const ttyFd = openSync(ttyPath, "w");
+  let inferior: ChildProcess;
+  try {
+    inferior = spawn(
+      process.execPath,
+      [
+        "-e",
+        `const { closeSync, openSync, writeFileSync } = require("node:fs");
+const [ttyPath, statePath] = process.argv.slice(1);
+const replaceInput = (path, state) => {
+  closeSync(0);
+  if (openSync(path, "r") !== 0) throw new Error("stdin was not reopened as fd 0");
+  writeFileSync(statePath, state);
+};
+process.on("SIGUSR1", () => replaceInput("/dev/zero", "unclassified"));
+process.on("SIGUSR2", () => replaceInput(ttyPath, "restored"));
+setInterval(() => {}, 1000);`,
+        ttyPath,
+        statePath,
+      ],
+      { stdio: [ttyFd, ttyFd, ttyFd] },
+    );
+  } finally {
+    closeSync(ttyFd);
+  }
+  inferiorProcesses.push(inferior);
+  await new Promise<void>((resolveSpawn, rejectSpawn) => {
+    inferior.once("spawn", resolveSpawn);
+    inferior.once("error", rejectSpawn);
+  });
+  return inferior;
+};
+
+const createPostDetachInputTransitionProvider = async (
+  pid: number,
+  commandsPath: string,
+): Promise<string> => {
+  directory = await mkdtemp(join(tmpdir(), "rea-rizin-detached-sink-"));
+  const provider = join(directory, "fake-rizin-detached-sink.mjs");
+  await writeFile(
+    provider,
+    `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+process.stdout.write("\\0");
+let input = "";
+let detached = false;
+let pendingDetach = false;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n"); if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    appendFileSync(${JSON.stringify(commandsPath)}, line + "\\n");
+    if (line === "olj") process.stdout.write((detached ? "[]" : JSON.stringify([{ fd: 12, raised: true, uri: "ptrace://${pid}" }])) + "\\0");
+    else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
+    else if (line.startsWith("o- ")) {
+      detached = true;
+      pendingDetach = true;
+      process.kill(${pid}, "SIGUSR1");
+    }
+    else if (line.startsWith("!echo ")) {
+      const marker = line.slice(6);
+      if (pendingDetach) {
+        pendingDetach = false;
+        setTimeout(() => process.stdout.write(marker + "\\0"), 100);
+      } else process.stdout.write(marker + "\\0");
+    }
+    else process.stdout.write("\\0");
+  }
+});
+`,
+  );
+  await chmod(provider, 0o700);
+  return provider;
+};
+
 const createLateDetachProvider = async (
   pid: number,
   providerDirectory: string,
@@ -674,6 +755,46 @@ it.skipIf(process.platform !== "linux")(
     ).toBe(true);
     expect(await readFile(commandsPath, "utf8")).not.toContain("o- 12");
     expect(manager.status(started.value.session_id)).toBeUndefined();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "retries descriptor verification after Rizin confirms detach without detaching twice",
+  async () => {
+    const ttyPath = await rizinTestInferiorTty();
+    directory = await mkdtemp(join(tmpdir(), "rea-rizin-detached-sink-test-"));
+    const statePath = join(directory, "inferior-input-state");
+    const commandsPath = join(directory, "commands");
+    const inferior = await spawnTestInferiorWithMutableInput(
+      ttyPath,
+      statePath,
+    );
+    const pid = inferior.pid;
+    expect(pid).toBeDefined();
+    if (pid === undefined) return;
+    const provider = await createPostDetachInputTransitionProvider(
+      pid,
+      commandsPath,
+    );
+    const { manager, sessionId } = await startRizinWithOwnedStop(provider);
+    expect(sessionId).toBeDefined();
+    if (sessionId === undefined) return;
+
+    const firstClose = await manager.close(sessionId);
+    expect(firstClose.ok).toBe(false);
+    if (!firstClose.ok) expect(firstClose.error.cleanupIncomplete).toBe(true);
+    await expect.poll(() => readFile(statePath, "utf8")).toBe("unclassified");
+
+    inferior.kill("SIGUSR2");
+    await expect.poll(() => readFile(statePath, "utf8")).toBe("restored");
+    expect(await manager.retryCleanupFailures()).toEqual({
+      ok: true,
+      value: null,
+    });
+    expect(
+      (await readFile(commandsPath, "utf8")).match(/^o- 12$/gm),
+    ).toHaveLength(1);
+    expect(manager.status(sessionId)).toBeUndefined();
   },
 );
 
