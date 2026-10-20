@@ -87,19 +87,16 @@ const statementPosition = (
   parents: WeakMap<t.Node, t.Node>,
   declarator?: t.VariableDeclarator,
 ): StatementPosition | null => {
-  let owner = statement;
-  let parent = parents.get(owner);
-  if (
-    (t.isExportNamedDeclaration(parent) ||
-      t.isExportDefaultDeclaration(parent)) &&
-    parent.declaration === statement
-  ) {
-    owner = parent;
-    parent = parents.get(owner);
-  }
+  const directParent = parents.get(statement);
+  const enclosing =
+    (t.isExportNamedDeclaration(directParent) ||
+      t.isExportDefaultDeclaration(directParent)) &&
+    directParent.declaration === statement
+      ? directParent
+      : statement;
+  const parent = parents.get(enclosing);
   if (!t.isProgram(parent) && !t.isBlockStatement(parent)) return null;
-  const body: readonly t.Node[] = parent.body;
-  const index = body.indexOf(owner);
+  const index = parent.body.indexOf(enclosing);
   return index < 0
     ? null
     : {
@@ -388,16 +385,8 @@ const computeDirectInitializerPosition = (
   node: t.Node,
   parents: WeakMap<t.Node, t.Node>,
 ): StatementPosition | null => {
-  if (t.isClassDeclaration(node) && node.id !== null) {
-    const parent = parents.get(node);
-    const statement =
-      (t.isExportNamedDeclaration(parent) ||
-        t.isExportDefaultDeclaration(parent)) &&
-      parent.declaration === node
-        ? parent
-        : node;
-    return statementPosition(statement, parents);
-  }
+  if (t.isClassDeclaration(node) && node.id !== null)
+    return statementPosition(node, parents);
   if (
     (t.isAssignmentExpression(node) &&
       t.isIdentifier(unwrapJavaScriptExpression(node.left).node)) ||
