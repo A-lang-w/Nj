@@ -3,15 +3,17 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { classifyArtifactContent } from "../../../src/artifacts/inventory/ArtifactGraphConstruction.js";
-import { ARTIFACT_CLASSIFICATION_PREFIX_BYTES } from "../../../src/artifacts/ArtifactHash.js";
+import { classifyArtifactBytesAtPath } from "../../fixtures/artifactClassification.js";
+import { ARTIFACT_CLASSIFICATION_PREFIX_BYTES } from "../../../src/artifacts/ArtifactClassificationProbe.js";
 import { scanCanonicalArtifactInventory } from "../../fixtures/artifactInventory.js";
 import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("MZ artifact classification", () => {
   it("classifies a signature-confirmed PE whose header overlaps the DOS header", () => {
-    expect(classifyArtifactContent("overlapped.exe", peFixture(32))).toEqual({
+    expect(
+      classifyArtifactBytesAtPath("overlapped.exe", peFixture(32)),
+    ).toEqual({
       kind: "executable",
       format: "pe",
     });
@@ -20,71 +22,73 @@ describe("MZ artifact classification", () => {
   it("keeps a low Windows header pointer unknown without a PE signature", () => {
     const bytes = peFixture(32);
     bytes.write("XXXX", 32, "latin1");
-    expect(classifyArtifactContent("invalid.exe", bytes)).toEqual({
+    expect(classifyArtifactBytesAtPath("invalid.exe", bytes)).toEqual({
       kind: "unknown",
       format: "unknown",
     });
   });
+});
 
-  it("distinguishes DOS, observed PE, malformed MZ and unavailable prefix evidence", () => {
-    const dos = dosFixture();
-    expect(classifyArtifactContent("LEGACY.EXE", dos)).toEqual({
-      kind: "executable",
-      format: "dos-mz",
-    });
-    expect(
-      classifyArtifactContent("LEGACY.EXE", dos.subarray(0, 16), dos.length),
-    ).toEqual({ kind: "unknown", format: "unknown" });
-    expect(classifyArtifactContent("bad.exe", Buffer.from("MZbroken"))).toEqual(
-      { kind: "unknown", format: "unknown" },
-    );
-    const distantPe = peFixture(ARTIFACT_CLASSIFICATION_PREFIX_BYTES + 64);
-    expect(
-      classifyArtifactContent(
-        "NATIVE.EXE",
-        distantPe.subarray(0, ARTIFACT_CLASSIFICATION_PREFIX_BYTES),
-        distantPe.length,
-      ),
-    ).toEqual({ kind: "unknown", format: "unknown" });
-    expect(classifyArtifactContent("NATIVE.EXE", distantPe).format).toBe("pe");
-    const distantRelocations = dosWithDistantRelocations();
-    expect(
-      classifyArtifactContent("LEGACY.EXE", distantRelocations).format,
-    ).toBe("dos-mz");
-    expect(
-      classifyArtifactContent(
-        "LEGACY.EXE",
-        distantRelocations.subarray(0, ARTIFACT_CLASSIFICATION_PREFIX_BYTES),
-        distantRelocations.length,
-      ).format,
-    ).toBe("unknown");
+it("distinguishes DOS, observed PE, malformed MZ and unavailable prefix evidence", () => {
+  const dos = dosFixture();
+  expect(classifyArtifactBytesAtPath("LEGACY.EXE", dos)).toEqual({
+    kind: "executable",
+    format: "dos-mz",
   });
+  expect(
+    classifyArtifactBytesAtPath("LEGACY.EXE", dos.subarray(0, 16), dos.length),
+  ).toEqual({ kind: "unknown", format: "unknown" });
+  expect(
+    classifyArtifactBytesAtPath("bad.exe", Buffer.from("MZbroken")),
+  ).toEqual({ kind: "unknown", format: "unknown" });
+  const distantPe = peFixture(ARTIFACT_CLASSIFICATION_PREFIX_BYTES + 64);
+  expect(
+    classifyArtifactBytesAtPath(
+      "NATIVE.EXE",
+      distantPe.subarray(0, ARTIFACT_CLASSIFICATION_PREFIX_BYTES),
+      distantPe.length,
+    ),
+  ).toEqual({ kind: "unknown", format: "unknown" });
+  expect(classifyArtifactBytesAtPath("NATIVE.EXE", distantPe).format).toBe(
+    "pe",
+  );
+  const distantRelocations = dosWithDistantRelocations();
+  expect(
+    classifyArtifactBytesAtPath("LEGACY.EXE", distantRelocations).format,
+  ).toBe("dos-mz");
+  expect(
+    classifyArtifactBytesAtPath(
+      "LEGACY.EXE",
+      distantRelocations.subarray(0, ARTIFACT_CLASSIFICATION_PREFIX_BYTES),
+      distantRelocations.length,
+    ).format,
+  ).toBe("unknown");
+});
 
-  it("keeps standalone and embedded DOS identities through inventory", async () => {
-    const directory = await createTestTempDirectory("rea-mz-inventory-");
-    const dosPath = join(directory, "LEGACY.EXE");
-    const pePath = join(directory, "NATIVE.EXE");
-    await writeFile(dosPath, dosFixture());
-    await writeFile(pePath, peFixture(128));
-    const standalone = artifactInventoryResultSchema.parse(
-      await scanCanonicalArtifactInventory(dosPath),
-    );
-    expect(standalone.manifest.root_format).toBe("dos-mz");
-    expect(standalone.nodes).toContainEqual(
-      expect.objectContaining({ format: "dos-mz" }),
-    );
+it("keeps standalone and embedded DOS identities through inventory", async () => {
+  const directory = await createTestTempDirectory("rea-mz-inventory-");
+  const dosPath = join(directory, "LEGACY.EXE");
+  const pePath = join(directory, "NATIVE.EXE");
+  await writeFile(dosPath, dosFixture());
+  await writeFile(pePath, peFixture(128));
+  const standalone = artifactInventoryResultSchema.parse(
+    await scanCanonicalArtifactInventory(dosPath),
+  );
+  expect(standalone.manifest.root_format).toBe("dos-mz");
+  expect(standalone.nodes).toContainEqual(
+    expect.objectContaining({ format: "dos-mz" }),
+  );
 
-    const tree = join(directory, "tree");
-    await mkdir(tree);
-    await writeFile(join(tree, "LEGACY.EXE"), dosFixture());
-    await writeFile(join(tree, "NATIVE.EXE"), peFixture(128));
-    const inventory = artifactInventoryResultSchema.parse(
-      await scanCanonicalArtifactInventory(tree),
-    );
-    expect(inventory.nodes.map(({ format }) => format)).toEqual(
-      expect.arrayContaining(["dos-mz", "pe"]),
-    );
-  });
+  const tree = join(directory, "tree");
+  await mkdir(tree);
+  await writeFile(join(tree, "LEGACY.EXE"), dosFixture());
+  await writeFile(join(tree, "NATIVE.EXE"), peFixture(128));
+  const inventory = artifactInventoryResultSchema.parse(
+    await scanCanonicalArtifactInventory(tree),
+  );
+  expect(inventory.nodes.map(({ format }) => format)).toEqual(
+    expect.arrayContaining(["dos-mz", "pe"]),
+  );
 });
 
 const dosFixture = (): Buffer => {

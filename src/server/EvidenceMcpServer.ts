@@ -1,7 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import {
-  McpServer,
   isCallToolResult,
   isJSONRPCRequest,
   isJSONRPCNotification,
@@ -40,6 +39,7 @@ import {
   measureMcpResultWithinBudget,
   TARGET_CONTENT_RESULT_META,
 } from "./toolResultEncoding.js";
+import { RequestTrackingMcpServer } from "./RequestTrackingMcpServer.js";
 
 export type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
 
@@ -104,7 +104,7 @@ export const forgetPendingMcpRequest = (
 };
 
 /** Bind oversized MCP error recovery to this server's Evidence ledger. */
-export class EvidenceMcpServer extends McpServer {
+export class EvidenceMcpServer extends RequestTrackingMcpServer {
   readonly catalogIdentity: ReturnType<typeof createCatalogIdentity>;
   private readonly compactPresentation:
     | CompactInputSchemaPresentation
@@ -451,7 +451,15 @@ class ErrorEvidenceTransport implements Transport {
     );
     return {
       ...message,
-      result: this.delivery.toErrorToolResult(failure, targetContent),
+      result: {
+        ...this.delivery.toErrorToolResult(failure, targetContent),
+        // The SDK stamps `resultType` on modern-era results before this
+        // transport sees them; the replacement must keep the stamp or a
+        // 2026-07-28 client discards REA's structured error entirely.
+        ...(typeof message.result.resultType === "string"
+          ? { resultType: message.result.resultType }
+          : {}),
+      },
     };
   }
 }
