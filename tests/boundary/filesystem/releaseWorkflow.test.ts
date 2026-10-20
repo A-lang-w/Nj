@@ -41,6 +41,7 @@ async function readReleaseWorkflow() {
           if: z.string(),
           needs: z.array(z.string()),
           uses: z.string(),
+          secrets: z.record(z.string(), z.string()),
           with: z.record(z.string(), z.string()),
         }),
         publish: jobSchema,
@@ -288,6 +289,9 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
     "needs.release-please.outputs.release_created",
   );
   expect(workflow.jobs.qualification.uses).toBe("./.github/workflows/ci.yml");
+  expect(workflow.jobs.qualification.secrets).toEqual({
+    TURBO_TOKEN: "${{ secrets.TURBO_TOKEN }}",
+  });
   expect(workflow.jobs.qualification.with).toEqual({
     source_sha:
       "${{ needs.merged-release.outputs.sha || needs.release-please.outputs.sha }}",

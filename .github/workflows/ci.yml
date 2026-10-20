@@ -15,6 +15,10 @@ on:
         description: Exact qualification source; must match the caller revision.
         required: true
         type: string
+    secrets:
+      TURBO_TOKEN:
+        description: Remote cache token. Only trusted release qualification passes it.
+        required: false
 
 permissions:
   contents: read
@@ -32,7 +36,9 @@ env:
   # Set Actions secret TURBO_TOKEN and variable TURBO_TEAM. OIDC can mint
   # TURBO_TOKEN via vercel/setup-turborepo-remote-cache-action; do not commit a token.
   # Writes only on the default branch for push, schedule, manual dispatch,
-  # and workflow_call. Pull requests get an empty token and remote read-only mode.
+  # and workflow_call when the caller passed TURBO_TOKEN. Release qualification
+  # passes it. Pull requests, including labeled workflow_call, get an empty
+  # token and remote read-only mode.
   TURBO_TOKEN: "${{ (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call')) && secrets.TURBO_TOKEN || '' }}"
   TURBO_TEAM: ${{ vars.TURBO_TEAM }}
   TURBO_CACHE: "${{ (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call')) && 'local:rw,remote:rw' || 'local:rw,remote:r' }}"
@@ -214,6 +220,12 @@ jobs:
           # configuration prefix from the previous successful full run.
           key: knip-meta-v1-${{ runner.os }}-${{ hashFiles('knip.json', 'tsconfig.json', 'package.json', 'package-lock.json') }}-${{ github.sha }}
           restore-keys: knip-meta-v1-${{ runner.os }}-${{ hashFiles('knip.json', 'tsconfig.json', 'package.json', 'package-lock.json') }}-
+      - name: Record deep static task source and execution identity
+        continue-on-error: true
+        env:
+          CI_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CI_STATIC_CONTEXT_SCRIPT: check:ci:deep:tasks
+        run: npm run ci:static-context
       - name: Run deep static checks
         run: npm run check:ci:deep
       - name: Save validated deep static task cache
@@ -232,6 +244,15 @@ jobs:
         with:
           path: node_modules/.cache/knip
           key: ${{ steps.knip-cache.outputs.cache-primary-key }}
+      - name: Upload complete deep static diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: static-deep-check-reports
+          path: .cache/static-checks/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
 
   test-source:
     name: Source tests

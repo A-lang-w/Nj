@@ -307,6 +307,8 @@ jobs:
       contents: read
       actions: read
     uses: ./.github/workflows/ci.yml
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     with:
       source_sha: ${{ needs.merged-release.outputs.sha || needs.release-please.outputs.sha }}
 

@@ -401,6 +401,9 @@ it("keeps fast feedback separate from complete qualification and release proof",
               type: z.literal("string"),
             }),
           }),
+          secrets: z.object({
+            TURBO_TOKEN: z.object({ required: z.literal(false) }),
+          }),
         }),
       }),
       concurrency: z.object({
