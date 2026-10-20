@@ -76,9 +76,45 @@ const firstLine = (command, args) => {
 const digest = (path) =>
   createHash("sha256").update(readFileSync(path)).digest("hex");
 
-const countProcesses = (name) => {
-  const output = run("sh", ["-c", `ps -eo comm= | grep -cx '${name}' || true`]);
-  return Number(output);
+const processSnapshot = () =>
+  run("ps", ["-eo", "pid=,ppid=,comm=,lstart="])
+    .split("\n")
+    .flatMap((line) => {
+      const match = /^(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/u.exec(line.trim());
+      return match === null
+        ? []
+        : [
+            {
+              pid: Number(match[1]),
+              parentPid: Number(match[2]),
+              command: match[3],
+              startedAt: match[4],
+            },
+          ];
+    });
+
+const descendantsOf = (rootPid, processes) => {
+  const descendants = new Set([rootPid]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const process of processes) {
+      if (descendants.has(process.parentPid) && !descendants.has(process.pid)) {
+        descendants.add(process.pid);
+        changed = true;
+      }
+    }
+  }
+  return descendants;
+};
+
+const ownedGdbProcesses = (mcpPid) => {
+  const processes = processSnapshot();
+  const descendants = descendantsOf(mcpPid, processes);
+  return processes.filter(
+    (process) =>
+      descendants.has(process.pid) && /^gdb(?:-|$)/iu.test(process.command),
+  );
 };
 
 const cli = (args) =>
@@ -212,7 +248,6 @@ const structured = (response) => response.structuredContent ?? {};
 const verifyGdb = async (fixture, expectedDigest) => {
   const observed = { version: firstLine("gdb", ["--version"]) };
   receipt.providers.gdb = observed;
-  const before = countProcesses("gdb");
 
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -223,6 +258,7 @@ const verifyGdb = async (fixture, expectedDigest) => {
   const client = new Client({ name: "rea-real-reverse-tools", version: "1" });
   let helper;
   let inferiorTty;
+  let ownedProcesses = [];
   try {
     await client.connect(transport);
     const terminal = await openInferiorTty();
@@ -247,6 +283,11 @@ const verifyGdb = async (fixture, expectedDigest) => {
         "gdb did not return a session identifier; this lane closed no session",
       );
       return;
+    }
+    const mcpPid = transport._process?.pid;
+    if (typeof mcpPid === "number") {
+      ownedProcesses = ownedGdbProcesses(mcpPid);
+      observed.owned_debugger_processes = ownedProcesses;
     }
 
     const expectations = [
@@ -418,12 +459,20 @@ const verifyGdb = async (fixture, expectedDigest) => {
   }
 
   await new Promise((resolveWait) => setTimeout(resolveWait, 1_000));
-  const after = countProcesses("gdb");
-  receipt.cleaned_up.gdb_processes = { before, after };
+  const remaining = processSnapshot().filter((process) =>
+    ownedProcesses.some(
+      (owned) =>
+        process.pid === owned.pid && process.startedAt === owned.startedAt,
+    ),
+  );
+  receipt.cleaned_up.gdb_processes = {
+    owned: ownedProcesses,
+    remaining,
+  };
   check(
-    "gdb left no owned debugger process behind",
-    after <= before,
-    `before=${before} after=${after}`,
+    "gdb stopped every debugger process owned by this verification session",
+    ownedProcesses.length > 0 && remaining.length === 0,
+    `owned=${ownedProcesses.length} remaining=${remaining.length}`,
   );
   check(
     "the verified inferior did not change the artifact",
