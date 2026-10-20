@@ -224,6 +224,7 @@
     "verify:firmware": "npm run build:cached && node scripts/verify/firmware/analysis.mjs",
     "fixtures:firmware": "node scripts/fixtures/firmware/generate.mjs",
     "verify:android": "npm run build:cached && node scripts/verify/android/analysis.mjs",
+    "verify:asc": "npm run build:cached && node scripts/verify/android/asc.mjs",
     "verify:jeb": "npm run build:cached && node scripts/verify-jeb.mjs",
     "fixtures:android": "node scripts/fixtures/android/fetch.mjs",
     "verify:harmony": "npm run build:cached && node scripts/verify/harmony/analysis.mjs",

@@ -1,0 +1,752 @@
+{
+  "schema_version": 1,
+  "started_at": "2026-10-20T07:34:06.235Z",
+  "revision": "2ba2a61a2bab7131e8d04507322d24642b7f480e",
+  "harness_sha256": "189a3da05cf5e3b358fd24a2fad57d5feea33ca92e906bc903079b658c63650e",
+  "environment": {
+    "platform": "darwin",
+    "architecture": "arm64",
+    "os_release": "25.6.0",
+    "cpu_model": "Apple M4 Pro",
+    "logical_cpus": 14,
+    "total_memory_bytes": 51539607552,
+    "node": "v24.18.0"
+  },
+  "sample": {
+    "path": "/Users/name/Desktop/name/ai/rea-droidasc/_reference/apk-integration/ApiDemos-debug.apk",
+    "sha256": "a9eecf37b26cd084855c530db81c2bb1b91f4c1b095a04f47aa7c20e2791f686",
+    "bytes": 6521217,
+    "source_url": "https://github.com/appium/android-apidemos/releases/download/v6.0.18/ApiDemos-debug.apk",
+    "sha256_after": "a9eecf37b26cd084855c530db81c2bb1b91f4c1b095a04f47aa7c20e2791f686"
+  },
+  "task": {
+    "description": "Discover one exact named top-level class using the provider's substring query then exact selection; compare identical oracle-confirmed hits, not unequal whole class inventories",
+    "query": "io.appium.android.apis.ApiDemos",
+    "descriptor": "Lio/appium/android/apis/ApiDemos;",
+    "expected_exact_hits": ["io.appium.android.apis.ApiDemos"],
+    "oracle_raw_definition_count": 5700,
+    "oracle_dexes": [
+      {
+        "entry": "classes.dex",
+        "bytes": 6520376,
+        "sha256": "3ee1ec565a8a0ce1a8d679037e91b98c6e2efcbaa9b0fb96587e94c4092f9dea"
+      },
+      {
+        "entry": "classes10.dex",
+        "bytes": 238964,
+        "sha256": "db5183e140c3b7189028fbcb7c9ca2b79917fb871d678b22c7893a7e8d7a4087"
+      },
+      {
+        "entry": "classes11.dex",
+        "bytes": 7720,
+        "sha256": "e42033ed9589df06b3a170c678169cfa20d91394770cade207ccd37de6492455"
+      },
+      {
+        "entry": "classes12.dex",
+        "bytes": 48968,
+        "sha256": "2b6a8d735d4a7f17eb56f0875717027933184c74e7bfd47de7162b2362742d26"
+      },
+      {
+        "entry": "classes13.dex",
+        "bytes": 81584,
+        "sha256": "12dcbcfe5016e35ab1f9ca8a68bfdaeaf3c632f6ddac667b69efe96e930886db"
+      },
+      {
+        "entry": "classes2.dex",
+        "bytes": 226788,
+        "sha256": "c759852fcd479c2d248ba020614eb37fd261858c19112a218edf24d592ab2c61"
+      },
+      {
+        "entry": "classes3.dex",
+        "bytes": 6896,
+        "sha256": "b7945aab375eb8d572c4b3c04aa02a6619570ac4c2ac25e5fdb022f7306a34b9"
+      },
+      {
+        "entry": "classes4.dex",
+        "bytes": 43328,
+        "sha256": "cc84ccd18c1ec42f5eef367b58b551a29b120579b8ae943c36edf7dbc48633fd"
+      },
+      {
+        "entry": "classes5.dex",
+        "bytes": 26464,
+        "sha256": "fc18060491d7d597047b267e29f98c9fff1155464e65707acd2a7fa5a22cb7a4"
+      },
+      {
+        "entry": "classes6.dex",
+        "bytes": 284228,
+        "sha256": "4a91b38b5eabaa2db9e1705e039a6423d701dbad7632a2fd75685aaf16303539"
+      },
+      {
+        "entry": "classes7.dex",
+        "bytes": 56632,
+        "sha256": "7110df9c41b662acb8f5acc03a940e45fbefd33824162b39880a760ca750f3d0"
+      },
+      {
+        "entry": "classes8.dex",
+        "bytes": 147520,
+        "sha256": "fa517f46e6c39157bec33e3b6ef33fcbfa76bfe9a2f1744b4152e9fde93b8fca"
+      },
+      {
+        "entry": "classes9.dex",
+        "bytes": 64000,
+        "sha256": "caa28c7dcf09b519f80e2c4d94cc3f5c43616ba79b00749094be2980905bf735"
+      }
+    ]
+  },
+  "cache_conditions": [
+    "Fresh Node worker and provider for every recorded backend/round",
+    "JADX repeat queries reuse the same retained JVM; ASC reuse is reported by its worker and observable process samples",
+    "OS disk/page caches are NOT flushed; fresh-process does not mean cold filesystem cache",
+    "Backend order alternates each round; sampler and host load may affect timings"
+  ],
+  "jadx_jar_sha256": "6e5eacf500b64292bfb73c49797c1958f6ee44646e43e868039ae7feb573ff75",
+  "runtime_fingerprint_scope": "Selected built/shared-service/provider and bridge entrypoints, not the entire transitive dependency tree or executed-byte identity",
+  "runtime_file_hashes_before": [
+    {
+      "path": "dist/application/android/AndroidAnalysisService.js",
+      "sha256": "741f76023df0575d8c22e101c64472f8f644185bc12e605b4d8d493afaccd530"
+    },
+    {
+      "path": "dist/android/JadxProvider.js",
+      "sha256": "c7acd3c34ff0343f726e985a3bf44c1725b1fd80bd0f705d662033b463bceb84"
+    },
+    {
+      "path": "dist/android/AscProvider.js",
+      "sha256": "d012f272bb4309a2c7515ba058047390b52b3a0b2741b060b05553644e66ddf4"
+    },
+    {
+      "path": "dist/android/AscProtocol.js",
+      "sha256": "f286e229202d4d2b5b28e9d808c671aa5bf1042b1abebdec3b3fa63e37ba6e0b"
+    },
+    {
+      "path": "dist/android/AscConfiguration.js",
+      "sha256": "0001444f84ffc8db0b238c19a5b2feca5826942cfbec4799cfad1c47cfc53ef3"
+    },
+    {
+      "path": "dist/composition/android.js",
+      "sha256": "7c4bd9d4fe5b6a712d5e31082f9de0bdb6e603451da8d328053610e1bf7da62d"
+    },
+    {
+      "path": "dist/application/android/AndroidBackendRouter.js",
+      "sha256": "9a356f224f9df9df5454310d19f80183e8e4d5d3b771f4a8fcb53325560afdde"
+    },
+    {
+      "path": "bridge/android/ReaJadxBridge.java",
+      "sha256": "a02b1ef0a4a40abd1ae310b9ee686ca163e0b59a3256df524c35b90ed17e9e63"
+    },
+    {
+      "path": "bridge/android/rea_asc.py",
+      "sha256": "3ef045bf0535afa1289b0c36e30e28d7e56eda88888cc45343593ba05f997343"
+    },
+    {
+      "path": "experiments/droidasc/benchmark.mjs",
+      "sha256": "189a3da05cf5e3b358fd24a2fad57d5feea33ca92e906bc903079b658c63650e"
+    },
+    {
+      "path": "experiments/droidasc/benchmark-oracle.mjs",
+      "sha256": "30af6a4b1114f2cf6dd4cd0129e26090fa625f5b8bc242e57e7a5d21d715da1d"
+    },
+    {
+      "path": "experiments/droidasc/benchmark-profile.mjs",
+      "sha256": "a62d94667adda9a6a0672863fa3b646bf28bf066251c399b5a09ad88fe6ac275"
+    }
+  ],
+  "runs": [
+    {
+      "backend": "asc",
+      "round": 1,
+      "raw_file": "1-asc.json",
+      "wall_ms": 2439.193959,
+      "phases": [
+        {
+          "name": "worker-import-and-construction",
+          "start_ms": 0,
+          "end_ms": 246.11624999999998,
+          "wall_ms": 246.118584
+        },
+        {
+          "name": "first-query-in-fresh-worker",
+          "start_ms": 246.14275000000004,
+          "end_ms": 1793.968209,
+          "wall_ms": 1547.825459,
+          "worker_cpu_seconds": 0.097495
+        },
+        {
+          "name": "repeat-query-1",
+          "start_ms": 1793.988167,
+          "end_ms": 2076.2302919999997,
+          "wall_ms": 282.24212499999976,
+          "worker_cpu_seconds": 0.044602
+        },
+        {
+          "name": "repeat-query-2",
+          "start_ms": 2076.241584,
+          "end_ms": 2356.906334,
+          "wall_ms": 280.6647499999999,
+          "worker_cpu_seconds": 0.042067
+        },
+        {
+          "name": "provider-close",
+          "start_ms": 2356.914167,
+          "end_ms": 2357.2919589999997,
+          "wall_ms": 0.3777919999997721,
+          "worker_cpu_seconds": 0.000375
+        }
+      ],
+      "peak_sampled_family_rss_kib": 271456,
+      "observed_family_cpu_seconds_lower_bound": 1.7400000000000002,
+      "correctness": [
+        {
+          "exact_hits": ["io.appium.android.apis.ApiDemos"],
+          "returned_matches": [
+            "io.appium.android.apis.ApiDemos$1",
+            "io.appium.android.apis.ApiDemos",
+            "io.appium.android.apis.ApiDemosApplication"
+          ],
+          "reported_inventory_total": 5700,
+          "scope": "Raw root-DEX class_def definitions; not equivalent to JADX's rewritten/top-level inventory",
+          "provider": {
+            "id": "asc",
+            "name": "DroidASC",
+            "version": null
+          }
+        },
+        {
+          "exact_hits": ["io.appium.android.apis.ApiDemos"],
+          "returned_matches": [
+            "io.appium.android.apis.ApiDemos$1",
+            "io.appium.android.apis.ApiDemos",
+            "io.appium.android.apis.ApiDemosApplication"
+          ],
+          "reported_inventory_total": 5700,
+          "scope": "Raw root-DEX class_def definitions; not equivalent to JADX's rewritten/top-level inventory",
+          "provider": {
+            "id": "asc",
+            "name": "DroidASC",
+            "version": null
+          }
+        },
+        {
+          "exact_hits": ["io.appium.android.apis.ApiDemos"],
+          "returned_matches": [
+            "io.appium.android.apis.ApiDemos$1",
+            "io.appium.android.apis.ApiDemos",
+            "io.appium.android.apis.ApiDemosApplication"
+          ],
+          "reported_inventory_total": 5700,
+          "scope": "Raw root-DEX class_def definitions; not equivalent to JADX's rewritten/top-level inventory",
+          "provider": {
+            "id": "asc",
+            "name": "DroidASC",
+            "version": null
+          }
+        }
+      ],
+      "failure": null
+    },
+    {
+      "backend": "jadx",
+      "round": 1,
+      "raw_file": "1-jadx.json",
+      "wall_ms": 6503.145166,
+      "phases": [
+        {
+          "name": "worker-import-and-construction",
+          "start_ms": 0,
+          "end_ms": 219.852625,
+          "wall_ms": 219.855292
+        },
+        {
+          "name": "first-query-in-fresh-worker",
+          "start_ms": 219.8795,
+          "end_ms": 5196.780458,
+          "wall_ms": 4976.900958,
+          "worker_cpu_seconds": 0.404929
+        },
+        {
+          "name": "repeat-query-1",
+          "start_ms": 5196.791,
+          "end_ms": 5235.907708000001,
+          "wall_ms": 39.11670800000047,
+          "worker_cpu_seconds": 0.037391
+        },
+        {
+          "name": "repeat-query-2",
+          "start_ms": 5235.911833,
+          "end_ms": 5274.027625000001,
+          "wall_ms": 38.11579200000051,
+          "worker_cpu_seconds": 0.036353
+        },
+        {
+          "name": "provider-close",
+          "start_ms": 5274.038375,
+          "end_ms": 6450.043125,
+          "wall_ms": 1176.00475,
+          "worker_cpu_seconds": 0.028456
+        }
+      ],
+      "peak_sampled_family_rss_kib": 869200,
+      "observed_family_cpu_seconds_lower_bound": 8.29,
+      "correctness": [
+        {
+          "exact_hits": ["io.appium.android.apis.ApiDemos"],
+          "returned_matches": [
+            "io.appium.android.apis.ApiDemos",
+            "io.appium.android.apis.ApiDemosApplication"
+          ],
+          "reported_inventory_total": 2876,
+          "scope": "JADX bridge class inventory; not guaranteed to equal raw DEX class_def inventory",
+          "provider": {
+            "id": "jadx",
+            "name": "JADX headless",
+            "version": "0.7.1"
+          }
+        },
+        {
+          "exact_hits": ["io.appium.android.apis.ApiDemos"],
+          "returned_matches": [
+            "io.appium.android.apis.ApiDemos",
+            "io.appium.android.apis.ApiDemosApplication"
+          ],
+          "reported_inventory_total": 2876,
+          "scope": "JADX bridge class inventory; not guaranteed to equal raw DEX class_def inventory",
+          "provider": {
+            "id": "jadx",
+            "name": "JADX headless",
+            "version": "0.7.1"
+          }
+        },
+        {
+          "exact_hits": ["io.appium.android.apis.ApiDemos"],
+          "returned_matches": [
+            "io.appium.android.apis.ApiDemos",
+            "io.appium.android.apis.ApiDemosApplication"
+          ],
+          "reported_inventory_total": 2876,
+          "scope": "JADX bridge class inventory; not guaranteed to equal raw DEX class_def inventory",
+          "provider": {
+            "id": "jadx",
+            "name": "JADX headless",
+            "version": "0.7.1"
+          }
+        }
+      ],
+      "failure": null
+    },
+    {
+      "backend": "jadx",
+      "round": 2,
+      "raw_file": "2-jadx.json",
+      "wall_ms": 7122.103166000001,
+      "phases": [
+        {
+          "name": "worker-import-and-construction",
+          "start_ms": 0,
+          "end_ms": 144.60925,
+          "wall_ms": 144.61183300000002
+        },
+        {
+          "name": "first-query-in-fresh-worker",
+          "start_ms": 144.63945800000002,
+          "end_ms": 5787.312166000001,
+          "wall_ms": 5642.672708,
+          "worker_cpu_seconds": 0.354024
+        },
+        {
+          "name": "repeat-query-1",
+          "start_ms": 5787.323958,
+          "end_ms": 5828.688666,
+          "wall_ms": 41.364708000000064,
+          "worker_cpu_seconds": 0.039768
+        },
+        {
+          "name": "repeat-query-2",
+          "start_ms": 5828.6923750000005,
+          "end_ms": 5869.340333,
+          "wall_ms": 40.64795799999956,
+          "worker_cpu_seconds": 0.03877
+        },
+        {
+          "name": "provider-close",
+          "start_ms": 5869.351875,
+          "end_ms": 7023.742166,
+          "wall_ms": 1154.3902909999997,
+          "worker_cpu_seconds": 0.027283
+        }
+      ],
+      "peak_sampled_family_rss_kib": 848992,
+      "observed_family_cpu_seconds_lower_bound": 8,
+      "correctness": [
+        {
+          "exact_hits": ["io.appium.android.apis.ApiDemos"],
+          "returned_matches": [
+            "io.appium.android.apis.ApiDemos",
+            "io.appium.android.apis.ApiDemosApplication"
+          ],
+          "reported_inventory_total": 2876,
+          "scope": "JADX bridge class inventory; not guaranteed to equal raw DEX class_def inventory",
+          "provider": {
+            "id": "jadx",
+            "name": "JADX headless",
+            "version": "0.7.1"
+          }
+        },
+        {
+          "exact_hits": ["io.appium.android.apis.ApiDemos"],
+          "returned_matches": [
+            "io.appium.android.apis.ApiDemos",
+            "io.appium.android.apis.ApiDemosApplication"
+          ],
+          "reported_inventory_total": 2876,
+          "scope": "JADX bridge class inventory; not guaranteed to equal raw DEX class_def inventory",
+          "provider": {
+            "id": "jadx",
+            "name": "JADX headless",
+            "version": "0.7.1"
+          }
+        },
+        {
+          "exact_hits": ["io.appium.android.apis.ApiDemos"],
+          "returned_matches": [
+            "io.appium.android.apis.ApiDemos",
+            "io.appium.android.apis.ApiDemosApplication"
+          ],
+          "reported_inventory_total": 2876,
+          "scope": "JADX bridge class inventory; not guaranteed to equal raw DEX class_def inventory",
+          "provider": {
+            "id": "jadx",
+            "name": "JADX headless",
+            "version": "0.7.1"
+          }
+        }
+      ],
+      "failure": null
+    },
+    {
+      "backend": "asc",
+      "round": 2,
+      "raw_file": "2-asc.json",
+      "wall_ms": 10691.549708,
+      "phases": [
+        {
+          "name": "worker-import-and-construction",
+          "start_ms": 0,
+          "end_ms": 145.08724999999998,
+          "wall_ms": 145.089833
+        },
+        {
+          "name": "first-query-in-fresh-worker",
+          "start_ms": 145.116041,
+          "end_ms": 5096.5565830000005,
+          "wall_ms": 4951.440542,
+          "worker_cpu_seconds": 0.083343
+        },
+        {
+          "name": "repeat-query-1",
+          "start_ms": 5096.574125,
+          "end_ms": 7881.535375,
+          "wall_ms": 2784.9612500000003,
+          "worker_cpu_seconds": 0.037167
+        },
+        {
+          "name": "repeat-query-2",
+          "start_ms": 7881.540333000001,
+          "end_ms": 10616.970791,
+          "wall_ms": 2735.430457999999,
+          "worker_cpu_seconds": 0.037521
+        },
+        {
+          "name": "provider-close",
+          "start_ms": 10616.977541,
+          "end_ms": 10617.319875000001,
+          "wall_ms": 0.34233400000084657,
+          "worker_cpu_seconds": 0.00034
+        }
+      ],
+      "peak_sampled_family_rss_kib": 274544,
+      "observed_family_cpu_seconds_lower_bound": 1.28,
+      "correctness": [
+        {
+          "exact_hits": ["io.appium.android.apis.ApiDemos"],
+          "returned_matches": [
+            "io.appium.android.apis.ApiDemos$1",
+            "io.appium.android.apis.ApiDemos",
+            "io.appium.android.apis.ApiDemosApplication"
+          ],
+          "reported_inventory_total": 5700,
+          "scope": "Raw root-DEX class_def definitions; not equivalent to JADX's rewritten/top-level inventory",
+          "provider": {
+            "id": "asc",
+            "name": "DroidASC",
+            "version": null
+          }
+        },
+        {
+          "exact_hits": ["io.appium.android.apis.ApiDemos"],
+          "returned_matches": [
+            "io.appium.android.apis.ApiDemos$1",
+            "io.appium.android.apis.ApiDemos",
+            "io.appium.android.apis.ApiDemosApplication"
+          ],
+          "reported_inventory_total": 5700,
+          "scope": "Raw root-DEX class_def definitions; not equivalent to JADX's rewritten/top-level inventory",
+          "provider": {
+            "id": "asc",
+            "name": "DroidASC",
+            "version": null
+          }
+        },
+        {
+          "exact_hits": ["io.appium.android.apis.ApiDemos"],
+          "returned_matches": [
+            "io.appium.android.apis.ApiDemos$1",
+            "io.appium.android.apis.ApiDemos",
+            "io.appium.android.apis.ApiDemosApplication"
+          ],
+          "reported_inventory_total": 5700,
+          "scope": "Raw root-DEX class_def definitions; not equivalent to JADX's rewritten/top-level inventory",
+          "provider": {
+            "id": "asc",
+            "name": "DroidASC",
+            "version": null
+          }
+        }
+      ],
+      "failure": null
+    },
+    {
+      "backend": "asc",
+      "round": 3,
+      "raw_file": "3-asc.json",
+      "wall_ms": 4240.092042,
+      "phases": [
+        {
+          "name": "worker-import-and-construction",
+          "start_ms": 0,
+          "end_ms": 201.333708,
+          "wall_ms": 201.336541
+        },
+        {
+          "name": "first-query-in-fresh-worker",
+          "start_ms": 201.36625,
+          "end_ms": 3781.916333,
+          "wall_ms": 3580.550083,
+          "worker_cpu_seconds": 0.084952
+        },
+        {
+          "name": "repeat-query-1",
+          "start_ms": 3781.934083,
+          "end_ms": 3996.3567080000003,
+          "wall_ms": 214.42262500000015,
+          "worker_cpu_seconds": 0.028891
+        },
+        {
+          "name": "repeat-query-2",
+          "start_ms": 3996.361833,
+          "end_ms": 4181.112375,
+          "wall_ms": 184.75054200000022,
+          "worker_cpu_seconds": 0.029246
+        },
+        {
+          "name": "provider-close",
+          "start_ms": 4181.120333,
+          "end_ms": 4181.485124999999,
+          "wall_ms": 0.3647919999993974,
+          "worker_cpu_seconds": 0.000362
+        }
+      ],
+      "peak_sampled_family_rss_kib": 270672,
+      "observed_family_cpu_seconds_lower_bound": 1.22,
+      "correctness": [
+        {
+          "exact_hits": ["io.appium.android.apis.ApiDemos"],
+          "returned_matches": [
+            "io.appium.android.apis.ApiDemos$1",
+            "io.appium.android.apis.ApiDemos",
+            "io.appium.android.apis.ApiDemosApplication"
+          ],
+          "reported_inventory_total": 5700,
+          "scope": "Raw root-DEX class_def definitions; not equivalent to JADX's rewritten/top-level inventory",
+          "provider": {
+            "id": "asc",
+            "name": "DroidASC",
+            "version": null
+          }
+        },
+        {
+          "exact_hits": ["io.appium.android.apis.ApiDemos"],
+          "returned_matches": [
+            "io.appium.android.apis.ApiDemos$1",
+            "io.appium.android.apis.ApiDemos",
+            "io.appium.android.apis.ApiDemosApplication"
+          ],
+          "reported_inventory_total": 5700,
+          "scope": "Raw root-DEX class_def definitions; not equivalent to JADX's rewritten/top-level inventory",
+          "provider": {
+            "id": "asc",
+            "name": "DroidASC",
+            "version": null
+          }
+        },
+        {
+          "exact_hits": ["io.appium.android.apis.ApiDemos"],
+          "returned_matches": [
+            "io.appium.android.apis.ApiDemos$1",
+            "io.appium.android.apis.ApiDemos",
+            "io.appium.android.apis.ApiDemosApplication"
+          ],
+          "reported_inventory_total": 5700,
+          "scope": "Raw root-DEX class_def definitions; not equivalent to JADX's rewritten/top-level inventory",
+          "provider": {
+            "id": "asc",
+            "name": "DroidASC",
+            "version": null
+          }
+        }
+      ],
+      "failure": null
+    },
+    {
+      "backend": "jadx",
+      "round": 3,
+      "raw_file": "3-jadx.json",
+      "wall_ms": 4764.966624999997,
+      "phases": [
+        {
+          "name": "worker-import-and-construction",
+          "start_ms": 0,
+          "end_ms": 148.922,
+          "wall_ms": 148.925875
+        },
+        {
+          "name": "first-query-in-fresh-worker",
+          "start_ms": 148.95374999999999,
+          "end_ms": 4347.019458,
+          "wall_ms": 4198.065708,
+          "worker_cpu_seconds": 0.425803
+        },
+        {
+          "name": "repeat-query-1",
+          "start_ms": 4347.035207999999,
+          "end_ms": 4414.875666,
+          "wall_ms": 67.84045800000058,
+          "worker_cpu_seconds": 0.05588
+        },
+        {
+          "name": "repeat-query-2",
+          "start_ms": 4414.881249999999,
+          "end_ms": 4481.798791,
+          "wall_ms": 66.91754100000071,
+          "worker_cpu_seconds": 0.05594
+        },
+        {
+          "name": "provider-close",
+          "start_ms": 4481.809416,
+          "end_ms": 4679.532999999999,
+          "wall_ms": 197.7235839999994,
+          "worker_cpu_seconds": 0.035552
+        }
+      ],
+      "peak_sampled_family_rss_kib": 860288,
+      "observed_family_cpu_seconds_lower_bound": 10.399999999999999,
+      "correctness": [
+        {
+          "exact_hits": ["io.appium.android.apis.ApiDemos"],
+          "returned_matches": [
+            "io.appium.android.apis.ApiDemos",
+            "io.appium.android.apis.ApiDemosApplication"
+          ],
+          "reported_inventory_total": 2876,
+          "scope": "JADX bridge class inventory; not guaranteed to equal raw DEX class_def inventory",
+          "provider": {
+            "id": "jadx",
+            "name": "JADX headless",
+            "version": "0.7.1"
+          }
+        },
+        {
+          "exact_hits": ["io.appium.android.apis.ApiDemos"],
+          "returned_matches": [
+            "io.appium.android.apis.ApiDemos",
+            "io.appium.android.apis.ApiDemosApplication"
+          ],
+          "reported_inventory_total": 2876,
+          "scope": "JADX bridge class inventory; not guaranteed to equal raw DEX class_def inventory",
+          "provider": {
+            "id": "jadx",
+            "name": "JADX headless",
+            "version": "0.7.1"
+          }
+        },
+        {
+          "exact_hits": ["io.appium.android.apis.ApiDemos"],
+          "returned_matches": [
+            "io.appium.android.apis.ApiDemos",
+            "io.appium.android.apis.ApiDemosApplication"
+          ],
+          "reported_inventory_total": 2876,
+          "scope": "JADX bridge class inventory; not guaranteed to equal raw DEX class_def inventory",
+          "provider": {
+            "id": "jadx",
+            "name": "JADX headless",
+            "version": "0.7.1"
+          }
+        }
+      ],
+      "failure": null
+    }
+  ],
+  "complete": true,
+  "failures": [],
+  "finished_at": "2026-10-20T07:34:42.319Z",
+  "runtime_file_hashes_after": [
+    {
+      "path": "dist/application/android/AndroidAnalysisService.js",
+      "sha256": "741f76023df0575d8c22e101c64472f8f644185bc12e605b4d8d493afaccd530"
+    },
+    {
+      "path": "dist/android/JadxProvider.js",
+      "sha256": "c7acd3c34ff0343f726e985a3bf44c1725b1fd80bd0f705d662033b463bceb84"
+    },
+    {
+      "path": "dist/android/AscProvider.js",
+      "sha256": "d012f272bb4309a2c7515ba058047390b52b3a0b2741b060b05553644e66ddf4"
+    },
+    {
+      "path": "dist/android/AscProtocol.js",
+      "sha256": "f286e229202d4d2b5b28e9d808c671aa5bf1042b1abebdec3b3fa63e37ba6e0b"
+    },
+    {
+      "path": "dist/android/AscConfiguration.js",
+      "sha256": "0001444f84ffc8db0b238c19a5b2feca5826942cfbec4799cfad1c47cfc53ef3"
+    },
+    {
+      "path": "dist/composition/android.js",
+      "sha256": "7c4bd9d4fe5b6a712d5e31082f9de0bdb6e603451da8d328053610e1bf7da62d"
+    },
+    {
+      "path": "dist/application/android/AndroidBackendRouter.js",
+      "sha256": "9a356f224f9df9df5454310d19f80183e8e4d5d3b771f4a8fcb53325560afdde"
+    },
+    {
+      "path": "bridge/android/ReaJadxBridge.java",
+      "sha256": "a02b1ef0a4a40abd1ae310b9ee686ca163e0b59a3256df524c35b90ed17e9e63"
+    },
+    {
+      "path": "bridge/android/rea_asc.py",
+      "sha256": "3ef045bf0535afa1289b0c36e30e28d7e56eda88888cc45343593ba05f997343"
+    },
+    {
+      "path": "experiments/droidasc/benchmark.mjs",
+      "sha256": "189a3da05cf5e3b358fd24a2fad57d5feea33ca92e906bc903079b658c63650e"
+    },
+    {
+      "path": "experiments/droidasc/benchmark-oracle.mjs",
+      "sha256": "30af6a4b1114f2cf6dd4cd0129e26090fa625f5b8bc242e57e7a5d21d715da1d"
+    },
+    {
+      "path": "experiments/droidasc/benchmark-profile.mjs",
+      "sha256": "a62d94667adda9a6a0672863fa3b646bf28bf066251c399b5a09ad88fe6ac275"
+    }
+  ]
+}

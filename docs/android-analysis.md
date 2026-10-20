@@ -5,13 +5,88 @@ kept as an unmodified, commit-pinned Git submodule; see
 [upstream provenance](https://github.com/morluto/rea/blob/main/third_party/README.md). CLI and MCP use the same
 application workflow and return artifact-bound Evidence inline.
 
-This family is present on repository main and in npm 4.1.0. Check the
-[released package boundary](installation.md#released-package-and-main) and the
-connected server's tool list before selecting it.
+The existing JADX-backed family is present on repository main and in npm 4.1.0.
+Check the [released package boundary](installation.md#released-package-and-main)
+and the connected server's tool list before selecting it. This release statement
+does not include the proposed DroidASC backend below.
 
 On Linux, JADX launches an REA-owned process and requires a procps-compatible
 `ps` on REA's `PATH`; see the shared
 [Linux process prerequisite](installation.md#linux-owned-process-prerequisite).
+
+## Optional DroidASC class discovery
+
+This branch proposes an opt-in DroidASC backend; maintainer scope approval is
+pending. It does not replace JADX or establish release availability. The first
+slice supports `search_android_classes` only. All other Android operations still
+use JADX by default; explicitly selecting ASC for them returns a capability error,
+not an automatic fallback or a second engine startup.
+
+Supply an existing Python 3.10+ environment containing DroidASC:
+
+```sh
+export REA_ASC_PYTHON=/absolute/path/to/venv/bin/python
+rea doctor --provider asc
+rea search-android-classes /absolute/path/Example.apk MainActivity --backend asc --format json
+```
+
+The equivalent MCP input is
+`{"path":"/absolute/path/Example.apk","query":"MainActivity","backend":"asc"}`.
+Omitting `backend`, or selecting `"jadx"`, preserves the existing behavior. REA
+does not install Python or ASC. Discovery checks the actual core imports without
+opening an APK. It does not persist an ambient `PYTHONPATH` into agent setup.
+Android session readiness still describes the default JADX backend; use
+`rea doctor --provider asc` to inspect ASC. Default JADX unavailability does not
+block an explicitly selected ASC class query.
+The tested ASC source revision is `60033d1c76bc5904588f24955cae4e83a2ba4f5d`;
+an installed package's version metadata need not identify an imported source tree.
+
+ASC returns **all raw root-DEX class definitions**, including inner and synthetic
+classes, rather than JADX's top-level decompiler aliases. Its result explicitly
+sets `inventory_kind: "dex_definitions"`; `$` remains in canonical dotted names.
+Both backends use case-sensitive literal substring matching, and an empty query
+inventories their respective scopes. Duplicate names survive. Do not pass an ASC
+raw name to JADX assuming the same alias or compare the two inventory totals as
+equivalent completeness claims.
+
+Evidence retains the selected APK digest, each DEX entry/digest, raw descriptor,
+producing Python and imported-module file fingerprints. Namespace modules have
+no file digest. Engine version and source revision remain unknown, not inferred
+from a possibly different installed distribution. The engine digest is a sorted
+module-fingerprint commitment, not a publisher attestation or complete release
+hash. The worker verifies CRCs, supported DEX headers and target content/stat
+before returning; it does not create an immutable APK snapshot or fully validate
+every DEX semantic rule.
+
+The admitted formats are standalone ZIP APKs with root DEX 035/037/038/039/040.
+Raw DEX, DEX 041 containers, split merging and embedded DEX are not supported.
+The worker reads one DEX at a time, does not execute APK code, and creates no
+persistent index. Caller-supplied interpreter/dependency code does execute; this
+is not an OS sandbox. Linux and macOS are enabled; real verification here covers
+macOS arm64, not Linux or Windows. Windows selection returns unavailable.
+
+Optional settings, validated before Python starts:
+
+| Setting                        | Default    | Boundary                                                           |
+| ------------------------------ | ---------- | ------------------------------------------------------------------ |
+| `REA_ASC_OPERATION_TIMEOUT_MS` | 120000     | Queued request's execution deadline after configuration validation |
+| `REA_ASC_MAX_APK_BYTES`        | 1073741824 | Worker input admission                                             |
+| `REA_ASC_MAX_DEX_BYTES`        | 536870912  | Total advertised expanded root DEX bytes, checked before inflation |
+| `REA_ASC_MAX_OUTPUT_BYTES`     | 33554432   | Complete worker JSON and owned-command output                      |
+
+These are independent byte budgets, not a process RSS cap; shared target
+admission and streaming hashes have their own costs. Capacity failure is not an
+empty or truncated successful inventory. Cancellation, timeout, malformed output
+and failed cleanup remain typed failures; exact failed owners are retained for
+cleanup retry. Each ASC request starts a fresh Python worker, so repeated queries
+do not have JADX's retained-session advantage.
+
+Run the source bridge regressions with `npm run test:python`. With the pinned
+ApiDemos fixture and a configured ASC environment, run
+`npm run verify:asc`. This verifies
+actual CLI/MCP selection, Evidence and parity with Java intentionally unavailable.
+For comparable large-APK measurements and limitations, see the
+[DroidASC benchmark](https://github.com/morluto/rea/tree/main/experiments/droidasc).
 
 ## Optional package delivery
 

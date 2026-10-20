@@ -1,0 +1,861 @@
+{
+  "schema_version": 1,
+  "started_at": "2026-10-20T07:34:42.664Z",
+  "revision": "2ba2a61a2bab7131e8d04507322d24642b7f480e",
+  "harness_sha256": "189a3da05cf5e3b358fd24a2fad57d5feea33ca92e906bc903079b658c63650e",
+  "environment": {
+    "platform": "darwin",
+    "architecture": "arm64",
+    "os_release": "25.6.0",
+    "cpu_model": "Apple M4 Pro",
+    "logical_cpus": 14,
+    "total_memory_bytes": 51539607552,
+    "node": "v24.18.0"
+  },
+  "sample": {
+    "path": "/Users/name/Desktop/name/ai/rea-droidasc/_reference/apk-integration/Signal-8.30.3.apk",
+    "sha256": "9a8ddd9a2f3d7ddc6abca15eb41e5d1515f75d0bd8c45e22074767932a5dde20",
+    "bytes": 114097843,
+    "source_url": "https://github.com/signalapp/Signal-Android/releases/download/v8.30.3/Signal-Android-github-prod-universal-release-8.30.3.apk",
+    "sha256_after": "9a8ddd9a2f3d7ddc6abca15eb41e5d1515f75d0bd8c45e22074767932a5dde20"
+  },
+  "task": {
+    "description": "Discover one exact named top-level class using the provider's substring query then exact selection; compare identical oracle-confirmed hits, not unequal whole class inventories",
+    "query": "org.thoughtcrime.securesms.ApplicationContext",
+    "descriptor": "Lorg/thoughtcrime/securesms/ApplicationContext;",
+    "expected_exact_hits": ["org.thoughtcrime.securesms.ApplicationContext"],
+    "oracle_raw_definition_count": 40773,
+    "oracle_dexes": [
+      {
+        "entry": "classes.dex",
+        "bytes": 11146036,
+        "sha256": "49a7ad5b3b0569a627bf5ccf36a8dab0b4b095c6d9d7f3c59e31c511ca2018bf"
+      },
+      {
+        "entry": "classes2.dex",
+        "bytes": 8667924,
+        "sha256": "1e2fd79563a891b75bafa2d39cab0b25c880b27e2f00e5b4284e280b45785d3e"
+      },
+      {
+        "entry": "classes3.dex",
+        "bytes": 10750544,
+        "sha256": "ecf19ab472960ad443f6e9a69a444b0cbd823f15ce3f19d7046f380915185023"
+      },
+      {
+        "entry": "classes4.dex",
+        "bytes": 10897716,
+        "sha256": "d50e299651241af74b7f1c1402ccb240c34639281326059123708b9212e76949"
+      },
+      {
+        "entry": "classes5.dex",
+        "bytes": 7057456,
+        "sha256": "756a0e65b8d84cdb9a51fd06e9ee2612683e0fac310befc82b048df4984038c6"
+      },
+      {
+        "entry": "classes6.dex",
+        "bytes": 570812,
+        "sha256": "07bb3da34cdd43bdd0a2e5a4ed78dead2f34e5ffca5a8feef55cd395d39dea97"
+      }
+    ]
+  },
+  "cache_conditions": [
+    "Fresh Node worker and provider for every recorded backend/round",
+    "JADX repeat queries reuse the same retained JVM; ASC reuse is reported by its worker and observable process samples",
+    "OS disk/page caches are NOT flushed; fresh-process does not mean cold filesystem cache",
+    "Backend order alternates each round; sampler and host load may affect timings"
+  ],
+  "jadx_jar_sha256": "6e5eacf500b64292bfb73c49797c1958f6ee44646e43e868039ae7feb573ff75",
+  "runtime_fingerprint_scope": "Selected built/shared-service/provider and bridge entrypoints, not the entire transitive dependency tree or executed-byte identity",
+  "runtime_file_hashes_before": [
+    {
+      "path": "dist/application/android/AndroidAnalysisService.js",
+      "sha256": "741f76023df0575d8c22e101c64472f8f644185bc12e605b4d8d493afaccd530"
+    },
+    {
+      "path": "dist/android/JadxProvider.js",
+      "sha256": "c7acd3c34ff0343f726e985a3bf44c1725b1fd80bd0f705d662033b463bceb84"
+    },
+    {
+      "path": "dist/android/AscProvider.js",
+      "sha256": "d012f272bb4309a2c7515ba058047390b52b3a0b2741b060b05553644e66ddf4"
+    },
+    {
+      "path": "dist/android/AscProtocol.js",
+      "sha256": "f286e229202d4d2b5b28e9d808c671aa5bf1042b1abebdec3b3fa63e37ba6e0b"
+    },
+    {
+      "path": "dist/android/AscConfiguration.js",
+      "sha256": "0001444f84ffc8db0b238c19a5b2feca5826942cfbec4799cfad1c47cfc53ef3"
+    },
+    {
+      "path": "dist/composition/android.js",
+      "sha256": "7c4bd9d4fe5b6a712d5e31082f9de0bdb6e603451da8d328053610e1bf7da62d"
+    },
+    {
+      "path": "dist/application/android/AndroidBackendRouter.js",
+      "sha256": "9a356f224f9df9df5454310d19f80183e8e4d5d3b771f4a8fcb53325560afdde"
+    },
+    {
+      "path": "bridge/android/ReaJadxBridge.java",
+      "sha256": "a02b1ef0a4a40abd1ae310b9ee686ca163e0b59a3256df524c35b90ed17e9e63"
+    },
+    {
+      "path": "bridge/android/rea_asc.py",
+      "sha256": "3ef045bf0535afa1289b0c36e30e28d7e56eda88888cc45343593ba05f997343"
+    },
+    {
+      "path": "experiments/droidasc/benchmark.mjs",
+      "sha256": "189a3da05cf5e3b358fd24a2fad57d5feea33ca92e906bc903079b658c63650e"
+    },
+    {
+      "path": "experiments/droidasc/benchmark-oracle.mjs",
+      "sha256": "30af6a4b1114f2cf6dd4cd0129e26090fa625f5b8bc242e57e7a5d21d715da1d"
+    },
+    {
+      "path": "experiments/droidasc/benchmark-profile.mjs",
+      "sha256": "a62d94667adda9a6a0672863fa3b646bf28bf066251c399b5a09ad88fe6ac275"
+    }
+  ],
+  "runs": [
+    {
+      "backend": "asc",
+      "round": 1,
+      "raw_file": "1-asc.json",
+      "wall_ms": 10471.00525,
+      "phases": [
+        {
+          "name": "worker-import-and-construction",
+          "start_ms": 0,
+          "end_ms": 235.33233299999998,
+          "wall_ms": 235.33820799999998
+        },
+        {
+          "name": "first-query-in-fresh-worker",
+          "start_ms": 235.43520800000002,
+          "end_ms": 4761.060041,
+          "wall_ms": 4525.624833,
+          "worker_cpu_seconds": 0.357966
+        },
+        {
+          "name": "repeat-query-1",
+          "start_ms": 4761.08,
+          "end_ms": 7386.801875,
+          "wall_ms": 2625.721875,
+          "worker_cpu_seconds": 0.230963
+        },
+        {
+          "name": "repeat-query-2",
+          "start_ms": 7386.806583,
+          "end_ms": 10407.268,
+          "wall_ms": 3020.4614169999995,
+          "worker_cpu_seconds": 0.248635
+        },
+        {
+          "name": "provider-close",
+          "start_ms": 10407.273666000001,
+          "end_ms": 10407.616416,
+          "wall_ms": 0.3427499999997963,
+          "worker_cpu_seconds": 0.000341
+        }
+      ],
+      "peak_sampled_family_rss_kib": 284496,
+      "observed_family_cpu_seconds_lower_bound": 2.68,
+      "correctness": [
+        {
+          "exact_hits": ["org.thoughtcrime.securesms.ApplicationContext"],
+          "returned_matches": [
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda70",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda72",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda0",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda11",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda5",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda74",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda76",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda7",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda81",
+            "org.thoughtcrime.securesms.ApplicationContext$1",
+            "org.thoughtcrime.securesms.ApplicationContext$ProviderInitializationException",
+            "org.thoughtcrime.securesms.ApplicationContext"
+          ],
+          "reported_inventory_total": 40773,
+          "scope": "Raw root-DEX class_def definitions; not equivalent to JADX's rewritten/top-level inventory",
+          "provider": {
+            "id": "asc",
+            "name": "DroidASC",
+            "version": null
+          }
+        },
+        {
+          "exact_hits": ["org.thoughtcrime.securesms.ApplicationContext"],
+          "returned_matches": [
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda70",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda72",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda0",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda11",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda5",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda74",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda76",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda7",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda81",
+            "org.thoughtcrime.securesms.ApplicationContext$1",
+            "org.thoughtcrime.securesms.ApplicationContext$ProviderInitializationException",
+            "org.thoughtcrime.securesms.ApplicationContext"
+          ],
+          "reported_inventory_total": 40773,
+          "scope": "Raw root-DEX class_def definitions; not equivalent to JADX's rewritten/top-level inventory",
+          "provider": {
+            "id": "asc",
+            "name": "DroidASC",
+            "version": null
+          }
+        },
+        {
+          "exact_hits": ["org.thoughtcrime.securesms.ApplicationContext"],
+          "returned_matches": [
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda70",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda72",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda0",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda11",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda5",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda74",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda76",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda7",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda81",
+            "org.thoughtcrime.securesms.ApplicationContext$1",
+            "org.thoughtcrime.securesms.ApplicationContext$ProviderInitializationException",
+            "org.thoughtcrime.securesms.ApplicationContext"
+          ],
+          "reported_inventory_total": 40773,
+          "scope": "Raw root-DEX class_def definitions; not equivalent to JADX's rewritten/top-level inventory",
+          "provider": {
+            "id": "asc",
+            "name": "DroidASC",
+            "version": null
+          }
+        }
+      ],
+      "failure": null
+    },
+    {
+      "backend": "jadx",
+      "round": 1,
+      "raw_file": "1-jadx.json",
+      "wall_ms": 12471.882708000001,
+      "phases": [
+        {
+          "name": "worker-import-and-construction",
+          "start_ms": 0,
+          "end_ms": 158.207542,
+          "wall_ms": 158.21058299999999
+        },
+        {
+          "name": "first-query-in-fresh-worker",
+          "start_ms": 158.236917,
+          "end_ms": 10837.766833,
+          "wall_ms": 10679.529916,
+          "worker_cpu_seconds": 0.696801
+        },
+        {
+          "name": "repeat-query-1",
+          "start_ms": 10837.778124999999,
+          "end_ms": 11007.125624999999,
+          "wall_ms": 169.34749999999985,
+          "worker_cpu_seconds": 0.171719
+        },
+        {
+          "name": "repeat-query-2",
+          "start_ms": 11007.129707999999,
+          "end_ms": 11174.346792,
+          "wall_ms": 167.2170840000017,
+          "worker_cpu_seconds": 0.164712
+        },
+        {
+          "name": "provider-close",
+          "start_ms": 11174.36875,
+          "end_ms": 12369.588416999999,
+          "wall_ms": 1195.2196669999994,
+          "worker_cpu_seconds": 0.031579
+        }
+      ],
+      "peak_sampled_family_rss_kib": 1965056,
+      "observed_family_cpu_seconds_lower_bound": 22.17,
+      "correctness": [
+        {
+          "exact_hits": ["org.thoughtcrime.securesms.ApplicationContext"],
+          "returned_matches": [
+            "org.thoughtcrime.securesms.ApplicationContext",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda0",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda5",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda7",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda70",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda72",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda74",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda76",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda81"
+          ],
+          "reported_inventory_total": 21861,
+          "scope": "JADX bridge class inventory; not guaranteed to equal raw DEX class_def inventory",
+          "provider": {
+            "id": "jadx",
+            "name": "JADX headless",
+            "version": "0.7.1"
+          }
+        },
+        {
+          "exact_hits": ["org.thoughtcrime.securesms.ApplicationContext"],
+          "returned_matches": [
+            "org.thoughtcrime.securesms.ApplicationContext",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda0",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda5",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda7",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda70",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda72",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda74",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda76",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda81"
+          ],
+          "reported_inventory_total": 21861,
+          "scope": "JADX bridge class inventory; not guaranteed to equal raw DEX class_def inventory",
+          "provider": {
+            "id": "jadx",
+            "name": "JADX headless",
+            "version": "0.7.1"
+          }
+        },
+        {
+          "exact_hits": ["org.thoughtcrime.securesms.ApplicationContext"],
+          "returned_matches": [
+            "org.thoughtcrime.securesms.ApplicationContext",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda0",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda5",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda7",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda70",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda72",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda74",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda76",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda81"
+          ],
+          "reported_inventory_total": 21861,
+          "scope": "JADX bridge class inventory; not guaranteed to equal raw DEX class_def inventory",
+          "provider": {
+            "id": "jadx",
+            "name": "JADX headless",
+            "version": "0.7.1"
+          }
+        }
+      ],
+      "failure": null
+    },
+    {
+      "backend": "jadx",
+      "round": 2,
+      "raw_file": "2-jadx.json",
+      "wall_ms": 13438.639542,
+      "phases": [
+        {
+          "name": "worker-import-and-construction",
+          "start_ms": 0,
+          "end_ms": 158.215667,
+          "wall_ms": 158.218417
+        },
+        {
+          "name": "first-query-in-fresh-worker",
+          "start_ms": 158.24154199999998,
+          "end_ms": 11913.890125,
+          "wall_ms": 11755.648583,
+          "worker_cpu_seconds": 0.674933
+        },
+        {
+          "name": "repeat-query-1",
+          "start_ms": 11913.902583,
+          "end_ms": 12084.668,
+          "wall_ms": 170.76541700000053,
+          "worker_cpu_seconds": 0.17035
+        },
+        {
+          "name": "repeat-query-2",
+          "start_ms": 12084.671624999999,
+          "end_ms": 12248.658082999998,
+          "wall_ms": 163.9864579999994,
+          "worker_cpu_seconds": 0.16254
+        },
+        {
+          "name": "provider-close",
+          "start_ms": 12248.689417,
+          "end_ms": 13339.335541999999,
+          "wall_ms": 1090.6461249999993,
+          "worker_cpu_seconds": 0.029958
+        }
+      ],
+      "peak_sampled_family_rss_kib": 1948000,
+      "observed_family_cpu_seconds_lower_bound": 22.480000000000004,
+      "correctness": [
+        {
+          "exact_hits": ["org.thoughtcrime.securesms.ApplicationContext"],
+          "returned_matches": [
+            "org.thoughtcrime.securesms.ApplicationContext",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda0",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda5",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda7",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda70",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda72",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda74",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda76",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda81"
+          ],
+          "reported_inventory_total": 21861,
+          "scope": "JADX bridge class inventory; not guaranteed to equal raw DEX class_def inventory",
+          "provider": {
+            "id": "jadx",
+            "name": "JADX headless",
+            "version": "0.7.1"
+          }
+        },
+        {
+          "exact_hits": ["org.thoughtcrime.securesms.ApplicationContext"],
+          "returned_matches": [
+            "org.thoughtcrime.securesms.ApplicationContext",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda0",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda5",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda7",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda70",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda72",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda74",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda76",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda81"
+          ],
+          "reported_inventory_total": 21861,
+          "scope": "JADX bridge class inventory; not guaranteed to equal raw DEX class_def inventory",
+          "provider": {
+            "id": "jadx",
+            "name": "JADX headless",
+            "version": "0.7.1"
+          }
+        },
+        {
+          "exact_hits": ["org.thoughtcrime.securesms.ApplicationContext"],
+          "returned_matches": [
+            "org.thoughtcrime.securesms.ApplicationContext",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda0",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda5",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda7",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda70",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda72",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda74",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda76",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda81"
+          ],
+          "reported_inventory_total": 21861,
+          "scope": "JADX bridge class inventory; not guaranteed to equal raw DEX class_def inventory",
+          "provider": {
+            "id": "jadx",
+            "name": "JADX headless",
+            "version": "0.7.1"
+          }
+        }
+      ],
+      "failure": null
+    },
+    {
+      "backend": "asc",
+      "round": 2,
+      "raw_file": "2-asc.json",
+      "wall_ms": 12483.279041999995,
+      "phases": [
+        {
+          "name": "worker-import-and-construction",
+          "start_ms": 0,
+          "end_ms": 225.392,
+          "wall_ms": 225.39412499999997
+        },
+        {
+          "name": "first-query-in-fresh-worker",
+          "start_ms": 225.415167,
+          "end_ms": 5688.120792000001,
+          "wall_ms": 5462.7056250000005,
+          "worker_cpu_seconds": 0.269922
+        },
+        {
+          "name": "repeat-query-1",
+          "start_ms": 5688.144167,
+          "end_ms": 9070.818167,
+          "wall_ms": 3382.674,
+          "worker_cpu_seconds": 0.23547
+        },
+        {
+          "name": "repeat-query-2",
+          "start_ms": 9070.823292,
+          "end_ms": 12401.02925,
+          "wall_ms": 3330.2059580000005,
+          "worker_cpu_seconds": 0.247795
+        },
+        {
+          "name": "provider-close",
+          "start_ms": 12401.035917,
+          "end_ms": 12401.393833999999,
+          "wall_ms": 0.357916999999361,
+          "worker_cpu_seconds": 0.000356
+        }
+      ],
+      "peak_sampled_family_rss_kib": 287648,
+      "observed_family_cpu_seconds_lower_bound": 2.47,
+      "correctness": [
+        {
+          "exact_hits": ["org.thoughtcrime.securesms.ApplicationContext"],
+          "returned_matches": [
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda70",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda72",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda0",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda11",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda5",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda74",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda76",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda7",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda81",
+            "org.thoughtcrime.securesms.ApplicationContext$1",
+            "org.thoughtcrime.securesms.ApplicationContext$ProviderInitializationException",
+            "org.thoughtcrime.securesms.ApplicationContext"
+          ],
+          "reported_inventory_total": 40773,
+          "scope": "Raw root-DEX class_def definitions; not equivalent to JADX's rewritten/top-level inventory",
+          "provider": {
+            "id": "asc",
+            "name": "DroidASC",
+            "version": null
+          }
+        },
+        {
+          "exact_hits": ["org.thoughtcrime.securesms.ApplicationContext"],
+          "returned_matches": [
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda70",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda72",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda0",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda11",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda5",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda74",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda76",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda7",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda81",
+            "org.thoughtcrime.securesms.ApplicationContext$1",
+            "org.thoughtcrime.securesms.ApplicationContext$ProviderInitializationException",
+            "org.thoughtcrime.securesms.ApplicationContext"
+          ],
+          "reported_inventory_total": 40773,
+          "scope": "Raw root-DEX class_def definitions; not equivalent to JADX's rewritten/top-level inventory",
+          "provider": {
+            "id": "asc",
+            "name": "DroidASC",
+            "version": null
+          }
+        },
+        {
+          "exact_hits": ["org.thoughtcrime.securesms.ApplicationContext"],
+          "returned_matches": [
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda70",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda72",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda0",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda11",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda5",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda74",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda76",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda7",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda81",
+            "org.thoughtcrime.securesms.ApplicationContext$1",
+            "org.thoughtcrime.securesms.ApplicationContext$ProviderInitializationException",
+            "org.thoughtcrime.securesms.ApplicationContext"
+          ],
+          "reported_inventory_total": 40773,
+          "scope": "Raw root-DEX class_def definitions; not equivalent to JADX's rewritten/top-level inventory",
+          "provider": {
+            "id": "asc",
+            "name": "DroidASC",
+            "version": null
+          }
+        }
+      ],
+      "failure": null
+    },
+    {
+      "backend": "asc",
+      "round": 3,
+      "raw_file": "3-asc.json",
+      "wall_ms": 9272.129791,
+      "phases": [
+        {
+          "name": "worker-import-and-construction",
+          "start_ms": 0,
+          "end_ms": 149.093458,
+          "wall_ms": 149.096083
+        },
+        {
+          "name": "first-query-in-fresh-worker",
+          "start_ms": 149.120833,
+          "end_ms": 5581.480542,
+          "wall_ms": 5432.359709,
+          "worker_cpu_seconds": 0.278043
+        },
+        {
+          "name": "repeat-query-1",
+          "start_ms": 5581.495583,
+          "end_ms": 8556.50125,
+          "wall_ms": 2975.0056670000004,
+          "worker_cpu_seconds": 0.240036
+        },
+        {
+          "name": "repeat-query-2",
+          "start_ms": 8556.506707999999,
+          "end_ms": 9181.373667,
+          "wall_ms": 624.8669590000009,
+          "worker_cpu_seconds": 0.270208
+        },
+        {
+          "name": "provider-close",
+          "start_ms": 9181.381958,
+          "end_ms": 9181.932958,
+          "wall_ms": 0.5509999999994761,
+          "worker_cpu_seconds": 0.000626
+        }
+      ],
+      "peak_sampled_family_rss_kib": 284384,
+      "observed_family_cpu_seconds_lower_bound": 2.57,
+      "correctness": [
+        {
+          "exact_hits": ["org.thoughtcrime.securesms.ApplicationContext"],
+          "returned_matches": [
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda70",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda72",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda0",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda11",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda5",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda74",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda76",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda7",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda81",
+            "org.thoughtcrime.securesms.ApplicationContext$1",
+            "org.thoughtcrime.securesms.ApplicationContext$ProviderInitializationException",
+            "org.thoughtcrime.securesms.ApplicationContext"
+          ],
+          "reported_inventory_total": 40773,
+          "scope": "Raw root-DEX class_def definitions; not equivalent to JADX's rewritten/top-level inventory",
+          "provider": {
+            "id": "asc",
+            "name": "DroidASC",
+            "version": null
+          }
+        },
+        {
+          "exact_hits": ["org.thoughtcrime.securesms.ApplicationContext"],
+          "returned_matches": [
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda70",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda72",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda0",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda11",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda5",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda74",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda76",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda7",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda81",
+            "org.thoughtcrime.securesms.ApplicationContext$1",
+            "org.thoughtcrime.securesms.ApplicationContext$ProviderInitializationException",
+            "org.thoughtcrime.securesms.ApplicationContext"
+          ],
+          "reported_inventory_total": 40773,
+          "scope": "Raw root-DEX class_def definitions; not equivalent to JADX's rewritten/top-level inventory",
+          "provider": {
+            "id": "asc",
+            "name": "DroidASC",
+            "version": null
+          }
+        },
+        {
+          "exact_hits": ["org.thoughtcrime.securesms.ApplicationContext"],
+          "returned_matches": [
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda70",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda72",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda0",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda11",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda5",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda74",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda76",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda7",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda81",
+            "org.thoughtcrime.securesms.ApplicationContext$1",
+            "org.thoughtcrime.securesms.ApplicationContext$ProviderInitializationException",
+            "org.thoughtcrime.securesms.ApplicationContext"
+          ],
+          "reported_inventory_total": 40773,
+          "scope": "Raw root-DEX class_def definitions; not equivalent to JADX's rewritten/top-level inventory",
+          "provider": {
+            "id": "asc",
+            "name": "DroidASC",
+            "version": null
+          }
+        }
+      ],
+      "failure": null
+    },
+    {
+      "backend": "jadx",
+      "round": 3,
+      "raw_file": "3-jadx.json",
+      "wall_ms": 12621.017541000001,
+      "phases": [
+        {
+          "name": "worker-import-and-construction",
+          "start_ms": 0,
+          "end_ms": 149.02825,
+          "wall_ms": 149.03108400000002
+        },
+        {
+          "name": "first-query-in-fresh-worker",
+          "start_ms": 149.052959,
+          "end_ms": 10863.671125,
+          "wall_ms": 10714.618166,
+          "worker_cpu_seconds": 0.744083
+        },
+        {
+          "name": "repeat-query-1",
+          "start_ms": 10863.685459,
+          "end_ms": 11078.363875,
+          "wall_ms": 214.67841599999883,
+          "worker_cpu_seconds": 0.17342
+        },
+        {
+          "name": "repeat-query-2",
+          "start_ms": 11078.368334,
+          "end_ms": 11283.639959,
+          "wall_ms": 205.2716249999994,
+          "worker_cpu_seconds": 0.162072
+        },
+        {
+          "name": "provider-close",
+          "start_ms": 11283.654084,
+          "end_ms": 12548.762334,
+          "wall_ms": 1265.1082499999993,
+          "worker_cpu_seconds": 0.031802
+        }
+      ],
+      "peak_sampled_family_rss_kib": 2064928,
+      "observed_family_cpu_seconds_lower_bound": 26.580000000000005,
+      "correctness": [
+        {
+          "exact_hits": ["org.thoughtcrime.securesms.ApplicationContext"],
+          "returned_matches": [
+            "org.thoughtcrime.securesms.ApplicationContext",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda0",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda5",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda7",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda70",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda72",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda74",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda76",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda81"
+          ],
+          "reported_inventory_total": 21861,
+          "scope": "JADX bridge class inventory; not guaranteed to equal raw DEX class_def inventory",
+          "provider": {
+            "id": "jadx",
+            "name": "JADX headless",
+            "version": "0.7.1"
+          }
+        },
+        {
+          "exact_hits": ["org.thoughtcrime.securesms.ApplicationContext"],
+          "returned_matches": [
+            "org.thoughtcrime.securesms.ApplicationContext",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda0",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda5",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda7",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda70",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda72",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda74",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda76",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda81"
+          ],
+          "reported_inventory_total": 21861,
+          "scope": "JADX bridge class inventory; not guaranteed to equal raw DEX class_def inventory",
+          "provider": {
+            "id": "jadx",
+            "name": "JADX headless",
+            "version": "0.7.1"
+          }
+        },
+        {
+          "exact_hits": ["org.thoughtcrime.securesms.ApplicationContext"],
+          "returned_matches": [
+            "org.thoughtcrime.securesms.ApplicationContext",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda0",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda5",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda7",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda70",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda72",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda74",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda76",
+            "org.thoughtcrime.securesms.ApplicationContext$$ExternalSyntheticLambda81"
+          ],
+          "reported_inventory_total": 21861,
+          "scope": "JADX bridge class inventory; not guaranteed to equal raw DEX class_def inventory",
+          "provider": {
+            "id": "jadx",
+            "name": "JADX headless",
+            "version": "0.7.1"
+          }
+        }
+      ],
+      "failure": null
+    }
+  ],
+  "complete": true,
+  "failures": [],
+  "finished_at": "2026-10-20T07:35:54.347Z",
+  "runtime_file_hashes_after": [
+    {
+      "path": "dist/application/android/AndroidAnalysisService.js",
+      "sha256": "741f76023df0575d8c22e101c64472f8f644185bc12e605b4d8d493afaccd530"
+    },
+    {
+      "path": "dist/android/JadxProvider.js",
+      "sha256": "c7acd3c34ff0343f726e985a3bf44c1725b1fd80bd0f705d662033b463bceb84"
+    },
+    {
+      "path": "dist/android/AscProvider.js",
+      "sha256": "d012f272bb4309a2c7515ba058047390b52b3a0b2741b060b05553644e66ddf4"
+    },
+    {
+      "path": "dist/android/AscProtocol.js",
+      "sha256": "f286e229202d4d2b5b28e9d808c671aa5bf1042b1abebdec3b3fa63e37ba6e0b"
+    },
+    {
+      "path": "dist/android/AscConfiguration.js",
+      "sha256": "0001444f84ffc8db0b238c19a5b2feca5826942cfbec4799cfad1c47cfc53ef3"
+    },
+    {
+      "path": "dist/composition/android.js",
+      "sha256": "7c4bd9d4fe5b6a712d5e31082f9de0bdb6e603451da8d328053610e1bf7da62d"
+    },
+    {
+      "path": "dist/application/android/AndroidBackendRouter.js",
+      "sha256": "9a356f224f9df9df5454310d19f80183e8e4d5d3b771f4a8fcb53325560afdde"
+    },
+    {
+      "path": "bridge/android/ReaJadxBridge.java",
+      "sha256": "a02b1ef0a4a40abd1ae310b9ee686ca163e0b59a3256df524c35b90ed17e9e63"
+    },
+    {
+      "path": "bridge/android/rea_asc.py",
+      "sha256": "3ef045bf0535afa1289b0c36e30e28d7e56eda88888cc45343593ba05f997343"
+    },
+    {
+      "path": "experiments/droidasc/benchmark.mjs",
+      "sha256": "189a3da05cf5e3b358fd24a2fad57d5feea33ca92e906bc903079b658c63650e"
+    },
+    {
+      "path": "experiments/droidasc/benchmark-oracle.mjs",
+      "sha256": "30af6a4b1114f2cf6dd4cd0129e26090fa625f5b8bc242e57e7a5d21d715da1d"
+    },
+    {
+      "path": "experiments/droidasc/benchmark-profile.mjs",
+      "sha256": "a62d94667adda9a6a0672863fa3b646bf28bf066251c399b5a09ad88fe6ac275"
+    }
+  ]
+}
