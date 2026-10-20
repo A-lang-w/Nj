@@ -161,6 +161,34 @@ describe("coordo handoff helper", () => {
     expect(result.stderr).toContain(message);
   });
 
+  it("rejects a lone surrogate that argv encoding would replace, but keeps valid pairs", async () => {
+    const root = await project();
+
+    // JSON.stringify escapes the lone surrogate, so the file is valid UTF-8.
+    const lone = await run(
+      root,
+      manifest(".private/evidence.json", [
+        task({ question: "before\ud800after" }),
+      ]),
+    );
+    const pair = await run(
+      root,
+      manifest(".private/evidence.json", [
+        task({ question: "Which call logs \u{1F600}?" }),
+      ]),
+    );
+
+    expect(lone.code).toBe(1);
+    expect(lone.stdout).toBe("");
+    expect(lone.stderr).toContain(
+      "tasks[0].question must be a nonempty single line of well-formed Unicode",
+    );
+    expect(pair.code).toBe(0);
+    expect(dryRunTasks(pair.stdout)[0]?.description).toContain(
+      "Question: Which call logs \u{1F600}?",
+    );
+  });
+
   it("rejects a bundle whose bytes do not match the manifest digest", async () => {
     const root = await project();
     await writeFile(join(root, ".private/evidence.json"), "changed\n");
@@ -238,7 +266,7 @@ describe.skipIf(process.platform === "win32")("coordo handoff --apply", () => {
     );
   });
 
-  it("reports Coordo's own failure reason, redacted, with the tasks created so far", async () => {
+  it("reports Coordo's exit status without its diagnostics, with the tasks created so far", async () => {
     const root = await project();
     const coordo = await fakeCoordo(
       [
@@ -255,12 +283,12 @@ describe.skipIf(process.platform === "win32")("coordo handoff --apply", () => {
     );
 
     expect(result.code).toBe(1);
-    expect(result.stderr).toContain(
-      "coordo failed (3): connect failed for mongodb+srv://<redacted>@cluster.example.net/coordo",
+    expect(result.stderr).toBe(
+      'Coordo handoff: coordo failed (3); created before failure: [{"to":"claude","task_id":"TASK-001"}]\n',
     );
-    expect(result.stderr).toContain(
-      'created before failure: [{"to":"claude","task_id":"TASK-001"}]',
-    );
+    // Child stderr is untrusted and may carry credentials or backend hosts.
+    expect(result.stderr).not.toContain("connect failed");
+    expect(result.stderr).not.toContain("cluster.example.net");
     expect(result.stderr).not.toContain("hunter2");
   });
 });
