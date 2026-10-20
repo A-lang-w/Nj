@@ -142,6 +142,8 @@ export const lazyLoadDylibInfoPayload = (options: {
   readonly path: string;
   readonly symbols?: readonly string[];
   readonly flags?: number;
+  readonly flagImageOffset?: number;
+  readonly chainStartImageOffset?: number;
 }): Uint8Array => {
   const symbols = options.symbols ?? [];
   const headerSize = 24;
@@ -158,7 +160,9 @@ export const lazyLoadDylibInfoPayload = (options: {
   const payload = new Uint8Array(Math.ceil(cursor / 8) * 8);
   const view = new DataView(payload.buffer);
   view.setUint32(0, pathOffset, true);
+  view.setUint32(4, options.flagImageOffset ?? 0, true);
   view.setUint16(8, options.flags ?? 0, true);
+  view.setUint32(12, options.chainStartImageOffset ?? 0, true);
   view.setUint32(16, symbols.length, true);
   view.setUint32(20, symbolArrayOffset, true);
   symbolOffsets.forEach((offset, index) =>
@@ -176,10 +180,49 @@ export const lazyLoadDylibInfoPayload = (options: {
  * Place one `LC_LAZY_LOAD_DYLIB_INFO` command among the other commands and
  * append its payload after the image. `dataoff` is relative to this slice.
  */
+/** `LC_SEGMENT` or `LC_SEGMENT_64` with a name and VM range, and no sections. */
+export const segmentCommand = (options: {
+  readonly name: string;
+  readonly vmaddr: bigint;
+  readonly vmsize: bigint;
+  readonly wide?: boolean;
+}): Uint8Array => {
+  const wide = options.wide ?? true;
+  const bytes = new Uint8Array(wide ? 72 : 56);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(0, wide ? 0x19 : 0x1, true);
+  view.setUint32(4, bytes.length, true);
+  bytes.set(encoder.encode(options.name).subarray(0, 16), 8);
+  if (wide) {
+    view.setBigUint64(24, options.vmaddr, true);
+    view.setBigUint64(32, options.vmsize, true);
+  } else {
+    view.setUint32(24, Number(options.vmaddr), true);
+    view.setUint32(28, Number(options.vmsize), true);
+  }
+  return bytes;
+};
+
+/** 16-byte `LC_LAZY_LOAD_DYLIB_INFO` pointing at a slice-relative payload. */
+export const lazyLoadDylibInfoCommand = (
+  dataOffset: number,
+  dataSize: number,
+): Uint8Array => {
+  const bytes = new Uint8Array(16);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(0, 0x3a, true);
+  view.setUint32(4, bytes.length, true);
+  view.setUint32(8, dataOffset, true);
+  view.setUint32(12, dataSize, true);
+  return bytes;
+};
+
 export const machoImageWithLazyLoadDylibInfo = (options: {
   readonly path: string;
   readonly symbols?: readonly string[];
   readonly flags?: number;
+  readonly flagImageOffset?: number;
+  readonly chainStartImageOffset?: number;
   readonly cpu?: { readonly type: number; readonly subtype: number };
   readonly fileType?: number;
   readonly wide?: boolean;

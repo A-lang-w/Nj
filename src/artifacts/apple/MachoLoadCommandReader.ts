@@ -27,6 +27,8 @@ const FAT_MAGIC_64 = 0xcafebabf;
 const FAT_CIGAM = 0xbebafeca;
 const FAT_CIGAM_64 = 0xbfbafeca;
 
+const LC_SEGMENT = 0x1;
+const LC_SEGMENT_64 = 0x19;
 const LC_ID_DYLIB = 0xd;
 const LC_LOAD_DYLIB = 0xc;
 const LC_LOAD_WEAK_DYLIB = 0x80000018;
@@ -89,6 +91,11 @@ const DYLIB_USE_MARKER = 0x1a741800;
 const LAZY_INFO_HEADER_BYTES = 24;
 /** ld64 may-be-missing bit: the lazy image is allowed to be absent. */
 const LAZY_INFO_MAY_BE_MISSING = 0x1;
+/**
+ * dyld's linkedit image-offset checks start at one page, then grow to the
+ * runtime end of every segment except `__LINKEDIT`.
+ */
+const LAZY_INFO_MIN_VM_OFFSET = 0x4000n;
 const DYLIB_USE_WEAK_LINK = 0x1;
 const DYLIB_USE_REEXPORT = 0x2;
 const DYLIB_USE_UPWARD = 0x4;
@@ -310,13 +317,14 @@ const readSlice = async (
       fatAlignmentExponent: fat?.alignmentExponent ?? null,
     });
     const slice = decoded.slice;
-    for (const dependency of decoded.dependencies) {
-      slice.dependencies.push(
-        dependency.kind === "parsed"
-          ? dependency.value
-          : await readLazyLoadDylibInfo(readAt, base, length, dependency),
-      );
-    }
+    await appendDependencies(
+      slice,
+      decoded.dependencies,
+      readAt,
+      base,
+      length,
+      decoded.maxVmOffset,
+    );
     const distinctPlatforms = [...new Set(slice.platforms)];
     slice.platform =
       distinctPlatforms.length === 1 ? (distinctPlatforms[0] ?? null) : null;
@@ -352,6 +360,7 @@ const decodeCommands = (
     | { readonly kind: "parsed"; readonly value: MachoDependency }
     | LazyLoadDylibInfoCommand
   )[];
+  readonly maxVmOffset: bigint;
 } => {
   const view = viewOf(bytes);
   const slice: MachoSlice = {
@@ -377,6 +386,9 @@ const decodeCommands = (
     | { readonly kind: "parsed"; readonly value: MachoDependency }
     | LazyLoadDylibInfoCommand
   > = [];
+  const segments: SegmentSpan[] = [];
+  let unreadableSegment: number | undefined;
+  let lazyInfo = false;
   let offset = 0;
   for (let index = 0; index < header.commandCount; index++) {
     if (offset + 8 > bytes.byteLength)
@@ -396,6 +408,12 @@ const decodeCommands = (
         `load command ${index} at offset ${offset} has invalid cmdsize ${size}`,
       );
     const body = bytes.subarray(offset, offset + size);
+    if (command === LC_SEGMENT || command === LC_SEGMENT_64) {
+      const span = readSegmentSpan(body, command === LC_SEGMENT_64);
+      if (span === undefined) unreadableSegment ??= index;
+      else segments.push(span);
+    }
+    if (command === LC_LAZY_LOAD_DYLIB_INFO) lazyInfo = true;
     const decoded = decodeCommand(command, body, index, slice);
     if (decoded !== undefined) dependencies.push(decoded);
     offset += size;
@@ -405,7 +423,12 @@ const decodeCommands = (
       "malformed",
       `load commands declare ${header.commandCount} commands but sizeofcmds holds ${bytes.byteLength} bytes`,
     );
-  return { slice, dependencies };
+  if (lazyInfo && unreadableSegment !== undefined)
+    throw new MachoFormatIssue(
+      "malformed",
+      `load command ${unreadableSegment} is too short to establish the slice VM range for LC_LAZY_LOAD_DYLIB_INFO`,
+    );
+  return { slice, dependencies, maxVmOffset: maximumVmOffset(segments) };
 };
 
 interface LazyLoadDylibInfoCommand {
@@ -414,6 +437,93 @@ interface LazyLoadDylibInfoCommand {
   readonly dataOffset: number;
   readonly dataSize: number;
 }
+
+interface SegmentSpan {
+  readonly name: string;
+  readonly vmaddr: bigint;
+  readonly vmsize: bigint;
+}
+
+/** Runtime end of the mapped image, excluding `__LINKEDIT`, floored at one page. */
+const maximumVmOffset = (segments: readonly SegmentSpan[]): bigint => {
+  let textVmAddr = 0n;
+  for (const segment of segments) {
+    if (segment.name === "__TEXT") {
+      textVmAddr = segment.vmaddr;
+      break;
+    }
+  }
+  let max = LAZY_INFO_MIN_VM_OFFSET;
+  for (const segment of segments) {
+    if (segment.name === "__LINKEDIT") continue;
+    const end = segment.vmaddr - textVmAddr + segment.vmsize;
+    if (end > max) max = end;
+  }
+  return max;
+};
+
+const readSegmentSpan = (
+  body: Uint8Array,
+  wide: boolean,
+): SegmentSpan | undefined => {
+  if (body.byteLength < (wide ? 72 : 56)) return undefined;
+  const view = viewOf(body);
+  const nameBytes = body.subarray(8, 24);
+  const end = nameBytes.indexOf(0);
+  return {
+    name: new TextDecoder("utf-8", { fatal: false }).decode(
+      end < 0 ? nameBytes : nameBytes.subarray(0, end),
+    ),
+    vmaddr: wide
+      ? view.getBigUint64(24, true)
+      : BigInt(view.getUint32(24, true)),
+    vmsize: wide
+      ? view.getBigUint64(32, true)
+      : BigInt(view.getUint32(28, true)),
+  };
+};
+
+const appendDependencies = async (
+  slice: MachoSlice,
+  dependencies: readonly (
+    | { readonly kind: "parsed"; readonly value: MachoDependency }
+    | LazyLoadDylibInfoCommand
+  )[],
+  readAt: ReadAt,
+  base: number,
+  length: number,
+  maxVmOffset: bigint,
+): Promise<void> => {
+  const payloads = new Map<string, MachoDependency>();
+  let payloadBytes = 0;
+  for (const dependency of dependencies) {
+    if (dependency.kind === "parsed") {
+      slice.dependencies.push(dependency.value);
+      continue;
+    }
+    const key = `${dependency.dataOffset}:${dependency.dataSize}`;
+    const cached = payloads.get(key);
+    if (cached !== undefined) {
+      slice.dependencies.push(cached);
+      continue;
+    }
+    payloadBytes += dependency.dataSize;
+    if (payloadBytes > MAX_LOAD_COMMAND_BYTES)
+      throw new MachoFormatIssue(
+        "unsupported",
+        `LC_LAZY_LOAD_DYLIB_INFO payloads occupy ${payloadBytes} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte aggregate limit`,
+      );
+    const value = await readLazyLoadDylibInfo(
+      readAt,
+      base,
+      length,
+      dependency,
+      maxVmOffset,
+    );
+    payloads.set(key, value);
+    slice.dependencies.push(value);
+  }
+};
 
 const decodeCommand = (
   command: number,
@@ -515,6 +625,7 @@ const readLazyLoadDylibInfo = async (
   base: number,
   length: number,
   command: LazyLoadDylibInfoCommand,
+  maxVmOffset: bigint,
 ): Promise<MachoDependency> => {
   if (
     command.dataOffset > length ||
@@ -536,18 +647,31 @@ const readLazyLoadDylibInfo = async (
     command.dataSize,
     `load command ${command.index} LC_LAZY_LOAD_DYLIB_INFO payload`,
   );
-  return decodeLazyLoadDylibInfoPayload(payload, command.index);
+  return decodeLazyLoadDylibInfoPayload(payload, command.index, maxVmOffset);
 };
 
 const decodeLazyLoadDylibInfoPayload = (
   payload: Uint8Array,
   index: number,
+  maxVmOffset: bigint,
 ): MachoDependency => {
   const view = viewOf(payload);
   const pathOffset = view.getUint32(0, true);
+  const flagImageOffset = view.getUint32(4, true);
   const flags = view.getUint16(8, true);
+  const chainStartImageOffset = view.getUint32(12, true);
   const symbolCount = view.getUint32(16, true);
   const symbolArrayOffset = view.getUint32(20, true);
+  if (BigInt(flagImageOffset) > maxVmOffset)
+    throw new MachoFormatIssue(
+      "malformed",
+      `load command ${index} LC_LAZY_LOAD_DYLIB_INFO flag image offset 0x${flagImageOffset.toString(16)} is beyond the slice VM range 0x${maxVmOffset.toString(16)}`,
+    );
+  if (BigInt(chainStartImageOffset) > maxVmOffset)
+    throw new MachoFormatIssue(
+      "malformed",
+      `load command ${index} LC_LAZY_LOAD_DYLIB_INFO chain start image offset 0x${chainStartImageOffset.toString(16)} is beyond the slice VM range 0x${maxVmOffset.toString(16)}`,
+    );
   if ((flags & ~LAZY_INFO_MAY_BE_MISSING) !== 0)
     throw new MachoFormatIssue(
       "unsupported",
