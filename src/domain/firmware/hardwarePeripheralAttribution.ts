@@ -3,6 +3,7 @@ import {
   type HardwareArchitecture,
   type HardwareMemoryRegionKind,
 } from "./hardwareMemoryMap.js";
+import { lookupHardwareRegister } from "./hardwareRegisterCatalog.js";
 import { err, ok, type Result } from "../result.js";
 
 /** Minimal input reference contract representing an analyzed instruction reference. */
@@ -33,6 +34,8 @@ export interface HardwareAccessAttribution {
   readonly accessKind: HardwareAccessKind;
   readonly peripheralBlockBase: string;
   readonly peripheralBlockOffset: string;
+  readonly registerName?: string | null;
+  readonly registerMnemonic?: string | null;
   readonly sourceAddress?: string | null;
   readonly operandIndex?: number | null;
   readonly provenance?: string | null;
@@ -48,6 +51,7 @@ export interface HardwarePeripheralBlockSummary {
   readonly writeCount: number;
   readonly uniqueAddresses: readonly string[];
   readonly observedOffsets: readonly string[];
+  readonly knownRegisters: readonly string[];
 }
 
 /** Complete aggregated summary of hardware peripheral interactions. */
@@ -91,6 +95,7 @@ export const attributeHardwareAccess = (
   const blockOffsetValue = addressValue & 0xfffn;
 
   const accessKind = deriveAccessKind(reference.read, reference.write);
+  const knownRegister = lookupHardwareRegister(canonicalAddress, architecture);
 
   return ok({
     targetAddress: canonicalAddress,
@@ -102,6 +107,8 @@ export const attributeHardwareAccess = (
     accessKind,
     peripheralBlockBase: `0x${blockBaseValue.toString(16)}`,
     peripheralBlockOffset: `0x${blockOffsetValue.toString(16)}`,
+    registerName: knownRegister?.name ?? null,
+    registerMnemonic: knownRegister?.mnemonic ?? null,
     sourceAddress: reference.source_address ?? null,
     operandIndex: reference.operand_index ?? null,
     provenance: reference.provenance ?? null,
@@ -129,6 +136,7 @@ export const summarizeHardwarePeripheralInteractions = (
     writeCount: number;
     readonly uniqueAddresses: Set<string>;
     readonly observedOffsets: Set<string>;
+    readonly knownRegisters: Set<string>;
   };
 
   const blocks = new Map<string, BlockAccumulator>();
@@ -151,6 +159,7 @@ export const summarizeHardwarePeripheralInteractions = (
         writeCount: 0,
         uniqueAddresses: new Set<string>(),
         observedOffsets: new Set<string>(),
+        knownRegisters: new Set<string>(),
       };
       blocks.set(item.peripheralBlockBase, block);
     }
@@ -164,6 +173,9 @@ export const summarizeHardwarePeripheralInteractions = (
     }
     block.uniqueAddresses.add(item.targetAddress);
     block.observedOffsets.add(item.peripheralBlockOffset);
+    if (item.registerMnemonic) {
+      block.knownRegisters.add(item.registerMnemonic);
+    }
   }
 
   const peripheralBlocks: HardwarePeripheralBlockSummary[] = Array.from(
@@ -183,6 +195,7 @@ export const summarizeHardwarePeripheralInteractions = (
       observedOffsets: Array.from(block.observedOffsets).sort((a, b) =>
         BigInt(a) < BigInt(b) ? -1 : 1,
       ),
+      knownRegisters: Array.from(block.knownRegisters).sort(),
     }));
 
   return {

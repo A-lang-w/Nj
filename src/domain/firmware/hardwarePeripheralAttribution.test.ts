@@ -31,6 +31,8 @@ describe("Hardware peripheral reference attribution", () => {
       accessKind: "read",
       peripheralBlockBase: "0x40011000",
       peripheralBlockOffset: "0x4",
+      registerName: null,
+      registerMnemonic: null,
       sourceAddress: "0x08000150",
       operandIndex: 1,
       provenance: "instruction_disassembly",
@@ -73,6 +75,10 @@ describe("Hardware peripheral reference attribution", () => {
     expect(result.value.isMmio).toBe(true);
     expect(result.value.peripheralBlockBase).toBe("0xe000e000");
     expect(result.value.peripheralBlockOffset).toBe("0x10");
+    expect(result.value.registerMnemonic).toBe("SysTick_CTRL");
+    expect(result.value.registerName).toBe(
+      "SysTick Control and Status Register",
+    );
   });
 
   it("distinguishes non-MMIO code and RAM memory accesses", () => {
