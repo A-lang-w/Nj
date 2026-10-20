@@ -207,6 +207,26 @@ export const isStateWrite = (record: StateRecordFacts): boolean =>
   !isQueryPost(record.method, record.path) &&
   (record.status === null || (record.status >= 200 && record.status < 400));
 
+/** Whether any write overlaps the span from one record's start to a later record's end; writes come in timeline order. */
+export const writeSpanCheck = (
+  writes: readonly StateRecordFacts[],
+): ((earlier: StateRecordFacts, later: StateRecordFacts) => boolean) => {
+  // The latest end among each prefix of writes, so one search answers a span.
+  const reach: number[] = [];
+  for (const write of writes)
+    reach.push(Math.max(reach.at(-1) ?? Number.NEGATIVE_INFINITY, write.end));
+  return (earlier, later) => {
+    let low = 0;
+    let high = writes.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (writes[middle]!.start < later.end) low = middle + 1;
+      else high = middle;
+    }
+    return low > 0 && reach[low - 1]! > earlier.start;
+  };
+};
+
 /** Literal leading segments shared by every template with the same first segment: each path's API base. */
 export const apiBaseLengths = (
   templates: readonly string[],

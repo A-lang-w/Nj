@@ -25,6 +25,7 @@ import {
   scalarText,
   segmentsOf,
   apiBaseLengths,
+  writeSpanCheck,
   type ExtractedState,
   type JsonObject,
   type RecordedViewReason,
@@ -68,6 +69,7 @@ export class EnvironmentStateExtraction {
   readonly #position: ReadonlyMap<number, number>;
   readonly #byOrdinal: ReadonlyMap<number, StateRecordFacts>;
   readonly #writes: readonly StateRecordFacts[];
+  readonly #writeWithin: ReturnType<typeof writeSpanCheck>;
   readonly #bases: ReadonlyMap<string, number>;
   readonly #identity = new Map<
     string,
@@ -99,6 +101,7 @@ export class EnvironmentStateExtraction {
       input.records.map((record) => [record.ordinal, record]),
     );
     this.#writes = input.records.filter(isStateWrite);
+    this.#writeWithin = writeSpanCheck(this.#writes);
     this.#bases = apiBaseLengths(input.tools.map((tool) => tool.path_template));
   }
 
@@ -380,20 +383,22 @@ export class EnvironmentStateExtraction {
         observation.tool === plan.tool.name &&
         requestLine(this.#byOrdinal.get(observation.ordinal)!) === line,
     );
-    for (const name of Object.keys(object))
-      if (
+    const changed = Object.keys(object).filter(
+      (name) =>
         earlier !== undefined &&
         Object.hasOwn(earlier.object, name) &&
-        !same(earlier.object[name], object[name])
-      ) {
-        // A change across any recorded write, even under another root, is not evidence of volatility.
-        if (this.#writeBetween(earlier.position, position)) {
-          this.#rewritten.add(plan.type);
-          continue;
-        }
-        const fields = this.#volatile.get(plan.type) ?? new Set<string>();
-        this.#volatile.set(plan.type, fields.add(name));
-      }
+        !same(earlier.object[name], object[name]),
+    );
+    if (earlier !== undefined && changed.length > 0) {
+      // A change across any recorded write, even under another root, is not evidence of volatility.
+      if (this.#writeWithin(this.#byOrdinal.get(earlier.ordinal)!, record))
+        this.#rewritten.add(plan.type);
+      else
+        this.#volatile.set(
+          plan.type,
+          new Set([...(this.#volatile.get(plan.type) ?? []), ...changed]),
+        );
+    }
     this.#retain(ENTRY_BYTES + jsonBytes(object));
     entity.observations.push({
       position,
@@ -401,14 +406,6 @@ export class EnvironmentStateExtraction {
       tool: plan.tool.name,
       item: plan.item,
       object,
-    });
-  }
-
-  /** Whether a recorded write lies strictly between two timeline positions. */
-  #writeBetween(from: number, to: number): boolean {
-    return this.#writes.some((write) => {
-      const position = this.#position.get(write.ordinal)!;
-      return position > from && position < to;
     });
   }
 

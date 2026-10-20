@@ -215,6 +215,51 @@ it("leaves a type recorded when a value changed across a write under another roo
   });
 });
 
+it("leaves a type recorded when a value changed across a write already in flight", () => {
+  const exchange = ([method, path, seconds, time, title]: readonly [
+    string,
+    string,
+    number,
+    number,
+    string,
+  ]) => ({
+    startedDateTime: new Date(
+      Date.parse("2026-10-17T18:00:00.000Z") + seconds * 1000,
+    ).toISOString(),
+    time,
+    request: { method, url: `http://app.example${path}` },
+    response: {
+      status: 200,
+      content: {
+        mimeType: "application/json",
+        text: JSON.stringify([{ id: 1, title }]),
+      },
+    },
+  });
+  const state = stateOf(
+    parentOf(
+      analysisViewCaptureEvidence(
+        environmentManifestCaptureFixture([
+          exchange([
+            "POST",
+            "/api/dashboards/db",
+            0,
+            30_000,
+            "Saltmarsh Depot",
+          ]),
+          exchange(["GET", "/api/search", 10, 5, "Granite Ledger"]),
+          exchange(["GET", "/api/search", 40, 5, "Saltmarsh Depot"]),
+        ]),
+      ),
+    ),
+  );
+  expect(viewOf(state, "get_search")).toEqual({
+    tool: "get_search",
+    shape: "recorded",
+    reason: "fields-differ",
+  });
+});
+
 it("does not list the whole collection when a counter exceeds the number listed", () => {
   const state = stateOf(
     captureOf([
