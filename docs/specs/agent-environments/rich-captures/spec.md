@@ -39,8 +39,10 @@ accept. Two changes:
 - `sibling-pair-variance` applies only when listed, before `sibling-variance`, so
   a single-position merge cannot template one half of a pair first. It
   compares groups equal in method, origin and segment count except at two
-  adjacent literal positions at index 2 or later that follow a plural literal,
-  and merges a bucket only when it holds at least three distinct pairs and both
+  adjacent literal positions at index 2 or later that follow a plural literal
+  and precede another literal (a trailing pair, such as
+  `/users/alice/followers`, names a sub-resource rather than a namespace and
+  name), and merges a bucket only when it holds at least three distinct pairs and both
   positions vary. Stop words and `v1`-style versions never qualify, and routes
   of more than 32 segments are not compared, with a limitation saying so.
 - Its parameters are named from the plural literal, singular plus `_namespace`

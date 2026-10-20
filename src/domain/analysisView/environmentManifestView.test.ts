@@ -618,6 +618,22 @@ it("templates two adjacent literals after a plural literal as a pair when three 
   ]);
 });
 
+it("keeps a trailing pair literal because its second half names a sub-resource", () => {
+  const projected = manifest(
+    ["sibling-pair-variance"],
+    syntheticCapture([
+      ["GET", "https://g.test/api/v1/users/alice/followers"],
+      ["GET", "https://g.test/api/v1/users/bob/following"],
+      ["GET", "https://g.test/api/v1/users/carol/starred"],
+    ]),
+  );
+  expect(projected.tools.map((tool) => tool.path_template)).toEqual([
+    "/api/v1/users/alice/followers",
+    "/api/v1/users/bob/following",
+    "/api/v1/users/carol/starred",
+  ]);
+});
+
 it("merges pairs before sibling-variance so the two rules compose", () => {
   const routes = syntheticCapture([
     ["GET", "https://g.test/api/repos/alice-1/common/issues"],

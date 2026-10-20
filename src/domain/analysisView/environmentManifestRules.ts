@@ -295,7 +295,10 @@ const mergeSiblingVariance = (groups: readonly ToolGroup[]): ToolGroup[] => {
 /** Fewest distinct literal pairs that make two adjacent positions one templated pair. */
 export const SIBLING_PAIR_MINIMUM = 3;
 
-/** Both positions are literals that are neither stop words nor versions, right after a plural literal. */
+/**
+ * Both positions are literals that are neither stop words nor versions, right after a plural literal
+ * and before another literal: a trailing pair such as `/users/alice/followers` names a sub-resource.
+ */
 const pairCandidate = (group: ToolGroup, position: number): boolean => {
   const previous = group.parts[position - 1];
   const first = group.parts[position];
@@ -306,6 +309,7 @@ const pairCandidate = (group: ToolGroup, position: number): boolean => {
     !STOP_WORDS.has(previous.value) &&
     first?.kind === "literal" &&
     second?.kind === "literal" &&
+    group.parts[position + 2]?.kind === "literal" &&
     [first.value, second.value].every(
       (value) => !STOP_WORDS.has(value) && !VERSION_TOKEN.test(value),
     )
