@@ -23,6 +23,8 @@ Namespace packages remain directories. Their `relative_offset` and
 `compressed_size` preserve any payload declared by older producers, while
 `declared_size` is zero because no bytecode is materialized for a namespace.
 Every declared span must end before the PYZ table of contents.
+PYZ `compression_flag` is derived from storage: nonempty payloads are compressed,
+including legacy namespaces; an empty namespace has no compressed payload.
 
 CArchive type `o` entries are runtime options. They are metadata occurrences,
 with no content artifact or extractable file. Their query paths are

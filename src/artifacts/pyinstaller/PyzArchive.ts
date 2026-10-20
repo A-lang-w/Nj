@@ -21,6 +21,8 @@ export interface PyzEntry {
   readonly typeCode: number;
   readonly offset: number;
   readonly length: number;
+  /** PYZ compresses every nonempty payload, independently of its logical module type. */
+  readonly compressionFlag: 0 | 1;
   readonly package: boolean;
   readonly namespace: boolean;
 }
@@ -254,6 +256,7 @@ const onePyzEntry = (
     typeCode,
     offset,
     length,
+    compressionFlag: length === 0 ? 0 : 1,
     package: typeCode === 1 || typeCode === 3,
     namespace: typeCode === 3,
   });

@@ -163,7 +163,7 @@ export const pyzEntryMetadata = (
       source_name: entry.name,
       type_code: entry.typeCode,
       relative_offset: entry.offset,
-      compression_flag: entry.namespace ? 0 : 1,
+      compression_flag: entry.compressionFlag,
     },
     entry.typeCode === 0 || entry.typeCode === 1,
     header,

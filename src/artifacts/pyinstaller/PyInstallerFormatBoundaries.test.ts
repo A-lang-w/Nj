@@ -146,7 +146,11 @@ it("retains legacy namespace payload extents without materializing them", async 
         entry_kind: "directory",
         declared_size: 0,
         compressed_size: length,
-        format_metadata: { relative_offset: 12, type_code: 3 },
+        format_metadata: {
+          relative_offset: 12,
+          type_code: 3,
+          compression_flag: 1,
+        },
         limitations: expect.arrayContaining([
           expect.stringContaining("not materialized"),
         ]),
@@ -267,7 +271,11 @@ it("retains the producer's nonzero namespace offset without inventing data", asy
         entry_kind: "directory",
         declared_size: 0,
         compressed_size: 0,
-        format_metadata: { relative_offset: 12, type_code: 3 },
+        format_metadata: {
+          relative_offset: 12,
+          type_code: 3,
+          compression_flag: 0,
+        },
       });
     },
   );
