@@ -2318,9 +2318,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonArray parameters = new JsonArray();
         result.add("parameters", parameters);
 
-        // hasVarArgs() is false by default; only imported (e.g. DWARF) or user signatures assert arity.
-        boolean varargsKnown = "imported".equals(signatureSource) || "user_defined".equals(signatureSource);
-        result.add("varargs", varargsKnown ? new JsonPrimitive(function.hasVarArgs()) : JsonNull.INSTANCE);
+        // hasVarArgs() is a stored flag that defaults to false, so false asserts fixed arity
+        // only for imported (e.g. DWARF) or user-defined signatures; a set flag is always evidence.
+        boolean variadic = function.hasVarArgs();
+        boolean arityAsserted = "imported".equals(signatureSource) || "user_defined".equals(signatureSource);
+        result.add("varargs", variadic || arityAsserted ? new JsonPrimitive(variadic) : JsonNull.INSTANCE);
 
         JsonArray jumpTables = new JsonArray();
         result.add("jump_tables", jumpTables);
