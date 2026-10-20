@@ -328,6 +328,31 @@ describe("CLI output valued-flag parsing", () => {
           },
         });
       }
+      // Equals-style values are normalized before output parsing.
+      const equalsInvalid = await cli.run({
+        arguments: ["capabilities", "--json", "--token-offset=bad"],
+      });
+      expect(equalsInvalid.exitCode).toBe(1);
+      expect(equalsInvalid.json).toMatchObject({
+        ok: false,
+        error: { code: "INVALID_OUTPUT_VALUE" },
+      });
+      const equalsJsonl = await cli.run({
+        arguments: ["capabilities", "--format=jsonl", "--token-offset=bad"],
+      });
+      expect(equalsJsonl.exitCode).toBe(1);
+      expect(
+        equalsJsonl.stdout
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line)),
+      ).toMatchObject([{ ok: false, error: { code: "INVALID_OUTPUT_VALUE" } }]);
+      // A structured format selected after the malformed value is not applied.
+      const lateJson = await cli.run({
+        arguments: ["capabilities", "--token-limit=nope", "--json"],
+      });
+      expect(lateJson.exitCode).toBe(1);
+      expect(lateJson.stdout).not.toContain("INVALID_OUTPUT_VALUE");
       const jsonl = await cli.run({
         arguments: ["capabilities", "--format", "jsonl", "--token-limit", "x"],
       });
