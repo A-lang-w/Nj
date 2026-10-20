@@ -83,6 +83,19 @@ replays in the later session.
   instead of reading or discarding a project another session is copying. A
   lock left behind by a session that died is taken over once it has been
   silent for longer than any plausible rebuild.
+- The lock names the session that holds it. A session that takes over an
+  abandoned lock moves it aside and compares it with the lock it observed, so
+  a lock another session holds in the meantime is put back instead of being
+  removed, and a session releases only the lock it holds. A rebuild that lost
+  its lock stops instead of changing a root another session is rebuilding.
+- A rebuild that cannot complete puts the previous root back, and the stored
+  projects another session published while the rebuild was running are moved
+  into it first: a rollback keeps a project another session stored instead of
+  discarding it.
+- The store keeps its staging, lock, and lease directories inside the cache
+  root. A link at one of those names is replaced by the store's own
+  directory, never followed, so a root that other principals could write
+  cannot make the store clean up outside the cache root.
 - **Miss** imports writable into a private runtime project; when the session
   closes after a clean, complete, mutation-free analysis the saved project is
   copied into the cache and published by an atomic rename under a per-key lock.

@@ -1,5 +1,6 @@
 import {
   chmod,
+  lstat,
   mkdtemp,
   mkdir,
   readFile,
@@ -424,6 +425,65 @@ describe("GhidraProjectStore repair leftovers", () => {
       await rm(lock, { force: true });
       await rm(copies, { recursive: true, force: true });
     }
+  });
+});
+
+describe("GhidraProjectStore working directories", () => {
+  it.skipIf(process.platform === "win32")(
+    "replaces a link at the name of a working directory instead of following it",
+    async () => {
+      const store = newStore();
+      // A root that other principals could write could hold a link at the
+      // name of one of the store's working directories.
+      const outside = await mkdtemp(join(tmpdir(), "rea-ghidra-outside-"));
+      try {
+        await writeFile(join(outside, "document.txt"), "not REA's");
+        await symlink(outside, join(root, "staging"), "dir");
+        const pruned = await store.prune();
+        expect(pruned.ok).toBe(true);
+        // The link is replaced by the store's own directory, and the files it
+        // pointed at are untouched.
+        await expect(
+          readFile(join(outside, "document.txt"), "utf8"),
+        ).resolves.toBe("not REA's");
+        const staging = await lstat(join(root, "staging"));
+        expect(staging.isDirectory()).toBe(true);
+        expect(staging.isSymbolicLink()).toBe(false);
+      } finally {
+        await rm(outside, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "copies into the store's own staging directory when a link holds its name",
+    async () => {
+      const store = newStore();
+      const outside = await mkdtemp(join(tmpdir(), "rea-ghidra-outside-"));
+      try {
+        await symlink(outside, join(root, "staging"), "dir");
+        const miss = await store.prepare({ identity: identity(), mode: "on" });
+        const published = await store.publish(publishable(store, miss));
+        expect(published.ok && published.value.published).toBe(true);
+        // The copy was made inside the cache root, not where the link
+        // pointed at.
+        await expect(readdir(outside)).resolves.toEqual([]);
+        const key = ghidraProjectCacheKey(identity());
+        await expect(stat(join(root, key))).resolves.toBeDefined();
+      } finally {
+        await rm(outside, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("replaces a file at the name of a working directory", async () => {
+    const store = newStore();
+    await writeFile(join(root, "staging"), "not a directory");
+    const pruned = await store.prune();
+    expect(pruned.ok).toBe(true);
+    const staging = await lstat(join(root, "staging"));
+    expect(staging.isDirectory()).toBe(true);
+    expect(staging.isSymbolicLink()).toBe(false);
   });
 });
 

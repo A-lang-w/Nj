@@ -393,6 +393,53 @@ describe("Windows cache root repair coordination", () => {
       readFile(join(root, "entry", "project"), "utf8"),
     ).resolves.toBe("published");
   });
+
+  it("keeps an entry another session published while the repair was running", async () => {
+    const parent = await tempRoot();
+    const root = join(parent, "cache");
+    const shared = join(parent, "shared");
+    await mkdir(root);
+    await mkdir(shared);
+    await writeFile(join(root, "entry"), "stored");
+    // A link cannot be carried into the private root, so the repair fails
+    // after the replacement is in place.
+    await symlink(shared, join(root, "shared"), "dir");
+    let rebuilt = false;
+    await expect(
+      ensureGhidraProjectCacheRoot(root, {
+        platform: "win32",
+        host: privateRootHost({
+          async createPrivateDirectory(path) {
+            await mkdir(path, { recursive: true });
+            if (path !== root) return path;
+            rebuilt = true;
+            // Another session used the root while the repair was running and
+            // published a project into the private replacement.
+            await mkdir(join(path, "published"), { recursive: true });
+            await writeFile(join(path, "published", "project"), "published");
+            return path;
+          },
+          verifyPrivateDirectory() {
+            if (!rebuilt)
+              throw new Error("Private object owner is not the current user");
+            return { privateDacl: true };
+          },
+        }),
+      }),
+    ).rejects.toMatchObject({
+      reason: "io",
+      path: root,
+      message: expect.stringContaining(
+        "could not be rebuilt as a private directory",
+      ),
+    });
+    // The project another session published is not discarded by the rollback,
+    // and the stored project the repair was preserving is still there.
+    await expect(
+      readFile(join(root, "published", "project"), "utf8"),
+    ).resolves.toBe("published");
+    await expect(readFile(join(root, "entry"), "utf8")).resolves.toBe("stored");
+  });
 });
 
 describe("Windows cache root repair locking", () => {
@@ -482,6 +529,99 @@ describe("Windows cache root repair locking", () => {
     await expect(access(join(parent, "cache.repair"))).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("stops the repair and keeps the lock when another session took it over", async () => {
+    const parent = await tempRoot();
+    const root = join(parent, "cache");
+    await mkdir(root);
+    await writeFile(join(root, "entry"), "stored");
+    const lock = join(parent, "cache.repair");
+    // The repair holds the lock while it copies, so the lock can be handed
+    // to another session while the repair runs.
+    let release: () => void = () => undefined;
+    const copying = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let inspected = false;
+    const repair = ensureGhidraProjectCacheRoot(root, {
+      platform: "win32",
+      host: privateRootHost({
+        async createPrivateDirectory(path) {
+          await copying;
+          await mkdir(path, { recursive: true });
+          return path;
+        },
+        verifyPrivateDirectory() {
+          if (!inspected) {
+            inspected = true;
+            throw new Error("Private object owner is not the current user");
+          }
+          return { privateDacl: true };
+        },
+      }),
+    });
+    // The repair holds the lock while it copies, so the lock can be handed
+    // to another session while the repair runs.
+    let waited = 0;
+    while (!existsSync(lock) && waited < 10_000) {
+      waited += 1;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    expect(existsSync(lock)).toBe(true);
+    // Another session took the lock over.
+    await writeFile(lock, "another-session");
+    release();
+    await expect(repair).rejects.toMatchObject({ reason: "io", path: root });
+    // The lock of the session that took it over is not removed by the repair
+    // that lost it.
+    await expect(readFile(lock, "utf8")).resolves.toBe("another-session");
+    // The stored project the repair was preserving is still there.
+    await expect(readFile(join(root, "entry"), "utf8")).resolves.toBe("stored");
+  });
+});
+
+describe("Windows cache root repair lock ownership", () => {
+  it("runs one repair when two sessions take over the same abandoned lock", async () => {
+    for (let round = 0; round < 8; round += 1) {
+      const parent = await tempRoot();
+      const root = join(parent, "cache");
+      await mkdir(root);
+      await writeFile(join(root, "entry"), "stored");
+      // The lock a dead session left behind is taken over by both sessions.
+      const lock = join(parent, "cache.repair");
+      await writeFile(lock, "abandoned");
+      const abandoned = new Date(Date.now() - 60 * 60 * 1000);
+      await utimes(lock, abandoned, abandoned);
+      const rebuilt: string[] = [];
+      let replaced = false;
+      const host = privateRootHost({
+        async createPrivateDirectory(path) {
+          if (path === root) replaced = true;
+          rebuilt.push(path);
+          await mkdir(path, { recursive: true });
+          return path;
+        },
+        verifyPrivateDirectory() {
+          // The root that was already there is not owner-only; the rebuilt
+          // one passes the same native verification.
+          if (!replaced)
+            throw new Error("Private object owner is not the current user");
+          return { privateDacl: true };
+        },
+      });
+      await Promise.allSettled([
+        ensureGhidraProjectCacheRoot(root, { platform: "win32", host }),
+        ensureGhidraProjectCacheRoot(root, { platform: "win32", host }),
+      ]);
+      // Only one session rebuilds the root, so the two sessions never change
+      // the root at the same time.
+      expect(rebuilt.filter((path) => path === root)).toHaveLength(1);
+      // The stored project survives, whichever session rebuilt the root.
+      await expect(readFile(join(root, "entry"), "utf8")).resolves.toBe(
+        "stored",
+      );
+    }
   });
 });
 

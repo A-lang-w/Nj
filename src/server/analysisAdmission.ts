@@ -9,8 +9,8 @@ export type WithAdmittedAnalysis = <Value>(
   operationName: string,
   signal: AbortSignal | undefined,
   operation: (analysis: AnalysisOperationPort) => Promise<Value>,
-  targetId?: string,
-  waitMs?: number,
+  targetId?: string | undefined,
+  waitMs?: number | undefined,
 ) => Promise<Result<Value, AnalysisError>>;
 
 /** Select exactly one owner for a server's analysis operation binding. */

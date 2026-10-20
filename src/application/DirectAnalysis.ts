@@ -40,6 +40,7 @@ import type {
   AnalysisExecution,
   ProviderIdentity,
 } from "./AnalysisProvider.js";
+import { createAnalysisExecutionEvidence } from "./AnalysisProvider.js";
 import {
   REA_WORKFLOW_PROVIDER,
   workflowAnalysisProfile,
@@ -208,17 +209,7 @@ const runManagedProviderAnalysis = async (
   );
   if (!execution.ok) return cliError(execution.error);
   const value = execution.value;
-  return createEvidence(value.subject ?? undefined, value.provider, {
-    operation: tool,
-    parameters: arguments_,
-    result: value.result,
-    rawResult: value.rawResult,
-    limitations: value.limitations,
-    ...(value.relationshipCoverage === undefined
-      ? {}
-      : { relationshipCoverage: value.relationshipCoverage }),
-    locations: value.locations,
-  });
+  return createAnalysisExecutionEvidence(tool, arguments_, value, "observed");
 };
 
 const runAnalysis = async (
@@ -343,7 +334,7 @@ const runAnalysis = async (
           : await session.openResolvedTarget(resolvedTarget, openOptions);
       if (!opened.ok) return cliError(opened.error);
       const evidenceProfile = analysisProfileForEvidence(session, tool);
-      const { output, evidence } = await executeAnalysisTool({
+      const { output, evidence, cachePolicy } = await executeAnalysisTool({
         session,
         openedTarget: opened.value,
         tool,
@@ -373,7 +364,11 @@ const runAnalysis = async (
         evidence !== undefined &&
         session.allowsSnapshotReplay(tool)
       ) {
-        const workflowRecord = workflowSnapshotRecord(evidence, tool);
+        const workflowRecord = workflowSnapshotRecord(
+          evidence,
+          tool,
+          cachePolicy,
+        );
         if (workflowRecord !== undefined) {
           const recorded = session.recordWorkflowSnapshot(workflowRecord);
           if (!recorded.ok)
@@ -419,7 +414,11 @@ const executeAnalysisTool = async (input: {
   readonly arguments: Readonly<Record<string, JsonValue>>;
   readonly signal: AbortSignal;
   readonly evidenceProfile: AnalysisProfileCommitment | undefined;
-}): Promise<{ readonly output: JsonValue; readonly evidence?: Evidence }> => {
+}): Promise<{
+  readonly output: JsonValue;
+  readonly evidence?: Evidence;
+  readonly cachePolicy?: "live";
+}> => {
   const { session, tool, signal, evidenceProfile } = input;
   if (tool === "analyze_function") {
     const { executeFunctionAnalysisEvidence } =
@@ -455,7 +454,13 @@ const executeAnalysisTool = async (input: {
       upstreamProfile: evidenceProfile,
       upstreamLimitations: result.value.limitations,
     });
-    return { output: evidence, evidence };
+    return {
+      output: evidence,
+      evidence,
+      ...(result.value.cachePolicy === undefined
+        ? {}
+        : { cachePolicy: result.value.cachePolicy }),
+    };
   }
   let result = await session.execute(tool, input.arguments, { signal });
   if (

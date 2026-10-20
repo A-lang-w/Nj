@@ -7,6 +7,7 @@ import {
   readdir,
   rename,
   rm,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -257,6 +258,11 @@ export class GhidraProjectStore {
             await this.#discard(stagingPath);
             return ok({ published: false });
           }
+          // The copy is made inside the store's own staging directory, so a
+          // link at the name of that directory cannot receive it.
+          await this.#ensureWorkingDirectory(
+            join(this.#root, GHIDRA_PROJECT_STAGING_DIRECTORY),
+          );
           await copyGhidraProjectDirectory(
             input.sourceProjectDirectory,
             stagingPath,
@@ -623,11 +629,45 @@ export class GhidraProjectStore {
     return join(this.#root, GHIDRA_PROJECT_LEASE_DIRECTORY, `${key}.lease`);
   }
 
+  /**
+   * Ensure one of the store's working directories is a real directory.
+   *
+   * The cache root is a path the caller chose, and a root that other
+   * principals could write could hold a link at the name of one of the
+   * store's working directories. The operations that list or remove what a
+   * working directory holds follow such a link, so the store would clean up
+   * outside the cache root. The link is removed instead of followed, and the
+   * store's own directory takes its place: only the entry at REA's own name
+   * is removed, never what the link points at.
+   */
+  async #ensureWorkingDirectory(path: string): Promise<void> {
+    const stats = await lstat(path).catch(() => undefined);
+    if (stats === undefined) {
+      await mkdir(path, { recursive: true, mode: 0o700 });
+      return;
+    }
+    if (stats.isDirectory() && !stats.isSymbolicLink()) return;
+    if (stats.isSymbolicLink()) await unlink(path);
+    else await rm(path, { recursive: true, force: true });
+    await mkdir(path, { recursive: true, mode: 0o700 });
+  }
+
+  /**
+   * Whether a working directory can be used, so a directory that cannot be
+   * made private is left alone instead of being read through a link.
+   */
+  async #usableWorkingDirectory(path: string): Promise<boolean> {
+    return await this.#ensureWorkingDirectory(path).then(
+      () => true,
+      () => false,
+    );
+  }
+
   /** Record that a hit is in use so a concurrent prune leaves it alone. */
   async #touchLease(key: string): Promise<void> {
     const path = this.#leasePath(key);
     try {
-      await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+      await this.#ensureWorkingDirectory(dirname(path));
       await writeFile(path, `${new Date().toISOString()}\n`, {
         encoding: "utf8",
         mode: 0o600,
@@ -648,6 +688,9 @@ export class GhidraProjectStore {
   /** Keys a recent hit leased for its runtime copy, refreshed as leases renew. */
   async #protectedKeys(signal?: AbortSignal): Promise<ReadonlySet<string>> {
     const directory = join(this.#root, GHIDRA_PROJECT_LEASE_DIRECTORY);
+    // A lease directory the store cannot use is left alone: the leases it
+    // holds are not read through a link.
+    if (!(await this.#usableWorkingDirectory(directory))) return new Set();
     const entries = await readdir(directory, { withFileTypes: true }).catch(
       () => [],
     );
@@ -670,6 +713,9 @@ export class GhidraProjectStore {
   /** Remove staging copies abandoned by an interrupted publish. */
   async #pruneStaging(signal?: AbortSignal): Promise<readonly string[]> {
     const directory = join(this.#root, GHIDRA_PROJECT_STAGING_DIRECTORY);
+    // A staging directory the store cannot use is left alone: the copies it
+    // holds are not removed through a link.
+    if (!(await this.#usableWorkingDirectory(directory))) return [];
     const entries = await readdir(directory, { withFileTypes: true }).catch(
       () => [],
     );
@@ -750,10 +796,9 @@ export class GhidraProjectStore {
     body: () => Promise<Value>,
   ): Promise<Value> {
     const lockPath = this.#lockPath(key);
-    await mkdir(join(this.#root, GHIDRA_PROJECT_LOCK_DIRECTORY), {
-      recursive: true,
-      mode: 0o700,
-    });
+    await this.#ensureWorkingDirectory(
+      join(this.#root, GHIDRA_PROJECT_LOCK_DIRECTORY),
+    );
     await this.#acquireLock(lockPath);
     try {
       signal?.throwIfAborted();

@@ -3,7 +3,6 @@ import {
   chmod,
   lstat,
   mkdir,
-  open,
   readdir,
   rename,
   rm,
@@ -20,7 +19,17 @@ import {
 } from "../../windows/WindowsNativeLoader.js";
 import { ghidraProjectDirectoryBytes } from "./GhidraProjectLayout.js";
 import {
+  acquireRepairLock,
+  keepRepairLockAlive,
+  releaseRepairLock,
+  tryAcquireRepairLock,
+  type RepairLock,
+} from "./GhidraProjectCacheLock.js";
+import {
+  GHIDRA_PROJECT_LEASE_DIRECTORY,
+  GHIDRA_PROJECT_LOCK_DIRECTORY,
   GHIDRA_PROJECT_REPAIR_STAGING_DIRECTORY,
+  GHIDRA_PROJECT_STAGING_DIRECTORY,
   GhidraProjectCacheError,
 } from "./GhidraProjectCacheTypes.js";
 
@@ -33,21 +42,6 @@ const createdRuntimeSchema = z
 
 /** Name of the durable directory created inside a native runtime root. */
 const DURABLE_ROOT_LEAF = "root";
-
-/**
- * Suffix of the file beside the cache root that serialises a repair.
- *
- * The lock lives beside the root because the repair replaces the root itself,
- * so a lock inside it would not survive the replacement.
- */
-const REPAIR_LOCK_SUFFIX = ".repair";
-
-/**
- * A repair lock that has been silent for longer than this belongs to a
- * session that died, and is taken over so one crash does not disable the
- * cache for good.
- */
-const REPAIR_LOCK_STALE_MS = 10 * 60 * 1000;
 
 /** Native operations that establish and verify a durable private cache root. */
 export interface GhidraProjectCacheRootHost {
@@ -133,12 +127,6 @@ const isNotFound = (cause: unknown): boolean =>
   cause !== null &&
   "code" in cause &&
   cause.code === "ENOENT";
-
-const isAlreadyExists = (cause: unknown): boolean =>
-  typeof cause === "object" &&
-  cause !== null &&
-  "code" in cause &&
-  cause.code === "EEXIST";
 
 const rootError = (
   message: string,
@@ -284,18 +272,23 @@ const copyCacheEntry = async (
  * one. A name a concurrent publisher already took keeps the published entry
  * and discards the copy, so a repair never replaces a project a live session
  * stored.
+ *
+ * The published names are recorded, so a repair that cannot complete knows
+ * which entries are its own copies and which ones another session published.
  */
 const publishPreservedProjects = async (
   staging: string,
   root: string,
+  published: Set<string>,
 ): Promise<void> => {
   for (const name of await readdir(staging)) {
     const copied = join(staging, name);
-    const published = join(root, name);
+    const publishedPath = join(root, name);
     try {
-      await rename(copied, published);
+      await rename(copied, publishedPath);
+      published.add(name);
     } catch (cause: unknown) {
-      const existing = await lstat(published).catch(() => undefined);
+      const existing = await lstat(publishedPath).catch(() => undefined);
       if (existing === undefined) throw cause;
       // A concurrent publisher won the name; its entry is the live one.
       await rm(copied, { recursive: true, force: true });
@@ -303,9 +296,59 @@ const publishPreservedProjects = async (
   }
 };
 
-/** Path of the file that serialises a root repair between sessions. */
-const repairLockPath = (root: string): string =>
-  join(dirname(root), `${basename(root)}${REPAIR_LOCK_SUFFIX}`);
+/**
+ * The directories the store keeps inside the cache root.
+ *
+ * They hold the store's own working state, not stored projects, so they are
+ * not carried over when a root is restored.
+ */
+const STORE_WORKING_DIRECTORIES: readonly string[] = [
+  GHIDRA_PROJECT_LOCK_DIRECTORY,
+  GHIDRA_PROJECT_STAGING_DIRECTORY,
+  GHIDRA_PROJECT_LEASE_DIRECTORY,
+  GHIDRA_PROJECT_REPAIR_STAGING_DIRECTORY,
+];
+
+/**
+ * Move the entries another session published into the set-aside root.
+ *
+ * A session that used the root while the repair ran can publish a stored
+ * project into the private replacement. The replacement is removed when the
+ * repair cannot complete, so those entries are moved into the set-aside root
+ * first: the rollback keeps a project another session stored instead of
+ * discarding it.
+ *
+ * The set-aside root holds an entry with the same name, because the project
+ * was there before the repair started. The entry the other session published
+ * is the newer one, so it takes its place.
+ *
+ * Returns whether every entry was preserved.
+ */
+const preserveConcurrentEntries = async (
+  root: string,
+  previous: string,
+  published: ReadonlySet<string>,
+): Promise<boolean> => {
+  for (const name of await readdir(root).catch(() => [])) {
+    if (published.has(name)) continue;
+    if (STORE_WORKING_DIRECTORIES.includes(name)) continue;
+    const source = join(root, name);
+    const target = join(previous, name);
+    try {
+      await rename(source, target);
+    } catch {
+      // The set-aside root holds an entry with the same name, so the newer
+      // entry takes its place.
+      await rm(target, { recursive: true, force: true }).catch(() => undefined);
+      try {
+        await rename(source, target);
+      } catch {
+        return false;
+      }
+    }
+  }
+  return true;
+};
 
 /**
  * Path of the directory that holds the copies of the preserved projects.
@@ -321,94 +364,6 @@ const repairLockPath = (root: string): string =>
  */
 const repairStagingPath = (root: string): string =>
   join(root, GHIDRA_PROJECT_REPAIR_STAGING_DIRECTORY);
-
-/**
- * How long the repair lock beside the root has been silent.
- *
- * A lock that does not exist is as old as it can be: no session holds it.
- */
-const repairLockAge = async (root: string): Promise<number> =>
-  await lstat(repairLockPath(root)).then(
-    (stats) => Date.now() - stats.mtimeMs,
-    () => Number.POSITIVE_INFINITY,
-  );
-
-/** A held repair lock and what taking it proved about the root. */
-interface RepairLock {
-  /** The file that serialises the repair. */
-  readonly path: string;
-  /**
-   * Another session held the lock, so the root may have been created or
-   * rebuilt while this session waited for it.
-   */
-  readonly contended: boolean;
-}
-
-/**
- * Take the repair lock without waiting for it.
- *
- * Returns `undefined` when another live session holds the lock, so a caller
- * that only reclaims what a repair left behind steps aside instead of
- * reporting a busy root. A lock a dead session left behind is taken over, so
- * one crash does not leave the copies of a repair on the disk for good.
- */
-const tryAcquireRepairLock = async (
-  root: string,
-): Promise<RepairLock | undefined> => {
-  const path = repairLockPath(root);
-  const take = async (): Promise<void> => {
-    const handle = await open(path, "wx", 0o600);
-    await handle.close();
-  };
-  try {
-    await take();
-    return { path, contended: false };
-  } catch (cause: unknown) {
-    if (!isAlreadyExists(cause)) throw cause;
-  }
-  // A lock a live session holds is not stolen.
-  if ((await repairLockAge(root)) < REPAIR_LOCK_STALE_MS) return undefined;
-  await rm(path, { force: true });
-  try {
-    await take();
-  } catch (cause: unknown) {
-    if (!isAlreadyExists(cause)) throw cause;
-    // Another session took the abandoned lock over first.
-    return undefined;
-  }
-  return { path, contended: true };
-};
-
-/**
- * Take the repair lock, so only one session changes the cache root.
- *
- * A lock a live session holds is not stolen: the caller reports the root as
- * busy instead of changing a root another session is rebuilding, so no
- * session can read or discard a project while it is still being copied. A
- * lock that has been silent for longer than any plausible repair belongs to a
- * session that died, and is taken over so one crash does not disable the
- * cache for good.
- */
-const acquireRepairLock = async (root: string): Promise<RepairLock> => {
-  const lock = await tryAcquireRepairLock(root);
-  if (lock !== undefined) return lock;
-  throw new GhidraProjectCacheError(
-    "busy",
-    "Another session is rebuilding the Ghidra project cache root",
-    repairLockPath(root),
-  );
-};
-
-/** Release the repair lock so another session can rebuild the root. */
-const releaseRepairLock = async (path: string): Promise<void> => {
-  await rm(path, { force: true }).catch(() => undefined);
-};
-
-/** Keep the repair lock alive while the preserved projects are copied. */
-const keepRepairLockAlive = async (lock: string): Promise<void> => {
-  const now = new Date();
-  await utimes(lock, now, now).catch(() => undefined);
-};
 
 /** A repair copy directory that was reclaimed, and the bytes it held. */
 export interface GhidraProjectCacheRootReclaim {
@@ -459,7 +414,7 @@ export const reclaimGhidraProjectCacheRootRepairs = async (
     );
     return removed ? [{ path, bytes }] : [];
   } finally {
-    await releaseRepairLock(lock.path);
+    await releaseRepairLock(lock);
   }
 };
 
@@ -489,27 +444,30 @@ interface WindowsRootRepair {
 const replaceWindowsRoot = async (
   root: string,
   host: GhidraProjectCacheRootHost,
-  lock: string,
+  lock: RepairLock,
 ): Promise<WindowsRootRepair> => {
   const previous = await quarantineRoot(root);
+  // The names this repair published. Every other entry of the replacement was
+  // published by another session, and a rollback has to keep it.
+  const published = new Set<string>();
   try {
     await host.createPrivateDirectory(root);
   } catch (failure: unknown) {
-    throw await rebuildFailure(root, previous, failure);
+    throw await rebuildFailure(root, previous, failure, published);
   }
   try {
     // The copy writes into the replacement, so the destination must be the
     // directory the native boundary created and not a link in its place.
     await assertDirectory(root);
   } catch (failure: unknown) {
-    throw await rebuildFailure(root, previous, failure);
+    throw await rebuildFailure(root, previous, failure, published);
   }
   try {
     // The replacement is verified before a stored project is copied into it,
     // so a root that is not owner-only never receives the preserved projects.
     host.verifyPrivateDirectory(root);
   } catch (verification: unknown) {
-    const restored = await restoreQuarantinedRoot(previous, root);
+    const restored = await restoreQuarantinedRoot(previous, root, published);
     throw rootError(
       repairFailureMessage(
         "Ghidra project cache root could not be verified as owner-only",
@@ -533,9 +491,9 @@ const replaceWindowsRoot = async (
       () => keepRepairLockAlive(lock),
       GHIDRA_PROJECT_REPAIR_STAGING_DIRECTORY,
     );
-    await publishPreservedProjects(staging, root);
+    await publishPreservedProjects(staging, root, published);
   } catch (failure: unknown) {
-    throw await rebuildFailure(root, previous, failure);
+    throw await rebuildFailure(root, previous, failure, published);
   } finally {
     await rm(staging, { recursive: true, force: true }).catch(() => undefined);
   }
@@ -556,8 +514,9 @@ const rebuildFailure = async (
   root: string,
   previous: string,
   failure: unknown,
+  published: ReadonlySet<string>,
 ): Promise<GhidraProjectCacheError> => {
-  const restored = await restoreQuarantinedRoot(previous, root);
+  const restored = await restoreQuarantinedRoot(previous, root, published);
   return rootError(
     repairFailureMessage(
       "Ghidra project cache root is not an owner-only directory and could not be rebuilt as a private directory",
@@ -583,16 +542,23 @@ const repairFailureMessage = (
  * Put the set-aside root back when a repair cannot complete.
  *
  * The replacement holds copies of the set-aside root's children, never the
- * only copy of a stored project, so it can be removed without losing one.
- * The set-aside root keeps every stored project until the replacement is in
- * place, so it is put back here. Returns whether the configured path holds
- * the previous root again; when it does not, the caller reports where the
- * stored projects were preserved.
+ * only copy of a stored project, so it can be removed without losing one. The
+ * entries another session published while the repair ran are moved into the
+ * set-aside root first, so the rollback keeps them too. The set-aside root
+ * keeps every stored project until the replacement is in place, so it is put
+ * back here. Returns whether the configured path holds the previous root
+ * again; when it does not, the caller reports where the stored projects were
+ * preserved.
  */
 const restoreQuarantinedRoot = async (
   previous: string,
   root: string,
+  published: ReadonlySet<string>,
 ): Promise<boolean> => {
+  // An entry that cannot be carried over stays in the replacement, so the
+  // replacement is not removed and the project it holds is not lost.
+  if (!(await preserveConcurrentEntries(root, previous, published)))
+    return false;
   const removed = await rm(root, { recursive: true, force: true }).then(
     () => true,
     () => false,
@@ -703,7 +669,7 @@ const ensureWindowsRoot = async (
       : initial;
     if (state === "ready") return { status: "ready" };
     if (state === "rebuild") {
-      const repair = await replaceWindowsRoot(root, host, lock.path);
+      const repair = await replaceWindowsRoot(root, host, lock);
       return {
         status: "repaired",
         preservedEntries: repair.preserved,
@@ -715,7 +681,7 @@ const ensureWindowsRoot = async (
     await createWindowsRoot(root, host);
     return { status: "ready" };
   } finally {
-    await releaseRepairLock(lock.path);
+    await releaseRepairLock(lock);
   }
 };
 

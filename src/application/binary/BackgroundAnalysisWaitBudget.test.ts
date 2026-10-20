@@ -24,10 +24,10 @@ describe("the shared wait budget", () => {
     const own = z.object({ wait_ms: z.number().optional() });
     const absent = z.object({ address: z.string() });
 
-    expect(declaresWaitBudget(marked.shape)).toBe(true);
+    expect(declaresWaitBudget(marked)).toBe(true);
     // A tool that grows a parameter of its own with the same name keeps it.
-    expect(declaresWaitBudget(own.shape)).toBe(false);
-    expect(declaresWaitBudget(absent.shape)).toBe(false);
+    expect(declaresWaitBudget(own)).toBe(false);
+    expect(declaresWaitBudget(absent)).toBe(false);
   });
 });
 
