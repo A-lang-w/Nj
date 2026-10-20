@@ -299,6 +299,103 @@ it.each(["after-replay", "before-replay", "replacement", "malformed"])(
   },
 );
 
+it.each(
+  ["foreign", "allowed", "missing"].flatMap((scope) =>
+    [false, true].flatMap((blankFirst) =>
+      [7, "not-a-fragment"].map((fragment) => ({
+        scope,
+        blankFirst,
+        fragment,
+      })),
+    ),
+  ),
+)(
+  "retains malformed WebMCP event scope: $scope/$blankFirst/$fragment",
+  async ({ scope, blankFirst, fragment }) => {
+    const browser = await startFakeCdpBrowser({
+      eventsBeforeReply: ["WebMCP.enable"],
+      commandResult: ({ method }, origin) =>
+        method === "Page.getFrameTree"
+          ? {
+              frameTree: {
+                frame: { id: "frame-main", url: `${origin}/app` },
+                childFrames: [
+                  {
+                    frame: {
+                      id: "child",
+                      parentId: "frame-main",
+                      url: `${origin}/child`,
+                    },
+                  },
+                ],
+              },
+            }
+          : undefined,
+      commandEvents: ({ method, sessionId }, origin) => {
+        if (method !== "WebMCP.enable") return undefined;
+        const navigation = (frame: Record<string, unknown>) => ({
+          method: "Page.frameNavigated",
+          ...(sessionId === undefined ? {} : { sessionId }),
+          params: { frame: { id: "child", parentId: "frame-main", ...frame } },
+        });
+        return [
+          {
+            method: "WebMCP.toolsAdded",
+            ...(sessionId === undefined ? {} : { sessionId }),
+            params: {
+              tools: [{ name: "stale", inputSchema: {}, frameId: "child" }],
+            },
+          },
+          ...(blankFirst ? [navigation({ url: "about:blank" })] : []),
+          navigation({
+            ...(scope === "missing"
+              ? {}
+              : {
+                  url:
+                    scope === "foreign"
+                      ? "https://foreign.invalid/child"
+                      : `${origin}/child`,
+                }),
+            urlFragment: fragment,
+          }),
+        ];
+      },
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().discoverWebMcpTools(
+      discoverWebMcpToolsInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.tools.items).toEqual([]);
+    expect(result.value.completeness.excluded).toContainEqual({
+      section: "webmcp_tools",
+      reason: "invalid_protocol_value",
+      count: 1,
+    });
+    expect(
+      result.value.completeness.attach_limited_sections.includes(
+        "webmcp_tools",
+      ),
+    ).toBe(scope !== "foreign");
+    expect(
+      result.value.completeness.policy_filtered_sections.includes(
+        "webmcp_tools",
+      ),
+    ).toBe(scope === "foreign");
+    if (scope === "foreign")
+      expect(result.value.completeness.excluded).toContainEqual({
+        section: "webmcp_tools",
+        reason: "out_of_target_scope",
+        count: 1,
+      });
+  },
+);
+
 describe("CdpBrowserProvider: transient WebMCP frames", () => {
   it("drops stale child tools and reports partial coverage when a blank commit remains", async () => {
     const browser = await startFakeCdpBrowser({

@@ -15,6 +15,7 @@ import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import type { CdpConnection, CdpEvent } from "./CdpConnection.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
+import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import {
   allowedSanitizedUrl,
   delayWithCancellation,
@@ -26,7 +27,7 @@ import {
 } from "./CdpCaptureValues.js";
 import {
   captureFrames,
-  cdpFrameUrl,
+  observeCdpFrameUrl,
   mainFrameUrl,
   observeMainFrameUrl,
   walkFrameTrees,
@@ -236,13 +237,21 @@ const handleFrameUpdate = (
     state.completeness.exclude("webmcp_tools", "invalid_protocol_value");
     return true;
   }
-  const rawUrl = cdpFrameUrl(frame);
-  if (frame.urlFragment !== undefined && rawUrl === undefined) {
+  const observation = observeCdpFrameUrl(frame);
+  const rawUrl = observation.kind === "observed" ? observation.url : undefined;
+  if (frame.urlFragment !== undefined && observation.kind !== "observed") {
     removeFrameTools(frameId, state.tools);
     state.frames.delete(frameId);
-    state.transientFrames.add(frameId);
     state.resolvedTransientFrames.delete(frameId);
     state.completeness.exclude("webmcp_tools", "invalid_protocol_value");
+    const scopeOrigin =
+      observation.kind === "invalid_fragment"
+        ? sanitizeBrowserUrl(observation.scopeUrl).origin
+        : null;
+    if (scopeOrigin !== null && !state.origins.has(scopeOrigin)) {
+      state.transientFrames.delete(frameId);
+      state.completeness.exclude("webmcp_tools", "out_of_target_scope");
+    } else state.transientFrames.add(frameId);
     return true;
   }
   // Chromium can briefly commit an inherited, empty document while replacing
