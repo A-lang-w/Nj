@@ -1350,7 +1350,11 @@ CI assigns discovered files by historical duration, with a deterministic
 fallback weight for new files, rather than dividing only by file count.
 Each file keeps its full duration on one worker. Extra workers overlap other
 files in the same sequence group, and `process-boundary` runs after that
-group. Every discovered file still belongs to exactly one shard; worker limits
+group. History published before the competing-loader split still names only
+`javascriptLiteralPercentPaths.test.ts`. Until that artifact records one of
+the three new files, the sequencer assigns that recorded duration by the
+pre-split case counts: 54/192 to the remaining file and 46/192 to each new
+file. Every discovered file still belongs to exactly one shard; worker limits
 and project ordering remain unchanged. Fast qualification keeps eight built
 shards without coverage. The merge job rejects successful reports with missing,
 unexpected, or duplicate portable files. Coverage instrumentation and aggregate
