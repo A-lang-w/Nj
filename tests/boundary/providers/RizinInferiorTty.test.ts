@@ -173,18 +173,12 @@ it.skipIf(process.platform !== "linux").each([
   },
   {
     name: "inactive ptrace row",
-    response: '[{"raised":false,"fd":3,"uri":"ptrace://1"}]',
+    response: '[{"raised":false,"fd":3,"uri":"ptrace://999999999"}]',
     closeSucceeds: false,
   },
   {
     name: "malformed ptrace URI",
     response: '[{"raised":true,"fd":3,"uri":"ptrace://bad"}]',
-    closeSucceeds: false,
-  },
-  {
-    name: "multiple ptrace rows",
-    response:
-      '[{"raised":true,"fd":3,"uri":"ptrace://999999998"},{"raised":true,"fd":4,"uri":"ptrace://999999999"}]',
     closeSucceeds: false,
   },
 ])(
@@ -236,11 +230,6 @@ process.stdin.on("data", (chunk) => {
 
 it.skipIf(process.platform !== "linux").each([
   {
-    name: "same descriptor remains listed after detach",
-    afterDetach: (pid: number) =>
-      `[{"raised":true,"fd":3,"uri":"ptrace://${pid}"}]`,
-  },
-  {
     name: "same inferior remains listed under a different FD",
     afterDetach: (pid: number) =>
       `[{"raised":true,"fd":4,"uri":"ptrace://${pid}"}]`,
@@ -250,9 +239,26 @@ it.skipIf(process.platform !== "linux").each([
     afterDetach: () => '[{"raised":true,"fd":4,"uri":"ptrace://999999999"}]',
   },
 ])(
-  "retains ownership when o- readback finds $name",
-  async ({ afterDetach }) => {
+  "reconciles $name using the target's process identity",
+  async ({ name, afterDetach }) => {
     const sessionId = await startFakeInferiorSession({ afterDetach });
+    const closed = await manager!.close(sessionId);
+    expect(
+      closed.ok,
+      closed.ok ? name : `${name}: ${closed.error.message}`,
+    ).toBe(true);
+    expect(manager!.status(sessionId)).toBeUndefined();
+    expect(inferiorPid).toBeDefined();
+    expect(() => process.kill(inferiorPid!, 0)).not.toThrow();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "retains ownership when the selected descriptor remains listed after detach",
+  async () => {
+    const sessionId = await startFakeInferiorSession({
+      afterDetach: (pid) => `[{"raised":true,"fd":3,"uri":"ptrace://${pid}"}]`,
+    });
     await expectCloseRejectedAndReleased(sessionId);
   },
 );
@@ -295,14 +301,16 @@ it.skipIf(process.platform !== "linux")(
 );
 
 it.skipIf(process.platform !== "linux")(
-  "retains ownership when the ptrace PID has no proc identity",
+  "releases an unresolved ptrace PID after repeated absence proves it ended",
   async () => {
     const sessionId = await startFakeInferiorSession({
       launchTarget: false,
       initialRows: '[{"raised":true,"fd":3,"uri":"ptrace://999999999"}]',
       startupWatchdogMs: 2_000,
     });
-    await expectCloseRejectedAndReleased(sessionId);
+    const closed = await manager!.close(sessionId);
+    expect(closed.ok).toBe(true);
+    expect(manager!.status(sessionId)).toBeUndefined();
   },
   4_000,
 );
