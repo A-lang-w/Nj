@@ -838,15 +838,23 @@ const codexToolEntry = (value: unknown): unknown | undefined => {
     if (value.length > 2) return undefined;
     const [rawApproval, rawLimit] = value;
     const parsedApproval = codexApprovalModeSchema.safeParse(rawApproval);
-    if (!parsedApproval.success) return undefined;
-    if (value.length === 1) return [parsedApproval.data];
-    if (rawLimit !== undefined && !hasTomlFloatProperty(value, "1")) {
-      const parsedLimit = codexToolOutputTokenLimitSchema.safeParse(rawLimit);
-      if (parsedLimit.success) {
-        return [parsedApproval.data, parsedLimit.data];
-      }
+    if (value.length === 1) {
+      return parsedApproval.success ? [parsedApproval.data] : undefined;
     }
-    return [parsedApproval.data];
+    const parsedLimit =
+      rawLimit !== undefined && !hasTomlFloatProperty(value, "1")
+        ? codexToolOutputTokenLimitSchema.safeParse(rawLimit)
+        : undefined;
+    if (parsedApproval.success && parsedLimit?.success) {
+      return [parsedApproval.data, parsedLimit.data];
+    }
+    if (parsedApproval.success) {
+      return [parsedApproval.data];
+    }
+    if (parsedLimit?.success) {
+      return { output_token_limit: parsedLimit.data };
+    }
+    return undefined;
   }
   const rawEntries = Object.entries(value);
   if (rawEntries.length === 0) {
