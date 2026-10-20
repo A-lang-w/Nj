@@ -23,6 +23,7 @@ import {
   inspectAnalysisViewInputSchema,
   projectAnalysisView,
   type AnalysisViewResult,
+  type AnalysisViewRequest,
   type InspectAnalysisViewInput,
 } from "../../domain/analysisView/analysisView.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
@@ -234,6 +235,14 @@ export const requireAnalysisViewRetention = (
 export const summarizeRetainedAnalysis = (
   evidence: Evidence,
   retention: AnalysisViewRetention,
+): Result<Evidence, AnalysisError> =>
+  projectRetainedAnalysis(evidence, retention, { kind: "summary" });
+
+/** Retain the complete owner observation and deliver one explicitly selected view. */
+export const projectRetainedAnalysis = (
+  evidence: Evidence,
+  retention: AnalysisViewRetention,
+  view: AnalysisViewRequest,
 ): Result<Evidence, AnalysisError> => {
   const ready = requireAnalysisViewRetention(evidence.operation, retention);
   if (!ready.ok) return ready;
@@ -242,7 +251,7 @@ export const summarizeRetainedAnalysis = (
   return inspectAnalysisViewValidated(
     {
       source: { kind: "retained-evidence", evidence_id: evidence.evidence_id },
-      view: { kind: "summary" },
+      view,
     },
     ready.value.evidenceById,
   );

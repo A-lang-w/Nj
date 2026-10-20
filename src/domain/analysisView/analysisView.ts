@@ -1,4 +1,11 @@
 import {
+  projectModelArtifactView,
+  modelArtifactSummarySchema,
+  modelArtifactViewRequestSchema,
+  modelArtifactViewItemsSchema,
+  modelArtifactViewContextSchema,
+} from "./modelArtifactView.js";
+import {
   goBinarySummarySchema,
   goBinaryViewContextSchema,
   goBinaryViewPageSchema,
@@ -291,6 +298,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   dartAotViewRequestSchema,
   browserScenarioViewRequestSchema,
   il2cppMetadataViewRequestSchema,
+  modelArtifactViewRequestSchema,
 ]);
 
 // The application owns admission and authenticated Evidence parsing. SDK and
@@ -395,6 +403,7 @@ const viewResultBase = {
     "inspect_dart_aot",
     "capture_browser_scenario",
     "inspect_il2cpp_metadata",
+    "inspect_model_artifact",
     ...NATIVE_INVENTORY_OPERATIONS,
     "match_native_functions",
   ]),
@@ -536,6 +545,21 @@ export const dartAotSummaryViewResultSchema = z.strictObject({
   summary: dartAotSummarySchema,
 });
 
+export const modelArtifactSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_model_artifact"),
+  summary: modelArtifactSummarySchema,
+});
+
+export const modelArtifactPageViewResultSchema = z.strictObject({
+  kind: z.literal("model-artifact"),
+  view: modelArtifactViewRequestSchema,
+  items: modelArtifactViewItemsSchema,
+  ...viewResultBase,
+  ...modelArtifactViewContextSchema.shape,
+  parent_operation: z.literal("inspect_model_artifact"),
+});
+
 /** Metadata identity and row counts for selected IL2CPP delivery. */
 export const il2cppMetadataSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
@@ -626,6 +650,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     pcapCaptureSummaryViewResultSchema,
     dartAotSummaryViewResultSchema,
     il2cppMetadataSummaryViewResultSchema,
+    modelArtifactSummaryViewResultSchema,
     nativeInventorySummaryViewResultSchema,
     browserScenarioSummaryViewResultSchema,
     nativeFunctionMatchingSummaryViewResultSchema,
@@ -773,6 +798,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     ...dartAotViewContextSchema.shape,
     parent_operation: z.literal("inspect_dart_aot"),
   }),
+  modelArtifactPageViewResultSchema,
   z.strictObject({
     kind: z.literal("browser-scenario"),
     view: browserScenarioViewRequestSchema,
@@ -914,6 +940,7 @@ const retainedViewProjectors = new Map<string, typeof projectWasmArtifactView>([
   ["inspect_android_package", projectAndroidPackageView],
   ["inspect_dart_aot", projectDartAotView],
   ["inspect_il2cpp_metadata", projectIl2cppMetadataView],
+  ["inspect_model_artifact", projectModelArtifactView],
   ["match_native_functions", projectNativeFunctionMatchingView],
   ["inspect_artifact", projectArtifactInventoryView],
   ["inventory_artifact", projectArtifactInventoryView],
