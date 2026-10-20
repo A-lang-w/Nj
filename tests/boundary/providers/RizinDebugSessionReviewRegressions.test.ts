@@ -363,6 +363,46 @@ process.stdin.on("data", (chunk) => {
   return provider;
 };
 
+const createNewOmittedInferiorProvider = async (
+  firstPid: number,
+  newPid: number,
+  commandsPath: string,
+): Promise<string> => {
+  const provider = join(directory!, "fake-rizin-new-omitted-inferior.mjs");
+  await writeFile(
+    provider,
+    `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+process.stdout.write("\\0");
+let input = "";
+let inventory = 0;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n"); if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    appendFileSync(${JSON.stringify(commandsPath)}, line + "\\n");
+    if (line === "olj") {
+      inventory += 1;
+      const rows = inventory === 1
+        ? [{ fd: 12, raised: true, uri: "ptrace://${firstPid}" }]
+        : inventory === 2
+          ? [{ fd: 13, raised: true, uri: "ptrace://${newPid}" }]
+          : [];
+      process.stdout.write(JSON.stringify(rows) + "\\0");
+    }
+    else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
+    else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
+    else process.stdout.write("\\0");
+  }
+});
+`,
+  );
+  await chmod(provider, 0o700);
+  return provider;
+};
+
 it("keeps persistent Rizin sessions unavailable on Windows", async () => {
   const rizin = await createRizinTestManager(
     { REA_RIZIN_COMMAND: "/missing/rizin" },
@@ -865,6 +905,80 @@ it.skipIf(process.platform !== "linux")(
     expect((await manager.retryCleanupFailures()).ok).toBe(false);
     expect(detachResults[2]).toBe("detached");
     expect(await readFile(commandsPath, "utf8")).toContain("o- 13");
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "retains newly observed inferiors when a retry omits an earlier active target",
+  async () => {
+    const omitted = await spawnTestInferior();
+    const newlyObserved = await spawnTestInferiorOnTty(
+      await rizinTestInferiorTty(),
+    );
+    expect(omitted.pid).toBeDefined();
+    expect(newlyObserved.pid).toBeDefined();
+    if (omitted.pid === undefined || newlyObserved.pid === undefined) return;
+    directory = await mkdtemp(join(tmpdir(), "rea-rizin-new-omitted-"));
+    const commandsPath = join(directory, "commands");
+    const provider = await createNewOmittedInferiorProvider(
+      omitted.pid,
+      newlyObserved.pid,
+      commandsPath,
+    );
+    const detachResults: string[] = [];
+    const manager = new RizinDebugSessionManager(
+      { ...process.env, REA_RIZIN_COMMAND: provider },
+      {
+        platform: "linux",
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          ownedProviderProcesses.push(launched.process);
+          return launched;
+        },
+        stopProcess: async (session) => {
+          try {
+            detachResults.push(
+              (await session.detachInferior?.())?.status ??
+                "missing-detach-capability",
+            );
+          } catch (cause) {
+            detachResults.push(
+              cause instanceof Error ? cause.message : String(cause),
+            );
+          }
+          return { status: "incomplete", reason: "injected retained debugger" };
+        },
+      },
+    );
+    managers.push(manager);
+    const started = await manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: await rizinTestInferiorTty(),
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    expect((await manager.close(started.value.session_id)).ok).toBe(false);
+    expect((await manager.retryCleanupFailures()).ok).toBe(false);
+    expect(detachResults[0]).toContain("descriptor 1");
+    expect(detachResults[1]).toContain(
+      `omitted retained inferior PID ${omitted.pid}`,
+    );
+
+    omitted.kill("SIGTERM");
+    await new Promise<void>((resolve) => omitted.once("exit", () => resolve()));
+    expect((await manager.retryCleanupFailures()).ok).toBe(false);
+    expect(detachResults[2]).toContain(
+      `identified PID ${newlyObserved.pid} is still active`,
+    );
+    expect(await readFile(commandsPath, "utf8")).not.toContain("o- 13");
+
+    newlyObserved.kill("SIGTERM");
+    await new Promise<void>((resolve) =>
+      newlyObserved.once("exit", () => resolve()),
+    );
+    expect((await manager.retryCleanupFailures()).ok).toBe(false);
+    expect(detachResults[3]).toBe("no-inferior");
   },
 );
 

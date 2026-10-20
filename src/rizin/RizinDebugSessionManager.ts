@@ -1263,10 +1263,15 @@ export class RizinDebugSessionManager {
         // as a new identity and run all normal policy and sink checks before
         // detaching it; the old identity is already proven ended by startTime.
       }
-      currentIdentities.set(pid, {
+      const identity = {
         pid,
         startTime,
-      });
+      };
+      // Retain each owned identity as soon as it is observed. A later row or
+      // partial-inventory check can fail, and a retry must still account for
+      // every target already reported by Rizin.
+      currentIdentities.set(pid, identity);
+      session.knownInferiorIdentities.set(pid, identity);
       activeInferiors.push([fd, pid]);
     }
     for (const [pid, identity] of session.knownInferiorIdentities) {
@@ -1284,8 +1289,6 @@ export class RizinDebugSessionManager {
           `Rizin omitted retained inferior PID ${pid} from the ptrace inventory while it is still active.`,
         );
     }
-    for (const [pid, identity] of currentIdentities)
-      session.knownInferiorIdentities.set(pid, identity);
     session.inferiorInventoryComplete = true;
     if (activeInferiors.length === 0) {
       // Keep previously proven identities until the debugger is fully stopped.
