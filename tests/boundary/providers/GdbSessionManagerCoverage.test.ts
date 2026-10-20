@@ -457,6 +457,76 @@ it("classifies cancellation while asynchronous GDB ownership preparation is pend
   });
 });
 
+it.each([
+  ["GDB rejects automatic-loading disable", "auto-load"],
+  ["GDB reports a different inferior TTY", "tty"],
+  ["the caller cancels between startup commands", "cancel"],
+] as const)(
+  "keeps a retained failed startup unusable when %s and its stop is uncertain",
+  async (_label, failure) => {
+    const controller = new AbortController();
+    const commands: string[] = [];
+    let stopCalls = 0;
+    const fake = createFakeSpawner((child, token, command) => {
+      commands.push(command);
+      if (failure === "auto-load" && command.includes("auto-load off"))
+        child.stdout.write(`${token}^error,msg="fixture rejected startup"\n`);
+      else if (command === "-inferior-tty-show")
+        child.stdout.write(
+          `${token}^done,inferior_tty_terminal="/dev/pts/8"\n`,
+        );
+      else if (command.includes("list-thread-groups"))
+        child.stdout.write(`${token}^done,groups=[]\n`);
+      else child.stdout.write(`${token}^done\n`);
+      if (failure === "cancel" && command.includes("auto-load off"))
+        setImmediate(() => controller.abort());
+    });
+    const manager = managerWithFakeSpawner(fake.spawnProcess, {
+      stopProcess: async (session, name) => {
+        stopCalls += 1;
+        return stopCalls === 1
+          ? {
+              status: "incomplete",
+              reason: "simulated failed-startup cleanup uncertainty",
+            }
+          : stopOwnedDebuggerProcess(session, name);
+      },
+    });
+
+    const started = await manager.start(
+      controller.signal,
+      failure === "tty" ? { inferiorTty: "/dev/pts/7" } : {},
+    );
+
+    expect(started).toMatchObject({
+      ok: false,
+      error: {
+        cleanup: { reason: "simulated failed-startup cleanup uncertainty" },
+      },
+    });
+    if (started.ok) return;
+    const [sessionId] = started.error.cleanup?.resources ?? [];
+    if (sessionId === undefined) throw new Error("no retained startup owner");
+    expect(manager.status(sessionId)).toMatchObject({
+      state: "closed",
+      inferior_tty_verified: false,
+    });
+    const dispatched = commands.length;
+
+    const consoleResult = await manager.execute(sessionId, "show version");
+
+    expect(consoleResult).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisInputError", operation: "gdb_console" },
+    });
+    expect(commands).toHaveLength(dispatched);
+    expect(commands.join("\n")).not.toContain("show version");
+    expect(await manager.close(sessionId)).toMatchObject({ ok: true });
+    expect(manager.status(sessionId)).toBeUndefined();
+    expect(fake.children).toHaveLength(1);
+  },
+);
+
 it("drains active GDB commands and rejects new commands before closeAll cleanup", async () => {
   let heldToken = "";
   let heldCommand = "";
