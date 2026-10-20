@@ -6,6 +6,7 @@ import {
 } from "./javascriptSemanticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
+import { namespaceReceiverCases } from "./javascriptNamespaceReceiver.fixture.js";
 
 const referenceChanged = (source: string, writesOnly = false): boolean => {
   const parsed = parseJavaScriptSource(source);
@@ -1836,3 +1837,14 @@ it("rechecks descriptors after their own effects activate copied references", ()
     ),
   ).toBe(true);
 });
+
+it.each(namespaceReceiverCases)(
+  "resolves namespace receiver values at their original read: $body",
+  ({ body, kept }) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `import * as ns from 'node:path';import fs from 'node:fs';${body}fs.readFileSync('kept');`,
+      ).configurationOperations.map(({ key }) => key),
+    ).toEqual(kept ? ["kept"] : []);
+  },
+);

@@ -85,6 +85,19 @@ const writeReceiverReviewSources = async (root: string): Promise<void> => {
   for (const [index, source] of sources.entries())
     await writeFile(join(root, `receiver-review-${index}.ts`), source);
   await writeFile(
+    join(root, "namespace-primitive-receiver.mjs"),
+    `import * as ns from 'node:path';import fs from 'node:fs';
+     const receiver=null;Reflect.set(ns,'saved',fs,receiver);
+     fs.readFileSync('primitive-receiver-binding.json');`,
+  );
+  await writeFile(
+    join(root, "namespace-stored-value.mjs"),
+    `import * as ns from 'node:path';import fs from 'node:fs';
+     const receiver={};Reflect.set(ns,'saved',fs,receiver);
+     receiver.saved.readFileSync=custom;
+     fs.readFileSync('wrong-namespace-stored-value');`,
+  );
+  await writeFile(
     join(root, "namespace-receiver.mjs"),
     `import * as fs from 'node:fs';
      Reflect.set(fs,'readFileSync',custom);fs.readFileSync('namespace-set.json');
@@ -253,6 +266,7 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     "opaque-unrelated.json",
     "ordered-kept.json",
     "outer-before-nested.json",
+    "primitive-receiver-binding.json",
     "projected-scalar.json",
     "receiver-data.json",
     "receiver-expression.json",

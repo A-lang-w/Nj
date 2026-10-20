@@ -6,6 +6,7 @@ import {
   semanticBuiltinSlotChanged,
 } from "./javascriptSemanticDataEffectHelpers.js";
 import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
+import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 
 import {
   clearSemanticRequireWriteCache,
@@ -21,10 +22,12 @@ import {
 
 import {
   resolveSemanticBindingState,
+  isUnshadowedGlobal,
   type JavaScriptBindingIndex,
   type JavaScriptSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
+import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import {
   clearSemanticValueCaches,
   evaluateSemanticBinding,
@@ -893,6 +896,81 @@ export function* collectSemanticMemberMutationsSteps(
       if (ancestor === invocation) return invocation;
     return input;
   };
+  const orderedInputInitializer = (node: t.Identifier) => {
+    const binding = resolveBinding(node, node.name);
+    if (
+      binding === undefined ||
+      semanticOpaqueBindingReadMayHaveChanged(binding, node, state)
+    )
+      return undefined;
+    const read = semanticBindingAtRead(binding, node, parents);
+    return read.status === "ordered" &&
+      read.hasDefiniteInitializer &&
+      read.binding.referenceInitializers.length === 0 &&
+      read.binding.initializers.length === 1
+      ? read.binding.initializers[0]
+      : undefined;
+  };
+  const primitiveInput = (input: t.Node): boolean => {
+    // Normalized bound inputs retain their original AST read site. Use the
+    // shared value owner there, including projected values and primitive unions.
+    const value = evaluateSemanticExpression(input, state, input);
+    if (
+      value.status === "literal" ||
+      (value.status === "union" && value.values.length > 0)
+    )
+      return true;
+    if ("resourceLimit" in value && value.resourceLimit !== undefined)
+      return false;
+    // Whole-object values retain later member writes. A scalar slot captured
+    // before those writes can still be selected from its ordered initializer,
+    // after the shared effect query proves that slot unchanged at the read.
+    const { root, members } = electronMemberPath(input);
+    if (
+      t.isIdentifier(root) &&
+      members.length > 0 &&
+      !members.includes(null) &&
+      !referenceMayHaveChangedAt(input, input)
+    ) {
+      const initializer = orderedInputInitializer(root);
+      if (initializer !== undefined) {
+        const slot = semanticSelectedReferenceSlot(
+          {
+            node: initializer.node,
+            projection: [...initializer.projection, ...members],
+          },
+          state,
+          initializer.node,
+        );
+        if (
+          slot?.presence === "present" &&
+          (slot.value.status === "literal" ||
+            (slot.value.status === "union" && slot.value.values.length > 0))
+        )
+          return true;
+      }
+    }
+    // Syntax also proves primitive results outside the JSON value lattice,
+    // such as bigint, void and nonfinite arithmetic. Follow only one ordered
+    // initializer at each alias read; unknown or cyclic sources stay uncertain.
+    const seen = new Set<t.Node>();
+    let node = input;
+    while (!seen.has(node)) {
+      seen.add(node);
+      if (
+        isPrimitiveJavaScriptExpression(node) ||
+        isUnshadowedGlobal(node, state, "undefined")
+      )
+        return true;
+      node = unwrapJavaScriptExpression(node).node;
+      if (!t.isIdentifier(node)) return false;
+      const initializer = orderedInputInitializer(node);
+      if (initializer === undefined || initializer.projection.length > 0)
+        return false;
+      node = initializer.node;
+    }
+    return false;
+  };
   const ownDataPropertyAt = (
     target: t.Node,
     key: string,
@@ -1082,7 +1160,7 @@ export function* collectSemanticMemberMutationsSteps(
               // a distinct ordinary receiver, so retain that receiver's effect.
               if (
                 args[3] !== undefined &&
-                !isPrimitiveJavaScriptExpression(args[3]) &&
+                !primitiveInput(args[3]) &&
                 !targetFacts(javaScriptExpressionValue(args[3])).moduleNamespace
               ) {
                 markValue(
