@@ -165,6 +165,7 @@ REA에는 Node.js 22.x(>=22.19), 24.x(>=24.11) 또는 26+와 npm이 필요합니
 | Android APK            | 매니페스트 선언, 클래스, 디컴파일된 메서드, 참조                              | Linux/macOS/Windows x64의 헤드리스 JADX와 전체 JDK; [Android 가이드](../android-analysis.md)                                      |
 | Android 기기           | 기기, 패키지, 프로세스, 로그, 덤프, 화면 캡처, APK/파일 전송                  | 호출자 제공 adb(에뮬레이터 또는 실제 기기); [ADB 가이드](../adb-device-analysis.md)                                               |
 | JEB 프로젝트           | 엔진 기반 프로젝트 유닛, 아티팩트 해시, 타입/메서드 의사코드                  | 호출자가 시작하고 MCP를 제공하는 JEB 클라이언트(REA_JEB_MCP_URL로 선택); [JEB 가이드](../jeb-analysis.md)                         |
+| JVM bytecode           | Derived Java sources, digests, durable manifest and diagnostics               | Caller-supplied Vineflower and Java; [JVM guide](../jvm-analysis.md)                                                              |
 | Android 리소스         | 디코딩된 매니페스트, 문자열 테이블, 로캘, 버전 정보                           | 호출자 제공 Apktool 런처; [리소스 가이드](../apktool-resource-analysis.md)                                                        |
 | Flutter 앱             | Dart 스냅샷 해시, ABI별 라이브러리 해시, 엔진 빌드 출처                       | 없음 (정적 APK 파싱); [Flutter 가이드](../flutter-analysis.md)                                                                    |
 | 펌웨어                 | 영역, 추출 결과, 네이티브 분석으로 전달할 정보                                | Linux의 Binwalk / Unblob; [펌웨어 가이드](../firmware-analysis.md)                                                                |

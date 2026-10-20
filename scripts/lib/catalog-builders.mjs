@@ -82,6 +82,11 @@ export const toolFamilyCatalog = (sources) => {
       contracts: sources.apktoolContracts.APKTOOL_TOOL_CONTRACTS,
     },
     {
+      id: "jvm",
+      surface: "jvm-provider",
+      contracts: sources.jvmContracts.JVM_TOOL_CONTRACTS,
+    },
+    {
       id: "jeb",
       surface: "jeb-provider",
       contracts: sources.jebContracts.JEB_TOOL_CONTRACTS,
@@ -331,6 +336,10 @@ export const providerCatalog = (sources) => {
     {
       identity: sources.apktoolProvider.APKTOOL_PROVIDER_IDENTITY,
       contracts: sources.apktoolContracts.APKTOOL_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.jvmProvider.VINEFLOWER_PROVIDER_IDENTITY,
+      contracts: sources.jvmContracts.JVM_TOOL_CONTRACTS,
     },
     {
       identity: sources.jebProvider.JEB_PROVIDER_IDENTITY,
