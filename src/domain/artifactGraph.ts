@@ -1,6 +1,19 @@
 import { z } from "zod";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
+/** Entry kinds or subtrees deliberately excluded by an artifact traversal. */
+export const artifactTraversalOmissionKindSchema = z.enum([
+  "fifo",
+  "socket",
+  "block-device",
+  "character-device",
+  "unsupported",
+  "directory-descendants",
+]);
+export type ArtifactTraversalOmissionKind = z.infer<
+  typeof artifactTraversalOmissionKindSchema
+>;
+
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/u);
 const artifactIdSchema = prefixedDigestSchema("art");
 const occurrenceIdSchema = prefixedDigestSchema("occ");
@@ -196,31 +209,17 @@ export type ArtifactInventoryCoverage = z.infer<
   typeof artifactInventoryCoverageSchema
 >;
 
-/** Complete inventory observation containing the stable artifact graph. */
-export const artifactInventoryResultSchema = z.object({
+/** Current inventory observation containing the stable artifact graph. */
+export const artifactInventoryResultSchema = z.strictObject({
   manifest: artifactGraphManifestSchema,
   nodes: z.array(artifactNodeSchema),
   occurrences: z.array(artifactOccurrenceSchema),
   edges: z.array(artifactEdgeSchema),
   provenance: z.array(artifactCommandSchema),
-  integrity_contradictions: z.array(integrityContradictionSchema).default([]),
-  // Omitted by older retained Evidence; the inventory parser owns its compatibility policy.
-  coverage: artifactInventoryCoverageSchema.optional(),
+  integrity_contradictions: z.array(integrityContradictionSchema),
+  coverage: artifactInventoryCoverageSchema,
   limitations: z.array(z.string()),
-  /** Optional only for persisted inventory Evidence written before this field. */
-  coverage_status: z.enum(["complete", "partial"]).optional(),
 });
-
-/** Current producers always declare coverage; historical Evidence inputs may omit it. */
-export const artifactInventoryOutputSchema =
-  artifactInventoryResultSchema.safeExtend({
-    coverage: artifactInventoryCoverageSchema,
-    coverage_status:
-      artifactInventoryResultSchema.shape.coverage_status.unwrap(),
-  });
-export type ArtifactInventoryOutput = z.infer<
-  typeof artifactInventoryOutputSchema
->;
 
 /** One safely materialized artifact beneath caller-approved output root. */
 const extractedArtifactSchema = z.object({

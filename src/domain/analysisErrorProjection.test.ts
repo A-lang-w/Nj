@@ -392,7 +392,30 @@ it("retains native partial observations and cleanup uncertainty on provider fail
   expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(true);
 });
 
-describe("analysis error projection: provider failures", () => {
+describe("analysis error projection: browser provider failures", () => {
+  it("explains the service-worker policy refusal and names its recovery", () => {
+    const projected = projectAnalysisError(
+      new BrowserObservationError(
+        "capture_browser_scenario",
+        "service_worker_blocked",
+      ),
+    );
+
+    expect(projected).toMatchObject({
+      code: "target_unavailable",
+      category: "unavailable",
+      retryable: false,
+      message: expect.stringContaining("service-worker policy is block"),
+      remediation: {
+        action: expect.stringContaining("environment.service_workers to allow"),
+      },
+      details: {
+        operation: "capture_browser_scenario",
+        reason: "service_worker_blocked",
+      },
+    });
+  });
+
   it("projects the primary browser failure alongside incomplete cleanup", () => {
     const projected = projectAnalysisError(
       new BrowserObservationError(
@@ -421,7 +444,9 @@ describe("analysis error projection: provider failures", () => {
       },
     });
   });
+});
 
+describe("analysis error projection: Hopper provider failures", () => {
   it("reports a timed-out active Hopper request and actionable retry guidance", () => {
     const projected = projectAnalysisError(
       new HopperTimeoutError(30_000, "trace_feature", 42, "busy"),
@@ -487,7 +512,9 @@ describe("analysis error projection: provider failures", () => {
       message: expect.stringContaining("Hopper analysis failed"),
     });
   });
+});
 
+describe("analysis error projection: detached provider diagnostics", () => {
   it.each(["adapter", "cancelled", "timeout"])(
     "preserves detached, actionable diagnostics for %s errors",
     (kind) => {
@@ -515,7 +542,9 @@ describe("analysis error projection: provider failures", () => {
       expect(error.diagnostics?.exit_code).toBe(1);
     },
   );
+});
 
+describe("analysis error projection: Hopper startup failures", () => {
   it("maps the Linux startup compatibility exit codes without host internals", () => {
     const expected = [
       [70, "private_display_unavailable"],
@@ -765,6 +794,18 @@ describe("analysis error projection: operational diagnostics", () => {
     expect(unknown.message).toContain("could not determine");
     expect(unknown.message).not.toContain("stopped");
     expect(unknown.remediation.action).toContain("provider_operation_health");
+
+    const unreachable = projectAnalysisError(
+      new HopperProcessError(null, {
+        operation: "search_strings",
+        providerState: "unreachable",
+      }),
+    );
+    expect(unreachable.message).toContain(
+      "If Hopper may have exited, call export_evidence_bundle before close_binary",
+    );
+    expect(unreachable.message).toContain("closing clears retained records");
+    expect(unreachable.remediation.action).toContain("export_evidence_bundle");
   });
 });
 
@@ -798,7 +839,9 @@ describe("analysis error projection: evidence files", () => {
 });
 
 it("retains the primary failure and both cleanup reports after a secondary failure", () => {
+  const callerReason = { caller: "stop" };
   const primary = new AnalysisCancelledError("execute_rizin_command", {
+    cause: callerReason,
     capturedOutput: {
       stdout: "partial",
       stderr: "diagnostic",
@@ -814,6 +857,8 @@ it("retains the primary failure and both cleanup reports after a secondary failu
   });
   expect(enriched).toBe(primary);
   expect(enriched._tag).toBe("AnalysisCancelledError");
+  expect(enriched.cause).toBe(callerReason);
+  expect(enriched.secondaryFailures).toEqual([secondary]);
   expect(projectAnalysisError(enriched)).toMatchObject({
     code: "cleanup_incomplete",
     details: {
@@ -825,3 +870,40 @@ it("retains the primary failure and both cleanup reports after a secondary failu
     },
   });
 });
+
+it("retains secondary failures when the primary error has no cause", () => {
+  const primary = new AnalysisCancelledError("execute_rizin_command");
+  const secondary = new AnalysisOutputError("open_binary", "cannot rebind");
+
+  primary.retainSecondaryFailure(secondary, {});
+
+  expect(primary.cause).toBeUndefined();
+  expect(primary.secondaryFailures).toEqual([secondary]);
+});
+
+it.each([false, true])(
+  "preserves producer capability recovery with retryable=%s",
+  (retryable) => {
+    const recovery =
+      "Choose an explicit disposition, then retry the same session.";
+    const projected = projectAnalysisError(
+      new AnalysisCapabilityUnavailableError("fixture", "close", "live state", {
+        retryable,
+        remediationAction: recovery,
+      }),
+    );
+    expect(projected).toMatchObject({
+      code: "capability_unavailable",
+      retryable,
+      remediation: { action: recovery },
+      details: {
+        provider_id: "fixture",
+        operation: "close",
+        reason: "live state",
+      },
+    });
+    expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
+      true,
+    );
+  },
+);

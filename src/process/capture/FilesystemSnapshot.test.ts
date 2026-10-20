@@ -16,7 +16,12 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { hashFile, snapshotRoots } from "./FilesystemSnapshot.js";
+import {
+  hashFile,
+  snapshotRoots,
+  ProcessCaptureSnapshotFailure,
+} from "./FilesystemSnapshot.js";
+import { ProcessCaptureReadFailure } from "./ProcessCaptureRead.js";
 import { parseProcessScenario } from "../../domain/process/processScenario.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
@@ -37,10 +42,26 @@ it("rejects cancellation during a now-inaccessible observed root lookup", async 
   await rename(parent, join(directory, "saved-reports"));
   await writeFile(parent, "regular file");
   const controller = new AbortController();
+  const reason = new Error("Caller cancelled the observed root lookup");
   const pending = snapshotRoots(scenario, controller.signal, before);
-  controller.abort();
+  controller.abort(reason);
 
-  await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  const failure = await pending.then(
+    () => {
+      throw new Error("Expected snapshot cancellation");
+    },
+    (cause: unknown) => cause,
+  );
+  expect(failure).toBeInstanceOf(ProcessCaptureSnapshotFailure);
+  if (!(failure instanceof ProcessCaptureSnapshotFailure)) throw failure;
+  expect(failure.cause).toBe(reason);
+  expect(failure).toMatchObject({
+    userCategory: "cancelled",
+    reason: "cancelled",
+    snapshot: { files: [], completeRoots: [], truncated: true },
+    cleanupLeases: [],
+    readFailures: [],
+  });
 });
 
 const countOpenDescriptorsFor = async (path: string): Promise<number> => {
@@ -196,7 +217,18 @@ it.skipIf(process.platform === "win32")(
       });
       controller.abort(reason);
 
-      await expect(hashing).rejects.toBe(reason);
+      let failure: unknown;
+      try {
+        await hashing;
+      } catch (cause: unknown) {
+        failure = cause;
+      }
+      expect(failure).toBeInstanceOf(ProcessCaptureReadFailure);
+      expect(failure).toMatchObject({
+        cause: reason,
+        userCategory: "cancelled",
+        outcome: { kind: "failed" },
+      });
       expect(await countOpenDescriptorsFor(path)).toBe(0);
     } finally {
       await rm(directory, { recursive: true, force: true });

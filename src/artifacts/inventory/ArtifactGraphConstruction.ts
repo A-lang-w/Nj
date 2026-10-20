@@ -1,3 +1,5 @@
+import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
+import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { isJavaScriptSourcePath } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
@@ -295,7 +297,9 @@ export const createArtifactEdges = (
   const edges: ArtifactEdge[] = [];
   const limitations: string[] = [];
   for (const occurrence of occurrences) {
-    const isSourceMap = occurrence.logical_path.toLowerCase().endsWith(".map");
+    // Use the occurrence's own classification: a directory named `x.map` is
+    // a container, not a source map of its sibling.
+    const isSourceMap = occurrence.artifact_kind === "source-map";
     const sourcePath = isSourceMap
       ? occurrence.logical_path.slice(0, -".map".length)
       : undefined;
@@ -337,8 +341,10 @@ export const createArtifactEdges = (
       relation:
         occurrence.entry_kind === "slice"
           ? ("slice-of" as const)
-          : isSourceMap && mappedSource === undefined
-            ? ("contains" as const)
+          : isSourceMap
+            ? mappedSource === undefined
+              ? ("contains" as const)
+              : ("maps-source" as const)
             : relationFor(occurrence.logical_path),
       occurrence_id: occurrence.occurrence_id,
     };
@@ -469,12 +475,13 @@ export const classifyArtifactPath = (
 /** Classify executable formats from bytes while retaining path-specific roles. */
 export const classifyArtifactContent = (
   path: string,
-  prefix: Buffer,
-  fileSize = prefix.length,
+  evidence: ArtifactClassificationEvidence,
+  fileSize = evidence.prefix.length,
 ): {
   readonly kind: ArtifactOccurrence["artifact_kind"];
   readonly format: ArtifactOccurrence["artifact_format"];
 } => {
+  const { prefix, asarHeader } = evidence;
   const format = classifyArtifactBytes(prefix, fileSize);
   const byPath = classifyArtifactPath(path);
   if (
@@ -487,25 +494,17 @@ export const classifyArtifactContent = (
   if (
     format === "file" &&
     path.toLowerCase().endsWith(".asar") &&
-    hasAsarHeader(prefix)
-  )
-    return { kind: "container", format: "asar" };
+    asarHeader.state !== "rejected"
+  ) {
+    if (asarHeader.state === "limit")
+      throw new ArtifactReaderFailure(
+        "limit",
+        "ASAR header exceeds the bounded classification or decode budget",
+      );
+    if (asarHeader.state === "matched")
+      return { kind: "container", format: "asar" };
+  }
   return artifactRoleForFormat(path, format);
-};
-
-/**
- * Electron ASAR starts with a size pickle whose payload is one uint32, then
- * a header pickle whose payload begins with a JSON object.
- */
-export const hasAsarHeader = (prefix: Buffer): boolean => {
-  if (prefix.length < 17 || prefix.readUInt32LE(0) !== 4) return false;
-  const headerSize = prefix.readUInt32LE(4);
-  const payloadSize = prefix.readUInt32LE(8);
-  if (headerSize < 16 || payloadSize !== headerSize - 4) return false;
-  const stringLength = prefix.readUInt32LE(12);
-  return (
-    stringLength >= 2 && stringLength <= payloadSize - 4 && prefix[16] === 0x7b
-  );
 };
 
 const artifactRoleForFormat = (
@@ -587,11 +586,8 @@ const classifyFatArtifact = (
   return identity.state === "mach-o" ? "mach-o-universal" : "unknown";
 };
 
-const relationFor = (path: string): ArtifactEdge["relation"] => {
-  const lower = path.toLowerCase();
-  if (lower.endsWith(".map")) return "maps-source";
-  if (lower.includes(".framework/")) return "embeds";
-  return "contains";
-};
+/** Relation of a non-source-map occurrence to its parent. */
+const relationFor = (path: string): ArtifactEdge["relation"] =>
+  path.toLowerCase().includes(".framework/") ? "embeds" : "contains";
 
 const depth = (path: string): number => path.split("/").length;
