@@ -139,6 +139,7 @@ export class ReverseEngineeringService {
     operation = "reverse_engineering_cleanup",
   ): Promise<Result<null, AnalysisError>> {
     let failure: AnalysisError | undefined;
+    const failures: AnalysisError[] = [];
     for (const [owner, retained] of this.#pendingCleanup) {
       let stopped: Awaited<ReturnType<ProviderProcessSupervisor["stop"]>>;
       try {
@@ -173,11 +174,22 @@ export class ReverseEngineeringService {
             ? {}
             : { operation: retained.operation }),
         });
+        failures.push(retryFailure);
         if (failure === undefined) failure = retryFailure;
       } else {
         for (const previous of retained.failures) previous.resolveCleanup();
         this.#pendingCleanup.delete(owner);
       }
+    }
+    if (failure !== undefined && failures.length > 1) {
+      const primary = failure;
+      failure = new AnalysisOutputError(
+        [...this.#pendingCleanup.values()].find((retained) =>
+          retained.failures.has(primary),
+        )?.operation ?? operation,
+        "Multiple previous provider processes still require cleanup.",
+        { cause: primary, cleanupPrimary: primary },
+      ).bindCleanupDependencies(failures);
     }
     return failure === undefined ? ok(null) : err(failure);
   }
@@ -226,13 +238,27 @@ export class ReverseEngineeringService {
       );
       if (!ready.ok) return ready;
     }
-    const invocationCwd = process.cwd();
+    let invocationCwd: string;
+    try {
+      invocationCwd = process.cwd();
+    } catch (cause) {
+      return err(
+        new AnalysisOutputError(
+          "inspect_with_objdump",
+          "The invocation working directory is unavailable.",
+          { cause },
+        ),
+      );
+    }
     // Capture the absolute artifact path once: argv and Evidence must name the
     // same target even if the process directory changes while command setup waits.
     const bound =
       input.operation === "architectures"
         ? input
-        : { ...input, path: absoluteCallerPath(input.path) };
+        : {
+            ...input,
+            path: absoluteCallerPath(input.path, { cwd: invocationCwd }),
+          };
     let parameters: Readonly<Record<string, JsonValue>>;
     if (input.operation === "disassemble") {
       const { symbol, ...base } = input;
@@ -248,6 +274,8 @@ export class ReverseEngineeringService {
       bound.operation === "architectures" ? undefined : bound.path,
       parameters,
       options.signal,
+      undefined,
+      invocationCwd,
     );
     return observed.ok && detail === "summary"
       ? summarizeRetainedAnalysis(observed.value, retention)
@@ -267,8 +295,21 @@ export class ReverseEngineeringService {
         err(new AnalysisInputError("execute_rizin_command")),
       );
     const input = parsed.data;
-    const invocationCwd = process.cwd();
-    const absolutePath = absoluteCallerPath(input.path);
+    let invocationCwd: string;
+    try {
+      invocationCwd = process.cwd();
+    } catch (cause) {
+      return Promise.resolve(
+        err(
+          new AnalysisOutputError(
+            "execute_rizin_command",
+            "The invocation working directory is unavailable.",
+            { cause },
+          ),
+        ),
+      );
+    }
+    const absolutePath = absoluteCallerPath(input.path, { cwd: invocationCwd });
     return this.#observe(
       "execute_rizin_command",
       (signal) =>
@@ -283,6 +324,7 @@ export class ReverseEngineeringService {
       input,
       options.signal,
       options.onDispatch,
+      invocationCwd,
     );
   }
 
@@ -297,6 +339,7 @@ export class ReverseEngineeringService {
     parameters: Readonly<Record<string, JsonValue>>,
     signal?: AbortSignal,
     onDispatch?: () => void,
+    invocationCwd?: string,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (signal?.aborted)
       return Promise.resolve(
@@ -346,6 +389,7 @@ export class ReverseEngineeringService {
       parameters,
       operationSignal,
       onDispatch,
+      invocationCwd,
     );
     const tracked = running.finally(() => {
       signal?.removeEventListener("abort", relayAbort);
@@ -366,6 +410,7 @@ export class ReverseEngineeringService {
     parameters: Readonly<Record<string, JsonValue>>,
     signal?: AbortSignal,
     onDispatch?: () => void,
+    invocationCwd?: string,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (signal?.aborted)
       return err(
@@ -423,10 +468,18 @@ export class ReverseEngineeringService {
         ),
       );
     }
-    if (signal?.aborted) return err(new AnalysisCancelledError(operation));
+    if (signal?.aborted)
+      return err(
+        new AnalysisCancelledError(operation, { cause: signal.reason }),
+      );
     const { executable: command, arguments: args } = profile;
     const absolutePath =
-      path === undefined ? undefined : absoluteCallerPath(path);
+      path === undefined
+        ? undefined
+        : absoluteCallerPath(
+            path,
+            invocationCwd === undefined ? undefined : { cwd: invocationCwd },
+          );
     let digest: string | undefined;
     try {
       if (absolutePath !== undefined)
@@ -653,7 +706,6 @@ export class ReverseEngineeringService {
         if (commandCancelled(signal, cause, code))
           failure = new AnalysisCancelledError(operation, {
             cause: callerCancellationCause(signal, cause),
-            capturedOutput,
             ...ownedCleanupOptions(cause),
           });
         else if (code === "ETIMEDOUT")
@@ -734,18 +786,7 @@ export class ReverseEngineeringService {
       }
     }
     if (signal?.aborted && failure === undefined) {
-      failure = new AnalysisCancelledError(operation, {
-        cause: signal.reason,
-        capturedOutput: {
-          stdout,
-          stderr,
-          truncated: outputTruncated,
-          stdout_bytes: stdoutBytes,
-          stderr_bytes: stderrBytes,
-          exit_code: typeof exitCode === "number" ? exitCode : null,
-          signal: signalName,
-        },
-      });
+      failure = new AnalysisCancelledError(operation, { cause: signal.reason });
       exitCode = null;
       completionStatus = "unknown";
     }
@@ -756,8 +797,7 @@ export class ReverseEngineeringService {
           ? null
           : digestAfter !== digest;
     const result = {
-      stdout,
-      stderr,
+      ...(failure instanceof AnalysisCancelledError ? {} : { stdout, stderr }),
       exit_code: exitCode,
       signal: signalName,
       output_truncated: outputTruncated,
@@ -859,7 +899,17 @@ export class ReverseEngineeringService {
         // that partial raw output on the error Evidence without changing the
         // established null raw_result contract for completed command Evidence.
         rawResult:
-          failure instanceof AnalysisCancelledError ? { stdout, stderr } : null,
+          failure instanceof AnalysisCancelledError
+            ? {
+                stdout,
+                stderr,
+                truncated: outputTruncated,
+                stdout_bytes: stdoutBytes,
+                stderr_bytes: stderrBytes,
+                exit_code: typeof exitCode === "number" ? exitCode : null,
+                signal: signalName,
+              }
+            : null,
         result,
         limitations,
         ...(absolutePath === undefined

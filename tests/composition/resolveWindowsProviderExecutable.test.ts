@@ -6,7 +6,10 @@ import { resolveWindowsProviderExecutable } from "../../src/composition/resolveW
 import { ReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
-import { AnalysisResourceConstraintError } from "../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
+} from "../../src/domain/analysisErrorCore.js";
 import { PROVIDER_COMMAND_RESOLUTION_CAPACITY_ERROR_CODE } from "../../src/application/reverse/ReverseEngineeringCommandPort.js";
 
 const windowsLookup = (cwd: string, files: readonly string[]) => {
@@ -61,7 +64,7 @@ it("drains a canceled PATH filesystem probe before service shutdown completes", 
   expect(closed).toBe(true);
 });
 
-describe("resolveWindowsProviderExecutable", async () => {
+describe("resolveWindowsProviderExecutable", () => {
   it("resolves a bare name from quoted and relative Windows PATH entries", async () => {
     const cwd = "C:\\work";
     const expected = "C:\\work\\Program Files\\REA Tools\\objdump.EXE";
@@ -177,6 +180,31 @@ describe("resolveWindowsProviderExecutable", async () => {
     ).toBe(expected);
   });
 
+  it("checks drive-rooted PATH candidates in one owned batch", async () => {
+    const expected = "D:\\entry128\\objdump.EXE";
+    const path = Array.from(
+      { length: 129 },
+      (_, index) => `D:\\entry${index}`,
+    ).join(";");
+    const findOwnedFiles = vi.fn((candidates: readonly string[]) =>
+      candidates.includes(expected) ? expected : undefined,
+    );
+
+    await expect(
+      resolveWindowsProviderExecutable(
+        "objdump",
+        { PATH: path, PATHEXT: ".COM;.EXE" },
+        { cwd: "D:\\work", findOwnedFiles },
+      ),
+    ).resolves.toBe(expected);
+
+    expect(findOwnedFiles).toHaveBeenCalledOnce();
+    expect(findOwnedFiles.mock.calls[0]?.[0]).toHaveLength(258);
+    expect(findOwnedFiles.mock.calls[0]?.[0].at(-1)).toBe(expected);
+  });
+});
+
+describe("network Windows PATH probes", () => {
   it.each(["abort", "deadline"])(
     "bounds a stalled network PATH probe on %s",
     async (mode) => {
@@ -328,6 +356,64 @@ describe("bounded Windows PATH probes", () => {
     } finally {
       pending.forEach((resolve) => resolve(false));
       await Promise.all(retained);
+      await service.close();
+    }
+  });
+});
+
+describe("drive-relative Windows provider lookup", () => {
+  it("rejects a drive-relative provider on another drive after prepare waits", async () => {
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue("D:\\original");
+    let releasePrepare!: () => void;
+    let preparing!: () => void;
+    const prepareGate = new Promise<void>((resolve) => {
+      releasePrepare = resolve;
+    });
+    const prepareStarted = new Promise<void>((resolve) => {
+      preparing = resolve;
+    });
+    const run = vi.fn(async () => ({ stdout: "", stderr: "" }));
+    const base = createReverseEngineeringCommandPort(
+      { REA_OBJDUMP_COMMAND: "C:tools\\objdump.exe" },
+      "win32",
+    );
+    const service = new ReverseEngineeringService({
+      commands: {
+        ...base,
+        objdump: async (input, options) => {
+          preparing();
+          await prepareGate;
+          return base.objdump(input, options);
+        },
+      },
+      run,
+    });
+    try {
+      const result = service.inspectWithObjdump({
+        operation: "architectures",
+      });
+      await prepareStarted;
+      cwd.mockReturnValue("C:\\changed");
+      releasePrepare();
+
+      const outcome = await result;
+      expect(outcome).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisInputError",
+          operation: "inspect_with_objdump",
+          issues: [
+            {
+              path: ["executable"],
+              reason: "invalid_format",
+            },
+          ],
+        },
+      });
+      expect(run).not.toHaveBeenCalled();
+    } finally {
+      releasePrepare();
+      cwd.mockRestore();
       await service.close();
     }
   });

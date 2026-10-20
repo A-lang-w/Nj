@@ -291,10 +291,7 @@ it.each([
       if (result.ok) return;
       expect(result.error.cause).toBe(code === "ABORT_ERR" ? reason : failure);
       if (captured && code === "ABORT_ERR") {
-        expect(result.error.capturedOutput).toMatchObject({
-          stdout: "partial stdout",
-          stderr: "partial stderr",
-        });
+        expect(result.error.capturedOutput).toBeUndefined();
         expect(result.error.partialObservation).toMatchObject({
           raw_result: { stdout: "partial stdout" },
         });

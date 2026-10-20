@@ -171,11 +171,16 @@ const registerOwnedRizinCommandFailureTests = (): void => {
               _tag: expected,
               partialObservation: {
                 normalized_result: {
-                  stdout: "captured owned output",
+                  ...(reason === "cancelled"
+                    ? {}
+                    : { stdout: "captured owned output" }),
                   exit_code: null,
                   completion_status: "unknown",
                   output_truncated: reason !== "cancelled",
                 },
+                ...(reason === "cancelled"
+                  ? { raw_result: { stdout: "captured owned output" } }
+                  : {}),
               },
               ...(reason === "timeout"
                 ? {

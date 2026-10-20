@@ -667,11 +667,14 @@ it("preserves raw retained byte counts when output text replaces invalid UTF-8",
       ok: false,
       error: {
         _tag: "AnalysisCancelledError",
-        capturedOutput: {
-          stdout: "�",
-          stderr: "�",
-          stdout_bytes: 1,
-          stderr_bytes: 2,
+        capturedOutput: undefined,
+        partialObservation: {
+          raw_result: {
+            stdout: "�",
+            stderr: "�",
+            stdout_bytes: 1,
+            stderr_bytes: 2,
+          },
         },
       },
     });
@@ -855,6 +858,66 @@ it("retains a capability failure when its injected owned runner also reports inc
     expect(runOwned).toHaveBeenCalledTimes(2);
   } finally {
     await service.close().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("aggregates every retained reverse owner during cleanup retry", async () => {
+  const { directory, path } = await createArtifact();
+  let firstCanStop = false;
+  let secondCanStop = false;
+  const owner = (which: "first" | "second") =>
+    ({
+      stop: vi.fn(async () =>
+        (which === "first" ? firstCanStop : secondCanStop)
+          ? { status: "verified-cleanup" as const }
+          : { status: "incomplete" as const, reason: `${which} still active` },
+      ),
+    }) as unknown as ProviderProcessSupervisor;
+  const first = owner("first");
+  const second = owner("second");
+  let launch = 0;
+  const service = new ReverseEngineeringService({
+    runOwned: async () => {
+      const current = launch++ === 0 ? first : second;
+      throw new OwnedCommandFailure(
+        "process",
+        "Command owner remains active.",
+        null,
+        "cleanup is incomplete",
+        { cause: new Error("fixture failure") },
+        [`${launch}-run`, `pid:${launch}`],
+        current,
+      );
+    },
+  });
+  try {
+    const outcomes = await Promise.all([
+      service.executeRizinCommand({ path, command: "first" }),
+      service.executeRizinCommand({ path, command: "second" }),
+    ]);
+    expect(outcomes.every((outcome) => !outcome.ok)).toBe(true);
+
+    const bothPending = await service.retryCleanup();
+    expect(bothPending.ok).toBe(false);
+    if (!bothPending.ok)
+      expect(bothPending.error.cleanupResources).toEqual(
+        expect.arrayContaining(["1-run", "pid:1", "2-run", "pid:2"]),
+      );
+
+    firstCanStop = true;
+    const secondPending = await service.retryCleanup();
+    expect(secondPending.ok).toBe(false);
+    if (!secondPending.ok)
+      expect(secondPending.error.cleanupResources).toEqual(["2-run", "pid:2"]);
+    if (!bothPending.ok)
+      expect(bothPending.error.cleanupResources).toEqual(["2-run", "pid:2"]);
+    secondCanStop = true;
+    await expect(service.retryCleanup()).resolves.toMatchObject({ ok: true });
+    expect(first.stop).toHaveBeenCalledTimes(2);
+    expect(second.stop).toHaveBeenCalledTimes(3);
+  } finally {
+    await service.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

@@ -395,7 +395,7 @@ export class PcapProvider {
       ),
       ...[...this.snapshotFailures.values()].map(({ snapshot }) => snapshot),
     ];
-    return new ProviderCleanupError(
+    const failure = new ProviderCleanupError(
       "pcap",
       [
         ...[...this.snapshots].map((snapshot) => snapshot.path),
@@ -403,7 +403,12 @@ export class PcapProvider {
       ],
       { reason: "Previous packet-capture resources remain owned." },
       { operation },
-    ).bindCleanupDependencies(dependencies);
+    );
+    // The command/snapshot may already own live resources while its failure is
+    // still being recorded. An empty dependency list must not clear that owner.
+    if (dependencies.length > 0)
+      return failure.bindCleanupDependencies(dependencies);
+    return failure;
   }
 
   async close(): Promise<void> {

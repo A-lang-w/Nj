@@ -45,6 +45,7 @@ export const createReverseEngineeringCommandPort = (
         commandOptions?.cwd,
         options.windowsExecutableLookup?.isFile,
         onProbe,
+        "inspect_with_objdump",
       ),
       arguments: objdumpCommand(input),
       identity: OBJDUMP_PROVIDER_IDENTITY,
@@ -62,6 +63,7 @@ export const createReverseEngineeringCommandPort = (
         commandOptions?.cwd,
         options.windowsExecutableLookup?.isFile,
         onProbe,
+        "execute_rizin_command",
       ),
       arguments: rizinCommand(input),
       identity: RIZIN_PROVIDER_IDENTITY,
@@ -80,12 +82,14 @@ const providerExecutable = (
   cwd?: string,
   isFile?: WindowsExecutableLookup["isFile"],
   onProbe?: WindowsExecutableLookup["onProbe"],
+  operation?: WindowsExecutableLookup["operation"],
 ): string | Promise<string> =>
   platform === "win32"
     ? resolveWindowsProviderExecutable(executable, environment, {
         signal,
         ...(isFile === undefined ? {} : { isFile }),
         ...(onProbe === undefined ? {} : { onProbe }),
+        ...(operation === undefined ? {} : { operation }),
         ...(cwd === undefined ? {} : { cwd }),
       })
     : executable;
