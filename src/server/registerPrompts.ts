@@ -1,5 +1,6 @@
 import { promptArgumentsSchema } from "./promptArguments.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
+import { currentMcpRequestSignal } from "./EvidenceMcpServerCore.js";
 import type { RegisteredPrompt } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
@@ -28,9 +29,16 @@ export const registerGuidedPrompts = (
   analysis: AnalysisOperationPort,
   session?: BinarySessionPort,
 ): GuidedPromptRegistry => {
-  const completion = server.bindPromptCompletion(
-    createPromptCompletionSource(analysis, session),
-  );
+  const source = createPromptCompletionSource(analysis, session);
+  const completion = server.bindPromptCompletion({
+    async complete(kind, value, context) {
+      // Completions can query the same providers as tools. Cancellation alone
+      // does not mean their provider cleanup has finished.
+      return server.runRequest(currentMcpRequestSignal(), () =>
+        source.complete(kind, value, context),
+      );
+    },
+  });
   const prompts = new Map<string, RegisteredPrompt>();
   for (const contract of PROMPT_CONTRACTS)
     prompts.set(contract.name, registerPrompt(server, contract, completion));

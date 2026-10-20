@@ -1,7 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import {
-  McpServer,
   isCallToolResult,
   isJSONRPCRequest,
   isJSONRPCNotification,
@@ -22,6 +21,7 @@ import {
   type TransportSendOptions,
 } from "@modelcontextprotocol/server";
 
+import { RequestTrackingMcpServer } from "./RequestTrackingMcpServer.js";
 import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
 import {
   presentAdvertisedInputSchema,
@@ -119,7 +119,7 @@ export const forgetPendingMcpRequest = (
 };
 
 /** Bind oversized MCP error recovery to this server's Evidence ledger. */
-export class EvidenceMcpServerCore extends McpServer {
+export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   private identity: ReturnType<typeof createCatalogIdentity> | undefined;
 
   /** Composition supplies identity without importing the canonical schema graph. */
