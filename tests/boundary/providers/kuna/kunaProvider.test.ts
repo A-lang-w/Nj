@@ -72,6 +72,7 @@ it("discovers configuration without probing and admits only verified targets", a
   const executable = (
     format: "elf" | "mach-o" | "pe" | "mach-o-universal",
     architecture: "x86_64" | "arm64" | "arm" | "x86",
+    managed = false,
   ) =>
     ({
       path: "/tmp/fixture",
@@ -80,6 +81,7 @@ it("discovers configuration without probing and admits only verified targets", a
       format,
       architecture,
       availableArchitectures: [architecture],
+      ...(format === "pe" ? { managed } : {}),
     }) as unknown as BinaryTarget;
   expect(
     configured.inspectTargetSupport(executable("elf", "x86_64")).status,
@@ -90,6 +92,12 @@ it("discovers configuration without probing and admits only verified targets", a
   expect(
     configured.inspectTargetSupport(executable("pe", "x86_64")).status,
   ).toBe("supported");
+  expect(
+    configured.inspectTargetSupport(executable("pe", "x86_64", true)),
+  ).toMatchObject({
+    status: "unsupported",
+    code: "managed_target_unsupported",
+  });
   expect(
     configured.inspectTargetSupport(executable("pe", "arm64")),
   ).toMatchObject({ code: "architecture_unsupported" });

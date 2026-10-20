@@ -167,6 +167,14 @@ export class KunaProvider implements AnalysisProviderCandidate {
         reason: `REA verified the Kuna provider on PE images for x86-64 only; ${target.architecture} PE is not admitted yet.`,
         diagnostics: { ...diagnostics, architecture: target.architecture },
       };
+    if (target.format === "pe" && target.managed !== false)
+      return {
+        status: "unsupported",
+        code: "managed_target_unsupported",
+        reason:
+          "REA verified the Kuna provider on native PE images only; managed PE targets such as .NET assemblies and normalized ReadyToRun images are not admitted yet.",
+        diagnostics,
+      };
     if (!VERIFIED_ARCHITECTURES.has(target.architecture))
       return {
         status: "unsupported",
