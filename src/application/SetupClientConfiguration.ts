@@ -829,27 +829,24 @@ const clientConfigurationDesired = (
   };
 };
 
-const codexToolEntry = (
-  value: unknown,
-): Record<string, unknown> | undefined => {
+const codexToolEntry = (value: unknown): unknown | undefined => {
   if (typeof value !== "object" || value === null) {
     return undefined;
   }
   if (Array.isArray(value)) {
-    if (value.length < 1 || value.length > 2) return undefined;
+    if (value.length === 0) return [];
+    if (value.length > 2) return undefined;
     const [rawApproval, rawLimit] = value;
-    const entry: Record<string, unknown> = {};
     const parsedApproval = codexApprovalModeSchema.safeParse(rawApproval);
-    if (parsedApproval.success) {
-      entry.approval_mode = parsedApproval.data;
-    }
+    if (!parsedApproval.success) return undefined;
+    if (value.length === 1) return [parsedApproval.data];
     if (rawLimit !== undefined && !hasTomlFloatProperty(value, "1")) {
       const parsedLimit = codexToolOutputTokenLimitSchema.safeParse(rawLimit);
       if (parsedLimit.success) {
-        entry.output_token_limit = parsedLimit.data;
+        return [parsedApproval.data, parsedLimit.data];
       }
     }
-    return Object.keys(entry).length > 0 ? entry : undefined;
+    return [parsedApproval.data];
   }
   const rawEntries = Object.entries(value);
   if (rawEntries.length === 0) {
@@ -878,7 +875,7 @@ const codexToolEntry = (
 
 const codexTools = (
   registration: unknown,
-): Record<string, Record<string, unknown>> | undefined => {
+): Record<string, unknown> | undefined => {
   if (
     typeof registration !== "object" ||
     registration === null ||
@@ -896,7 +893,7 @@ const codexTools = (
   if (rawEntries.length === 0) {
     return {};
   }
-  const validTools: Record<string, Record<string, unknown>> = {};
+  const validTools: Record<string, unknown> = {};
   for (const [toolName, toolConfig] of rawEntries) {
     const entry = codexToolEntry(toolConfig);
     if (entry !== undefined) {

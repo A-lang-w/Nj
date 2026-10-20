@@ -508,7 +508,6 @@ function registerCodexClientToolPolicyTests(): void {
     "[mcp_servers.rea.tools.binary_session]\noutput_token_limit = 1e3",
     'default_tools_approval_mode = "unsupported"',
     "default_tools_approval_mode = 12",
-    "[mcp_servers.rea.tools]\nbinary_session = []",
     '[mcp_servers.rea.tools]\nbinary_session = ["approve", 12, "extra"]',
     '[mcp_servers.rea.tools]\nbinary_session = ["unsupported", 12]',
     "[mcp_servers.rea.tools]\nbinary_session = [12]",
@@ -567,6 +566,7 @@ function registerCodexClientToolPolicyTests(): void {
 
 function registerCodexPerToolSequenceTests(): void {
   it.each([
+    "binary_session = []",
     'binary_session = ["approve"]',
     'binary_session = ["writes"]',
     'binary_session = ["auto", 32000]',

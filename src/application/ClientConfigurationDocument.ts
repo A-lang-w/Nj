@@ -90,6 +90,7 @@ const codexServerToolSequenceSchema = z
   })
   .pipe(
     z.union([
+      z.tuple([]),
       z.tuple([codexApprovalModeSchema]),
       z.tuple([codexApprovalModeSchema, codexToolOutputTokenLimitSchema]),
     ]),
@@ -131,29 +132,6 @@ export const clientConfigurationValuesEqual = (
   );
 
 const normalizeConfigurationValue = (value: unknown): unknown => {
-  if (
-    Array.isArray(value) &&
-    value.length >= 1 &&
-    value.length <= 2 &&
-    typeof value[0] === "string" &&
-    codexApprovalModeSchema.safeParse(value[0]).success &&
-    (value.length === 1 ||
-      (typeof value[1] === "number" && !hasTomlFloatProperty(value, "1")) ||
-      typeof value[1] === "bigint")
-  ) {
-    const parsedLimit =
-      value.length === 2
-        ? codexToolOutputTokenLimitSchema.safeParse(value[1])
-        : undefined;
-    if (value.length === 1 || parsedLimit?.success) {
-      return normalizeConfigurationValue({
-        approval_mode: value[0],
-        ...(parsedLimit?.success
-          ? { output_token_limit: parsedLimit.data }
-          : {}),
-      });
-    }
-  }
   if (Array.isArray(value)) return value.map(normalizeConfigurationValue);
   if (typeof value !== "object" || value === null || value instanceof Date)
     return value;

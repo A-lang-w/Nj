@@ -607,6 +607,7 @@ describe("Codex sequence-form tool settings preservation and repair", () => {
       "tool_timeout_sec = 450",
       "",
       "[mcp_servers.rea.tools]",
+      "empty_session = []",
       'binary_session = ["approve", 12]',
       "",
     ].join("\n");
@@ -626,6 +627,7 @@ describe("Codex sequence-form tool settings preservation and repair", () => {
           startup_timeout_sec: 30,
           tool_timeout_sec: 450,
           tools: {
+            empty_session: [],
             binary_session: ["approve", 12],
           },
         },
@@ -665,9 +667,7 @@ describe("Codex sequence-form tool settings preservation and repair", () => {
           startup_timeout_sec: 30,
           tool_timeout_sec: 450,
           tools: {
-            binary_session: {
-              approval_mode: "approve",
-            },
+            binary_session: ["approve"],
           },
         },
       },
