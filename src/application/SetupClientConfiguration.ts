@@ -12,8 +12,7 @@ import {
   clientConfigurationValuesEqual,
   clientServerListedDisabled,
   clientServerPath,
-  codexDefaultToolsApprovalModeSchema,
-  codexToolApprovalModeSchema,
+  codexApprovalModeSchema,
   codexToolOutputTokenLimitSchema,
   hasTomlFloatProperty,
   legacyClientServerPath,
@@ -843,7 +842,7 @@ const codexToolEntry = (
   const entry: Record<string, unknown> = {};
   for (const [key, prop] of rawEntries) {
     if (key === "approval_mode") {
-      const parsedApproval = codexToolApprovalModeSchema.safeParse(prop);
+      const parsedApproval = codexApprovalModeSchema.safeParse(prop);
       if (parsedApproval.success) {
         entry[key] = parsedApproval.data;
       }
@@ -900,7 +899,7 @@ const codexDefaultToolsApprovalMode = (
     !Object.hasOwn(registration, "default_tools_approval_mode")
   )
     return undefined;
-  const parsed = codexDefaultToolsApprovalModeSchema.safeParse(
+  const parsed = codexApprovalModeSchema.safeParse(
     Reflect.get(registration, "default_tools_approval_mode"),
   );
   return parsed.success ? parsed.data : undefined;

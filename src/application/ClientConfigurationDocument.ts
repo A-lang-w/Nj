@@ -64,8 +64,6 @@ export const codexApprovalModeSchema = z.enum([
   "auto",
   "writes",
 ]);
-export const codexToolApprovalModeSchema = codexApprovalModeSchema;
-export const codexDefaultToolsApprovalModeSchema = codexApprovalModeSchema;
 export const codexToolOutputTokenLimitSchema = z.union([
   z.number().int().positive(),
   z.bigint().positive(),
@@ -79,7 +77,7 @@ export const hasTomlFloatProperty = (value: object, key: string): boolean =>
 
 const codexServerToolObjectSchema = z
   .object({
-    approval_mode: codexToolApprovalModeSchema.optional(),
+    approval_mode: codexApprovalModeSchema.optional(),
     output_token_limit: codexToolOutputTokenLimitSchema.optional(),
   })
   .passthrough();
