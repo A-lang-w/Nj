@@ -9,6 +9,7 @@ import {
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   createTestBinarySession,
   createBinarySessionTargets,
@@ -59,6 +60,53 @@ const register = (overrides: {
 };
 
 describe("close lifecycle reverse cleanup ordering", () => {
+  it("preserves a successful snapshot receipt when reverse cleanup remains pending", async () => {
+    const receipt = {
+      path: "/tmp/analysis.json",
+      bytes: 321,
+      primitive_entries: 2,
+      workflow_entries: 1,
+      evidence_records: 3,
+    };
+    const session = {
+      closeWithSnapshot: async () => ok(receipt),
+    } as unknown as BinarySessionPort;
+    const { handler } = register({
+      session,
+      retry: async () =>
+        err(
+          new AnalysisOutputError(
+            "close_binary",
+            "A provider process still requires cleanup.",
+            {
+              cleanup: {
+                reason: "provider process still live",
+                resources: ["pid:42"],
+              },
+            },
+          ),
+        ),
+    });
+
+    const result = await handler({
+      snapshot_path: receipt.path,
+      overwrite: false,
+    });
+    if (
+      typeof result !== "object" ||
+      result === null ||
+      !("error" in result) ||
+      !(result.error instanceof Error)
+    )
+      throw new Error("Expected a retained cleanup error");
+    expect(
+      projectAnalysisError(result.error as AnalysisOutputError),
+    ).toMatchObject({
+      code: "cleanup_incomplete",
+      details: { diagnostics: { saved_snapshot: receipt } },
+    });
+  });
+
   it("retries reverse cleanup only after the session close has settled", async () => {
     const order: string[] = [];
     let release!: () => void;

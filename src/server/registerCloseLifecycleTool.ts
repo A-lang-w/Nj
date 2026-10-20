@@ -10,6 +10,7 @@ import { mcpProgressReporter } from "./mcpProgress.js";
 import type { LifecycleToolRegistration } from "./registerSessionTools.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 
 /** Expected lifecycle failures keep the same typed result when a child rejects. */
 const closeResult = async <Value>(
@@ -36,6 +37,7 @@ export const registerCloseLifecycleTool = ({
     closeSession: (
       afterResourceClose: () => Promise<void>,
     ) => Promise<Result<Value, AnalysisError>>,
+    snapshotReceipt?: (value: Value) => Readonly<Record<string, JsonValue>>,
   ): Promise<Result<Value, AnalysisError>> => {
     let reverseRetry:
       | Promise<PromiseSettledResult<Result<null, AnalysisError>>>
@@ -106,7 +108,15 @@ export const registerCloseLifecycleTool = ({
           failure,
           next,
         ).bindCleanupDependencies([failure, next]);
-    return failure === undefined ? closed : err(failure);
+    if (failure === undefined) return closed;
+    if (
+      snapshotReceipt !== undefined &&
+      closed.ok &&
+      reverseCleanup.status === "fulfilled" &&
+      !reverseCleanup.value.ok
+    )
+      failure.retainDiagnostics(snapshotReceipt(closed.value));
+    return err(failure);
   };
   server.registerTool(
     closeContract.name,
@@ -128,10 +138,20 @@ export const registerCloseLifecycleTool = ({
         return server.delivery.toCallToolResult(closed, closeContract);
       }
       const closing = logToolExecution(logger, closeContract.name, () =>
-        closeWithResources((afterResourceClose) =>
-          session.closeWithSnapshot(snapshotPath, input.overwrite, {
-            progress,
-            afterResourceClose,
+        closeWithResources(
+          (afterResourceClose) =>
+            session.closeWithSnapshot(snapshotPath, input.overwrite, {
+              progress,
+              afterResourceClose,
+            }),
+          (receipt) => ({
+            saved_snapshot: {
+              path: receipt.path,
+              bytes: receipt.bytes,
+              primitive_entries: receipt.primitive_entries,
+              workflow_entries: receipt.workflow_entries,
+              evidence_records: receipt.evidence_records,
+            },
           }),
         ),
       );

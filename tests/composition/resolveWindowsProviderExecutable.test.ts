@@ -293,6 +293,34 @@ describe("bounded Windows PATH probes", () => {
 });
 
 describe("admitted Windows provider lookup", () => {
+  it("binds relative Windows provider selection to the invocation CWD", async () => {
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue("C:\\original");
+    const run = vi.fn(async () => ({ stdout: "", stderr: "" }));
+    const service = new ReverseEngineeringService({
+      commands: createReverseEngineeringCommandPort(
+        { REA_OBJDUMP_COMMAND: ".\\tools\\objdump.exe" },
+        "win32",
+      ),
+      run,
+    });
+    try {
+      const operation = service.inspectWithObjdump({
+        operation: "architectures",
+      });
+      cwd.mockReturnValue("D:\\changed");
+      await operation;
+      expect(run).toHaveBeenCalledWith(
+        "C:\\original\\tools\\objdump.exe",
+        expect.any(Array),
+        expect.any(Object),
+        "inspect_with_objdump",
+      );
+    } finally {
+      cwd.mockRestore();
+      await service.close();
+    }
+  });
+
   it.each(["cancel", "close", "deadline"])(
     "settles admitted lookup on %s without launching a provider",
     async (mode) => {

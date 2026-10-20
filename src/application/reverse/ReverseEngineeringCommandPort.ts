@@ -20,13 +20,13 @@ export interface ReverseEngineeringProviderCommand {
 export interface ReverseEngineeringCommandPort {
   objdump(
     input: ObjdumpInput,
-    options?: { readonly signal?: AbortSignal },
+    options?: { readonly signal?: AbortSignal; readonly cwd?: string },
   ):
     | ReverseEngineeringProviderCommand
     | Promise<ReverseEngineeringProviderCommand>;
   rizin(
     input: RizinInput,
-    options?: { readonly signal?: AbortSignal },
+    options?: { readonly signal?: AbortSignal; readonly cwd?: string },
   ):
     | ReverseEngineeringProviderCommand
     | Promise<ReverseEngineeringProviderCommand>;

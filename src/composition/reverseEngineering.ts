@@ -21,6 +21,7 @@ export const createReverseEngineeringCommandPort = (
       environment,
       platform,
       options?.signal,
+      options?.cwd,
     ),
     arguments: objdumpCommand(input),
     identity: OBJDUMP_PROVIDER_IDENTITY,
@@ -32,6 +33,7 @@ export const createReverseEngineeringCommandPort = (
       environment,
       platform,
       options?.signal,
+      options?.cwd,
     ),
     arguments: rizinCommand(input),
     identity: RIZIN_PROVIDER_IDENTITY,
@@ -43,9 +45,13 @@ const providerExecutable = (
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform,
   signal?: AbortSignal,
+  cwd?: string,
 ): string | Promise<string> =>
   platform === "win32"
-    ? resolveWindowsProviderExecutable(executable, environment, { signal })
+    ? resolveWindowsProviderExecutable(executable, environment, {
+        signal,
+        ...(cwd === undefined ? {} : { cwd }),
+      })
     : executable;
 
 /** Compose BYO reverse-engineering commands without acquiring tools at import time. */

@@ -205,6 +205,7 @@ export class ReverseEngineeringService {
         err(new AnalysisInputError("inspect_with_objdump")),
       );
     const input = parsed.data;
+    const invocationCwd = process.cwd();
     // Capture the absolute artifact path once: the argv and the digest must
     // name the same file even if the process directory changes while awaiting.
     const bound =
@@ -219,7 +220,10 @@ export class ReverseEngineeringService {
     return this.#observe(
       "inspect_with_objdump",
       (signal) =>
-        this.#commands.objdump(bound, signal === undefined ? {} : { signal }),
+        this.#commands.objdump(bound, {
+          cwd: invocationCwd,
+          ...(signal === undefined ? {} : { signal }),
+        }),
       bound.operation === "architectures" ? undefined : bound.path,
       parameters,
       options.signal,
@@ -239,13 +243,17 @@ export class ReverseEngineeringService {
         err(new AnalysisInputError("execute_rizin_command")),
       );
     const input = parsed.data;
+    const invocationCwd = process.cwd();
     const absolutePath = absoluteCallerPath(input.path);
     return this.#observe(
       "execute_rizin_command",
       (signal) =>
         this.#commands.rizin(
           { ...input, path: absolutePath },
-          signal === undefined ? {} : { signal },
+          {
+            cwd: invocationCwd,
+            ...(signal === undefined ? {} : { signal }),
+          },
         ),
       absolutePath,
       input,
