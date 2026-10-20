@@ -131,7 +131,7 @@ export const parseCliOutputArguments = (
       const value = arguments_[index + 1];
       if (value) {
         // Incur stops parsing at an invalid format before applying any later
-        // output controls. Let it report that malformed flag itself.
+        // output controls. Report it here only after a structured format.
         if (!INCUR_OUTPUT_FORMATS.has(value)) return invalid(argument, value);
         format = value;
         index += 1;
