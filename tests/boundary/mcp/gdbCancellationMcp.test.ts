@@ -833,8 +833,11 @@ process.stdin.on("data", (chunk) => {
       try {
         await manager.closeAll();
       } finally {
-        await analysisSession.close();
-        await rm(directory, { recursive: true, force: true });
+        try {
+          await analysisSession.close();
+        } finally {
+          await rm(directory, { recursive: true, force: true });
+        }
       }
     }
   },
