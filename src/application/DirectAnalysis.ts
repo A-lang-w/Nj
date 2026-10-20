@@ -24,22 +24,28 @@ import {
 } from "../domain/evidenceErrors.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { access } from "node:fs/promises";
+import { access, stat } from "node:fs/promises";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { readAnalysisSnapshot } from "./binary/AnalysisSnapshotFiles.js";
 import { requiresNativeSourceAdmissionBeforeReplay } from "./binary/AnalysisSnapshotCache.js";
-import { parseBinaryTarget } from "./BinaryTargetResolver.js";
+import {
+  classifyBinaryTargetFilesystemFailure,
+  parseBinaryTarget,
+} from "./BinaryTargetResolver.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   snapshotEvidenceForQuery,
   snapshotMatchesTarget,
 } from "../domain/analysisSnapshot.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
+import { profilelessNativeDispatchProfile } from "./binary/ProfilelessNativeWorkflowSnapshot.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
 import type {
   AnalysisExecution,
   ProviderIdentity,
 } from "./AnalysisProvider.js";
+import { createAnalysisExecutionEvidence } from "./AnalysisProvider.js";
 import {
   REA_WORKFLOW_PROVIDER,
   workflowAnalysisProfile,
@@ -58,11 +64,13 @@ import {
   AnalysisInputError,
 } from "../domain/analysisErrorCore.js";
 import { deliverAnalysisEvidence } from "./EvidenceBundleCommands.js";
+import type { BinaryTargetError } from "../domain/configurationErrors.js";
 import {
   directAnalysisCleanupFailure,
   managedAnalysisCleanupFailure,
   withSessionCleanup,
 } from "./DirectAnalysisCleanup.js";
+import { BUNDLE_RESOURCE_OPERATIONS } from "./binary/BundleResourceSession.js";
 
 type DirectAnalysisTool =
   | "annotate_native_function"
@@ -99,7 +107,6 @@ const NATIVE_INSPECTION_OPERATIONS: ReadonlySet<string> = new Set([
 const ARTIFACT_ANALYSIS_OPERATION_SET: ReadonlySet<string> = new Set(
   ARTIFACT_ANALYSIS_OPERATIONS,
 );
-
 /**
  * Open one binary, execute one tool, and always release provider resources.
  * Unlike MCP mode, every CLI invocation is intentionally isolated and does not
@@ -270,17 +277,7 @@ const runManagedProviderAnalysis = async (
   if (!execution.ok) return execution;
   const value = execution.value;
   return ok(
-    createEvidence(value.subject ?? undefined, value.provider, {
-      operation: tool,
-      parameters: arguments_,
-      result: value.result,
-      rawResult: value.rawResult,
-      limitations: value.limitations,
-      ...(value.relationshipCoverage === undefined
-        ? {}
-        : { relationshipCoverage: value.relationshipCoverage }),
-      locations: value.locations,
-    }),
+    createAnalysisExecutionEvidence(tool, arguments_, value, "observed"),
   );
 };
 
@@ -320,6 +317,24 @@ const runAnalysis = async (
   return withSessionCleanup(
     session,
     async () => {
+      let isDirectory = false;
+      if (BUNDLE_RESOURCE_OPERATIONS.has(tool)) {
+        const inspected = await inspectBundleResourceInput(path);
+        if (!inspected.ok) return cliError(inspected.error);
+        isDirectory = inspected.value;
+      }
+      if (BUNDLE_RESOURCE_OPERATIONS.has(tool) && isDirectory) {
+        const opened = await session.openBundleResources(path, { signal });
+        if (!opened.ok) return cliError(opened.error);
+        const execution = await session.execute(tool, arguments_, { signal });
+        if (!execution.ok) return cliError(execution.error);
+        return createAnalysisExecutionEvidence(
+          tool,
+          arguments_,
+          execution.value,
+          "observed",
+        );
+      }
       const prepared = await prepareSnapshot({
         path,
         snapshotPath,
@@ -357,7 +372,8 @@ const runAnalysis = async (
         if (!preview.ok) return cliError(preview.error);
         resolvedTarget = preview.value;
         const route = preview.value.route;
-        const bindingProfile = route.profile ?? undefined;
+        const bindingProfile =
+          route.profile ?? nativeDispatchBindingProfile(route, tool);
         const evidenceProfile = analysisProfileForRoute(route, tool);
         // A parsed Windows path does not prove Ghidra's native snapshot owner
         // admitted the selected source; CLI replay must wait for that client.
@@ -404,7 +420,7 @@ const runAnalysis = async (
           : await session.openResolvedTarget(resolvedTarget, openOptions);
       if (!opened.ok) return cliError(opened.error);
       const evidenceProfile = analysisProfileForEvidence(session, tool);
-      const { output, evidence } = await executeAnalysisTool({
+      const { output, evidence, cachePolicy } = await executeAnalysisTool({
         session,
         openedTarget: opened.value,
         tool,
@@ -434,7 +450,12 @@ const runAnalysis = async (
         evidence !== undefined &&
         session.allowsSnapshotReplay(tool)
       ) {
-        const workflowRecord = workflowSnapshotRecord(evidence, tool);
+        const workflowRecord = workflowSnapshotRecord(
+          evidence,
+          tool,
+          evidenceProfile,
+          cachePolicy,
+        );
         if (workflowRecord !== undefined) {
           const recorded = session.recordWorkflowSnapshot(workflowRecord);
           if (!recorded.ok)
@@ -480,7 +501,11 @@ const executeAnalysisTool = async (input: {
   readonly arguments: Readonly<Record<string, JsonValue>>;
   readonly signal: AbortSignal;
   readonly evidenceProfile: AnalysisProfileCommitment | undefined;
-}): Promise<{ readonly output: JsonValue; readonly evidence?: Evidence }> => {
+}): Promise<{
+  readonly output: JsonValue;
+  readonly evidence?: Evidence;
+  readonly cachePolicy?: "live";
+}> => {
   const { session, tool, signal, evidenceProfile } = input;
   if (tool === "analyze_function") {
     const { executeFunctionAnalysisEvidence } =
@@ -516,7 +541,13 @@ const executeAnalysisTool = async (input: {
       upstreamProfile: evidenceProfile,
       upstreamLimitations: result.value.limitations,
     });
-    return { output: evidence, evidence };
+    return {
+      output: evidence,
+      evidence,
+      ...(result.value.cachePolicy === undefined
+        ? {}
+        : { cachePolicy: result.value.cachePolicy }),
+    };
   }
   let result = await session.execute(tool, input.arguments, { signal });
   if (
@@ -548,7 +579,9 @@ const executeAnalysisTool = async (input: {
   }
   if (!result.ok) return { output: cliError(result.error) };
   const evidence = createEvidence(
-    result.value.subject ?? input.openedTarget,
+    result.value.subject === undefined
+      ? input.openedTarget
+      : (result.value.subject ?? undefined),
     result.value.provider,
     {
       operation: tool,
@@ -632,6 +665,19 @@ const prepareSnapshot = async (options: {
   return ok({ snapshot: loaded.value, target: target.value });
 };
 
+const inspectBundleResourceInput = async (
+  path: string,
+): Promise<Result<boolean, BinaryTargetError>> => {
+  const callerPath = absoluteCallerPath(path);
+  try {
+    return ok((await stat(callerPath)).isDirectory());
+  } catch (cause: unknown) {
+    const failure = classifyBinaryTargetFilesystemFailure(callerPath, cause);
+    if (failure !== undefined) return err(failure);
+    throw cause;
+  }
+};
+
 const allowsSnapshotReplay = (
   route: SessionProviderRoute,
   tool:
@@ -658,11 +704,28 @@ const analysisProfileForRoute = (
     | DirectAnalysisTool,
 ): AnalysisProfileCommitment | undefined => {
   const profile = route.profile;
-  if (profile === null || profile === undefined) return undefined;
+  const nativeDispatchProfile =
+    profile === null || profile === undefined
+      ? nativeDispatchBindingProfile(route, tool)
+      : undefined;
+  if (profile === null || profile === undefined) {
+    if (nativeDispatchProfile === undefined) return undefined;
+    return isWorkflowEvidenceTool(tool)
+      ? workflowAnalysisProfile(nativeDispatchProfile, tool)
+      : nativeDispatchProfile;
+  }
   if (isWorkflowEvidenceTool(tool))
     return workflowAnalysisProfile(profile, tool);
   const provider = providerIdentityForRoute(route, tool);
   return provider.id === profile.provider.id ? profile : undefined;
+};
+
+const nativeDispatchBindingProfile = (
+  route: SessionProviderRoute,
+  operation: string,
+): AnalysisProfileCommitment | undefined => {
+  if (operation !== "inspect_native_dispatch_metadata") return undefined;
+  return profilelessNativeDispatchProfile(route);
 };
 
 /** Mirror BinarySession.providerIdentity for a route not opened yet. */
@@ -681,7 +744,7 @@ const analysisProfileForEvidence = (
     | DirectAnalysisTool,
 ): AnalysisProfileCommitment | undefined => {
   if (!isWorkflowEvidenceTool(tool)) return session.analysisProfile(tool);
-  return session.analysisProfile();
+  return session.analysisProfile() ?? session.analysisProfile(tool);
 };
 
 const isWorkflowEvidenceTool = (

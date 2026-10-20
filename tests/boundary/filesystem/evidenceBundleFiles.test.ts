@@ -29,6 +29,9 @@ import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js"
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { writeTextParts } from "../../../src/application/JsonFiles.js";
+import { failFileReadAfterAbort } from "../../support/failFileReadAfterAbort.js";
+import { holdFirstFileRead } from "../../support/holdFirstFileRead.js";
+import { JsonInputPhysicalReadFailure } from "../../../src/application/JsonInputFile.js";
 import {
   createEvidenceBundle,
   parseEvidenceBundle,
@@ -53,10 +56,10 @@ it.each([
   async (_, read) => {
     const root = await createTestTempDirectory("rea-bundle-pre-cancel-");
     const controller = new AbortController();
-    controller.abort(new Error("cancel before bundle read"));
-    expect(
-      await read(join(root, "missing.json"), controller.signal),
-    ).toMatchObject({
+    const reason = new Error("cancel before bundle read");
+    controller.abort(reason);
+    const result = await read(join(root, "missing.json"), controller.signal);
+    expect(result).toMatchObject({
       ok: false,
       error: {
         _tag: "AnalysisCancelledError",
@@ -64,7 +67,102 @@ it.each([
         cause: controller.signal.reason,
       },
     });
+    if (result.ok) throw new Error("Expected cancelled bundle read");
+    expect(result.error.cause).toBe(reason);
     expect(await readdir(root)).toEqual([]);
+  },
+);
+
+it.each([
+  ["mutable", readEvidenceBundle],
+  ["immutable", readImmutableEvidenceBundle],
+] as const)(
+  "preserves the caller cancellation reason during %s read",
+  async (_, read) => {
+    const root = await createTestTempDirectory("rea-bundle-read-cancel-");
+    const path = join(root, "bundle.json");
+    await writeFile(path, JSON.stringify(bundle()));
+    const reader = await holdFirstFileRead(path);
+    const controller = new AbortController();
+    const reason = new Error("stop bundle import");
+    try {
+      const pending = read(path, controller.signal);
+      await reader.firstRead;
+      controller.abort(reason);
+      reader.release();
+      const result = await pending;
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisCancelledError",
+          operation: "import_evidence_bundle",
+        },
+      });
+      if (result.ok) throw new Error("Expected cancelled bundle read");
+      expect(result.error.cause).toBe(reason);
+    } finally {
+      controller.abort(reason);
+      reader.release();
+      vi.restoreAllMocks();
+    }
+  },
+);
+
+it.each([
+  ["mutable", readEvidenceBundle],
+  ["immutable", readImmutableEvidenceBundle],
+] as const)(
+  "keeps the physical null read cause for %s import after cancellation",
+  async (_, read) => {
+    const root = await createTestTempDirectory("rea-bundle-late-io-");
+    const path = join(root, "bundle.json");
+    await writeFile(path, JSON.stringify(bundle()));
+    const controller = new AbortController();
+    await failFileReadAfterAbort(
+      path,
+      controller,
+      new Error("later abort"),
+      null,
+    );
+    try {
+      const result = await read(path, controller.signal);
+      expect(result).toMatchObject({
+        ok: false,
+        error: { _tag: "EvidenceFileError", reason: "io", path },
+      });
+      if (result.ok) throw new Error("Expected physical JSON read failure");
+      expect(result.error.cause).toBeNull();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  },
+);
+
+it.each([
+  ["mutable", readEvidenceBundle],
+  ["immutable", readImmutableEvidenceBundle],
+] as const)(
+  "keeps an identical physical and abort reason for %s import",
+  async (_, read) => {
+    const root = await createTestTempDirectory("rea-bundle-identical-abort-");
+    const path = join(root, "bundle.json");
+    await writeFile(path, JSON.stringify(bundle()));
+    const controller = new AbortController();
+    const physical = new JsonInputPhysicalReadFailure(
+      Object.assign(new Error("physical EIO"), { code: "EIO" }),
+    );
+    await failFileReadAfterAbort(path, controller, physical, physical);
+    try {
+      const result = await read(path, controller.signal);
+      expect(result).toMatchObject({
+        ok: false,
+        error: { _tag: "EvidenceFileError", reason: "io" },
+      });
+      if (result.ok) throw new Error("Expected physical JSON read failure");
+      expect(result.error.cause).toBe(physical);
+    } finally {
+      vi.restoreAllMocks();
+    }
   },
 );
 
@@ -74,10 +172,13 @@ it("preserves the failed-close owner when import is also cancelled", async () =>
   await writeFile(path, JSON.stringify(bundle()));
   const controller = new AbortController();
   const cleanupCause = new Error("fixture close failure");
+  const cancellationReason = new JsonInputPhysicalReadFailure(
+    new Error("opaque cancellation reason"),
+  );
   const close = vi
     .spyOn(OwnedFileHandle.prototype, "close")
     .mockImplementationOnce(async () => {
-      controller.abort(new Error("cancel during cleanup"));
+      controller.abort(cancellationReason);
       throw cleanupCause;
     });
   let failure: unknown;
@@ -167,12 +268,13 @@ describe("evidence bundle export cancellation", () => {
       const path = join(root, "bundle.json");
       if (overwrite) await writeFile(path, "original");
       const controller = new AbortController();
+      const cancellationReason = new Error("cancel staged publication");
       let closed = false;
       let continued = false;
       function* parts() {
         try {
           yield "staged partial data";
-          controller.abort();
+          controller.abort(cancellationReason);
           yield "cancelled data";
           continued = true;
           yield "unreachable";
@@ -190,6 +292,7 @@ describe("evidence bundle export cancellation", () => {
         error: {
           _tag: "AnalysisCancelledError",
           operation: "export_evidence_bundle",
+          cause: cancellationReason,
         },
       });
       expect(closed).toBe(true);
@@ -262,10 +365,9 @@ it.each([1, 2])(
       expect(attempts).toBe(2);
       expect(result.error._tag).toBe("AnalysisCancelledError");
       expect(result.error.partialObservation).toBe(parent);
-      expect(result.error.cause).toMatchObject({
-        cleanupCause,
-        cause: { cause: reason },
-      });
+      expect(result.error.cause).toBe(reason);
+      expect(result.error.cleanupPrimary?.cause).toBe(reason);
+      expect(result.error.cleanup?.reason).toBe(cleanupCause.message);
       const incomplete = failedAttempts === 2;
       expect(result.error.cleanupIncomplete).toBe(incomplete);
       expect(result.error.cleanupResources).toEqual(

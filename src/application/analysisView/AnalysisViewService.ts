@@ -22,6 +22,7 @@ import {
   inspectAnalysisViewInputSchema,
   projectAnalysisView,
   type AnalysisViewResult,
+  type AnalysisViewRequest,
   type InspectAnalysisViewInput,
 } from "../../domain/analysisView/analysisView.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
@@ -149,6 +150,8 @@ export const inspectAnalysisViewValidated = (
     {
       evidenceId: parent.evidence_id,
       operation: parent.operation,
+      provider: parent.provider,
+      analysisProfileDigest: parent.analysis_profile?.digest ?? null,
       normalizedResult:
         immutableJsonSnapshotMember(parent, "normalized_result") ??
         parent.normalized_result,
@@ -175,11 +178,11 @@ export const inspectAnalysisViewValidated = (
   if (!projected.ok) return projected;
   if (
     parent.subject !== null &&
-    parent.subject.digest.sha256 !== projected.value.artifact.sha256
+    parent.subject.digest.sha256 !== projected.value.artifact?.sha256
   )
     return err(
       new EvidenceIntegrityError(
-        `Parent subject SHA-256 ${parent.subject.digest.sha256} differs from analysis artifact SHA-256 ${projected.value.artifact.sha256}.`,
+        `Parent subject SHA-256 ${parent.subject.digest.sha256} differs from analysis artifact SHA-256 ${projected.value.artifact?.sha256 ?? "unknown"}.`,
       ),
     );
   return ok(createAnalysisViewEvidence(input, parent, projected.value));
@@ -231,6 +234,14 @@ export const requireAnalysisViewRetention = (
 export const summarizeRetainedAnalysis = (
   evidence: Evidence,
   retention: AnalysisViewRetention,
+): Result<Evidence, AnalysisError> =>
+  projectRetainedAnalysis(evidence, retention, { kind: "summary" });
+
+/** Retain the complete owner observation and deliver one explicitly selected view. */
+export const projectRetainedAnalysis = (
+  evidence: Evidence,
+  retention: AnalysisViewRetention,
+  view: AnalysisViewRequest,
 ): Result<Evidence, AnalysisError> => {
   const ready = requireAnalysisViewRetention(evidence.operation, retention);
   if (!ready.ok) return ready;
@@ -239,7 +250,7 @@ export const summarizeRetainedAnalysis = (
   return inspectAnalysisViewValidated(
     {
       source: { kind: "retained-evidence", evidence_id: evidence.evidence_id },
-      view: { kind: "summary" },
+      view,
     },
     ready.value.evidenceById,
   );
@@ -337,7 +348,7 @@ const createAnalysisViewEvidence = (
       ? { relationshipCoverage: parent.relationship_coverage }
       : {}),
     locations: [
-      ...(result.artifact.path.length > 0
+      ...(result.artifact != null && result.artifact.path.length > 0
         ? [{ kind: "artifact-path" as const, path: result.artifact.path }]
         : []),
       ...(result.kind === "native" &&

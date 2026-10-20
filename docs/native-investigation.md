@@ -425,6 +425,10 @@ complete observation.
   vtable descriptors. Records include exact virtual addresses/file offsets and
   artifact evidence. Vtable indexes are metadata word offsets; witness indexes
   start after the conformance header. Names unavailable in metadata remain null.
+  The `swift_class_vtable_descriptors` coverage counters count examined vtable
+  slots and successfully decoded slots, rather than type-section entries.
+  The `objc_class_method_ivar_metadata` counters count admitted class and
+  metaclass objects and successfully decoded objects.
   Pointers are decoded through the image's fixups:
   - `LC_DYLD_CHAINED_FIXUPS` rebases and binds, including the authenticated
     arm64e formats;
@@ -465,6 +469,21 @@ complete observation.
   workflow tries direct metadata first and uses the symbol fallback only when
   that operation is unavailable; runtime failures remain failures rather than
   being replaced by symbol-only results.
+
+`get_objc_classes` keeps names from the provider inventory. It coalesces rows
+only when their exact selected-image pointer slots decode to the same class
+import, including its binding stream, raw library ordinal, resolved library, weak status, and addend. A literal filter is
+applied to the original names before that join; if the filter selects only an
+alias, the output keeps that exact row. `identity_coverage` distinguishes a
+complete selected-inventory scan from partial, unsupported, and unknown cases.
+Recognized Mach-O formats outside the native metadata reader's support retain
+the provider's class labels with unknown import identity; malformed headers and
+read failures remain errors.
+The join also requires matching whole-artifact digests and matching provider-
+owned selected-image facts: container, byte range, full raw CPU type/subtype,
+and FAT table digest when present. A missing or overridden loader selection
+remains unknown; the result describes agreement on the selected artifact image,
+not an atomic observation of a running process or whole-program class coverage.
 
 ## Native desktop observation
 

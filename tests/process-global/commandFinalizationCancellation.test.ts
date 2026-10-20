@@ -151,17 +151,33 @@ it.each([
   ["evidence-file", "control"],
   ["evidence-file", "SIGINT"],
   ["evidence-file", "SIGTERM"],
+  ["request-file", "control"],
+  ["request-file", "SIGINT"],
+  ["request-file", "SIGTERM"],
 ] as const)(
   "preserves the analysis-view exit status after %s close and logging: %s",
   async (source, signal) => {
     const root = await createTestTempDirectory("rea-analysis-view-signal-");
     const parent = analysisViewLayoutEvidence();
-    const filename = source === "bundle" ? "bundle.json" : "evidence.json";
+    const filename = `${source}.json`;
     const path = join(root, filename);
+    const request = {
+      source:
+        source === "bundle"
+          ? { kind: "retained-evidence", evidence_id: parent.evidence_id }
+          : source === "evidence-file"
+            ? { kind: "evidence-file", path }
+            : { kind: "inline", evidence: parent },
+      view: { kind: "summary" },
+    };
     await writeFile(
       path,
       JSON.stringify(
-        source === "bundle" ? createEvidenceBundle([parent]) : parent,
+        source === "bundle"
+          ? createEvidenceBundle([parent])
+          : source === "evidence-file"
+            ? parent
+            : request,
       ),
     );
     const originalClose = OwnedFileHandle.prototype.close;
@@ -184,13 +200,7 @@ it.each([
       await cli.serve(
         [
           "inspect-analysis-view",
-          JSON.stringify({
-            source:
-              source === "bundle"
-                ? { kind: "retained-evidence", evidence_id: parent.evidence_id }
-                : { kind: "evidence-file", path },
-            view: { kind: "summary" },
-          }),
+          source === "request-file" ? path : JSON.stringify(request),
           ...(source === "bundle" ? ["--evidence-bundle", path] : []),
           "--json",
         ],
