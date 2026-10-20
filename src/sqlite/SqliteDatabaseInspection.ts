@@ -469,8 +469,16 @@ const readRows = (
       .join(", ")} FROM ${source} LIMIT ?`,
   );
   lengths.setReturnArrays(true);
-  for (const raw of lengths.iterate(limit))
+  let hasMore = false;
+  let count = 0;
+  for (const raw of lengths.iterate(limit + 1)) {
+    if (count === limit) {
+      hasMore = true;
+      break;
+    }
+    count++;
     budget.beforeProjection(cellByteLengths.parse(raw));
+  }
   const statement = db.prepare(`SELECT ${projection} FROM ${source} LIMIT ?`);
   statement.setReturnArrays(true);
   const rows: NonNullable<SqliteDatabase["rows"]> = {
@@ -479,21 +487,17 @@ const readRows = (
     values: [],
     row_limit: limit,
     returned_rows: 0,
-    truncated: false,
+    truncated: hasMore,
     order: "unspecified",
   };
-  for (const raw of statement.iterate(limit)) {
+  for (const raw of statement.iterate(count)) {
     const rawRow = arrayRow.parse(raw);
-    // Hex expansion already belongs to the retained-output budget, before decoding/copying cells.
     budget.beforeDecode(rawRow);
     const values = rawRow.map((value) => cell(value, encoding));
     budget.retain(values);
     rows.values.push(values);
   }
   rows.returned_rows = rows.values.length;
-  rows.truncated =
-    db.prepare(`SELECT 1 FROM ${source} LIMIT 1 OFFSET ?`).get(limit) !==
-    undefined;
   return rows;
 };
 
@@ -507,7 +511,7 @@ export const inspectSqliteDatabaseSnapshot = (
     allowExtension: false,
     readBigInts: true,
     enableDoubleQuotedStringLiterals: false,
-    timeout: 0,
+    timeout: 2000,
     limits: {
       length: SQLITE_DATABASE_LIMITS.outputBytes,
       sqlLength: SQLITE_DATABASE_LIMITS.outputBytes,
