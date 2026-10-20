@@ -64,11 +64,13 @@ export const servedCatalog = (
   const tools = environmentToolDefinitions(
     fromState
       ? {
-          ...source.manifest,
-          tools: source.manifest.tools.filter(servedFromState),
+          ...source,
+          manifest: {
+            ...source.manifest,
+            tools: source.manifest.tools.filter(servedFromState),
+          },
         }
-      : source.manifest,
-    source.evidenceId,
+      : source,
     name,
     { operation, dataPlane },
   );

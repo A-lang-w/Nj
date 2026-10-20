@@ -390,7 +390,7 @@ describe("planEnvironmentBundle without a state", () => {
     const reads = servedSource.manifest.tools.filter(
       ({ method }) => method === "GET",
     );
-    const tools = Array.from({ length: 350 }, (_, index) => {
+    const tools = Array.from({ length: 310 }, (_, index) => {
       const tool = reads[index % reads.length]!;
       return index < reads.length
         ? tool
@@ -416,7 +416,7 @@ describe("planEnvironmentBundle without a state", () => {
       served: false,
       code: "resource_constraint",
     });
-    expect(planned.value.toolCount).toBe(350);
+    expect(planned.value.toolCount).toBe(310);
     expect(planned.value.check).toEqual({
       tool: "get_annotations",
       recordOrdinal: 25,
