@@ -53,7 +53,7 @@ const expectMissingInputFailureText = (text: string, path: string): void => {
   for (const value of [
     "invalid_request",
     "invalid_input",
-    "Correct the listed arguments and retry.",
+    "Correct the listed fields, then retry.",
     path,
     "read-failed",
     "ENOENT",
@@ -87,7 +87,8 @@ it.each(["json", "toon", "yaml", "md"] as const)(
             category: "invalid_input",
             retryable: true,
             remediation: {
-              action: "Correct the listed arguments and retry.",
+              action:
+                "Read the declared input schema or CLI usage for trace-application-feature; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.",
             },
             details: {
               input_path: missingPath,
