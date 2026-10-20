@@ -305,6 +305,40 @@ describe("checked lines", () => {
       view.writes.find((candidate) => candidate.effect === "delete"),
     ).toMatchObject({ served: true, checked_record_ordinals: [7, 9] });
   });
+  /** Organisations listed only under encoded or other spellings, a delete in each, then a list of the first spelled plainly. */
+  const deletedThenPlain = (listed: readonly Book[]): TimedCaptureRow[] => {
+    const third = "/api/orgs/gamma3/books";
+    const fourth = book(4, "Fourth Book", "2026-10-01T11:00:00Z");
+    return [
+      ["GET", ENCODED, [SECOND_BOOK]],
+      ["GET", OTHER, [THIRD_BOOK]],
+      ["GET", third, [fourth]],
+      ["GET", `${ENCODED}/2`, SECOND_BOOK],
+      ["GET", `${OTHER}/3`, THIRD_BOOK],
+      ["DELETE", `${ENCODED}/2`, "", 204],
+      ["GET", `${ENCODED}/2`, BOOK_NOT_FOUND, 404],
+      ["DELETE", `${OTHER}/3`, "", 204],
+      ["GET", `${OTHER}/3`, BOOK_NOT_FOUND, 404],
+      ["GET", PLAIN, [...listed]],
+    ];
+  };
+
+  it("checks a read spelled plainly against the encoded line serving answers it from", () => {
+    const deleteOf = (listed: readonly Book[]) =>
+      environmentStateViewOf(timedCaptureEvidence(deletedThenPlain(listed)), [
+        "sibling-variance",
+      ]).writes.find((candidate) => candidate.effect === "delete");
+    // Serving lists the encoded collection for the plain argument, which no longer holds the book.
+    expect(deleteOf([SECOND_BOOK])).toMatchObject({
+      served: false,
+      reason: "contradicted",
+      contradicted_by: 9,
+    });
+    expect(deleteOf([])).toMatchObject({
+      served: true,
+      checked_record_ordinals: [6, 8, 9],
+    });
+  });
 });
 
 describe("insert rules", () => {

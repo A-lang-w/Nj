@@ -209,4 +209,7 @@ write tools.
 A third round kept a checked line's path spelling (replay prefers a verbatim
 one, so two spellings of one parent stay separate lines) and compared a later
 slug rule with the values earlier calls recorded rather than only their member
-names; both new tests fail on the previous head.
+names; both new tests fail on the previous head. A fourth round chose a read's
+line as replay does, so a read spelled plainly is checked against the encoded
+line that answers it, and its list against that line's collection; its test
+fails on the previous head.

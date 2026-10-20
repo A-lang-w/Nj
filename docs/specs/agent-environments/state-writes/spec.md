@@ -173,9 +173,10 @@ from the state:
 
 - an item read of a state-backed item view;
 - a list or document read on one of its view's checked request lines,
-  matched as serving matches a call to a line: the path as spelled, since
-  replay prefers a verbatim spelling, and the query values decoded, in any
-  order.
+  chosen as replay chooses the line for the read's call: each path parameter
+  the read's value verbatim or once percent-decoded, preferring verbatim
+  spellings, then recorded order, and the query values decoded, in any order.
+  A list is compared as served from the collection of that line.
 
 **Comparison.** The read's answer is the full response serving would give from
 the copy: an item read's entity rendered into its item view's base recording,
