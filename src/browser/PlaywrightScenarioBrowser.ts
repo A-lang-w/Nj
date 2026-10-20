@@ -10,7 +10,7 @@ import { access, chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import type {
   Browser,
@@ -342,16 +342,23 @@ const publishAndroidPlaywrightBrowsersPath = async (
   process.env.PLAYWRIGHT_BROWSERS_PATH = browsersPath;
 };
 
+const TERMUX_CHROMIUM_WRAPPERS = new Set(["chromium", "chromium-browser"]);
+
 /**
- * Termux's `chromium-browser` wrapper lives in `$PREFIX/bin`. Chromium then
- * looks for `icudtl.dat` next to that wrapper and exits. The real binary
- * sits next to the ICU file in `$PREFIX/lib/chromium`.
+ * Termux's `chromium` and `chromium-browser` wrappers live in `$PREFIX/bin`.
+ * Chromium then looks for `icudtl.dat` next to that wrapper and exits. The
+ * real binary sits next to the ICU file in `$PREFIX/lib/chromium`. Other
+ * selected executables stay as the caller wrote them.
  */
 const resolveAndroidChromiumExecutable = async (
   executablePath: string,
 ): Promise<string> => {
   const resolved = resolve(executablePath);
-  if (process.platform !== "android") return resolved;
+  if (
+    process.platform !== "android" ||
+    !TERMUX_CHROMIUM_WRAPPERS.has(basename(resolved))
+  )
+    return resolved;
   const sibling = join(dirname(resolved), "..", "lib", "chromium", "chrome");
   try {
     await access(sibling, fsConstants.F_OK);
