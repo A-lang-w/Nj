@@ -84,41 +84,32 @@ const writeReceiverReviewSources = async (root: string): Promise<void> => {
   ];
   for (const [index, source] of sources.entries())
     await writeFile(join(root, `receiver-review-${index}.ts`), source);
-  await writeFile(
-    join(root, "commonjs-callback.cjs"),
-    `Object.assign=(t,get)=>{get().require=replacement};
+  for (const [name, source] of Object.entries({
+    "commonjs-callback.cjs": `Object.assign=(t,get)=>{get().require=replacement};
      Object.assign({},()=>module);require('fs').readFileSync('wrong-callback');`,
-  );
-  await writeFile(
-    join(root, "callable-scalar.cjs"),
-    `const label=function named(){};
+    "callable-scalar.cjs": `const label=function named(){};
      Object.assign=(t,key)=>{t[key]=1};Object.assign({},label.name);
      require('fs').readFileSync('callable-name.json');`,
-  );
-  await writeFile(
-    join(root, "callable-property-reference.cjs"),
-    `const label=function named(){};
+    "callable-property-reference.cjs": `const label=function named(){};
      Object.defineProperty(label,'name',{value:module});
      Object.assign=(t,v)=>{v.require=replacement};Object.assign({},label.name);
      require('fs').readFileSync('wrong-callable-name');`,
-  );
-  await writeFile(
-    join(root, "callable-escaped-property.cjs"),
-    `const label=()=>module;patch(label);
+    "callable-escaped-property.cjs": `const label=()=>module;patch(label);
      Object.assign=(t,v)=>{v.require=replacement};Object.assign({},label.name);
      require('fs').readFileSync('wrong-escaped-callable');`,
-  );
-  await writeFile(
-    join(root, "callable-captured-property.cjs"),
-    `const label=()=>module;const display=label.name;patch(label);
+    "callable-captured-property.cjs": `const label=()=>module;const display=label.name;patch(label);
      Object.assign=(t,key)=>{t[key]=1};Object.assign({},display);
      require('fs').readFileSync('callable-captured.json');`,
-  );
-  await writeFile(
-    join(root, "aliased-mutator.cjs"),
-    `const O=Object;O.assign=(t,key)=>{t[key]=1};O.assign({},1);
+    "aliased-mutator.cjs": `const O=Object;O.assign=(t,key)=>{t[key]=1};O.assign({},1);
      require('fs').readFileSync('aliased-mutator.json');`,
-  );
+    "callable-primitive-prefix.cjs": `const label=function named(){};patch(label.name);
+     Object.assign=(t,key)=>{t[key]=1};Object.assign({},label.name.length);
+     require('fs').readFileSync('callable-prefix.json');`,
+    "callable-changed-prefix.cjs": `const label=()=>module;patch(label);
+     Object.assign=(t,v)=>{v.require=replacement};Object.assign({},label.name.length);
+     require('fs').readFileSync('wrong-callable-prefix');`,
+  }))
+    await writeFile(join(root, name), source);
   await writeFile(
     join(root, "commonjs-bound-callback.cjs"),
     `Object.assign=(t,get)=>{get().require=replacement};
@@ -287,6 +278,7 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     "bound-separate.json",
     "callable-captured.json",
     "callable-name.json",
+    "callable-prefix.json",
     "commonjs-primitive-union.json",
     "constructed-receiver.json",
     "copied-unrelated.json",

@@ -989,14 +989,16 @@ const writesModuleRequire = (
       // unknown call results and closures must retain the original uncertainty.
       written?: true;
       callee?: true;
-      changed?: true;
+      // The immediate prefix may itself be scalar (name in name.length).
+      // Earlier ancestors and opaque binding effects can replace that scalar.
+      changed?: "parent" | "ancestor";
     }[] = nodes.map((node) => ({
       node,
       path: [],
       ...(calleeRoot ? { callee: true } : {}),
     }));
     const traversals = Array.from(
-      { length: 8 },
+      { length: 12 },
       () => new WeakMap<t.Node, Map<t.Node, SemanticPropertyPathCoverage>>(),
     );
     let timeDependent = false;
@@ -1020,7 +1022,13 @@ const writesModuleRequire = (
       const readAt = capturedAt ?? value;
       const traversal =
         traversals[
-          (inheritedChange ? 4 : 0) + (callee ? 2 : 0) + (written ? 1 : 0)
+          (inheritedChange === "ancestor"
+            ? 8
+            : inheritedChange === "parent"
+              ? 4
+              : 0) +
+            (callee ? 2 : 0) +
+            (written ? 1 : 0)
         ]!;
       const captures =
         traversal.get(value) ?? new Map<t.Node, SemanticPropertyPathCoverage>();
@@ -1044,7 +1052,7 @@ const writesModuleRequire = (
         )) {
           timeDependent = true;
           if (semanticEffectTiming(readAt, effect, state) !== "after")
-            changed = true;
+            changed = "ancestor";
         }
         for (const effect of binding.escapedPaths) {
           if (
@@ -1065,7 +1073,10 @@ const writesModuleRequire = (
             semanticEffectTiming(readAt, effect.node, state) !== "after" &&
             !nativeReplacement(effect.node)
           )
-            changed = true;
+            changed =
+              changed === "ancestor" || effect.path.length < path.length - 1
+                ? "ancestor"
+                : "parent";
         }
       }
       const context = {
@@ -1112,8 +1123,8 @@ const writesModuleRequire = (
               node: reference.node,
               path: [...reference.path, ...path.slice(effect.path.length)],
               readAt,
+              ...context,
               written: true,
-              ...(callee ? { callee } : {}),
             });
         }
       }
@@ -1269,7 +1280,12 @@ const writesModuleRequire = (
         // the selected intrinsic scalar before treating the whole callable as
         // a value that unknown code can invoke.
         if (isPrimitiveJavaScriptCallableProperty(value, path)) {
-          if (changed) return true;
+          if (
+            changed !== undefined &&
+            (changed !== "parent" ||
+              !isPrimitiveJavaScriptCallableProperty(value, path.slice(0, -1)))
+          )
+            return true;
           continue;
         }
         // A callable value can expose captures or results when unknown code
@@ -1319,8 +1335,8 @@ const writesModuleRequire = (
             node: reference.node,
             path: [...reference.projection, ...path],
             readAt,
+            ...context,
             written: true as const,
-            ...(callee ? { callee } : {}),
           })),
         );
       } else if (

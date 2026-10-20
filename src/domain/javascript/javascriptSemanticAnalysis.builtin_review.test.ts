@@ -15,6 +15,9 @@ import {
   callableEscapedPropertyCases,
   aliasedMutatorCalleeCases,
   aliasedMutatorExposureCases,
+  callablePrimitivePrefixCases,
+  callableChangedPrefixCases,
+  callableSavedPrefixUncertainty,
 } from "./javascriptCallableProperties.fixture.js";
 import {
   commonJsCallbackExposureCases,
@@ -1933,3 +1936,32 @@ it.each([...callableEscapedPropertyCases, ...aliasedMutatorExposureCases])(
     ).toEqual([]);
   },
 );
+
+it.each(callablePrimitivePrefixCases)(
+  "preserves reads after only a primitive callable prefix escapes: %s",
+  (body) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `${body}require('fs').readFileSync('kept');`,
+      ).configurationOperations.map(({ key }) => key),
+    ).toEqual(["kept"]);
+  },
+);
+
+it.each(callableChangedPrefixCases)(
+  "retains changes to the callable or an overridden prefix: %s",
+  (body) => {
+    expect(
+      analyzeJavaScriptSemantics(`${body}require('fs').readFileSync('wrong');`)
+        .configurationOperations,
+    ).toEqual([]);
+  },
+);
+
+it("retains uncertainty for a saved callable property selected again after escape", () => {
+  expect(
+    analyzeJavaScriptSemantics(
+      `${callableSavedPrefixUncertainty}require('fs').readFileSync('unproven');`,
+    ).configurationOperations,
+  ).toEqual([]);
+});
