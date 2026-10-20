@@ -191,6 +191,8 @@ it("bounds folded-name retention against the actual Ghidra file admission", () =
   expect(caught.remediationAction).toContain(
     "The IL2CPP Ghidra seed-file allowance",
   );
+  expect(caught.remediationAction).toContain("fixed byte allowance");
+  expect(caught.remediationAction).not.toContain("fixed count");
   expect(caught.remediationAction).not.toContain("seed-name allowance");
   expect(caught.retryable).toBe(false);
 });
@@ -230,5 +232,7 @@ it("refuses names the real Ghidra seed parser cannot admit", () => {
   expect(caught.remediationAction).toContain(
     "The IL2CPP Ghidra seed-name allowance",
   );
+  expect(caught.remediationAction).toContain("fixed count");
+  expect(caught.remediationAction).not.toContain("fixed byte allowance");
   expect(caught.retryable).toBe(false);
 });

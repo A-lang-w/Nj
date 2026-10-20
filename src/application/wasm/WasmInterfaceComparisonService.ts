@@ -136,7 +136,7 @@ export const compareWasmInterfaces = async (
           { maximum_bytes: WASM_INTERFACE_REPRESENTATION_BYTES },
           fixedAllowanceOptions(
             "The WASM interface comparison inventory",
-            "count",
+            "bytes",
           ),
         );
       if (++work % 256 === 0) {

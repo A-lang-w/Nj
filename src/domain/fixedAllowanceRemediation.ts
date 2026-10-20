@@ -5,6 +5,7 @@
 export type FixedAllowanceKind =
   | "parser"
   | "count"
+  | "bytes"
   | "report"
   | "input"
   | "capture"
@@ -22,6 +23,8 @@ export const fixedAllowanceRemediation = (
       return `${allowance} is a fixed allowance. Worker memory limits, inherited limits, and additional host memory do not raise it. Select another complete input within the allowance when that preserves the needed observation. ${unchangedRequest}`;
     case "count":
       return `${allowance} is a fixed count. Waiting for an active analysis to finish does not raise it. ${unchangedRequest}`;
+    case "bytes":
+      return `${allowance} is a fixed byte allowance. Waiting for an active analysis to finish does not raise it. ${unchangedRequest}`;
     case "report":
       return `${allowance} is a fixed report allowance. This refusal does not leave a completed report or Evidence record to retrieve, and complete CLI JSON does not raise it. ${unchangedRequest}`;
     case "input":

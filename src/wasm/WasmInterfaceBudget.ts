@@ -12,7 +12,7 @@ export class WasmInterfaceBudget {
         "capacity",
         "Typed WASM interface decoding exceeds the WABT output representation budget",
         { maximum_bytes: WASM_INTERFACE_REPRESENTATION_BYTES },
-        fixedAllowanceOptions("The typed WASM interface inventory", "count"),
+        fixedAllowanceOptions("The typed WASM interface inventory", "bytes"),
       );
     this.#remaining -= bytes;
   }

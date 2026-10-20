@@ -27,6 +27,8 @@ it("refuses typed WASM interface growth without asking the caller to wait", () =
     expect(projected.remediation.action).toContain(
       "typed WASM interface inventory",
     );
+    expect(projected.remediation.action).toContain("fixed byte allowance");
+    expect(projected.remediation.action).not.toContain("fixed count");
     expect(projected.remediation.action).not.toMatch(
       /Wait for an active analysis/u,
     );

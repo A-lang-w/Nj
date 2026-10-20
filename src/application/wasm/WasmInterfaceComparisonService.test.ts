@@ -243,6 +243,8 @@ it("refuses two admitted inventories that together exceed the comparison cap", a
   expect(projected.remediation.action).toContain(
     "The WASM interface comparison inventory",
   );
+  expect(projected.remediation.action).toContain("fixed byte allowance");
+  expect(projected.remediation.action).not.toContain("fixed count");
   expect(projected.remediation.action).not.toMatch(
     /Wait for an active analysis/u,
   );

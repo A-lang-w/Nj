@@ -12,7 +12,12 @@ const forbidden = {
     /available host memory\. Retry/u,
     /worker memory limits and available/u,
   ],
-  count: [/Wait for an active analysis/u, /\bretry\b/iu],
+  count: [
+    /Wait for an active analysis/u,
+    /\bretry\b/iu,
+    /fixed byte allowance/u,
+  ],
+  bytes: [/Wait for an active analysis/u, /\bretry\b/iu, /fixed count/u],
   report: [/get_evidence_bundle/u, /complete CLI JSON output/u],
   input: [/evidence reply/u, /file-size allowance for the evidence/u],
   capture: [/available host memory\. Retry/u],
@@ -23,6 +28,7 @@ describe("fixed allowance recovery", () => {
   it.each([
     ["parser", "memory"],
     ["count", "capacity"],
+    ["bytes", "capacity"],
     ["report", "transport"],
     ["input", "file-size"],
     ["capture", "memory"],
