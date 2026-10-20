@@ -395,6 +395,52 @@ describe("identityless lineage refresh follows tree membership", () => {
   });
 });
 
+describe("identityless lineage refresh rechecks an initial descendant", () => {
+  const row = (
+    pid: number,
+    parentPid: number,
+    processGroupId = pid,
+  ): ProcessTableEntry => ({
+    pid,
+    parentPid,
+    processGroupId,
+    state: "S",
+    command: `pid-${String(pid)}`,
+  });
+
+  it("rejects a reused PID after an earlier descendant token matched", async () => {
+    let reads = 0;
+    const environment = vi.fn((pid: number) => {
+      if (pid === 101)
+        return Promise.reject(
+          new Error("process exited during environment read"),
+        );
+      if (pid !== 102)
+        return Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" });
+      reads += 1;
+      return Promise.resolve(
+        reads === 1 ? { REA_PROCESS_RUN_ID: "run-token" } : {},
+      );
+    });
+    const descendant = row(102, 100, 102);
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([row(100, 1, 100), descendant, row(101, 100)])
+      .mockResolvedValue([row(100, 1, 100), descendant]);
+    await expect(
+      observeOwnedProcessLineage(ownership, {
+        listProcesses,
+        environment,
+        signalGroup: vi.fn(),
+      }),
+    ).resolves.toMatchObject({
+      status: "unavailable",
+      reason: "process lineage contains an unowned or PID-reused process",
+    });
+    expect(reads).toBe(2);
+  });
+});
+
 describe("identityless lineage refresh publishes one row per PID", () => {
   const row = (
     pid: number,

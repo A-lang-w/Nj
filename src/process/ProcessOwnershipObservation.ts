@@ -270,6 +270,9 @@ export const observeOwnedProcessLineage = async (
           "process lineage contains an unowned or PID-reused process",
         );
       if (member.pid !== launcher.pid) verifiedDescendants.push(member);
+      const seeded = examinedRefresh.get(member.pid);
+      if (seeded !== undefined)
+        examinedRefresh.set(member.pid, { ...seeded, tokenChecked: true });
     } else {
       let refreshed: readonly ProcessTableEntry[];
       try {
