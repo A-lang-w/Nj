@@ -1,4 +1,4 @@
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -23,6 +23,46 @@ const application = async () => {
 };
 
 describe("JavaScript application input selection", () => {
+  it("preserves the selected path and host reason for an overlong name or link cycle", async () => {
+    const { root } = await application();
+    const longPath = join(root, "x".repeat(300));
+    const loopPath = join(root, "loop-a");
+    await symlink("loop-b", loopPath);
+    await symlink("loop-a", join(root, "loop-b"));
+
+    const longError = await analyzeFailure({ input_path: longPath });
+    const loopError = await analyzeFailure({ input_path: loopPath });
+    expect(longError).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["input_path"],
+            reason: "invalid_value",
+            message: expect.stringContaining(
+              `Selected input path exceeds the host filename length limit (ENAMETOOLONG): ${longPath}`,
+            ),
+          },
+        ],
+      },
+    });
+    expect(loopError).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["input_path"],
+            reason: "invalid_value",
+            message: expect.stringContaining(
+              `Selected input path contains a symbolic-link loop (ELOOP): ${loopPath}`,
+            ),
+          },
+        ],
+      },
+    });
+    expect(longError).not.toEqual(loopError);
+  });
+
   it("reports a missing input path as invalid input, not an artifact read failure", async () => {
     const { root } = await application();
     const missing = join(root, "missing");
