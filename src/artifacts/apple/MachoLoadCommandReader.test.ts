@@ -655,6 +655,49 @@ describe("LC_LAZY_LOAD_DYLIB_INFO payload budget", () => {
       ],
     });
   });
+});
+
+describe("LC_LAZY_LOAD_DYLIB_INFO string bounds", () => {
+  it("does not reuse a cached path that extends past a shorter payload", async () => {
+    const payload = new Uint8Array(48);
+    const view = new DataView(payload.buffer);
+    const path = new TextEncoder().encode("@rpath/libl.dylib");
+    view.setUint32(0, 24, true);
+    view.setUint32(20, 24, true);
+    payload.set(path, 24);
+    const image = machoImage({
+      commands: [
+        lazyLoadDylibInfoCommand(0, payload.length),
+        lazyLoadDylibInfoCommand(0, 24),
+      ],
+    });
+    const bytes = new Uint8Array(image.length + payload.length);
+    bytes.set(image);
+    bytes.set(payload, image.length);
+    const patched = new DataView(bytes.buffer);
+    patched.setUint32(32 + 8, image.length, true);
+    patched.setUint32(48 + 8, image.length, true);
+    expect(await read(bytes)).toMatchObject({
+      status: "malformed",
+      reason: expect.stringContaining("outside the payload"),
+    });
+    const truncated = machoImage({
+      commands: [
+        lazyLoadDylibInfoCommand(0, payload.length),
+        lazyLoadDylibInfoCommand(0, 40),
+      ],
+    });
+    const truncatedBytes = new Uint8Array(truncated.length + payload.length);
+    truncatedBytes.set(truncated);
+    truncatedBytes.set(payload, truncated.length);
+    const truncatedView = new DataView(truncatedBytes.buffer);
+    truncatedView.setUint32(32 + 8, truncated.length, true);
+    truncatedView.setUint32(48 + 8, truncated.length, true);
+    expect(await read(truncatedBytes)).toMatchObject({
+      status: "malformed",
+      reason: expect.stringContaining("unterminated"),
+    });
+  });
 
   it("rejects a load path taken from the payload header", async () => {
     const payload = new Uint8Array(24);

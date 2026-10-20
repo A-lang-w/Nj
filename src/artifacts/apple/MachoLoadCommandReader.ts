@@ -483,10 +483,16 @@ const readSegmentSpan = (
   };
 };
 
+interface CachedLazyString {
+  readonly text: string;
+  /** Absolute file offset of the terminating NUL. */
+  readonly end: number;
+}
+
 interface LazyPayloadWork {
   readonly dependencies: Map<string, MachoDependency>;
   readonly reads: { fileOffset: number; bytes: Uint8Array }[];
-  readonly strings: Map<number, string>;
+  readonly strings: Map<number, CachedLazyString>;
   payloadBytes: number;
   stringBytes: number;
 }
@@ -784,17 +790,25 @@ const payloadString = (
       "malformed",
       `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} offset ${offset} is inside the payload header`,
     );
-  const absolute = Number.isSafeInteger(fileOffset + offset)
-    ? fileOffset + offset
-    : undefined;
-  const cached =
-    absolute === undefined ? undefined : work.strings.get(absolute);
-  if (cached !== undefined) return cached;
   if (offset >= payload.byteLength)
     throw new MachoFormatIssue(
       "malformed",
       `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} offset ${offset} is outside the payload`,
     );
+  const absolute = Number.isSafeInteger(fileOffset + offset)
+    ? fileOffset + offset
+    : undefined;
+  const cached =
+    absolute === undefined ? undefined : work.strings.get(absolute);
+  if (cached !== undefined) {
+    const end = cached.end - fileOffset;
+    if (end < offset || end >= payload.byteLength)
+      throw new MachoFormatIssue(
+        "malformed",
+        `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} is unterminated`,
+      );
+    return cached.text;
+  }
   const end = payload.indexOf(0, offset);
   const scanned = (end < 0 ? payload.byteLength : end) - offset;
   work.stringBytes += scanned;
@@ -819,7 +833,8 @@ const payloadString = (
       `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} is not UTF-8`,
     );
   }
-  if (absolute !== undefined) work.strings.set(absolute, text);
+  if (absolute !== undefined && Number.isSafeInteger(fileOffset + end))
+    work.strings.set(absolute, { text, end: fileOffset + end });
   return text;
 };
 
