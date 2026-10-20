@@ -4,6 +4,7 @@ import {
   type AnalysisProvider,
 } from "../../../src/application/AnalysisProvider.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
+import { readAnalysisSnapshot } from "../../../src/application/binary/AnalysisSnapshotFiles.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import type { RecordUnknownInput } from "../../../src/domain/residualUnknown.js";
@@ -614,6 +615,58 @@ describe("fresh run identity", () => {
     expect(runIds).toHaveLength(2);
     expect(new Set(runIds).size).toBe(2);
     await session.close();
+  });
+});
+
+describe("open snapshot loading and cleanup recovery", () => {
+  it("loads a snapshot only after the in-turn cleanup recovery completes", async () => {
+    const [target] = await createBinarySessionTargets();
+    const beforeSource = createTestBinarySession(createCacheProvider([]));
+    const afterSource = createTestBinarySession(createCacheProvider([]));
+    const session = createTestBinarySession(createCacheProvider([]));
+    try {
+      await openAndExecuteAddressName(beforeSource, target, {
+        address: "0x1000",
+        document: "snapshot before cleanup recovery",
+      });
+      await openAndExecuteAddressName(afterSource, target, {
+        address: "0x1000",
+        document: "snapshot after cleanup recovery",
+      });
+      const before = beforeSource.exportAnalysisSnapshot();
+      const after = afterSource.exportAnalysisSnapshot();
+      if (!before.ok) throw before.error;
+      if (!after.ok) throw after.error;
+
+      const snapshotPath = join(
+        await createTestTempDirectory("rea-open-snapshot-recovery-"),
+        "analysis.json",
+      );
+      await writeFile(snapshotPath, JSON.stringify(before.value));
+      const events: string[] = [];
+      const opened = await session.open(target, {
+        beforeOpen: async () => {
+          events.push("cleanup recovery");
+          await writeFile(snapshotPath, JSON.stringify(after.value));
+          return resultOk(null);
+        },
+        loadSnapshot: async () => {
+          events.push("snapshot load");
+          return readAnalysisSnapshot(snapshotPath);
+        },
+      });
+
+      expect(opened.ok).toBe(true);
+      expect(events).toEqual(["cleanup recovery", "snapshot load"]);
+      expect(session.exportAnalysisSnapshot()).toMatchObject({
+        ok: true,
+        value: { entries: after.value.entries },
+      });
+    } finally {
+      await session.close();
+      await beforeSource.close();
+      await afterSource.close();
+    }
   });
 });
 

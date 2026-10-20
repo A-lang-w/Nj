@@ -272,13 +272,7 @@ export class BinarySession
     options: BinarySessionOpenOptions,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
-      const admitted = await this.#withLoadedSnapshot(options);
-      if (!admitted.ok) return admitted;
-      return this.#openWithinTransition(
-        admittedThrough,
-        () => resolve(admitted.value),
-        admitted.value,
-      );
+      return this.#openWithinTransition(admittedThrough, resolve, options);
     });
   }
 
@@ -297,11 +291,10 @@ export class BinarySession
 
   async #openWithinTransition(
     admittedThrough: number,
-    resolve: () => Promise<Result<ResolvedSessionOpen, AnalysisError>>,
-    options: Pick<
-      BinarySessionOpenOptions,
-      "signal" | "snapshot" | "beforeOpen"
-    >,
+    resolve: (
+      admitted: BinarySessionOpenOptions,
+    ) => Promise<Result<ResolvedSessionOpen, AnalysisError>>,
+    options: BinarySessionOpenOptions,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
     if (isAborted(options.signal))
       return err(new AnalysisCancelledError("open_binary"));
@@ -320,11 +313,16 @@ export class BinarySession
     }
     if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true)
       return err(this.#externalMutationCleanupFailure);
-    const resolved = await resolve();
+    const loaded = await this.#withLoadedSnapshot(options);
+    if (!loaded.ok) return loaded;
+    const openOptions = loaded.value;
+    if (isAborted(openOptions.signal))
+      return err(new AnalysisCancelledError("open_binary"));
+    const resolved = await resolve(openOptions);
     if (!resolved.ok) return resolved;
     const { target, route, sameTarget } = resolved.value;
     const { profile } = route;
-    if (isAborted(options.signal))
+    if (isAborted(openOptions.signal))
       return err(new AnalysisCancelledError("open_binary"));
     const activeProfile = this.#active?.profile;
     const sameProfile =
@@ -333,14 +331,14 @@ export class BinarySession
         : profile !== null && analysisProfilesEqual(activeProfile, profile);
     const pendingClosed = await this.#retryPendingCleanup();
     if (!pendingClosed.ok) return pendingClosed;
-    if (isAborted(options.signal))
+    if (isAborted(openOptions.signal))
       return err(new AnalysisCancelledError("open_binary"));
     const retained = sameTarget && sameProfile ? this.#active : undefined;
     if (retained !== undefined) {
       const fastPath = await this.#tryRetainedFastPath(
         retained,
         target,
-        options,
+        openOptions,
       );
       if (fastPath !== undefined) return fastPath;
     }
@@ -356,12 +354,12 @@ export class BinarySession
         return closed;
       }
     }
-    if (isAborted(options.signal))
+    if (isAborted(openOptions.signal))
       return err(
         await this.#restoreAfterFailedOpen(
           previous,
           new AnalysisCancelledError("open_binary", {
-            cause: options.signal?.reason,
+            cause: openOptions.signal?.reason,
           }),
         ),
       );
@@ -370,11 +368,11 @@ export class BinarySession
       runId,
     });
     const run: SessionRun = { client, route, runId };
-    const started = await client.execute("health", {}, options);
+    const started = await client.execute("health", {}, openOptions);
     if (!started.ok) {
       return err(await this.#failedOpen(run, previous, started.error));
     }
-    if (isAborted(options.signal)) {
+    if (isAborted(openOptions.signal)) {
       return err(
         await this.#failedOpen(
           run,
@@ -396,12 +394,12 @@ export class BinarySession
     };
     this.#clearRuntimeAvailability();
     this.resetSnapshotInvalidation();
-    if (options.snapshot === undefined) {
+    if (openOptions.snapshot === undefined) {
       if (profile === null) this.clearSnapshot();
       else this.selectSnapshot(target, profile);
     }
-    if (options.snapshot !== undefined) {
-      const imported = this.importAnalysisSnapshot(options.snapshot);
+    if (openOptions.snapshot !== undefined) {
+      const imported = this.importAnalysisSnapshot(openOptions.snapshot);
       if (!imported.ok) {
         this.#active = undefined;
         return err(await this.#failedOpen(run, previous, imported.error));
