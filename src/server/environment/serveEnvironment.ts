@@ -7,29 +7,23 @@ import {
 } from "@modelcontextprotocol/server";
 import type { Logger } from "pino";
 
+import type { ReplayArguments } from "../../application/environment/environmentReplay.js";
+import type { EnvironmentSource } from "../../application/environment/environmentSource.js";
 import {
-  replayEnvironmentTool,
-  type ReplayArguments,
-  type ReplayResult,
-} from "../../application/environment/environmentReplay.js";
-import type {
-  EnvironmentManifestTool,
-  EnvironmentSource,
-} from "../../application/environment/environmentSource.js";
-import {
-  servedFromState,
+  servedCatalog,
   type EnvironmentState,
 } from "../../application/environment/environmentState.js";
-import { answerFromState } from "../../application/environment/environmentStateAnswer.js";
+import {
+  environmentToolAnswer,
+  type EnvironmentToolAnswer,
+} from "../../application/environment/environmentStateAnswer.js";
 import { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
 import {
   environmentCard,
-  environmentToolDefinitions,
   REPLAY_CATALOG_INSTRUCTIONS,
   type EnvironmentCard,
   type EnvironmentToolDefinition,
 } from "../../application/environment/environmentTools.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { safeParseJson } from "../../domain/safeJson.js";
 import type { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
@@ -97,17 +91,11 @@ const isRpcMessage = (
   (!("params" in message) ||
     (typeof message.params === "object" && message.params !== null));
 
-/** How one served tool call is answered: from its recordings, or from the live state. */
-type ToolAnswer = (
-  tool: EnvironmentManifestTool,
-  args: ReplayArguments,
-) => Result<ReplayResult, AnalysisError>;
-
 /** Build the MCP server whose tools answer from retained records or the live state; every result is target content. */
 export const createEnvironmentMcpServer = (
   name: string,
   tools: readonly EnvironmentToolDefinition[],
-  answer: ToolAnswer,
+  answer: EnvironmentToolAnswer,
 ): RequestTrackingMcpServer => {
   // Tool names, descriptions and replies all come from the captured application, so the
   // server carries REA's untrusted-content instructions plus a warning about its own catalog.
@@ -274,25 +262,11 @@ export const serveEnvironment = async (
     options.state === undefined
       ? undefined
       : new EnvironmentStateStore(options.state);
-  const dataPlane = store === undefined ? "none" : "state";
-  const prepared = environmentToolDefinitions(
-    store === undefined
-      ? source.manifest
-      : {
-          ...source.manifest,
-          tools: source.manifest.tools.filter(servedFromState),
-        },
-    source.evidenceId,
-    name,
-    { dataPlane },
-  );
-  if (!prepared.ok) return prepared;
-  const tools = prepared.value;
+  const catalog = servedCatalog(source, store !== undefined, name);
+  if (!catalog.ok) return catalog;
+  const { tools, dataPlane } = catalog.value;
   const card = environmentCard(name, tools, dataPlane);
-  const answer: ToolAnswer =
-    store === undefined
-      ? (tool, args) => replayEnvironmentTool(source, tool, args)
-      : (tool, args) => answerFromState({ source, store }, tool, args);
+  const answer = environmentToolAnswer(source, store);
   const served = await serveStreamableHttp({
     host,
     port,

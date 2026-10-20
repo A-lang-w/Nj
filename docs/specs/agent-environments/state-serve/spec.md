@@ -1,26 +1,47 @@
-# Serve tool calls from the environment state
+# Serve the environment from its state by default
 
 Issue: https://github.com/morluto/rea/issues/4933
 
 ## Outcome
 
-`rea environment-serve <manifest> --evidence <capture> --state <state.json>`
-serves the environment from the initial state the `environment-state` view
-extracted: read tools whose views are state-backed answer from one live state,
-the `/agentenv` data plane implements `data/reset`, `data/add` and `data/get`
-against it, and the card advertises those operations and an intake
-declaration. Without `--state` nothing changes: tools replay their recordings,
-`/agentenv` answers every method as not found and the card is byte-identical.
-Serving is read-only in this increment: write tools are not served.
+`rea environment-serve <manifest> --evidence <capture>` serves the environment
+from the initial state the capture observed, with nothing else to supply: at
+startup it derives the `environment-state` view of the capture in-process with
+the manifest's `template_rules`. Read tools whose views are state-backed answer
+from one live state, the `/agentenv` data plane implements `data/reset`,
+`data/add` and `data/get` against it, and the card advertises those operations
+and an intake declaration. `--replay-only` serves exactly the stateless replay
+main serves: every manifest tool replays its recordings, `/agentenv` answers every method as not found and the card is
+byte-identical. A state that cannot be derived, or whose catalog exceeds the
+discovery budget, starts the server in replay mode, logs why and reports it. Exported bundles serve the state by default,
+and their verifier and README match what they serve. Serving is read-only in
+this increment: write tools are not served from the state.
 
 ## Requirements
 
-- Authenticate the state file as REA Evidence with the role `state`, require
-  `inspect_analysis_view` Evidence of kind `environment-state`, its
-  `parent_evidence_id` equal to the capture's `evidence_id`, its
+- Derive the state in the application layer, shared by serve and export:
+  `deriveEnvironmentState(source, capture, operation)` authenticates the
+  capture value the command already read (an owned snapshot authenticated by
+  the source load is reused, not parsed again), projects the
+  `environment-state` view with the manifest's `template_rules` through
+  `inspectAnalysisViewValidated` with the capture as retained Evidence (the
+  Evidence id equals that of a projection by hand, and the capture's strings
+  are not charged again as inline input, which refuses captures of a few MiB),
+  then applies `loadEnvironmentState`: `inspect_analysis_view` Evidence of kind
+  `environment-state`, its `parent_evidence_id` equal to the capture's, its
   `template_rules` equal to the manifest's in the same order, and every view
-  naming a manifest tool; refuse otherwise with `invalid_request` whose issue
-  path starts with `state`, before binding.
+  naming a manifest tool, refusing otherwise with `invalid_request` whose issue
+  path starts with `state`. The source validates a HAR capture with the owned
+  borrowing parse, so the view reuses that validation.
+- `prepareServedState(source, capture, {name, operation})` first builds the
+  state catalog under the served name, then derives the state, and reports
+  `{served: true, evidence_id}` or
+  `{served: false, reason: "unavailable", code, message}` with the refusal's
+  projected code and message: a state catalog over the discovery budget is
+  unavailable with `resource_constraint`, and no state is derived for it. A
+  derived state whose catalog fits always serves from the state. The CLI
+  reports `{served: false, reason: "replay-only"}` itself for `--replay-only`
+  and derives nothing.
 - Keep one state store per server process, shared by every MCP session and the
   data plane: entities keyed by type, collection and id with per-collection
   order taken from the entities array, documents keyed by tool. `reset`
@@ -72,14 +93,48 @@ Serving is read-only in this increment: write tools are not served.
   and the `urn:agentenv:intake/v1` extension, describe tools as answering from
   the state where it backs them, and leave out `POST`, `PUT`, `PATCH` and
   `DELETE` tools other than query `POST`s. The discovery budget reserves the
-  card and descriptions actually served, so stateless serving and export admit
-  exactly what they did before.
-- Add `--state` to the CLI, read like the other two files, and add
-  `state_evidence_id` to the stopped document.
+  card and descriptions actually served (`servedCatalog` returns the tools and
+  the data plane the card declares). A state catalog can exceed the budget a
+  replay catalog fits, so such a state is unavailable and the environment and
+  its export serve replay: everything main served and exported is still
+  served and exported.
+- The CLI has no `--state`; `--replay-only` (default false) serves replay
+  without deriving. Otherwise it prepares the state under the name it serves
+  (`ENVIRONMENT_NAME` or the manifest's). When the state is unavailable the
+  command logs a warning with the code and message through its listener logger
+  before binding, and serves replay. The stopped document's `state` member is
+  the report. `serveEnvironment` keeps taking an optional prepared state and
+  serves replay without one; the served catalog (`servedCatalog`) and the
+  answer function (`environmentToolAnswer`) are shared with export.
+- `environment-export` keeps the bundle command
+  `rea environment-serve /env/manifest.json --evidence /env/evidence.json` and,
+  after its name checks, prepares the state under the bundle name as that
+  server will, to predict what it serves, so a refused `--name` derives
+  nothing; its report is served or unavailable, never replay-only. The
+  verifier's `TOOL_COUNT` and the command's `tool_count` are the served tool
+  count, and its check tool and expected status come from calling the server's
+  answer function with `{}` on the first served `GET` tool without path
+  parameters whose answer is not an error. The verifier and smoke task use the
+  id `serve`. The README's "What the environment serves" section describes
+  serving from the state, the replay fallback and `--replay-only`, says which
+  applies to the bundle (with the code and message when the state is
+  unavailable), and keeps the not-emulation and untrusted-content caveats. The
+  export output adds `state`. The hosted-lane verifier script expects the
+  served count.
 
 ## Acceptance and limits
 
-Services tests cover the loader refusals, store reset, order, round trip and
+Services tests cover derivation (the by-hand Evidence id and state, a capture
+the manifest was not projected from, a capture inline admission refuses),
+the prepared reports (served, unavailable for a `capture_browser_scenario`
+capture with header values but no response bodies, unavailable with
+`resource_constraint` for a 350-tool read-only manifest whose replay catalog
+fits), bundle plans served from the state and in replay (tool count, check tool
+and status, a check whose state answer differs from replay's in record and
+status, a check that skips a tool the server cannot answer, the replay fallback
+of that 350-tool manifest, name refusals before any preparation, a manifest
+neither mode admits, verifier, smoke task and README wording), the loader
+refusals, store reset, order, round trip and
 atomic replace, the first-problem pointers, citation provenance after a load and
 every answer path: item (including percent-encoded collection segments and
 ids), list `all`, list `recorded`, lines recorded after a write or with other
@@ -92,14 +147,17 @@ streamed size, the timeout whether or not the fetcher honours its signal), the
 default fetch's refused redirects, arrival-order application across requests,
 batches and notifications, the card declaration, absent write tools, a served
 query `POST`, the per-mode discovery reservation and a `data/add` that changes
-the next tool answer over MCP. The cli-boundary test refuses a state from another
-capture and an unreadable state path; the mcp-boundary test serves the three
-files through the built CLI; the process-boundary test checks the stopped
-document. No test reaches an external network. Write effects, exporting the
-state with a bundle, list filters beyond recorded lines and `tables` in the
-intake declaration are out of scope.
+the next tool answer over MCP. The mcp-boundary tests serve the state the
+built CLI derives from only a manifest and a capture, and `--replay-only` with
+every manifest tool, `-32601` data-plane answers and a card whose SHA-256
+equals that of the card main serves for the fixture; the process-boundary test checks the stopped document's
+`state` for a derived state, `--replay-only` and an unavailable state, and the
+warning logged before binding; the cli-boundary export test checks the served
+tool count, the verifier and the README of an exported bundle. No test reaches
+an external network. Write effects, list filters beyond recorded lines and
+`tables` in the intake declaration are out of scope.
 
 ## Deferred issue criteria
 
-Write effects and exporting the state with a bundle are later increments of
-#4933. This PR must reference rather than close the issue.
+Write effects are a later increment of #4933. This PR must reference rather
+than close the issue.

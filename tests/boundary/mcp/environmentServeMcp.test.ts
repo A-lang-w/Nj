@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   Client,
   StreamableHTTPClientTransport,
@@ -9,7 +11,6 @@ import {
   environmentServeSource,
   environmentStateServeFixture,
   writeEnvironmentServeFiles,
-  writeEnvironmentStateServeFiles,
 } from "../../fixtures/environmentServe.js";
 import { startListeningProcess } from "../../support/mcp/streamableHttpProcess.js";
 import {
@@ -19,9 +20,12 @@ import {
 
 const HTTP_BOUNDARY_TIMEOUT_MS = 90_000;
 const CARD_PATH = "/.well-known/agent-env.json";
+/** SHA-256 of the 11,131-byte card main serves for the fixture named "renamed"; pure replay must serve the same bytes. */
+const MAIN_REPLAY_CARD_SHA256 =
+  "f12f16011feb5f675b2bbf6a04a8b28a2ed8041074e4fe188cf74e7a66b15207";
 
-/** Serve the fixture pair through the built CLI and connect an SDK client to it. */
-const serveFixture = async (
+/** Serve the fixture pair as pure replay through the built CLI. */
+const serveReplayOnly = async (
   processes: TestProcesses,
   environment: Readonly<Record<string, string>> = {},
 ) => {
@@ -34,6 +38,7 @@ const serveFixture = async (
       files.manifestPath,
       "--evidence",
       files.capturePath,
+      "--replay-only",
       "--port",
       "0",
     ],
@@ -49,12 +54,12 @@ const connect = async (url: URL) => {
   return client;
 };
 
-describe("rea environment-serve", () => {
+describe("rea environment-serve --replay-only", () => {
   processTest(
     "lists one tool per manifest tool and replays exact and best-effort records as untrusted target content",
     async ({ processes }) => {
       const source = environmentServeSource();
-      const started = await serveFixture(processes);
+      const started = await serveReplayOnly(processes);
       expect(started.url.hostname).toBe("127.0.0.1");
       expect(started.url.pathname).toBe("/mcp");
       const client = await connect(started.url);
@@ -106,16 +111,20 @@ describe("rea environment-serve", () => {
   );
 
   processTest(
-    "serves the environment card named by ENVIRONMENT_NAME and refuses every data-plane method",
+    "serves the stateless environment card named by ENVIRONMENT_NAME and refuses every data-plane method",
     async ({ processes }) => {
       const source = environmentServeSource();
-      const started = await serveFixture(processes, {
+      const started = await serveReplayOnly(processes, {
         ENVIRONMENT_NAME: "renamed",
       });
       const origin = new URL(started.url).origin;
       const card = await fetch(new URL(CARD_PATH, origin));
       expect(card.status).toBe(200);
-      const body: unknown = await card.json();
+      const text = await card.text();
+      expect(createHash("sha256").update(text).digest("hex")).toBe(
+        MAIN_REPLAY_CARD_SHA256,
+      );
+      const body: unknown = JSON.parse(text);
       expect(body).toMatchObject({
         name: "renamed",
         protocolVersion: "1.0",
@@ -144,31 +153,38 @@ describe("rea environment-serve", () => {
   );
 });
 
-describe("rea environment-serve --state", () => {
+describe("rea environment-serve", () => {
   processTest(
-    "serves read tools from --state and loads a replacement state through the data plane",
+    "serves read tools from the state it derives from the capture and loads a replacement state through the data plane",
     async ({ processes }) => {
       const root = await createTestTempDirectory("rea-environment-state-mcp-");
       const fixture = environmentStateServeFixture();
-      const files = await writeEnvironmentStateServeFiles(root, fixture);
+      // Only the manifest and the capture: the server derives the state itself.
+      const files = await writeEnvironmentServeFiles(root, fixture);
       const started = await startListeningProcess(processes, [
         "environment-serve",
         files.manifestPath,
         "--evidence",
         files.capturePath,
-        "--state",
-        files.statePath,
         "--port",
         "0",
       ]);
+      expect(started.stderr()).not.toContain("Environment state unavailable");
       const origin = new URL(started.url).origin;
       const card = (await (await fetch(new URL(CARD_PATH, origin))).json()) as {
-        capabilities: { operations: string[]; tools: { name: string }[] };
+        capabilities: {
+          operations: string[];
+          extensions: { uri: string }[] | null;
+          tools: { name: string }[];
+        };
       };
       expect(card.capabilities.operations).toEqual([
         "data/reset",
         "data/add",
         "data/get",
+      ]);
+      expect(card.capabilities.extensions).toMatchObject([
+        { uri: "urn:agentenv:intake/v1" },
       ]);
       const names = card.capabilities.tools.map(({ name }) => name);
       expect(names).toContain("get_users_by_id");
@@ -189,7 +205,16 @@ describe("rea environment-serve --state", () => {
           })
         ).json() as Promise<{
           result?: {
-            parts: [{ data: { rea_state: { entities: unknown[] } } }];
+            parts: [
+              {
+                data: {
+                  rea_state: {
+                    state_evidence_id: string;
+                    entities: unknown[];
+                  };
+                };
+              },
+            ];
           };
           error?: { code: number };
         }>;
@@ -198,6 +223,10 @@ describe("rea environment-serve --state", () => {
       });
       const current = await rpc("data/get");
       const document = current.result?.parts[0].data;
+      // The derived state is the one inspect-analysis-view projects from the capture.
+      expect(document?.rea_state.state_evidence_id).toBe(
+        fixture.state.evidence_id,
+      );
       expect(document?.rea_state.entities.length).toBeGreaterThan(0);
       const client = await connect(started.url);
       try {

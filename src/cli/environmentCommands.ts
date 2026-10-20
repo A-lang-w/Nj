@@ -1,7 +1,7 @@
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import type { EnvironmentExportResult } from "../application/environment/environmentExport.js";
 import type { EnvironmentSource } from "../application/environment/environmentSource.js";
-import type { EnvironmentState } from "../application/environment/environmentState.js";
+import type { ServedState } from "../application/environment/environmentState.js";
 import { z } from "incur";
 import type { Logger } from "pino";
 
@@ -71,22 +71,29 @@ const transportError = (
 interface ServeArguments {
   readonly manifest: string;
   readonly evidence: string;
-  readonly state?: string | undefined;
+  readonly replayOnly: boolean;
   readonly host?: string | undefined;
   readonly port?: number | undefined;
 }
 
 interface ServeInputs {
   readonly source: EnvironmentSource;
-  readonly state: EnvironmentState | undefined;
+  readonly served: ServedState;
 }
 
 const cancelledServe = (): JsonValue =>
   cliError(new AnalysisCancelledError(CLI_COMMANDS.environmentServe));
 
-/** Read and authenticate the manifest, capture and optional state files; a refusal is the command's output. */
+/** Pure replay, as `--replay-only` asks for: no state is derived. */
+const REPLAY_ONLY: ServedState = {
+  state: undefined,
+  report: { served: false, reason: "replay-only" },
+};
+
+/** Read and authenticate the manifest and capture, then prepare the state under the served name unless pure replay is asked for; a refusal is the command's output. */
 const loadServeInputs = async (
   input: ServeArguments,
+  environmentName: string | undefined,
   signal: AbortSignal,
 ): Promise<Result<ServeInputs, JsonValue>> => {
   const read = (path: string) =>
@@ -97,21 +104,22 @@ const loadServeInputs = async (
   if (!manifest.ok) return manifest;
   const evidence = await read(input.evidence);
   if (!evidence.ok) return evidence;
-  const state = input.state === undefined ? undefined : await read(input.state);
-  if (state?.ok === false) return state;
   const { loadEnvironmentSource } =
     await import("../application/environment/environmentSource.js");
   if (signal.aborted) return err(cancelledServe());
   const source = loadEnvironmentSource(manifest.value, evidence.value);
   if (!source.ok) return err(cliError(source.error));
-  if (state === undefined)
-    return ok({ source: source.value, state: undefined });
-  const { loadEnvironmentState } =
+  if (input.replayOnly)
+    return ok({ source: source.value, served: REPLAY_ONLY });
+  const { prepareServedState } =
     await import("../application/environment/environmentState.js");
-  const loaded = loadEnvironmentState(state.value, source.value);
-  return loaded.ok
-    ? ok({ source: source.value, state: loaded.value })
-    : err(cliError(loaded.error));
+  if (signal.aborted) return err(cancelledServe());
+  return ok({
+    source: source.value,
+    served: prepareServedState(source.value, evidence.value, {
+      name: environmentName,
+    }),
+  });
 };
 
 /** Load the Evidence files, bind the listener and run until a signal ends it. */
@@ -129,9 +137,18 @@ const serveEnvironmentCommand = async (
   if (!endpoint.ok) return cliError(endpoint.error);
   const environmentName = parseEnvironmentName(environment);
   if (!environmentName.ok) return cliError(environmentName.error);
-  const inputs = await loadServeInputs(input, signal);
+  const inputs = await loadServeInputs(input, environmentName.value, signal);
   if (!inputs.ok) return inputs.error;
-  const { source, state } = inputs.value;
+  const {
+    source,
+    served: { state, report },
+  } = inputs.value;
+  const commandLogger = listenerLogger(environment, logger);
+  if (!report.served && report.reason === "unavailable")
+    commandLogger.warn(
+      { code: report.code, error: report.message },
+      "Environment state unavailable; serving recorded replay",
+    );
   if (signal.aborted) return cancelledServe();
   // Loaded here so registering the command catalog never loads the HTTP listener.
   const { serveEnvironment } =
@@ -154,7 +171,7 @@ const serveEnvironmentCommand = async (
       ...(environmentName.value === undefined
         ? {}
         : { environmentName: environmentName.value }),
-      logger: listenerLogger(environment, logger),
+      logger: commandLogger,
       onerror: (error) => failListener(error),
     });
     if (!started.ok) return cliError(started.error);
@@ -179,7 +196,7 @@ const serveEnvironmentCommand = async (
     tools: served.card.capabilities.tools.length,
     evidence_id: source.evidenceId,
     manifest_evidence_id: source.manifestEvidenceId,
-    ...(state === undefined ? {} : { state_evidence_id: state.evidenceId }),
+    state: report,
   };
 };
 
@@ -191,7 +208,7 @@ interface ExportArguments {
   readonly name?: string | undefined;
 }
 
-/** The written files with sizes and the pinned package source, as the command prints them. */
+/** The written files with sizes, whether the bundle serves the state, and the pinned package source, as the command prints them. */
 const exportDocument = (result: EnvironmentExportResult): JsonValue => ({
   status: result.status,
   directory: result.directory,
@@ -199,6 +216,7 @@ const exportDocument = (result: EnvironmentExportResult): JsonValue => ({
   tool_count: result.tool_count,
   evidence_id: result.evidence_id,
   manifest_evidence_id: result.manifest_evidence_id,
+  state: result.state,
   package_source: result.package_source,
   files: result.files.map(({ path, bytes }) => ({ path, bytes })),
 });
@@ -299,15 +317,15 @@ export const registerEnvironmentCommands = (
   registerExportCommand(cli, logger);
   cli.command(CLI_COMMANDS.environmentServe, {
     description:
-      "Serve an environment manifest as an agent environment that replays retained capture records, or answers read tools from an environment state, over streamable HTTP until SIGINT or SIGTERM",
+      "Serve an environment manifest as an agent environment over streamable HTTP until SIGINT or SIGTERM: read tools answer from the state the capture observed, derived at startup, or every tool replays retained capture records with --replay-only or when the state is unavailable",
     args: z.object({ manifest: manifestArgument }),
     options: z.object({
       evidence: evidenceOption,
-      state: z
-        .string()
-        .optional()
+      replayOnly: z
+        .boolean()
+        .default(false)
         .describe(
-          "Environment state Evidence JSON path (inspect-analysis-view environment-state output) extracted from the same capture with the manifest's template_rules; read tools answer from it and /agentenv serves data/reset, data/add and data/get",
+          "Serve pure replay: derive no state, serve every manifest tool from its retained records and answer every /agentenv method as not found",
         ),
       host: z
         .string()
@@ -331,7 +349,7 @@ export const registerEnvironmentCommands = (
             {
               manifest: args.manifest,
               evidence: options.evidence,
-              state: options.state,
+              replayOnly: options.replayOnly,
               host: options.host,
               port: options.port,
             },

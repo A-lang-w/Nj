@@ -21,7 +21,7 @@ import { projectInputIssues } from "../../domain/inputIssueProjection.js";
 import { immutableJsonSnapshotMember } from "../../domain/immutableJson.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
-  webNetworkCaptureSchema,
+  safeParseOwnedWebNetworkCapture,
   type WebNetworkCaptureRecord,
 } from "../../domain/webNetworkCapture.js";
 
@@ -79,7 +79,7 @@ export const inputError = (
   );
 
 /** Authenticate one Evidence file; schema failures name the file role in their paths. */
-const parseEvidenceFile = (
+export const parseEvidenceFile = (
   operation: string,
   role: "manifest" | "evidence" | "state",
   value: unknown,
@@ -202,7 +202,8 @@ const parseCaptureEvidence = (
         const record = immutableJsonSnapshotMember(records, String(index));
         immutableJsonSnapshotMember(record, "reported");
       }
-    const capture = webNetworkCaptureSchema.safeParse(normalized);
+    // An owned snapshot is validated once and borrowed, so deriving the state reuses this validation.
+    const capture = safeParseOwnedWebNetworkCapture(normalized);
     if (capture.success) {
       // The manifest view projects HAR captures only, and replay reads HAR's response fields.
       if (capture.data.format !== "har")

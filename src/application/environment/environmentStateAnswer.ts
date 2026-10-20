@@ -388,3 +388,18 @@ export const answerFromState = (
       return answerCheckedLine(serving, tool, view, args);
   }
 };
+
+/** How a served environment answers one tool call. */
+export type EnvironmentToolAnswer = (
+  tool: EnvironmentManifestTool,
+  args: ReplayArguments,
+) => Result<ReplayResult, AnalysisError>;
+
+/** The answer a served environment gives: replay without a state store, the live state with one. */
+export const environmentToolAnswer = (
+  source: EnvironmentSource,
+  store: EnvironmentStateStore | undefined,
+): EnvironmentToolAnswer =>
+  store === undefined
+    ? (tool, args) => replayEnvironmentTool(source, tool, args)
+    : (tool, args) => answerFromState({ source, store }, tool, args);

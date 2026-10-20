@@ -8,7 +8,9 @@ import {
 } from "../../src/application/environment/environmentSource.js";
 import {
   loadEnvironmentState,
+  prepareServedState,
   type EnvironmentState,
+  type PreparedState,
 } from "../../src/application/environment/environmentState.js";
 import type { Evidence } from "../../src/domain/evidence.js";
 import {
@@ -52,6 +54,14 @@ export const environmentServeSource = (
   const source = loadEnvironmentSource(fixture.manifest, fixture.capture);
   if (!source.ok) throw source.error;
   return source.value;
+};
+
+/** The fixture source and the state its server prepares at startup, as serving and export prepare it. */
+export const environmentServeServed = (
+  fixture: EnvironmentServeFixture = environmentServeFixture(),
+): { readonly source: EnvironmentSource; readonly served: PreparedState } => {
+  const source = environmentServeSource(fixture);
+  return { source, served: prepareServedState(source, fixture.capture) };
 };
 
 /** Paths of the two Evidence files the serve command reads. */
@@ -122,7 +132,7 @@ export const environmentStateServeFixture = (
   };
 };
 
-/** The served source and its loaded state, as `--state` loads them. */
+/** The served source and the state Evidence loaded for it, as derivation checks it. */
 export const environmentStateServeInputs = (
   fixture: EnvironmentStateServeFixture = environmentStateServeFixture(),
 ): { readonly source: EnvironmentSource; readonly state: EnvironmentState } => {
@@ -130,17 +140,4 @@ export const environmentStateServeInputs = (
   const state = loadEnvironmentState(fixture.state, source);
   if (!state.ok) throw state.error;
   return { source, state: state.value };
-};
-
-/** Write the three files `environment-serve --state` reads. */
-export const writeEnvironmentStateServeFiles = async (
-  root: string,
-  fixture: EnvironmentStateServeFixture = environmentStateServeFixture(),
-): Promise<EnvironmentServeFiles & { readonly statePath: string }> => {
-  const statePath = join(root, "state.json");
-  const [files] = await Promise.all([
-    writeEnvironmentServeFiles(root, fixture),
-    writeFile(statePath, JSON.stringify(fixture.state)),
-  ]);
-  return { ...files, statePath };
 };

@@ -7,15 +7,26 @@ import {
   type StateView,
 } from "../../domain/analysisView/environmentStateRules.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import type { AnalysisInputIssue } from "../../domain/analysisErrorCore.js";
+import type {
+  AnalysisInputIssue,
+  AnalysisResourceConstraintError,
+} from "../../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { inspectAnalysisViewValidated } from "../analysisView/AnalysisViewService.js";
 import {
   ENVIRONMENT_SERVE_OPERATION,
   inputError,
+  parseEvidenceFile,
   parseViewEvidence,
   type EnvironmentManifestTool,
   type EnvironmentSource,
 } from "./environmentSource.js";
+import {
+  environmentToolDefinitions,
+  type EnvironmentDataPlane,
+  type EnvironmentToolDefinition,
+} from "./environmentTools.js";
 
 type EnvironmentStateView = Extract<
   AnalysisViewResult,
@@ -33,8 +44,36 @@ export interface EnvironmentState {
 }
 
 /** Serving from the state is read-only: tools whose requests may change state are not served. */
-export const servedFromState = (tool: EnvironmentManifestTool): boolean =>
+const servedFromState = (tool: EnvironmentManifestTool): boolean =>
   !changesState(tool.method, tool.path_template);
+
+/** The tools an environment serves and the data plane its card declares. */
+export interface ServedCatalog {
+  readonly tools: readonly EnvironmentToolDefinition[];
+  readonly dataPlane: EnvironmentDataPlane;
+}
+
+/** The catalog an environment serves: every manifest tool for replay, the read tools and the data plane from a state. */
+export const servedCatalog = (
+  source: EnvironmentSource,
+  fromState: boolean,
+  name: string,
+  operation: string = ENVIRONMENT_SERVE_OPERATION,
+): Result<ServedCatalog, AnalysisResourceConstraintError> => {
+  const dataPlane: EnvironmentDataPlane = fromState ? "state" : "none";
+  const tools = environmentToolDefinitions(
+    fromState
+      ? {
+          ...source.manifest,
+          tools: source.manifest.tools.filter(servedFromState),
+        }
+      : source.manifest,
+    source.evidenceId,
+    name,
+    { operation, dataPlane },
+  );
+  return tools.ok ? ok({ tools: tools.value, dataPlane }) : tools;
+};
 
 const refusal = (
   operation: string,
@@ -122,4 +161,88 @@ export const loadEnvironmentState = (
     entities: view.entities,
     documents: view.documents,
   });
+};
+
+/** Derive the state the capture observed with the manifest's rules, projected as retained Evidence, and check it as a supplied state. */
+export const deriveEnvironmentState = (
+  source: EnvironmentSource,
+  captureValue: unknown,
+  operation: string = ENVIRONMENT_SERVE_OPERATION,
+): Result<EnvironmentState, AnalysisError> => {
+  const capture = parseEvidenceFile(operation, "evidence", captureValue);
+  if (!capture.ok) return capture;
+  const captureId = capture.value.evidence_id;
+  const projected = inspectAnalysisViewValidated(
+    {
+      source: { kind: "retained-evidence", evidence_id: captureId },
+      view: {
+        kind: "environment-state",
+        template_rules: [...source.manifest.view.template_rules],
+      },
+    },
+    (evidenceId) => (evidenceId === captureId ? capture.value : undefined),
+  );
+  return projected.ok
+    ? loadEnvironmentState(projected.value, source, operation)
+    : projected;
+};
+
+/** What a command reports about the state: the state Evidence it serves, or why it serves replay. */
+export type StateServingReport =
+  | { readonly served: true; readonly evidence_id: string }
+  | { readonly served: false; readonly reason: "replay-only" }
+  | {
+      readonly served: false;
+      readonly reason: "unavailable";
+      readonly code: string;
+      readonly message: string;
+    };
+
+/** The state an environment serves, if any, and how its command reports it. */
+export interface ServedState {
+  readonly state: EnvironmentState | undefined;
+  readonly report: StateServingReport;
+}
+
+/** What preparing the state yields: served or unavailable, never replay-only, which only the serve command chooses. */
+export interface PreparedState extends ServedState {
+  readonly report: Exclude<
+    StateServingReport,
+    { readonly reason: "replay-only" }
+  >;
+}
+
+const unavailable = (error: AnalysisError): PreparedState => {
+  const { code, message } = projectAnalysisError(error);
+  return {
+    state: undefined,
+    report: { served: false, reason: "unavailable", code, message },
+  };
+};
+
+/** Serve the derived state when its catalog fits under the served name; otherwise serve replay and report why. */
+export const prepareServedState = (
+  source: EnvironmentSource,
+  captureValue: unknown,
+  options: {
+    readonly name?: string | undefined;
+    readonly operation?: string;
+  } = {},
+): PreparedState => {
+  const operation = options.operation ?? ENVIRONMENT_SERVE_OPERATION;
+  // The state catalog depends only on the manifest and name, so checking it first spares deriving a state that cannot be served.
+  const catalog = servedCatalog(
+    source,
+    true,
+    options.name ?? source.manifest.name,
+    operation,
+  );
+  if (!catalog.ok) return unavailable(catalog.error);
+  const derived = deriveEnvironmentState(source, captureValue, operation);
+  return derived.ok
+    ? {
+        state: derived.value,
+        report: { served: true, evidence_id: derived.value.evidenceId },
+      }
+    : unavailable(derived.error);
 };

@@ -3,16 +3,30 @@ import { describe, expect, it } from "vitest";
 import {
   analysisViewCaptureEvidence,
   environmentManifestCaptureFixture,
+  timedCaptureEvidence,
 } from "../../../tests/fixtures/analysisView.js";
 import {
+  scenarioHeaderOnlyCaptureEvidence,
+  scenarioServeFixture,
+} from "../../../tests/fixtures/browserScenarioCapture.js";
+import {
+  environmentServeFixture,
   environmentServeSource,
   environmentStateServeFixture,
   environmentStateServeInputs,
 } from "../../../tests/fixtures/environmentServe.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
-import { loadEnvironmentState } from "./environmentState.js";
+import {
+  inspectAnalysisView,
+  inspectAnalysisViewValidated,
+} from "../analysisView/AnalysisViewService.js";
+import { loadEnvironmentSource } from "./environmentSource.js";
+import {
+  deriveEnvironmentState,
+  loadEnvironmentState,
+  prepareServedState,
+} from "./environmentState.js";
 import { EnvironmentStateStore } from "./environmentStateStore.js";
 
 const fixture = environmentStateServeFixture();
@@ -131,6 +145,106 @@ describe("loadEnvironmentState", () => {
     expect(
       loadEnvironmentState(fixture.state, environmentServeSource()).ok,
     ).toBe(false);
+  });
+});
+
+describe("deriveEnvironmentState", () => {
+  it("derives the state inspect-analysis-view projects from the capture with the manifest's rules, under the same Evidence id", () => {
+    const derived = deriveEnvironmentState(source, fixture.capture);
+    if (!derived.ok) throw derived.error;
+    expect(derived.value.evidenceId).toBe(fixture.state.evidence_id);
+    expect(derived.value).toEqual(state);
+  });
+
+  it("checks the derived state as a supplied one, refusing a capture the manifest was not projected from", () => {
+    const other = environmentServeFixture();
+    const derived = deriveEnvironmentState(source, other.capture);
+    if (derived.ok)
+      throw new Error("Expected the other capture's state to be refused");
+    expect(projectAnalysisError(derived.error)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["state", "normalized_result", "parent_evidence_id"],
+            expected: source.evidenceId,
+          },
+        ],
+      },
+    });
+  });
+
+  it("projects the authenticated capture as retained Evidence, so a capture inline admission refuses still yields its state", () => {
+    const capture = timedCaptureEvidence(
+      Array.from({ length: 20 }, (_, index) => [
+        "GET",
+        `/api/items/${String(index)}`,
+        { id: index, text: "x".repeat(200_000) },
+      ]),
+    );
+    const inline = inspectAnalysisView({
+      source: { kind: "inline", evidence: capture },
+      view: { kind: "environment-state", template_rules: [] },
+    });
+    if (inline.ok) throw new Error("Expected inline admission to refuse");
+    expect(projectAnalysisError(inline.error).code).toBe("resource_constraint");
+    const retained = (kind: "environment-manifest" | "environment-state") =>
+      inspectAnalysisViewValidated(
+        {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: capture.evidence_id,
+          },
+          view:
+            kind === "environment-state"
+              ? { kind, template_rules: [] }
+              : {
+                  kind,
+                  template_rules: [],
+                  include_query_parameter_names: true,
+                },
+        },
+        (id) => (id === capture.evidence_id ? capture : undefined),
+      );
+    const manifest = retained("environment-manifest");
+    if (!manifest.ok) throw manifest.error;
+    const large = loadEnvironmentSource(manifest.value, capture);
+    if (!large.ok) throw large.error;
+    const derived = deriveEnvironmentState(large.value, capture);
+    if (!derived.ok) throw derived.error;
+    const byHand = retained("environment-state");
+    if (!byHand.ok) throw byHand.error;
+    expect(derived.value.evidenceId).toBe(byHand.value.evidence_id);
+  });
+});
+
+describe("prepareServedState", () => {
+  it("reports the served state Evidence", () => {
+    expect(prepareServedState(source, fixture.capture)).toEqual({
+      state,
+      report: { served: true, evidence_id: fixture.state.evidence_id },
+    });
+  });
+
+  it("serves replay and reports the code and message when the capture yields a manifest but no state", () => {
+    const headerOnly = scenarioServeFixture(
+      scenarioHeaderOnlyCaptureEvidence(),
+    );
+    const scenario = loadEnvironmentSource(
+      headerOnly.manifest,
+      headerOnly.capture,
+    );
+    if (!scenario.ok) throw scenario.error;
+    const served = prepareServedState(scenario.value, headerOnly.capture);
+    expect(served.state).toBeUndefined();
+    expect(served.report).toEqual({
+      served: false,
+      reason: "unavailable",
+      code: "unsupported_target",
+      message: expect.stringContaining(
+        "environment-state needs a capture_browser_scenario capture with capture.network.response_body selected",
+      ),
+    });
   });
 });
 
