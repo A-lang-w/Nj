@@ -1161,7 +1161,7 @@ export function* collectSemanticMemberMutationsSteps(
           interop.boundIntrinsic(node)?.kind === "known"
         )
           return;
-        for (const source of returnedReferences(node.callee))
+        for (const source of returnedReferences(node.callee).references)
           markEscaped(source.node, node, source.projection);
         // The invocation owner includes captured bind arguments and call/apply
         // inputs for generic intrinsics as well as the mutators handled above.

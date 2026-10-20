@@ -1207,7 +1207,7 @@ const writesModuleRequire = (
           seenInitializers: new Set(),
         });
         if (!callable.complete) return true;
-        const results = returnedReferences(value.callee);
+        const results = returnedReferences(value.callee).references;
         if (results.length === 0) return true;
         pending.push(
           ...value.arguments.map((node) => ({ node, path: [], readAt })),
