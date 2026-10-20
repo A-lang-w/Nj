@@ -32,6 +32,7 @@ import {
 import { err, ok, type Result } from "../../domain/result.js";
 import { WebNetworkApiSurfaceAccumulator } from "../../domain/analysisView/WebNetworkApiSurfaceAccumulator.js";
 import { EnvironmentManifestAccumulator } from "../../domain/analysisView/EnvironmentManifestAccumulator.js";
+import { EnvironmentStateAccumulator } from "../../domain/analysisView/EnvironmentStateAccumulator.js";
 import { admitAnalysisViewData } from "../../domain/analysisView/analysisViewDataAdmission.js";
 import {
   readEvidenceFileSource,
@@ -128,7 +129,12 @@ export const inspectAnalysisViewValidated = (
           input.view.template_rules,
         )
       : undefined;
-  const accumulator = apiSurfaceAccumulator ?? manifestAccumulator;
+  const stateAccumulator =
+    input.view.kind === "environment-state"
+      ? new EnvironmentStateAccumulator(undefined, input.view.template_rules)
+      : undefined;
+  const accumulator =
+    apiSurfaceAccumulator ?? manifestAccumulator ?? stateAccumulator;
   if (input.source.kind === "inline") {
     const admitted =
       accumulator === undefined
@@ -143,6 +149,8 @@ export const inspectAnalysisViewValidated = (
     {
       evidenceId: parent.evidence_id,
       operation: parent.operation,
+      provider: parent.provider,
+      analysisProfileDigest: parent.analysis_profile?.digest ?? null,
       normalizedResult:
         immutableJsonSnapshotMember(parent, "normalized_result") ??
         parent.normalized_result,
@@ -160,17 +168,20 @@ export const inspectAnalysisViewValidated = (
             },
     },
     input.view,
-    apiSurfaceAccumulator,
-    manifestAccumulator,
+    {
+      apiSurface: apiSurfaceAccumulator,
+      manifest: manifestAccumulator,
+      state: stateAccumulator,
+    },
   );
   if (!projected.ok) return projected;
   if (
     parent.subject !== null &&
-    parent.subject.digest.sha256 !== projected.value.artifact.sha256
+    parent.subject.digest.sha256 !== projected.value.artifact?.sha256
   )
     return err(
       new EvidenceIntegrityError(
-        `Parent subject SHA-256 ${parent.subject.digest.sha256} differs from analysis artifact SHA-256 ${projected.value.artifact.sha256}.`,
+        `Parent subject SHA-256 ${parent.subject.digest.sha256} differs from analysis artifact SHA-256 ${projected.value.artifact?.sha256 ?? "unknown"}.`,
       ),
     );
   return ok(createAnalysisViewEvidence(input, parent, projected.value));
@@ -314,10 +325,12 @@ const createAnalysisViewEvidence = (
     result: jsonValueSchema.parse(result),
     rawResult: null,
     confidence:
-      // Grouping is whole-capture, so any templated group or parameter makes the result inferred.
-      (result.kind === "api-surface" ||
+      // Grouping is whole-capture, so any templated group or parameter makes the result inferred;
+      // entity types and identity in an extracted state always are.
+      result.kind === "environment-state" ||
+      ((result.kind === "api-surface" ||
         result.kind === "environment-manifest") &&
-      result.templated_groups > 0
+        result.templated_groups > 0)
         ? "inferred"
         : "derived",
     authority: parent.authority,
@@ -326,7 +339,7 @@ const createAnalysisViewEvidence = (
       ? { relationshipCoverage: parent.relationship_coverage }
       : {}),
     locations: [
-      ...(result.artifact.path.length > 0
+      ...(result.artifact != null && result.artifact.path.length > 0
         ? [{ kind: "artifact-path" as const, path: result.artifact.path }]
         : []),
       ...(result.kind === "native" &&
