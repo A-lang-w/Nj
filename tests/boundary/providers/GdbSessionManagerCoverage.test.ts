@@ -140,10 +140,16 @@ it.each([
   ["inferior-tty /tmp/output", true],
   ["tty /dev/pts/2", true],
   ["source commands.gdb", true],
+  ["sour commands.gdb", true],
   ["sourc commands.gdb", true],
   ["python print(1)", true],
   ["define start\nrun", true],
+  ["run < input.txt", false],
+  ["run <input.txt", false],
   ["run > /tmp/output", true],
+  ["run < input.txt > /tmp/output", true],
+  ["run < input.txt; echo done", true],
+  ["run < input.txt\ncontinue", true],
 ] as const)("classifies inferior output mutations: %s", (command, expected) => {
   expect(commandMayChangeInferiorOutput(command)).toBe(expected);
 });
@@ -1289,6 +1295,43 @@ const startWithVerifiedInferiorTty = async (
   if (!started.ok) throw new Error("GDB did not start with its selected TTY");
   return { manager, sessionId: started.value.session_id, commands };
 };
+
+it("retains detach proof for an inferior input-only redirection", async () => {
+  const commands: string[] = [];
+  let outputSinkChecks = 0;
+  const fake = createFakeSpawner((_child, token, command) => {
+    commands.push(command);
+    const response = command.includes("inferior-tty-show")
+      ? '^done,inferior_tty_terminal="/dev/pts/42"'
+      : command.includes("list-thread-groups")
+        ? '^done,groups=[{id="i1",pid="123"}]'
+        : "^done";
+    fake.children[0]?.stdout.write(`${token}${response}\n`);
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    verifyInferiorOutputSink: async () => {
+      outputSinkChecks += 1;
+      // A regular file on stdin is independent of the durable selected output
+      // terminal and is permitted by the production descriptor classifier.
+      return "not-inherited";
+    },
+  });
+  const started = await manager.start(undefined, {
+    inferiorTty: "/dev/pts/42",
+  });
+  expect(started.ok).toBe(true);
+  if (!started.ok) return;
+
+  expect(
+    (await manager.execute(started.value.session_id, "run < input.txt")).ok,
+  ).toBe(true);
+  expect(manager.status(started.value.session_id)?.inferior_tty_verified).toBe(
+    true,
+  );
+  expect((await manager.close(started.value.session_id)).ok).toBe(true);
+  expect(outputSinkChecks).toBe(2);
+  expect(commands).toContain("-target-detach");
+});
 
 const createProvider = async (body: string): Promise<string> => {
   directory ??= await mkdtemp(join(tmpdir(), "rea-gdb-coverage-"));

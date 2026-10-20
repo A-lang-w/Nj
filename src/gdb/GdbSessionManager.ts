@@ -2783,10 +2783,21 @@ export const commandMayChangeInferiorOutput = (command: string): boolean => {
     "source".startsWith(firstToken);
   const mayDefineAlias =
     firstToken !== undefined && "alias".startsWith(firstToken);
-  const mayRunWithOutputRedirection =
+  const runCommand =
     firstToken !== undefined &&
-    ["run", "start", "starti"].some((name) => name.startsWith(firstToken)) &&
-    /[<>]{1,2}|&>/u.test(command.slice(firstToken.length));
+    ["run", "start", "starti"].some((name) => name.startsWith(firstToken));
+  const runTail = runCommand ? command.slice(firstToken.length) : "";
+  // GDB accepts an input-only redirection for the inferior. It does not change
+  // stdout/stderr, which are independently verified from the live process at
+  // close time. Keep the exception narrow: compound commands and any output
+  // redirection still revoke the startup proof.
+  const inputOnlyRunRedirection =
+    runCommand &&
+    /^\s+(?:[^<>;&|\r\n]+\s+)?<\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s<>;&|]+)\s*$/u.test(
+      runTail,
+    );
+  const mayRunWithOutputRedirection =
+    runCommand && /[<>]{1,2}|&>/u.test(runTail) && !inputOnlyRunRedirection;
   return (
     maySetInferiorTty ||
     mayBeTtyCommand ||
