@@ -324,20 +324,25 @@ const recordingInferiorListResponder = (groups: string) => {
 
 it("returns cancellation when GDB startup is aborted after spawn", async () => {
   const controller = new AbortController();
+  const reason = Object.freeze({ requested: "stop" });
   const fake = createFakeSpawner(undefined, {
-    afterSpawn: () => controller.abort(),
+    afterSpawn: () => controller.abort(reason),
   });
   const manager = managerWithFakeSpawner(fake.spawnProcess);
 
   const started = await manager.start(controller.signal);
 
   expect(started.ok).toBe(false);
-  if (!started.ok) expect(started.error._tag).toBe("AnalysisCancelledError");
+  if (!started.ok) {
+    expect(started.error._tag).toBe("AnalysisCancelledError");
+    expect(started.error.cause).toBe(reason);
+  }
   expect(fake.children[0]?.signalCode).toBe("SIGTERM");
 });
 
 it("cancels immediately after the startup prompt before sending configuration commands", async () => {
   const controller = new AbortController();
+  const reason = Object.freeze({ requested: "stop" });
   const commands: string[] = [];
   const fake = createFakeSpawner(
     (child, token, command) => {
@@ -346,7 +351,7 @@ it("cancels immediately after the startup prompt before sending configuration co
     },
     {
       deferPrompt: true,
-      afterPrompt: () => controller.abort(),
+      afterPrompt: () => controller.abort(reason),
     },
   );
   const manager = managerWithFakeSpawner(fake.spawnProcess);
@@ -357,6 +362,7 @@ it("cancels immediately after the startup prompt before sending configuration co
     ok: false,
     error: { _tag: "AnalysisCancelledError" },
   });
+  if (!started.ok) expect(started.error.cause).toBe(reason);
   expect(commands).toEqual([]);
   expect(fake.children[0]?.killSignals).toEqual(["SIGTERM"]);
 });
