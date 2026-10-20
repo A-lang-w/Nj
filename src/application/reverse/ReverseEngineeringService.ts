@@ -210,12 +210,16 @@ export class ReverseEngineeringService {
       input.operation === "architectures"
         ? input
         : { ...input, path: absoluteCallerPath(input.path) };
+    let parameters: Readonly<Record<string, JsonValue>>;
+    if (input.operation === "disassemble") {
+      const { symbol, ...base } = input;
+      parameters = symbol === undefined ? base : { ...base, symbol };
+    } else parameters = input;
     return this.#observe(
       "inspect_with_objdump",
-      (signal) =>
-        this.#commands.objdump(bound, signal === undefined ? {} : { signal }),
+      (signal) => this.#commands.objdump(bound, { signal }),
       bound.operation === "architectures" ? undefined : bound.path,
-      input,
+      parameters,
       options.signal,
     );
   }
@@ -653,6 +657,12 @@ export class ReverseEngineeringService {
             "The executable version and supported formats are reported as unknown because no reliable version probe was performed.",
           ]),
       "A non-zero process exit is preserved as an observed command result.",
+      ...(operation === "inspect_with_objdump" &&
+      typeof parameters.symbol === "string"
+        ? [
+            "Disassembly is scoped to the caller-selected symbol using the provider's matching and symbol-boundary semantics; an empty match does not establish artifact-wide absence.",
+          ]
+        : []),
       ...(operation === "inspect_with_objdump" &&
       parameters.follow_debug_links === true
         ? [
