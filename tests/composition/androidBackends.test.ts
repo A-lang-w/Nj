@@ -5,6 +5,8 @@ import { androidRequestSchema } from "../../src/domain/android/androidAnalysis.j
 import { AnalysisCapabilityUnavailableError } from "../../src/domain/analysisErrorCore.js";
 import { err } from "../../src/domain/result.js";
 import type { BinaryTarget } from "../../src/domain/binaryTargetTypes.js";
+import { ProviderAdapterError } from "../../src/domain/providerAdapterError.js";
+import { ProviderCleanupError } from "../../src/domain/providerCleanupError.js";
 
 const target = {} as BinaryTarget;
 const provider = (id: string) => {
@@ -71,6 +73,98 @@ it("joins independent cleanup and retries only the backend that failed", async (
   await router.close();
   expect(attempts).toBe(2);
   expect(jadx.calls).toEqual(["close"]);
+});
+
+it.each(["jadx", "asc"] as const)(
+  "preserves the single %s cleanup failure and its exact provider owner",
+  async (id) => {
+    const jadx = provider("jadx");
+    const asc = provider("asc");
+    const failed = id === "jadx" ? jadx : asc;
+    const peer = id === "jadx" ? asc : jadx;
+    const cause = new Error("provider primary failure");
+    let resources = [`${id}:process`, `${id}:workspace`];
+    const failure = new ProviderAdapterError(id, "inspect_android_package", {
+      cause,
+      capturedOutput: {
+        stdout: "producer reply",
+        stderr: "diagnostic",
+        truncated: false,
+      },
+      diagnostics: { source: id },
+      cleanup: { resources, reason: "provider-owned close denied" },
+    }).bindCleanupResourceOwner({
+      get cleanupResources() {
+        return resources;
+      },
+    });
+    let denied = true;
+    failed.port.close = async () => {
+      failed.calls.push("close");
+      if (denied) throw failure;
+      resources = [];
+      failure.resolveCleanup();
+    };
+    const router = new AndroidBackendRouter({ jadx: jadx.port, asc: asc.port });
+    await expect(router.close()).rejects.toBe(failure);
+    expect(failure.providerId).toBe(id);
+    expect(failure.operation).toBe("inspect_android_package");
+    expect(failure.cause).toBe(cause);
+    resources = [`${id}:workspace`];
+    expect(failure.cleanupResources).toEqual([`${id}:workspace`]);
+    await expect(router.close()).rejects.toBe(failure);
+    expect(peer.calls).toEqual(["close"]);
+    denied = false;
+    await router.close();
+    expect(failure.cleanupIncomplete).toBe(false);
+    expect(peer.calls).toEqual(["close"]);
+  },
+);
+
+it("keeps a mixed cleanup aggregate live until all original backend owners release", async () => {
+  const jadx = provider("jadx");
+  const asc = provider("asc");
+  let jadxDenied = true;
+  let ascDenied = true;
+  const jadxFailure = new ProviderCleanupError("jadx", ["jadx:workspace"], {});
+  const ascFailure = new ProviderCleanupError("asc", ["asc:descriptor"], {});
+  for (const [fixture, failure, denied] of [
+    [jadx, jadxFailure, () => jadxDenied],
+    [asc, ascFailure, () => ascDenied],
+  ] as const) {
+    fixture.port.close = async () => {
+      fixture.calls.push("close");
+      if (denied()) throw failure;
+      failure.resolveCleanup();
+    };
+  }
+  const router = new AndroidBackendRouter({ jadx: jadx.port, asc: asc.port });
+  const aggregate = await router.close().then(
+    () => {
+      throw new Error("Expected both backend cleanup failures");
+    },
+    (cause: unknown) => {
+      if (!(cause instanceof ProviderCleanupError)) throw cause;
+      return cause;
+    },
+  );
+  expect((aggregate.cause as AggregateError).errors).toEqual([
+    jadxFailure,
+    ascFailure,
+  ]);
+  expect(aggregate.cleanupResources).toEqual([
+    "jadx:workspace",
+    "asc:descriptor",
+  ]);
+  jadxDenied = false;
+  await expect(router.close()).rejects.toBe(ascFailure);
+  expect(aggregate.cleanupIncomplete).toBe(true);
+  expect(aggregate.cleanupResources).toEqual(["asc:descriptor"]);
+  ascDenied = false;
+  await router.close();
+  expect(aggregate.cleanupIncomplete).toBe(false);
+  expect(jadx.calls).toEqual(["close", "close"]);
+  expect(asc.calls).toEqual(["close", "close", "close"]);
 });
 
 it("rejects an unknown backend instead of treating it as the default", () => {

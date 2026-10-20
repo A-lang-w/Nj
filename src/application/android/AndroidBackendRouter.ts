@@ -65,6 +65,11 @@ export class AndroidBackendRouter implements AndroidAnalysisPort {
       }),
     );
     if (this.#pending.size > 0) {
+      // A lone backend already owns its typed failure, diagnostics and cleanup
+      // capability. Only independent failures need a router-owned aggregate.
+      const failures = [...this.#failures.values()];
+      if (failures.length === 1 && failures[0] instanceof AnalysisError)
+        throw failures[0];
       const resources = () =>
         [...this.#pending.keys()].flatMap((id) => {
           const failure = this.#failures.get(id);
