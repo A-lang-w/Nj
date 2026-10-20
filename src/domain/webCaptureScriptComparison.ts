@@ -25,16 +25,7 @@ export const compareWebCaptureScripts = (
   for (const base of new Set([...beforeGroups.keys(), ...afterGroups.keys()])) {
     const left = beforeGroups.get(base) ?? [];
     const right = afterGroups.get(base) ?? [];
-    const sourceComparable =
-      inventoryComplete &&
-      [...left, ...right].every((script) => script.source.included);
-    const pairs = matchScripts(
-      left,
-      right,
-      sourceComparable
-        ? (script) => scriptFingerprint(script, true)
-        : (script) => script.script_key,
-    );
+    const pairs = matchScripts(left, right, inventoryComplete);
     for (const pair of pairs) {
       if (pair.before === undefined) {
         if (inventoryComplete && pair.after !== undefined)
@@ -43,6 +34,10 @@ export const compareWebCaptureScripts = (
         if (inventoryComplete)
           changes.push({ identity: pair.before.script_key, change: "removed" });
       } else {
+        const sourceComparable =
+          inventoryComplete &&
+          pair.before.source.included &&
+          pair.after.source.included;
         if (
           !sourceComparable &&
           (pair.before.cdp_hash === null || pair.after.cdp_hash === null)
@@ -100,27 +95,53 @@ const scriptGroups = (scripts: readonly Script[]): Map<string, Script[]> => {
 const matchScripts = (
   before: readonly Script[],
   after: readonly Script[],
-  identity: (script: Script) => string,
+  includeSources: boolean,
 ): ScriptPair[] => {
-  const remainingAfter = new Map<string, Script[]>();
-  for (const script of [...after].reverse()) {
-    const key = identity(script);
-    const bucket = remainingAfter.get(key) ?? [];
-    bucket.push(script);
-    remainingAfter.set(key, bucket);
-  }
   const pairs: ScriptPair[] = [];
-  const unmatchedBefore: Script[] = [];
-  for (const script of before) {
-    const matched = remainingAfter.get(identity(script))?.pop();
-    if (matched === undefined) unmatchedBefore.push(script);
-    else pairs.push({ before: script, after: matched });
-  }
-  const unmatchedAfter = [...remainingAfter.values()]
-    .flat()
-    .sort((left, right) =>
-      compareUnicodeCodePoints(left.script_key, right.script_key),
+  let unmatchedBefore = [...before];
+  let unmatchedAfter = [...after];
+  const match = (
+    leftIdentity: (script: Script) => string | undefined,
+    rightIdentity = leftIdentity,
+  ) => {
+    const remainingAfter = new Map<string, Script[]>();
+    for (const script of [...unmatchedAfter].reverse()) {
+      const key = rightIdentity(script);
+      if (key === undefined) continue;
+      const bucket = remainingAfter.get(key) ?? [];
+      bucket.push(script);
+      remainingAfter.set(key, bucket);
+    }
+    const matchedAfter = new Set<Script>();
+    unmatchedBefore = unmatchedBefore.filter((script) => {
+      const key = leftIdentity(script);
+      const matched =
+        key === undefined ? undefined : remainingAfter.get(key)?.pop();
+      if (matched === undefined) return true;
+      pairs.push({ before: script, after: matched });
+      matchedAfter.add(matched);
+      return false;
+    });
+    unmatchedAfter = unmatchedAfter.filter(
+      (script) => !matchedAfter.has(script),
     );
+  };
+  if (includeSources) {
+    match((script) =>
+      script.source.included ? scriptFingerprint(script, true) : undefined,
+    );
+    const known = (script: Script) =>
+      script.source.included ? scriptFingerprint(script, false) : undefined;
+    const unknown = (script: Script) =>
+      script.source.included ? undefined : scriptFingerprint(script, false);
+    // Unknown sources can explain residual known content, but not metadata changes.
+    match(known, unknown);
+    match(unknown, known);
+    match(unknown);
+  } else match((script) => script.script_key);
+  unmatchedAfter.sort((left, right) =>
+    compareUnicodeCodePoints(left.script_key, right.script_key),
+  );
   // Pair only residual occurrences after cancelling identical content counts.
   for (
     let index = 0;

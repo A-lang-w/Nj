@@ -62,11 +62,14 @@ const writeCaptures = async (
   return paths;
 };
 
-const scriptGroupCapture = (texts: readonly (string | null)[]) => {
-  const capture = scriptCapture(texts[0] ?? null);
+const scriptGroupCapture = (
+  texts: readonly (string | null)[],
+  cdpHash: string | null = null,
+) => {
+  const capture = scriptCapture(texts[0] ?? null, cdpHash);
   const base = capture.inspection.scripts.items[0]!.script_key;
   const items = texts.map(
-    (text) => scriptCapture(text).inspection.scripts.items[0]!,
+    (text) => scriptCapture(text, cdpHash).inspection.scripts.items[0]!,
   );
   const sourceOrder = (script: (typeof items)[number]) =>
     script.source.included
@@ -366,6 +369,68 @@ cliTest(
 );
 
 cliTest(
+  "CLI honors explicit script exclusions without conflating other omissions",
+  async ({ cli }) => {
+    const before = scriptCapture("export let x = 1;\n");
+    const after = scriptCapture("export let x = 2;\n");
+    const excludedBefore = structuredClone(before);
+    const excludedAfter = structuredClone(after);
+    // Schema-valid inputs can record exclusions without the redundant section flags.
+    excludedBefore.inspection.completeness.excluded.push({
+      section: "scripts",
+      reason: "out_of_target_scope",
+      count: 1,
+    });
+    excludedAfter.inspection.completeness.excluded.push({
+      section: "scripts",
+      reason: "provider_unavailable",
+      count: null,
+    });
+    const zero = structuredClone(after);
+    zero.inspection.completeness.excluded.push({
+      section: "scripts",
+      reason: "out_of_target_scope",
+      count: 0,
+    });
+    const other = structuredClone(after);
+    other.inspection.completeness.excluded.push({
+      section: "network_requests",
+      reason: "out_of_target_scope",
+      count: 1,
+    });
+    const paths = await writeCaptures([
+      before,
+      after,
+      excludedBefore,
+      excludedAfter,
+      zero,
+      other,
+    ]);
+    for (const [left, right] of [
+      [2, 3],
+      [3, 2],
+      [0, 3],
+      [3, 0],
+      [2, 1],
+      [1, 2],
+      [2, 2],
+    ] as const) {
+      expect(
+        await compareScripts(cli, paths[left]!, paths[right]!),
+      ).toMatchObject({ status: "unknown", total_changes: 0, changes: [] });
+    }
+    for (const right of [4, 5]) {
+      expect(await compareScripts(cli, paths[0]!, paths[right]!)).toMatchObject(
+        {
+          status: "changed",
+          total_changes: 1,
+        },
+      );
+    }
+  },
+);
+
+cliTest(
   "CLI keeps missing script membership unknown while preserving known metadata changes",
   async ({ cli }) => {
     const complete = scriptCapture(null, "producer-hash");
@@ -465,6 +530,82 @@ cliTest(
       expect(
         await compareScripts(cli, paths[left]!, paths[right]!),
       ).toMatchObject({ status: "unknown", total_changes: 0, changes: [] });
+    }
+  },
+);
+
+cliTest.for([null, "producer-hash"])(
+  "CLI preserves provable replacements with partially retained sources and hash %s",
+  async (cdpHash, { cli }) => {
+    const before = scriptGroupCapture(
+      ["export let x = 1;\n", "export let x = 1;\n"],
+      cdpHash,
+    );
+    const after = scriptGroupCapture(["export let x = 2;\n", null], cdpHash);
+    after.inspection.completeness.unavailable_sections.push("script_sources");
+    const paths = await writeCaptures([before, after]);
+    for (const [left, right] of [
+      [0, 1],
+      [1, 0],
+    ] as const) {
+      expect(
+        await compareScripts(cli, paths[left]!, paths[right]!),
+      ).toMatchObject({
+        status: "changed",
+        total_changes: 1,
+        changes: [{ identity: expect.any(String), change: "modified" }],
+      });
+    }
+  },
+);
+
+cliTest.for([
+  {
+    name: "two forced replacements",
+    before: [1, 1, 1],
+    after: [2, 2, null],
+    status: "changed",
+    changes: 2,
+  },
+  {
+    name: "unknown slots on both sides can explain the difference",
+    before: [1, null],
+    after: [2, null],
+    status: "unknown",
+    changes: 0,
+  },
+  {
+    name: "equal counts with a shared digest can explain the difference",
+    before: [1, 1, 2],
+    after: [1, 2, null],
+    status: "unknown",
+    changes: 0,
+  },
+] as const)(
+  "CLI accounts for partially retained source counts: $name",
+  async ({ before, after, status, changes }, { cli }) => {
+    const capture = (values: readonly (number | null)[]) => {
+      const result = scriptGroupCapture(
+        values.map((value) =>
+          value === null ? null : `export let x = ${String(value)};\n`,
+        ),
+      );
+      if (values.includes(null))
+        result.inspection.completeness.unavailable_sections.push(
+          "script_sources",
+        );
+      return result;
+    };
+    const paths = await writeCaptures([capture(before), capture(after)]);
+    for (const [left, right] of [
+      [0, 1],
+      [1, 0],
+    ] as const) {
+      const compared = await compareScripts(cli, paths[left]!, paths[right]!);
+      expect(compared).toMatchObject({ status, total_changes: changes });
+      expect(compared.changes).toHaveLength(changes);
+      for (const change of compared.changes)
+        expect(change.change).toBe("modified");
     }
   },
 );

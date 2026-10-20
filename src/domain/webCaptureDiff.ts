@@ -213,7 +213,10 @@ const scriptDimension = (
   const inventoryComplete = [before, after].every(
     (inspection) =>
       eventInventoryComplete(inspection, ["scripts"]) &&
-      inspection.scripts.total === inspection.scripts.items.length,
+      inspection.scripts.total === inspection.scripts.items.length &&
+      !inspection.completeness.excluded.some(
+        ({ section, count }) => section === "scripts" && count !== 0,
+      ),
   );
   return compareWebCaptureScripts(
     before.scripts.items,

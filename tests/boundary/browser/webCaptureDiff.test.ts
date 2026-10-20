@@ -1210,11 +1210,15 @@ const markSectionsComplete = (
       attach_limited_sections: string[];
       truncated_sections: string[];
       unavailable_sections: string[];
+      excluded: WebPageInspection["completeness"]["excluded"];
     };
   },
   sections: readonly string[],
 ): void => {
   const completed = new Set(sections);
+  inspection.completeness.excluded = inspection.completeness.excluded.filter(
+    ({ section }) => !completed.has(section),
+  );
   for (const key of [
     "policy_filtered_sections",
     "attach_limited_sections",
