@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { open, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 
@@ -84,26 +84,29 @@ it("inventories a 2.1 archive, nested PYZ modules, and derived bytecode", async 
     (occurrence) => occurrence.logical_path === ".",
   );
   expect(root).toMatchObject({ artifact_kind: "container" });
-  expect(root?.limitations).toEqual(
-    expect.arrayContaining([
-      "PyInstaller CArchive layout 2.1.",
-      "Python version 314 (3.14).",
-      "Python library libpython3.14.dylib.",
-    ]),
-  );
+  expect(root?.format_metadata).toMatchObject({
+    kind: "pyinstaller",
+    layout_version: "2.1",
+    python_version_raw: 314,
+    python_major: 3,
+    python_minor: 14,
+    python_library: "libpython3.14.dylib",
+    runtime_option_count: 1,
+  });
   const hello = snapshot.occurrences.find(
     (occurrence) => occurrence.logical_path === "hello",
   );
-  expect(hello?.limitations).toEqual(
-    expect.arrayContaining([
-      "PyInstaller type code s.",
-      "PyInstaller compression flag 1.",
-      RECONSTRUCTED_PYTHON_HEADER_LIMITATION,
-    ]),
-  );
+  expect(hello?.format_metadata).toMatchObject({
+    kind: "pyinstaller-entry",
+    container: "carchive",
+    type_code: "s",
+    compression_flag: 1,
+    bytecode_header: "unknown",
+    bytecode_magic: null,
+  });
   expect(
-    snapshot.nodes.find((node) => node.sha256 === sha256(derived(script))),
-  ).toMatchObject({ size: derived(script).length });
+    snapshot.nodes.find((node) => node.sha256 === sha256(script)),
+  ).toMatchObject({ size: script.length });
   expect(
     snapshot.nodes.find((node) => node.sha256 === sha256(stored)),
   ).toBeDefined();
@@ -117,7 +120,7 @@ it("inventories a 2.1 archive, nested PYZ modules, and derived bytecode", async 
       "PYZ.pyz/json/decoder.pyc",
       "PYZ.pyz/pkg/__init__.pyc",
       "PYZ.pyz/ns",
-      "pyi-contents-directory _internal",
+      "__pyinstaller__/runtime-options/3",
     ]),
   );
   expect(
@@ -128,7 +131,7 @@ it("inventories a 2.1 archive, nested PYZ modules, and derived bytecode", async 
   const scriptEdge = snapshot.edges.find(
     (edge) => edge.occurrence_id === hello?.occurrence_id,
   );
-  expect(scriptEdge?.relation).toBe("derived-from");
+  expect(scriptEdge?.relation).toBe("contains");
 });
 
 it("records a 2.0 cookie without a Python library name", async () => {
@@ -151,13 +154,14 @@ it("records a 2.0 cookie without a Python library name", async () => {
   const root = snapshot.occurrences.find(
     (occurrence) => occurrence.logical_path === ".",
   );
-  expect(root?.limitations).toEqual(
-    expect.arrayContaining([
-      "PyInstaller CArchive layout 2.0.",
-      "Python version 307 (3.7).",
-      "Python library is unknown.",
-    ]),
-  );
+  expect(root?.format_metadata).toMatchObject({
+    kind: "pyinstaller",
+    layout_version: "2.0",
+    python_version_raw: 307,
+    python_major: 3,
+    python_minor: 7,
+    python_library: null,
+  });
 });
 
 it("extracts derived members into the safe output tree", async () => {
@@ -486,7 +490,7 @@ it("preserves an uppercase Z ZIP member as a readable file", async () => {
     ),
   ).toMatchObject({
     entry_kind: "file",
-    limitations: expect.arrayContaining(["PyInstaller type code Z."]),
+    format_metadata: { kind: "pyinstaller-entry", type_code: "Z" },
   });
   expect(
     snapshot.nodes.find((node) => node.sha256 === sha256(zip)),
@@ -557,9 +561,12 @@ it("projects CArchive type n entries as symlinks", async () => {
     entry_kind: "symlink",
     artifact_id: null,
     hash_status: "not-hashed",
+    format_metadata: {
+      kind: "pyinstaller-entry",
+      type_code: "n",
+      compression_flag: 0,
+    },
     limitations: expect.arrayContaining([
-      "PyInstaller type code n.",
-      "PyInstaller compression flag 0.",
       "PyInstaller symlink target was not read.",
     ]),
   });
@@ -702,12 +709,8 @@ it("inventories and extracts a Windows member name under its canonical path", as
   const resource = snapshot.occurrences.find(
     (occurrence) => occurrence.logical_path === "PYZ.pyz/res/icon.bin",
   );
-  expect(member?.limitations).toContain(
-    `Stored PyInstaller member name: ${JSON.stringify(storedName)}.`,
-  );
-  expect(resource?.limitations).toContain(
-    `Stored PyInstaller member name: ${JSON.stringify(pyzName)}.`,
-  );
+  expect(member?.format_metadata).toMatchObject({ source_name: storedName });
+  expect(resource?.format_metadata).toMatchObject({ source_name: pyzName });
   const directory = await createTestTempDirectory("rea-pyinstaller-out-");
   const output = join(directory, "extracted");
   await materializeArtifactInventory(
@@ -895,7 +898,7 @@ it("opens selected PYZ modules lazily and permits repeat reads without retaining
     expect(selected.declaredSize).toBeNull();
     for (let attempt = 0; attempt < 2; attempt += 1)
       expect(await buffer(await reader.open(selected))).toEqual(derived(good));
-    await expect(reader.open(damaged)).rejects.toMatchObject({
+    await expect(buffer(await reader.open(damaged))).rejects.toMatchObject({
       reason: "format",
     });
   } finally {
@@ -1039,13 +1042,26 @@ it("closes each spooled PYZ image after listing and reopens it for a requested m
       })),
     }),
   );
-  const close = vi.spyOn(OwnedFileHandle.prototype, "close");
-  const reader = new PyInstallerArtifactReader(path);
+  const closed = new Set<OwnedFileHandle>();
+  const originalClose = OwnedFileHandle.prototype.close;
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(async function (this: OwnedFileHandle) {
+      await originalClose.call(this);
+      closed.add(this);
+    });
+  const rootHandle = await open(path, "r");
+  const reader = new PyInstallerArtifactReader(path, {
+    handle: rootHandle,
+    initial: await rootHandle.stat(),
+  });
   try {
     const iterator = reader.entries()[Symbol.asyncIterator]();
     const first = await iterator.next();
     // Every spooled image is closed once its table is read, before any entry is yielded.
-    expect(close.mock.calls.length).toBe(bodies.length);
+    expect(closed.size).toBeGreaterThanOrEqual(bodies.length);
+    for (const owner of closed) expect(owner.handle.fd).toBe(-1);
+    const listedHandles = closed.size;
     const entries = first.done === true ? [] : [first.value];
     for (
       let next = await iterator.next();
@@ -1060,47 +1076,60 @@ it("closes each spooled PYZ image after listing and reopens it for a requested m
     expect(await buffer(await reader.open(selected))).toEqual(
       derived(bodies[1] as Buffer),
     );
-  } finally {
-    close.mockRestore();
     await reader.close();
+    expect(closed.size).toBe(listedHandles + 1);
+    for (const owner of closed) expect(owner.handle.fd).toBe(-1);
+    expect(rootHandle.fd).toBeGreaterThanOrEqual(0);
+  } finally {
+    try {
+      await reader.close();
+    } finally {
+      close.mockRestore();
+      await rootHandle.close();
+    }
   }
 });
 
-it("retains a spooled PYZ owner whose close fails after listing", async () => {
-  const path = await writeArchive(
-    "spool-close-owner",
-    cArchiveExecutable({
-      layout: "2.1",
-      pythonVersion: 309,
-      members: [
-        {
-          name: "PYZ.pyz",
-          typeCode: "z",
-          payload: pyzArchive({ magic: PYTHON_39_MAGIC, modules: [] }),
-          compress: true,
-        },
-      ],
-    }),
-  );
-  const originalClose = OwnedFileHandle.prototype.close;
-  const owners: OwnedFileHandle[] = [];
-  const closeFailure = new Error("spool close failed");
-  const close = vi
-    .spyOn(OwnedFileHandle.prototype, "close")
-    .mockImplementation(async function (this: OwnedFileHandle) {
-      owners.push(this);
-      if (owners.length === 1) throw closeFailure;
-      await originalClose.call(this);
-    });
-  const reader = new PyInstallerArtifactReader(path);
-  try {
-    await expect(reader.entries()[Symbol.asyncIterator]().next()).rejects.toBe(
-      closeFailure,
+it.each([1, 2])(
+  "retains a private PYZ owner whose close fails at stage %s",
+  async (failedStage) => {
+    const path = await writeArchive(
+      "spool-close-owner",
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 309,
+        members: [
+          {
+            name: "PYZ.pyz",
+            typeCode: "z",
+            payload: pyzArchive({ magic: PYTHON_39_MAGIC, modules: [] }),
+            compress: true,
+          },
+        ],
+      }),
     );
-    await reader.close();
-    expect(owners.filter((owner) => owner === owners[0])).toHaveLength(2);
-  } finally {
-    close.mockRestore();
-    await reader.close().catch(() => undefined);
-  }
-});
+    const originalClose = OwnedFileHandle.prototype.close;
+    const owners: OwnedFileHandle[] = [];
+    const closeFailure = new Error("spool close failed");
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        owners.push(this);
+        if (owners.length === failedStage) throw closeFailure;
+        await originalClose.call(this);
+      });
+    const reader = new PyInstallerArtifactReader(path);
+    try {
+      await expect(
+        reader.entries()[Symbol.asyncIterator]().next(),
+      ).rejects.toBe(closeFailure);
+      await reader.close();
+      expect(
+        owners.filter((owner) => owner === owners[failedStage - 1]),
+      ).toHaveLength(2);
+    } finally {
+      close.mockRestore();
+      await reader.close().catch(() => undefined);
+    }
+  },
+);

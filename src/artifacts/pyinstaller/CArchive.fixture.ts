@@ -181,16 +181,20 @@ const marshalPair = (
   length: number,
 ): Buffer =>
   smallTuple([
-    shortAscii(name),
+    marshalString(name),
     smallTuple([int32(typeCode), int32(offset), int32(length)]),
   ]);
 
 const smallTuple = (items: readonly Buffer[]): Buffer =>
   Buffer.concat([Buffer.from([0x29, items.length]), ...items]);
 
-const shortAscii = (text: string): Buffer => {
-  const body = Buffer.from(text, "ascii");
-  return Buffer.concat([Buffer.from([0x7a, body.length]), body]);
+const marshalString = (text: string): Buffer => {
+  const body = Buffer.from(text, "utf8");
+  if (body.length <= 255 && body.every((byte) => byte < 0x80))
+    return Buffer.concat([Buffer.from([0x7a, body.length]), body]);
+  const length = Buffer.alloc(4);
+  length.writeUInt32LE(body.length);
+  return Buffer.concat([Buffer.from([0x75]), length, body]);
 };
 
 const int32 = (value: number): Buffer => {

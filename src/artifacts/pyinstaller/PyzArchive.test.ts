@@ -1,20 +1,14 @@
-import { deflateSync } from "node:zlib";
 import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
-import {
-  inflateBounded,
-  parsePyzArchive,
-  readPyzArchive,
-  MAX_PYZ_TABLE_BYTES,
-} from "./PyzArchive.js";
+import { readPyzArchive, MAX_PYZ_TABLE_BYTES } from "./PyzArchive.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { PYTHON_39_MAGIC, pyzArchive } from "./CArchive.fixture.js";
 
-it("lists modules from a supported PYZ and leaves an unknown magic opaque", () => {
+it("lists modules from a supported PYZ and leaves an unknown magic opaque", async () => {
   const body = Buffer.from("module");
-  const parsed = parsePyzArchive(
+  const parsed = await readImage(
     pyzArchive({
       magic: PYTHON_39_MAGIC,
       modules: [{ name: "json.decoder", typeCode: 0, body }],
@@ -27,7 +21,7 @@ it("lists modules from a supported PYZ and leaves an unknown magic opaque", () =
     { name: "json.decoder", typeCode: 0, package: false },
   ]);
 
-  const opaque = parsePyzArchive(
+  const opaque = await readImage(
     pyzArchive({
       magic: Buffer.alloc(4),
       modules: [{ name: "json.decoder", typeCode: 0, body }],
@@ -38,45 +32,29 @@ it("lists modules from a supported PYZ and leaves an unknown magic opaque", () =
   expect(opaque.value.limitation).toContain("left opaque");
 });
 
-it("leaves a PYZ opaque when the table uses an unsupported marshal type", () => {
+it("leaves a PYZ opaque when the table uses an unsupported marshal type", async () => {
   const image = pyzArchive({
     magic: PYTHON_39_MAGIC,
     modules: [],
     toc: Buffer.from([0x4e]),
   });
-  const parsed = parsePyzArchive(image);
+  const parsed = await readImage(image);
   expect(parsed.ok).toBe(true);
   if (!parsed.ok || parsed.value.kind !== "opaque") return;
   expect(parsed.value.limitation).toContain("left opaque");
   expect(parsed.value.pythonMagic).toEqual(PYTHON_39_MAGIC);
 });
 
-it("reports an entry that extends outside the PYZ as an integrity error", () => {
+it("reports an entry that extends outside the PYZ as an integrity error", async () => {
   const image = pyzArchive({
     magic: PYTHON_39_MAGIC,
     modules: [{ name: "missing", typeCode: 0, body: Buffer.from("x") }],
   });
   image.writeInt32LE(100_000, image.length - 4);
-  const parsed = parsePyzArchive(image);
+  const parsed = await readImage(image);
   expect(parsed.ok).toBe(false);
   if (parsed.ok) return;
   expect(parsed.error.reason).toBe("integrity");
-});
-
-it("stops a zlib stream that expands past the supplied output bound", async () => {
-  const inflated = await inflateBounded(
-    deflateSync(Buffer.from("hello world hello world")),
-    4,
-  );
-  expect(inflated.ok).toBe(false);
-  if (inflated.ok) return;
-  expect(inflated.error.reason).toBe("limit");
-});
-
-it("classifies a truncated zlib stream as malformed rather than over budget", async () => {
-  const compressed = deflateSync(Buffer.from("complete module"));
-  const result = await inflateBounded(compressed.subarray(0, -2), 1024);
-  expect(result).toMatchObject({ ok: false, error: { reason: "format" } });
 });
 
 it("rejects an oversized sparse PYZ table before allocating its bytes", async () => {
@@ -100,7 +78,7 @@ it("rejects an oversized sparse PYZ table before allocating its bytes", async ()
   }
 });
 
-it("rejects a PYZ table whose back-references repeat one long row", () => {
+it("rejects a PYZ table whose back-references repeat one long row", async () => {
   // One namespace row with a 16 KiB name, flagged for reference, then 999
   // back-references to it. The table is about 21 KiB but would expand to
   // 16 MiB of entry names.
@@ -133,7 +111,7 @@ it("rejects a PYZ table whose back-references repeat one long row", () => {
   const image = Buffer.concat([header, table]);
   expect(image.length).toBeLessThan(32 * 1024);
 
-  const parsed = parsePyzArchive(image);
+  const parsed = await readImage(image);
   expect(parsed).toMatchObject({ ok: false, error: { reason: "limit" } });
   if (parsed.ok) return;
   expect(parsed.error.message).toContain("expand past");
@@ -143,4 +121,16 @@ const int32 = (value: number): Buffer => {
   const bytes = Buffer.alloc(4);
   bytes.writeInt32LE(value);
   return bytes;
+};
+
+const readImage = async (bytes: Buffer) => {
+  const root = await createTestTempDirectory("rea-pyz-file-");
+  const path = join(root, "image.pyz");
+  await writeFile(path, bytes);
+  const handle = await open(path, "r");
+  try {
+    return await readPyzArchive(handle, 0, bytes.length);
+  } finally {
+    await handle.close();
+  }
 };

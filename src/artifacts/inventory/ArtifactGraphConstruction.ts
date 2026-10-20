@@ -1,4 +1,3 @@
-import { RECONSTRUCTED_PYTHON_HEADER_LIMITATION } from "../pyinstaller/PythonBytecode.js";
 import { hasGodotPckHeader } from "../../domain/godotPckFormat.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
@@ -83,16 +82,18 @@ export const createOccurrence = (
   duplicateOrdinal = 0,
 ): MutableOccurrence => {
   const role =
-    entry.kind === "directory"
-      ? {
-          kind: path.toLowerCase().endsWith(".framework")
-            ? ("framework" as const)
-            : ("container" as const),
-          format: "directory" as const,
-        }
-      : containerSuffixFamily(path) === undefined
-        ? classifyArtifactPath(path)
-        : ({ kind: "unknown", format: "unknown" } as const);
+    entry.kind === "metadata"
+      ? { kind: "package-metadata" as const, format: "unknown" as const }
+      : entry.kind === "directory"
+        ? {
+            kind: path.toLowerCase().endsWith(".framework")
+              ? ("framework" as const)
+              : ("container" as const),
+            format: "directory" as const,
+          }
+        : containerSuffixFamily(path) === undefined
+          ? classifyArtifactPath(path)
+          : ({ kind: "unknown", format: "unknown" } as const);
   return {
     occurrence_id: `occ_${digestCanonicalValue(
       duplicateOrdinal === 0
@@ -365,9 +366,8 @@ export const createArtifactEdges = (
       relation:
         occurrence.entry_kind === "slice"
           ? ("slice-of" as const)
-          : occurrence.limitations.includes(
-                RECONSTRUCTED_PYTHON_HEADER_LIMITATION,
-              )
+          : occurrence.format_metadata?.kind === "pyinstaller-entry" &&
+              occurrence.format_metadata.bytecode_header === "derived"
             ? ("derived-from" as const)
             : isSourceMap
               ? mappedSource === undefined

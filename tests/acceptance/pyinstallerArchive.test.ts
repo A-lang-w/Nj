@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -30,6 +30,12 @@ const onefile = async (): Promise<string> => {
       pythonLibrary: "libpython3.14.dylib",
       trailer: Buffer.from("signature"),
       members: [
+        {
+          name: "pyi-contents-directory _internal",
+          typeCode: "o",
+          payload: Buffer.alloc(0),
+          compress: false,
+        },
         {
           name: "hello",
           typeCode: "s",
@@ -71,9 +77,22 @@ it("lists CArchive members and the Python version through inspect-artifact", asy
   const root = inventory?.occurrences.find(
     (occurrence) => occurrence.logical_path === ".",
   );
-  expect(root?.limitations).toEqual(
-    expect.arrayContaining(["Python version 314 (3.14)."]),
-  );
+  expect(root?.format_metadata).toMatchObject({
+    kind: "pyinstaller",
+    python_version_raw: 314,
+    python_major: 3,
+    python_minor: 14,
+    runtime_option_count: 1,
+  });
+  expect(
+    inventory?.occurrences.find((item) => item.entry_kind === "metadata"),
+  ).toMatchObject({
+    artifact_id: null,
+    format_metadata: {
+      source_name: "pyi-contents-directory _internal",
+      type_code: "o",
+    },
+  });
   expect(
     inventory?.occurrences.map((occurrence) => occurrence.logical_path),
   ).toEqual(expect.arrayContaining(["hello", "PYZ.pyz", "PYZ.pyz/app.pyc"]));
@@ -100,4 +119,13 @@ it("extracts CArchive members through extract-artifact", async () => {
   expect(
     await readFile(join(extracted.output_root, "PYZ.pyz", "app.pyc")),
   ).toHaveLength(16 + Buffer.from("app-body").length);
+  expect(await readFile(join(extracted.output_root, "hello"))).toEqual(
+    Buffer.from("print('hi')"),
+  );
+  expect(await readdir(extracted.output_root)).not.toContain("__pyinstaller__");
+  expect(
+    extracted.artifacts.some((item) =>
+      item.relative_path.includes("pyi-contents-directory"),
+    ),
+  ).toBe(false);
 });

@@ -31,12 +31,3 @@ export const reconstructedPycHeader = (magic: Buffer): Buffer => {
   magic.copy(header, 0, 0, 4);
   return header;
 };
-
-/** Cookie python version integer, with a dotted reading when the encoding is known. */
-export const formatPythonCookieVersion = (version: number): string => {
-  if (version >= 100 && version <= 399)
-    return `${String(version)} (${String(Math.floor(version / 100))}.${String(version % 100)})`;
-  if (version >= 20 && version <= 27)
-    return `${String(version)} (2.${String(version % 10)})`;
-  return String(version);
-};

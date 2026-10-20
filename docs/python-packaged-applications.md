@@ -1,54 +1,71 @@
 # Python packaged applications
 
-REA inventories a PyInstaller executable when the native bootloader has an
-appended CArchive. `inspect_artifact` and `extract_artifact` list and extract
-the archive members. REA does not decrypt encrypted PYZ entries and does not
-decompile bytecode.
+REA statically inventories PyInstaller executables with an appended CArchive.
+`inspect_artifact` and `extract_artifact` share the same reader through CLI and
+MCP. They read archive bytes without launching the application. Bytecode
+source decompilation, encrypted PYZ recovery, zipapp and PEX analysis are outside
+this capability.
 
-## What the inventory reports
+## Facts and focused queries
 
-The root occurrence records the CArchive layout (2.0 or 2.1), the Python
-version integer from the cookie, and the Python library name when the 2.1
-cookie includes one.
+The root occurrence's `format_metadata` records the CArchive layout (2.0 or
+2.1), archive and cookie offsets, table extent, entry count, raw Python version,
+normalized major/minor when known, library name and encryption marker. Member
+metadata retains the original name, table index, type, compression flag,
+relative offset and known directory record extent. Logical paths use archive
+path rules; the source name retains its spelling, including backslashes.
 
-Each table entry reports its name, type code, compression flag, declared sizes
-and known source offsets. Inventory opens members individually to hash their
-content; it does not retain expanded module bodies. PYZ tables declare only
-compressed lengths, so uncompressed declared sizes and decoded source spans
-remain unknown. Entry scripts use type `s`.
-Runtime options use type `o`, and the option text is the entry name.
+CArchive type `o` entries are runtime options. They are metadata occurrences,
+with no content artifact or extractable file. Their query paths are
+`__pyinstaller__/runtime-options/<table index>`; the option text is
+`format_metadata.source_name`. Repeated declarations retain distinct occurrence
+identities. These paths do not claim output filesystem names.
 
-Stored PYZ images are read through file ranges. Outer-compressed images stream
-to private temporary files under the aggregate decompression budget and are
-removed when the reader closes. Only the header and marshal table are loaded
-for listing; the table has a separate 16 MiB transient memory budget. A table
-over that budget returns a resource failure before allocation.
-
-A PYZ archive is a nested container when its Python bytecode magic is a final
-magic for Python 3.7, 3.8, 3.9, 3.10, 3.11, 3.12, 3.13, or 3.14. The table of
-contents supplies module, package, data, and namespace entries. A PYZ whose
-magic is outside that set, or whose table uses a marshal type outside list,
-tuple, string, integer, and bytes, stays one opaque member with a limitation.
-
-An archive that contains the module `pyimod00_crypto_key` marks PYZ entry blobs
-as encrypted. Those entries are reported and are not decoded. Extraction of an
-archive that contains an encrypted entry is refused.
-
-Compiled members are written as `.pyc` files with a reconstructed 16-byte header
-when the Python magic is known. The inventory records that header as a
-derivation. The member digest covers the derived file. A supported PYZ magic remains usable
-for separate CArchive scripts even when the PYZ table itself stays opaque.
-
-Detection searches the last 16 MiB of the file for the CArchive cookie, so a
-macOS code signature after the cookie does not hide the archive. Member offsets
-are relative to the archive start, which is the cookie position plus the cookie
-size minus the package length.
+Request `detail: "summary"` for a compact inspection, then query retained
+Evidence with `inspect_analysis_view`. An inventory view can select
+`collection: "occurrences"`, `entry_kinds: ["metadata"]`, exact logical paths or
+occurrence IDs, requested `fields`, and `offset`/`limit`. Filters intersect;
+identities, parent Evidence and coverage survive projection. Full inventory
+Evidence remains available for export. A compact reply reduces returned context;
+it still performs the complete member inventory and hashing work.
 
 ```bash
-rea inspect-artifact /absolute/path/hello --json
+rea inspect-artifact /absolute/path/hello --detail summary --evidence_output /absolute/new/evidence.json --json
 rea extract-artifact /absolute/path/hello --json
 ```
 
-The bootloader remains a native executable. Use the native analysis tools when
-the question is about the bootloader rather than the packaged Python
-application.
+## Decoding and evidence limits
+
+Inventory hashes members individually through bounded streams. Stored PYZ
+images use descriptor ranges; outer-compressed images stream to private files,
+which the reader owns through cleanup and any cleanup retry. Extraction binds
+the selected carrier to its inventoried digest and checks source identity and
+state before and after reading. It does not retain expanded module bodies.
+
+Only the PYZ header and marshal directory are loaded for listing. PYZ tables
+have a 16 MiB budget; CArchive tables have a 32 MiB budget. Parsed facts and
+projected entry metadata have separate 32 MiB and 64 MiB serialized budgets,
+including per-record bookkeeping reservations. Plaintext expansion has an
+aggregate archive-derived budget. Exceeding a budget returns a resource failure.
+
+Supported final Python bytecode magic values cover Python 3.7 through 3.14.
+Supported marshal directory values are lists, tuples, strings, integers and
+bytes. An unsupported magic or directory stays an opaque member with a
+limitation and `pyz_status: "opaque"`; its module contents remain unknown.
+The directory declares compressed module lengths, so uncompressed declared
+sizes and source spans inside decoded data remain unknown.
+
+PYZ modules receive a derived 16-byte `.pyc` header from their own supported
+magic. CArchive bytecode receives that header only when every sibling PYZ magic
+and the cookie's Python version agree. Otherwise it retains its original bytes
+and `bytecode_header: "unknown"`. `bytecode_magic` and graph derivation edges
+identify synthesized headers; member digests cover the resulting derived files.
+These headers do not establish successful execution or decompilation.
+
+The module `pyimod00_crypto_key` is recorded as an encryption marker. Affected
+PYZ blobs are reported without decoding; extraction refuses encrypted entries.
+
+Detection searches the last 16 MiB for a cookie, allowing a trailing macOS code
+signature within that bound. Member offsets are relative to the archive start:
+cookie position plus cookie size minus package length. Native bootloader
+analysis remains available through the native tools.

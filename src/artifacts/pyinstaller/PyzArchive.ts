@@ -1,8 +1,5 @@
-import { createHash } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
 import { hashReadable } from "../ArtifactHash.js";
-import { inflate as inflateCallback } from "node:zlib";
-import { promisify } from "node:util";
 
 import { err, ok, type Result } from "../../domain/result.js";
 import { readMarshalSubset, type MarshalValue } from "./MarshalSubset.js";
@@ -12,12 +9,12 @@ import {
 } from "./PyInstallerFailure.js";
 import { pythonVersionForMagic } from "./PythonBytecode.js";
 
-const inflate = promisify(inflateCallback);
 const PYZ_MAGIC = Buffer.from("PYZ\0");
 const PYZ_HEADER_BYTES = 12;
 
 /** One PYZ table entry. Type codes follow the archive's module, package, data, and namespace values. */
 export interface PyzEntry {
+  readonly index: number;
   readonly name: string;
   readonly typeCode: number;
   readonly offset: number;
@@ -40,17 +37,6 @@ export type PyzArchive =
       readonly sha256: string;
       readonly limitation: string;
     };
-
-/** Parse a PYZ image. Unexpected marshal values become an opaque member. */
-export const parsePyzArchive = (
-  bytes: Buffer,
-): Result<PyzArchive, PyInstallerFailure> => {
-  const sha256 = createHash("sha256").update(bytes).digest("hex");
-  const header = bytes.subarray(0, PYZ_HEADER_BYTES);
-  const offset =
-    bytes.length >= PYZ_HEADER_BYTES ? bytes.readUInt32BE(8) : bytes.length;
-  return parsePyzParts(header, bytes.subarray(offset), bytes.length, sha256);
-};
 
 /** Bound the transient marshal table allocation independently of image expansion. */
 export const MAX_PYZ_TABLE_BYTES = 16 * 1024 * 1024;
@@ -163,46 +149,6 @@ const parsePyzParts = (
   });
 };
 
-/** Inflate one zlib member. Output is capped by the caller-supplied budget. */
-export const inflateBounded = async (
-  bytes: Buffer,
-  maxOutputBytes: number,
-): Promise<Result<Buffer, PyInstallerFailure>> => {
-  if (maxOutputBytes < 0)
-    return err(
-      pyInstallerFailure(
-        "limit",
-        "Compressed member exceeds the decompression budget",
-      ),
-    );
-  try {
-    // Node requires a positive cap. One byte still validates an empty stream
-    // and rejects any produced output when the declared size is zero.
-    const output = await inflate(bytes, {
-      maxOutputLength: maxOutputBytes === 0 ? 1 : maxOutputBytes,
-    });
-    if (output.length > maxOutputBytes)
-      return err(
-        pyInstallerFailure(
-          "limit",
-          "Compressed member exceeds the decompression budget",
-        ),
-      );
-    return ok(output);
-  } catch (cause: unknown) {
-    if (isOutputLimit(cause))
-      return err(
-        pyInstallerFailure(
-          "limit",
-          "Compressed member exceeds the decompression budget",
-        ),
-      );
-    return err(
-      pyInstallerFailure("format", "Compressed member is not a zlib stream"),
-    );
-  }
-};
-
 /**
  * Marshal back-references let one stored row appear many times, so a small
  * table can name far more bytes than it holds. Each genuine entry stores its
@@ -220,7 +166,7 @@ const pyzEntries = (
   const entries: PyzEntry[] = [];
   let nameBytes = 0;
   for (const item of value) {
-    const entry = onePyzEntry(item, archiveBytes);
+    const entry = onePyzEntry(item, archiveBytes, entries.length);
     if (!entry.ok) return entry;
     nameBytes += Buffer.byteLength(entry.value.name, "utf8");
     if (nameBytes > tableBytes)
@@ -238,6 +184,7 @@ const pyzEntries = (
 const onePyzEntry = (
   item: MarshalValue,
   archiveBytes: number,
+  index: number,
 ): Result<PyzEntry, PyInstallerFailure> => {
   if (!Array.isArray(item) || item.length !== 2)
     return err(
@@ -294,6 +241,7 @@ const onePyzEntry = (
       ),
     );
   return ok({
+    index,
     name,
     typeCode,
     offset,
@@ -302,8 +250,3 @@ const onePyzEntry = (
     namespace: typeCode === 3,
   });
 };
-
-const isOutputLimit = (cause: unknown): boolean =>
-  cause instanceof Error &&
-  "code" in cause &&
-  (cause.code === "ERR_BUFFER_ERROR" || cause.code === "ERR_BUFFER_TOO_LARGE");

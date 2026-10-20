@@ -139,7 +139,7 @@ export const artifactOccurrenceSchema = z.object({
   artifact_id: artifactIdSchema.nullable(),
   parent_occurrence_id: occurrenceIdSchema.nullable(),
   logical_path: boundedRelativePathSchema,
-  entry_kind: z.enum(["file", "directory", "symlink", "slice"]),
+  entry_kind: z.enum(["file", "directory", "symlink", "slice", "metadata"]),
   artifact_kind: artifactKindSchema,
   artifact_format: artifactFormatSchema,
   declared_size: z

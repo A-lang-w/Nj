@@ -40,6 +40,9 @@ export interface PyInstallerCookie {
 
 /** One CArchive table entry. */
 export interface CArchiveEntry {
+  readonly index: number;
+  readonly tocRecordOffset: number;
+  readonly tocRecordLength: number;
   readonly name: string;
   readonly typeCode: string;
   readonly offset: number;
@@ -163,6 +166,9 @@ export const parseCArchiveToc = (
         ),
       );
     entries.push({
+      index: entries.length,
+      tocRecordOffset: offset,
+      tocRecordLength: entryLength,
       name: name.value,
       typeCode: String.fromCharCode(typeCode),
       offset: bytes.readUInt32BE(offset + 4),
@@ -254,7 +260,9 @@ const libraryName = (
     );
   if (text.length === 0) return ok(null);
   try {
-    return ok(new TextDecoder("utf-8", { fatal: true }).decode(text));
+    return ok(
+      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(text),
+    );
   } catch {
     return err(
       pyInstallerFailure(
@@ -271,7 +279,9 @@ const tocName = (bytes: Buffer): Result<string, PyInstallerFailure> => {
   if (text.length === 0)
     return err(pyInstallerFailure("format", "CArchive entry name is empty"));
   try {
-    return ok(new TextDecoder("utf-8", { fatal: true }).decode(text));
+    return ok(
+      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(text),
+    );
   } catch {
     return err(
       pyInstallerFailure("format", "CArchive entry name is not valid UTF-8"),

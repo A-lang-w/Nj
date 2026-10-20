@@ -182,7 +182,11 @@ const readUtf8 = (
   const bytes = readBytes(cursor, length.value);
   if (!bytes.ok) return bytes;
   try {
-    return ok(new TextDecoder("utf-8", { fatal: true }).decode(bytes.value));
+    return ok(
+      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+        bytes.value,
+      ),
+    );
   } catch {
     return err(
       pyInstallerFailure("format", "PYZ marshal string is not valid UTF-8"),
