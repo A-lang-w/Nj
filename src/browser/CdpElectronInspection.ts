@@ -276,7 +276,19 @@ const advanceFrameGeneration = (
   event: CdpEvent,
   state: ElectronInspectionState,
 ): string | undefined => {
-  // Same-document URL changes retain the document and its authorization.
+  // A same-document event changes the cached identity, never its generation
+  // or authority. Later full-frame replay must compare with that current URL.
+  if (event.method === "Page.navigatedWithinDocument") {
+    const params = recordValue(event.params);
+    const id = cdpStringValue(params?.frameId);
+    if (id === undefined) return;
+    const previous = state.frameDocuments.get(id);
+    if (previous === undefined) return;
+    const url = cdpFrameUrl(params);
+    if (url === undefined || url === "") state.frameDocuments.delete(id);
+    else state.frameDocuments.set(id, { ...previous, url });
+    return;
+  }
   if (
     ![
       "Page.frameNavigated",
@@ -351,6 +363,7 @@ const frameDocument = (
 const seedFrameDocuments = (
   result: unknown,
   generations: ReadonlyMap<string, number>,
+  documents: ReadonlyMap<string, ElectronFrameDocument>,
   state: ElectronInspectionState,
 ): void => {
   const tree = recordValue(recordValue(result)?.frameTree);
@@ -362,6 +375,9 @@ const seedFrameDocuments = (
     if (
       id !== undefined &&
       document !== undefined &&
+      // A same-document event can update identity without changing generation.
+      // Do not overwrite that newer observation with this in-flight tree.
+      state.frameDocuments.get(id) === documents.get(id) &&
       (generations.get(id) ?? 0) === (state.frameGenerations.get(id) ?? 0)
     )
       state.frameDocuments.set(id, document);
@@ -391,13 +407,14 @@ const readCurrentFrames = async (
   // Snapshot before the asynchronous protocol and filesystem boundaries.
   // A tree can only authorize the generations for which it was requested.
   const generations = new Map(state.frameGenerations);
+  const documents = new Map(state.frameDocuments);
   const result = await context.connection.send(
     "Page.getFrameTree",
     {},
     context.sessionId,
     context.signal,
   );
-  seedFrameDocuments(result, generations, state);
+  seedFrameDocuments(result, generations, documents, state);
   const inventory = await captureFrames(result, completeness, context.signal);
   const main = inventory.frames[0];
   if (main === undefined || inventory.parents.get(main.frame_id) !== null)
@@ -485,13 +502,14 @@ const assertStableMainFrame = async (
   expectedPath: string,
 ): Promise<ElectronPageInspection["frames"]> => {
   const generations = new Map(state.frameGenerations);
+  const documents = new Map(state.frameDocuments);
   const result = await context.connection.send(
     "Page.getFrameTree",
     {},
     context.sessionId,
     context.signal,
   );
-  seedFrameDocuments(result, generations, state);
+  seedFrameDocuments(result, generations, documents, state);
   const afterPath = await mainFilePath(result, context.signal);
   if (afterPath === undefined)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");

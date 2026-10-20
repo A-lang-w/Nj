@@ -10,9 +10,11 @@ import { completeSemanticSteps } from "./javascript/javascriptSemanticTraversal.
 import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemanticAnalysis.js";
 import { isIntrinsicMapLookup } from "./javascript/javascriptSemanticMapOperations.js";
 import {
-  semanticFinalObjectProperty,
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
+  isNullishJavaScriptSyntax,
+  staticObjectProperty,
+  staticObjectPropertyNames,
   unwrapJavaScriptExpression,
 } from "./javascript/javascriptAstValues.js";
 import {
@@ -365,23 +367,60 @@ const addWebMcpDeclaration = (
   if (!t.isObjectExpression(declaration)) return;
   const name = objectString(declaration, "name");
   const description = objectString(declaration, "description");
-  const schema =
-    semanticFinalObjectProperty(declaration, "inputSchema") ??
-    semanticFinalObjectProperty(declaration, "input_schema");
-  const properties = t.isObjectExpression(schema)
-    ? semanticFinalObjectProperty(schema, "properties")
-    : undefined;
-  const schemaPropertyNames = t.isObjectExpression(properties)
-    ? properties.properties.flatMap((property) => {
-        if (!t.isObjectProperty(property)) return [];
-        const key = semanticStaticPropertyKey(property.key, property.computed);
-        return key === null ? [] : [key];
-      })
-    : [];
+  const camelSchema = staticObjectProperty(
+    declaration,
+    "inputSchema",
+    isNullishJavaScriptSyntax,
+  );
+  const schemaProperty =
+    camelSchema.status === "missing" ||
+    (camelSchema.status === "explicit" &&
+      isNullishJavaScriptSyntax(camelSchema.property.value))
+      ? staticObjectProperty(
+          declaration,
+          "input_schema",
+          isNullishJavaScriptSyntax,
+        )
+      : camelSchema;
+  let schemaPropertyNames: readonly string[] = [];
+  let schemaPropertyNamesCoverage: NonNullable<
+    WebMcpDeclaration["schema_property_names_coverage"]
+  > = "unknown";
+  if (schemaProperty.status === "missing") {
+    schemaPropertyNamesCoverage = "not_present";
+  } else if (schemaProperty.status === "explicit") {
+    const schema = schemaProperty.property.value;
+    if (t.isObjectExpression(schema)) {
+      const propertiesProperty = staticObjectProperty(
+        schema,
+        "properties",
+        isNullishJavaScriptSyntax,
+      );
+      if (propertiesProperty.status === "missing") {
+        schemaPropertyNamesCoverage = "not_present";
+      } else if (propertiesProperty.status === "explicit") {
+        const properties = propertiesProperty.property.value;
+        if (t.isObjectExpression(properties)) {
+          const projection = staticObjectPropertyNames(
+            properties,
+            isNullishJavaScriptSyntax,
+          );
+          if (
+            projection.status === "complete" ||
+            projection.status === "partial"
+          ) {
+            schemaPropertyNames = projection.names;
+            schemaPropertyNamesCoverage = projection.status;
+          }
+        }
+      }
+    }
+  }
   const metadata = {
     name: name ?? null,
     description: description ?? null,
     schema_property_names: [...new Set(schemaPropertyNames)].sort(),
+    schema_property_names_coverage: schemaPropertyNamesCoverage,
   };
   // Deduplicate the metadata we return, preserving omission and descriptions.
   // Property names are a variable-length source-derived list: NUL-joins

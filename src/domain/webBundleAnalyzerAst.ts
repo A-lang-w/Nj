@@ -2,15 +2,25 @@ import * as t from "@babel/types";
 
 import { sanitizeBrowserUrl } from "./browserObservation.js";
 import {
+  isNullishJavaScriptSyntax,
   readExactJavaScriptLiteral,
-  semanticFinalObjectProperty,
+  staticObjectProperty,
 } from "./javascript/javascriptAstValues.js";
+
+/** Read a statically known own property value from an object expression. */
+export const objectValue = (
+  object: t.ObjectExpression,
+  name: string,
+): t.ObjectProperty["value"] | undefined => {
+  const result = staticObjectProperty(object, name, isNullishJavaScriptSyntax);
+  return result.status === "explicit" ? result.property.value : undefined;
+};
 
 export const objectString = (
   object: t.ObjectExpression,
   name: string,
 ): string | undefined => {
-  const value = semanticFinalObjectProperty(object, name);
+  const value = objectValue(object, name);
   if (value === undefined) return undefined;
   const literal = readExactJavaScriptLiteral(value);
   return literal.found && typeof literal.value === "string"

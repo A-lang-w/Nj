@@ -1185,3 +1185,209 @@ it.each(["about:blank", "https://foreign.invalid/root"])(
     );
   },
 );
+
+const replayScripts =
+  (source: string, sessionId: string | undefined) =>
+  (id: string, frameId: string, contextId: number) => [
+    {
+      method: "Runtime.executionContextCreated",
+      ...(sessionId === undefined ? {} : { sessionId }),
+      params: { context: { id: contextId, auxData: { frameId } } },
+    },
+    {
+      method: "Debugger.scriptParsed",
+      ...(sessionId === undefined ? {} : { sessionId }),
+      params: {
+        scriptId: id,
+        url: source,
+        executionContextId: contextId,
+        hash: id,
+        length: 7,
+        scriptLanguage: "JavaScript",
+      },
+    },
+  ];
+
+const replayFrameTree = (
+  main: string,
+  child: string,
+  before: string,
+  kind: string,
+  reads: number,
+) => ({
+  frameTree: {
+    frame: { id: "frame-main", url: main },
+    childFrames:
+      reads === 1 || (kind === "during-tree" && reads === 2)
+        ? [
+            {
+              frame: {
+                id: "child",
+                parentId: "frame-main",
+                url: before,
+                ...(kind === "missing-loader"
+                  ? {}
+                  : { loaderId: "child-loader" }),
+              },
+              childFrames: [
+                {
+                  frame: {
+                    id: "grandchild",
+                    parentId: "child",
+                    url: child,
+                    loaderId: "grandchild-loader",
+                  },
+                },
+              ],
+            },
+          ]
+        : [],
+  },
+});
+
+it.each([
+  "inline",
+  "split",
+  "clear",
+  "query",
+  "during-tree",
+  "post-detach",
+  "changed-loader",
+  "changed-parent",
+  "unknown-frame",
+  "missing-loader",
+  "missing-url",
+  "invalid-fragment",
+])(
+  "preserves authorized same-document history across replay and detach: %s",
+  async (kind) => {
+    const root = await electronFixture();
+    const main = pathToFileURL(join(root, "index.html")).href;
+    const child = pathToFileURL(join(root, "child.html")).href;
+    const source = pathToFileURL(join(root, "app.js")).href;
+    const before = `${child}#old`;
+    const after =
+      kind === "clear"
+        ? child
+        : kind === "query"
+          ? `${child}?caller=retained#next`
+          : `${child}#next`;
+    const expectedOwner = [
+      "inline",
+      "split",
+      "clear",
+      "query",
+      "during-tree",
+      "post-detach",
+    ].includes(kind);
+    let eventReads = 0;
+    const browser = await startFakeCdpBrowser({
+      electronFileUrl: main,
+      eventsBeforeReply: [
+        "Debugger.enable",
+        "Page.getFrameTree",
+        "DOMSnapshot.captureSnapshot",
+      ],
+      commandResult: ({ method }, _origin, reads) =>
+        method === "Page.getFrameTree"
+          ? replayFrameTree(main, child, before, kind, reads)
+          : undefined,
+      commandEvents: ({ method, sessionId }) => {
+        if (method === "Page.getFrameTree") eventReads += 1;
+        if (
+          method !== "Debugger.enable" &&
+          !(
+            kind === "during-tree" &&
+            (method === "Page.getFrameTree" ||
+              method === "DOMSnapshot.captureSnapshot")
+          )
+        )
+          return method === "Runtime.enable" ? [] : undefined;
+        const scope = sessionId === undefined ? {} : { sessionId };
+        const script = replayScripts(source, sessionId);
+        const events = [
+          ...script("before", "child", 70),
+          {
+            method: "Page.navigatedWithinDocument",
+            ...scope,
+            params: {
+              frameId: kind === "unknown-frame" ? "unknown" : "child",
+              ...(kind === "missing-url"
+                ? {}
+                : kind === "split"
+                  ? { url: child, urlFragment: "#next" }
+                  : kind === "clear"
+                    ? { url: before, urlFragment: "" }
+                    : kind === "invalid-fragment"
+                      ? { url: child, urlFragment: 7 }
+                      : { url: after }),
+            },
+          },
+          {
+            method: "Page.frameNavigated",
+            ...scope,
+            params: {
+              frame: {
+                id: "child",
+                parentId:
+                  kind === "changed-parent" ? "other-parent" : "frame-main",
+                url: after,
+                loaderId:
+                  kind === "changed-loader" ? "replacement" : "child-loader",
+              },
+            },
+          },
+          ...script("after-replay", "child", 71),
+          ...script("descendant", "grandchild", 72),
+          {
+            method: "Page.frameDetached",
+            ...scope,
+            params: { frameId: "child", reason: "remove" },
+          },
+          ...(kind === "post-detach"
+            ? script("after-detach", "child", 73)
+            : []),
+        ];
+        if (kind !== "during-tree") return events;
+        if (method === "Debugger.enable") return events.slice(0, 2);
+        if (method === "Page.getFrameTree")
+          return eventReads === 2 ? events.slice(2, 3) : [];
+        return events.slice(3);
+      },
+    });
+    browsers.push(browser);
+    const result = await new CdpElectronProvider().inspectPage(
+      inspectElectronPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        target_id: "electron-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.scripts.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ cdp_hash: "before", frame_id: "child" }),
+        expect.objectContaining({
+          cdp_hash: "after-replay",
+          frame_id: expectedOwner ? "child" : null,
+        }),
+        expect.objectContaining({
+          cdp_hash: "descendant",
+          frame_id: expectedOwner ? "grandchild" : null,
+        }),
+      ]),
+    );
+    if (kind === "post-detach")
+      expect(result.value.scripts.items).toContainEqual(
+        expect.objectContaining({ cdp_hash: "after-detach", frame_id: null }),
+      );
+    expect(
+      result.value.completeness.attach_limited_sections.includes("scripts"),
+    ).toBe(!expectedOwner || kind === "post-detach" || kind === "during-tree");
+    expect(result.value.frames.map(({ frame_id }) => frame_id)).toEqual(
+      kind === "during-tree"
+        ? ["frame-main", "child", "grandchild"]
+        : ["frame-main"],
+    );
+  },
+);
