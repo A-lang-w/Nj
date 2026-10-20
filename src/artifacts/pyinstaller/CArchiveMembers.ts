@@ -132,7 +132,7 @@ export const projectPyzContainer = (
       executable: false,
       encrypted: false,
       byteOffset,
-      declaredSha256: null,
+      declaredIntegrity: null,
       unpacked: false,
       limitations: [
         ...limitations,
@@ -174,7 +174,7 @@ export const projectPyzMember = (
         executable: false,
         encrypted: false,
         byteOffset: null,
-        declaredSha256: null,
+        declaredIntegrity: null,
         unpacked: false,
         limitations: [
           "PyInstaller PYZ type 3.",
@@ -287,7 +287,7 @@ const fileEntry = (input: {
   executable: false,
   encrypted: input.encrypted === true,
   byteOffset: input.byteOffset,
-  declaredSha256: null,
+  declaredIntegrity: null,
   unpacked: false,
   limitations: input.limitations,
   adapterKey: input.adapterKey,

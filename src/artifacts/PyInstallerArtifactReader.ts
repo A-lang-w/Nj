@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { lstat, mkdtemp, open, rm, type FileHandle } from "node:fs/promises";
 
-import { artifactDecompressionBudgetBytes } from "../domain/artifactDecompressionBudget.js";
+import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
   NonRegularFileReadError,
@@ -164,8 +164,8 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     const handle = await this.#openHandle(signal);
     await this.#verifySource();
     const size = (await handle.stat()).size;
-    this.#budget = artifactDecompressionBudgetBytes(size);
     const cookie = await this.#cookie(handle, size);
+    this.#budget = artifactExpansionBudgetBytes(cookie.packageLength);
     const toc = await this.#toc(handle, cookie);
     for (const entry of toc) this.#charge(entry.uncompressedSize);
     assertMemberRanges(toc, cookie.tocOffset);

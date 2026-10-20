@@ -12,8 +12,18 @@ import {
 } from "./ClientConfigurationDocument.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import {
+  mergeEnvironmentOverrides,
+  snapshotEnvironment,
+} from "../process/snapshotEnvironment.js";
 import { dshDocument } from "./DshCordisPatch.js";
 import type { McpToolTimeoutInputs } from "../mcpStartupPolicy.js";
+import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
+
+export type ProviderRequestBudgetResolver = (
+  analysisProvider: AnalysisProviderSelector,
+  environment: Readonly<Record<string, string>>,
+) => Result<number | undefined, ConfigurationError>;
 
 export interface ClientRegistrationEnvironmentDetails {
   readonly values: Readonly<Record<string, string>>;
@@ -25,13 +35,20 @@ export const clientRegistrationEnvironment = (
   parsed: ClientConfigurationDocument | undefined,
   overrides: Readonly<Record<string, string>> = {},
   validation: "fragment" | "effective" = "effective",
+  platform: NodeJS.Platform = process.platform,
 ): Result<Readonly<Record<string, string>>, ConfigurationError> => {
   if (parsed?.dialect === "dsh")
-    return dshDocument(parsed.document).environment(overrides, validation);
+    return dshDocument(parsed.document).environment(
+      overrides,
+      validation,
+      platform,
+    );
   const details = clientRegistrationEnvironmentDetails(
     parsed,
     overrides,
     validation,
+    undefined,
+    platform,
   );
   return details.ok ? ok(details.value.values) : details;
 };
@@ -41,14 +58,22 @@ export const clientRegistrationEnvironmentDetails = (
   parsed: ClientConfigurationDocument | undefined,
   overrides: Readonly<Record<string, string>> = {},
   validation: "fragment" | "effective" = "effective",
+  resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
+  platform: NodeJS.Platform = process.platform,
 ): Result<ClientRegistrationEnvironmentDetails, ConfigurationError> => {
   if (parsed?.dialect === "dsh") {
     const environment = dshDocument(parsed.document).environment(
       overrides,
       validation,
+      platform,
     );
     if (!environment.ok) return environment;
-    return validatedDetails(environment.value, validation);
+    return validatedDetails(
+      environment.value,
+      validation,
+      resolveProviderRequestBudget,
+      platform,
+    );
   }
   const key =
     parsed?.dialect === "opencode" || parsed?.dialect === "opencode_v2"
@@ -77,19 +102,37 @@ export const clientRegistrationEnvironmentDetails = (
     );
   // Validate known settings with the runtime's parser, but retain the original
   // string overrides, including unknown client-specific keys and no defaults.
-  const environment = { ...existing.data, ...overrides };
-  return validatedDetails(environment, validation);
+  const environment = mergeEnvironmentOverrides(
+    existing.data,
+    overrides,
+    platform,
+  );
+  return validatedDetails(
+    environment,
+    validation,
+    resolveProviderRequestBudget,
+    platform,
+  );
 };
 
 const validatedDetails = (
   environment: Readonly<Record<string, string>>,
   validation: "fragment" | "effective",
+  resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
+  platform: NodeJS.Platform = process.platform,
 ): Result<ClientRegistrationEnvironmentDetails, ConfigurationError> => {
+  const runtimeEnvironment = snapshotEnvironment(environment, platform);
   const validated =
     validation === "fragment"
-      ? parseEnvironmentValues(environment)
-      : parseEnvironment(environment);
+      ? parseEnvironmentValues(runtimeEnvironment)
+      : parseEnvironment(runtimeEnvironment);
   if (!validated.ok) return validated;
+  const providerRequestBudget =
+    resolveProviderRequestBudget?.(
+      validated.value.REA_ANALYSIS_PROVIDER,
+      runtimeEnvironment,
+    ) ?? ok(undefined);
+  if (!providerRequestBudget.ok) return providerRequestBudget;
   return ok({
     values: Object.fromEntries(
       Object.entries(environment).sort(([left], [right]) =>
@@ -103,6 +146,9 @@ const validatedDetails = (
       ...(validated.value.REA_JEB_MCP_TIMEOUT_MS === undefined
         ? {}
         : { jebMcpTimeoutMs: validated.value.REA_JEB_MCP_TIMEOUT_MS }),
+      ...(providerRequestBudget.value === undefined
+        ? {}
+        : { providerRequestTimeoutMs: providerRequestBudget.value }),
     },
   });
 };

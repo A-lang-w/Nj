@@ -1,8 +1,12 @@
+import { locateGodotPck } from "../GodotPckLocation.js";
+import { withArtifactRegularFile } from "../ArtifactFileOperation.js";
+import type { ArtifactCleanupAttempt } from "../ArtifactResourceScope.js";
 import { lstat, realpath } from "node:fs/promises";
 
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
+import { GodotPckArtifactReader } from "../GodotPckArtifactReader.js";
 import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
@@ -21,7 +25,6 @@ import { isZipPackageFormat } from "../../domain/zipPackageFormat.js";
 import { MachOSliceArtifactReader } from "../MachOSliceArtifactReader.js";
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
 import { containsPyInstallerArchive } from "../pyinstaller/CArchiveLayout.js";
-import { openRootArtifact } from "../inventory/hashStableRootArtifact.js";
 import {
   artifactExtractionResultSchema,
   type ArtifactExtractionResult,
@@ -67,7 +70,7 @@ const extractArtifactInScope = async (
   // Cancellation wins over every later refusal, including unsupported formats.
   abortIfNeeded(signal);
   const sourcePath = await realpath(input.inputPath);
-  await requireExtractableFormat(sourcePath, input);
+  await requireExtractableFormat(sourcePath, input, signal);
   const snapshot = await scanArtifactInventoryInScope(sourcePath, {
     resourceScope: input.resourceScope,
     signal,
@@ -101,6 +104,18 @@ const materializeArtifactInventoryInScope = async (
   signal?: AbortSignal,
 ): Promise<ArtifactExtractionResult> => {
   abortIfNeeded(signal);
+  const containerMetadata = snapshot.occurrences.find(
+    (row) => row.logical_path === ".",
+  )?.format_metadata;
+  if (
+    containerMetadata?.kind === "godot-pck" &&
+    containerMetadata.directory_status !== "available"
+  )
+    throw new AnalysisUnsupportedTargetError(
+      "extract_artifact",
+      input.inputPath,
+      `Godot PCK directory is ${containerMetadata.directory_status}; its complete contents cannot be extracted`,
+    );
   const selectedOccurrences = snapshot.occurrences.filter(
     (occurrence) =>
       (occurrence.entry_kind === "file" || occurrence.entry_kind === "slice") &&
@@ -217,10 +232,22 @@ const materializeSelection = async ({
   readonly selected: readonly SelectedOccurrence[];
   readonly signal: AbortSignal | undefined;
 }): Promise<ArtifactExtractionResult> => {
-  const byPath = new Map(
-    selected.map((item) => [item.occurrence.logical_path, item]),
+  const byPath = new Map<string, SelectedOccurrence>();
+  for (const item of selected) {
+    const path = item.occurrence.logical_path;
+    if (byPath.has(path))
+      throw new ArtifactReaderFailure(
+        "path",
+        `Artifact extraction path collision: ${JSON.stringify(path)}. Multiple selected occurrences share this normalized logical path; they cannot be materialized at the same destination path, even when the archive is valid. Inventory retains each occurrence.`,
+      );
+    byPath.set(path, item);
+  }
+  const reader = await createReader(
+    sourcePath,
+    input,
+    inventory.manifest.root_format,
+    signal,
   );
-  const reader = await createReader(sourcePath, input);
   const readerOwner: ArtifactResourceOwner = {
     kind: "reader" as const,
     reader,
@@ -231,6 +258,7 @@ const materializeSelection = async ({
   let completed: ArtifactExtractionResult | undefined;
   const extracted: ExtractedOccurrence[] = [];
   try {
+    await reader.prepareContainer?.(inventory.manifest.root_sha256, signal);
     try {
       output = await SafeOutputTree.create(input.outputRoot);
     } catch (cause: unknown) {
@@ -241,13 +269,9 @@ const materializeSelection = async ({
     localReaderOwner = undefined;
     const closeAttempt = await input.resourceScope.release(readerOwner);
     if (closeAttempt.kind === "failed")
-      throw ArtifactReaderFailure.withCleanup(
-        closeAttempt.cause,
-        ArtifactReaderFailure.cleanupObservation(
-          closeAttempt.cause,
-          readerOwner.resource,
-        ),
-      );
+      throw input.resourceScope.cleanupFailure({ kind: "completed" }, [
+        closeAttempt,
+      ]);
     extracted.sort((left, right) =>
       compareUnicodeCodePoints(left.relative_path, right.relative_path),
     );
@@ -261,19 +285,11 @@ const materializeSelection = async ({
       output,
       input.outputRoot,
     );
-    if (cleanupFailures.length > 0) {
-      const observations = cleanupFailures.map(
-        ({ cause: cleanupCause, resource }) =>
-          ArtifactReaderFailure.cleanupObservation(cleanupCause, resource),
-      );
-      throw ArtifactReaderFailure.withCleanup(
-        cause,
-        {
-          reason: observations.map(({ reason }) => reason).join("; "),
-          resources: [
-            ...new Set(observations.flatMap(({ resources }) => resources)),
-          ],
-        },
+    const [firstCleanup, ...remainingCleanup] = cleanupFailures;
+    if (firstCleanup !== undefined) {
+      throw input.resourceScope.cleanupFailure(
+        { kind: "failed", cause },
+        [firstCleanup, ...remainingCleanup],
         output?.published === true && completed !== undefined
           ? { kind: "artifact-extraction", extraction: completed }
           : undefined,
@@ -342,12 +358,14 @@ const releaseExtractionOwners = async (
   readerOwner: ArtifactResourceOwner | undefined,
   output: SafeOutputTree | undefined,
   outputRoot: string,
-): Promise<{ readonly cause: unknown; readonly resource: string }[]> => {
-  const failures: { readonly cause: unknown; readonly resource: string }[] = [];
+): Promise<Extract<ArtifactCleanupAttempt, { readonly kind: "failed" }>[]> => {
+  const failures: Extract<
+    ArtifactCleanupAttempt,
+    { readonly kind: "failed" }
+  >[] = [];
   if (readerOwner !== undefined) {
     const attempt = await resourceScope.release(readerOwner);
-    if (attempt.kind === "failed")
-      failures.push({ cause: attempt.cause, resource: readerOwner.resource });
+    if (attempt.kind === "failed") failures.push(attempt);
   }
   if (output !== undefined) {
     const owner: ArtifactResourceOwner = {
@@ -356,8 +374,7 @@ const releaseExtractionOwners = async (
       resource: outputRoot,
     };
     const attempt = await resourceScope.release(owner);
-    if (attempt.kind === "failed")
-      failures.push({ cause: attempt.cause, resource: owner.resource });
+    if (attempt.kind === "failed") failures.push(attempt);
   }
   return failures;
 };
@@ -415,24 +432,38 @@ const requireExtractableFormat = async (
     ArtifactExtractionInput,
     "inputPath" | "inputFormat" | "resourceScope"
   >,
+  signal?: AbortSignal,
 ): Promise<boolean> => {
   const format = input.inputFormat;
   const directory = (await lstat(path)).isDirectory();
   if (
     !directory &&
     format !== "asar" &&
+    format !== "godot-pck" &&
     !isMachOFormat(format) &&
-    !isZipPackageFormat(format) &&
-    !(
-      (format === "elf" || format === "pe") &&
-      (await pathContainsPyInstallerArchive(path, input.resourceScope))
-    )
-  )
-    throw new AnalysisUnsupportedTargetError(
-      "extract_artifact",
-      input.inputPath,
-      `Artifact format has no extraction reader: ${format}`,
+    !isZipPackageFormat(format)
+  ) {
+    const pack = await withArtifactRegularFile(
+      path,
+      input.resourceScope,
+      signal,
+      async (handle) => {
+        const size = (await handle.stat()).size;
+        if (await locateGodotPck(handle, size, signal)) return true;
+        if (format !== "elf" && format !== "pe") return false;
+        abortIfNeeded(signal);
+        const packaged = await containsPyInstallerArchive(handle, size);
+        abortIfNeeded(signal);
+        return packaged;
+      },
     );
+    if (!pack)
+      throw new AnalysisUnsupportedTargetError(
+        "extract_artifact",
+        input.inputPath,
+        `Artifact format has no extraction reader: ${format}`,
+      );
+  }
   return directory;
 };
 
@@ -442,56 +473,18 @@ const createReader = async (
     ArtifactExtractionInput,
     "inputPath" | "inputFormat" | "environment" | "resourceScope"
   >,
+  containerFormat: ArtifactGraphManifest["root_format"],
+  signal?: AbortSignal,
 ): Promise<ArtifactReader> => {
   const format = input.inputFormat;
-  if (await requireExtractableFormat(path, input))
+  if (containerFormat === "godot-pck") return new GodotPckArtifactReader(path);
+  if (containerFormat === "pyinstaller")
+    return new PyInstallerArtifactReader(path);
+  if (await requireExtractableFormat(path, input, signal))
     return new DirectoryArtifactReader(path);
   if (format === "asar") return new AsarArtifactReader(path);
   if (isZipPackageFormat(format)) return new ZipArtifactReader(path, format);
-  if (
-    (format === "elf" || format === "pe" || isMachOFormat(format)) &&
-    (await pathContainsPyInstallerArchive(path, input.resourceScope))
-  )
-    return new PyInstallerArtifactReader(path);
   return new MachOSliceArtifactReader(path, input.environment);
-};
-
-const pathContainsPyInstallerArchive = async (
-  path: string,
-  resourceScope: ArtifactResourceScope,
-): Promise<boolean> => {
-  const owner = await openRootArtifact(path, resourceScope);
-  const resource = `PyInstaller detection descriptor for ${path}`;
-  let detected: boolean;
-  try {
-    detected = await containsPyInstallerArchive(
-      owner.handle,
-      (await owner.handle.stat()).size,
-    );
-  } catch (cause: unknown) {
-    const cleanup = await resourceScope.release({
-      kind: "file-handle",
-      resource,
-      handle: owner,
-    });
-    if (cleanup.kind === "failed")
-      throw ArtifactReaderFailure.withCleanup(
-        cause,
-        ArtifactReaderFailure.cleanupObservation(cleanup.cause, resource),
-      );
-    throw cause;
-  }
-  const cleanup = await resourceScope.release({
-    kind: "file-handle",
-    resource,
-    handle: owner,
-  });
-  if (cleanup.kind === "failed")
-    throw ArtifactReaderFailure.withCleanup(
-      cleanup.cause,
-      ArtifactReaderFailure.cleanupObservation(cleanup.cause, resource),
-    );
-  return detected;
 };
 
 const preflight = (entry: ArtifactEntry): void => {
