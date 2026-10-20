@@ -231,13 +231,20 @@ const binaryReport = (
   method_addresses: link.method_addresses,
 });
 
+/**
+ * Source facts stay on the refusal. The shared report sentence would deny an
+ * Evidence record that this reader attaches and MCP retains.
+ */
+const completeReportRecovery =
+  "The IL2CPP complete-report allowance is a fixed report allowance. No complete metadata inventory is retained. Source facts already observed stay with this refusal, and complete CLI JSON does not raise the allowance. Repeating the unchanged request fails the same way.";
+
 const reportLimit = (path: string, maximumBytes: number) =>
   new AnalysisResourceConstraintError(
     OPERATION,
     "memory",
     `Complete IL2CPP metadata for ${path} exceeds the retained report budget; no complete inventory is retained.`,
     { maximum_report_bytes: maximumBytes },
-    fixedAllowanceOptions("The IL2CPP complete-report allowance", "report"),
+    { retryable: false, remediationAction: completeReportRecovery },
   );
 
 const sourceArtifact = (path: string, snapshot: StableArtifactSnapshot) => ({

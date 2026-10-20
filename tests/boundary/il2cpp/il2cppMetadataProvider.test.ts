@@ -190,6 +190,41 @@ it("admits a report whose escaped names fit the budget exactly", async () => {
   }
 });
 
+it("keeps observed source facts with a complete-report refusal", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-report-evidence-");
+  const path = join(root, "global-metadata.dat");
+  const bytes = createIl2cppMetadataFixture().bytes;
+  await writeFile(path, bytes);
+  const result = await inspectMetadata(path, 256);
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected report allowance refusal");
+  expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+  expect(result.error.partialObservation).toMatchObject({
+    operation: "observe_il2cpp_metadata_source",
+    normalized_result: {
+      artifact: {
+        path,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.length,
+      },
+      inventory_status: "not-returned-as-complete",
+    },
+  });
+  const projected = projectAnalysisError(result.error);
+  expect(projected.retryable).toBe(false);
+  expect(projected.code).toBe("resource_constraint");
+  expect(projected.remediation.action).toContain(
+    "No complete metadata inventory is retained",
+  );
+  expect(projected.remediation.action).toContain(
+    "Source facts already observed stay with this refusal",
+  );
+  expect(projected.remediation.action).not.toMatch(
+    /does not leave a completed report or Evidence record/u,
+  );
+  expect(projected.remediation.action).not.toMatch(/worker memory/u);
+});
+
 it("refuses from row counts before decoding any row", async () => {
   const root = await createTestTempDirectory("rea-il2cpp-provider-counts-");
   const path = join(root, "global-metadata.dat");
