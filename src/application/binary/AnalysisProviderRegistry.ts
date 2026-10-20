@@ -118,7 +118,7 @@ export class AnalysisProviderRegistry {
       this.#profileFiles.retain({
         kind: "lease",
         resource,
-        lease: new AnalysisCleanupLease(() => owner.close(), [resource]),
+        lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
       }),
     run: (operation) => this.#profileFiles.run(operation),
   };
@@ -538,7 +538,9 @@ export class AnalysisProviderRegistry {
       reason,
       selection.requestedProviderId,
       selection.candidates,
-      operation,
+      {
+        operation,
+      },
     );
   }
 
@@ -579,15 +581,17 @@ export class AnalysisProviderRegistry {
       !refusal.cleanupIncomplete
     )
       return err(
-        selectionError("target_unsupported", providerId, statuses, undefined, {
-          userMessage: refusal.message,
-          ...(refusal.remediationAction === undefined
-            ? {}
-            : { remediationAction: refusal.remediationAction }),
-          capturedOutput: refusal.capturedOutput,
-          diagnostics: refusal.diagnostics,
-          partialObservation: refusal.partialObservation,
-          cause: refusal,
+        selectionError("target_unsupported", providerId, statuses, {
+          refusal: {
+            userMessage: refusal.message,
+            ...(refusal.remediationAction === undefined
+              ? {}
+              : { remediationAction: refusal.remediationAction }),
+            capturedOutput: refusal.capturedOutput,
+            diagnostics: refusal.diagnostics,
+            partialObservation: refusal.partialObservation,
+            cause: refusal,
+          },
         }),
       );
     if (refusal !== undefined) return err(refusal);
@@ -674,7 +678,14 @@ export class AnalysisProviderRegistry {
         candidates: statuses,
       });
     if (usable.length > 1)
-      return err(selectionError("ambiguous", "auto", statuses));
+      return err(
+        selectionError(
+          "ambiguous",
+          "auto",
+          usable.map(({ status }) => status),
+          { rejectionCandidates: statuses },
+        ),
+      );
     const selected = usable[0];
     if (selected === undefined)
       throw new TypeError("Usable provider selection disappeared");
@@ -779,25 +790,30 @@ const replaceCandidate = (
 const selectionError = (
   reason: ProviderSelectionFailureReason,
   requestedProviderId: string,
-  candidates: readonly AnalysisProviderCandidateStatus[],
-  operation = "open_binary",
-  refusal: Pick<
-    ProviderSelectionErrorOptions,
-    | "userMessage"
-    | "remediationAction"
-    | "capturedOutput"
-    | "diagnostics"
-    | "partialObservation"
-    | "cause"
-  > = {},
+  candidateChoices: readonly AnalysisProviderCandidateStatus[],
+  options: {
+    readonly operation?: string;
+    readonly rejectionCandidates?: readonly AnalysisProviderCandidateStatus[];
+    readonly refusal?: Pick<
+      ProviderSelectionErrorOptions,
+      | "userMessage"
+      | "remediationAction"
+      | "capturedOutput"
+      | "diagnostics"
+      | "partialObservation"
+      | "cause"
+    >;
+  } = {},
 ): ProviderSelectionError =>
   new ProviderSelectionError({
-    ...refusal,
-    operation,
+    ...options.refusal,
+    operation: options.operation ?? "open_binary",
     reason,
     requestedProviderId,
-    candidateIds: candidates.map(({ provider }) => provider.id),
-    rejections: candidateRejections(candidates),
+    candidateIds: candidateChoices.map(({ provider }) => provider.id),
+    rejections: candidateRejections(
+      options.rejectionCandidates ?? candidateChoices,
+    ),
   });
 
 const candidateRejections = (

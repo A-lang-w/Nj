@@ -13,6 +13,14 @@ rea doctor --provider kuna
 
 Select it explicitly with `--provider kuna`, MCP's `open_binary.provider_id: "kuna"`, or `REA_ANALYSIS_PROVIDER=kuna`. With Kuna and another provider configured for the same target, `auto` reports `ambiguous` instead of choosing one.
 
+Ordinary readiness cancellation returns `cancelled` (CLI SIGINT/SIGTERM exits
+130/143); an earlier recorded timeout or physical failure keeps its diagnostic.
+Completed version, hash and script observations remain in `kuna_installation`
+with `status: "partial"` and `completed_hash` when available. Typed errors carry
+this in `details.diagnostics`; doctor cleanup checks carry it in their `details`.
+Omitted fields remain unobserved; availability remains unknown until readiness
+completes. Cleanup retries keep both the observations and the exact file owner.
+
 | Setting                       | Default                                                                                                                                 | Meaning                                                                                                                                                                                  |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `REA_KUNA_COMMAND`            | none (required)                                                                                                                         | Absolute path of the `kuna` executable.                                                                                                                                                  |
@@ -21,6 +29,8 @@ Select it explicitly with `--provider kuna`, MCP's `open_binary.provider_id: "ku
 | `REA_KUNA_PROJECT_TIMEOUT_MS` | 30 minutes                                                                                                                              | Deadline for whole-program inventory/export, reference and string scans.                                                                                                                 |
 | `REA_KUNA_TIMEOUT_MS`         | 120 s                                                                                                                                   | Deadline for one single-function decompile, and for the inventory run REA makes when the export ends without one.                                                                        |
 | `REA_KUNA_JOBS`               | 1                                                                                                                                       | `decompile-project --jobs`. 1 is Kuna's reference answer; more jobs finish sooner but lose callee-first prototypes, and change about 40–60% of function bodies on the measured binaries. |
+
+A single-function decompile, inventory, string, graph or xref run that exceeds its deadline fails as `provider_timeout`, naming the setting that owns the deadline and that raising it takes a restart. A project export that exceeds `REA_KUNA_PROJECT_TIMEOUT_MS` is an export failure instead: requests that need the export report `capability_unavailable` with the export's own retry guidance.
 
 Windows is not supported yet. Supported targets are ELF and thin Mach-O executables for x86-64, AArch64 and ARM; PE and universal Mach-O are rejected with a typed reason.
 

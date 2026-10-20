@@ -59,6 +59,7 @@ jobs:
       web_network: ${{ steps.plan.outputs.web_network }}
       web_runtime: ${{ steps.plan.outputs.web_runtime }}
       web_source_map: ${{ steps.plan.outputs.web_source_map }}
+      agentenv: ${{ steps.plan.outputs.agentenv }}
       nativeaot: ${{ steps.plan.outputs.nativeaot }}
       ghidra_bridge: ${{ steps.plan.outputs.ghidra_bridge }}
       website: ${{ steps.plan.outputs.website }}
@@ -302,7 +303,8 @@ jobs:
       needs.changes.outputs.recorded_crash == 'true' ||
       needs.changes.outputs.web_network == 'true' ||
       needs.changes.outputs.web_runtime == 'true' ||
-      needs.changes.outputs.web_source_map == 'true'
+      needs.changes.outputs.web_source_map == 'true' ||
+      needs.changes.outputs.agentenv == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -357,10 +359,15 @@ jobs:
       # test:prepare caches only portable JS, skill, and catalog outputs.
       # Native package jobs still run their build and prepack checks; Turbo
       # restores matching outputs or rebuilds when their inputs differ.
+      - name: Stage current portable build task cache
+        shell: bash
+        run: |
+          # A new Turbo dry run can evict the entries this build just used.
+          node scripts/ci/portable-build-cache.mjs snapshot < .cache/ci-build-plan.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rea-build-cache
-          path: .turbo/cache/
+          path: .cache/ci-build-cache/
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
@@ -648,6 +655,7 @@ jobs:
           tests/boundary/cli/nativePlistPrototypeKeyCli.test.ts
           tests/boundary/cli/nativePlistSelectionFailureCli.test.ts
           tests/boundary/cli/nativeDemangleCli.test.ts
+          tests/boundary/cli/nativeDispatchPropertyAttributes.test.ts
           tests/boundary/mcp/nativeDemangleMcp.test.ts
           tests/boundary/providers/native/nativeSignatureTargetBinding.test.ts
           tests/boundary/cli/nativeSignatureCli.test.ts
@@ -742,12 +750,16 @@ jobs:
           tests/boundary/providers/native/artifactProvider.extractionCompleteness.test.ts
           tests/boundary/filesystem/setupUnavailableProvider.test.ts
           tests/boundary/filesystem/windowsNpxRegistration.test.ts
+          tests/boundary/filesystem/clientConfigurationEnvironment.test.ts
+          tests/boundary/filesystem/clientConfigurationLayeredEnvironment.test.ts
+          tests/acceptance/setup/registrationRuntimeEnvironmentCli.test.ts
           tests/boundary/android/workspaceGuardianRetry.test.ts
           tests/acceptance/setup/homeDirectoryFallback.test.ts
           tests/boundary/filesystem/javascriptApplicationWorkflows.test.ts
           tests/boundary/filesystem/webScriptManifestPaths.test.ts
           tests/boundary/process/ProcessEvidence.host.test.ts
           tests/boundary/process/packageNpmInvocation.test.ts
+          tests/boundary/process/packedBridgeVerification.test.ts
           tests/boundary/process/windowsOutputCapture.test.ts
           tests/acceptance/webModuleCli.test.ts
           tests/acceptance/webSourceLocationCli.test.ts
@@ -902,6 +914,13 @@ jobs:
     with:
       build_cache_artifact: rea-build-cache
 
+  agentenv:
+    needs: [changes, static, build]
+    if: needs.changes.outputs.agentenv == 'true'
+    uses: ./.github/workflows/real-agentenv.yml
+    with:
+      build_cache_artifact: rea-build-cache
+
   nativeaot:
     needs: [changes, static]
     if: needs.changes.outputs.nativeaot == 'true'
@@ -946,6 +965,7 @@ jobs:
         web_network,
         web_runtime,
         web_source_map,
+        agentenv,
         nativeaot,
         ghidra_bridge,
         website,

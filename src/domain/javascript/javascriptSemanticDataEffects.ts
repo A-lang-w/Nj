@@ -17,8 +17,14 @@ import {
   recordSemanticValueLimit,
   resolveSemanticBindingState,
   semanticResolutionBlocked,
+  semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
+import {
+  semanticBindingAtRead,
+  semanticEffectTiming,
+} from "./javascriptSemanticMutationInitializers.js";
 import {
   builtinDataEffectMethod as builtinMethod,
   dataEffectArgumentBindingId as argumentBindingId,
@@ -242,6 +248,45 @@ const collectRequests = (
   return output;
 };
 
+/**
+ * Any other write (assignment, update, loop or destructuring target) can
+ * replace the response before this read. A sole write that can be skipped or
+ * runs after the read leaves an incoming value possible.
+ */
+const soleWriteReachesRead = (
+  binding: JavaScriptSemanticBindingState | undefined,
+  read: t.Node,
+  context: TraversalContext,
+  request: t.Node | undefined,
+): boolean => {
+  if (binding === undefined || request === undefined) return false;
+  const snapshot = semanticBindingAtRead(
+    binding,
+    read,
+    context.state.parentsByNode,
+  );
+  const initializers = snapshot.binding.initializers.filter(
+    ({ node }) => semanticEffectTiming(read, node, context.state) !== "after",
+  );
+  const [initializer] = initializers;
+  if (initializers.length !== 1 || initializer === undefined) return false;
+  // The result itself must be this request. Containing a request in a branch
+  // or child allocation does not prove the entire initializer is its response.
+  let source = unwrapJavaScriptExpression(initializer.node).node;
+  while (t.isAwaitExpression(source))
+    source = unwrapJavaScriptExpression(source.argument).node;
+  return (
+    source === request &&
+    !snapshot.binding.referenceInitializers.some(
+      ({ assignment, node }) =>
+        assignment &&
+        semanticEffectTiming(read, node, context.state) !== "after",
+    ) &&
+    (semanticStableInitializer(binding, context.state) !== undefined ||
+      snapshot.hasDefiniteInitializer)
+  );
+};
+
 const collectResponseConsumers = (
   program: t.Program,
   context: TraversalContext,
@@ -290,9 +335,12 @@ const collectResponseConsumers = (
       )
         ? linked[0]
         : undefined;
-    // Any other write (assignment, update, loop or destructuring target) can
-    // replace the response before this read, so its endpoint stays unknown.
-    const soleWrite = binding?.initializers.length === 1;
+    const soleWrite = soleWriteReachesRead(
+      binding,
+      member.object,
+      context,
+      uniqueRequest?.node,
+    );
     output.push({
       requestId: `response:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
       kind: "response-consumer",

@@ -10,6 +10,7 @@ import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import {
   projectPlistValue,
   unknownDateLimitation,
+  unknownScalarLimitation,
 } from "../../domain/apple/plistValue.js";
 import {
   omittedPrototypeKeysLimitation,
@@ -39,7 +40,6 @@ import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
 import {
   decodeBinaryPlistNumbers,
   scanBinaryPlistNumberLiterals,
-  xmlPlistNumberLiterals,
 } from "./PlistNumberLiterals.js";
 import type { PlistNumberLiterals } from "../../domain/apple/plistNumbers.js";
 import {
@@ -68,6 +68,7 @@ export const analyzeInterfaceBuilderBundle = async (input: {
   const unresolvedConnections = new Map<string, number>();
   const prototypeKeyOmissions = new Map<string, number | null>();
   const unknownDates = new Map<string, number>();
+  const unknownScalars = new Map<string, number>();
   let omitted = 0;
   let attempted = 0;
   let aggregateInputBytes = 0;
@@ -149,6 +150,7 @@ export const analyzeInterfaceBuilderBundle = async (input: {
           value: raw,
           omittedPrototypeKeys,
           unknownDateCount,
+          unknownScalarCount,
           numberLiterals,
         } = nib === null
           ? decodePlist(bytes, xmlText, binaryPrototypeKeyObserved)
@@ -156,6 +158,7 @@ export const analyzeInterfaceBuilderBundle = async (input: {
               value: nib.raw,
               omittedPrototypeKeys: 0,
               unknownDateCount: 0,
+              unknownScalarCount: 0,
               numberLiterals: undefined,
             };
         if (nib !== null && nib.omitted > 0)
@@ -166,6 +169,8 @@ export const analyzeInterfaceBuilderBundle = async (input: {
           prototypeKeyOmissions.set(entry.path, omittedPrototypeKeys);
         if (unknownDateCount !== 0)
           unknownDates.set(entry.path, unknownDateCount);
+        if (unknownScalarCount !== 0)
+          unknownScalars.set(entry.path, unknownScalarCount);
         const documentHash = createHash("sha256").update(bytes).digest("hex");
         documents.push({
           relativePath: entry.path,
@@ -208,6 +213,7 @@ export const analyzeInterfaceBuilderBundle = async (input: {
     unresolvedConnections,
     prototypeKeyOmissions,
     unknownDates,
+    unknownScalars,
     invalid,
     omittedArchives,
     unreportedOmittedArchives,
@@ -277,6 +283,7 @@ const finalizeHierarchyCoverage = (
     unresolvedConnections: ReadonlyMap<string, number>;
     prototypeKeyOmissions: ReadonlyMap<string, number | null>;
     unknownDates: ReadonlyMap<string, number>;
+    unknownScalars: ReadonlyMap<string, number>;
     invalid: readonly string[];
     omittedArchives: readonly { path: string; reason: string }[];
     unreportedOmittedArchives: number;
@@ -289,6 +296,7 @@ const finalizeHierarchyCoverage = (
     unresolvedConnections,
     prototypeKeyOmissions,
     unknownDates,
+    unknownScalars,
     invalid,
     omittedArchives,
     unreportedOmittedArchives,
@@ -376,6 +384,9 @@ const finalizeHierarchyCoverage = (
       ),
       ...[...unknownDates].map(
         ([path, count]) => `${path}: ${unknownDateLimitation(count)}`,
+      ),
+      ...[...unknownScalars].map(
+        ([path, count]) => `${path}: ${unknownScalarLimitation(count)}`,
       ),
       ...omittedArchives.map(
         ({ path, reason }) =>
@@ -747,18 +758,20 @@ const decodePlist = (
   readonly value: JsonValue;
   readonly omittedPrototypeKeys: number | null;
   readonly unknownDateCount: number;
+  readonly unknownScalarCount: number;
   readonly numberLiterals: PlistNumberLiterals;
 } => {
   const binary = hasBinaryPlistSignature(bytes);
   const binaryNumberMetadata = binary
     ? scanBinaryPlistNumberLiterals(bytes)
     : undefined;
-  const { value, omittedPrototypeKeys } = binary
+  const { value, omittedPrototypeKeys, numberLiterals } = binary
     ? {
         value: parseBinary(
           decodeBinaryPlistNumbers(bytes, binaryNumberMetadata!),
         ),
         omittedPrototypeKeys: binaryPrototypeKeyObserved ? null : 0,
+        numberLiterals: binaryNumberMetadata!.literals,
       }
     : parseXmlWithinDecodeBudget(xmlText ?? decodeXmlPlistText(bytes));
   const projected = projectPlistValue(value);
@@ -766,8 +779,7 @@ const decodePlist = (
     value: projected.value,
     omittedPrototypeKeys,
     unknownDateCount: projected.unknownDateCount,
-    numberLiterals: binary
-      ? binaryNumberMetadata!.literals
-      : xmlPlistNumberLiterals(xmlText ?? decodeXmlPlistText(bytes)),
+    unknownScalarCount: projected.unknownScalarCount,
+    numberLiterals,
   };
 };

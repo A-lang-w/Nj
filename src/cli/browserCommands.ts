@@ -75,7 +75,6 @@ const registerTargetList = (
             },
             context.provider.identity().id,
             "list_browser_targets",
-            undefined,
             signal,
           );
         }),
@@ -132,7 +131,6 @@ const registerPageInspection = (
             },
             context.provider.identity().id,
             "inspect_web_page",
-            undefined,
             signal,
           );
         }),
@@ -160,6 +158,10 @@ const registerBundleAnalysis = (
         .boolean()
         .default(false)
         .describe("Fetch source maps referenced by captured scripts"),
+      maxHeapMb: analyzeWebBundleInputSchema.shape.max_heap_mb,
+      analysisTimeoutMs: analyzeWebBundleInputSchema.shape.analysis_timeout_ms,
+      totalAnalysisTimeoutMs:
+        analyzeWebBundleInputSchema.shape.total_analysis_timeout_ms,
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -172,6 +174,15 @@ const registerBundleAnalysis = (
             observation_ms: options.observationMs,
             include_script_sources: true,
             fetch_source_maps: options.fetchSourceMaps,
+            ...(options.maxHeapMb === undefined
+              ? {}
+              : { max_heap_mb: options.maxHeapMb }),
+            ...(options.analysisTimeoutMs === undefined
+              ? {}
+              : { analysis_timeout_ms: options.analysisTimeoutMs }),
+            ...(options.totalAnalysisTimeoutMs === undefined
+              ? {}
+              : { total_analysis_timeout_ms: options.totalAnalysisTimeoutMs }),
           };
           const parsed = analyzeWebBundleInputSchema.safeParse(input);
           if (!parsed.success)
@@ -191,7 +202,6 @@ const registerBundleAnalysis = (
             },
             context.provider.identity().id,
             "analyze_web_bundle",
-            undefined,
             signal,
           );
         }),
@@ -243,7 +253,6 @@ const registerObservationSession = (
             },
             context.provider.identity().id,
             "observe_web_session",
-            undefined,
             signal,
           );
         }),

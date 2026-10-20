@@ -1,3 +1,4 @@
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { z } from "zod";
 
 import {
@@ -39,9 +40,11 @@ import {
   kunaFileCleanupError,
   type KunaProcessLauncher,
 } from "./KunaCommand.js";
+import { kunaFunctionDeadline } from "./KunaConfiguration.js";
 import {
   createKunaFileCloseScope,
   inspectKunaInstallation,
+  kunaInstallationCancellation,
   type KunaInstallation,
 } from "./KunaInstallation.js";
 import {
@@ -74,10 +77,7 @@ import {
   type KunaProjectFileSpan,
 } from "./KunaProjectReader.js";
 import { kunaUnavailable } from "./KunaUnavailable.js";
-import {
-  RegularFileCleanupFailure,
-  regularFileCancellation,
-} from "../filesystem/OwnedRegularFile.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { kunaQueryFailureForCaller } from "./KunaQueryErrors.js";
@@ -1117,7 +1117,7 @@ export class KunaSessionClient implements AnalysisClient {
       installation,
       arguments: (input) => ["decompile", input, address, "--addr"],
       operation,
-      timeoutMs: installation.configuration.functionTimeoutMs,
+      deadline: kunaFunctionDeadline(installation.configuration),
       outputBytes: KUNA_FUNCTION_TEXT_BYTES,
       signal,
       releaseRun: admitted,
@@ -1381,7 +1381,7 @@ export class KunaSessionClient implements AnalysisClient {
         this.#fileCloseResources.retain({
           kind: "lease",
           resource,
-          lease: { release: () => owner.close() },
+          lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
         }),
       run: <T>(operation: () => Promise<T>) =>
         this.#fileCloseResources.run(operation),
@@ -1408,7 +1408,7 @@ export class KunaSessionClient implements AnalysisClient {
         );
       return ok(inspected.value);
     } catch (cause: unknown) {
-      const cancellation = regularFileCancellation(cause);
+      const cancellation = kunaInstallationCancellation(cause);
       if (
         !(cause instanceof RegularFileCleanupFailure) &&
         cancellation !== undefined
@@ -1416,6 +1416,7 @@ export class KunaSessionClient implements AnalysisClient {
         return err(
           new AnalysisCancelledError("health", {
             cause: cancellation.reason,
+            diagnostics: cancellation.diagnostics,
           }),
         );
       if (!(cause instanceof RegularFileCleanupFailure))
@@ -1607,7 +1608,7 @@ export class KunaSessionClient implements AnalysisClient {
       installation,
       arguments: (input) => ["functions", input, "--json"],
       operation: "list_procedures",
-      timeoutMs: installation.configuration.functionTimeoutMs,
+      deadline: kunaFunctionDeadline(installation.configuration),
       outputBytes: KUNA_INVENTORY_OUTPUT_BYTES,
       signal: this.#session.signal,
     });
