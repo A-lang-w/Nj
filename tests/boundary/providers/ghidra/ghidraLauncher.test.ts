@@ -5,6 +5,7 @@ import {
   readdir,
   readFile,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { EventEmitter } from "node:events";
@@ -566,6 +567,7 @@ const launchExistingProject = async (
     environment: process.env,
     analyzeHeadlessPath: fixturePath,
     platform: "linux",
+    configurationDirectoryName: "ghidra_12.1.4_PUBLIC",
     javaHome,
     bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
     existingProject: { projectPath, programName: "game.exe" },
@@ -732,6 +734,42 @@ describe("Ghidra existing project launcher", () => {
         runtime.path,
         parent,
         join(runtime.path, "project"),
+        spawned,
+      );
+      expect(launched.ok).toBe(false);
+      if (launched.ok) throw new Error("launch unexpectedly succeeded");
+      expect(String(launched.error.cause)).toMatch(
+        /overlaps the REA runtime directory/u,
+      );
+      expect(spawned).toHaveLength(0);
+      expect(await readdir(join(runtime.path, "project"))).toEqual([]);
+    },
+  );
+});
+
+describe("Ghidra existing project symlink overlap", () => {
+  it.skipIf(process.platform === "win32")(
+    "rejects a project path whose symbolic link hides a runtime overlap before copying",
+    async () => {
+      const parent = await createTestTempDirectory("rea-launcher-test-");
+      const runtime = await createGhidraTestRuntime(parent);
+      runtimes.push(runtime);
+      // A valid project directory inside the owned runtime, reached only
+      // through a symbolic link outside it: the lexical path never overlaps
+      // the runtime, so only a realpath-based comparison can refuse the copy.
+      const hidden = join(runtime.path, "link-target");
+      await mkdir(hidden, { recursive: true });
+      await writeFile(join(hidden, "rea-project.gpr"), "", {
+        encoding: "utf8",
+      });
+      await mkdir(join(hidden, "rea-project.rep"), { recursive: true });
+      const alias = join(parent, "alias");
+      await symlink(hidden, alias);
+      const spawned: OwnedProviderProcessSpawnOptions[] = [];
+      const launched = await launchExistingProject(
+        runtime.path,
+        parent,
+        alias,
         spawned,
       );
       expect(launched.ok).toBe(false);

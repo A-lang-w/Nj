@@ -1076,10 +1076,17 @@ export const copyExistingGhidraProject = async (
   signal?: AbortSignal,
 ): Promise<void> => {
   signal?.throwIfAborted();
-  // The destination is the runtime's project root, inside the runtime root,
-  // so one comparison against the runtime root rejects a project placed at
-  // the runtime root, anywhere inside it, or an ancestor of it.
-  if (pathsOverlap(resolve(sourcePath), resolve(dirname(destinationRoot))))
+  // Resolve both sides through realpath before comparing: resolve() does not
+  // follow symbolic links, so a symlinked path component could otherwise hide
+  // an overlap with the runtime from the purely lexical check below. The
+  // destination is the runtime's project root, inside the runtime root, so one
+  // comparison against the runtime root rejects a project placed at the
+  // runtime root, anywhere inside it, or an ancestor of it.
+  const realRuntime = await realpath(dirname(destinationRoot)).catch(() =>
+    resolve(dirname(destinationRoot)),
+  );
+  const realSource = await realpath(sourcePath).catch(() => undefined);
+  if (realSource !== undefined && pathsOverlap(realSource, realRuntime))
     throw new Error(
       `Existing Ghidra project directory overlaps the REA runtime directory; select a project outside the runtime: ${sourcePath}`,
     );
