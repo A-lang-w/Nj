@@ -606,6 +606,31 @@ const settledProcessTable = (
 /** Confirmation tables taken after an unreadable exit-refresh row disappears. */
 const EXIT_REFRESH_CONFIRMATION_LIMIT = 8;
 
+/** Parent and group recorded for a PID in the pre-exit process table. */
+interface InitialProcessRelation {
+  readonly parentPid: number;
+  readonly processGroupId: number;
+}
+
+/**
+ * Newcomers are token-checked. A PID from the pre-exit table is checked only
+ * when its parent or group changed, which is the identityless sign that the
+ * PID may have been reused. An unchanged pre-existing row stays unread.
+ */
+const isExitRefreshCandidate = (
+  process: ProcessTableEntry,
+  ownership: OwnedProcessGroup,
+  initialRelations: ReadonlyMap<number, InitialProcessRelation>,
+): boolean => {
+  if (process.processGroupId === ownership.processGroupId) return false;
+  const initial = initialRelations.get(process.pid);
+  return (
+    initial === undefined ||
+    initial.parentPid !== process.parentPid ||
+    initial.processGroupId !== process.processGroupId
+  );
+};
+
 /**
  * Times one group may be revalidated in a single cleanup. The second pass
  * covers a group that reappears after it was already processed. Another
@@ -624,7 +649,7 @@ const classifyUnlinkedExitRows = async (
   refreshed: readonly ProcessTableEntry[],
   unlinked: readonly ProcessTableEntry[],
   host: ProcessOwnershipHost,
-  priorPids: ReadonlySet<number>,
+  initialRelations: ReadonlyMap<number, InitialProcessRelation>,
 ): Promise<
   | { readonly kind: "clear"; readonly processes: readonly ProcessTableEntry[] }
   | { readonly kind: "uncertain"; readonly reason: string }
@@ -692,14 +717,13 @@ const classifyUnlinkedExitRows = async (
       };
     // The confirmation read is its own table. A PID classified on the previous
     // table, including a readable foreign token, does not identify the process
-    // now using that PID. Read every newcomer on this table again.
+    // now using that PID. Read newcomers again, and read a pre-exit PID again
+    // when its parent or group changed.
     current = liveRows;
     inspected.clear();
     matched.length = 0;
-    pending = current.filter(
-      (process) =>
-        !priorPids.has(process.pid) &&
-        process.processGroupId !== ownership.processGroupId,
+    pending = current.filter((process) =>
+      isExitRefreshCandidate(process, ownership, initialRelations),
     );
   }
   const livePids = new Set(current.map(({ pid }) => pid));
@@ -823,11 +847,18 @@ const settleLauncherExit = async (
       )
     )
       return { cleaned: false, reason };
-    const priorPids = new Set(processes.map(({ pid }) => pid));
+    const initialRelations = new Map(
+      processes.map((process) => [
+        process.pid,
+        {
+          parentPid: process.parentPid,
+          processGroupId: process.processGroupId,
+        },
+      ]),
+    );
     const unlinked = refreshed.processes.filter(
       (process) =>
-        !priorPids.has(process.pid) &&
-        process.processGroupId !== ownership.processGroupId &&
+        isExitRefreshCandidate(process, ownership, initialRelations) &&
         !descendantPids.has(process.pid) &&
         !descendantGroupIds.has(process.processGroupId) &&
         !refreshedDescendantPids.has(process.pid),
@@ -837,7 +868,7 @@ const settleLauncherExit = async (
       refreshed.processes,
       unlinked,
       host,
-      priorPids,
+      initialRelations,
     );
     if (classified.kind === "uncertain")
       return { cleaned: false, reason: classified.reason };

@@ -278,7 +278,9 @@ an unreadable live token stays unresolved, a replacement that appears only in
 the confirmation table is still token-checked, a group discovered during
 revalidation is signaled before cleanup succeeds, a member that changes groups
 during confirmation is signaled in its new group, a PID first seen with a
-foreign token is read again on the confirmation table, an unbounded confirmation
+foreign token is read again on the confirmation table, a pre-existing PID is
+read again when its parent or group changes, an unchanged pre-existing row
+stays unread, an unbounded confirmation
 chain stays unresolved, lineage reads a row again when its launcher-tree
 membership changes, a cached lineage token is read again on the next refresh,
 a group that reappears after it was processed is revalidated once, a further
