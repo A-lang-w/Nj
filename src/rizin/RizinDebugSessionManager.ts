@@ -1215,19 +1215,20 @@ export class RizinDebugSessionManager {
   async #detachInferiorUnlocked(
     session: RizinDebugSession,
   ): Promise<OwnedDebuggerDetachResult> {
+    const previouslyConfirmedDetach = session.confirmedDetachedInferiorIdentity;
     if (session.exited || session.protocolError !== undefined)
       throw new Error(
         "Rizin protocol state is ambiguous; inferior detach is unverified.",
-      );
-    if (session.confirmedDetachedInferiorIdentity !== undefined)
-      return this.#verifyConfirmedDetachedInferior(
-        session,
-        session.confirmedDetachedInferiorIdentity,
       );
     if (session.completedDetachCommand !== undefined)
       return this.#verifyCompletedDetachCommand(
         session,
         session.completedDetachCommand,
+      );
+    if (session.confirmedDetachedInferiorIdentity !== undefined)
+      return this.#verifyConfirmedDetachedInferior(
+        session,
+        session.confirmedDetachedInferiorIdentity,
       );
     session.inferiorInventoryComplete = false;
     const inferior = parseRizinPtraceRows(
@@ -1258,6 +1259,11 @@ export class RizinDebugSessionManager {
     }
     for (const [pid, identity] of session.knownInferiorIdentities) {
       if (currentIdentities.has(pid)) continue;
+      if (
+        previouslyConfirmedDetach?.pid === pid &&
+        previouslyConfirmedDetach.startTime === identity.startTime
+      )
+        continue;
       // A non-empty but partial ptrace inventory does not prove that an
       // omitted retained target was detached. Only its end or a changed PID
       // identity makes it safe to proceed toward stopping the debugger.
@@ -1308,11 +1314,19 @@ export class RizinDebugSessionManager {
     const after = parseRizinPtraceRows(
       await this.#runInternalCommand(session, "olj"),
     );
+    const selectedRowRemains = after.some(
+      ([activeFd, activePid]) =>
+        activeFd === completed.fd || activePid === completed.identity.pid,
+    );
+    if (selectedRowRemains)
+      throw new Error(
+        "Rizin did not confirm that the selected inferior FD was detached.",
+      );
+    // The selected FD's absence is useful durable proof even when another
+    // active inferior makes it unsafe to stop the debugger. Retain both facts:
+    // its detach confirmation and the completed command awaiting clean inventory.
+    session.confirmedDetachedInferiorIdentity = completed.identity;
     for (const [activeFd, activePid] of after) {
-      if (activeFd === completed.fd || activePid === completed.identity.pid)
-        throw new Error(
-          "Rizin did not confirm that the selected inferior FD was detached.",
-        );
       // Rizin can retain an unrelated ptrace row after its original process
       // ended. Reuse the same identity/tracer reconciliation as the initial
       // inventory; any row that still names an active inferior remains fatal.

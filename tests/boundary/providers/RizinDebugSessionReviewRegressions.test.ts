@@ -362,6 +362,44 @@ process.stdin.on("data", (chunk) => {
   return provider;
 };
 
+const createAdditionalActiveAfterDetachProvider = async (
+  selectedPid: number,
+  additionalPid: number,
+  commandsPath: string,
+): Promise<string> => {
+  const provider = join(
+    directory!,
+    "fake-rizin-additional-active-after-detach.mjs",
+  );
+  await writeFile(
+    provider,
+    `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+process.stdout.write("\\0");
+let input = "";
+let detached = false;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n"); if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    appendFileSync(${JSON.stringify(commandsPath)}, line + "\\n");
+    if (line === "olj") process.stdout.write(JSON.stringify(detached
+      ? [{ fd: 13, raised: true, uri: "ptrace://${additionalPid}" }]
+      : [{ fd: 12, raised: true, uri: "ptrace://${selectedPid}" }]) + "\\0");
+    else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
+    else if (line === "o- 12") detached = true;
+    else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
+    else process.stdout.write("\\0");
+  }
+});
+`,
+  );
+  await chmod(provider, 0o700);
+  return provider;
+};
+
 const createLateDetachProvider = async (
   pid: number,
   providerDirectory: string,
@@ -846,6 +884,47 @@ it.skipIf(process.platform !== "linux")(
     ).toBe(true);
     expect(await readFile(commandsPath, "utf8")).not.toContain("o- 12");
     expect(manager.status(started.value.session_id)).toBeUndefined();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "retains selected detach proof while another active inferior blocks cleanup",
+  async () => {
+    const tty = await rizinTestInferiorTty();
+    const selected = await spawnTestInferiorOnTty(tty);
+    const additional = await spawnTestInferiorOnTty(tty);
+    const selectedPid = selected.pid;
+    const additionalPid = additional.pid;
+    expect(selectedPid).toBeDefined();
+    expect(additionalPid).toBeDefined();
+    if (selectedPid === undefined || additionalPid === undefined) return;
+    directory = await mkdtemp(join(tmpdir(), "rea-rizin-active-row-retry-"));
+    const commandsPath = join(directory, "commands");
+    const provider = await createAdditionalActiveAfterDetachProvider(
+      selectedPid,
+      additionalPid,
+      commandsPath,
+    );
+    const { manager, sessionId } = await startRizinWithOwnedStop(provider);
+
+    expect((await manager.close(sessionId)).ok).toBe(false);
+    expect(manager.status(sessionId)).toBeDefined();
+    expect(selected.exitCode).toBeNull();
+
+    const additionalExit = new Promise<void>((resolve) =>
+      additional.once("exit", () => resolve()),
+    );
+    additional.kill("SIGTERM");
+    await additionalExit;
+    expect(await manager.retryCleanupFailures()).toEqual({
+      ok: true,
+      value: null,
+    });
+    expect(
+      (await readFile(commandsPath, "utf8")).match(/^o- 12$/gm),
+    ).toHaveLength(1);
+    expect(selected.exitCode).toBeNull();
+    expect(manager.status(sessionId)).toBeUndefined();
   },
 );
 
