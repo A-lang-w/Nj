@@ -1269,6 +1269,21 @@ export class RizinDebugSessionManager {
       });
       activeInferiors.push([fd, pid]);
     }
+    for (const [pid, identity] of session.knownInferiorIdentities) {
+      if (currentIdentities.has(pid)) continue;
+      // A non-empty but partial ptrace inventory does not prove that an
+      // omitted retained target was detached. Only its end or a changed PID
+      // identity makes it safe to proceed toward stopping the debugger.
+      if (
+        !(await verifyOwnedInferiorsEnded(
+          [identity],
+          this.#readProcessStartTime,
+        ))
+      )
+        throw new Error(
+          `Rizin omitted retained inferior PID ${pid} from the ptrace inventory while it is still active.`,
+        );
+    }
     for (const [pid, identity] of currentIdentities)
       session.knownInferiorIdentities.set(pid, identity);
     session.inferiorInventoryComplete = true;
