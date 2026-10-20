@@ -20,6 +20,44 @@ const windowsLookup = (cwd: string, files: readonly string[]) => {
   };
 };
 
+it("drains a canceled PATH filesystem probe before service shutdown completes", async () => {
+  let resolveProbe!: (found: boolean) => void;
+  const isFile = vi.fn(
+    () =>
+      new Promise<boolean>((resolve) => {
+        resolveProbe = resolve;
+      }),
+  );
+  const commands = createReverseEngineeringCommandPort(
+    { PATH: "\\\\unreachable\\share", PATHEXT: ".EXE" },
+    "win32",
+    { windowsExecutableLookup: { isFile } },
+  );
+  const service = new ReverseEngineeringService({
+    commands,
+    run: async () => ({ stdout: "unused", stderr: "" }),
+  });
+  const controller = new AbortController();
+  const operation = service.inspectWithObjdump(
+    { path: "C:\\target.bin", operation: "file_headers" },
+    { signal: controller.signal },
+  );
+  await vi.waitFor(() => expect(isFile).toHaveBeenCalledOnce());
+  controller.abort();
+  expect((await operation).ok).toBe(false);
+
+  let closed = false;
+  const closing = service.close().then(() => {
+    closed = true;
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(closed).toBe(false);
+
+  resolveProbe(false);
+  await closing;
+  expect(closed).toBe(true);
+});
+
 describe("resolveWindowsProviderExecutable", async () => {
   it("resolves a bare name from quoted and relative Windows PATH entries", async () => {
     const cwd = "C:\\work";

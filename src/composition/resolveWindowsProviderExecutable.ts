@@ -13,6 +13,8 @@ export interface WindowsExecutableLookup {
   readonly signal?: AbortSignal | undefined;
   /** Total startup lookup budget, including stalled network filesystem probes. */
   readonly timeoutMs?: number;
+  /** Track non-cancellable filesystem probes until their physical completion. */
+  readonly onProbe?: (probe: Promise<unknown>) => void;
 }
 
 /**
@@ -55,6 +57,7 @@ let pendingWindowsPathProbes = 0;
 const probeWindowsPathEntry = (
   isFile: (path: string) => boolean | Promise<boolean>,
   path: string,
+  onProbe?: (probe: Promise<unknown>) => void,
 ): Promise<boolean> => {
   if (pendingWindowsPathProbes >= MAX_PENDING_WINDOWS_PATH_PROBES)
     throw Object.assign(
@@ -79,6 +82,7 @@ const probeWindowsPathEntry = (
       pendingWindowsPathProbes -= 1;
     },
   );
+  onProbe?.(probe);
   return probe;
 };
 
@@ -132,7 +136,7 @@ export const resolveWindowsProviderExecutable = async (
           : absolute(entry, `${executable}${extension}`);
         // Keep a handler on a late filesystem rejection after cancellation.
         const found = await waitForAbortable(
-          probeWindowsPathEntry(isFile, candidate),
+          probeWindowsPathEntry(isFile, candidate, lookup.onProbe),
           deadline.signal,
         );
         if (found === ABORTED) deadline.signal.throwIfAborted();

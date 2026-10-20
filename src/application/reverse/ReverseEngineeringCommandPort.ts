@@ -18,6 +18,8 @@ export interface ReverseEngineeringProviderCommand {
 
 /** Provider-specific command construction stays outside the application layer. */
 export interface ReverseEngineeringCommandPort {
+  /** Wait until canceled provider-resolution filesystem probes physically settle. */
+  drainPendingResolution?(): Promise<void>;
   objdump(
     input: ObjdumpSelection,
     options?: { readonly signal?: AbortSignal; readonly cwd?: string },

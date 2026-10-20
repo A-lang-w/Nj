@@ -40,6 +40,9 @@ export const registerReverseEngineeringTools = (
       value: Result<Value, AnalysisError>,
       error: AnalysisError,
     ) => AnalysisError,
+    cleanupRecovery?: (
+      failure: AnalysisError | undefined,
+    ) => Promise<Result<null, AnalysisError>>,
   ) => Promise<Result<Result<Value, AnalysisError>, AnalysisError>>,
   registerRizin = true,
   evidenceById?: EvidenceLookup,
@@ -128,6 +131,7 @@ export const registerReverseEngineeringTools = (
               },
             );
           },
+          () => service.retryCleanup(rizin.name),
         );
         if (!admitted.ok)
           return deliverFailure(

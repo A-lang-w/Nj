@@ -198,6 +198,10 @@ export class ReverseEngineeringService {
     const active = [...this.#activeOperations.entries()];
     for (const [controller] of active) controller.abort();
     await Promise.allSettled(active.map(([, operation]) => operation));
+    // PATH probes use non-cancellable filesystem calls. They remain owned by
+    // the command port after logical cancellation and must settle before this
+    // service reports shutdown complete.
+    await this.#commands.drainPendingResolution?.();
 
     const cleanup = await this.retryCleanup();
     if (!cleanup.ok) throw cleanup.error;

@@ -516,14 +516,14 @@ export const createServer = (
     undefined,
     session === undefined
       ? undefined
-      : (path, signal, operation, rebindFailure) =>
+      : (path, signal, operation, rebindFailure, cleanupRecovery) =>
           session.withAdmittedExternalMutation(
             path,
             signal,
             operation,
             rebindFailure,
             "execute_rizin_command",
-            undefined,
+            cleanupRecovery,
             "provider-dispatch",
           ),
     session !== undefined,

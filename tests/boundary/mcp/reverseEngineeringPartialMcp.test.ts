@@ -5,7 +5,12 @@ import { dirname, join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { TestReverseEngineeringService as ReverseEngineeringService } from "../../support/reverseEngineeringService.js";
-import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisOutputError,
+} from "../../../src/domain/analysisErrorCore.js";
+import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import type { Evidence } from "../../../src/domain/evidence.js";
 import {
   createBinarySessionTargets,
   createCacheProvider,
@@ -14,6 +19,7 @@ import {
 import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { err, ok } from "../../../src/domain/result.js";
+import type { Result } from "../../../src/domain/result.js";
 import type { WithAdmittedAnalysis } from "../../../src/server/analysisAdmission.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { registerReverseEngineeringTools } from "../../../src/server/registerReverseEngineeringTools.js";
@@ -68,6 +74,60 @@ it("records partial Evidence and references it in the original MCP error", async
       evidence_id: expect.any(String),
     },
   });
+});
+
+it("passes retained Rizin cleanup recovery through external mutation admission", async () => {
+  const { server, handler } = createReverseEngineeringMcpHarness();
+  const cleanupFailure = new AnalysisOutputError(
+    "execute_rizin_command",
+    "A prior Rizin process still requires cleanup.",
+    { cleanup: { reason: "provider writer remains", resources: ["process"] } },
+  );
+  const service = new ReverseEngineeringService({
+    run: async () => ({ stdout: "unused", stderr: "" }),
+  });
+  const retryCleanup = vi
+    .spyOn(service, "retryCleanup")
+    .mockResolvedValueOnce(ok(null))
+    .mockResolvedValueOnce(err(cleanupFailure));
+  let recoveryResult: Result<null, AnalysisError> | undefined;
+  const withAdmittedExternalMutation = async <Value>(
+    _path: string | undefined,
+    _signal: AbortSignal | undefined,
+    _operation: (
+      onDispatch?: () => void,
+    ) => Promise<Result<Value, AnalysisError>>,
+    _retirementFailure: (
+      value: Result<Value, AnalysisError>,
+      error: AnalysisError,
+    ) => AnalysisError,
+    cleanupRecovery?: (
+      failure: AnalysisError | undefined,
+    ) => Promise<Result<null, AnalysisError>>,
+  ): Promise<Result<Result<Value, AnalysisError>, AnalysisError>> => {
+    recoveryResult = await cleanupRecovery?.(cleanupFailure);
+    return err(cleanupFailure);
+  };
+  registerReverseEngineeringTools(
+    server,
+    service,
+    pino({ enabled: false }),
+    createToolResultDelivery(2 * 1024 * 1024),
+    undefined,
+    undefined,
+    undefined,
+    withAdmittedExternalMutation,
+  );
+
+  const response = (await invokeWithLiveSignal(
+    handler("execute_rizin_command"),
+    { path: "package.json", command: "iI" },
+  )) as { readonly isError?: boolean };
+
+  expect(response.isError).toBe(true);
+  expect(retryCleanup).toHaveBeenNthCalledWith(1, "execute_rizin_command");
+  expect(retryCleanup).toHaveBeenNthCalledWith(2, "execute_rizin_command");
+  expect(recoveryResult).toEqual(err(cleanupFailure));
 });
 
 it.each(["missing", "directory"])(
@@ -151,7 +211,8 @@ it("admits Rizin mutation after invalidating before dispatch", async () => {
   const { server, handler } = createReverseEngineeringMcpHarness();
   const events: string[] = [];
   const service = new ReverseEngineeringService({
-    run: async () => {
+    run: async (_command, _arguments, options) => {
+      options?.onDispatch?.();
       events.push("dispatch");
       return { stdout: "rizin output", stderr: "" };
     },
@@ -183,7 +244,10 @@ it("invalidates the snapshot in the legacy Rizin admission path", async () => {
   const { server, handler } = createReverseEngineeringMcpHarness();
   const invalidateSnapshot = vi.fn();
   const service = new ReverseEngineeringService({
-    run: async () => ({ stdout: "rizin output", stderr: "" }),
+    run: async (_command, _arguments, options) => {
+      options?.onDispatch?.();
+      return { stdout: "rizin output", stderr: "" };
+    },
   });
   registerReverseEngineeringTools(
     server,
@@ -326,7 +390,8 @@ it.skipIf(process.platform === "win32").each(["success", "timeout"])(
 
     const { server, handler } = createReverseEngineeringMcpHarness();
     const service = new ReverseEngineeringService({
-      run: async () => {
+      run: async (_command, _arguments, options) => {
+        options?.onDispatch?.();
         await writeFile(alias, "changed by Rizin");
         if (outcome === "timeout")
           throw Object.assign(new Error("timed out"), {
