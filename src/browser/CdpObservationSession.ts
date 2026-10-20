@@ -5,8 +5,13 @@ import type {
 } from "../domain/browserSession.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
+import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
-import { CdpConnection, type CdpEvent } from "./CdpConnection.js";
+import {
+  CdpConnection,
+  type CdpEvent,
+  type CdpTransportEvent,
+} from "./CdpConnection.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import { authorizedMainFrame } from "./CdpAuthorizedMainFrame.js";
 import {
@@ -15,6 +20,7 @@ import {
   isHttpUrl,
   numberValue,
   recordValue,
+  recordsValue,
   cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
@@ -43,6 +49,7 @@ type TimelineEvent = WebObservationSession["timeline"][number];
 interface TimelineEntryOptions {
   readonly type: TimelineEvent["type"];
   readonly params: UnknownRecord;
+  readonly timestamp?: number | null;
   readonly rawUrl?: string | null;
   readonly destinationScope?: TimelineEvent["destination_scope"];
   readonly requestId?: string | null;
@@ -66,9 +73,7 @@ export const observeCdpSession = async (
   if (mainFrameId === undefined)
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   const capture = new TimelineCapture(allowedOrigins, mainFrameId, initialUrl);
-  const removeListener = context.connection.onEvent((event) => {
-    if (cdpTargetEventMatches(event, context.sessionId)) capture.ingest(event);
-  });
+  let removeListener = (): void => {};
   const removeDisconnectListener = context.connection.onDisconnect(() =>
     capture.targetTerminated(),
   );
@@ -86,12 +91,34 @@ export const observeCdpSession = async (
       context.signal,
     );
     await context.connection.send(
+      "Performance.enable",
+      { timeDomain: "timeTicks" },
+      context.sessionId,
+      context.signal,
+    );
+    removeListener = context.connection.onEvent((event) => {
+      if (cdpTargetEventMatches(event, context.sessionId))
+        capture.ingest(event);
+    });
+    // Host wall time marks command dispatch. The returned browser monotonic
+    // timestamp is the authoritative cutoff for timestamped lifecycle facts.
+    const armedAt = new Date().toISOString();
+    const armTimestamp = performanceTimestamp(
+      await context.connection.send(
+        "Performance.getMetrics",
+        {},
+        context.sessionId,
+        context.signal,
+      ),
+    );
+    capture.assertPreArmBufferWithinLimit();
+    capture.arm(armTimestamp);
+    await context.connection.send(
       "Page.setLifecycleEventsEnabled",
       { enabled: true },
       context.sessionId,
       context.signal,
     );
-    const armedAt = new Date().toISOString();
     await context.progress?.report({
       phase: "browser_observation",
       completed: 1,
@@ -133,6 +160,11 @@ export const observeCdpSession = async (
         "The timeline begins after REA attaches; earlier navigation and network activity is unavailable.",
         "Only navigation metadata is retained; headers, bodies, cookies, console values, and payloads are not captured by this tool.",
         "An out-of-policy destination ends collection immediately and is recorded without its URL.",
+        ...(capture.hasUnknownEventTime
+          ? [
+              "Timeline rows without a comparable producer timestamp have a null timestamp. Buffered events with unknown timing are retained as context only; they do not establish activity inside the selected observation window.",
+            ]
+          : []),
       ],
     };
   } finally {
@@ -149,6 +181,11 @@ class TimelineCapture {
   #pendingReload = false;
   #scopeExcluded = false;
   #endReason: EndReason | undefined;
+  #armTimestamp: number | undefined;
+  #eventsBeforeArm: CdpTransportEvent[] = [];
+  #eventsBeforeArmBytes = 0;
+  #preArmBufferExceeded = false;
+  #hasUnknownEventTime = false;
   readonly #listeners = new Set<(reason: EndReason) => void>();
 
   constructor(
@@ -160,34 +197,85 @@ class TimelineCapture {
       allowedSanitizedUrl(initialUrl, allowedOrigins)?.url ?? null;
   }
 
-  ingest(event: CdpEvent): void {
+  ingest(event: CdpTransportEvent): void {
+    if (this.#endReason !== undefined || this.#scopeExcluded) return;
+    if (!isTimelineEvent(event.method)) return;
+    if (this.#armTimestamp === undefined) {
+      this.#bufferBeforeArm(event);
+      return;
+    }
+    this.#ingestArmed(event);
+  }
+
+  #ingestArmed(event: CdpTransportEvent, bufferedBeforeArm = false): void {
     if (this.#endReason !== undefined || this.#scopeExcluded) return;
     const params = recordValue(event.params);
     if (params === undefined) return;
+    const contextOnly =
+      bufferedBeforeArm && hasNoComparableProducerTimestamp(event.method);
+    if (contextOnly) this.#hasUnknownEventTime = true;
     switch (event.method) {
       case "Page.frameRequestedNavigation":
-        this.#navigationRequested(event, params);
+        this.#navigationRequested(event, params, contextOnly);
         break;
       case "Page.frameNavigated":
-        this.#navigationCommitted(event, params);
+        this.#navigationCommitted(event, params, contextOnly);
         break;
       case "Page.navigatedWithinDocument":
-        this.#sameDocument(event, params);
+        this.#sameDocument(event, params, contextOnly);
         break;
       case "Network.requestWillBeSent":
-        this.#redirect(params);
+        this.#redirect(params, bufferedBeforeArm);
         break;
       case "Network.loadingFailed":
-        this.#loadingFailed(params);
+        this.#loadingFailed(params, bufferedBeforeArm);
         break;
       case "Page.lifecycleEvent":
         this.#lifecycle(params);
         break;
       case "Inspector.targetCrashed":
       case "Target.detachedFromTarget":
-        this.targetTerminated();
+        this.targetTerminated(params);
         break;
     }
+  }
+
+  arm(timestamp: number): void {
+    this.#armTimestamp = timestamp;
+    // Events can arrive after the browser samples Timestamp but before its
+    // command response. Defer interpretation so timestamped facts use the
+    // sampled cutoff instead of being lost at the transport boundary.
+    const pending = this.#eventsBeforeArm;
+    this.#eventsBeforeArm = [];
+    this.#eventsBeforeArmBytes = 0;
+    for (const event of pending) this.#ingestArmed(event, true);
+  }
+
+  assertPreArmBufferWithinLimit(): void {
+    if (!this.#preArmBufferExceeded) return;
+    this.#eventsBeforeArm = [];
+    this.#eventsBeforeArmBytes = 0;
+    throw new BrowserObservationError("observe_web_session", "payload_limit", {
+      detail: `The retained CDP event buffer exceeded its ${String(WEB_RUNTIME_LIMITS.retainedEventBytes)} byte limit before the observation clock was sampled.`,
+    });
+  }
+
+  #bufferBeforeArm(event: CdpTransportEvent): void {
+    if (this.#preArmBufferExceeded) return;
+    // The transport carries the original payload length, so budget admission
+    // does not reconstruct or reserialize parsed protocol data.
+    const bytes = event.wireBytes;
+    if (
+      bytes >
+      WEB_RUNTIME_LIMITS.retainedEventBytes - this.#eventsBeforeArmBytes
+    ) {
+      this.#preArmBufferExceeded = true;
+      this.#eventsBeforeArm = [];
+      this.#eventsBeforeArmBytes = 0;
+      return;
+    }
+    this.#eventsBeforeArm.push(event);
+    this.#eventsBeforeArmBytes += bytes;
   }
 
   onEnd(listener: (reason: EndReason) => void): () => void {
@@ -203,11 +291,12 @@ class TimelineCapture {
     this.#listeners.clear();
   }
 
-  targetTerminated(): void {
+  targetTerminated(params: UnknownRecord = {}): void {
     if (this.#endReason !== undefined) return;
     this.#add({
       type: "target_terminated",
-      params: {},
+      params,
+      timestamp: null,
       rawUrl: null,
       requestId: null,
       detail: "target_terminated",
@@ -225,6 +314,10 @@ class TimelineCapture {
     return this.#scopeExcluded;
   }
 
+  get hasUnknownEventTime(): boolean {
+    return this.#hasUnknownEventTime;
+  }
+
   excludeTargetScope(
     reason: "invalid_protocol_value" | "out_of_target_scope",
   ): void {
@@ -234,20 +327,33 @@ class TimelineCapture {
     this.completeness.exclude("timeline", reason);
   }
 
-  #navigationRequested(event: CdpEvent, params: UnknownRecord): void {
+  #navigationRequested(
+    event: CdpEvent,
+    params: UnknownRecord,
+    contextOnly: boolean,
+  ): void {
     if (!isMainFrameNavigation(event, this.mainFrameId)) return;
     const reason = safeDetail(params.reason);
-    this.#pendingReload = reason === "reload";
+    const rawUrl = cdpStringValue(params.url);
+    const destination =
+      rawUrl === undefined ? undefined : scopedUrl(rawUrl, this.allowedOrigins);
+    if (!contextOnly) this.#pendingReload = reason === "reload";
     this.#add({
       type: "navigation_requested",
       params,
-      rawUrl: cdpStringValue(params.url) ?? null,
+      timestamp: null,
+      rawUrl: rawUrl ?? null,
       requestId: null,
       detail: reason,
     });
+    if (destination !== undefined) this.#stopIfOutOfScope(destination);
   }
 
-  #navigationCommitted(event: CdpEvent, params: UnknownRecord): void {
+  #navigationCommitted(
+    event: CdpEvent,
+    params: UnknownRecord,
+    contextOnly: boolean,
+  ): void {
     const frame = recordValue(params.frame);
     if (!isMainFrameNavigation(event, this.mainFrameId)) return;
     const observation = observeCdpFrameUrl(frame);
@@ -255,52 +361,48 @@ class TimelineCapture {
       observation.kind === "observed" ? observation.url : undefined;
     const destination = classifyCdpFrameUrl(observation, this.allowedOrigins);
     this.#add({
-      type: this.#pendingReload ? "same_origin_reload" : "navigation_committed",
+      type:
+        !contextOnly && this.#pendingReload
+          ? "same_origin_reload"
+          : "navigation_committed",
       params: { ...params, frameId: frame?.id, loaderId: frame?.loaderId },
+      timestamp: null,
       rawUrl: rawUrl ?? null,
       destinationScope:
         destination.scope === "unknown" ? null : destination.scope,
       requestId: null,
       detail: safeDetail(frame?.transitionType),
     });
+    if (observation.kind !== "observed") this.invalidateFinalUrl();
+    if (this.#stopIfOutOfScope(destination)) return;
+    if (contextOnly) return;
     this.#pendingReload = false;
-    if (observation.kind === "invalid_fragment") {
-      this.invalidateFinalUrl();
-      if (destination.scope !== "approved") {
-        this.excludeTargetScope("out_of_target_scope");
-        this.end("target_left_scope");
-      }
-      return;
-    }
-    if (!this.#hasObservedUrl(rawUrl)) return;
-    if (destination.scope === "approved")
-      this.finalUrl = destination.url ?? null;
-    else {
-      this.excludeTargetScope("out_of_target_scope");
-      this.end("target_left_scope");
-    }
+    this.finalUrl = destination.url ?? null;
   }
 
-  #sameDocument(event: CdpEvent, params: UnknownRecord): void {
+  #sameDocument(
+    event: CdpEvent,
+    params: UnknownRecord,
+    contextOnly: boolean,
+  ): void {
     if (!isMainFrameNavigation(event, this.mainFrameId)) return;
     const rawUrl = cdpStringValue(params.url);
     const destination = scopedUrl(rawUrl, this.allowedOrigins);
     this.#add({
       type: "same_document_navigation",
       params,
+      timestamp: null,
       rawUrl: rawUrl ?? null,
       requestId: null,
       detail: null,
     });
     if (!this.#hasObservedUrl(rawUrl)) return;
-    if (destination.scope === "approved") this.finalUrl = destination.url;
-    else {
-      this.excludeTargetScope("out_of_target_scope");
-      this.end("target_left_scope");
-    }
+    if (this.#stopIfOutOfScope(destination)) return;
+    if (contextOnly) return;
+    this.finalUrl = destination.url;
   }
 
-  #redirect(params: UnknownRecord): void {
+  #redirect(params: UnknownRecord, bufferedBeforeArm: boolean): void {
     const resourceType = cdpStringValue(params.type);
     if (resourceType !== undefined && resourceType !== "Document") return;
     if (
@@ -308,21 +410,23 @@ class TimelineCapture {
       recordValue(params.redirectResponse) === undefined
     )
       return;
+    const eventTime = this.#networkEventTime(params, bufferedBeforeArm);
+    if (!eventTime.keep) return;
     const request = recordValue(params.request);
     const rawUrl = cdpStringValue(request?.url);
     const destination = scopedUrl(rawUrl, this.allowedOrigins);
     this.#add({
       type: "redirect",
       params,
+      ...(eventTime.timestamp === undefined
+        ? {}
+        : { timestamp: eventTime.timestamp }),
       rawUrl: rawUrl ?? null,
       requestId: cdpStringValue(params.requestId) ?? null,
       detail: null,
     });
     if (!this.#hasObservedUrl(rawUrl)) return;
-    if (destination.scope !== "approved") {
-      this.excludeTargetScope("out_of_target_scope");
-      this.end("target_left_scope");
-    }
+    this.#stopIfOutOfScope(destination);
   }
 
   invalidateFinalUrl(): void {
@@ -337,20 +441,64 @@ class TimelineCapture {
     return false;
   }
 
-  #loadingFailed(params: UnknownRecord): void {
+  #stopIfOutOfScope(destination: {
+    readonly scope: "approved" | "outside_policy" | "unsupported" | "unknown";
+  }): boolean {
+    if (destination.scope === "approved" || destination.scope === "unknown")
+      return false;
+    this.excludeTargetScope("out_of_target_scope");
+    this.end("target_left_scope");
+    return true;
+  }
+
+  #loadingFailed(params: UnknownRecord, bufferedBeforeArm: boolean): void {
     const frame = cdpStringValue(params.frameId);
     if (frame !== undefined && frame !== this.mainFrameId) return;
+    const eventTime = this.#networkEventTime(params, bufferedBeforeArm);
+    if (!eventTime.keep) return;
     this.#add({
       type: "load_failed",
       params,
+      ...(eventTime.timestamp === undefined
+        ? {}
+        : { timestamp: eventTime.timestamp }),
       rawUrl: null,
       requestId: cdpStringValue(params.requestId) ?? null,
       detail: safeNetworkError(params.errorText),
     });
   }
 
+  #networkEventTime(
+    params: UnknownRecord,
+    bufferedBeforeArm: boolean,
+  ): {
+    readonly keep: boolean;
+    readonly timestamp?: number | null;
+  } {
+    if (!bufferedBeforeArm) return { keep: true };
+    const timestamp = numberValue(params.timestamp);
+    if (timestamp === undefined || timestamp < 0) {
+      this.completeness.exclude("timeline", "invalid_protocol_value");
+      this.#hasUnknownEventTime = true;
+      return { keep: true, timestamp: null };
+    }
+    if (this.#armTimestamp === undefined || timestamp <= this.#armTimestamp)
+      return { keep: false, timestamp };
+    return { keep: true, timestamp };
+  }
+
   #lifecycle(params: UnknownRecord): void {
     if (cdpStringValue(params.frameId) !== this.mainFrameId) return;
+    const timestamp = numberValue(params.timestamp);
+    if (
+      timestamp === undefined ||
+      timestamp < 0 ||
+      this.#armTimestamp === undefined
+    ) {
+      this.completeness.exclude("timeline", "invalid_protocol_value");
+      return;
+    }
+    if (timestamp <= this.#armTimestamp) return;
     this.#add({
       type: "lifecycle",
       params,
@@ -370,11 +518,27 @@ class TimelineCapture {
     } = options;
     const destination =
       rawUrl == null ? null : scopedUrl(rawUrl, this.allowedOrigins);
+    const observedTimestamp = numberValue(params.timestamp);
+    const timestamp =
+      options.timestamp === undefined ? observedTimestamp : options.timestamp;
+    if (
+      timestamp === undefined ||
+      timestamp === null ||
+      (timestamp !== null && timestamp < 0)
+    ) {
+      this.#hasUnknownEventTime = true;
+    }
+    if (timestamp !== null && timestamp !== undefined && timestamp < 0) {
+      this.completeness.exclude("timeline", "invalid_protocol_value");
+    }
     this.#sequence += 1;
     this.timeline.push({
       sequence: this.#sequence,
       type,
-      timestamp: Math.max(0, numberValue(params.timestamp) ?? 0),
+      timestamp:
+        timestamp === undefined || (timestamp !== null && timestamp < 0)
+          ? null
+          : timestamp,
       frame_id: boundedId(params.frameId),
       loader_id: boundedId(params.loaderId),
       request_id: requestId ?? null,
@@ -384,6 +548,19 @@ class TimelineCapture {
     });
   }
 }
+
+const performanceTimestamp = (value: unknown): number => {
+  const metrics = recordsValue(recordValue(value)?.metrics).filter(
+    ({ name }) => name === "Timestamp",
+  );
+  const timestamp = numberValue(metrics[0]?.value);
+  if (metrics.length !== 1 || timestamp === undefined || timestamp < 0)
+    throw new BrowserObservationError("observe_web_session", "protocol_error", {
+      detail:
+        "Performance.getMetrics returned no valid monotonic Timestamp metric.",
+    });
+  return timestamp;
+};
 
 const waitForWindow = async (
   durationMs: number,
@@ -453,6 +630,19 @@ const frameId = (result: unknown): string | undefined =>
   cdpStringValue(
     recordValue(recordValue(recordValue(result)?.frameTree)?.frame)?.id,
   );
+
+const hasNoComparableProducerTimestamp = (method: string): boolean =>
+  method === "Page.frameRequestedNavigation" ||
+  method === "Page.frameNavigated" ||
+  method === "Page.navigatedWithinDocument" ||
+  method === "Inspector.targetCrashed" ||
+  method === "Target.detachedFromTarget";
+
+const isTimelineEvent = (method: string): boolean =>
+  hasNoComparableProducerTimestamp(method) ||
+  method === "Network.requestWillBeSent" ||
+  method === "Network.loadingFailed" ||
+  method === "Page.lifecycleEvent";
 
 const scopedUrl = (
   value: string | undefined,
