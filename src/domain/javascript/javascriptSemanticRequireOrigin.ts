@@ -43,6 +43,8 @@ import {
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { semanticBranchMayBeSkipped } from "./javascriptSemanticEvaluationOrder.js";
+import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
+import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 
 export interface JavaScriptRequireOrigin {
   readonly origin: JavaScriptModuleOrigin;
@@ -352,6 +354,24 @@ const writesModuleRequire = (
       isUnshadowedGlobal(value, state, "undefined")
     )
       return true;
+    const evaluated = evaluateSemanticExpression(expression, state, expression);
+    if (
+      evaluated.status === "literal" ||
+      (evaluated.status === "union" && evaluated.values.length > 0)
+    )
+      return true;
+    if ("resourceLimit" in evaluated && evaluated.resourceLimit !== undefined)
+      return false;
+    if (t.isConditionalExpression(value))
+      return (
+        isSeparateReceiver(value.consequent, visited) &&
+        isSeparateReceiver(value.alternate, visited)
+      );
+    if (t.isLogicalExpression(value))
+      return (
+        isSeparateReceiver(value.left, visited) &&
+        isSeparateReceiver(value.right, visited)
+      );
     const separateNamespace = (origin: JavaScriptModuleOrigin): boolean =>
       isBuiltin(origin.specifier) &&
       (origin.importedPath.length === 0 ||
@@ -363,7 +383,12 @@ const writesModuleRequire = (
       return true;
     if (!t.isIdentifier(value)) return false;
     const binding = resolveSemanticBindingState(state, value, value.name);
-    if (binding === undefined || visited.has(binding.bindingId)) return false;
+    if (
+      binding === undefined ||
+      visited.has(binding.bindingId) ||
+      semanticOpaqueBindingReadMayHaveChanged(binding, value, state)
+    )
+      return false;
     const snapshot = semanticBindingAtRead(binding, value, state.parentsByNode);
     if (snapshot.status !== "ordered") return false;
     const { initializers, referenceInitializers, directOrigins } =
@@ -389,6 +414,7 @@ const writesModuleRequire = (
   // only fully explored module-free node/projection pairs; a partial walk that
   // found exposure cannot establish anything about its other visited nodes.
   const moduleFree = new WeakMap<t.Node, SemanticPropertyPathCoverage>();
+  const calleeModuleFree = new WeakMap<t.Node, SemanticPropertyPathCoverage>();
   const plainObject = (
     source: t.Node | undefined,
     seen = new Set<string>(),
@@ -944,7 +970,13 @@ const writesModuleRequire = (
     const written = literalAllocation(receiver, [], receiver);
     return saved !== undefined && written !== undefined && saved !== written;
   };
-  const exposesModule = (nodes: readonly t.Node[], call: t.Node): boolean => {
+  const exposesModule = (
+    nodes: readonly t.Node[],
+    call: t.Node,
+    calleeRoot = false,
+  ): boolean => {
+    // A callee can carry bound inputs; its implementation is not itself a
+    // value supplied to unknown code. Keep those two absence proofs separate.
     const pending: {
       node: t.Node;
       path: JavaScriptSemanticPropertyPath;
@@ -952,28 +984,38 @@ const writesModuleRequire = (
       // Discharging a recorded write requires a positive module-free proof;
       // unknown call results and closures must retain the original uncertainty.
       written?: true;
-    }[] = nodes.map((node) => ({ node, path: [] }));
-    const visited = new WeakMap<
-      t.Node,
-      Map<t.Node, SemanticPropertyPathCoverage>
-    >();
-    const writtenVisited = new WeakMap<
-      t.Node,
-      Map<t.Node, SemanticPropertyPathCoverage>
-    >();
+      callee?: true;
+    }[] = nodes.map((node) => ({
+      node,
+      path: [],
+      ...(calleeRoot ? { callee: true } : {}),
+    }));
+    const traversals = Array.from(
+      { length: 4 },
+      () => new WeakMap<t.Node, Map<t.Node, SemanticPropertyPathCoverage>>(),
+    );
     let timeDependent = false;
-    const examined: { node: t.Node; path: JavaScriptSemanticPropertyPath }[] =
-      [];
+    const examined: {
+      node: t.Node;
+      path: JavaScriptSemanticPropertyPath;
+      callee?: true;
+    }[] = [];
     while (pending.length > 0) {
       const {
         node: source,
         path,
         readAt: capturedAt,
         written,
+        callee,
       } = pending.pop()!;
+      const context = {
+        ...(written ? { written } : {}),
+        ...(callee ? { callee } : {}),
+      };
+      const provenFree = callee ? calleeModuleFree : moduleFree;
       const value = unwrapJavaScriptExpression(source).node;
       const readAt = capturedAt ?? value;
-      const traversal = written ? writtenVisited : visited;
+      const traversal = traversals[(callee ? 2 : 0) + (written ? 1 : 0)]!;
       const captures =
         traversal.get(value) ?? new Map<t.Node, SemanticPropertyPathCoverage>();
       const coverage =
@@ -1025,17 +1067,18 @@ const writesModuleRequire = (
               path: [...reference.path, ...path.slice(effect.path.length)],
               readAt,
               written: true,
+              ...(callee ? { callee } : {}),
             });
         }
       }
-      if (!written && moduleFree.get(value)?.covers(path)) continue;
-      examined.push({ node: value, path });
+      if (!written && provenFree.get(value)?.covers(path)) continue;
+      examined.push({ node: value, path, ...(callee ? { callee } : {}) });
       for (const reference of interop.intrinsicValueReferences(value))
         pending.push({
           node: reference.node,
           path: [...reference.path, ...path],
           readAt: reference.node,
-          ...(written ? { written } : {}),
+          ...context,
         });
       if (semanticCommonJsModuleObjectAt(value, state)) {
         if (path.length === 0) return true;
@@ -1076,7 +1119,7 @@ const writesModuleRequire = (
                 ),
                 ...path,
               ],
-              ...(written ? { written } : {}),
+              ...context,
             });
         }
       } else if (t.isSpreadElement(value))
@@ -1084,7 +1127,7 @@ const writesModuleRequire = (
           node: value.argument,
           path,
           readAt,
-          ...(written ? { written } : {}),
+          ...context,
         });
       else if (t.isArrayExpression(value)) {
         const [key, ...remaining] = path;
@@ -1103,7 +1146,7 @@ const writesModuleRequire = (
               node: element,
               path: key === undefined ? [] : remaining,
               readAt,
-              ...(written ? { written } : {}),
+              ...context,
             });
         }
       } else if (t.isObjectExpression(value)) {
@@ -1112,7 +1155,7 @@ const writesModuleRequire = (
             (reference) => ({
               ...reference,
               readAt,
-              ...(written ? { written } : {}),
+              ...context,
             }),
           ),
         );
@@ -1127,7 +1170,7 @@ const writesModuleRequire = (
             semanticStaticPropertyKey(value.property, value.computed),
             ...path,
           ],
-          ...(written ? { written } : {}),
+          ...context,
         });
       } else if (
         t.isConditionalExpression(value) ||
@@ -1140,7 +1183,7 @@ const writesModuleRequire = (
               : value.left,
             path,
             readAt,
-            ...(written ? { written } : {}),
+            ...context,
           },
           {
             node: t.isConditionalExpression(value)
@@ -1148,7 +1191,7 @@ const writesModuleRequire = (
               : value.right,
             path,
             readAt,
-            ...(written ? { written } : {}),
+            ...context,
           },
         );
       } else if (t.isSequenceExpression(value)) {
@@ -1158,7 +1201,7 @@ const writesModuleRequire = (
             node: last,
             path,
             readAt,
-            ...(written ? { written } : {}),
+            ...context,
           });
       } else if (t.isAssignmentExpression(value)) {
         if (["=", "||=", "&&=", "??="].includes(value.operator))
@@ -1166,16 +1209,21 @@ const writesModuleRequire = (
             node: value.right,
             path,
             readAt,
-            ...(written ? { written } : {}),
+            ...context,
           });
         if (["||=", "&&=", "??="].includes(value.operator))
           pending.push({
             node: value.left,
             path,
             readAt,
-            ...(written ? { written } : {}),
+            ...context,
           });
-      } else if (t.isNewExpression(value)) {
+      } else if (
+        (!callee && (t.isFunction(value) || t.isClass(value))) ||
+        t.isNewExpression(value)
+      ) {
+        // A callable value can expose captures or results when unknown code
+        // invokes it. Merely allocating the callable proves neither absent.
         // Construction can expose instance fields even when an explicit return
         // is primitive or a return branch is skipped. Ordinary function return
         // references cannot prove that the resulting instance is module-free.
@@ -1220,6 +1268,7 @@ const writesModuleRequire = (
             path: [...reference.projection, ...path],
             readAt,
             written: true as const,
+            ...(callee ? { callee } : {}),
           })),
         );
       } else if (
@@ -1244,11 +1293,12 @@ const writesModuleRequire = (
         return true;
     }
     if (timeDependent) return false;
-    for (const { node, path } of examined) {
+    for (const { node, path, callee } of examined) {
+      const provenFree = callee ? calleeModuleFree : moduleFree;
       const coverage =
-        moduleFree.get(node) ?? new SemanticPropertyPathCoverage();
+        provenFree.get(node) ?? new SemanticPropertyPathCoverage();
       coverage.retain(path);
-      moduleFree.set(node, coverage);
+      provenFree.set(node, coverage);
     }
     return false;
   };
@@ -1305,7 +1355,10 @@ const writesModuleRequire = (
           // An overwritten callable does not retain native mutator argument
           // semantics. Preserve any module reference supplied directly,
           // through call/apply containers or a captured bound argument.
-          if (exposesModule([...node.arguments, node.callee], node))
+          if (
+            exposesModule(node.arguments, node) ||
+            exposesModule([node.callee], node, true)
+          )
             writes.push(node);
           return;
         }

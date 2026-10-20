@@ -85,6 +85,23 @@ const writeReceiverReviewSources = async (root: string): Promise<void> => {
   for (const [index, source] of sources.entries())
     await writeFile(join(root, `receiver-review-${index}.ts`), source);
   await writeFile(
+    join(root, "commonjs-callback.cjs"),
+    `Object.assign=(t,get)=>{get().require=replacement};
+     Object.assign({},()=>module);require('fs').readFileSync('wrong-callback');`,
+  );
+  await writeFile(
+    join(root, "commonjs-bound-callback.cjs"),
+    `Object.assign=(t,get)=>{get().require=replacement};
+     const assign=Object.assign.bind(null,{},()=>module);
+     assign();require('fs').readFileSync('wrong-bound-callback');`,
+  );
+  await writeFile(
+    join(root, "commonjs-primitive-union.cjs"),
+    `const receiver=flag?null:1;
+     Reflect.set(module,'require',replacement,receiver);
+     require('fs').readFileSync('commonjs-primitive-union.json');`,
+  );
+  await writeFile(
     join(root, "namespace-primitive-receiver.mjs"),
     `import * as ns from 'node:path';import fs from 'node:fs';
      const receiver=null;Reflect.set(ns,'saved',fs,receiver);
@@ -237,6 +254,7 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
     "before-write.json",
     "before.json",
     "bound-separate.json",
+    "commonjs-primitive-union.json",
     "constructed-receiver.json",
     "copied-unrelated.json",
     "deferred-descriptor.json",

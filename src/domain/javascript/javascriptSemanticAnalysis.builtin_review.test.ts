@@ -7,6 +7,11 @@ import {
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import { namespaceReceiverCases } from "./javascriptNamespaceReceiver.fixture.js";
+import {
+  commonJsCallbackExposureCases,
+  commonJsPrimitiveReceiverCases,
+  commonJsUncertainReceiverCases,
+} from "./javascriptCommonJsExposure.fixture.js";
 
 const referenceChanged = (source: string, writesOnly = false): boolean => {
   const parsed = parseJavaScriptSource(source);
@@ -1846,5 +1851,26 @@ it.each(namespaceReceiverCases)(
         `import * as ns from 'node:path';import fs from 'node:fs';${body}fs.readFileSync('kept');`,
       ).configurationOperations.map(({ key }) => key),
     ).toEqual(kept ? ["kept"] : []);
+  },
+);
+
+it.each([...commonJsCallbackExposureCases, ...commonJsUncertainReceiverCases])(
+  "retains CommonJS module exposure through callback or receiver values: %s",
+  (body) => {
+    expect(
+      analyzeJavaScriptSemantics(`${body}require('fs').readFileSync('wrong');`)
+        .configurationOperations,
+    ).toEqual([]);
+  },
+);
+
+it.each(commonJsPrimitiveReceiverCases)(
+  "keeps CommonJS reads after rejected or separate union receivers: %s",
+  (body) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `${body}require('fs').readFileSync('kept');`,
+      ).configurationOperations.map(({ key }) => key),
+    ).toEqual(["kept"]);
   },
 );

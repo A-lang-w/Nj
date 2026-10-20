@@ -1212,6 +1212,17 @@ export function* collectSemanticMemberMutationsSteps(
               );
             const dataDescriptor =
               dataProperty || ownData || wrapperRequireData;
+            if (
+              dataDescriptor &&
+              !invokesSetter &&
+              args[3] !== undefined &&
+              primitiveInput(args[3])
+            ) {
+              // A data-slot set cannot write to a primitive receiver or store
+              // its RHS there. Key coercion can still expose references.
+              markEscaped(args[1]!, node, [], inputReadAt(args[1]!, node));
+              return;
+            }
             if (invokesSetter || path[0] === null) {
               // A setter can mutate shared children of its `this` receiver.
               markEscaped(target, node, [], inputReadAt(target, node));
