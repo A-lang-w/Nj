@@ -764,6 +764,7 @@ export const openPlaywrightScenarioBrowser = async (
       options.retainCleanup,
     );
 
+  const launchedBrowser = scenario.browser;
   const preferredTemp = androidScenarioTempDirectory(environment);
   if (preferredTemp !== undefined)
     await mkdir(preferredTemp, { recursive: true });
@@ -775,8 +776,8 @@ export const openPlaywrightScenarioBrowser = async (
     await chmod(profilePath, 0o700);
     context = await withAndroidHostTempDirectory(preferredTemp, () =>
       launcher.launchPersistentContext(profilePath, {
-        executablePath: resolve(scenario.browser.executable_path),
-        headless: scenario.browser.headless,
+        executablePath: resolve(launchedBrowser.executable_path),
+        headless: launchedBrowser.headless,
         acceptDownloads: false,
         viewport: {
           width: scenario.environment.viewport.width,
