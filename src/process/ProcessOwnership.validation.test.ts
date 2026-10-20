@@ -694,6 +694,71 @@ describe("identityless exit refresh rechecks a prior PID whose relation changes"
   });
 });
 
+describe("identityless exit refresh keeps a token-read helper", () => {
+  it("rechecks a matched helper after it returns to its original group", async () => {
+    const helper = {
+      ...launcher,
+      pid: 50,
+      parentPid: 1,
+      processGroupId: 50,
+      command: "helper",
+    };
+    const leader = {
+      ...launcher,
+      pid: 60,
+      parentPid: 1,
+      processGroupId: 60,
+      command: "owned-leader",
+    };
+    const stable = {
+      ...launcher,
+      pid: 70,
+      parentPid: 1,
+      processGroupId: 70,
+      command: "stable-outsider",
+    };
+    const unreadable = {
+      ...launcher,
+      pid: 104,
+      parentPid: 1,
+      processGroupId: 104,
+      command: "unreadable",
+    };
+    const signalGroup = vi.fn();
+    const environment = vi.fn((pid: number) =>
+      pid === 104
+        ? Promise.reject(new Error("environment unavailable"))
+        : Promise.resolve({ REA_PROCESS_RUN_ID: ownership.runId }),
+    );
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([
+        { ...launcher, command: "[MainThread]" },
+        { ...launcher, pid: 101, parentPid: 100 },
+        helper,
+        stable,
+      ])
+      .mockResolvedValueOnce([
+        leader,
+        { ...helper, parentPid: 60, processGroupId: 60 },
+        unreadable,
+        stable,
+      ])
+      .mockResolvedValue([leader, helper, stable]);
+    await expect(
+      cleanupOwnedProcessGroup(
+        { ...ownership, expectedCommand: "fixture" },
+        { listProcesses, environment, signalGroup },
+      ),
+    ).resolves.toEqual({ cleaned: true, signaled: true });
+    expect(environment.mock.calls.map(([pid]) => pid)).not.toContain(70);
+    expect(signalGroup.mock.calls).toEqual([
+      [50, "SIGKILL"],
+      [60, "SIGKILL"],
+    ]);
+  });
+});
+
 describe("identityless exit refresh re-reads a reused foreign PID", () => {
   it("token-checks a PID again after a foreign row exits into an owned replacement", async () => {
     const reused = {

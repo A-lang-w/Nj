@@ -664,6 +664,9 @@ const classifyUnlinkedExitRows = async (
   let confirmations = 0;
   const matched: ProcessTableEntry[] = [];
   const inspected = new Set<number>();
+  // A readable token does not expire when the PID's parent and group return
+  // to the pre-exit values. Those PIDs are read again on the next table.
+  const tokenRead = new Set<number>();
   while (pending.length > 0) {
     const due = pending.filter((process) => !inspected.has(process.pid));
     if (due.length === 0) break;
@@ -674,6 +677,7 @@ const classifyUnlinkedExitRows = async (
       due,
     )) {
       if (observation.state === "readable") {
+        tokenRead.add(process.pid);
         if (observation.runId === ownership.runId) matched.push(process);
         continue;
       }
@@ -717,13 +721,16 @@ const classifyUnlinkedExitRows = async (
       };
     // The confirmation read is its own table. A PID classified on the previous
     // table, including a readable foreign token, does not identify the process
-    // now using that PID. Read newcomers again, and read a pre-exit PID again
-    // when its parent or group changed.
+    // now using that PID. Read newcomers again, read a pre-exit PID again
+    // when its parent or group changed, and read a PID again when its token
+    // was already read even if that parent and group have returned.
     current = liveRows;
     inspected.clear();
     matched.length = 0;
-    pending = current.filter((process) =>
-      isExitRefreshCandidate(process, ownership, initialRelations),
+    pending = current.filter(
+      (process) =>
+        tokenRead.has(process.pid) ||
+        isExitRefreshCandidate(process, ownership, initialRelations),
     );
   }
   const livePids = new Set(current.map(({ pid }) => pid));
