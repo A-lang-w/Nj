@@ -49,14 +49,18 @@ try {
     appPath,
   );
   const decoded = evidence.normalized_result;
-  await withArtifactMcp(appPath, async (client) => {
-    const mcp = await artifactMcpResult(client, "decode_interface_builder");
-    assert.deepEqual(
-      mcp,
-      decoded,
-      "CLI and MCP compiled archive results differ",
-    );
-  });
+  await withArtifactMcp(
+    appPath,
+    async (client) => {
+      const mcp = await artifactMcpResult(client, "decode_interface_builder");
+      assert.deepEqual(
+        mcp,
+        decoded,
+        "CLI and MCP compiled archive results differ",
+      );
+    },
+    { bundleResources: true },
+  );
   assert.equal(decoded.documents.length, 1);
   assert.equal(
     decoded.documents[0]?.relative_path,

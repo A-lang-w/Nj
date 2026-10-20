@@ -80,25 +80,29 @@ try {
         asset_name === "FixtureColor" && metadata.AssetType === "Color",
     ),
   );
-  await withArtifactMcp(app, async (client) => {
-    assert.deepEqual(
-      await artifactMcpResult(client, "inspect_asset_catalog"),
-      cli,
-    );
-    const first = await artifactMcpResult(client, "inspect_asset_catalog", {
-      limit: 1,
-    });
-    assert.equal(first.next_offset, 1);
-    const next = await artifactMcpResult(client, "inspect_asset_catalog", {
-      offset: first.next_offset,
-    });
-    assert.deepEqual([...first.records, ...next.records], cli.records);
-    const invalid = await client.callTool({
-      name: "inspect_asset_catalog",
-      arguments: { offset: -1 },
-    });
-    assert.equal(invalid.isError, true);
-  });
+  await withArtifactMcp(
+    app,
+    async (client) => {
+      assert.deepEqual(
+        await artifactMcpResult(client, "inspect_asset_catalog"),
+        cli,
+      );
+      const first = await artifactMcpResult(client, "inspect_asset_catalog", {
+        limit: 1,
+      });
+      assert.equal(first.next_offset, 1);
+      const next = await artifactMcpResult(client, "inspect_asset_catalog", {
+        offset: first.next_offset,
+      });
+      assert.deepEqual([...first.records, ...next.records], cli.records);
+      const invalid = await client.callTool({
+        name: "inspect_asset_catalog",
+        arguments: { offset: -1 },
+      });
+      assert.equal(invalid.isError, true);
+    },
+    { bundleResources: true },
+  );
   report = {
     ok: true,
     mocked: false,
