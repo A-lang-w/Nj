@@ -9,8 +9,8 @@ import {
   type FileHandle,
 } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
-import type { Readable } from "node:stream";
-import { finished } from "node:stream/promises";
+import { finished, type Readable } from "node:stream";
+import { setImmediate, setTimeout } from "node:timers/promises";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { streamChunkToBuffer } from "./StreamBytes.js";
 
@@ -168,15 +168,15 @@ export class SafeOutputTree {
     signal?: AbortSignal,
   ): Promise<SafeOutputFile> {
     // Own errors before asynchronous destination setup, without starting reads.
-    // Keep the outcome handled until the consumer or setup-failure path joins it.
-    const sourceCompletion = finished(source, {
-      readable: true,
-      writable: false,
-      cleanup: true,
-    }).then(
-      () => ({ kind: "complete" as const }),
-      (cause: unknown) => ({ kind: "failed" as const, cause }),
-    );
+    // Retain the observer through destruction, including late cleanup errors.
+    let stopObservingSource!: () => void;
+    const sourceCompletion = new Promise<Error | undefined>((resolve) => {
+      stopObservingSource = finished(
+        source,
+        { readable: true, writable: false },
+        (error) => resolve(error ?? undefined),
+      );
+    });
     try {
       this.#assertWritable();
       if (!Number.isSafeInteger(expected.bytes) || expected.bytes < 0)
@@ -237,8 +237,8 @@ export class SafeOutputTree {
         hash.update(chunk);
         await writeAll(ownedHandle.handle, chunk);
       }
-      const completion = await sourceCompletion;
-      if (completion.kind === "failed") throw completion.cause;
+      const sourceFailure = await sourceCompletion;
+      if (sourceFailure !== undefined) throw sourceFailure;
       if (bytes !== expected.bytes)
         throw new ArtifactReaderFailure(
           "integrity",
@@ -275,11 +275,17 @@ export class SafeOutputTree {
     } catch (cause: unknown) {
       try {
         source.destroy();
+        // Destruction can finish without an event when emitClose is false.
+        // Keep observing errors through the queued destroy notifications, then
+        // join the resource state even if finished() has already seen an error.
+        await setImmediate();
+        while (!source.closed) await setTimeout(10);
       } catch {
         // Preserve the write refusal or failure as the caller-visible error.
       }
-      await sourceCompletion;
       throw cause;
+    } finally {
+      stopObservingSource();
     }
   }
 
