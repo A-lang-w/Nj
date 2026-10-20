@@ -122,9 +122,8 @@ describe("executable header parsing", () => {
     });
   });
 
-  it("selects the first declared slice when no slice matches the host", () => {
+  it("selects the first valid declared slice when none matches the host", () => {
     const bytes = fat([0x01000007, 0x0100000c]);
-
     expect(parseExecutableHeader(fat([0x01000007]), "arm64")).toMatchObject({
       ok: true,
       value: {
@@ -134,12 +133,15 @@ describe("executable header parsing", () => {
       },
     });
     expect(parseExecutableHeader(bytes, "riscv64")).toMatchObject({
-      ok: true,
       value: {
-        format: "mach-o-universal",
         architecture: "x86_64",
         availableArchitectures: ["x86_64", "arm64"],
       },
+    });
+    // An undersized first slice does not hide a later valid one.
+    bytes.writeUInt32BE(31, 8 + 12);
+    expect(parseExecutableHeader(bytes, "riscv64")).toMatchObject({
+      value: { architecture: "arm64" },
     });
   });
 

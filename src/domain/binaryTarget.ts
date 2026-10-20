@@ -156,20 +156,27 @@ const parseFatMachO = (
       size: declaration.size,
     });
   }
-  // Prefer the slice the host would load. A container without one still
-  // declares its images, so select the first, as a thin foreign image is.
+  // Prefer the slice the host would load; a malformed host slice is an error.
+  // A container without one still declares its images, so select the first
+  // that can hold its Mach-O header, as a thin foreign image would be.
   const preferred = fatHostArchitecture(host);
-  const selected =
+  const candidates =
     preferred !== undefined && slices.has(preferred)
-      ? preferred
-      : architectures[0];
+      ? [preferred]
+      : architectures;
+  const holdsHeader = (architecture: HeaderArchitecture): boolean =>
+    (slices.get(architecture)?.size ?? 0) >=
+    (architecture === "arm64" || architecture === "x86_64" ? 32 : 28);
+  const selected = candidates.find(holdsHeader);
   const slice = selected === undefined ? undefined : slices.get(selected);
-  if (selected === undefined || slice === undefined)
-    return err("FAT binary declares no supported Mach-O architecture");
-  const minimumHeaderSize =
-    selected === "arm64" || selected === "x86_64" ? 32 : 28;
-  if (slice.size < minimumHeaderSize)
-    return err(`FAT slice for ${selected} is shorter than its Mach-O header`);
+  if (selected === undefined || slice === undefined) {
+    const first = candidates[0];
+    return err(
+      first === undefined
+        ? "FAT binary declares no supported Mach-O architecture"
+        : `FAT slice for ${first} is shorter than its Mach-O header`,
+    );
+  }
   return ok({
     format: "mach-o-universal",
     architecture: selected,
