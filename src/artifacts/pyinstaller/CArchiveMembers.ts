@@ -9,6 +9,7 @@ import {
 import {
   cArchiveEntryMetadata,
   pyzEntryMetadata,
+  pyzEntryEncrypted,
 } from "./PyInstallerMetadata.js";
 import type { PyInstallerEntryMetadata } from "../../domain/artifactFormatMetadata.js";
 
@@ -180,7 +181,7 @@ export const projectPyzContainer = (
 export const projectPyzMember = (
   container: CArchiveEntry,
   item: PyzEntry,
-  encrypted: boolean,
+  encryptionMarker: boolean,
   pythonMagic: Buffer | undefined,
   range:
     | {
@@ -191,6 +192,7 @@ export const projectPyzMember = (
     | undefined,
 ): PyInstallerMember => {
   const path = pyzMemberPath(canonicalMemberPath(container.name), item);
+  const encrypted = pyzEntryEncrypted(item, encryptionMarker);
   if (item.namespace)
     return {
       entry: {
@@ -199,15 +201,25 @@ export const projectPyzMember = (
         declaredSize: 0,
         compressedSize: item.length,
         executable: false,
-        encrypted: false,
+        encrypted,
         byteOffset: null,
         declaredIntegrity: null,
         unpacked: false,
         limitations: [
           "Namespace package has no importable bytecode; its declared payload is not materialized.",
+          ...(encrypted
+            ? [
+                "PYZ namespace payload is declared encrypted and is not materialized.",
+              ]
+            : []),
         ],
         adapterKey: `pyz:${String(container.index)}:${String(item.index)}:${path}`,
-        formatMetadata: pyzEntryMetadata(container, item, undefined, encrypted),
+        formatMetadata: pyzEntryMetadata(
+          container,
+          item,
+          undefined,
+          encryptionMarker,
+        ),
       },
       read: undefined,
     };
@@ -234,7 +246,12 @@ export const projectPyzMember = (
       encrypted,
       limitations,
       adapterKey: `pyz:${String(container.index)}:${String(item.index)}:${path}`,
-      formatMetadata: pyzEntryMetadata(container, item, header, encrypted),
+      formatMetadata: pyzEntryMetadata(
+        container,
+        item,
+        header,
+        encryptionMarker,
+      ),
     }),
     read: range === undefined ? undefined : { kind: "pyz", ...range, header },
   };

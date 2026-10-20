@@ -24,6 +24,8 @@ import {
   sameArtifactEntry,
   type ArtifactEntry,
   type ArtifactReader,
+  type ArtifactReaderTraversal,
+  type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import { abortIfNeeded, hashReadable } from "./ArtifactHash.js";
 import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
@@ -64,6 +66,7 @@ interface PyzImage {
 
 interface LoadedArchive {
   readonly members: readonly PyInstallerMember[];
+  readonly traversal: ArtifactReaderTraversal;
 }
 
 /**
@@ -134,7 +137,10 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     });
   }
 
-  async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {
+  async *entries(
+    signal?: AbortSignal,
+    options?: ArtifactTraversalOptions,
+  ): AsyncIterable<ArtifactEntry> {
     const active = this.#signal(signal);
     const loaded = await this.#scope.run(async () => {
       const value = await this.#load(active);
@@ -142,6 +148,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
       this.#members.clear();
       return value;
     });
+    options?.onCoverage?.(loaded.traversal);
     for (const member of loaded.members) {
       abortIfNeeded(active);
       const sealed = sealMember(member);
@@ -320,7 +327,21 @@ export class PyInstallerArtifactReader implements ArtifactReader {
         this.#charge(member.read.header?.length ?? 0);
     await this.#verifySource();
     this.#metadata = cookieMetadata(cookie, toc, encrypted);
-    return { members };
+    let opaqueImages = 0;
+    for (const image of images.values())
+      if (image.archive.kind === "opaque") opaqueImages++;
+    return {
+      members,
+      traversal: {
+        status: opaqueImages === 0 ? "complete" : "unknown",
+        limitations:
+          opaqueImages === 0
+            ? []
+            : [
+                `${String(opaqueImages)} PYZ archives remain opaque; module traversal is unknown. See opaque PYZ occurrences for source magic and per-archive limitations.`,
+              ],
+      },
+    };
   }
 
   async #openHandle(signal?: AbortSignal): Promise<FileHandle> {

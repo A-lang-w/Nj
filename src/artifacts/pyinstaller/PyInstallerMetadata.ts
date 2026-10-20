@@ -148,6 +148,12 @@ const dependencyMetadata = (
   };
 };
 
+/** Legacy writers encrypt nonempty namespace payloads as well as module payloads. */
+export const pyzEntryEncrypted = (
+  entry: PyzEntry,
+  encryptionMarker: boolean,
+): boolean => encryptionMarker && entry.length > 0;
+
 export const pyzEntryMetadata = (
   container: CArchiveEntry,
   entry: PyzEntry,
@@ -167,6 +173,7 @@ export const pyzEntryMetadata = (
     entry.typeCode === 0 || entry.typeCode === 1,
     header,
   ),
-  encryption_source:
-    encryptionMarker && !entry.namespace ? "carchive-marker" : null,
+  encryption_source: pyzEntryEncrypted(entry, encryptionMarker)
+    ? "carchive-marker"
+    : null,
 });

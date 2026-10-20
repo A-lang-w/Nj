@@ -91,6 +91,10 @@ Supported final Python bytecode magic values cover Python 3.7 through 3.14.
 Supported marshal directory values are lists, tuples, strings, integers and
 bytes. An unsupported magic or directory stays an opaque member with a
 limitation and `pyz_status: "opaque"`; its module contents remain unknown.
+Any opaque PYZ makes producer traversal coverage unknown, including retained
+summaries and exhausted queries. Per-archive reasons remain on the opaque
+occurrences; the coverage observation summarizes their count without repeating
+every limitation. An empty result does not establish module absence.
 Observed `pyz_python_magic` bytes remain available even when their Python version
 is unknown.
 The directory declares compressed module lengths, so uncompressed declared
@@ -106,6 +110,8 @@ These headers do not establish successful execution or decompilation.
 The nonempty CArchive Python module `pyimod00_crypto_key` (`m`/`M`) is recorded
 as an encryption marker; a same-named data file or script is not. Affected
 PYZ blobs are reported without decoding; extraction refuses encrypted entries.
+The marker also applies to nonempty legacy namespace payloads. Empty namespaces
+have no payload to encrypt and retain a null encryption source.
 
 Detection searches the last 16 MiB for a cookie, allowing a trailing macOS code
 signature within that bound. Member offsets are relative to the archive start:

@@ -19,7 +19,7 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url));
 
-const onefile = async (): Promise<string> => {
+const onefile = async (magic = PYTHON_39_MAGIC): Promise<string> => {
   const directory = await createTestTempDirectory("rea-pyinstaller-cli-");
   const path = join(directory, "hello");
   await writeFile(
@@ -52,7 +52,7 @@ const onefile = async (): Promise<string> => {
           name: "PYZ.pyz",
           typeCode: "z",
           payload: pyzArchive({
-            magic: PYTHON_39_MAGIC,
+            magic,
             modules: [
               { name: "app", typeCode: 0, body: Buffer.from("app-body") },
             ],
@@ -155,4 +155,24 @@ it("extracts CArchive members through extract-artifact", async () => {
       item.relative_path.includes("pyi-contents-directory"),
     ),
   ).toBe(false);
+});
+
+it("reports unknown traversal through the CLI for an opaque PYZ", async () => {
+  const path = await onefile(Buffer.alloc(4));
+  const result = await execute(process.execPath, [
+    cli,
+    "inspect-artifact",
+    path,
+    "--json",
+  ]);
+  const inspection = artifactInspectionResultSchema.parse(
+    parseEvidence(JSON.parse(result.stdout)).normalized_result,
+  );
+  const inventory = inspection.substeps[0]?.evidence.normalized_result;
+  expect(inventory?.coverage.status).toBe("unknown");
+  expect(inventory?.limitations.join(" ")).toContain("opaque");
+  expect(
+    inventory?.occurrences.find((row) => row.logical_path === "PYZ.pyz")
+      ?.format_metadata,
+  ).toMatchObject({ pyz_python_magic: "00000000", pyz_status: "opaque" });
 });

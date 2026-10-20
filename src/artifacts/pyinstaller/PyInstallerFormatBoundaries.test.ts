@@ -554,12 +554,12 @@ it("retains legacy namespace payload extents without materializing them", async 
     modules: [
       {
         name: "ns",
-        typeCode: 0,
+        typeCode: 3,
+        legacyNamespacePayload: true,
         body: Buffer.from("legacy namespace code object"),
       },
     ],
   });
-  image.writeInt32LE(3, image.length - 14);
   const length = image.readInt32LE(image.length - 4);
   expect(length).toBeGreaterThan(0);
   await withPyInstallerReader(
@@ -602,6 +602,124 @@ it("retains legacy namespace payload extents without materializing them", async 
     },
   );
 });
+
+it.each(["magic", "marshal"])(
+  "retains unknown traversal coverage for an opaque PYZ %s",
+  async (kind) => {
+    const known = pyzArchive({
+      magic: PYTHON_39_MAGIC,
+      modules: [{ name: "known", typeCode: 0, body: Buffer.from("known") }],
+    });
+    const opaque = pyzArchive({
+      magic: kind === "magic" ? Buffer.alloc(4) : PYTHON_39_MAGIC,
+      modules: [],
+      ...(kind === "marshal" ? { toc: Buffer.from([0x4e]) } : {}),
+    });
+    await withPyInstallerReader(
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 309,
+        members: [
+          { name: "known.pyz", typeCode: "z", payload: known, compress: false },
+          {
+            name: "opaque.pyz",
+            typeCode: "z",
+            payload: opaque,
+            compress: false,
+          },
+        ],
+      }),
+      async (reader, _root, path) => {
+        for (let run = 0; run < 2; run++) {
+          const observed: unknown[] = [];
+          const listed: ArtifactEntry[] = [];
+          for await (const entry of reader.entries(undefined, {
+            onCoverage: (coverage) => observed.push(coverage),
+          }))
+            listed.push(entry);
+          expect(listed).toHaveLength(3);
+          expect(observed).toEqual([
+            expect.objectContaining({ status: "unknown" }),
+          ]);
+        }
+        const inventory = await scanCanonicalArtifactInventory(path);
+        expect(inventory.coverage).toMatchObject({ status: "unknown" });
+        expect(inventory.limitations.join(" ")).toContain("opaque");
+        expect(
+          inventory.occurrences.find(
+            (row) => row.logical_path === "known.pyz/known.pyc",
+          ),
+        ).toMatchObject({ hash_status: "verified" });
+        expect(
+          inventory.occurrences.find((row) => row.logical_path === "opaque.pyz")
+            ?.format_metadata,
+        ).toMatchObject({ pyz_status: "opaque" });
+      },
+    );
+  },
+);
+
+it.each([false, true])(
+  "derives namespace encryption from stored payload and the marker (%s)",
+  async (marker) => {
+    const image = pyzArchive({
+      magic: PYTHON_39_MAGIC,
+      modules: [
+        {
+          name: "legacy",
+          typeCode: 3,
+          legacyNamespacePayload: true,
+          body: Buffer.from("declared namespace payload"),
+        },
+        { name: "empty", typeCode: 3, body: Buffer.alloc(0) },
+      ],
+    });
+    await withPyInstallerReader(
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 309,
+        members: [
+          ...(marker
+            ? [
+                {
+                  name: "pyimod00_crypto_key",
+                  typeCode: "m",
+                  payload: Buffer.from("key module"),
+                  compress: false,
+                },
+              ]
+            : []),
+          { name: "PYZ.pyz", typeCode: "z", payload: image, compress: false },
+        ],
+      }),
+      async (_reader, _root, path) => {
+        const inventory = await scanCanonicalArtifactInventory(path);
+        expect(
+          inventory.occurrences.find(
+            (row) => row.logical_path === "PYZ.pyz/legacy",
+          ),
+        ).toMatchObject({
+          entry_kind: "directory",
+          encrypted: marker,
+          compressed_size: expect.any(Number),
+          format_metadata: {
+            encryption_source: marker ? "carchive-marker" : null,
+          },
+        });
+        expect(
+          inventory.occurrences.find(
+            (row) => row.logical_path === "PYZ.pyz/empty",
+          ),
+        ).toMatchObject({
+          entry_kind: "directory",
+          encrypted: false,
+          compressed_size: 0,
+          format_metadata: { encryption_source: null },
+        });
+      },
+    );
+  },
+);
 
 it.each([
   ["sequence", Buffer.from("5ba1860100", "hex")],

@@ -100,7 +100,7 @@ export const pyzArchive = (input: {
   let offset = 12;
   for (const module of input.modules) {
     const compressed =
-      module.typeCode === 3
+      module.typeCode === 3 && module.legacyNamespacePayload !== true
         ? Buffer.alloc(0)
         : Buffer.concat([
             deflateSync(module.body),
@@ -125,8 +125,9 @@ export const pyzArchive = (input: {
   return Buffer.concat([header, ...blobs, toc]);
 };
 
-/** One PYZ table row. Type 3 is a namespace package and stores no body. */
+/** Type 3 normally stores no body; older producers can write a namespace payload. */
 export interface PyzFixtureModule {
+  readonly legacyNamespacePayload?: boolean;
   readonly compressedSuffix?: Buffer;
   readonly name: string;
   readonly typeCode: number;
