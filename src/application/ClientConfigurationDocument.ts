@@ -82,15 +82,18 @@ const codexServerToolObjectSchema = z
   })
   .passthrough();
 
-const codexServerToolSequenceSchema = z.union([
-  z.tuple([codexApprovalModeSchema]),
-  z
-    .tuple([codexApprovalModeSchema, codexToolOutputTokenLimitSchema])
-    .refine((seq) => !hasTomlFloatProperty(seq, "1"), {
-      message: "Expected output_token_limit to be a TOML integer",
-      path: [1],
-    }),
-]);
+const codexServerToolSequenceSchema = z
+  .unknown()
+  .refine((seq) => Array.isArray(seq) && !hasTomlFloatProperty(seq, "1"), {
+    message: "Expected output_token_limit to be a TOML integer",
+    path: [1],
+  })
+  .pipe(
+    z.union([
+      z.tuple([codexApprovalModeSchema]),
+      z.tuple([codexApprovalModeSchema, codexToolOutputTokenLimitSchema]),
+    ]),
+  );
 
 /** Codex per-tool configuration entry (`[mcp_servers.<server>.tools.<tool>]`). */
 export const codexServerToolSchema = z.union([
