@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -290,6 +291,54 @@ it("bounds concurrent snapshots and retains active decoding until close complete
     const refused = await provider.inspect({ path });
     expect(refused.ok).toBe(false);
     if (!refused.ok) {
+      expect(refused.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
+      expect(projectAnalysisError(refused.error)).toMatchObject({
+        code: "capability_unavailable",
+        retryable: false,
+        details: { reason: "IL2CPP metadata reader is closed" },
+      });
+      expect(
+        projectAnalysisError(refused.error).remediation.action,
+      ).not.toMatch(/retry/i);
+    }
+    await setImmediate();
+    expect(closed).toBe(false);
+  } finally {
+    resume();
+    await closing;
+  }
+  expect((await active).ok).toBe(true);
+  expect(closed).toBe(true);
+  const afterClose = await provider.inspect({ path });
+  expect(afterClose.ok).toBe(false);
+  if (!afterClose.ok) {
+    expect(afterClose.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
+    expect(projectAnalysisError(afterClose.error).retryable).toBe(false);
+  }
+});
+
+it("keeps occupied capacity retryable while the reader remains open", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-provider-occupied-");
+  const path = join(root, "global-metadata.dat");
+  await writeFile(path, createIl2cppMetadataFixture().bytes);
+  let markEntered!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    markEntered = resolve;
+  });
+  let resume!: () => void;
+  const release = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const provider = new Il2cppMetadataProvider(undefined, () => {
+    markEntered();
+    return release;
+  });
+  const active = provider.inspect({ path });
+  await entered;
+  try {
+    const refused = await provider.inspect({ path });
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) {
       expect(refused.error).toBeInstanceOf(AnalysisResourceConstraintError);
       expect(projectAnalysisError(refused.error)).toMatchObject({
         retryable: true,
@@ -302,15 +351,11 @@ it("bounds concurrent snapshots and retains active decoding until close complete
         },
       });
     }
-    await setImmediate();
-    expect(closed).toBe(false);
   } finally {
     resume();
-    await closing;
+    await active;
+    await provider.close();
   }
-  expect((await active).ok).toBe(true);
-  expect(closed).toBe(true);
-  expect((await provider.inspect({ path })).ok).toBe(false);
 });
 
 it.each([false, true])(

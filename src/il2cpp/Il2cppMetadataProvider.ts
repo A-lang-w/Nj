@@ -27,6 +27,7 @@ import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
@@ -327,6 +328,8 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
   readonly identity = IL2CPP_METADATA_PROVIDER_IDENTITY;
   readonly #resources = new ArtifactResourceScope();
   #inspecting = false;
+  /** `close()` stops admission permanently, including while an inspection is active. */
+  #admissionStopped = false;
 
   /** `outputBytes` exists so tests can reach the guard with small files. */
   constructor(
@@ -335,6 +338,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
   ) {}
 
   async close(): Promise<void> {
+    this.#admissionStopped = true;
     try {
       await this.#resources.close();
     } catch (cause: unknown) {
@@ -362,6 +366,18 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
     if (options?.signal?.aborted)
       return err(
         new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
+      );
+    if (this.#admissionStopped)
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          IL2CPP_METADATA_PROVIDER_IDENTITY.id,
+          OPERATION,
+          "IL2CPP metadata reader is closed",
+          {
+            remediationAction:
+              "This reader has stopped admitting inspections. Create a new IL2CPP metadata reader to inspect again. Repeating the request on this reader fails the same way.",
+          },
+        ),
       );
     if (this.#inspecting)
       return err(
