@@ -18,6 +18,12 @@ export type ReadAt = (offset: number, length: number) => Promise<Uint8Array>;
 
 /** Load commands larger than this are refused instead of buffered. */
 export const MAX_LOAD_COMMAND_BYTES = 16 * 1024 * 1024;
+/**
+ * Identical `LC_LAZY_LOAD_DYLIB_INFO` commands are 16 bytes, so the load-command
+ * byte cap alone would retain about a million dependency results. Stop before
+ * those results are kept or traced.
+ */
+export const MAX_LAZY_INFO_DEPENDENCIES = 1024;
 const MH_MAGIC = 0xfeedface;
 const MH_MAGIC_64 = 0xfeedfacf;
 const MH_CIGAM = 0xcefaedfe;
@@ -389,6 +395,7 @@ const decodeCommands = (
   const segments: SegmentSpan[] = [];
   let unreadableSegment: number | undefined;
   let lazyInfo = false;
+  let lazyInfoCount = 0;
   let offset = 0;
   for (let index = 0; index < header.commandCount; index++) {
     if (offset + 8 > bytes.byteLength)
@@ -413,7 +420,15 @@ const decodeCommands = (
       if (span === undefined) unreadableSegment ??= index;
       else segments.push(span);
     }
-    if (command === LC_LAZY_LOAD_DYLIB_INFO) lazyInfo = true;
+    if (command === LC_LAZY_LOAD_DYLIB_INFO) {
+      lazyInfoCount += 1;
+      if (lazyInfoCount > MAX_LAZY_INFO_DEPENDENCIES)
+        throw new MachoFormatIssue(
+          "unsupported",
+          `LC_LAZY_LOAD_DYLIB_INFO commands exceed the ${MAX_LAZY_INFO_DEPENDENCIES}-dependency limit`,
+        );
+      lazyInfo = true;
+    }
     const decoded = decodeCommand(command, body, index, slice);
     if (decoded !== undefined) dependencies.push(decoded);
     offset += size;

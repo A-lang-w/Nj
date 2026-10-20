@@ -188,7 +188,8 @@ measured from the `__TEXT` vmaddr. Payload strings must start after the 24-byte
 header. Distinct payload bytes and payload-range lookups stay within the 16 MiB
 limit, and a file range already read is reused. String scanning and UTF-8
 checks count every reference, including repeats and overlaps, and stop at that
-same aggregate.
+same aggregate. A slice retains at most 1024 of these commands; further copies are
+unsupported instead of becoming one traced edge each.
 Nothing is executed and no Apple tool is required, so the tool also works off
 macOS.
 

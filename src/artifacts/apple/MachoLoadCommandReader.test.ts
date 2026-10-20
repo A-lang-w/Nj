@@ -24,6 +24,7 @@ import {
   versionMinCommand,
 } from "./MachoImage.fixture.js";
 import {
+  MAX_LAZY_INFO_DEPENDENCIES,
   MAX_LOAD_COMMAND_BYTES,
   hasMachoMagic,
   readMachoImage,
@@ -656,8 +657,8 @@ describe("LC_LAZY_LOAD_DYLIB_INFO payload budget", () => {
     });
   });
 
-  it("stops walking earlier payload ranges once lookup work exceeds the limit", async () => {
-    const count = 6000;
+  it("parses distinct non-nested lazy-info payloads under the dependency limit", async () => {
+    const count = 8;
     const payloadSize = 25;
     const payload = new Uint8Array(payloadSize);
     new DataView(payload.buffer).setUint32(0, 24, true);
@@ -671,9 +672,41 @@ describe("LC_LAZY_LOAD_DYLIB_INFO payload budget", () => {
     bytes.set(image);
     for (let index = 0; index < count; index += 1)
       bytes.set(payload, image.length + index * payloadSize);
-    expect(await read(bytes)).toMatchObject({
+    const facts = await read(bytes);
+    if (facts.status !== "parsed")
+      throw new Error(
+        facts.status === "not-mach-o" ? facts.status : facts.reason,
+      );
+    expect(facts.slices[0]?.dependencies).toHaveLength(count);
+  });
+});
+
+describe("LC_LAZY_LOAD_DYLIB_INFO dependency limit", () => {
+  it("retains one result per command until the dependency limit", async () => {
+    const payload = lazyLoadDylibInfoPayload({ path: "@rpath/libl.dylib" });
+    const imageFor = (count: number) => {
+      const dataOffset = 32 + 16 + count * 16;
+      const image = machoImage({
+        commands: Array.from({ length: count }, () =>
+          lazyLoadDylibInfoCommand(dataOffset, payload.length),
+        ),
+      });
+      const bytes = new Uint8Array(image.length + payload.length);
+      bytes.set(image);
+      bytes.set(payload, image.length);
+      return bytes;
+    };
+    const atLimit = await read(imageFor(MAX_LAZY_INFO_DEPENDENCIES));
+    if (atLimit.status !== "parsed")
+      throw new Error(
+        atLimit.status === "not-mach-o" ? atLimit.status : atLimit.reason,
+      );
+    expect(atLimit.slices[0]?.dependencies).toHaveLength(
+      MAX_LAZY_INFO_DEPENDENCIES,
+    );
+    expect(await read(imageFor(MAX_LAZY_INFO_DEPENDENCIES + 1))).toMatchObject({
       status: "unsupported",
-      reason: expect.stringContaining("range lookup"),
+      reason: expect.stringContaining("dependency limit"),
     });
   });
 });
