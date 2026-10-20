@@ -5,7 +5,7 @@ import {
   classifyCdpFrameUrl,
   observeMainFrameUrl,
 } from "./CdpCaptureDocuments.js";
-import { delayWithCancellation, isHttpUrl } from "./CdpCaptureValues.js";
+import { delayWithCancellation } from "./CdpCaptureValues.js";
 
 interface AuthorizedMainFrameOptions {
   readonly connection: CdpConnection;
@@ -32,15 +32,13 @@ export const authorizedMainFrame = async ({
     );
     const observed = observeMainFrameUrl(result);
     const facts = classifyCdpFrameUrl(observed, allowedOrigins);
-    if (observed.kind === "invalid_fragment") {
-      const reason =
-        facts.scope === "approved" ? "protocol_error" : "target_not_allowed";
-      throw new BrowserObservationError(operation, reason);
-    }
-    const url = observed.kind === "observed" ? observed.url : undefined;
-    if (facts.url !== undefined) return result;
-    if (isHttpUrl(url))
+    if (facts.scope === "outside_policy")
       throw new BrowserObservationError(operation, "target_not_allowed");
+    if (facts.scope === "approved" && observed.kind === "invalid_fragment")
+      throw new BrowserObservationError(operation, "protocol_error");
+    if (facts.url !== undefined) return result;
+    // Unsupported or missing base evidence cannot establish a policy exit.
+    // Keep the bounded startup retry even when the fragment is malformed.
     await delayWithCancellation(25, operation, signal);
   }
   throw new BrowserObservationError(operation, "target_not_allowed");
