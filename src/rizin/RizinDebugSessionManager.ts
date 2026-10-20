@@ -191,6 +191,7 @@ interface RizinDebugSession {
   readonly inferiorTtyDevice: number;
   readonly inferiorTtyInode: number;
   readonly knownInferiorIdentities: Map<string, OwnedInferiorIdentity>;
+  readonly pendingInferiorPids: Set<string>;
   confirmedDetachedInferiorIdentity: OwnedInferiorIdentity | undefined;
   completedDetachCommand:
     | {
@@ -469,6 +470,7 @@ export class RizinDebugSessionManager {
       inferiorTtyDevice: ttyDevice,
       inferiorTtyInode: ttyInode,
       knownInferiorIdentities: new Map(),
+      pendingInferiorPids: new Set(),
       confirmedDetachedInferiorIdentity: undefined,
       completedDetachCommand: undefined,
       verifiedDetachResult: undefined,
@@ -1199,6 +1201,58 @@ export class RizinDebugSessionManager {
     return session.stopAttempt;
   }
 
+  async #readInferiorInventory(
+    session: RizinDebugSession,
+  ): Promise<Array<[string, string]>> {
+    const parsed = parseRizinPtraceRows(
+      await this.#runInternalCommand(session, "olj"),
+    );
+    let identityFailure: unknown;
+    if (parsed.error === undefined) {
+      for (const pid of [...session.pendingInferiorPids]) {
+        try {
+          if (parsed.rows.some(([, observedPid]) => observedPid === pid)) {
+            await this.#resolveInferiorRowIdentity(session, pid);
+            session.pendingInferiorPids.delete(pid);
+            continue;
+          }
+          const first = await this.#readProcessStartTime(pid);
+          const second = await this.#readProcessStartTime(pid);
+          if (first === null && second === null) {
+            session.pendingInferiorPids.delete(pid);
+            continue;
+          }
+          throw new Error(
+            `Rizin omitted unresolved inferior PID ${pid} while its identity or exit remains unknown.`,
+          );
+        } catch (cause) {
+          identityFailure ??= cause;
+        }
+      }
+      if (identityFailure !== undefined) {
+        session.inferiorInventoryComplete = false;
+        throw identityFailure;
+      }
+      return parsed.rows;
+    }
+    // Preserve every identity in the valid prefix before surfacing malformed
+    // later rows. A retry must account for these targets even if its inventory
+    // omits them. Do not stop at the first identity lookup failure either.
+    for (const [, pid] of parsed.rows) {
+      session.pendingInferiorPids.add(pid);
+      try {
+        await this.#resolveInferiorRowIdentity(session, pid);
+        session.pendingInferiorPids.delete(pid);
+      } catch (cause) {
+        identityFailure ??= cause;
+      }
+    }
+    // A partial or identity-ambiguous readback is sticky until a later full
+    // read and reconciliation establishes the complete inventory.
+    session.inferiorInventoryComplete = false;
+    throw parsed.error ?? identityFailure;
+  }
+
   async #detachInferior(
     session: RizinDebugSession,
   ): Promise<OwnedDebuggerDetachResult> {
@@ -1236,9 +1290,7 @@ export class RizinDebugSessionManager {
         session.confirmedDetachedInferiorIdentity,
       );
     session.inferiorInventoryComplete = false;
-    const inferior = parseRizinPtraceRows(
-      await this.#runInternalCommand(session, "olj"),
-    );
+    const inferior = await this.#readInferiorInventory(session);
     if (inferior.length === 0) {
       await assertRizinEmptyInferiorInventory(
         session.knownInferiorIdentities.values(),
@@ -1318,9 +1370,7 @@ export class RizinDebugSessionManager {
       readonly readbackDisprovedPids?: readonly string[];
     },
   ): Promise<OwnedDebuggerDetachResult> {
-    const after = parseRizinPtraceRows(
-      await this.#runInternalCommand(session, "olj"),
-    );
+    const after = await this.#readInferiorInventory(session);
     const selectedRow = after.find(
       ([activeFd, activePid]) =>
         activeFd === completed.fd || activePid === completed.identity.pid,
@@ -1541,9 +1591,7 @@ export class RizinDebugSessionManager {
     identity: OwnedInferiorIdentity,
   ): Promise<OwnedDebuggerDetachResult> {
     const activeIdentities = new Map<string, OwnedInferiorIdentity>();
-    for (const [, pid] of parseRizinPtraceRows(
-      await this.#runInternalCommand(session, "olj"),
-    )) {
+    for (const [, pid] of await this.#readInferiorInventory(session)) {
       const activeIdentity = await this.#resolveInferiorRowIdentity(
         session,
         pid,
@@ -1799,15 +1847,23 @@ export interface RizinDebugCommandResult {
   readonly backend: string | null;
 }
 
-const parseRizinPtraceRows = (output: string): Array<[string, string]> => {
+const parseRizinPtraceRows = (
+  output: string,
+): { readonly rows: Array<[string, string]>; readonly error?: Error } => {
   let parsed: unknown;
   try {
     parsed = JSON.parse(output);
   } catch (cause) {
-    throw new Error("Rizin returned malformed JSON for `olj`.", { cause });
+    return {
+      rows: [],
+      error: new Error("Rizin returned malformed JSON for `olj`.", { cause }),
+    };
   }
   if (!Array.isArray(parsed))
-    throw new Error("Rizin `olj` response is not an array.");
+    return {
+      rows: [],
+      error: new Error("Rizin `olj` response is not an array."),
+    };
   const rows: Array<[string, string]> = [];
   for (const row of parsed) {
     if (
@@ -1819,19 +1875,28 @@ const parseRizinPtraceRows = (output: string): Array<[string, string]> => {
       typeof (row as { raised?: unknown }).raised !== "boolean" ||
       typeof (row as { uri?: unknown }).uri !== "string"
     )
-      throw new Error(
-        "Rizin `olj` response contains a malformed descriptor row.",
-      );
+      return {
+        rows,
+        error: new Error(
+          "Rizin `olj` response contains a malformed descriptor row.",
+        ),
+      };
     const uri = (row as { uri: string }).uri;
     const match = /^ptrace:\/\/(\d+)$/u.exec(uri);
     if (match !== null) {
       if ((row as { raised: boolean }).raised !== true)
-        throw new Error("Rizin `olj` ptrace descriptor is not active.");
+        return {
+          rows,
+          error: new Error("Rizin `olj` ptrace descriptor is not active."),
+        };
       rows.push([String((row as { fd: number }).fd), match[1]!]);
     } else if (uri.startsWith("ptrace://"))
-      throw new Error("Rizin `olj` returned a malformed ptrace URI.");
+      return {
+        rows,
+        error: new Error("Rizin `olj` returned a malformed ptrace URI."),
+      };
   }
-  return rows;
+  return { rows };
 };
 
 /** @internal Reject a PID that changed identity during inferior detach. */
