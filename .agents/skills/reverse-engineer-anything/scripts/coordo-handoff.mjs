@@ -56,12 +56,17 @@ function line(value, name) {
     value.trim() !== value ||
     value.length === 0 ||
     value.length > 2000 ||
+    // JSON escapes can produce lone surrogates after UTF-8 decoding; argv
+    // encoding would silently replace them with U+FFFD.
+    !value.isWellFormed() ||
     [...value].some((character) => {
       const code = character.codePointAt(0);
       return code < 32 || code === 127;
     })
   )
-    fail(`${name} must be a nonempty single line of at most 2000 characters`);
+    fail(
+      `${name} must be a nonempty single line of well-formed Unicode of at most 2000 characters`,
+    );
   return value;
 }
 
