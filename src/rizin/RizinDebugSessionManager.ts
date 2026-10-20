@@ -1172,32 +1172,52 @@ export class RizinDebugSessionManager {
         "Rizin protocol state is ambiguous; inferior detach is unverified.",
       );
     session.inferiorInventoryComplete = false;
-    session.knownInferiorIdentities.clear();
     const inferior = parseRizinPtraceRows(
       await this.#runInternalCommand(session, "olj"),
     );
     if (inferior.length === 0) {
-      session.knownInferiorIdentities.clear();
+      // Keep prior identities until the debugger itself is fully stopped.
+      // A later cleanup retry may receive a stale ptrace row after this valid
+      // empty inventory; retaining the proof lets us recognize that exact PID.
       session.inferiorInventoryComplete = true;
       return { status: "no-inferior" };
     }
-    session.knownInferiorIdentities.clear();
-    for (const [, pid] of inferior) {
-      if (session.knownInferiorIdentities.has(pid)) continue;
+    const currentIdentities = new Map<string, OwnedInferiorIdentity>();
+    const activeInferiors: Array<[string, string]> = [];
+    for (const [fd, pid] of inferior) {
+      const previous = session.knownInferiorIdentities.get(pid);
       const startTime = await readLinuxProcessStartTime(pid);
-      if (startTime === null)
+      if (startTime === null) {
+        if (
+          previous === undefined ||
+          !(await verifyOwnedInferiorsEnded([previous]))
+        )
+          throw new Error(
+            `Inferior PID ${pid} ended before its identity could be established.`,
+          );
+        continue;
+      }
+      if (previous !== undefined && previous.startTime !== startTime)
         throw new Error(
-          `Inferior PID ${pid} ended before its identity could be established.`,
+          `Inferior PID ${pid} changed identity during Rizin session cleanup.`,
         );
-      session.knownInferiorIdentities.set(pid, {
+      currentIdentities.set(pid, {
         pid,
         startTime,
       });
+      activeInferiors.push([fd, pid]);
     }
+    session.knownInferiorIdentities.clear();
+    for (const [pid, identity] of currentIdentities)
+      session.knownInferiorIdentities.set(pid, identity);
     session.inferiorInventoryComplete = true;
-    if (inferior.length !== 1)
+    if (activeInferiors.length === 0) {
+      session.knownInferiorIdentities.clear();
+      return { status: "no-inferior" };
+    }
+    if (activeInferiors.length !== 1)
       throw new Error("Rizin reported multiple or ambiguous ptrace inferiors.");
-    const [fd, pid] = inferior[0]!;
+    const [fd, pid] = activeInferiors[0]!;
     const identity = session.knownInferiorIdentities.get(pid)!;
     assertRizinProcessStartTimeStable(
       identity.startTime,
@@ -1231,7 +1251,9 @@ export class RizinDebugSessionManager {
       // Detach resumes the inferior. Its identity or descriptors may disappear
       // before readback; only a previously identified process can prove its end.
       if (!(await verifyOwnedInferiorsEnded([identity]))) throw cause;
-      session.knownInferiorIdentities.clear();
+      // Keep the identity while Rizin may still report a stale ptrace row.
+      // A retry can then prove that this exact process ended instead of
+      // treating the stale PID as an unowned, never-identified process.
       return { status: "no-inferior" };
     }
     return { status: "detached", outputSink: "durable", inputSink };
