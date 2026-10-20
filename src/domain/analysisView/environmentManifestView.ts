@@ -27,6 +27,20 @@ export const templateRulesSchema = z
   .meta({ uniqueItems: true })
   .default([]);
 
+/** Ordinals where a later recording session begins, ascending; absent, the capture is one session. */
+export const sessionStartsSchema = z
+  .array(z.number().int().positive())
+  .refine(
+    (starts) =>
+      starts.every((start, index) => index === 0 || start > starts[index - 1]!),
+    { message: "session_starts must be strictly ascending" },
+  )
+  .meta({ uniqueItems: true })
+  .optional();
+
+export const sessionStartsDescription =
+  "Ordinals of the records where a later recording session begins, strictly ascending; the first session starts at the capture's start, and without them the capture is one session. Every session must have been recorded against the application restored to the same state. Each session's reads before its own first related write show the initial state, and each session's writes are replayed from that state.";
+
 export const environmentManifestViewRequestSchema = z.strictObject({
   kind: z.literal("environment-manifest"),
   template_rules: templateRulesSchema.describe(
@@ -38,6 +52,9 @@ export const environmentManifestViewRequestSchema = z.strictObject({
     .describe(
       "Include distinct observed query parameter names per tool; names do not establish required parameters or a complete API schema.",
     ),
+  session_starts: sessionStartsSchema.describe(
+    `${sessionStartsDescription} The manifest does not group by session; it records them so an environment derives its state with them.`,
+  ),
 });
 
 const manifestRuleSchema = z.enum([...ROUTE_RULES, ...TEMPLATE_RULES]);

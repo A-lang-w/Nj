@@ -232,7 +232,8 @@ captured text without changing the tool names or schema fields clients use.
 Replay answers each call from one recording, so the answers reflect whichever
 moment of the capture recorded them. The
 [environment state](web-network-captures.md#environment-state) view extracts
-instead the data the capture's reads observed before the first related write:
+instead the data the capture's reads observed before the first related write
+(of each recording session, for a capture made of several):
 entity types with an identity field, entities with their recorded values,
 documents for reads that are not entities, and a render plan per read tool,
 kept only where it reproduces that tool's recordings from the state. It is the
@@ -240,6 +241,41 @@ starting state an environment holds, loads and reports: `environment-serve`
 derives it from the capture at startup; see
 [Serve from the state](#serve-from-the-state). With `--replay-only`, replay is
 unchanged.
+
+### More recordings of one application
+
+A single recording often writes once and never reads the result back, so the
+write stays unserved, or never meets the error a second call would. More
+recordings supply that evidence when each starts from the same application
+state: restore the application (for example from a database snapshot) before
+every recording, append the recordings' HAR entries into one HAR in recording
+order, and name where each later recording starts in `session_starts`, the
+zero-based index of its first entry:
+
+```sh
+jq -s '{log: (.[0].log + {entries: map(.log.entries) | add})}' first.har second.har > /absolute/sessions.har
+jq '.log.entries | length' first.har   # where second.har starts: its session start
+rea inspect-web-network-capture /absolute/sessions.har har --format json > capture.json
+```
+
+```json
+{
+  "source": { "kind": "inline", "evidence": { "evidence_id": "ev_…" } },
+  "view": {
+    "kind": "environment-manifest",
+    "template_rules": ["after-uid-literal", "opaque-token", "sibling-variance"],
+    "session_starts": [42]
+  }
+}
+```
+
+Pass the same `session_starts` in any `environment-state` view you request; the manifest records it, so
+`environment-serve` and `environment-export` derive the state with the same
+sessions and refuse a supplied state extracted with other ones. Each session's
+reads before its own first related write add to the initial state, and its
+writes are replayed from the initial state, so a write any session confirms is
+served unless another session contradicts it. See
+[environment state](web-network-captures.md#environment-state).
 
 ## Serve a manifest
 

@@ -175,6 +175,56 @@ describe("deriveEnvironmentState", () => {
     });
   });
 
+  it("derives the state with the manifest's recording sessions and refuses one extracted with others", () => {
+    const capture = timedCaptureEvidence([
+      ["GET", "/api/books", [{ id: 1, name: "One" }]],
+      ["POST", "/api/books", { id: 2, name: "Two" }, 201, { name: "Two" }],
+      ["GET", "/api/books/1", { id: 1, name: "One" }],
+    ]);
+    const project = (
+      kind: "environment-manifest" | "environment-state",
+      session_starts?: number[],
+    ) => {
+      const projected = inspectAnalysisView({
+        source: { kind: "inline", evidence: capture },
+        view: {
+          kind,
+          template_rules: [],
+          ...(session_starts === undefined ? {} : { session_starts }),
+        },
+      });
+      if (!projected.ok) throw projected.error;
+      return projected.value;
+    };
+    const sessioned = loadEnvironmentSource(
+      project("environment-manifest", [2]),
+      capture,
+    );
+    if (!sessioned.ok) throw sessioned.error;
+    const derived = deriveEnvironmentState(sessioned.value, capture);
+    if (!derived.ok) throw derived.error;
+    expect(derived.value.evidenceId).toBe(
+      project("environment-state", [2]).evidence_id,
+    );
+    // The second session's item read, before any write of its own, backs the item view.
+    expect(derived.value.views.get("get_books_by_id")).toMatchObject({
+      shape: "item",
+      checked_record_ordinals: [2],
+    });
+    const refused = refusal(project("environment-state"), sessioned.value);
+    expect(refused).toMatchObject({
+      details: {
+        issues: [
+          {
+            path: ["state", "normalized_result", "view", "session_starts"],
+            expected: [2],
+          },
+        ],
+      },
+    });
+    expect(refused.message).toContain("different recording sessions");
+  });
+
   it("projects the authenticated capture as retained Evidence, so a capture inline admission refuses still yields its state", () => {
     const capture = timedCaptureEvidence(
       Array.from({ length: 20 }, (_, index) => [

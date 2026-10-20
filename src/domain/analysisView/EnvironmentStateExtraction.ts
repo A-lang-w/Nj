@@ -25,6 +25,7 @@ import {
   same,
   scalarText,
   segmentsOf,
+  sessionOf,
   writeSpanCheck,
   type ExtractedState,
   type JsonObject,
@@ -52,7 +53,7 @@ import {
   type StateGateContext,
   type StatePlan,
 } from "./environmentStateGate.js";
-import { StateWriteCutoffs } from "./environmentStateWriteCutoffs.js";
+import { SessionWriteCutoffs } from "./environmentStateWriteCutoffs.js";
 import { extractWrites } from "./environmentStateWrites.js";
 
 class StateBudgetExhausted extends Error {}
@@ -71,18 +72,19 @@ const entityKey = (type: string, collection: string, id: string): string =>
 const requestLine = (record: StateRecordFacts): string =>
   record.path + (record.query ?? "");
 
-/** Derive the init state and render plans from manifest tools and timeline-ordered records. */
+/** Derive the init state and render plans from manifest tools and records in timeline order within each recording session. */
 export class EnvironmentStateExtraction {
   readonly #tools: readonly StateToolFacts[];
   readonly #records: readonly StateRecordFacts[];
   readonly #timeline: StateTimeline;
+  readonly #sessionStarts: readonly number[];
   readonly #budget: StateBudget;
   readonly #position: ReadonlyMap<number, number>;
   readonly #byOrdinal: ReadonlyMap<number, StateRecordFacts>;
   readonly #writes: readonly StateRecordFacts[];
   readonly #writeWithin: ReturnType<typeof writeSpanCheck>;
   readonly #bases: ReadonlyMap<string, number>;
-  #writeCutoffs: StateWriteCutoffs | undefined;
+  #writeCutoffs: SessionWriteCutoffs | undefined;
   readonly #initLimits = new Map<string, StateRecordFacts | undefined>();
   readonly #identity = new Map<
     string,
@@ -102,11 +104,14 @@ export class EnvironmentStateExtraction {
     readonly tools: readonly StateToolFacts[];
     readonly records: readonly StateRecordFacts[];
     readonly timeline: StateTimeline;
+    /** Ordinals where a later recording session begins; records come grouped by session. */
+    readonly sessionStarts?: readonly number[];
     readonly budget: StateBudget;
   }) {
     this.#tools = input.tools;
     this.#records = input.records;
     this.#timeline = input.timeline;
+    this.#sessionStarts = input.sessionStarts ?? [];
     this.#budget = input.budget;
     this.#position = new Map(
       input.records.map((record, index) => [record.ordinal, index]),
@@ -115,7 +120,9 @@ export class EnvironmentStateExtraction {
       input.records.map((record) => [record.ordinal, record]),
     );
     this.#writes = input.records.filter(isStateWrite);
-    this.#writeWithin = writeSpanCheck(this.#writes);
+    this.#writeWithin = writeSpanCheck(this.#writes, (record) =>
+      this.#sessionOf(record),
+    );
     this.#bases = apiBaseLengths(input.tools.map((tool) => tool.path_template));
   }
 
@@ -123,14 +130,15 @@ export class EnvironmentStateExtraction {
   run(): ExtractedState | null {
     try {
       if (this.#writes.length > 0)
-        this.#writeCutoffs = new StateWriteCutoffs(
-          this.#writes,
-          this.#bases,
-          (left, right) =>
+        this.#writeCutoffs = new SessionWriteCutoffs({
+          writes: this.#writes,
+          bases: this.#bases,
+          sessionOf: (record) => this.#sessionOf(record),
+          before: (left, right) =>
             this.#position.get(left.ordinal)! <
             this.#position.get(right.ordinal)!,
-          (bytes) => this.#retain(bytes),
-        );
+          retain: (bytes) => this.#retain(bytes),
+        });
       const candidates = this.#candidates();
       for (const candidate of candidates.filter((entry) => entry.item))
         this.#planItem(candidate);
@@ -165,6 +173,7 @@ export class EnvironmentStateExtraction {
         tools: this.#tools,
         records: this.#records,
         timed: this.#timeline === "recorded-start-time",
+        sessionOf: (record) => this.#sessionOf(record),
         volatileOf: (type) => this.#volatileOf(type),
         io: {
           withBody: (ordinal, use) => this.#withBody(ordinal, use),
@@ -178,6 +187,10 @@ export class EnvironmentStateExtraction {
         },
       }),
     };
+  }
+
+  #sessionOf(record: StateRecordFacts): number {
+    return sessionOf(this.#sessionStarts, record.ordinal);
   }
 
   #retain(bytes: number): void {
@@ -219,24 +232,31 @@ export class EnvironmentStateExtraction {
     return candidates;
   }
 
-  /** The first write whose root relates to the template's bounds its init recordings. */
-  #initLimit(template: string): StateRecordFacts | undefined {
+  /** A session's first write whose root relates to the template's bounds that session's init recordings. */
+  #initLimit(template: string, session: number): StateRecordFacts | undefined {
     if (this.#writeCutoffs === undefined) return undefined;
-    if (this.#initLimits.has(template)) return this.#initLimits.get(template);
-    const first = this.#writeCutoffs.first(rootOf(template, this.#bases));
-    this.#retain(ENTRY_BYTES + textBytes(template.length));
-    this.#initLimits.set(template, first);
+    const key = compositeKey([String(session), template]);
+    if (this.#initLimits.has(key)) return this.#initLimits.get(key);
+    const first = this.#writeCutoffs.first(
+      rootOf(template, this.#bases),
+      session,
+    );
+    this.#retain(ENTRY_BYTES + textBytes(key.length));
+    this.#initLimits.set(key, first);
     return first;
   }
 
-  /** Successful recordings that finished before the first related write began. */
+  /** Successful recordings that finished before their session's first related write began. */
   #initRecordings(tool: StateToolFacts, template: string): StateRecordFacts[] {
-    const limit = this.#initLimit(template);
-    const before = (record: StateRecordFacts): boolean =>
-      limit === undefined ||
-      (this.#position.get(record.ordinal)! <
-        this.#position.get(limit.ordinal)! &&
-        (this.#timeline === "record-order" || record.end <= limit.start));
+    const before = (record: StateRecordFacts): boolean => {
+      const limit = this.#initLimit(template, this.#sessionOf(record));
+      return (
+        limit === undefined ||
+        (this.#position.get(record.ordinal)! <
+          this.#position.get(limit.ordinal)! &&
+          (this.#timeline === "record-order" || record.end <= limit.start))
+      );
+    };
     return tool.record_ordinals
       .map((ordinal) => this.#byOrdinal.get(ordinal))
       .filter(
@@ -620,7 +640,9 @@ export class EnvironmentStateExtraction {
         collection_template: type,
         id_field: field,
         id_basis: basis,
-        init_before_ordinal: this.#initLimit(type)?.ordinal ?? null,
+        init_before_ordinal:
+          this.#writeCutoffs?.earliest(rootOf(type, this.#bases))?.ordinal ??
+          null,
         volatile_fields: [...this.#volatileOf(type)].sort(compare),
       }))
       .sort((left, right) =>

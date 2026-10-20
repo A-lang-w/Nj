@@ -143,10 +143,11 @@ type EnvironmentStateView = Extract<
   { kind: "environment-state" }
 >;
 
-/** The environment-state view a capture projects with no opt-in template rules. */
+/** The environment-state view a capture projects, with no opt-in template rules and one recording session unless given. */
 export const environmentStateViewOf = (
   capture: Evidence,
   templateRules: readonly TemplateRule[] = [],
+  sessionStarts?: readonly number[],
 ): EnvironmentStateView => {
   const result = projectAnalysisView(
     {
@@ -157,7 +158,13 @@ export const environmentStateViewOf = (
       limitations: [],
       parameters: capture.parameters,
     },
-    { kind: "environment-state", template_rules: [...templateRules] },
+    {
+      kind: "environment-state",
+      template_rules: [...templateRules],
+      ...(sessionStarts === undefined
+        ? {}
+        : { session_starts: [...sessionStarts] }),
+    },
   );
   if (!result.ok || result.value.kind !== "environment-state")
     throw new Error("Expected an environment state");

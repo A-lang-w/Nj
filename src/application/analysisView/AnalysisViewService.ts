@@ -132,7 +132,11 @@ export const inspectAnalysisViewValidated = (
       : undefined;
   const stateAccumulator =
     input.view.kind === "environment-state"
-      ? new EnvironmentStateAccumulator(undefined, input.view.template_rules)
+      ? new EnvironmentStateAccumulator(
+          undefined,
+          input.view.template_rules,
+          input.view.session_starts ?? [],
+        )
       : undefined;
   const accumulator =
     apiSurfaceAccumulator ?? manifestAccumulator ?? stateAccumulator;

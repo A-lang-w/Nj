@@ -18,6 +18,7 @@ import {
   deeperThan,
   hasPrototypeKey,
   isStateWrite,
+  sessionOf,
   type ParsedBody,
   type StateRecordFacts,
   type StateTimeline,
@@ -130,19 +131,22 @@ const UNKNOWNS: StateView["unknowns"] = [
   {
     kind: "state-transition",
     statement:
-      "The state is one snapshot from before the first related recorded write; write effects are modelled only from the calls the capture recorded, and served only where its later reads confirmed them.",
+      "The state is one snapshot from before the first related recorded write of each recording session; write effects are modelled only from the calls the capture recorded, and served only where its later reads confirmed them.",
   },
 ];
 
 /** The manifest's grouping plus the record facts and bodies the init state is extracted from. */
 export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator {
   readonly #entries = new Map<number, RecordEntry>();
+  readonly #sessionStarts: readonly number[];
 
   constructor(
     maximumBytes = WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
     rules: readonly TemplateRule[] = [],
+    sessionStarts: readonly number[] = [],
   ) {
     super(maximumBytes, true, rules, "Environment-state");
+    this.#sessionStarts = sessionStarts;
   }
 
   /** The state publishes no body shapes. */
@@ -293,7 +297,7 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
     );
   }
 
-  /** Project the init state of the manifest's primary origin; records keep timeline order. */
+  /** Project the init state of the manifest's primary origin; records keep timeline order within each session. */
   finishState(): Result<StateFields, AnalysisError> {
     const manifest = this.finish();
     if (!manifest.ok) return manifest;
@@ -308,12 +312,16 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
       entries.length > 0 && entries.every((entry) => entry.timed)
         ? "recorded-start-time"
         : "record-order";
+    const session = (facts: StateRecordFacts): number =>
+      sessionOf(this.#sessionStarts, facts.ordinal);
     const records = entries
       .map((entry) => entry.facts)
       .sort((left, right) =>
         timeline === "record-order"
           ? left.ordinal - right.ordinal
-          : left.start - right.start || left.ordinal - right.ordinal,
+          : session(left) - session(right) ||
+            left.start - right.start ||
+            left.ordinal - right.ordinal,
       )
       .map((facts) =>
         timeline === "record-order"
@@ -324,6 +332,7 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
       tools: manifest.value.tools,
       records,
       timeline,
+      sessionStarts: this.#sessionStarts,
       budget: {
         body: (ordinal) => this.#body(ordinal),
         requestBody: (ordinal) => this.#requestBody(ordinal),
@@ -334,6 +343,11 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
     }).run();
     if (state === null) return this.overBudget();
     const limitations = this.addLimitations([
+      ...(this.#sessionStarts.length > 0
+        ? [
+            `The capture is read as ${String(this.#sessionStarts.length + 1)} recording sessions; each is taken to start from the same application state, which the state does not establish.`,
+          ]
+        : []),
       ...(redactedWrites > 0
         ? [
             `${String(redactedWrites)} of the recorded writes had a redacted URL; each ends the initial state of every type, since its target is unknown.`,

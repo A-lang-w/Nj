@@ -99,3 +99,56 @@ export class StateWriteCutoffs {
     return first;
   }
 }
+
+/** Write cutoffs per recording session: each session's initial reads end at its own first related write. */
+export class SessionWriteCutoffs {
+  readonly #sessions = new Map<number, StateWriteCutoffs>();
+
+  constructor(input: {
+    readonly writes: readonly StateRecordFacts[];
+    readonly bases: ReadonlyMap<string, number>;
+    readonly sessionOf: (record: StateRecordFacts) => number;
+    readonly before: (
+      left: StateRecordFacts,
+      right: StateRecordFacts,
+    ) => boolean;
+    readonly retain: (bytes: number) => void;
+  }) {
+    const grouped = new Map<number, StateRecordFacts[]>();
+    for (const write of input.writes) {
+      const session = input.sessionOf(write);
+      const writes = grouped.get(session);
+      if (writes === undefined) grouped.set(session, [write]);
+      else writes.push(write);
+    }
+    for (const session of [...grouped.keys()].sort(
+      (left, right) => left - right,
+    ))
+      this.#sessions.set(
+        session,
+        new StateWriteCutoffs(
+          grouped.get(session)!,
+          input.bases,
+          input.before,
+          input.retain,
+        ),
+      );
+  }
+
+  /** A session's first write related to the root, if it wrote one. */
+  first(
+    root: readonly string[],
+    session: number,
+  ): StateRecordFacts | undefined {
+    return this.#sessions.get(session)?.first(root);
+  }
+
+  /** The first related write in timeline order: the earliest session's that has one. */
+  earliest(root: readonly string[]): StateRecordFacts | undefined {
+    for (const cutoffs of this.#sessions.values()) {
+      const first = cutoffs.first(root);
+      if (first !== undefined) return first;
+    }
+    return undefined;
+  }
+}

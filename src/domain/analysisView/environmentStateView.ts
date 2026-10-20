@@ -10,6 +10,8 @@ import type {
 import { EnvironmentStateAccumulator } from "./EnvironmentStateAccumulator.js";
 import {
   groupCaptureRecords,
+  sessionStartsSchema,
+  sessionStartsDescription,
   templateRulesSchema,
 } from "./environmentManifestView.js";
 
@@ -17,6 +19,9 @@ export const environmentStateViewRequestSchema = z.strictObject({
   kind: z.literal("environment-state"),
   template_rules: templateRulesSchema.describe(
     "Opt-in template rules as for environment-manifest, each listed at most once. Use the rules of the manifest the state accompanies so tool names match.",
+  ),
+  session_starts: sessionStartsSchema.describe(
+    `${sessionStartsDescription} Use the manifest's session_starts.`,
   ),
 });
 
@@ -291,7 +296,11 @@ export const environmentStateFields = {
 export const projectEnvironmentStateView = (
   parent: AnalysisViewParent,
   view: Extract<AnalysisViewRequest, { kind: "environment-state" }>,
-  accumulator = new EnvironmentStateAccumulator(undefined, view.template_rules),
+  accumulator = new EnvironmentStateAccumulator(
+    undefined,
+    view.template_rules,
+    view.session_starts ?? [],
+  ),
 ): Result<UnsignedAnalysisView, AnalysisError> => {
   const grouped = groupCaptureRecords(parent, view.kind, view.template_rules, {
     accumulator,

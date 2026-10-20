@@ -143,6 +143,23 @@ const stateMismatch = (
       },
       "The state was extracted with different template rules than the manifest.",
     );
+  const starts = source.manifest.view.session_starts ?? [];
+  const stateStarts = view.view.session_starts ?? [];
+  if (
+    stateStarts.length !== starts.length ||
+    stateStarts.some((start, index) => start !== starts[index])
+  )
+    return refusal(
+      operation,
+      {
+        path: ["view", "session_starts"],
+        reason: "invalid_value",
+        expected: [...starts],
+        message:
+          "The state must be extracted with the manifest's session_starts, so its initial state and write verdicts come from the same recording sessions.",
+      },
+      "The state was extracted with different recording sessions than the manifest.",
+    );
   const tools = new Set(source.manifest.tools.map((tool) => tool.name));
   const index = view.views.findIndex((entry) => !tools.has(entry.tool));
   return index < 0
@@ -161,7 +178,7 @@ const stateMismatch = (
 /**
  * Load the environment-state Evidence for an already loaded manifest and
  * capture, refusing a state extracted from another capture or with other
- * template rules; refusals name the command that loaded it.
+ * template rules or recording sessions; refusals name the command that loaded it.
  */
 export const loadEnvironmentState = (
   stateValue: unknown,
@@ -204,6 +221,9 @@ export const deriveEnvironmentState = (
       view: {
         kind: "environment-state",
         template_rules: [...source.manifest.view.template_rules],
+        ...(source.manifest.view.session_starts === undefined
+          ? {}
+          : { session_starts: [...source.manifest.view.session_starts] }),
       },
     },
     (evidenceId) => (evidenceId === captureId ? capture.value : undefined),

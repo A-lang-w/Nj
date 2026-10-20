@@ -244,23 +244,63 @@ export const isStateWrite = (record: StateRecordFacts): boolean =>
   changesState(record.method, record.path) &&
   (record.status === null || (record.status >= 200 && record.status < 400));
 
-/** Whether any write overlaps the span from one record's start to a later record's end; writes come in timeline order. */
+/** The recording session of a record ordinal: how many session starts it has reached. */
+export const sessionOf = (
+  starts: readonly number[],
+  ordinal: number,
+): number => {
+  let low = 0;
+  let high = starts.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (starts[middle]! <= ordinal) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+};
+
+/**
+ * Whether any write overlaps the span from one record's start to a later record's end; writes come
+ * in timeline order. A later session starts from the initial state, so between records of two
+ * sessions lie only the later session's writes before the later record.
+ */
 export const writeSpanCheck = (
   writes: readonly StateRecordFacts[],
+  sessionOfRecord: (record: StateRecordFacts) => number = () => 0,
 ): ((earlier: StateRecordFacts, later: StateRecordFacts) => boolean) => {
-  // The latest end among each prefix of writes, so one search answers a span.
-  const reach: number[] = [];
-  for (const write of writes)
-    reach.push(Math.max(reach.at(-1) ?? Number.NEGATIVE_INFINITY, write.end));
+  // Per session, the latest end among each prefix of writes, so one search answers a span.
+  const sessions = new Map<
+    number,
+    { readonly writes: StateRecordFacts[]; readonly reach: number[] }
+  >();
+  for (const write of writes) {
+    const session = sessionOfRecord(write);
+    let span = sessions.get(session);
+    if (span === undefined) {
+      span = { writes: [], reach: [] };
+      sessions.set(session, span);
+    }
+    span.reach.push(
+      Math.max(span.reach.at(-1) ?? Number.NEGATIVE_INFINITY, write.end),
+    );
+    span.writes.push(write);
+  }
   return (earlier, later) => {
+    const session = sessionOfRecord(later);
+    const span = sessions.get(session);
+    if (span === undefined) return false;
     let low = 0;
-    let high = writes.length;
+    let high = span.writes.length;
     while (low < high) {
       const middle = (low + high) >>> 1;
-      if (writes[middle]!.start < later.end) low = middle + 1;
+      if (span.writes[middle]!.start < later.end) low = middle + 1;
       else high = middle;
     }
-    return low > 0 && reach[low - 1]! > earlier.start;
+    return (
+      low > 0 &&
+      (sessionOfRecord(earlier) !== session ||
+        span.reach[low - 1]! > earlier.start)
+    );
   };
 };
 

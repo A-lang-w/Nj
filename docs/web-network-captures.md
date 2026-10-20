@@ -476,7 +476,11 @@ their grouped templates and the manifest says so in a limitation. `body_shape`
 is derived for `POST`, `PUT` and `PATCH` from the tool's earliest record when it
 carries an `application/json` or `application/*+json` request body: top-level
 keys and their JSON type names, never values and never nested structure; a body
-on a later record adds nothing. `unknowns` always states three facts: the authorization model, response
+on a later record adds nothing. `session_starts` marks a capture made of
+several recording sessions, as [environment state](#environment-state)
+describes; the manifest groups records the same way with or without it, and
+records it so that an environment derives its state with the same sessions.
+`unknowns` always states three facts: the authorization model, response
 semantics and state transitions are not established by a capture.
 `templated_groups` counts tools and excluded groups with a templated segment;
 whenever it is nonzero the Evidence is inferred, otherwise derived. The view
@@ -541,6 +545,21 @@ has an unknown target, so it ends the state of every type, and a limitation
 counts such writes. Values from a `capture_browser_scenario` parent keep the
 capture's redaction markers in place of declared secrets; the state is not
 refused for them, as the manifest is not.
+
+A capture may hold several recording sessions of one application, each made
+after restoring it to the same state, such as one database snapshot. List the
+ordinal of each later session's first record in `session_starts`, strictly
+ascending, in both the manifest and the state view; the first session starts
+at the capture's start. A HAR record's ordinal is its zero-based index in
+`log.entries`, so a second recording appended to a first starts at the first's
+entry count. Records are then ordered by session, and within a session as
+above. Each session's successful reads before its own first related write show
+the initial state, so a value two sessions' initial reads disagree on is
+volatile, unless the later session wrote under another root before its read,
+which makes it `fields-differ` as within one session. The write replay below
+starts each session from the initial state. A limitation counts the sessions;
+that they start from one state is the caller's statement, which the view does
+not establish. Without `session_starts` the capture is one session.
 
 Each `GET` tool whose template ends in a parameter is an item tool, and its
 type's `collection_template` is the template without that parameter; any other
@@ -624,7 +643,8 @@ sending must be a clock, an increment or a slug, or the plan is
 tool. Every member the first call sent is required, except by `PATCH` and
 `POST` updates.
 
-The view then replays the timeline on a copy of the initial state. Modelled
+The view then replays each session's timeline on its own copy of the initial
+state. Modelled
 writes apply their effect; only a `2xx` write is modelled or an example, and
 any other write (a redirect, an unanswered or unmodelled one) leaves the entity
 below whose item path it wrote unknown until a read shows it again (a whole
@@ -637,8 +657,8 @@ base recording, with the members the state still holds. A 400, 404 or 410 (or a
 the writes that changed its entity or collection since it was last read; a
 mismatch contradicts them, or, when an unmodelled write came after them, is
 checked only on the members they sent; a mismatch no write explains marks the related writes since as
-`side-effect`. A plan is `served` when a read confirmed it and none
-contradicted it; otherwise its `reason` is the first of its build reason
+`side-effect`. A plan is `served` when a read in any session confirmed it and
+none in any session contradicted it; otherwise its `reason` is the first of its build reason
 (`no-call`, `body-unusable`, `no-observation`, `unexplained-change`),
 `contradicted` (with `contradicted_by`), `side-effect`, `unconfirmed` and `incomplete-entities` (an update or delete that answers with the entity, when no initial entity holds every field its recorded answer shows, so it could answer only for entities the environment created).
 `checked_record_ordinals` lists the confirming reads, `insert` places created
