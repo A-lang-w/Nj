@@ -139,6 +139,10 @@ describe("background analysis job reporting", () => {
 
     const projection = projectAnalysisError(polled.error);
     expect(projection.code).toBe("analysis_in_progress");
+    // A still-running analysis is a bounded wait that expired, not a
+    // resource constraint.
+    expect(projection.category).toBe("timeout");
+    expect(projection.retryable).toBe(true);
     expect(projection.details?.elapsed_ms).toBeGreaterThanOrEqual(0);
     // No provider streams a phase line into the application layer, so the
     // contract promises elapsed time only.
