@@ -2380,6 +2380,107 @@ process.stdin.on("data", (chunk) => {
 );
 
 it.skipIf(process.platform !== "linux")(
+  "releases Rizin cleanup after an unidentified pending inferior exits",
+  async () => {
+    const inferior = await spawnTestInferior();
+    expect(inferior.pid).toBeDefined();
+    if (inferior.pid === undefined) return;
+    directory = await mkdtemp(join(tmpdir(), "rea-rizin-unidentified-exit-"));
+    const provider = join(directory, "fake-rizin-unidentified-exit.mjs");
+    await writeFile(
+      provider,
+      `#!/usr/bin/env node
+process.stdout.write("\\0");
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n"); if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    if (line === "olj")
+      process.stdout.write(JSON.stringify([{ fd: 12, raised: true, uri: "ptrace://${inferior.pid}" }]) + "\\0");
+    else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
+    else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
+    else process.stdout.write("\\0");
+  }
+});
+`,
+    );
+    await chmod(provider, 0o700);
+
+    let identityUnavailable = true;
+    let verifyResultAfterDebuggerExit: boolean | undefined;
+    let stopCalls = 0;
+    const manager = new RizinDebugSessionManager(
+      { ...process.env, REA_RIZIN_COMMAND: provider },
+      {
+        platform: "linux",
+        readProcessStartTime: async (pid) => {
+          expect(pid).toBe(String(inferior.pid));
+          if (identityUnavailable)
+            throw new Error("injected identity read failure");
+          return inferior.exitCode === null && inferior.signalCode === null
+            ? "200"
+            : null;
+        },
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          ownedProviderProcesses.push(launched.process);
+          return launched;
+        },
+        stopProcess: async (session) => {
+          if (stopCalls++ > 0) {
+            verifyResultAfterDebuggerExit =
+              (await session.verifyInferiorsEndedAfterExit?.()) === true;
+            return verifyResultAfterDebuggerExit
+              ? { status: "stopped" }
+              : {
+                  status: "incomplete",
+                  reason: "inferior state remains unknown",
+                };
+          }
+          try {
+            await session.detachInferior?.();
+          } catch {
+            // The reported PID cannot be identified in this attempt.
+          }
+          session.launched.process.kill("SIGTERM");
+          expect(await session.supervisor.waitForExit(1_000)).toBe(true);
+          expect(await session.verifyInferiorsEndedAfterExit?.()).toBe(false);
+          identityUnavailable = false;
+          return {
+            status: "incomplete",
+            reason: "inferior state remains unknown",
+          };
+        },
+      },
+    );
+    managers.push(manager);
+    const started = await manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: await rizinTestInferiorTty(),
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    expect((await manager.close(started.value.session_id)).ok).toBe(false);
+    const inferiorExit = new Promise<void>((resolveExit) =>
+      inferior.once("exit", () => resolveExit()),
+    );
+    inferior.kill("SIGTERM");
+    await inferiorExit;
+
+    expect(await manager.retryCleanupFailures()).toEqual({
+      ok: true,
+      value: null,
+    });
+    expect(verifyResultAfterDebuggerExit).toBe(true);
+    expect(manager.status(started.value.session_id)).toBeUndefined();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
   "keeps Rizin cleanup unknown when an inferior inventory is only partially captured",
   async () => {
     const inferior = await spawnTestInferior();

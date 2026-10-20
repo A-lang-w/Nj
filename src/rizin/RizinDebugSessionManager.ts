@@ -514,10 +514,12 @@ export class RizinDebugSessionManager {
         // alive on a later attempt.
         if (session.inferiorInventoryRowsComplete)
           session.inferiorInventoryComplete = true;
-        const ended = await verifyOwnedInferiorsEnded(
-          session.knownInferiorIdentities.values(),
-          this.#readProcessStartTime,
-        );
+        const ended =
+          session.knownInferiorIdentities.size === 0 ||
+          (await verifyOwnedInferiorsEnded(
+            session.knownInferiorIdentities.values(),
+            this.#readProcessStartTime,
+          ));
         if (ended) session.knownInferiorIdentities.clear();
         return ended;
       },
