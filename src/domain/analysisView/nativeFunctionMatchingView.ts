@@ -137,7 +137,7 @@ const sharedContext = (
   parent_evidence_id: parent.evidenceId,
   parent_operation: "match_native_functions" as const,
   parent_digest: parent.evidenceId.slice(3),
-  artifact: { path: parent.evidenceId, sha256: null },
+  artifact: null,
   limitations: boundedViewMessages(
     [...parent.limitations, ...report.limitations],
     parent.evidenceId,

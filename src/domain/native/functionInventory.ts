@@ -31,7 +31,7 @@ export interface MatchingFunction {
 }
 interface Detail {
   body?: Body;
-  dossier?: string;
+  dossier?: string | null;
   candidate?: string | null;
   conflict: boolean;
   readonly links: string[];
@@ -89,13 +89,15 @@ const addBody = (observation: Evidence, details: Facts["details"]): void => {
     detail.conflict = true;
   detail.body = procedure.body;
   if (observation.operation === "analyze_function") {
-    if (
-      detail.dossier !== undefined &&
-      detail.dossier !== observation.evidence_id
-    )
-      detail.conflict = true;
-    detail.dossier = observation.evidence_id;
-    detail.candidate = functionStructuralCandidate(observation, dossier!);
+    const candidate = functionStructuralCandidate(observation, dossier!);
+    if (detail.dossier === undefined) {
+      detail.dossier = observation.evidence_id;
+      detail.candidate = candidate;
+    } else {
+      // Request identity and dossier selection are independent of body agreement.
+      if (detail.dossier !== observation.evidence_id) detail.dossier = null;
+      if (detail.candidate !== candidate) detail.candidate = null;
+    }
   }
   detail.links.push(observation.evidence_id);
 };
@@ -164,18 +166,27 @@ const functionFact = async (
     sourceIndex,
   }: { inventory: Evidence; row: AddressedValue; sourceIndex: number },
   facts: Facts,
+  checkpoint: NativeMatchingCheckpoint,
 ): Promise<MatchingFunction> => {
   const address = parseNativeAddress(row.address),
     detail = facts.details.get(address),
     symbols = facts.symbols.get(address);
-  const links = new Set([
-    inventory.evidence_id,
-    ...(detail?.links ?? []),
-    ...(symbols?.links ?? []),
-  ]);
+  // Bound expansion before creating per-occurrence sets, arrays and subsequent
+  // schema/Evidence serialization copies. Same-address aliases repeat these links.
+  for (const link of detail?.links ?? [])
+    await checkpoint(256 + 8 * link.length);
+  for (const link of symbols?.links ?? [])
+    await checkpoint(256 + 8 * link.length);
+  await checkpoint(256 + 8 * inventory.evidence_id.length);
+  const links = new Set([inventory.evidence_id]);
+  for (const link of detail?.links ?? []) links.add(link);
+  for (const link of symbols?.links ?? []) links.add(link);
   const body = detail?.conflict ? undefined : detail?.body;
   const fingerprint = await facts.bytes.fingerprint(body);
-  for (const link of fingerprint?.links ?? []) links.add(link);
+  for (const link of fingerprint?.links ?? []) {
+    await checkpoint(256 + 8 * link.length);
+    links.add(link);
+  }
   const limitations: string[] = [];
   const symbol = reportedSymbol(row, symbols);
   if (fingerprint === null)
@@ -187,6 +198,10 @@ const functionFact = async (
   if (!symbol.originKnown)
     limitations.push(
       "Symbol origin unavailable; exact-name matching uses the reported name and the existing automatic-name exclusion rule.",
+    );
+  if (detail?.dossier === null)
+    limitations.push(
+      "Multiple supplied dossiers describe this address; no dossier is selected automatically. Agreed body bytes and structural facts remain usable.",
     );
   return {
     member: {
@@ -255,7 +270,9 @@ export const readFunctionInventory = async (
   for (let sourceIndex = 0; sourceIndex < rows.length; sourceIndex++) {
     const row = rows[sourceIndex]!;
     await checkpoint(1024 + 4 * (row.address.length + row.value.length));
-    functions.push(await functionFact({ inventory, row, sourceIndex }, facts));
+    functions.push(
+      await functionFact({ inventory, row, sourceIndex }, facts, checkpoint),
+    );
   }
   return functions;
 };

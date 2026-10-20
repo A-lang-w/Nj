@@ -535,6 +535,7 @@ export const nativeInventorySummaryViewResultSchema = z.strictObject({
 /** Compact native matching discovery retains the complete matching report. */
 export const nativeFunctionMatchingSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
+  artifact: z.null(),
   parent_operation: z.literal("match_native_functions"),
   summary: nativeFunctionMatchingViewContextSchema,
 });
@@ -545,6 +546,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     ...viewResultBase,
     ...nativeFunctionMatchingViewContextSchema.shape,
     kind: z.literal("function-matches"),
+    artifact: z.null(),
     view: nativeFunctionMatchingViewRequestSchema,
     items: nativeFunctionMatchingViewItemsSchema,
     parent_operation: z.literal("match_native_functions"),

@@ -100,13 +100,15 @@ rea match-native-functions request.json \
 
 `source_bundle` resolves exact references from authenticated local bundles.
 Default summary requires `evidence_output`, retaining full matching Evidence and
-its selected source closure. Publication never overwrites. Set `detail: "complete"`
+its selected source closure, including transitive Evidence links across supplied
+bundles. Missing dependencies fail with an integrity error; unrelated records
+are omitted. Publication never overwrites. Set `detail: "complete"`
 in the JSON for all groups inline. Import the bundle into MCP for views, or
 extract its matching Evidence record to a JSON file for the existing CLI
 `inspect-analysis-view` `evidence-file` source. Input bundles are unchanged.
 
 Representation admission is bounded at 96 MiB before cloning selected observations
-and expanding matching indexes. Work yields to cancellation. No worker/provider
+and expanding matching indexes and repeated per-function source links. Work yields to cancellation. No worker/provider
 concurrency is introduced; this budget is not a bound on total process RSS.
 
 The self-owned source fixture is [nativeFunctionMatching.c](https://github.com/morluto/rea/blob/main/tests/fixtures/nativeFunctionMatching.c).

@@ -1,6 +1,7 @@
+import { NativeMatchingAdmission } from "./NativeMatchingAdmission.js";
+import { loadNativeMatchingBundleSources } from "./NativeMatchingBundleSources.js";
 import { RegularFileCleanupFailure } from "../RegularFileRead.js";
 import { matchFunctionInventories } from "../../domain/native/matchFunctionInventories.js";
-import { readImmutableEvidenceBundle } from "../EvidenceBundleFiles.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { setImmediate } from "node:timers/promises";
 import { matchNativeFunctionsInputSchema } from "../../contracts/native/functionMatchingContracts.js";
@@ -16,7 +17,6 @@ import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
-  AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -28,22 +28,31 @@ import type { ExecutionOptions } from "../AnalysisProvider.js";
 import { FUNCTION_COMPARISON_PROVIDER } from "../InvestigationProviders.js";
 
 const OPERATION = "match_native_functions";
-// Budget includes decoded observations, grouping/index nodes and retained result
-// representation. It is charged before cloning/expanding admitted observations.
-export const NATIVE_MATCHING_REPRESENTATION_BYTES = 96 * 1024 * 1024;
 export interface NativeFunctionMatchingResult {
   readonly evidence: Evidence;
   readonly sources: readonly Evidence[];
 }
 
-/** Pair retained inventories without opening targets, decompiling or reading files. */
-export const matchNativeFunctions = async (
+/** Pair existing observations through one source/analysis admission. */
+export const matchNativeFunctions = (
   rawInput: unknown,
   options?: ExecutionOptions,
   lookup?: EvidenceLookup,
+): Promise<Result<NativeFunctionMatchingResult, AnalysisError>> =>
+  matchWithAdmission(
+    rawInput,
+    options,
+    lookup,
+    new NativeMatchingAdmission(OPERATION, options?.signal),
+  );
+
+const matchWithAdmission = async (
+  rawInput: unknown,
+  options: ExecutionOptions | undefined,
+  lookup: EvidenceLookup | undefined,
+  admission: NativeMatchingAdmission,
 ): Promise<Result<NativeFunctionMatchingResult, AnalysisError>> => {
   try {
-    const admission = new NativeMatchingAdmission(options?.signal);
     const checkpoint = admission.checkpoint;
     await setImmediate();
     await checkpoint();
@@ -86,6 +95,13 @@ export const matchNativeFunctions = async (
     const rightObservations = await observations(
       parsed.data.right_observations,
     );
+    const directLinks = [...sources.keys()].sort();
+    // Expand provenance separately from role observations: dependencies may be
+    // any Evidence operation and must not be interpreted as native body facts.
+    for (const source of sources.values())
+      for (const id of source.evidence_links)
+        if (!sources.has(id))
+          await resolve({ kind: "retained-evidence", evidence_id: id });
     const leftFunctions = await readFunctionInventory(
       left,
       leftObservations,
@@ -169,7 +185,7 @@ export const matchNativeFunctions = async (
       },
       result: report,
       limitations,
-      evidenceLinks: [...sources.keys()].sort(),
+      evidenceLinks: directLinks,
     });
     await checkpoint();
     return ok({ evidence, sources: [...sources.values()] });
@@ -194,59 +210,6 @@ export const matchNativeFunctions = async (
   }
 };
 
-/** Budget the actual selected observations, before cloning or index allocation. */
-class NativeMatchingAdmission {
-  #remaining = NATIVE_MATCHING_REPRESENTATION_BYTES;
-  #work = 0;
-  readonly #seen = new WeakSet<object>();
-  constructor(readonly signal?: AbortSignal) {}
-  readonly checkpoint = async (bytes = 0): Promise<void> => {
-    this.#remaining -= bytes;
-    if (this.#remaining < 0)
-      throw new AnalysisResourceConstraintError(
-        OPERATION,
-        "capacity",
-        "Native function matching exceeds representation capacity",
-        { maximum_bytes: NATIVE_MATCHING_REPRESENTATION_BYTES },
-      );
-    this.signal?.throwIfAborted();
-    if (++this.#work % 256 === 0)
-      await setImmediate(
-        undefined,
-        this.signal === undefined ? {} : { signal: this.signal },
-      );
-  };
-  async admit(root: unknown): Promise<void> {
-    const pending: Iterator<unknown>[] = [[root][Symbol.iterator]()];
-    while (pending.length) {
-      const next = pending[pending.length - 1]!.next();
-      if (next.done) {
-        pending.pop();
-        continue;
-      }
-      const value = next.value;
-      if (typeof value === "object" && value !== null) {
-        if (this.#seen.has(value)) continue;
-        this.#seen.add(value);
-        await this.checkpoint(128);
-        // Iterator traversal avoids a second width-sized array of child values.
-        pending.push(
-          (function* () {
-            for (const key in value)
-              if (Object.hasOwn(value, key)) {
-                yield key;
-                yield (value as Record<string, unknown>)[key];
-              }
-          })(),
-        );
-      } else
-        await this.checkpoint(
-          typeof value === "string" ? 64 + value.length * 4 : 128,
-        );
-    }
-  }
-}
-
 /** Load selected portable records; do not retain unrelated records across bundles. */
 export const matchNativeFunctionsFromBundles = async (
   input: unknown,
@@ -260,36 +223,18 @@ export const matchNativeFunctionsFromBundles = async (
       return err(
         analysisInputErrorFromIssues(OPERATION, parsed.error.issues, input),
       );
-    const selected = new Set<string>();
-    for (const value of [
-      parsed.data.left,
-      parsed.data.right,
-      ...parsed.data.left_observations,
-      ...parsed.data.right_observations,
-    ]) {
-      const reference = retainedEvidenceReferenceSchema.safeParse(value);
-      if (reference.success) selected.add(reference.data.evidence_id);
-    }
-    const records = new Map<string, Evidence>(),
-      admission = new NativeMatchingAdmission(options?.signal);
-    for (const path of paths) {
-      const bundle = await readImmutableEvidenceBundle(
-        path,
-        options?.signal,
-        resources,
-      );
-      if (!bundle.ok) return bundle;
-      for (const record of bundle.value.records)
-        if (
-          selected.has(record.evidence_id) &&
-          !records.has(record.evidence_id)
-        ) {
-          await admission.admit(record);
-          records.set(record.evidence_id, record);
-        }
-    }
-    return await matchNativeFunctions(parsed.data, options, (id) =>
-      records.get(id),
+    const admission = new NativeMatchingAdmission(OPERATION, options?.signal);
+    const loaded = await loadNativeMatchingBundleSources({
+      input: parsed.data,
+      paths,
+      resources,
+      admission,
+    });
+    return await matchWithAdmission(
+      loaded.input,
+      options,
+      loaded.lookup,
+      admission,
     );
   } catch (cause: unknown) {
     // This marker carries the exact descriptor owner; the caller must finish

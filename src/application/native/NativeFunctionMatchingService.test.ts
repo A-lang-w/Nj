@@ -23,6 +23,62 @@ const compare = async (input: unknown) => {
   };
 };
 
+it("retains transitive provenance without treating dependencies as native observations and fails closed for a missing ancestor", async () => {
+  const ancestor = createEvidence(undefined, nativeMatchingProvider, {
+    operation: "fixture_provenance",
+    parameters: {},
+    result: { provenance: "Synthetic ancestor" },
+  });
+  const dependency = createEvidence(undefined, nativeMatchingProvider, {
+    operation: "fixture_dependency",
+    parameters: {},
+    result: { provenance: "Synthetic dependency" },
+    evidenceLinks: [ancestor.evidence_id],
+  });
+  const left = nativeMatchingInventory(
+    "1",
+    [{ address: "0x10", value: "main" }],
+    [dependency.evidence_id],
+  );
+  const right = nativeMatchingInventory(
+    "2",
+    [{ address: "0x20", value: "main" }],
+    [dependency.evidence_id],
+  );
+  const dependencies = new Map(
+    [ancestor, dependency].map((record) => [record.evidence_id, record]),
+  );
+  const result = await matchNativeFunctions({ left, right }, undefined, (id) =>
+    dependencies.get(id),
+  );
+  if (!result.ok) throw result.error;
+  expect(
+    new Set(result.value.sources.map((record) => record.evidence_id)),
+  ).toEqual(
+    new Set(
+      [left, right, dependency, ancestor].map((record) => record.evidence_id),
+    ),
+  );
+  expect(new Set(result.value.evidence.evidence_links)).toEqual(
+    new Set([left.evidence_id, right.evidence_id]),
+  );
+  expect(
+    nativeFunctionMatchingSchema.parse(result.value.evidence.normalized_result)
+      .summary.matched,
+  ).toBe(1);
+  const missing = await matchNativeFunctions(
+    { left, right },
+    undefined,
+    (id) => (id === dependency.evidence_id ? dependency : undefined),
+  );
+  expect(missing.ok).toBe(false);
+  if (missing.ok) throw new Error("Missing ancestor accepted");
+  expect(missing.error).toMatchObject({
+    evidenceId: ancestor.evidence_id,
+    reason: "missing",
+  });
+});
+
 it("keeps symbol origin unknown when supplied metadata describes a different same-address alias", async () => {
   const left = nativeMatchingInventory("1", [
     { address: "0x10", value: "reported_name" },
@@ -332,6 +388,88 @@ it("reconstructs discontiguous bodies from adjacent byte reads without next-proc
       .update(Buffer.from("010203", "hex"))
       .digest("hex"),
   });
+});
+
+it("preserves byte correspondence when consistent dossiers differ only in request identity, without choosing an arbitrary dossier", async () => {
+  const left = nativeMatchingInventory("1", [
+    { address: "0x10", value: "old_name" },
+  ]);
+  const right = nativeMatchingInventory("2", [
+    { address: "0x20", value: "new_name" },
+  ]);
+  const leftDetails = nativeMatchingDetails("1", "0x10", "0102", true);
+  const another = createEvidence(
+    nativeMatchingTarget("1"),
+    nativeMatchingProvider,
+    {
+      operation: "analyze_function",
+      parameters: { procedure: "old_name" },
+      result: leftDetails[0]!.normalized_result,
+      relationshipCoverage: { status: "complete" },
+    },
+  );
+  for (const observations of [
+    [...leftDetails, another],
+    [another, ...leftDetails],
+  ]) {
+    const { report } = await compare({
+      left,
+      right,
+      left_observations: observations,
+      right_observations: nativeMatchingDetails("2", "0x20", "0102", true),
+    });
+    expect(report.summary.matched).toBe(1);
+    expect(report.matches[0]).toMatchObject({
+      basis: "identical-bytes",
+      compare_functions_input: null,
+      left: [
+        {
+          dossier_evidence_id: null,
+          body_bytes: 2,
+          body_sha256: createHash("sha256")
+            .update(Buffer.from("0102", "hex"))
+            .digest("hex"),
+        },
+      ],
+    });
+    expect(report.matches[0]!.left[0]!.evidence_links).toContain(
+      another.evidence_id,
+    );
+  }
+  const conflicting = nativeMatchingDetails("1", "0x10", "010203", true)[0]!;
+  const { report } = await compare({
+    left,
+    right,
+    left_observations: [...leftDetails, conflicting],
+    right_observations: nativeMatchingDetails("2", "0x20", "0102", true),
+  });
+  expect(report.summary.matched).toBe(0);
+  expect(report.matches[0]!.left[0]!.body_sha256).toBeNull();
+});
+
+it("rejects repeated per-occurrence source-link expansion within the shared representation budget", async () => {
+  const base = nativeMatchingDetails("1", "0x10", "c3")[0]!;
+  const observations = Array.from({ length: 250 }, (_, observation) =>
+    createEvidence(nativeMatchingTarget("1"), nativeMatchingProvider, {
+      operation: "procedure_info",
+      parameters: { procedure: "0x10", observation },
+      result: base.normalized_result,
+    }),
+  );
+  const result = await matchNativeFunctions({
+    left: nativeMatchingInventory(
+      "1",
+      Array.from({ length: 1000 }, (_, i) => ({
+        address: "0x10",
+        value: `alias_${i}`,
+      })),
+    ),
+    right: nativeMatchingInventory("2", []),
+    left_observations: observations,
+  });
+  expect(result.ok).toBe(false);
+  if (!result.ok)
+    expect(result.error._tag).toBe("AnalysisResourceConstraintError");
 });
 
 it("retains missing bytes and conflicting overlapping observations as unknown instead of exact matches", async () => {

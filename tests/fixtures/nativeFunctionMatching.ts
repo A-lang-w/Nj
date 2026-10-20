@@ -18,11 +18,13 @@ export const nativeMatchingTarget = (side: "1" | "2") => ({
 export const nativeMatchingInventory = (
   side: "1" | "2",
   entries: readonly { address: string; value: string }[],
+  evidenceLinks: readonly string[] = [],
 ) =>
   createEvidence(nativeMatchingTarget(side), nativeMatchingProvider, {
     operation: "list_procedures",
     parameters: {},
     result: jsonValueSchema.parse(entries),
+    evidenceLinks: [...evidenceLinks],
   });
 export const nativeMatchingBody = (address: string, bytes: number) => ({
   available: true as const,
