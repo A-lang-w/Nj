@@ -162,12 +162,20 @@ describe("FAT Mach-O slice selection", () => {
         availableArchitectures: ["x86_64", "arm64"],
       },
     });
-    // An undersized first arm64 subtype does not hide a later valid one.
+    // A foreign family declared twice, such as arm64 and arm64e, has no
+    // provider-neutral slice, whether or not one declaration is undersized.
     const subtypes = fat([0x0100000c, 0x0100000c]);
-    subtypes.writeUInt32BE(31, 8 + 12);
     expect(parseExecutableHeader(subtypes, "x64")).toMatchObject({
-      value: { architecture: "arm64", universalSlice: { offset: 80 } },
+      ok: false,
+      error:
+        "FAT binary has no x64 slice and no foreign architecture declared exactly once",
     });
+    subtypes.writeUInt32BE(31, 8 + 12);
+    expect(parseExecutableHeader(subtypes, "x64").ok).toBe(false);
+    // A unique foreign family is still selected beside an ambiguous one.
+    expect(
+      parseExecutableHeader(fat([0x0100000c, 0x0100000c, 0x01000007]), "arm"),
+    ).toMatchObject({ value: { architecture: "x86_64" } });
   });
 });
 

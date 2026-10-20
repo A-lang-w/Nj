@@ -152,23 +152,33 @@ const parseFatMachO = (
   ];
   // Prefer the slice the host would load; a malformed host slice is an error.
   // A container without one still declares its images, so select the first
-  // declaration that can hold its Mach-O header, as a thin foreign image would
-  // be. Several declarations, such as CPU subtypes, may share one family.
+  // that can hold its Mach-O header, as a thin foreign image would be. A
+  // family declared more than once, such as arm64 and arm64e, has no
+  // provider-neutral choice and is not selected.
   const preferred = fatHostArchitecture(host);
   const hostSlice = declarations.find(
     ({ architecture }) => architecture === preferred,
   );
-  const candidates = hostSlice === undefined ? declarations : [hostSlice];
+  const unambiguous = declarations.filter(
+    ({ architecture }) =>
+      declarations.filter((other) => other.architecture === architecture)
+        .length === 1,
+  );
+  const candidates = hostSlice === undefined ? unambiguous : [hostSlice];
   const selected = candidates.find(
     ({ architecture, size }) =>
       size >= (architecture === "arm64" || architecture === "x86_64" ? 32 : 28),
   );
   if (selected === undefined) {
     const first = candidates[0];
+    if (first !== undefined)
+      return err(
+        `FAT slice for ${first.architecture} is shorter than its Mach-O header`,
+      );
     return err(
-      first === undefined
+      declarations.length === 0
         ? "FAT binary declares no supported Mach-O architecture"
-        : `FAT slice for ${first.architecture} is shorter than its Mach-O header`,
+        : `FAT binary has no ${host} slice and no foreign architecture declared exactly once`,
     );
   }
   return ok({
