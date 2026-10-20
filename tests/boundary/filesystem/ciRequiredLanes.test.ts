@@ -200,7 +200,7 @@ it("binds provider build reuse to the current run while keeping standalone dispa
   expect(stage).toBeGreaterThan(prepare);
   expect(upload).toBeGreaterThan(stage);
   expect(buildSteps[stage]?.run).toContain(
-    "npm run --silent test:prepare -- --dry=json |",
+    "node scripts/ci/portable-build-cache.mjs snapshot < .cache/ci-build-plan.json",
   );
   expect(buildSteps[stage]?.if).toBeUndefined();
   expect(buildSteps[stage]?.shell).toBe("bash");
@@ -219,6 +219,7 @@ it("binds provider build reuse to the current run while keeping standalone dispa
     "web_network",
     "web_runtime",
     "web_source_map",
+    "agentenv",
   ];
   const buildTerms = z
     .string()
@@ -443,6 +444,7 @@ it.each([
       ["sqlite", "sqlite-runtime"],
       ["workflows", "static"],
       ["ghidra_bridge", "ghidra_bridge"],
+      ["agentenv", "agentenv"],
     ] as const) {
       // GitHub exposes only direct dependencies in the required job's needs context.
       const needs: Record<

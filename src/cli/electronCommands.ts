@@ -22,6 +22,7 @@ import {
 } from "../cliObservationOptions.js";
 import { runCliJavaScriptApplicationAnalysis } from "./javascriptApplicationAnalysis.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
 /** Register CLI equivalents of the Electron MCP tools. */
@@ -64,7 +65,6 @@ const registerElectronFuseCommand = (
             service,
             service.provider.identity.id,
             "inspect_electron_fuses",
-            undefined,
             signal,
           );
         }),
@@ -134,7 +134,6 @@ const registerElectronActiveCommand = (
               },
               provider.identity().id,
               "capture_electron_scenario",
-              undefined,
               signal,
             );
             return "code" in result
@@ -217,7 +216,6 @@ const registerElectronTargetList = (
             },
             "rea-cdp-electron",
             "list_electron_targets",
-            undefined,
             signal,
           );
         }),
@@ -259,7 +257,6 @@ const registerElectronPageInspection = (
             },
             "rea-cdp-electron",
             "inspect_electron_page",
-            undefined,
             signal,
           );
         }),
@@ -283,7 +280,7 @@ const registerJavaScriptApplicationCommand = (
         logCliCommand(logger, CLI_COMMANDS.analyzeJavaScriptApplication, () =>
           runCliJavaScriptApplicationAnalysis(
             {
-              input_path: args.path,
+              input_path: absoluteCallerPath(args.path),
               format: options.artifactFormat,
               integrity_policy: options.integrityPolicy,
               ...(options.maxSemanticNodes === undefined

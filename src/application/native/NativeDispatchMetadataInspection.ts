@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { addressedValue } from "../../contracts/toolOutputSchemaPrimitives.js";
+import { addressedValueSchema } from "../../domain/native/nativeInventory.js";
 import {
   nativeDispatchMetadataResultSchema,
   inspectNativeDispatchMetadata,
@@ -9,6 +9,13 @@ import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { err, ok } from "../../domain/result.js";
 import type { AnalysisOperationPort } from "../AnalysisProvider.js";
 import type { EnhancedResult } from "../EnhancedToolTypes.js";
+
+/** Source operations for this workflow, shared with capability discovery. */
+export const NATIVE_DISPATCH_METADATA_SOURCES = {
+  binary: "inspect_native_dispatch_metadata",
+  symbols: "list_names",
+} as const;
+
 /** Prefer validated binary metadata, otherwise preserve the bound provider's symbol-only coverage. */
 export const inspectNativeDispatch = async (
   analysis: AnalysisOperationPort,
@@ -16,7 +23,7 @@ export const inspectNativeDispatch = async (
   signal?: AbortSignal,
 ): EnhancedResult => {
   const binaryMetadata = await analysis.execute(
-    "inspect_native_dispatch_metadata",
+    NATIVE_DISPATCH_METADATA_SOURCES.binary,
     { max_records: maxRecords },
     signal === undefined ? {} : { signal },
   );
@@ -29,7 +36,7 @@ export const inspectNativeDispatch = async (
   if (binaryMetadata.error._tag !== "AnalysisCapabilityUnavailableError")
     return err(binaryMetadata.error);
   const execution = await analysis.execute(
-    "list_names",
+    NATIVE_DISPATCH_METADATA_SOURCES.symbols,
     {},
     signal === undefined ? {} : { signal },
   );
@@ -37,8 +44,8 @@ export const inspectNativeDispatch = async (
   const names = z
     .array(
       z.union([
-        addressedValue.strict(),
-        addressedValue
+        addressedValueSchema.strict(),
+        addressedValueSchema
           .omit({ value: true })
           .extend({ name: z.string() })
           .strict(),
@@ -48,7 +55,7 @@ export const inspectNativeDispatch = async (
   if (!names.success)
     return err(
       new AnalysisOutputError(
-        "list_names",
+        NATIVE_DISPATCH_METADATA_SOURCES.symbols,
         "provider returned an invalid inventory",
       ),
     );
