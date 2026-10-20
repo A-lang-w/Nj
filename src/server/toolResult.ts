@@ -1,3 +1,4 @@
+import { isNativeInventoryOperation } from "../domain/native/nativeInventory.js";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { ToolResultDelivery as Delivery } from "./ToolResultDelivery.js";
 import { INSPECT_ANALYSIS_VIEW_OPERATION } from "../domain/analysisView/analysisViewErrors.js";
@@ -8,7 +9,7 @@ import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 /** Full delivery policy, including canonical native Evidence continuation. */
 export class ToolResultDelivery extends Delivery {
   constructor(maximumResponseBytes: number) {
-    super(maximumResponseBytes, nativeEvidenceContinuation);
+    super(maximumResponseBytes, retainedEvidenceContinuation);
   }
 }
 
@@ -19,13 +20,19 @@ export const createToolResultDelivery = (
   new ToolResultDelivery(maximumResponseBytes ?? STDIO_DEFAULT_MAX_BUFFER_SIZE);
 
 /** Offer a named, schema-validated source page only for retained native analysis. */
-const nativeEvidenceContinuation = (
+const retainedEvidenceContinuation = (
   evidence: Evidence,
 ): Readonly<Record<string, JsonValue>> => {
-  if (evidence.operation !== "analyze_function") return {};
+  const view =
+    evidence.operation === "analyze_function"
+      ? { kind: "native", facet: "pseudocode", offset: 0 }
+      : isNativeInventoryOperation(evidence.operation)
+        ? { kind: "native-inventory", offset: 0, limit: 64 }
+        : undefined;
+  if (view === undefined) return {};
   const input = inspectAnalysisViewInputSchema.safeParse({
     source: { kind: "retained-evidence", evidence_id: evidence.evidence_id },
-    view: { kind: "native", facet: "pseudocode", offset: 0 },
+    view,
   });
   if (!input.success) return {};
   return {

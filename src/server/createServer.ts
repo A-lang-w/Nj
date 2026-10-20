@@ -908,6 +908,7 @@ const registerBinaryAnalysisTools = ({
     activeTarget,
     recordEvidence,
     recordUnknown,
+    evidenceById,
     withAdmittedAnalysis,
   };
   registerOfficialTools(server, analysisOptions);
