@@ -833,8 +833,15 @@ export class ProviderProcessSupervisor {
   }
 }
 
+const OUTPUT_CAPTURE_CHUNK_BYTES = 4 * 1024;
+
+interface ProcessOutputChunk {
+  readonly buffer: Buffer;
+  used: number;
+}
+
 class ProcessOutputCapture {
-  readonly #chunks: Buffer[] = [];
+  readonly #chunks: ProcessOutputChunk[] = [];
   #bytes = 0;
 
   get bytes(): number {
@@ -848,12 +855,32 @@ class ProcessOutputCapture {
 
   append(chunk: Buffer): void {
     this.#bytes += chunk.byteLength;
-    this.#chunks.push(Buffer.from(chunk));
+    let sourceOffset = 0;
+    while (sourceOffset < chunk.byteLength) {
+      let tail = this.#chunks.at(-1);
+      if (tail === undefined || tail.used === tail.buffer.byteLength) {
+        tail = {
+          buffer: Buffer.allocUnsafe(OUTPUT_CAPTURE_CHUNK_BYTES),
+          used: 0,
+        };
+        this.#chunks.push(tail);
+      }
+      const copied = Math.min(
+        chunk.byteLength - sourceOffset,
+        tail.buffer.byteLength - tail.used,
+      );
+      chunk.copy(tail.buffer, tail.used, sourceOffset, sourceOffset + copied);
+      tail.used += copied;
+      sourceOffset += copied;
+    }
   }
 
   snapshot(observedBytes: number): ProviderProcessSnapshot["stdout"] {
     return this.#snapshotBuffer(
-      Buffer.concat(this.#chunks, this.#bytes),
+      Buffer.concat(
+        this.#chunks.map(({ buffer, used }) => buffer.subarray(0, used)),
+        this.#bytes,
+      ),
       observedBytes,
     );
   }
@@ -867,10 +894,11 @@ class ProcessOutputCapture {
     const chunks: Buffer[] = [];
     let offset = 0;
     for (const chunk of this.#chunks) {
-      const chunkEnd = offset + chunk.byteLength;
+      const chunkEnd = offset + chunk.used;
       const from = Math.max(availableStart, offset);
       const to = Math.min(availableEnd, chunkEnd);
-      if (to > from) chunks.push(chunk.subarray(from - offset, to - offset));
+      if (to > from)
+        chunks.push(chunk.buffer.subarray(from - offset, to - offset));
       offset = chunkEnd;
       if (offset >= availableEnd) break;
     }

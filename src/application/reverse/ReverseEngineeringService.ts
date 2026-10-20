@@ -149,17 +149,18 @@ export class ReverseEngineeringService {
           resources: [cause.owner.resource],
         },
       };
-      const failure = arguments_[1]?.aborted
-        ? new AnalysisCancelledError(operation, options)
-        : original instanceof Error &&
-            "code" in original &&
-            original.code === "ETIMEDOUT"
+      const failure =
+        original instanceof Error &&
+        "code" in original &&
+        original.code === "ETIMEDOUT"
           ? new AnalysisTimeoutError(operation, DEFAULT_TIMEOUT_MS, options)
-          : new AnalysisOutputError(
-              operation,
-              "Artifact descriptor cleanup remains incomplete.",
-              options,
-            );
+          : original instanceof AnalysisCancelledError || arguments_[1]?.aborted
+            ? new AnalysisCancelledError(operation, options)
+            : new AnalysisOutputError(
+                operation,
+                "Artifact descriptor cleanup remains incomplete.",
+                options,
+              );
       this.#pendingCleanup.set(cause.owner, {
         observation: options.cleanup,
         failures: new Set([failure]),
@@ -1062,7 +1063,7 @@ class DigestFileCleanupOwner {
   }
 }
 
-class DigestFileCleanupFailure extends Error {
+export class DigestFileCleanupFailure extends Error {
   constructor(
     override readonly cause: unknown,
     readonly owner: DigestFileCleanupOwner,

@@ -17,7 +17,10 @@ import {
 } from "../../../src/domain/evidence.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
-import { ReverseEngineeringService as CoreReverseEngineeringService } from "../../../src/application/reverse/ReverseEngineeringService.js";
+import {
+  DigestFileCleanupFailure,
+  ReverseEngineeringService as CoreReverseEngineeringService,
+} from "../../../src/application/reverse/ReverseEngineeringService.js";
 import { createReverseEngineeringCommandPort } from "../../../src/composition/reverseEngineering.js";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import type { ProviderProcessSupervisor } from "../../../src/process/ProviderProcess.js";
@@ -311,6 +314,55 @@ it("preserves an independent timeout after cleanup succeeds", async () => {
   });
   expect(error.cleanupIncomplete).toBe(false);
   expect(projectAnalysisError(error).details).not.toHaveProperty("cleanup");
+});
+
+it("keeps a digest timeout primary when cancellation arrives during descriptor cleanup", async () => {
+  const { directory, path } = await createArtifact();
+  const controller = new AbortController();
+  let ownerClosed = false;
+  const owner = {
+    resource: "artifact-descriptor:test",
+    stop: vi.fn(async () =>
+      ownerClosed
+        ? { status: "not-owned" as const }
+        : {
+            status: "incomplete" as const,
+            reason: "descriptor close remains pending",
+          },
+    ),
+  };
+  const timeout = Object.assign(new Error("digest timed out"), {
+    code: "ETIMEDOUT",
+  });
+  let digestCalls = 0;
+  const service = new CoreReverseEngineeringService({
+    commands: createReverseEngineeringCommandPort({}),
+    runOwned: vi.fn(async () => providerSnapshot()),
+    digest: async () => {
+      digestCalls += 1;
+      if (digestCalls === 1) return "a".repeat(64);
+      controller.abort(new Error("later caller cancellation"));
+      throw new DigestFileCleanupFailure(timeout, owner as never);
+    },
+  });
+
+  try {
+    const result = await service.inspectWithObjdump(
+      { path, operation: "file_headers" },
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected the digest timeout");
+    expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanup?.resources).toEqual([
+      "artifact-descriptor:test",
+    ]);
+  } finally {
+    ownerClosed = true;
+    await service.close().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 it("does not project cancellation cleanup as incomplete after a successful retry", async () => {

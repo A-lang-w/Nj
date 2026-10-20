@@ -147,6 +147,43 @@ export const registerReverseEngineeringCommands = (
       running = false;
     }
   };
+  const retainedGdbManagers = new Set<GdbSessionManager>();
+  let gdbCleanupRetryTimer: ReturnType<typeof setTimeout> | undefined;
+  let gdbCleanupRetryDelayMs = 250;
+  const retryRetainedGdbCleanup = (): void => {
+    if (gdbCleanupRetryTimer !== undefined) return;
+    gdbCleanupRetryTimer = setTimeout(() => {
+      gdbCleanupRetryTimer = undefined;
+      for (const manager of retainedGdbManagers) {
+        void manager
+          .closeAll()
+          .then(() => {
+            retainedGdbManagers.delete(manager);
+            gdbCleanupRetryDelayMs = 250;
+          })
+          .catch((cause: unknown) => {
+            gdbCleanupRetryDelayMs = Math.min(
+              8_000,
+              gdbCleanupRetryDelayMs * 2,
+            );
+            logger.error(
+              {
+                command: CLI_COMMANDS.debugWithGdb,
+                cleanup:
+                  cause instanceof Error
+                    ? cause.message
+                    : "Unknown cleanup failure",
+              },
+              "Retrying retained GDB cleanup",
+            );
+          })
+          .finally(() => {
+            if (retainedGdbManagers.size > 0) retryRetainedGdbCleanup();
+          });
+      }
+    }, gdbCleanupRetryDelayMs);
+    gdbCleanupRetryTimer.unref();
+  };
   cli.command(CLI_COMMANDS.inspectWithObjdump, {
     description:
       "Inspect a local artifact with GNU objdump and retain its raw output as Evidence",
@@ -324,7 +361,11 @@ export const registerReverseEngineeringCommands = (
                 "GDB fallback cleanup failed",
               );
             }
-            if (cleanupFailed) process.exitCode = 1;
+            if (cleanupFailed) {
+              retainedGdbManagers.add(manager);
+              retryRetainedGdbCleanup();
+              process.exitCode = 1;
+            }
           }
         }),
       ),
