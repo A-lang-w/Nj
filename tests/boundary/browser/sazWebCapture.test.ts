@@ -16,6 +16,7 @@ import {
 } from "../../../src/domain/webNetworkCapture.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { protobufFrame } from "../../fixtures/protobufCapture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import {
@@ -204,6 +205,88 @@ it("uses HTTP optional whitespace for SAZ identity codings without changing raw 
         }),
       );
   }
+});
+
+it("checks trailer credentials before hidden metadata blocks analysis and withholds unchecked source", async () => {
+  const credential = Buffer.concat([
+    protobufFrame(Buffer.from([8, 1])),
+    protobufFrame(Buffer.from("authorization: Bearer fixture-only\r\n"), 128),
+  ]);
+  const responseBytes = (body: Buffer, contentType: string, extra = "") =>
+    Buffer.concat([
+      Buffer.from(
+        `HTTP/1.1 200 OK\r\nContent-Type: ${contentType}\r\nX-Debug: harmless\r\n${extra}\r\n`,
+      ),
+      body,
+    ]);
+  const bytes = await archive([
+    ["raw/1_s.txt", responseBytes(credential, "application/grpc-web+proto")],
+    [
+      "raw/2_s.txt",
+      responseBytes(Buffer.from([0, 0, 0]), "application/grpc-web+proto"),
+    ],
+    [
+      "raw/3_s.txt",
+      responseBytes(
+        gzipSync(credential),
+        "application/grpc-web+proto",
+        "Content-Encoding: gzip\r\n",
+      ),
+    ],
+    [
+      "raw/4_s.txt",
+      responseBytes(Buffer.from("invalid*base64"), "application/grpc-web-text"),
+    ],
+  ]);
+  const path = await fixture(bytes);
+  const { call } = await connectLocalToolsMcp();
+  const base = {
+    capture_path: path,
+    format: "saz",
+    sensitive_values: ["X-Debug"],
+  };
+  const protectedReply = await call("inspect_web_network_capture", {
+    ...base,
+    record_ordinals: [0],
+  });
+  expect(protectedReply.isError, JSON.stringify(protectedReply)).not.toBe(true);
+  const protectedCapture = webNetworkCaptureSchema.parse(
+    parseEvidence(protectedReply.structuredContent).normalized_result,
+  );
+  expect(protectedCapture.records[0]?.binary_fields).toContainEqual(
+    expect.objectContaining({
+      pointer: "/response/body",
+      state: "redacted",
+      content_base64: null,
+      sha256: null,
+    }),
+  );
+  expect(protectedCapture.records[0]?.protobuf).toBeUndefined();
+  for (const ordinals of [[0, 1], [2], [3]]) {
+    const response = await call("inspect_web_network_capture", {
+      ...base,
+      record_ordinals: ordinals,
+    });
+    const error = parseMcpToolError(response).error;
+    expect(error.code).toBe("capability_unavailable");
+    expect(JSON.stringify(response)).not.toContain("content_base64");
+    expect(error.details).not.toHaveProperty("partial_observation");
+  }
+  const opaqueReply = await call("inspect_web_network_capture", {
+    capture_path: path,
+    format: "saz",
+    record_ordinals: [2],
+  });
+  expect(opaqueReply.isError, JSON.stringify(opaqueReply)).not.toBe(true);
+  const opaque = webNetworkCaptureSchema.parse(
+    parseEvidence(opaqueReply.structuredContent).normalized_result,
+  );
+  expect(opaque.records[0]?.binary_fields).toContainEqual(
+    expect.objectContaining({ pointer: "/response/body", state: "retained" }),
+  );
+  expect(opaque.records[0]?.protobuf).toBeUndefined();
+  expect(opaque.protobuf_coverage?.status).toBe("partial");
+  expect(await readFile(path)).toEqual(bytes);
 });
 
 it("inspects native SAZ through the public CLI and MCP with equal evidence, bytes and archive coordinates", async () => {

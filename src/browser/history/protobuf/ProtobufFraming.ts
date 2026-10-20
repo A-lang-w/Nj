@@ -76,6 +76,7 @@ const decodeText = async (
 
 export interface PreparedProtobufBody {
   readonly data: Uint8Array | undefined;
+  readonly credentialsChecked: boolean;
   readonly excluded?: "explicit-sensitive-value" | "transport-credential";
 }
 
@@ -100,16 +101,26 @@ export const prepareProtobufBody = async (
   await work.checkpoint();
   const data =
     framing === "grpc-web-text" ? await decodeText(body, work) : body;
-  if (data === undefined) return { data };
+  if (data === undefined) return { data, credentialsChecked: false };
   if (exclusions.decoded(data))
-    return { data, excluded: "explicit-sensitive-value" };
-  if (framing === "raw" || framing === "grpc") return { data };
+    return {
+      data,
+      credentialsChecked: true,
+      excluded: "explicit-sensitive-value",
+    };
+  if (framing === "raw" || framing === "grpc")
+    return { data, credentialsChecked: true };
   let at = 0;
+  let credentialsChecked = true;
   while (at < data.length) {
     await work.checkpoint();
     const parsed = readGrpcFrame(data, at, framing);
-    if (!parsed.ok) break;
+    if (!parsed.ok) {
+      credentialsChecked = false;
+      break;
+    }
     const frame = parsed.value;
+    if (frame.flags === 129) credentialsChecked = false;
     if (frame.flags === 128) {
       let start = frame.payload_offset;
       for (let index = start; index <= frame.end; index++) {
@@ -119,11 +130,15 @@ export const prepareProtobufBody = async (
         let colon = start;
         while (colon < index && data[colon] !== 58) colon++;
         if (colon < index && exclusions.header(data, start, colon))
-          return { data, excluded: "transport-credential" };
+          return {
+            data,
+            credentialsChecked: true,
+            excluded: "transport-credential",
+          };
         start = index + 1;
       }
     }
     at = frame.end;
   }
-  return { data };
+  return { data, credentialsChecked };
 };

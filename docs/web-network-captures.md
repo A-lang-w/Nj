@@ -181,6 +181,9 @@ exclusions for the transport declared in MIME metadata.
 Unknown or explicitly excluded HTTP coding metadata is not treated as absent:
 SAZ/native bodies remain opaque until identity coding is established. Raw
 header values and retained body bytes remain available in source Evidence.
+Skipping wire analysis still runs the independent credential check. If HTTP
+coding metadata is unavailable and that check cannot complete, the operation
+returns unavailable without publishing unchecked capture bodies as Evidence.
 
 Use `detail: "summary"`, then `inspect_analysis_view` with its retained parent:
 

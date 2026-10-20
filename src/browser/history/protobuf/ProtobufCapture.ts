@@ -11,7 +11,10 @@ import {
   withCaptureReaderCleanup,
 } from "../CaptureFailures.js";
 import type { ArtifactResourceScope } from "../../../artifacts/ArtifactResourceScope.js";
-import { AnalysisInputError } from "../../../domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisCapabilityUnavailableError,
+} from "../../../domain/analysisErrorCore.js";
 import { redactExplicitText } from "../../../domain/explicitSensitiveValues.js";
 import {
   WEB_NETWORK_CAPTURE_LIMITS,
@@ -163,12 +166,18 @@ const bodyMetadata = (
           ? content.mimeType
           : headers.get("content-type"),
       httpIdentityKnown: true,
+      httpCodingKnown: true,
     };
   }
   if (pointer !== `/${side}/body` && pointer !== `/${side}/content`)
     return undefined;
   return {
     contentType: headers.get("content-type"),
+    httpCodingKnown:
+      headerNamesKnown &&
+      ["content-encoding", "transfer-encoding"].every(
+        (name) => !headers.has(name) || headers.get(name) !== undefined,
+      ),
     httpIdentityKnown:
       headerNamesKnown &&
       ["content-encoding", "transfer-encoding"].every(
@@ -259,13 +268,6 @@ export const prepareCaptureProtobuf = async (
           ? automatic
           : options.framing;
       if (framing === undefined) continue;
-      if (!metadata.httpIdentityKnown) {
-        incomplete = true;
-        record.limitations.push(
-          "Selected protobuf body's HTTP content/transfer coding is encoded or unknown, so identity is not established; its exact stored bytes remain opaque.",
-        );
-        continue;
-      }
       if (
         field.bytes > WEB_NETWORK_CAPTURE_LIMITS.inputBytes ||
         field.content_base64.length >
@@ -313,6 +315,28 @@ export const prepareCaptureProtobuf = async (
         excludeBody(record, field.pointer, excluded);
         binaryByPointer.delete(field.pointer);
         incomplete = true;
+        continue;
+      }
+      // Analysis eligibility never bypasses the independent source exclusions.
+      if (
+        !metadata.httpCodingKnown &&
+        (!prepared.credentialsChecked || !declared.credentialsChecked)
+      )
+        throw new AnalysisCapabilityUnavailableError(
+          input.format,
+          "inspect_web_network_capture",
+          "Credential inspection could not complete while HTTP coding metadata was unavailable; unchecked capture bodies were withheld.",
+          {
+            diagnostics: { body_pointer: field.pointer },
+            userMessage:
+              "Use a capture with available HTTP coding metadata, or select records whose transport can be inspected. Unchecked source bytes were not published.",
+          },
+        );
+      if (!metadata.httpIdentityKnown) {
+        incomplete = true;
+        record.limitations.push(
+          "Selected protobuf body's HTTP content/transfer coding is encoded or unknown, so identity is not established; its exact stored bytes remain opaque.",
+        );
         continue;
       }
       bodies.push({ field, body, contentType, framing, prepared });
