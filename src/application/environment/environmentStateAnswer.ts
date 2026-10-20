@@ -264,12 +264,21 @@ export const missingAnswer = (
     readonly id: string;
   },
 ): Result<StateAnswer, AnalysisError> => {
+  // A read also answers with a 2xx JSON null, the absence the write gate accepts; a write never does, as a 2xx would
+  // report success for an entity that is not there.
+  const nullAbsence = tool.method === "GET";
   const latestAbsence = (ordinals: readonly number[]) =>
     ordinals
       .map((ordinal) => serving.source.exchanges.get(ordinal))
       .filter(
         (exchange): exchange is RecordedExchange =>
-          exchange !== undefined && isAbsence(exchange.status),
+          exchange !== undefined &&
+          (isAbsence(exchange.status) ||
+            (nullAbsence &&
+              exchange.status !== null &&
+              exchange.status >= 200 &&
+              exchange.status < 300 &&
+              recordedJson(exchange) === null)),
       )
       .at(-1);
   // The tool's own recorded absence first, else that of an item view of the type.
