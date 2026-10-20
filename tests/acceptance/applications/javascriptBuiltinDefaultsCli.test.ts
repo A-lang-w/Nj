@@ -35,6 +35,20 @@ const opaqueMutatorSources = {
   "await-primitive.cjs": `async function run(){
     Object.assign=(t,v)=>{v.require=replacement};Object.assign({},await 1);
     require('fs').readFileSync('suspended-primitive.json');}run();`,
+  "scalar-argument.cjs": `Object.assign=(t,key)=>{t[key]=1};
+    Object.assign({},module===module);Object.assign({},typeof module);
+    require('fs').readFileSync('scalar-argument.json');`,
+  "scalar-evaluation.cjs": `function change(value){value.require=replacement;return 0}
+    Object.assign=(t,key)=>{t[key]=1};Object.assign({},typeof change(module));
+    require('fs').readFileSync('wrong-scalar-evaluation');`,
+  "inherited-then.cjs": `Object.prototype.then=function(resolve){
+    delete Object.prototype.then;resolve(module)};
+    async function run(){Object.assign=(t,v)=>{v.require=replacement};
+    Object.assign({},await {});require('fs').readFileSync('wrong-inherited-then');}run();`,
+  "own-then.cjs": `Object.prototype.then=function(resolve){
+    delete Object.prototype.then;resolve(module)};
+    async function run(){Object.assign=(t,v)=>{v.require=replacement};
+    Object.assign({},await {then:null});require('fs').readFileSync('own-then.json');}run();`,
 };
 
 const writeReceiverReviewSources = async (root: string): Promise<void> => {
@@ -392,6 +406,8 @@ it("preserves opaque-write and suspension boundaries through CLI and MCP", async
   ).toEqual([
     "opaque-saved-key.json",
     "opaque-saved-receiver.json",
+    "own-then.json",
+    "scalar-argument.json",
     "suspended-primitive.json",
   ]);
   const { client, call } = await connectLocalToolsMcp();

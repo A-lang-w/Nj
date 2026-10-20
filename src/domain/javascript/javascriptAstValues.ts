@@ -1,6 +1,10 @@
 import * as t from "@babel/types";
 import type { JavaScriptSemanticPrimitive } from "./javascriptSemanticValueTypes.js";
 import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
+import {
+  childNodes,
+  traverseJavaScriptAst,
+} from "./javascriptSemanticTraversal.js";
 
 /** TypeScript receiver annotations occupy no positional runtime parameter slot. */
 export const runtimeFunctionParameters = (
@@ -71,9 +75,10 @@ export const isPrimitiveJavaScriptExpression = (node: t.Node): boolean => {
     if (
       t.isBinaryExpression(node) &&
       !["in", "instanceof"].includes(node.operator)
-    )
+    ) {
+      if (node.operator === "===" || node.operator === "!==") continue;
       operands = [node.left, node.right];
-    else if (t.isUnaryExpression(node)) {
+    } else if (t.isUnaryExpression(node)) {
       if (["void", "typeof", "!", "delete"].includes(node.operator)) continue;
       operands = [node.argument];
     } else if (t.isTemplateLiteral(node)) operands = node.expressions;
@@ -84,6 +89,48 @@ export const isPrimitiveJavaScriptExpression = (node: t.Node): boolean => {
     for (const operand of operands) pending.push({ node: operand, depth });
   }
   return true;
+};
+
+/** Effectful inputs still evaluated when an expression returns a scalar. */
+export const javaScriptScalarEvaluationSources = (
+  expression: t.Node,
+): readonly t.Node[] => {
+  const sources: t.Node[] = [];
+  const ownedChildren = new WeakSet<t.Node>();
+  traverseJavaScriptAst(expression, {
+    skip: (node) =>
+      (t.isFunction(node) && !t.isObjectMethod(node)) ||
+      ownedChildren.has(node),
+    enter: (node) => {
+      if (node === expression) return;
+      if (t.isObjectMethod(node) || t.isObjectProperty(node)) {
+        if (node.computed) sources.push(node.key);
+        if (t.isObjectMethod(node))
+          for (const child of childNodes(node)) ownedChildren.add(child);
+      }
+      if (
+        t.isCallExpression(node) ||
+        t.isOptionalCallExpression(node) ||
+        t.isNewExpression(node) ||
+        t.isMemberExpression(node) ||
+        t.isOptionalMemberExpression(node) ||
+        t.isAwaitExpression(node) ||
+        t.isYieldExpression(node) ||
+        t.isClass(node) ||
+        t.isTaggedTemplateExpression(node) ||
+        t.isSpreadElement(node) ||
+        ((t.isBinaryExpression(node) ||
+          t.isUnaryExpression(node) ||
+          t.isTemplateLiteral(node)) &&
+          !isPrimitiveJavaScriptExpression(node))
+      ) {
+        sources.push(node);
+        // The consumer follows each selected source's evaluated inputs.
+        for (const child of childNodes(node)) ownedChildren.add(child);
+      }
+    },
+  });
+  return sources;
 };
 
 /** Intrinsic scalar slots on a newly created callable, before external writes. */

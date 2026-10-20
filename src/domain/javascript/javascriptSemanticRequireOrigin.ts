@@ -25,6 +25,7 @@ import {
 } from "./javascriptSemanticState.js";
 import {
   isPrimitiveJavaScriptExpression,
+  javaScriptScalarEvaluationSources,
   isPrimitiveJavaScriptCallableProperty,
   javaScriptExpressionValue,
   readExactJavaScriptLiteral,
@@ -52,6 +53,7 @@ import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { semanticBranchMayBeSkipped } from "./javascriptSemanticEvaluationOrder.js";
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
+import { semanticSlotAtPath } from "./javascriptSemanticSlots.js";
 import {
   semanticOpaqueBindingReadMayHaveChanged,
   createSemanticOpaqueReferenceEffectQuery,
@@ -1252,7 +1254,11 @@ const writesModuleRequire = (
     const value = javaScriptExpressionValue(node);
     if (
       interop.isFreshObject(value) ||
-      isPrimitiveJavaScriptExpression(expression) ||
+      (isPrimitiveJavaScriptExpression(expression) &&
+        !exposesModule(
+          javaScriptScalarEvaluationSources(expression),
+          expression,
+        )) ||
       (t.isUnaryExpression(value) && !exposesModule([value.argument], value)) ||
       isUnshadowedGlobal(value, state, "undefined")
     )
@@ -1344,6 +1350,33 @@ const writesModuleRequire = (
   // their assigned values instead of treating every write as the wrapper.
   // Accessors and unproven descriptor/source maps remain conservative.
   const ambientEffectAt = createSemanticAmbientEffectQuery(state);
+  const awaitMayAssimilate = (operand: t.Node, at: t.Node): boolean => {
+    if (
+      isPrimitiveJavaScriptExpression(operand) ||
+      isUnshadowedGlobal(operand, state, "undefined")
+    )
+      return false;
+    const value = evaluateSemanticExpression(operand, state, at);
+    if (
+      value.status === "literal" ||
+      (value.status === "union" && value.values.length > 0)
+    )
+      return false;
+    if (value.status !== "object" && value.status !== "array") return true;
+    const then = semanticSlotAtPath(value, ["then"]);
+    if (
+      then.presence === "present" &&
+      (then.value.status === "literal" ||
+        (then.value.status === "union" && then.value.values.length > 0))
+    )
+      return false;
+    if (then.presence !== "absent") return true;
+    return (
+      ambientEffectAt(["global", "Object", "prototype", "then"], at) ||
+      (value.status === "array" &&
+        ambientEffectAt(["global", "Array", "prototype", "then"], at))
+    );
+  };
   const returnedReferences = createSemanticReturnedReferences(state);
   const callableById = new Map(
     state.callables.map((callable) => [callable.callableId, callable]),
@@ -2184,10 +2217,13 @@ const writesModuleRequire = (
         // A callable value can expose captures or results when unknown code
         // invokes it. Merely allocating the callable proves neither absent.
         if (!callee) return true;
-      } else if (t.isNewExpression(value)) {
+      } else if (
+        t.isNewExpression(value) ||
+        t.isTaggedTemplateExpression(value)
+      ) {
         // Construction can expose instance fields even when an explicit return
-        // is primitive or a return branch is skipped. Ordinary function return
-        // references cannot prove that the resulting instance is module-free.
+        // is primitive. Neither it nor a tagged-template invocation uses the
+        // ordinary call-result proof below.
         return true;
       } else if (
         t.isCallExpression(value) ||
@@ -2235,8 +2271,11 @@ const writesModuleRequire = (
           })),
         );
       } else if (t.isAwaitExpression(value)) {
-        // Await may unwrap a thenable; an unknown operand cannot establish
-        // that the resumed value is module-free.
+        // Then is looked up at suspension, including inherited slots. The own
+        // slot inventory can prove a non-callable override; unknown coverage
+        // cannot establish that the resumed value is the original operand.
+        timeDependent = true;
+        if (awaitMayAssimilate(value.argument, value)) return true;
         pending.push({
           node: value.argument,
           path,
@@ -2252,6 +2291,20 @@ const writesModuleRequire = (
         t.isUnaryExpression(value) ||
         t.isTemplateLiteral(value)
       ) {
+        // Scalar results do not expose their operands to the replacement.
+        // Keep effectful subexpressions separate from the scalar result:
+        // typeof change(module) still evaluates the call, and a strict
+        // comparison can contain a coercive arithmetic operand.
+        if (isPrimitiveJavaScriptExpression(value)) {
+          pending.push(
+            ...javaScriptScalarEvaluationSources(value).map((node) => ({
+              node,
+              path: [],
+              readAt,
+            })),
+          );
+          continue;
+        }
         const operands = t.isBinaryExpression(value)
           ? [value.left, value.right]
           : t.isUnaryExpression(value)

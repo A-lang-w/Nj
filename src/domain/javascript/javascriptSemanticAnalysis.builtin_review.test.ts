@@ -7,7 +7,10 @@ import {
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import { namespaceReceiverCases } from "./javascriptNamespaceReceiver.fixture.js";
-import { opaqueMutatorCases } from "./javascriptOpaqueMutators.fixture.js";
+import {
+  opaqueMutatorCases,
+  scalarAndThenableCases,
+} from "./javascriptOpaqueMutators.fixture.js";
 import {
   callableScalarPropertyCases,
   callableReferencePropertyCases,
@@ -1967,7 +1970,7 @@ it("retains uncertainty for a saved callable property selected again after escap
   ).toEqual([]);
 });
 
-it.each(opaqueMutatorCases)(
+it.each([...opaqueMutatorCases, ...scalarAndThenableCases])(
   "retains read/capture identity across opaque and suspended inputs: $source",
   ({ source, kept }) => {
     expect(
