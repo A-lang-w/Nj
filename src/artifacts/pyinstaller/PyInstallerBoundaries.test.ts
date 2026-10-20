@@ -359,6 +359,95 @@ it("joins a late private-file close and retries its failed owner after cancellat
   });
 });
 
+for (const cancel of [false, true]) {
+  it.each([false, true])(
+    `awaits private member close before completion (cancel: ${cancel}, close failure: %s)`,
+    async (failClose) => {
+      const bytes = cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 309,
+        members: [
+          {
+            name: "PYZ.pyz",
+            typeCode: "z",
+            compress: true,
+            payload: pyzArchive({
+              magic: PYTHON_39_MAGIC,
+              modules: [
+                { name: "app", typeCode: 0, body: Buffer.from("body") },
+              ],
+            }),
+          },
+        ],
+      });
+      await withPyInstallerReader(bytes, async (reader, borrowed) => {
+        const entry = (await members(reader)).find((item) =>
+          item.path.endsWith("app.pyc"),
+        )!;
+        const entered = deferred(),
+          release = deferred();
+        const signal = new AbortController();
+        const failure = new Error("private member final close failed");
+        const nativeClose = OwnedFileHandle.prototype.close;
+        let owner: OwnedFileHandle | undefined;
+        let attempts = 0;
+        const spy = vi
+          .spyOn(OwnedFileHandle.prototype, "close")
+          .mockImplementation(async function (this: OwnedFileHandle) {
+            if (owner === undefined) {
+              owner = this;
+              attempts += 1;
+              entered.resolve();
+              await release.promise;
+              if (failClose) throw failure;
+            } else if (this === owner) attempts += 1;
+            await nativeClose.call(this);
+          });
+        const output = await reader.open(entry, signal.signal);
+        const reading = buffer(output).then(
+          (value) => ({ ok: true as const, value }),
+          (cause: unknown) => ({ ok: false as const, cause }),
+        );
+        try {
+          await entered.promise;
+          expect(output.readableEnded).toBe(false);
+          expect(owner?.handle.fd).toBeGreaterThanOrEqual(0);
+          if (cancel) {
+            signal.abort(new Error("cancel during member cleanup"));
+            await setImmediate();
+            expect(output.destroyed).toBe(false);
+          }
+          release.resolve();
+          const result = await reading;
+          if (failClose || cancel) {
+            expect(result.ok).toBe(false);
+            if (result.ok) throw new Error("Expected read failure");
+            expect(result.cause).toMatchObject(
+              failClose
+                ? { reason: "io", message: failure.message }
+                : { reason: "cancelled" },
+            );
+            if (failClose) expect(owner?.handle.fd).toBeGreaterThanOrEqual(0);
+          } else {
+            expect(result.ok).toBe(true);
+            if (!result.ok) throw result.cause;
+            expect(result.value.subarray(16)).toEqual(Buffer.from("body"));
+          }
+          await reader.close();
+          expect(attempts).toBe(failClose ? 2 : 1);
+          expect(owner?.handle.fd).toBe(-1);
+          expect(borrowed.fd).toBeGreaterThanOrEqual(0);
+        } finally {
+          release.resolve();
+          await reading;
+          spy.mockRestore();
+          await reader.close();
+        }
+      });
+    },
+  );
+}
+
 it("preserves a private-image read failure when its descriptor close also fails", async () => {
   const bytes = cArchiveExecutable({
     layout: "2.1",

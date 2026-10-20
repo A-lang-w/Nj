@@ -193,6 +193,11 @@ export class PyInstallerArtifactReader implements ArtifactReader {
         await finished(parts.source, { cleanup: true }).catch(() => undefined);
         abortIfNeeded(active);
       }
+      // Keep one close attempt in this read. Failed owners stay in the store
+      // for reader.close() to retry, without losing the original failure.
+      let closeAttempt: Promise<void> | undefined;
+      const closeSource = (primary?: unknown) =>
+        (closeAttempt ??= parts.close?.(primary));
       const stream = pyInstallerMemberStream(parts.source, {
         sourceBytes:
           read.kind === "carchive" ? read.source.compressedSize : read.length,
@@ -211,8 +216,15 @@ export class PyInstallerArtifactReader implements ArtifactReader {
           ? { charge: (bytes: number) => this.#charge(bytes) }
           : {}),
         complete: async (bytes) => {
-          await parts.verify?.();
-          await this.#verifySource();
+          try {
+            await parts.verify?.();
+            await this.#verifySource();
+            abortIfNeeded(active);
+          } catch (cause: unknown) {
+            await closeSource(cause);
+            throw cause;
+          }
+          await closeSource();
           abortIfNeeded(active);
           if (read.kind === "pyz" && previousSize === undefined)
             this.#openedPyzSizes.set(entry.adapterKey, bytes);
@@ -226,7 +238,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
           } catch (cause: unknown) {
             primary = cause;
           }
-          await parts.close?.(primary);
+          await closeSource(primary);
           if (primary !== undefined) throw primary;
         })
         .catch((cause: unknown) =>

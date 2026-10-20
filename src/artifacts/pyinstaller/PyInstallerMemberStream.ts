@@ -22,6 +22,7 @@ export const pyInstallerMemberStream = (
 ): { readonly output: Readable; readonly completion: Promise<void> } => {
   let bytes = 0;
   let headerSent = false;
+  let completing = false;
   const prependHeader = (): void => {
     if (!headerSent && options.header !== undefined)
       output.push(options.header);
@@ -45,6 +46,7 @@ export const pyInstallerMemberStream = (
       }
     },
     flush(callback) {
+      completing = true;
       void (async () => {
         abortIfNeeded(options.signal);
         if (
@@ -67,14 +69,28 @@ export const pyInstallerMemberStream = (
         abortIfNeeded(options.signal);
         prependHeader();
       })().then(
-        () => callback(),
-        (cause: unknown) => callback(asError(cause)),
+        () => {
+          completing = false;
+          try {
+            abortIfNeeded(options.signal);
+          } catch (cause: unknown) {
+            callback(asError(cause));
+            return;
+          }
+          callback();
+        },
+        (cause: unknown) => {
+          completing = false;
+          callback(asError(cause));
+        },
       );
     },
   });
   // A consumer can retire its reader before attaching its stream error handler.
   output.on("error", () => undefined);
   const onAbort = (): void => {
+    // Verification and private-file cleanup own their accepted native I/O.
+    if (completing) return;
     // The descriptor source owns cancellation until its native read settles.
     // Retiring it downstream earlier would hide a native I/O rejection.
     if (!source.readableEnded && !source.destroyed) return;
