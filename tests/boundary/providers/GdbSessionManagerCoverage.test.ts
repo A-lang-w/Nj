@@ -3347,8 +3347,8 @@ it.each(["reply-first", "stop-first"] as const)(
     const observedRun = new Promise<void>((resolve) => {
       running = resolve;
     });
-    let interruptSent!: (token: number) => void;
-    const observedInterrupt = new Promise<number>((resolve) => {
+    let interruptSent!: (token: string) => void;
+    const observedInterrupt = new Promise<string>((resolve) => {
       interruptSent = resolve;
     });
     const commands: string[] = [];
