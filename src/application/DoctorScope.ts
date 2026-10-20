@@ -81,7 +81,11 @@ export const scopeDoctorChecks = (
   const hopperHostChecks = input.scope.providers.includes("hopper")
     ? input.checks.filter(({ name }) => name === "host")
     : [];
-  // A process-start failure blocks the client and skill even with no provider.
+  // parseConfig rejects these before the MCP server starts. Hopper's own
+  // scope already includes hopper-startup-timeout through its provider checks.
+  const blocksMcpStartup = (check: DoctorCheck): boolean =>
+    check.name.startsWith("runtime-configuration:") ||
+    check.name === "hopper-startup-timeout";
   const blocksProcess = (check: DoctorCheck): boolean => {
     const setting = check.details?.setting;
     return (
@@ -90,28 +94,20 @@ export const scopeDoctorChecks = (
       blocksProcessStart(setting)
     );
   };
-  const processStartChecks = input.checks.filter(blocksProcess);
-  // Remaining admission failures block the selected native engine.
-  const nativeConfigurationChecks =
-    input.scope.providers.length > 0
-      ? input.checks.filter(
-          (check) =>
-            check.name.startsWith("runtime-configuration:") &&
-            !blocksProcess(check),
-        )
-      : [];
-  // The Hopper timeout is parsed before every native engine. Hopper's own
-  // scope already includes hopper-startup-timeout.
-  const sharedHopperTimeoutChecks =
-    input.scope.providers.length > 0 &&
-    !input.scope.providers.includes("hopper")
-      ? input.checks.filter(({ name }) => name === "hopper-startup-timeout")
-      : [];
+  const exercisesMcpStartup =
+    input.scope.clients.length > 0 || input.scope.providers.length > 0;
+  const startupChecks = (
+    exercisesMcpStartup
+      ? input.checks.filter(blocksMcpStartup)
+      : input.checks.filter(blocksProcess)
+  ).filter(
+    (check) =>
+      check.name !== "hopper-startup-timeout" ||
+      !input.scope.providers.includes("hopper"),
+  );
   const scopeChecks = [
     ...coreChecks,
-    ...processStartChecks,
-    ...nativeConfigurationChecks,
-    ...sharedHopperTimeoutChecks,
+    ...startupChecks,
     ...hopperHostChecks,
     ...selectedProviderChecks,
     ...clientChecks,
@@ -121,9 +117,7 @@ export const scopeDoctorChecks = (
   return {
     healthy:
       coreChecks.every(({ ok }) => ok) &&
-      processStartChecks.every(({ ok }) => ok) &&
-      nativeConfigurationChecks.every(({ ok }) => ok) &&
-      sharedHopperTimeoutChecks.every(({ ok }) => ok) &&
+      startupChecks.every(({ ok }) => ok) &&
       hopperHostChecks.every(({ ok }) => ok) &&
       clientChecks.every(({ ok }) => ok) &&
       skillChecks.every(({ ok }) => ok) &&

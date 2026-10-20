@@ -107,6 +107,28 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
   },
 );
 
+cliTest(
+  "reports MCP startup failures for a selected client",
+  async ({ cli }) => {
+    const doctor = await cli.run({
+      arguments: ["--json", "doctor", "--client", "codex"],
+      environment: { REA_GHIDRA_STARTUP_TIMEOUT_MS: "abc" },
+    });
+    expect(doctor.exitCode, doctor.stderr).toBe(1);
+    expect(doctor.stderr).toBe("");
+    expect(doctor.json).toMatchObject({
+      healthy: false,
+      scope: { mode: "explicit", clients: ["codex"], providers: [] },
+      scope_checks: expect.arrayContaining([
+        expect.objectContaining({
+          name: "runtime-configuration:REA_GHIDRA_STARTUP_TIMEOUT_MS",
+          ok: false,
+        }),
+      ]),
+    });
+  },
+);
+
 cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
   "retains a configured Hopper path in host diagnostics without launching it",
   async ({ cli }) => {

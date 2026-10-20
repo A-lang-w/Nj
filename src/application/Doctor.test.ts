@@ -207,7 +207,7 @@ describe("doctor native analysis configuration", () => {
     ).toBe(false);
   });
 
-  it("keeps an invalid native setting informational outside a provider scope", async () => {
+  it("keeps an invalid native setting informational when nothing starts MCP", async () => {
     const result = await runDoctor(
       undefined,
       configurationHost({ REA_GHIDRA_STARTUP_TIMEOUT_MS: "abc" }),
@@ -227,59 +227,6 @@ describe("doctor native analysis configuration", () => {
     );
   });
 
-  it("requires an invalid log level in every explicit scope", async () => {
-    const alignedCodex: ClientRegistrationStatus = {
-      client: "codex",
-      config_path: "/home/user/.codex/config.toml",
-      command: ["/current/rea", "mcp"],
-      state: "aligned",
-      remediation: null,
-    };
-    const selectedHost: DoctorHost = {
-      ...configurationHost({
-        REA_LOG_LEVEL: "verbose",
-        REA_GHIDRA_STARTUP_TIMEOUT_MS: "abc",
-      }),
-      clientRegistrations: () => Promise.resolve([alignedCodex]),
-    };
-
-    const client = await runDoctor(undefined, selectedHost, {
-      clients: ["codex"],
-    });
-    expect(client.healthy).toBe(false);
-    expect(client.scope_checks).toContainEqual(
-      expect.objectContaining({
-        name: "runtime-configuration:REA_LOG_LEVEL",
-        ok: false,
-        details: { setting: "REA_LOG_LEVEL" },
-      }),
-    );
-    expect(client.scope_checks).toContainEqual(
-      expect.objectContaining({ name: "registration:codex", ok: true }),
-    );
-    expect(client.scope_checks.map(({ name }) => name)).not.toContain(
-      "runtime-configuration:REA_GHIDRA_STARTUP_TIMEOUT_MS",
-    );
-    expect(client.informational_checks).toContainEqual(
-      expect.objectContaining({
-        name: "runtime-configuration:REA_GHIDRA_STARTUP_TIMEOUT_MS",
-        ok: false,
-      }),
-    );
-
-    const skill = await runDoctor(undefined, selectedHost, { skill: true });
-    expect(skill.healthy).toBe(false);
-    expect(skill.scope_checks).toContainEqual(
-      expect.objectContaining({
-        name: "runtime-configuration:REA_LOG_LEVEL",
-        ok: false,
-      }),
-    );
-    expect(skill.scope_checks).toContainEqual(
-      expect.objectContaining({ name: "skill:identity", ok: true }),
-    );
-  });
-
   it("does not treat a JEB-only timeout as native analysis configuration", async () => {
     const result = await runDoctor(
       undefined,
@@ -293,6 +240,132 @@ describe("doctor native analysis configuration", () => {
         name.startsWith("runtime-configuration:"),
       ),
     ).toBe(false);
+  });
+});
+
+describe("doctor MCP startup readiness", () => {
+  const configurationHost = (
+    environment: Readonly<NodeJS.ProcessEnv>,
+  ): DoctorHost => ({
+    ...systemDoctorHost({ environment: { ...environment } }),
+    ...host({
+      installationPaths: () => Promise.resolve([]),
+      clientRegistrations: () => Promise.resolve([]),
+    }),
+  });
+  const alignedCodex: ClientRegistrationStatus = {
+    client: "codex",
+    config_path: "/home/user/.codex/config.toml",
+    command: ["/current/rea", "mcp"],
+    state: "aligned",
+    remediation: null,
+  };
+  const selectedHost = (
+    environment: Readonly<NodeJS.ProcessEnv>,
+  ): DoctorHost => ({
+    ...configurationHost(environment),
+    clientRegistrations: () => Promise.resolve([alignedCodex]),
+  });
+
+  it("requires an invalid log level for a client and for the skill", async () => {
+    const client = await runDoctor(
+      undefined,
+      selectedHost({
+        REA_LOG_LEVEL: "verbose",
+        REA_GHIDRA_STARTUP_TIMEOUT_MS: "abc",
+      }),
+      { clients: ["codex"] },
+    );
+    expect(client.healthy).toBe(false);
+    expect(client.scope_checks).toContainEqual(
+      expect.objectContaining({
+        name: "runtime-configuration:REA_LOG_LEVEL",
+        ok: false,
+        details: { setting: "REA_LOG_LEVEL" },
+      }),
+    );
+    expect(client.scope_checks).toContainEqual(
+      expect.objectContaining({
+        name: "runtime-configuration:REA_GHIDRA_STARTUP_TIMEOUT_MS",
+        ok: false,
+      }),
+    );
+    expect(client.scope_checks).toContainEqual(
+      expect.objectContaining({ name: "registration:codex", ok: true }),
+    );
+
+    const skill = await runDoctor(
+      undefined,
+      selectedHost({
+        REA_LOG_LEVEL: "verbose",
+        REA_GHIDRA_STARTUP_TIMEOUT_MS: "abc",
+      }),
+      { skill: true },
+    );
+    expect(skill.healthy).toBe(false);
+    expect(skill.scope_checks).toContainEqual(
+      expect.objectContaining({
+        name: "runtime-configuration:REA_LOG_LEVEL",
+        ok: false,
+      }),
+    );
+    expect(skill.scope_checks.map(({ name }) => name)).not.toContain(
+      "runtime-configuration:REA_GHIDRA_STARTUP_TIMEOUT_MS",
+    );
+  });
+
+  it("requires every MCP startup failure for an aligned client", async () => {
+    const ghidraTimeout = await runDoctor(
+      undefined,
+      selectedHost({ REA_GHIDRA_STARTUP_TIMEOUT_MS: "abc" }),
+      { clients: ["codex"] },
+    );
+    expect(ghidraTimeout.healthy).toBe(false);
+    expect(ghidraTimeout.scope_checks).toContainEqual(
+      expect.objectContaining({
+        name: "runtime-configuration:REA_GHIDRA_STARTUP_TIMEOUT_MS",
+        ok: false,
+      }),
+    );
+    expect(ghidraTimeout.scope_checks).toContainEqual(
+      expect.objectContaining({ name: "registration:codex", ok: true }),
+    );
+
+    const hopperTimeout = await runDoctor(
+      undefined,
+      selectedHost({ REA_HOPPER_STARTUP_TIMEOUT_MS: "abc" }),
+      { clients: ["codex"] },
+    );
+    expect(hopperTimeout.healthy).toBe(false);
+    expect(
+      hopperTimeout.scope_checks.filter(
+        ({ name }) => name === "hopper-startup-timeout",
+      ),
+    ).toHaveLength(1);
+
+    const hopperAndClient = await runDoctor(
+      undefined,
+      selectedHost({ REA_HOPPER_STARTUP_TIMEOUT_MS: "abc" }),
+      { clients: ["codex"], providers: ["hopper"] },
+    );
+    expect(
+      hopperAndClient.scope_checks.filter(
+        ({ name }) => name === "hopper-startup-timeout",
+      ),
+    ).toHaveLength(1);
+
+    const skill = await runDoctor(
+      undefined,
+      selectedHost({ REA_GHIDRA_STARTUP_TIMEOUT_MS: "abc" }),
+      { skill: true },
+    );
+    expect(skill.healthy).toBe(true);
+    expect(skill.informational_checks).toContainEqual(
+      expect.objectContaining({
+        name: "runtime-configuration:REA_GHIDRA_STARTUP_TIMEOUT_MS",
+        ok: false,
+      }),
+    );
   });
 });
 
