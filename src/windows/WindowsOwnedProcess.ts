@@ -359,7 +359,7 @@ export class WindowsOwnedProcess extends EventEmitter {
       const failure = cause instanceof Error ? cause : new Error(String(cause));
       this.#failure = failure.message;
       if (this.listenerCount("error") > 0) this.emit("error", failure);
-      if (!this.#closed) this.#schedule(100);
+      if (!this.#closed) this.#schedule();
     }
   }
 
