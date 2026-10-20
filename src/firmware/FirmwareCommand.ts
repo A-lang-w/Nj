@@ -1,7 +1,5 @@
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { randomUUID } from "node:crypto";
-import { access, realpath, stat } from "node:fs/promises";
-import { constants } from "node:fs";
 import { isAbsolute } from "node:path";
 import {
   AnalysisCapabilityUnavailableError,
@@ -19,6 +17,11 @@ import {
 } from "../process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
+import {
+  FIRMWARE_COMMAND_VARIABLES,
+  firmwareLimiterPath,
+  inspectFirmwareExecutable,
+} from "./FirmwareConfiguration.js";
 import {
   FirmwareFileAccess,
   inventoryFirmwareOutput,
@@ -47,8 +50,7 @@ export const resolveFirmwareCommand = async (
   files: FirmwareFileAccess,
   signal?: AbortSignal,
 ) => {
-  const variable =
-    engine === "binwalk" ? "REA_BINWALK_COMMAND" : "REA_UNBLOB_COMMAND";
+  const variable = FIRMWARE_COMMAND_VARIABLES[engine];
   const configured = environment[variable];
   if (
     process.platform !== "linux" ||
@@ -60,47 +62,31 @@ export const resolveFirmwareCommand = async (
       operation,
       `This integration requires Linux and an absolute ${variable} path to the caller-supplied tool`,
     );
-  const command = await realpath(configured).catch((cause: unknown) => {
-    throw firmwareToolUnavailable(
-      engine,
-      operation,
-      `${variable} is unavailable: ${cause instanceof Error ? cause.message : String(cause)}`,
-    );
-  });
-  let sha256: string;
+  const command = await inspectFirmwareExecutable(configured, variable);
+  if (!command.ok)
+    throw firmwareToolUnavailable(engine, operation, command.error);
+  const limiter = await inspectFirmwareExecutable(
+    firmwareLimiterPath(environment),
+    "REA_FIRMWARE_PRLIMIT_COMMAND (util-linux prlimit)",
+    false,
+  );
+  if (!limiter.ok)
+    throw firmwareToolUnavailable(engine, operation, limiter.error);
   try {
-    await access(command, constants.R_OK | constants.X_OK);
-    if (!(await stat(command)).isFile())
-      throw new TypeError("Configured path is not a regular file");
-    sha256 = await files.hash(command, signal);
+    const sha256 = await files.hash(command.value, signal);
+    return {
+      command: command.value,
+      limiter: firmwareLimiterPath(environment),
+      sha256,
+    };
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure) throw cause;
     throw firmwareToolUnavailable(
       engine,
       operation,
-      `${variable} is not a readable executable regular file: ${command}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      `${variable} could not be fingerprinted: ${command.value}: ${cause instanceof Error ? cause.message : String(cause)}`,
     );
   }
-  const limiter =
-    environment.REA_FIRMWARE_PRLIMIT_COMMAND ?? "/usr/bin/prlimit";
-  if (!isAbsolute(limiter))
-    throw firmwareToolUnavailable(
-      engine,
-      operation,
-      "REA_FIRMWARE_PRLIMIT_COMMAND must be absolute",
-    );
-  try {
-    await access(limiter, constants.X_OK);
-    if (!(await stat(limiter)).isFile())
-      throw new TypeError("Configured path is not a regular file");
-  } catch (cause: unknown) {
-    throw firmwareToolUnavailable(
-      engine,
-      operation,
-      `Resource limiter is not an executable regular file: ${limiter}: ${cause instanceof Error ? cause.message : String(cause)}; provide util-linux prlimit`,
-    );
-  }
-  return { command, limiter, sha256 };
 };
 
 /** Execute one bounded provider command and verify its owned descendants have stopped. */
