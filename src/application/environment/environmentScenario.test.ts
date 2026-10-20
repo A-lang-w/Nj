@@ -83,7 +83,7 @@ describe("environment manifests from capture_browser_scenario parents", () => {
     });
     if (refused.ok) throw new Error("Expected the unsupported view refusal");
     expect(JSON.stringify(projectAnalysisError(refused.error))).toContain(
-      "summary, browser-scenario and environment-manifest views",
+      "summary, browser-scenario, environment-manifest and environment-state views",
     );
   });
 

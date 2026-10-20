@@ -225,6 +225,13 @@ names are inferences; the Evidence is inferred whenever any tool or excluded gro
 is templated, and derived otherwise.
 See [environment manifests](web-network-captures.md#environment-manifest).
 
+`inspect_analysis_view` also accepts `environment-state` for the same parents,
+extracting the initial state the recorded reads observed: entity types with an
+identity field, entities, documents for written non-entity paths, and a render
+plan per read tool that reproduces its recordings from the state or names why it
+cannot. Types and identity are inferences, so the Evidence is always inferred.
+See [environment state](web-network-captures.md#environment-state).
+
 `inspect_analysis_view` also reads completed `capture_browser_scenario`
 Evidence: a summary, step pages that compare each step's capture with the
 previous step's capture, and one step's retained accessibility or DOM text.

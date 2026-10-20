@@ -33,6 +33,7 @@ import {
 import { err, ok, type Result } from "../../domain/result.js";
 import { WebNetworkApiSurfaceAccumulator } from "../../domain/analysisView/WebNetworkApiSurfaceAccumulator.js";
 import { EnvironmentManifestAccumulator } from "../../domain/analysisView/EnvironmentManifestAccumulator.js";
+import { EnvironmentStateAccumulator } from "../../domain/analysisView/EnvironmentStateAccumulator.js";
 import { admitAnalysisViewData } from "../../domain/analysisView/analysisViewDataAdmission.js";
 import {
   readEvidenceFileSource,
@@ -129,7 +130,12 @@ export const inspectAnalysisViewValidated = (
           input.view.template_rules,
         )
       : undefined;
-  const accumulator = apiSurfaceAccumulator ?? manifestAccumulator;
+  const stateAccumulator =
+    input.view.kind === "environment-state"
+      ? new EnvironmentStateAccumulator(undefined, input.view.template_rules)
+      : undefined;
+  const accumulator =
+    apiSurfaceAccumulator ?? manifestAccumulator ?? stateAccumulator;
   if (input.source.kind === "inline") {
     const admitted =
       accumulator === undefined
@@ -161,8 +167,11 @@ export const inspectAnalysisViewValidated = (
             },
     },
     input.view,
-    apiSurfaceAccumulator,
-    manifestAccumulator,
+    {
+      apiSurface: apiSurfaceAccumulator,
+      manifest: manifestAccumulator,
+      state: stateAccumulator,
+    },
   );
   if (!projected.ok) return projected;
   if (
@@ -315,10 +324,12 @@ const createAnalysisViewEvidence = (
     result: jsonValueSchema.parse(result),
     rawResult: null,
     confidence:
-      // Grouping is whole-capture, so any templated group or parameter makes the result inferred.
-      (result.kind === "api-surface" ||
+      // Grouping is whole-capture, so any templated group or parameter makes the result inferred;
+      // entity types and identity in an extracted state always are.
+      result.kind === "environment-state" ||
+      ((result.kind === "api-surface" ||
         result.kind === "environment-manifest") &&
-      result.templated_groups > 0
+        result.templated_groups > 0)
         ? "inferred"
         : "derived",
     authority: parent.authority,

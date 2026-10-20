@@ -146,7 +146,11 @@ const exchangeEvents = (
     transaction_id: transaction,
     source_event_sequence: source,
     phase,
-    headers: { state: "not_requested" as const },
+    // The fixture's transactions record no header names, so selected header
+    // values are captured as an empty list.
+    headers: selected.header_values
+      ? { state: "captured" as const, items: [] }
+      : { state: "not_requested" as const },
     body,
   });
   const events: unknown[] = [
