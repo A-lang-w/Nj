@@ -26,9 +26,13 @@ the parameter another tool already uses at that position, so the write becomes
   preceding parts compare by the rule that names them, so a position templated
   by `prefix-variance` matches the parameter it shares.
 - The literal qualifies when it is one of the values any such tool observed at
-  that position, or when it carries a digit and has the length and character
+  that position, when it carries a digit and has the length and character
   classes (digits, lower case, upper case, each other character) of one of
-  them. An empty literal, a stop word or a `v1`-style version never qualifies.
+  them, or when every observed value has one length of eight or more
+  characters, as generated identifiers often do, and the literal has that
+  length and uses only their character classes, so an identifier that happens
+  to hold no digit still qualifies. An empty literal, a stop word or a
+  `v1`-style version never qualifies.
 - Positions templated by the four format rules are never shared, so
   `/api/teams/{numeric}` still absorbs no literal.
 - The parameter takes the name of the parameter it shares (`collection_id`,

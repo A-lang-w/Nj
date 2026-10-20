@@ -1230,7 +1230,7 @@ it("templates an unobserved literal only when it carries a digit and is spelled 
       ["GET", "https://k.test/api/readlists/0RZ56NR37AC1T"],
       ["PATCH", "https://k.test/api/readlists/0RZ576R5KA57B", null, "{}"],
       ["PUT", "https://k.test/api/readlists/0rz576r5ka57b", null, "{}"],
-      ["DELETE", "https://k.test/api/readlists/ABCDEFGHIJKLM", null],
+      ["DELETE", "https://k.test/api/readlists/ABCDEFGHIJ", null],
       ["POST", "https://k.test/api/readlists/Metrics::12", null, "{}"],
       ["GET", "https://k.test/api/items/a1"],
       ["GET", "https://k.test/api/items/b2"],
@@ -1241,7 +1241,7 @@ it("templates an unobserved literal only when it carries a digit and is spelled 
     "PUT /api/items/v2",
     "GET /api/items/{item_id}",
     "PUT /api/readlists/0rz576r5ka57b",
-    "DELETE /api/readlists/ABCDEFGHIJKLM",
+    "DELETE /api/readlists/ABCDEFGHIJ",
     "POST /api/readlists/Metrics::12",
     "GET /api/readlists/{readlist_id}",
     "PATCH /api/readlists/{readlist_id}",
@@ -1343,5 +1343,34 @@ it("shares both halves of a templated pair and keeps each half's name", () => {
   ).toEqual([
     ["repo_namespace", "prefix-variance"],
     ["repo_name", "prefix-variance"],
+  ]);
+});
+
+it("templates a digit-free literal only as a member of a fixed-length identifier family", () => {
+  const projected = manifest(
+    ["sibling-variance", "prefix-variance"],
+    syntheticCapture([
+      ["GET", "https://n.test/api/workflows/yDr9n16753TZr7Zc"],
+      ["GET", "https://n.test/api/workflows/5LPA94ML1gYbgAQx"],
+      ["PATCH", "https://n.test/api/workflows/FkMwxmXNGaGVsXFG", null, "{}"],
+      ["DELETE", "https://n.test/api/workflows/listForAccounts", null],
+      ["PUT", "https://n.test/api/workflows/fkmw-xmxn-gagv-x", null, "{}"],
+      ["GET", "https://n.test/api/tags/a1"],
+      ["GET", "https://n.test/api/tags/b22"],
+      ["DELETE", "https://n.test/api/tags/cc", null],
+      ["GET", "https://n.test/api/labels/ab12cd34"],
+      ["GET", "https://n.test/api/labels/ef56gh78"],
+      ["DELETE", "https://n.test/api/labels/abcdefgh", null],
+    ]),
+  );
+  expect(projected.tools.map(line)).toEqual([
+    "DELETE /api/labels/{label_id}",
+    "GET /api/labels/{label_id}",
+    "DELETE /api/tags/cc",
+    "GET /api/tags/{tag_id}",
+    "PUT /api/workflows/fkmw-xmxn-gagv-x",
+    "DELETE /api/workflows/listForAccounts",
+    "GET /api/workflows/{workflow_id}",
+    "PATCH /api/workflows/{workflow_id}",
   ]);
 });

@@ -1,7 +1,5 @@
-import {
-  compareUnicodeCodePoints as compare,
-  compositeKey,
-} from "../unicodeCodePointOrder.js";
+import { compositeKey } from "../unicodeCodePointOrder.js";
+import { spelledLikeObserved } from "./environmentManifestSpelling.js";
 import type { RouteRule } from "./webNetworkRouteTemplates.js";
 
 /** Opt-in template rules applied after the four exact format rules. */
@@ -444,34 +442,15 @@ const sharedPositions = (
   return shared;
 };
 
-/** The distinct classes of a text's characters: digits, lower case, upper case and each other character. */
-const characterClasses = (text: string): string =>
-  [
-    ...new Set(
-      text
-        .replaceAll(/\d/gu, "0")
-        .replaceAll(/[a-z]/gu, "a")
-        .replaceAll(/[A-Z]/gu, "A"),
-    ),
-  ]
-    .sort(compare)
-    .join("");
-
-/** One of the observed values, or a digit-bearing value with the length and character classes of one; never a stop word or version. */
+/** One of the observed values or spelled like them; never empty, a stop word or a version. */
 const sharesPosition = (
   value: string,
   observed: ReadonlySet<string>,
-): boolean => {
-  if (value === "" || STOP_WORDS.has(value) || VERSION_TOKEN.test(value))
-    return false;
-  if (observed.has(value)) return true;
-  if (!/\d/u.test(value)) return false;
-  const classes = characterClasses(value);
-  return [...observed].some(
-    (other) =>
-      other.length === value.length && characterClasses(other) === classes,
-  );
-};
+): boolean =>
+  value !== "" &&
+  !STOP_WORDS.has(value) &&
+  !VERSION_TOKEN.test(value) &&
+  (observed.has(value) || spelledLikeObserved(value, observed));
 
 /** The bucket's earliest group, with each position's parameter taken from a group that templated it by its own rule when one did. */
 const sharedShape = (bucket: readonly ToolGroup[]): ToolGroup => {
