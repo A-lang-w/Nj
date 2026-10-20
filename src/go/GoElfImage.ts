@@ -101,9 +101,10 @@ export const readGoElfImage = (bytes: Buffer): GoBinaryContainer => {
     "ELF program headers",
   );
   const mappings: GoFileMapping[] = [];
+  const executableMappings: GoFileMapping[] = [];
   const zeroFills: GoZeroFillMapping[] = [];
   const sections: GoImageSection[] = [];
-  let fallback: GoFileMapping | null = null;
+  const fallback: GoFileMapping[] = [];
   for (let index = 0; index < phCount; index++) {
     const offset = phStart + index * phWidth;
     if (reader.u32(offset) !== 1) continue;
@@ -123,10 +124,13 @@ export const readGoElfImage = (bytes: Buffer): GoBinaryContainer => {
         : reader.fileRange(fileOffset, size, "ELF load segment")),
       address,
     };
-    if (mapping.size !== 0) mappings.push(mapping);
+    if (mapping.size !== 0) {
+      mappings.push(mapping);
+      if ((flags & 1) !== 0) executableMappings.push(mapping);
+    }
     if (memorySize > size)
       zeroFills.push({ address: address + size, size: memorySize - size });
-    if (fallback === null && (flags & 3) === 2) fallback = mapping;
+    if (mapping.size !== 0 && (flags & 3) === 2) fallback.push(mapping);
   }
   let search: GoFileMapping | null = null;
   if (shCount !== 0) {
@@ -217,16 +221,16 @@ export const readGoElfImage = (bytes: Buffer): GoBinaryContainer => {
       }
     }
   }
-  const machine = reader.u16(18);
   return {
     format: "elf",
-    architecture: elfArchitecture(machine),
+    architecture: goArchitectureForElfMachine(fixedHeader.value.machine),
     bits,
     byte_order: reader.little ? "little" : "big",
     mappings,
+    executable_mappings: executableMappings,
     zero_fills: zeroFills,
     sections,
-    search: search ?? fallback,
+    search: search === null ? fallback : [search],
   };
 };
 
@@ -324,7 +328,8 @@ const elfImageSection = ({
 
 const SHT_NOBITS = 8;
 
-const elfArchitecture = (machine: number): string => {
+/** Go build-info vocabulary, including families outside REA target admission. */
+const goArchitectureForElfMachine = (machine: number): string => {
   const names = new Map([
     [3, "386"],
     [8, "mips"],

@@ -5,9 +5,11 @@ import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.math.BigInteger;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.SocketTimeoutException;
 import java.net.StandardProtocolFamily;
 import java.net.UnixDomainSocketAddress;
 import java.nio.channels.Channels;
@@ -138,6 +140,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         "params"
     );
     private static final String[] CAPABILITIES = {
+        "read_binary_inventory_summary",
         "annotate_native_function",
         "set_address_name",
         "set_addresses_names",
@@ -298,7 +301,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     Files.move(pendingPath, endpointPath);
                 }
             }
-            acceptClient(server, descriptor);
+            acceptAuthenticatedLoopbackClient(server, descriptor);
         }
         finally {
             Files.deleteIfExists(pendingPath);
@@ -308,6 +311,50 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private static boolean isWindowsHost() {
         return System.getProperty("os.name", "").startsWith("Windows");
+    }
+
+    private static String readLoopbackHandshake(
+            SocketChannel client, int maxBytes, long timeoutMillis) throws IOException {
+        long deadline = System.nanoTime() + timeoutMillis * 1_000_000L;
+        InputStream input = client.socket().getInputStream();
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        while (true) {
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) throw new SocketTimeoutException("Bridge authentication timed out");
+            client.socket().setSoTimeout((int) Math.max(1,
+                Math.min(Integer.MAX_VALUE, (remaining + 999_999L) / 1_000_000L)));
+            int value = input.read();
+            if (value == -1) return null;
+            if (value == '\n') return bytes.toString(StandardCharsets.UTF_8);
+            if (bytes.size() == maxBytes) throw new IOException("Bridge authentication frame is too large");
+            bytes.write(value);
+        }
+    }
+
+    private void acceptAuthenticatedLoopbackClient(
+            ServerSocketChannel server, SessionDescriptor descriptor) throws Exception {
+        while (true) {
+            try (SocketChannel client = server.accept()) {
+                Request first;
+                try {
+                    String line = readLoopbackHandshake(client, 64 * 1024, 1_000);
+                    if (line == null) continue;
+                    first = parseRequest(line, descriptor.token);
+                }
+                catch (IOException | RuntimeException rejected) {
+                    // A rejected unauthenticated peer cannot consume the bridge session.
+                    continue;
+                }
+                client.socket().setSoTimeout(0);
+                try (BufferedReader reader = new BufferedReader(
+                         Channels.newReader(client, StandardCharsets.UTF_8));
+                     BufferedWriter writer = new BufferedWriter(
+                         Channels.newWriter(client, StandardCharsets.UTF_8))) {
+                    serveClient(descriptor, reader, writer, first);
+                }
+                return;
+            }
+        }
     }
 
     private void acceptClient(
@@ -320,26 +367,28 @@ public final class ReaGhidraBridge extends HeadlessScript {
              BufferedWriter writer = new BufferedWriter(
                  Channels.newWriter(client, StandardCharsets.UTF_8)
              )) {
-            serveClient(descriptor, reader, writer);
+            serveClient(descriptor, reader, writer, null);
         }
     }
 
     private void serveClient(
             SessionDescriptor descriptor,
             BufferedReader reader,
-            BufferedWriter writer) throws Exception {
+            BufferedWriter writer,
+            Request first) throws Exception {
         while (true) {
-            String line = reader.readLine();
-            if (line == null) {
-                return;
-            }
-            Request request;
-            try {
-                request = parseRequest(line, descriptor.token);
-            }
-            catch (RuntimeException exception) {
-                writeFailure(writer, 1, "invalid_request", "Bridge request is invalid");
-                return;
+            Request request = first;
+            first = null;
+            if (request == null) {
+                String line = reader.readLine();
+                if (line == null) return;
+                try {
+                    request = parseRequest(line, descriptor.token);
+                }
+                catch (RuntimeException exception) {
+                    writeFailure(writer, 1, "invalid_request", "Bridge request is invalid");
+                    return;
+                }
             }
             try {
                 if (request.method.equals("shutdown")) {
@@ -379,6 +428,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             );
         }
         return switch (request.method) {
+            case "read_binary_inventory_summary" -> binaryInventorySummary(request.params);
             case "inspect_native_load_image" -> inspectNativeLoadImage(request.params);
             case "read_bytes" -> readMemoryBytes(request.params);
             case "search_bytes" -> searchMemoryBytes(request.params, descriptor);
@@ -408,6 +458,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 FunctionAnalysisObservation observation = analyzeFunctionObservation(request.params);
                 JsonObject result = functionObservation(observation.dossier(), observation.limitations());
                 result.add("relationship_coverage", observation.relationshipCoverage());
+                if (observation.decompilerFailed()) result.addProperty("cache_policy", "live");
                 yield result;
             }
             case "set_address_name", "set_addresses_names" -> {
@@ -886,7 +937,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             String value = decompiledText(decompile(function));
             JsonObject result = functionObservation(
                 value == null ? JsonNull.INSTANCE : GSON.toJsonTree(value),
-                noReturnCallLimitations(
+                functionBoundaryLimitations(
+                    function,
                     currentProgram.getListing().getInstructions(function.getBody(), true)
                 )
             );
@@ -978,7 +1030,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         InstructionScan scan = scanInstructions(function, Integer.MAX_VALUE);
         return functionObservation(
             GSON.toJsonTree(renderAssembly(scan.instructions)),
-            noReturnCallLimitations(scan.instructions)
+            functionBoundaryLimitations(function, scan.instructions)
         );
     }
 
@@ -997,7 +1049,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         limitations.add(
             "The fast path does not invoke the decompiler or scan whole-program names and strings."
         );
-        List<String> boundaryLimitations = noReturnCallLimitations(scan.instructions);
+        List<String> boundaryLimitations = functionBoundaryLimitations(function, scan.instructions);
         for (String limitation : boundaryLimitations) limitations.add(limitation);
         JsonObject result = new JsonObject();
         result.add("procedure", procedureIdentity(function));
@@ -1020,7 +1072,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             result.add(canonicalAddress(item.getEntryPoint()));
         }
         if (callers) {
-            JsonObject observation = functionObservation(result, noReturnCallLimitations(
+            JsonObject observation = functionObservation(result, functionBoundaryLimitations(function,
                 currentProgram.getListing().getInstructions(function.getBody(), true)
             ));
             observation.add("relationship_coverage", callRelationshipCoverage(null,
@@ -1050,7 +1102,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add("classification", functionClassification(function));
         return functionObservation(
             result,
-            noReturnCallLimitations(
+            functionBoundaryLimitations(
+                function,
                 currentProgram.getListing().getInstructions(function.getBody(), true)
             )
         );
@@ -1081,12 +1134,22 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.addProperty("direction", direction);
         result.add("references", edges);
         result.addProperty("reference_kinds_available", true);
-        JsonArray unresolvedCalls = direction.equals("outgoing")
-            ? callBoundaryObservation(
+        List<String> limitations;
+        JsonArray unresolvedCalls = new JsonArray();
+        if (direction.equals("outgoing")) {
+            CallBoundaryObservation calls = callBoundaryObservation(
                 function, currentProgram.getListing().getInstructions(function.getBody(), true), null, true, references
-            ).unresolvedCalls() : new JsonArray();
+            );
+            unresolvedCalls = calls.unresolvedCalls();
+            limitations = calls.limitations();
+        } else {
+            limitations = functionBoundaryLimitations(
+                function,
+                currentProgram.getListing().getInstructions(function.getBody(), true)
+            );
+        }
         result.add("unresolved_calls", unresolvedCalls);
-        return result;
+        return functionObservation(result, limitations);
     }
 
     private JsonObject inspectNativeDataType(JsonObject params) throws Exception {
@@ -1287,11 +1350,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add("references", references);
         if (includeIncoming) {
             TreeMap<String, Reference> incoming = new TreeMap<>();
-            ReferenceIterator incomingIterator = currentProgram.getReferenceManager().getReferencesTo(address);
-            while (incomingIterator.hasNext()) {
-                monitor.checkCancelled();
-                addReference(incoming, incomingIterator.next());
-            }
+            visitObservedReferencesTo(address, reference -> addReference(incoming, reference));
             List<Reference> orderedIncoming = new ArrayList<>(incoming.values());
             orderedIncoming.sort(REFERENCE_ORDER);
             JsonArray incomingReferences = new JsonArray();
@@ -1343,16 +1402,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         requireKeys(params, Set.of("document", "address"));
         requireDocument(params);
         Address address = requireAddress(params, "address");
-        ReferenceIterator references = currentProgram.getReferenceManager().getReferencesTo(address);
         Set<Address> sources = new HashSet<>();
-        while (references.hasNext()) {
-            monitor.checkCancelled();
-            Reference reference = references.next();
-            if (reference.isEntryPointReference()) {
-                continue;
-            }
-            sources.add(reference.getFromAddress());
-            }
+        visitObservedReferencesTo(address, reference -> sources.add(reference.getFromAddress()));
         List<Address> ordered = new ArrayList<>(sources);
         ordered.sort(Address::compareTo);
         JsonArray result = new JsonArray();
@@ -1490,12 +1541,23 @@ public final class ReaGhidraBridge extends HeadlessScript {
         requireKeys(params, Set.of("procedure"));
         Function function = resolveProcedure(requireString(params, "procedure"));
         InstructionScan scan = scanInstructions(function, Integer.MAX_VALUE);
-        DecompileResults decompilation = decompile(function);
+        DecompileResults decompilation;
+        String decompilerFailure = null;
+        try {
+            decompilation = decompile(function);
+        } catch (RequestFailure failure) {
+            // The listing, reference and CFG facts below do not depend on the
+            // native decompiler. Cancellation still ends the request.
+            if (!failure.code.equals("decompile_failed")) throw failure;
+            decompilation = null;
+            decompilerFailure = failure.getMessage().strip();
+        }
         String pseudocode = decompiledText(decompilation);
         JsonObject availability = new JsonObject();
         availability.add("pseudocode", facetAvailability(
             pseudocode != null,
-            function.isExternal() ? "Ghidra does not decompile external functions."
+            decompilerFailure != null ? decompilerFailure
+                : function.isExternal() ? "Ghidra does not decompile external functions."
                 : function.getBody().isEmpty() ? "Ghidra has no function body to decompile."
                 : "Ghidra completed decompilation without returning pseudocode."
         ));
@@ -1544,9 +1606,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add("basic_blocks", blocks);
         result.add(
             "native_api",
-            nativeApiBoundary(function, decompilation)
+            decompilerFailure == null
+                ? nativeApiBoundary(function, decompilation)
+                : unavailableNativeApiBoundary(decompilerFailure)
         );
-        result.add("native_value_flow", nativeValueFlow(decompilation));
+        result.add(
+            "native_value_flow",
+            decompilerFailure == null
+                ? nativeValueFlow(decompilation)
+                : unavailableNativeValueFlow(decompilerFailure)
+        );
         // Successful full queries distinguish collected empty sets from missing facts.
         // Availability does not claim that Ghidra resolved every runtime relationship.
         for (String facet : List.of("comments", "callers", "callees", "references", "strings_names", "cfg")) {
@@ -1571,7 +1640,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         );
         if (swift && aarch64) {
             limitations.add(
-                "Swift String literals are decoded from constant register pairs at calls, returns and paired stores; literals stored one word at a time, chosen by conditional selects, passed through unresolved jumps, or built at runtime are not reported."
+                "Swift String literals are decoded from constant register pairs at calls, returns and paired stores. Literals stored one word at a time, chosen by conditional selects, or built at runtime are not reported; candidate pairs at unresolved jumps are retained as unknown omissions."
             );
             if (swiftLiterals.omissions().size() > 0) {
                 limitations.add(
@@ -1593,6 +1662,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
             !decompilation.getErrorMessage().isBlank()) {
             limitations.add("Ghidra decompiler diagnostic: " + decompilation.getErrorMessage());
         }
+        if (decompilerFailure != null) {
+            limitations.add(
+                decompilerFailure + (decompilerFailure.endsWith(".") ? " " : ". ") +
+                "Pseudocode, the native API boundary and p-code value flow are unavailable for this procedure; assembly, comments, callers, callees, references, strings, names and basic blocks come from the Ghidra program listing and were still collected."
+            );
+        }
         result.add("limitations", limitations);
         monitor.checkCancelled();
         int missingCallers = 0;
@@ -1601,25 +1676,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (unrepresentedCaller(reference, callerFunctions)) missingCallers++;
         }
         return new FunctionAnalysisObservation(result, calls.limitations(),
-            callRelationshipCoverage(calls, missingCallers));
+            callRelationshipCoverage(calls, missingCallers), decompilerFailure != null);
     }
 
     private JsonObject nativeValueFlow(DecompileResults decompilation) throws Exception {
         HighFunction highFunction =
             decompilation == null ? null : decompilation.getHighFunction();
         if (highFunction == null) {
-            JsonObject unavailable = new JsonObject();
-            unavailable.addProperty("available", false);
-            unavailable.addProperty(
-                "reason",
+            return unavailableNativeValueFlow(
                 "Ghidra has no HighFunction p-code model for this procedure"
             );
-            JsonArray limitations = new JsonArray();
-            limitations.add(
-                "No p-code operations or def-use relationships were recovered for this procedure."
-            );
-            unavailable.add("limitations", limitations);
-            return unavailable;
         }
 
         List<PcodeOpAST> selected = new ArrayList<>();
@@ -1926,6 +1992,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
+    private JsonObject binaryInventorySummary(JsonObject params) throws Exception {
+        requireKeys(params, Set.of());
+        JsonObject result = new JsonObject();
+        result.addProperty("document", currentProgram.getName());
+        result.add("segments", segments());
+        // Count the owning inventories, preserving their exact discovery rules
+        // without serializing function identities or string values for counts.
+        result.addProperty("procedure_count", procedures().size());
+        result.addProperty("string_count", strings().size());
+        return result;
+    }
+
     private JsonArray listNames(JsonObject params) throws Exception {
         requireKeys(params, Set.of("document", "address"));
         requireDocument(params);
@@ -1952,6 +2030,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private JsonArray listSegments(JsonObject params) {
         requireKeys(params, Set.of("document"));
         requireDocument(params);
+        return segments();
+    }
+
+    private JsonArray segments() {
         JsonArray result = new JsonArray();
         String imageBase = canonicalAddress(currentProgram.getImageBase());
         MemoryBlock[] blocks = currentProgram.getMemory().getBlocks();
@@ -2289,6 +2371,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
             jumpTables.add(inferredJumpTable(recoveredJumpTables[index], caseTokens));
         }
         return result;
+    }
+
+    private static JsonObject unavailableNativeValueFlow(String reason) {
+        JsonObject unavailable = new JsonObject();
+        unavailable.addProperty("available", false);
+        unavailable.addProperty("reason", reason);
+        JsonArray limitations = new JsonArray();
+        limitations.add(
+            "No p-code operations or def-use relationships were recovered for this procedure."
+        );
+        unavailable.add("limitations", limitations);
+        return unavailable;
     }
 
     private static JsonObject unavailableNativeApiBoundary(String reason) {
@@ -3380,22 +3474,19 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return omitted[0];
     }
 
-    private List<String> noReturnCallLimitations(Iterable<Instruction> instructions)
+    private List<String> functionBoundaryLimitations(
+            Function function, Iterable<Instruction> instructions)
             throws Exception {
-        List<String> limitations = new ArrayList<>();
-        for (Instruction instruction : instructions) {
-            monitor.checkCancelled();
-            String limitation = terminalCallLimitation(instruction);
-            if (limitation != null) limitations.add(limitation);
-        }
-        return limitations;
+        FunctionBoundaryLimitations boundary = new FunctionBoundaryLimitations(function);
+        for (Instruction instruction : instructions) boundary.observe(instruction);
+        return boundary.values();
     }
 
     private CallBoundaryObservation callBoundaryObservation(
             Function function, Iterable<Instruction> instructions, Set<Function> returnedCallees,
             boolean includeUnresolvedSites, List<Reference> observedReferences)
             throws Exception {
-        List<String> limitations = new ArrayList<>();
+        FunctionBoundaryLimitations boundary = new FunctionBoundaryLimitations(function);
         CallBoundaryReferences calls = new CallBoundaryReferences(returnedCallees, includeUnresolvedSites);
         if (observedReferences == null) visitReferences(function, "outgoing", calls::observe);
         else for (Reference reference : observedReferences) {
@@ -3403,9 +3494,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             calls.observe(reference);
         }
         for (Instruction instruction : instructions) {
-            monitor.checkCancelled();
-            String limitation = terminalCallLimitation(instruction);
-            if (limitation != null) limitations.add(limitation);
+            boundary.observe(instruction);
             if (!instruction.getFlowType().isCall()) continue;
             boolean destination = false;
             for (Reference reference : instruction.getReferencesFrom()) {
@@ -3419,8 +3508,91 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     "Instruction decoder identifies a call but ReferenceManager supplies no call destination");
             }
         }
-        return new CallBoundaryObservation(List.copyOf(limitations),
+        return new CallBoundaryObservation(boundary.values(),
             returnedCallees == null ? null : calls.unrepresented, calls.unresolvedCalls());
+    }
+
+    private final class FunctionBoundaryLimitations {
+        private final Function function;
+        private final List<String> limitations = new ArrayList<>();
+        private Instruction beforePrevious;
+        private Instruction previous;
+
+        private FunctionBoundaryLimitations(Function function) {
+            this.function = function;
+        }
+
+        private void observe(Instruction instruction) throws Exception {
+            monitor.checkCancelled();
+            String limitation = terminalCallLimitation(instruction);
+            if (limitation != null) limitations.add(limitation);
+            if (beforePrevious != null && previous != null) {
+                String seh = borlandSehHandlerLimitation(
+                    function, beforePrevious, previous, instruction);
+                if (seh != null) limitations.add(seh);
+            }
+            beforePrevious = previous;
+            previous = instruction;
+        }
+
+        private List<String> values() {
+            return List.copyOf(limitations);
+        }
+    }
+
+    private String borlandSehHandlerLimitation(
+            Function function, Instruction handlerPush, Instruction framePush,
+            Instruction frameLink) {
+        if (!immediatelyPrecedes(handlerPush, framePush) ||
+            !immediatelyPrecedes(framePush, frameLink) ||
+            !handlerPush.getMnemonicString().equalsIgnoreCase("PUSH") ||
+            handlerPush.getNumOperands() != 1 ||
+            !framePush.getMnemonicString().equalsIgnoreCase("PUSH") ||
+            framePush.getNumOperands() != 1 ||
+            !frameLink.getMnemonicString().equalsIgnoreCase("MOV") ||
+            frameLink.getNumOperands() != 2 ||
+            !sameFsMemoryOperand(framePush, frameLink) ||
+            !hasRegisterOperand(frameLink, 1, "ESP"))
+            return null;
+        Object[] handlerOperand = handlerPush.getOpObjects(0);
+        if (handlerOperand.length != 1 || !(handlerOperand[0] instanceof Scalar scalar) ||
+            scalar.bitLength() != 32)
+            return null;
+        Address handler = currentProgram.getAddressFactory().getDefaultAddressSpace()
+            .getAddress(scalar.getUnsignedValue());
+        if (function.getBody().contains(handler)) return null;
+        return "Ghidra Listing shows a Borland/Delphi-style SEH frame registration at " +
+            canonicalAddress(frameLink.getAddress()) + " (push " + canonicalAddress(handler) +
+            " followed by fs-segment stack chaining); handler " + canonicalAddress(handler) +
+            " lies outside this procedure's body, so callees, strings, and cross-references may omit the handler region.";
+    }
+
+    private static boolean immediatelyPrecedes(Instruction first, Instruction second) {
+        Address fallThrough = first.getFallThrough();
+        return fallThrough != null && fallThrough.equals(second.getAddress());
+    }
+
+    private static boolean sameFsMemoryOperand(Instruction first, Instruction second) {
+        String firstOperand = normalizedFsMemoryOperand(first);
+        String secondOperand = normalizedFsMemoryOperand(second);
+        return firstOperand != null && firstOperand.equalsIgnoreCase(secondOperand);
+    }
+
+    private static String normalizedFsMemoryOperand(Instruction instruction) {
+        String representation = instruction.getDefaultOperandRepresentation(0);
+        representation = representation.replaceAll("(?i)\\b(?:byte|word|dword|qword)\\s+ptr\\s+", "")
+            .replaceAll("\\s+", "");
+        return representation.regionMatches(true, 0, "fs:", 0, 3) &&
+            representation.indexOf('[') >= 0 ? representation : null;
+    }
+
+    private static boolean hasRegisterOperand(
+            Instruction instruction, int operand, String name) {
+        for (Object object : instruction.getOpObjects(operand)) {
+            if (object instanceof Register register && register.getName().equalsIgnoreCase(name))
+                return true;
+        }
+        return false;
     }
 
     private final class CallBoundaryReferences {
@@ -3549,22 +3721,34 @@ public final class ReaGhidraBridge extends HeadlessScript {
             monitor.checkCancelled();
             Address address = addresses.next();
             if (outgoing) {
-                for (Reference reference : currentProgram.getReferenceManager()
-                        .getReferencesFrom(address)) {
-                    monitor.checkCancelled();
-                    if (!reference.isEntryPointReference()) visitor.accept(reference);
-                }
+                visitObservedReferencesFrom(address, visitor);
             }
             else {
-                ReferenceIterator iterator = currentProgram.getReferenceManager()
-                    .getReferencesTo(address);
-                while (iterator.hasNext()) {
-                    monitor.checkCancelled();
-                    Reference reference = iterator.next();
-                    if (!reference.isEntryPointReference()) visitor.accept(reference);
-                }
+                visitObservedReferencesTo(address, visitor);
             }
         }
+    }
+
+    private void visitObservedReferencesFrom(Address address, ReferenceVisitor visitor)
+            throws Exception {
+        for (Reference reference : currentProgram.getReferenceManager().getReferencesFrom(address)) {
+            monitor.checkCancelled();
+            visitObservedReference(reference, visitor);
+        }
+    }
+
+    private void visitObservedReferencesTo(Address address, ReferenceVisitor visitor)
+            throws Exception {
+        ReferenceIterator references = currentProgram.getReferenceManager().getReferencesTo(address);
+        while (references.hasNext()) {
+            monitor.checkCancelled();
+            visitObservedReference(references.next(), visitor);
+        }
+    }
+
+    private static void visitObservedReference(Reference reference, ReferenceVisitor visitor)
+            throws Exception {
+        if (!reference.isEntryPointReference()) visitor.accept(reference);
     }
 
     private static void addReference(TreeMap<String, Reference> observed, Reference reference) {
@@ -3827,13 +4011,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
      * The canonical empty string is a small literal with a zero count.
      */
     private SwiftStringLiteralDecode swiftStringLiterals(Function function) throws Exception {
+        return swiftStringLiterals(function, new SwiftLiteralBudget());
+    }
+
+    // An explicit budget makes capacity omissions deterministic in producer tests.
+    private SwiftStringLiteralDecode swiftStringLiterals(
+        Function function,
+        SwiftLiteralBudget budget
+    ) throws Exception {
         Register[] registers = new Register[31];
         for (int index = 0; index < registers.length; index++) {
             registers[index] = currentProgram.getRegister("x" + index);
         }
         TreeMap<String, JsonObject> observed = new TreeMap<>();
         TreeMap<String, JsonObject> omitted = new TreeMap<>();
-        SwiftLiteralBudget budget = new SwiftLiteralBudget();
         Map<String, Boolean> selectedValues = new HashMap<>();
         SymbolicPropogator propagator = new SymbolicPropogator(currentProgram, false);
         propagator.flowConstants(function.getEntryPoint(), function.getBody(), new ContextEvaluatorAdapter() {
@@ -3841,6 +4032,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             public boolean evaluateContextBefore(VarnodeContext context, Instruction instruction) {
                 // Returning true ends only the current flow, so every queued flow checks the shared stop.
                 if (budget.stopped()) return true;
+                FlowType flow = instruction.getFlowType();
+                Address[] flowTargets = instruction.getFlows();
+                boolean unresolvedJump = flow.isJump() && !flow.isConditional() && flowTargets.length == 0;
                 for (Register[] pair : swiftStringPairs(function, instruction, registers)) {
                     Long word = registerConstant(context, pair[0]);
                     Long object = registerConstant(context, pair[1]);
@@ -3890,12 +4084,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     JsonObject item = overCapacity
                         ? swiftStringOmission(layout, word, object)
                         : swiftStringItem(value, layout, word, object);
+                    if (unresolvedJump && !overCapacity)
+                        item = swiftStringOmission(layout, word, object, "unresolved_jump");
                     item.addProperty("source_address", canonicalAddress(instruction.getAddress()));
                     JsonArray pairRegisters = new JsonArray();
                     pairRegisters.add(pair[0].getName());
                     pairRegisters.add(pair[1].getName());
                     item.add("registers", pairRegisters);
-                    (overCapacity ? omitted : observed).put(key, item);
+                    (overCapacity || unresolvedJump ? omitted : observed).put(key, item);
                     if (overCapacity) {
                         budget.stop();
                         return true;
@@ -3931,11 +4127,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (operation.getOpcode() == PcodeOp.RETURN) returns = true;
         }
         // A jump is a proven tail call only when it has resolved targets and all leave the
-        // body. A targetless computed jump can still dispatch inside the function.
+        // body. For unresolved targetless jumps, candidate literals remain unknown omissions.
         Address[] targets = instruction.getFlows();
         boolean tailCall = flow.isJump() && !flow.isConditional() && targets.length > 0 &&
             Arrays.stream(targets).allMatch(target -> !function.getBody().contains(target));
-        if (!flow.isCall() && !returns && !tailCall) return pairs;
+        boolean unresolvedJump = flow.isJump() && !flow.isConditional() && targets.length == 0;
+        if (!flow.isCall() && !returns && !tailCall && !unresolvedJump) return pairs;
         // A String occupies two consecutive registers among x0-x7, or x0 and x1 when returned.
         int lastFirstRegister = returns ? 0 : 6;
         for (int index = 0; index <= lastFirstRegister; index++) {
@@ -4078,6 +4275,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
             remaining = Math.max(0, (runtime.maxMemory() - runtime.totalMemory() + runtime.freeMemory()) / 2);
         }
 
+        SwiftLiteralBudget(long remaining) {
+            if (remaining < 0) throw new IllegalArgumentException("Swift literal budget must be nonnegative");
+            this.remaining = remaining;
+        }
+
         boolean takeState() {
             if (remaining < BYTES_PER_RECORD) return false;
             remaining -= BYTES_PER_RECORD;
@@ -4116,6 +4318,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private static JsonObject swiftStringOmission(SwiftLiteralLayout layout, long word, long object) {
+        return swiftStringOmission(layout, word, object, "capacity");
+    }
+
+    private static JsonObject swiftStringOmission(
+        SwiftLiteralLayout layout,
+        long word,
+        long object,
+        String reason
+    ) {
         JsonObject item = new JsonObject();
         item.addProperty("representation", layout.representation());
         if (layout.address() == null) {
@@ -4124,7 +4335,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             item.addProperty("address", canonicalAddress(layout.address()));
         }
         item.addProperty("byte_length", layout.byteLength());
-        item.addProperty("reason", "capacity");
+        item.addProperty("reason", reason);
         item.add("words", swiftStringWords(word, object));
         return item;
     }
@@ -4692,7 +4903,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private record InventoryItem(Address address, String value, JsonObject facts) {}
     private record AddressNameRequest(String inputAddress, Address address, String name) {}
     private record FunctionEntry(Function function, InventoryItem item) {}
-    private record FunctionAnalysisObservation(JsonObject dossier, List<String> limitations, JsonObject relationshipCoverage) {}
+    private record FunctionAnalysisObservation(JsonObject dossier, List<String> limitations, JsonObject relationshipCoverage, boolean decompilerFailed) {}
     private record CallBoundaryObservation(List<String> limitations, Integer unrepresentedCalleeCalls, JsonArray unresolvedCalls) {}
     private record SwiftStringLiteralDecode(JsonArray literals, JsonArray omissions) {}
     private record SwiftLiteralLayout(

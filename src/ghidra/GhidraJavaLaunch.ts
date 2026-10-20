@@ -1,6 +1,45 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { dirname, join } from "node:path";
-import { execFileOutput } from "../process/ExecFileOutput.js";
+import {
+  execFileOutput,
+  ExecFileOutputCancelledError,
+  execFileOutputFailure,
+  type ExecFileOutputFailure,
+} from "../process/ExecFileOutput.js";
+
+export const GHIDRA_LAUNCH_SUPPORT_CAPTURE_BYTES = 64 * 1024;
+type LaunchSupportPhase = "-envvars" | "-vmargs";
+type LaunchSupportOutcome = Omit<
+  ExecFileOutputFailure,
+  "killed" | "outputTruncated"
+> & {
+  readonly killed: boolean | null;
+  readonly outputTruncated: boolean | null;
+};
+
+export class GhidraLaunchSupportError extends Error {
+  readonly outcome: LaunchSupportOutcome | undefined;
+  readonly cancellation: { readonly reason: unknown } | undefined;
+
+  constructor(phase: LaunchSupportPhase, cause: unknown) {
+    super(`Ghidra LaunchSupport ${phase} failed`, { cause });
+    this.name = "GhidraLaunchSupportError";
+    this.cancellation =
+      cause instanceof ExecFileOutputCancelledError
+        ? { reason: cause.cause }
+        : undefined;
+    const outcome = execFileOutputFailure(cause);
+    this.outcome =
+      outcome === undefined
+        ? undefined
+        : {
+            ...outcome,
+            killed: this.cancellation === undefined ? outcome.killed : null,
+            outputTruncated:
+              this.cancellation === undefined ? outcome.outputTruncated : null,
+          };
+  }
+}
 
 /** JVM option environments remove quotes, including quotes inside an option. */
 const jvmEnvironmentArguments = (value: string): readonly string[] => {
@@ -50,6 +89,8 @@ export const ghidraJavaLaunch = async (options: {
   readonly command: string;
   readonly arguments: readonly string[];
   readonly environment: NodeJS.ProcessEnv;
+  /** REA-configured -Xmx value, not effective or observed JVM memory. */
+  readonly configuredMaxHeap?: string;
 }> => {
   const supportRoot = dirname(options.analyzeHeadlessPath);
   const installRoot = dirname(supportRoot);
@@ -85,17 +126,20 @@ export const ghidraJavaLaunch = async (options: {
   const environment = {
     ...snapshotEnvironment(options.environment, options.platform),
   };
-  const configuredEnvironment = await execFileOutput(
-    command,
-    [...supportArguments, "-envvars"],
-    {
-      env: environment,
-      // Wait for the helper's exit on abort so a cancelled or timed-out
-      // startup never leaves the probe running without an owning process.
-      stopSignal: "SIGTERM",
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    },
-  );
+  const supportOutput = async (phase: LaunchSupportPhase) => {
+    try {
+      return await execFileOutput(command, [...supportArguments, phase], {
+        env: environment,
+        maxBuffer: GHIDRA_LAUNCH_SUPPORT_CAPTURE_BYTES,
+        // Wait for the helper's exit on abort so no probe outlives its owner.
+        stopSignal: "SIGTERM",
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      });
+    } catch (cause: unknown) {
+      throw new GhidraLaunchSupportError(phase, cause);
+    }
+  };
+  const configuredEnvironment = await supportOutput("-envvars");
   options.onStderr("-envvars", configuredEnvironment.stderr);
   for (const line of configuredEnvironment.stdout.split(/\r?\n/u)) {
     if (line === "") continue;
@@ -110,6 +154,8 @@ export const ghidraJavaLaunch = async (options: {
     if ((environment[key] ?? "") === "")
       environment[key] = line.slice(separator + 1);
   }
+  const configuredMaxHeap =
+    environment.GHIDRA_HEADLESS_MAXMEM || environment.GHIDRA_MAXMEM || "2G";
   // The merged environment becomes the analysis JVM's environment, and the
   // JVM applies these options variables automatically. An injected
   // -Dos.arch/-Dos.name there selects an unvalidated native directory without
@@ -121,17 +167,7 @@ export const ghidraJavaLaunch = async (options: {
   ] as const) {
     rejectJvmPlatformOverrides(jvmEnvironmentArguments(environment[key] ?? ""));
   }
-  const configuredArguments = await execFileOutput(
-    command,
-    [...supportArguments, "-vmargs"],
-    {
-      env: environment,
-      // Wait for the helper's exit on abort so a cancelled or timed-out
-      // startup never leaves the probe running without an owning process.
-      stopSignal: "SIGTERM",
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    },
-  );
+  const configuredArguments = await supportOutput("-vmargs");
   options.onStderr("-vmargs", configuredArguments.stderr);
   const vmArguments = configuredArguments.stdout
     .split(/\r?\n/u)
@@ -146,10 +182,11 @@ export const ghidraJavaLaunch = async (options: {
   return {
     command,
     environment,
+    configuredMaxHeap,
     arguments: [
       ...vmArguments,
       ...(options.platform === "darwin" ? ["-Xdock:name=Ghidra-Headless"] : []),
-      `-Xmx${environment.GHIDRA_HEADLESS_MAXMEM || environment.GHIDRA_MAXMEM || "2G"}`,
+      `-Xmx${configuredMaxHeap}`,
       "-XX:ParallelGCThreads=2",
       "-XX:CICompilerCount=2",
       "-Djava.awt.headless=true",

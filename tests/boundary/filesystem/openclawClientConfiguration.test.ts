@@ -70,6 +70,32 @@ describe("OpenClaw configuration paths", () => {
 });
 
 describe("OpenClaw JSON registration", () => {
+  it("isolates inherited OPENCLAW_HOME before registration and uninstall", async () => {
+    const external = await createTestTempDirectory("rea-openclaw-external-");
+    const path = join(external, "openclaw.json");
+    const original = JSON.stringify({
+      mcpServers: { rea: { command: "user-owned" } },
+    });
+    await writeFile(path, original);
+    vi.stubEnv("OPENCLAW_HOME", external);
+    clearClientLocationEnvironment();
+    const home = await createTestTempDirectory("rea-openclaw-isolated-");
+    const client = supportedClients(home, process.platform).find(
+      ({ name }) => name === "openclaw",
+    );
+    if (client?.markerPath === undefined)
+      throw new Error("missing OpenClaw client");
+    expect(client.configPath).toBe(join(home, ".openclaw", "openclaw.json"));
+    await mkdir(client.markerPath, { recursive: true });
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("configured");
+    expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
+      "removed",
+    );
+    expect(await readFile(path, "utf8")).toBe(original);
+  });
+
   const openclawClient = async () => {
     const home = await createTestTempDirectory("rea-openclaw-");
     const client = openclawPath(home, process.platform);

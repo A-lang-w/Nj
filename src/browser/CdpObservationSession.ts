@@ -11,6 +11,7 @@ import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import { authorizedMainFrame } from "./CdpAuthorizedMainFrame.js";
 import {
   allowedSanitizedUrl,
+  delayWithCancellation,
   isHttpUrl,
   numberValue,
   recordValue,
@@ -106,6 +107,7 @@ export const observeCdpSession = async (
       message: "Browser observation window ended",
       terminal: true,
     });
+    if (capture.scopeExcluded) endReason = "target_left_scope";
     return {
       browser: context.discovery.version,
       target: {
@@ -139,6 +141,7 @@ class TimelineCapture {
   finalUrl: string | null;
   #sequence = 0;
   #pendingReload = false;
+  #scopeExcluded = false;
   #endReason: EndReason | undefined;
   readonly #listeners = new Set<(reason: EndReason) => void>();
 
@@ -152,7 +155,7 @@ class TimelineCapture {
   }
 
   ingest(event: CdpEvent): void {
-    if (this.#endReason !== undefined) return;
+    if (this.#endReason !== undefined || this.#scopeExcluded) return;
     const params = recordValue(event.params);
     if (params === undefined) return;
     switch (event.method) {
@@ -207,8 +210,22 @@ class TimelineCapture {
   }
 
   setFinalUrl(rawUrl: string): void {
+    if (this.#scopeExcluded) return;
     const destination = scopedUrl(rawUrl, this.allowedOrigins);
     this.finalUrl = destination.scope === "approved" ? destination.url : null;
+  }
+
+  get scopeExcluded(): boolean {
+    return this.#scopeExcluded;
+  }
+
+  excludeTargetScope(
+    reason: "invalid_protocol_value" | "out_of_target_scope",
+  ): void {
+    if (this.#scopeExcluded) return;
+    this.#scopeExcluded = true;
+    this.finalUrl = null;
+    this.completeness.exclude("timeline", reason);
   }
 
   #navigationRequested(event: CdpEvent, params: UnknownRecord): void {
@@ -239,8 +256,7 @@ class TimelineCapture {
     this.#pendingReload = false;
     if (destination.scope === "approved") this.finalUrl = destination.url;
     else {
-      this.finalUrl = null;
-      this.completeness.exclude("timeline", "out_of_target_scope");
+      this.excludeTargetScope("out_of_target_scope");
       this.end("target_left_scope");
     }
   }
@@ -258,8 +274,7 @@ class TimelineCapture {
     });
     if (destination.scope === "approved") this.finalUrl = destination.url;
     else {
-      this.finalUrl = null;
-      this.completeness.exclude("timeline", "out_of_target_scope");
+      this.excludeTargetScope("out_of_target_scope");
       this.end("target_left_scope");
     }
   }
@@ -283,7 +298,7 @@ class TimelineCapture {
       detail: null,
     });
     if (destination.scope !== "approved") {
-      this.completeness.exclude("timeline", "out_of_target_scope");
+      this.excludeTargetScope("out_of_target_scope");
       this.end("target_left_scope");
     }
   }
@@ -342,27 +357,38 @@ const waitForWindow = async (
   signal?: AbortSignal,
 ): Promise<EndReason> =>
   await new Promise<EndReason>((resolve, reject) => {
+    const timerController = new AbortController();
     let settled = false;
     let removeEnd = (): void => {};
-    const finish = (reason: EndReason): void => {
+    const settle = (complete: () => void): void => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      timerController.abort();
       signal?.removeEventListener("abort", onAbort);
       removeEnd();
-      resolve(reason);
+      complete();
     };
-    const onAbort = (): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      removeEnd();
-      reject(new AnalysisCancelledError("observe_web_session"));
-    };
-    const timer = setTimeout(() => finish("window_elapsed"), durationMs);
-    removeEnd = capture.onEnd(finish);
+    const finish = (reason: EndReason): void => settle(() => resolve(reason));
+    const onAbort = (): void =>
+      settle(() => {
+        reject(
+          new AnalysisCancelledError("observe_web_session", {
+            cause: signal?.reason,
+          }),
+        );
+      });
     signal?.addEventListener("abort", onAbort, { once: true });
     if (signal?.aborted === true) onAbort();
+    if (!settled) removeEnd = capture.onEnd(finish);
+    if (settled) return;
+    void delayWithCancellation(
+      durationMs,
+      "observe_web_session",
+      timerController.signal,
+    ).then(
+      () => finish("window_elapsed"),
+      (cause: unknown) => settle(() => reject(cause)),
+    );
   });
 
 const captureFinalUrl = async (
@@ -370,12 +396,14 @@ const captureFinalUrl = async (
   capture: TimelineCapture,
   allowedOrigins: ReadonlySet<string>,
 ): Promise<EndReason> => {
+  if (capture.scopeExcluded) return "target_left_scope";
   const result = await context.connection.send(
     "Page.getFrameTree",
     {},
     context.sessionId,
     context.signal,
   );
+  if (capture.scopeExcluded) return "target_left_scope";
   const url = mainFrameUrl(result);
   if (
     url !== undefined &&
@@ -384,9 +412,7 @@ const captureFinalUrl = async (
     capture.setFinalUrl(url);
     return "window_elapsed";
   }
-  capture.finalUrl = null;
-  capture.completeness.exclude(
-    "timeline",
+  capture.excludeTargetScope(
     url === undefined ? "invalid_protocol_value" : "out_of_target_scope",
   );
   return "target_left_scope";

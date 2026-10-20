@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { TOOL_CONTRACTS } from "./toolContracts.js";
-import { TOOL_EFFECTS, annotationsFromEffects } from "./toolEffects.js";
+import {
+  TOOL_EFFECTS,
+  annotationsFromEffects,
+  type ToolEffects,
+} from "./toolEffects.js";
 
 /**
  * Descriptions that name running, launching, executing, starting, installing,
@@ -22,6 +26,8 @@ const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
   inspect_native_load_image: "states that it does not execute the target",
   resolve_native_call_targets: "states that it does not execute code",
   inspect_pe_resources: "states that it does not execute the image",
+  inspect_desktop_application:
+    "states that directory triage performs no target execution",
   inspect_go_binary: "reads embedded metadata without executing the target",
   inspect_rust_binary:
     "reads an embedded dependency list without executing the target",
@@ -60,6 +66,8 @@ const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
     "inspects the operator-selected adb client; never starts its server",
   list_adb_devices: "may start the local adb server, which REA does not own",
   inspect_firmware_regions: "states there is no target execution",
+  inspect_model_artifact:
+    "states that model code and inference are never executed",
   extract_firmware: "states that extracted code is never executed",
   analyze_javascript_application: "reconstructs the graph without executing",
   reconcile_javascript_runtime: "never invents execution claims",
@@ -159,8 +167,19 @@ describe("tool effects", () => {
   });
 
   it("derives destructiveHint from each destructive effect alone", () => {
-    const base = TOOL_EFFECTS["binary_session"];
-    if (base === undefined) throw new Error("binary_session is unaudited");
+    // Keep annotation algebra independent of any operation's audited effects.
+    const base: ToolEffects = {
+      mutatesTarget: false,
+      mutatesSession: false,
+      writesFilesystem: false,
+      launchesProcess: false,
+      accessesNetwork: false,
+      changesUiState: false,
+      mayDiscardData: false,
+      executesForeignCode: false,
+      mutatesDevice: false,
+      idempotent: true,
+    };
     expect(annotationsFromEffects(base)).toEqual({
       readOnlyHint: true,
       destructiveHint: false,

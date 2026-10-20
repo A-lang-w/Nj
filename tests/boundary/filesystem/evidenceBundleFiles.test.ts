@@ -134,12 +134,13 @@ describe("evidence bundle export cancellation", () => {
       const path = join(root, "bundle.json");
       if (overwrite) await writeFile(path, "original");
       const controller = new AbortController();
+      const cancellationReason = new Error("cancel staged publication");
       let closed = false;
       let continued = false;
       function* parts() {
         try {
           yield "staged partial data";
-          controller.abort();
+          controller.abort(cancellationReason);
           yield "cancelled data";
           continued = true;
           yield "unreachable";
@@ -157,6 +158,7 @@ describe("evidence bundle export cancellation", () => {
         error: {
           _tag: "AnalysisCancelledError",
           operation: "export_evidence_bundle",
+          cause: cancellationReason,
         },
       });
       expect(closed).toBe(true);
@@ -324,6 +326,21 @@ it("reuses authenticated file snapshots while isolating mutable public reads", a
 });
 
 describe("evidence bundle filesystem adapter", () => {
+  it.skipIf(process.platform === "win32").each(["/", "/."])(
+    "preserves the directory requirement of a missing output ending in %s",
+    async (suffix) => {
+      const directory = await createTestTempDirectory(
+        "rea-evidence-directory-",
+      );
+      const selected = `${join(directory, "report.json")}${suffix}`;
+      expect(await writeBundle(bundle(), selected, false)).toMatchObject({
+        ok: false,
+        error: { _tag: "EvidenceFileError", reason: "not-file" },
+      });
+      expect(await readdir(directory)).toEqual([]);
+    },
+  );
+
   it("round trips canonical bytes and requires explicit overwrite", async () => {
     const directory = await createTestTempDirectory("rea-evidence-");
     const path = join(directory, "bundle.json");
