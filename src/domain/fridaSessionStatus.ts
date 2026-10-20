@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { jsonValueSchema } from "./jsonValue.js";
 
 /** Delivery selection is separate from the provider's live session lookup. */
 export const fridaSessionStatusInputSchema = z.strictObject({
@@ -7,17 +6,22 @@ export const fridaSessionStatusInputSchema = z.strictObject({
   detail: z.enum(["complete", "summary"]).optional(),
 });
 
-/** Canonical facts owned by the Frida session observation workflow. */
-export const fridaSessionStatusSchema = z.strictObject({
+/** Session identity and state shared by start, status and one-shot observations. */
+export const fridaSessionObservationSchema = z.strictObject({
   session_id: z.string().uuid(),
   device_id: z.string(),
   state: z.enum(["paused", "running", "detached"]),
   target: z.string(),
   pid: z.number().int().nonnegative(),
   mode: z.enum(["attach", "spawn"]),
+});
+
+/** Canonical captured facts; message payload meanings remain caller-defined. */
+export const fridaSessionStatusSchema = fridaSessionObservationSchema.extend({
   scripts: z.array(
     z.strictObject({ script_id: z.string().uuid(), name: z.string() }),
   ),
-  messages: z.array(jsonValueSchema),
+  // Evidence validates JSON payloads; status views validate only this envelope.
+  messages: z.array(z.unknown()),
   messages_truncated: z.boolean(),
 });
