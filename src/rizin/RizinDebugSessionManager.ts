@@ -1338,6 +1338,18 @@ export class RizinDebugSessionManager {
           "Rizin reported another active inferior after detaching the selected FD.",
         );
     }
+    for (const [pid, identity] of session.knownInferiorIdentities) {
+      if (pid === completed.identity.pid) continue;
+      if (
+        !(await verifyOwnedInferiorsEnded(
+          [identity],
+          this.#readProcessStartTime,
+        ))
+      )
+        throw new Error(
+          `Rizin omitted retained inferior PID ${pid} from the post-detach inventory while it is still active.`,
+        );
+    }
     // Preserve this protocol proof before later identity and descriptor checks.
     // A retry can then revalidate the retained process sinks without issuing
     // another detach command or treating an empty inventory as contradictory.

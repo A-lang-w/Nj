@@ -378,6 +378,7 @@ import { appendFileSync } from "node:fs";
 process.stdout.write("\\0");
 let input = "";
 let detached = false;
+let postDetachReadbacks = 0;
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   input += chunk;
@@ -385,9 +386,14 @@ process.stdin.on("data", (chunk) => {
     const boundary = input.indexOf("\\n"); if (boundary < 0) break;
     const line = input.slice(0, boundary); input = input.slice(boundary + 1);
     appendFileSync(${JSON.stringify(commandsPath)}, line + "\\n");
-    if (line === "olj") process.stdout.write(JSON.stringify(detached
-      ? [{ fd: 13, raised: true, uri: "ptrace://${additionalPid}" }]
-      : [{ fd: 12, raised: true, uri: "ptrace://${selectedPid}" }]) + "\\0");
+    if (line === "olj") {
+      const rows = !detached
+        ? [{ fd: 12, raised: true, uri: "ptrace://${selectedPid}" }]
+        : postDetachReadbacks++ === 0
+          ? [{ fd: 13, raised: true, uri: "ptrace://${additionalPid}" }]
+          : [];
+      process.stdout.write(JSON.stringify(rows) + "\\0");
+    }
     else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
     else if (line === "o- 12") detached = true;
     else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
@@ -908,6 +914,10 @@ it.skipIf(process.platform !== "linux")(
     const { manager, sessionId } = await startRizinWithOwnedStop(provider);
 
     expect((await manager.close(sessionId)).ok).toBe(false);
+    expect(manager.status(sessionId)).toBeDefined();
+    expect(selected.exitCode).toBeNull();
+
+    expect((await manager.retryCleanupFailures()).ok).toBe(false);
     expect(manager.status(sessionId)).toBeDefined();
     expect(selected.exitCode).toBeNull();
 
