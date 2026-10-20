@@ -41,7 +41,13 @@ it("publishes observed Evidence with the recorded architecture", async () => {
   expect(JSON.stringify(result.value)).toContain('"x86_64"');
 });
 
-it.each(["different-path", "outside-range", "wrong-coverage", "stream-count"])(
+it.each([
+  "different-path",
+  "outside-range",
+  "wrong-coverage",
+  "stream-count",
+  "exception-register-outside",
+])(
   "rejects invalid provider output before creating Evidence: %s",
   async (problem) => {
     const report = await observedReport();
@@ -50,6 +56,9 @@ it.each(["different-path", "outside-range", "wrong-coverage", "stream-count"])(
       report.memory[0]!.location.offset = report.artifact.bytes;
     if (problem === "wrong-coverage") report.coverage.unknown_streams = 9;
     if (problem === "stream-count") report.header.stream_count = 99;
+    if (problem === "exception-register-outside")
+      report.exception!.context.registers![0]!.location.offset =
+        report.artifact.bytes;
     expect(
       await serviceReturning(report).inspect({ path: PATH }),
     ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });

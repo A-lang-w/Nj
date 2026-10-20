@@ -106,6 +106,12 @@ export class WindowsMinidumpService {
 const validRanges = (report: WindowsMinidump): boolean => {
   const inside = ({ offset, bytes }: WindowsMinidumpRange) =>
     offset <= report.artifact.bytes - bytes;
+  const contextRanges = (
+    context: WindowsMinidump["threads"][number]["context"],
+  ): WindowsMinidumpRange[] => [
+    context.location,
+    ...(context.registers ?? []).map((r) => r.location),
+  ];
   const ranges: WindowsMinidumpRange[] = [
     report.header.location,
     report.header.directory_location,
@@ -114,12 +120,14 @@ const validRanges = (report: WindowsMinidump): boolean => {
     ...report.threads.flatMap((t) => [
       t.entry_location,
       t.stack.location,
-      t.context.location,
-      ...(t.context.registers ?? []).map((r) => r.location),
+      ...contextRanges(t.context),
     ]),
     ...(report.exception === null
       ? []
-      : [report.exception.location, report.exception.context.location]),
+      : [
+          report.exception.location,
+          ...contextRanges(report.exception.context),
+        ]),
     ...report.modules.flatMap((m) => [
       m.entry_location,
       m.name_location,

@@ -74,7 +74,7 @@ export const registerBinaryDiagnosticsCommands = (
               () =>
                 minidump.inspect(
                   {
-                    path: resolve(args.path),
+                    path: absoluteCallerPath(args.path),
                     max_file_bytes: options.maxFileBytes,
                     max_entries: options.maxEntries,
                   },
@@ -83,6 +83,7 @@ export const registerBinaryDiagnosticsCommands = (
               minidump,
               "rea-windows-minidump",
               "inspect_windows_minidump",
+              signal,
             ),
         );
       }),

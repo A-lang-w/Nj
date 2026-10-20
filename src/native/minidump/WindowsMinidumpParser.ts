@@ -21,6 +21,10 @@ const EXCEPTION_BYTES = 168;
 const SYSTEM_INFO_BYTES = 56;
 const MAX_NAME_BYTES = 65536;
 const YIELD_EVERY = 1024;
+// Cumulative recorded-name bytes; each byte expands into a decoded string and
+// two hex characters, so repeated descriptors must not multiply allocations.
+const MAX_TOTAL_NAME_BYTES = 16 * 1024 * 1024;
+const EXCEPTION_PARAMETER_SLOTS = 15;
 
 const failure = (message: string): never => {
   throw new ArtifactReaderFailure("format", message);
@@ -47,6 +51,13 @@ export const parseWindowsMinidump = async (
     if (
       Math.floor(before / YIELD_EVERY) !== Math.floor(examined / YIELD_EVERY)
     ) {
+      await setImmediate();
+      signal?.throwIfAborted();
+    }
+  };
+  // Yield inside every descriptor loop so cancellation and peer requests run.
+  const tick = async (index: number): Promise<void> => {
+    if (index % YIELD_EVERY === YIELD_EVERY - 1) {
       await setImmediate();
       signal?.throwIfAborted();
     }
@@ -86,6 +97,7 @@ export const parseWindowsMinidump = async (
   const streams: WindowsMinidump["streams"] = [];
   const byType = new Map<number, WindowsMinidumpRange>();
   for (let index = 0; index < streamCount; index++) {
+    await tick(index);
     const at = directoryRva + index * DIRECTORY_ENTRY_BYTES;
     const type = bytes.readUInt32LE(at);
     const stream = location(at + 4, `Stream ${String(index)}`);
@@ -168,6 +180,11 @@ export const parseWindowsMinidump = async (
   const threads: WindowsMinidump["threads"] = [];
   for (const [index, at] of (await listEntries(3, THREAD_BYTES)).entries()) {
     const stack = location(at + 32, `Thread ${String(index)} stack memory`);
+    // Stacks share the memory overlap check; identical aliases stay allowed.
+    memoryContents.push({
+      range: stack,
+      what: `thread ${String(index)} stack`,
+    });
     threads.push({
       index,
       entry_location: { offset: at, bytes: THREAD_BYTES },
@@ -182,19 +199,24 @@ export const parseWindowsMinidump = async (
       },
       context: readContext(at + 40, `Thread ${String(index)} context`),
     });
-    if (index % YIELD_EVERY === YIELD_EVERY - 1) {
-      await setImmediate();
-      signal?.throwIfAborted();
-    }
+    await tick(index);
   }
 
   const modules: WindowsMinidump["modules"] = [];
+  let nameBytesTotal = 0;
   for (const [index, at] of (await listEntries(4, MODULE_BYTES)).entries()) {
+    await tick(index);
     const nameRva = bytes.readUInt32LE(at + 20);
     require(nameRva, 4, `Module ${String(index)} name length`);
     const nameBytes = bytes.readUInt32LE(nameRva);
     if (nameBytes % 2 !== 0 || nameBytes > MAX_NAME_BYTES)
       failure(`Module ${String(index)} name has an invalid UTF-16 length.`);
+    nameBytesTotal += nameBytes;
+    if (nameBytesTotal > MAX_TOTAL_NAME_BYTES)
+      throw new ArtifactReaderFailure(
+        "limit",
+        `Recorded module names exceed the ${String(MAX_TOTAL_NAME_BYTES)}-byte decoding budget.`,
+      );
     const name = require(nameRva +
       4, nameBytes, `Module ${String(index)} name`);
     const raw = bytes.subarray(name.offset, name.offset + name.bytes);
@@ -220,7 +242,8 @@ export const parseWindowsMinidump = async (
   }
 
   const memory: WindowsMinidump["memory"] = [];
-  for (const at of await listEntries(5, MEMORY_BYTES)) {
+  for (const [index, at] of (await listEntries(5, MEMORY_BYTES)).entries()) {
+    await tick(index);
     const content = location(at + 8, "Memory list range");
     memoryContents.push({ range: content, what: "memory-list content" });
     memory.push({
@@ -246,6 +269,7 @@ export const parseWindowsMinidump = async (
       failure("Memory64ListStream descriptor count does not match its range.");
     let rva = bytes.readBigUInt64LE(memory64.offset + 8);
     for (let index = 0; index < Number(entries); index++) {
+      await tick(index);
       const at = memory64.offset + 16 + index * MEMORY_BYTES;
       const size = bytes.readBigUInt64LE(at + 8);
       if (rva + size > BigInt(bytes.length))
@@ -273,6 +297,10 @@ export const parseWindowsMinidump = async (
       failure("ExceptionStream is incomplete.");
     const at = exceptionStream.offset;
     const declared = bytes.readUInt32LE(at + 32);
+    if (declared > EXCEPTION_PARAMETER_SLOTS)
+      failure(
+        `ExceptionStream declares ${String(declared)} parameters; the record holds at most ${String(EXCEPTION_PARAMETER_SLOTS)}.`,
+      );
     exception = {
       location: exceptionStream,
       historical_thread_id: bytes.readUInt32LE(at),
@@ -281,7 +309,7 @@ export const parseWindowsMinidump = async (
       nested_record: hex(bytes.readBigUInt64LE(at + 16)),
       address: hex(bytes.readBigUInt64LE(at + 24)),
       declared_parameters: declared,
-      parameters: Array.from({ length: Math.min(declared, 15) }, (_u, i) =>
+      parameters: Array.from({ length: declared }, (_u, i) =>
         hex(bytes.readBigUInt64LE(at + 40 + i * 8)),
       ),
       context: readContext(at + 160, "Exception context"),
