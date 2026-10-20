@@ -172,7 +172,9 @@ const registerJavaScriptRuntimeReconciliationCommand = (
           const { reconcileJavaScriptRuntimeEvidence } =
             await import("../application/javascript/JavaScriptRuntimeReconciliationService.js");
           const result = reconcileJavaScriptRuntimeEvidence(input.value);
-          return result.ok ? result.value : cliError(result.error);
+          return result.ok
+            ? result.value
+            : cliError(result.error, "Application workflow failed");
         },
       ),
   });
@@ -339,7 +341,8 @@ const inputError = (
 
 const cliError = (
   error: Parameters<typeof projectAnalysisError>[0],
+  label = "Electron analysis failed",
 ): JsonValue => ({
-  error: "Electron analysis failed",
+  error: label,
   ...projectAnalysisError(error),
 });
