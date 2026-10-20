@@ -69,6 +69,12 @@ export interface ScenarioNetworkTransactionCount {
   readonly retained: number | null;
 }
 
+/** Capture-wide transactions, including those no step can be attributed. */
+export interface ScenarioNetworkTransactionTotals extends ScenarioNetworkTransactionCount {
+  /** Retained transactions whose request event was not retained, so no step counts them. */
+  readonly withoutRetainedRequest: number | null;
+}
+
 type StepState = Readonly<
   Record<BrowserScenarioStateArtifact, ScenarioArtifactObservation>
 >;
@@ -92,7 +98,7 @@ export interface BrowserScenarioStepProjection {
   readonly enabledEventFamilies: readonly BrowserScenarioEventFamily[];
   /** Events received between step windows or after the final capture, such as final network drains. */
   readonly receivedOutsideStepWindows: ReceivedScenarioEvents;
-  readonly networkTransactions: ScenarioNetworkTransactionCount;
+  readonly networkTransactions: ScenarioNetworkTransactionTotals;
 }
 
 const tallyKinds = (
@@ -232,8 +238,10 @@ const compareWithPrevious = (
 /**
  * Project one capture into per-step facts. Each step is compared with the
  * previous step's capture using the run comparison owner without normalization
- * rules, events are accounted by recorded receipt window, and network
- * transactions keep the comparison owner's request-step attribution.
+ * rules, events are accounted by recorded receipt window, and a network
+ * transaction counts toward the step of its retained request. A transaction
+ * whose request event was dropped or never observed has no known starting
+ * step, so only the capture-wide totals count it.
  */
 export const projectBrowserScenarioSteps = (
   capture: BrowserScenarioCapture,
@@ -249,8 +257,14 @@ export const projectBrowserScenarioSteps = (
     ? scenarioNetworkTransactions(capture)
     : [];
   const transactionsByStep = new Map<number, number>();
-  for (const { step_index: index } of transactions)
-    transactionsByStep.set(index, (transactionsByStep.get(index) ?? 0) + 1);
+  let withoutRetainedRequest = 0;
+  for (const {
+    step_index: index,
+    request_retained: attributed,
+  } of transactions)
+    if (attributed)
+      transactionsByStep.set(index, (transactionsByStep.get(index) ?? 0) + 1);
+    else withoutRetainedRequest += 1;
   const eventCoverage =
     enabledEventFamilies.length === 0
       ? "not_requested"
@@ -283,7 +297,12 @@ export const projectBrowserScenarioSteps = (
       ? {
           coverage: captureEventEvidenceState(capture),
           retained: transactions.length,
+          withoutRetainedRequest,
         }
-      : { coverage: "not_requested", retained: null },
+      : {
+          coverage: "not_requested",
+          retained: null,
+          withoutRetainedRequest: null,
+        },
   });
 };

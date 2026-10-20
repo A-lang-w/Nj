@@ -152,7 +152,10 @@ const summarize = (
       ),
     },
     network_transactions: {
-      ...projection.networkTransactions,
+      coverage: projection.networkTransactions.coverage,
+      retained: projection.networkTransactions.retained,
+      without_retained_request:
+        projection.networkTransactions.withoutRetainedRequest,
       omitted_by_transaction_limit:
         capture.events.omissions.network_transaction_range?.count ?? 0,
     },
@@ -212,6 +215,18 @@ const unobservedFamilies = (
       ];
 };
 
+/** Name transactions no step row counts because their starting step is unknown. */
+const unattributedTransactions = (
+  projection: BrowserScenarioStepProjection,
+): string[] => {
+  const count = projection.networkTransactions.withoutRetainedRequest ?? 0;
+  return count === 0
+    ? []
+    : [
+        `${String(count)} retained network ${count === 1 ? "transaction has" : "transactions have"} no retained request event, so the step that started ${count === 1 ? "it" : "them"} is unknown; the summary total includes ${count === 1 ? "it" : "them"}, but no step row does.`,
+      ];
+};
+
 const unknownsFor = (
   capture: BrowserScenarioCapture,
   projection: BrowserScenarioStepProjection,
@@ -220,6 +235,7 @@ const unknownsFor = (
   "Only the declared actions were executed; states and transitions the scenario did not exercise remain unknown.",
   ...partiallyRequestedArtifacts(projection),
   ...unobservedFamilies(projection),
+  ...unattributedTransactions(projection),
   ...(capture.completeness.status === "complete"
     ? []
     : [

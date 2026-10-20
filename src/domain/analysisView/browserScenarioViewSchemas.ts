@@ -77,7 +77,7 @@ const networkTransactionsSchema = z
       ),
   })
   .describe(
-    "Network transactions attributed by their request, as compare_web_captures attributes them.",
+    "Network transactions attributed to the step of their retained request event; a transaction without a retained request counts toward no step.",
   );
 
 const stepArtifactSchema = z.strictObject({
@@ -239,6 +239,14 @@ export const browserScenarioSummarySchema = z.strictObject({
     ),
   }),
   network_transactions: networkTransactionsSchema.extend({
+    without_retained_request: z
+      .number()
+      .int()
+      .nonnegative()
+      .nullable()
+      .describe(
+        "Retained transactions whose request event was dropped or never observed; included in retained but in no step row. Null when network was not observed.",
+      ),
     omitted_by_transaction_limit: z
       .number()
       .int()

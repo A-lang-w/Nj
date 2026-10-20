@@ -460,11 +460,16 @@ source.
 - `{kind: "summary"}` returns the browser identity, step outcomes, per-artifact
   capture coverage and step changes, declared and enabled event families,
   events received outside any step window, and the network transaction count.
+  `without_retained_request` counts the retained transactions whose request
+  event was dropped or never observed, such as a request over the event
+  allocation limit or one already in flight when connect mode attached; the
+  total includes them, but no step row does.
 - `{kind: "browser-scenario", collection: "steps", offset, limit}` pages steps.
   Each row carries the exact recorded action declaration and its family
   (`start-navigation`, `navigation`, `input`, or `wait`), outcome, recorded
   URLs, counts of the events received inside the step's sequence window, and
-  the count of network transactions attributed to the step by their request.
+  the count of network transactions attributed to the step by their retained
+  request event.
   The network count is `null` with `not_requested` coverage when network
   events were not observed. For each artifact requested at this step or the
   previous one, a row reports the capture coverage, the comparison digest, and

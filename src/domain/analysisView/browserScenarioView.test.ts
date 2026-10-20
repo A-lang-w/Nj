@@ -225,6 +225,7 @@ it("summarizes coverage, step changes and events received outside step windows",
   expect(summary.network_transactions).toEqual({
     coverage: "captured",
     retained: 2,
+    without_retained_request: 0,
     omitted_by_transaction_limit: 0,
   });
   expect(result.limitations).toEqual(
