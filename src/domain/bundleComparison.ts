@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isAbsolute } from "node:path";
 
 import { z } from "zod";
 
@@ -23,10 +24,19 @@ const classificationSchema = z.enum([
   "history_diverged",
 ]);
 
+const absoluteBundlePathSchema = (field: string) =>
+  localPathStringSchema
+    .refine(isAbsolute, {
+      message: `${field} must be an absolute local filesystem path (for example /tmp/rea/evidence.json or C:\\rea\\evidence.json)`,
+    })
+    .describe(
+      "Absolute local filesystem path for a canonical Evidence bundle; relative paths are rejected.",
+    );
+
 /** Strict input for canonical Evidence bundle comparison. */
 export const bundleComparisonInputSchema = z.strictObject({
-  left_bundle_path: localPathStringSchema,
-  right_bundle_path: localPathStringSchema,
+  left_bundle_path: absoluteBundlePathSchema("left_bundle_path"),
+  right_bundle_path: absoluteBundlePathSchema("right_bundle_path"),
   record_pairs: z
     .array(
       z.object({

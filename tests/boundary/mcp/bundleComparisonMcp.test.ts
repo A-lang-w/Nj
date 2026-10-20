@@ -212,6 +212,36 @@ describe("bundle comparison MCP integration", () => {
     }
   });
 
+  it("rejects a relative bundle path in either field before reading it", async () => {
+    const root = await createTestTempDirectory("rea-bundle-relative-");
+    roots.push(root);
+    const absolute = join(root, "bundle.json");
+    await writeFile(
+      absolute,
+      serializeEvidenceBundle(createEvidenceBundle([])),
+    );
+    const connected = await connect();
+    try {
+      for (const [field, left, right] of [
+        ["left_bundle_path", "absent-bundle.json", absolute],
+        ["right_bundle_path", absolute, "absent-bundle.json"],
+      ] as const) {
+        const result = await connected.client.callTool({
+          name: "compare_bundles",
+          arguments: { left_bundle_path: left, right_bundle_path: right },
+        });
+        expect(result.isError, field).toBe(true);
+        const content = JSON.stringify(result.content);
+        expect(content, field).toContain(
+          `${field} must be an absolute local filesystem path`,
+        );
+        expect(content, field).not.toContain("missing");
+      }
+    } finally {
+      await connected.close();
+    }
+  });
+
   it("explains that a single Evidence record is not a bundle", async () => {
     const root = await createTestTempDirectory("rea-bundle-record-");
     roots.push(root);

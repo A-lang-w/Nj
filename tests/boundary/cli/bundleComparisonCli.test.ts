@@ -103,3 +103,23 @@ cliTest(
     });
   },
 );
+
+cliTest(
+  "resolves operator-relative bundle paths from the CLI working directory",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-bundle-comparison-cwd-");
+    await writeFile(
+      join(root, "evidence.json"),
+      serializeEvidenceBundle(createEvidenceBundle([])),
+    );
+    const result = await cli.run({
+      arguments: ["compare", "evidence.json", "evidence.json", "--json"],
+      cwd: root,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(bundleComparisonResultSchema.parse(result.json)).toMatchObject({
+      status: "unchanged",
+      changes: [],
+    });
+  },
+);

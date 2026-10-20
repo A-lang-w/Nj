@@ -299,3 +299,25 @@ describe("bundle comparison history", () => {
     );
   });
 });
+
+describe("bundle comparison input paths", () => {
+  it.each(["left_bundle_path", "right_bundle_path"] as const)(
+    "rejects a relative %s and names the field",
+    (field) => {
+      const parsed = bundleComparisonInputSchema.safeParse({
+        left_bundle_path: "/tmp/left.json",
+        right_bundle_path: "/tmp/right.json",
+        [field]: "evidence.json",
+      });
+      expect(parsed.success).toBe(false);
+      expect(parsed.error?.issues).toEqual([
+        expect.objectContaining({
+          path: [field],
+          message: expect.stringContaining(
+            `${field} must be an absolute local filesystem path`,
+          ),
+        }),
+      ]);
+    },
+  );
+});
