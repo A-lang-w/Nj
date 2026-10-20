@@ -179,6 +179,39 @@ interface EntityCheck {
 const entityKey = (entity: Pick<StateEntity, "type" | "collection" | "id">) =>
   compositeKey([entity.type, entity.collection, entity.id]);
 
+/** The first problem with an entity's view values: each names an item or list view of its type once and keeps its identity. */
+const viewFieldsProblem = (
+  state: EnvironmentState,
+  type: StateType,
+  entity: ParsedEntity,
+  path: Path,
+): AnalysisInputIssue | undefined => {
+  const tools = new Set<string>();
+  for (const [index, view] of (entity.view_fields ?? []).entries()) {
+    const plan = state.views.get(view.tool);
+    if (
+      (plan?.shape !== "item" && plan?.shape !== "list") ||
+      plan.type !== entity.type ||
+      tools.has(view.tool)
+    )
+      return problem(
+        [...path, "view_fields", index, "tool"],
+        "is not an item or list view of the entity's type, or repeats one",
+      );
+    tools.add(view.tool);
+    // Views render these values over the entity's fields, so one carrying another id would answer under this entity's key with another entity's identity.
+    if (
+      Object.hasOwn(view.fields, type.id_field) &&
+      scalarText(view.fields[type.id_field]) !== entity.id
+    )
+      return problem(
+        [...path, "view_fields", index, "fields"],
+        `sets the type's ${type.id_field} field to a value other than the entity's id`,
+      );
+  }
+  return undefined;
+};
+
 /** The first problem with one entity, given the keys already seen. */
 const entityProblem = (
   { state, initial, seen }: EntityCheck,
@@ -210,21 +243,7 @@ const entityProblem = (
       [...path, "record_ordinals"],
       "cites records the served Evidence does not cite for this entity",
     );
-  const tools = new Set<string>();
-  for (const [index, view] of (entity.view_fields ?? []).entries()) {
-    const plan = state.views.get(view.tool);
-    if (
-      (plan?.shape !== "item" && plan?.shape !== "list") ||
-      plan.type !== entity.type ||
-      tools.has(view.tool)
-    )
-      return problem(
-        [...path, "view_fields", index, "tool"],
-        "is not an item or list view of the entity's type, or repeats one",
-      );
-    tools.add(view.tool);
-  }
-  return undefined;
+  return viewFieldsProblem(state, type, entity, path);
 };
 
 /** The first problem with the documents: each names a document view once, at the initial document's path. */

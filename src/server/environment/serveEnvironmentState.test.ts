@@ -24,8 +24,10 @@ import {
   ENVIRONMENT_CARD_PATH,
   ENVIRONMENT_RPC_PATH,
   environmentRoutes,
+  MAX_RPC_RESPONSE_BYTES,
   serveEnvironment,
   type ServedEnvironment,
+  type ServeEnvironmentOptions,
 } from "./serveEnvironment.js";
 import {
   DEFAULT_STATE_INTAKE,
@@ -50,19 +52,23 @@ const renamedDocument = () => {
   };
 };
 
-/** A data plane over a fresh store, posting raw bodies to its route. */
-const dataPlane = (intake: Partial<StateIntake> = {}) => {
+/** A data plane over a fresh store, posting raw bodies to its route; `stopped` is the server's stop signal. */
+const dataPlane = (
+  intake: Partial<StateIntake> = {},
+  stopped?: AbortSignal,
+) => {
   const store = new EnvironmentStateStore(state);
   const route = environmentRoutes(
     environmentCard("grafana-example", [], "state"),
-    stateDataPlane(store, { ...DEFAULT_STATE_INTAKE, ...intake }),
+    stateDataPlane(store, { ...DEFAULT_STATE_INTAKE, ...intake }, stopped),
   ).find((entry) => entry.path === ENVIRONMENT_RPC_PATH);
   if (route === undefined) throw new Error("No data-plane route");
-  const post = async (body: unknown) => {
+  const post = async (body: unknown, signal?: AbortSignal) => {
     const response = await route.handle(
       new Request(`http://127.0.0.1${ENVIRONMENT_RPC_PATH}`, {
         method: "POST",
         body: typeof body === "string" ? body : JSON.stringify(body),
+        ...(signal === undefined ? {} : { signal }),
       }),
     );
     return {
@@ -85,6 +91,32 @@ const dataPlane = (intake: Partial<StateIntake> = {}) => {
 
 const loginOf = (store: EnvironmentStateStore) =>
   store.entity("/api/users", "/api/users", "2")?.fields.login;
+
+/** A `data/add` message loading the document an https uri names. */
+const addByUri = (
+  id: number,
+  uri = "https://state.example.test/state.json",
+) => ({
+  jsonrpc: "2.0",
+  id,
+  method: "data/add",
+  params: { parts: [{ kind: "file", file: { uri } }] },
+});
+
+/** A fetcher that reports each call and the signal it was given, then answers only when `answer` settles. */
+const heldFetcher = (answer: () => Promise<Response>) => {
+  const signals: AbortSignal[] = [];
+  let started: () => void = () => undefined;
+  const fetching = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const fetchState = (_: URL, signal: AbortSignal) => {
+    signals.push(signal);
+    started();
+    return answer();
+  };
+  return { signals, fetching, fetchState };
+};
 
 describe("state data plane", () => {
   it("answers data/get, data/add and data/reset in the AgentEnv shapes", async () => {
@@ -271,6 +303,35 @@ describe("state data plane intake", () => {
     await expect(add()).resolves.toMatchObject({ error: { code: -32602 } });
   });
 
+  it("opens file uris only on this host, refusing another host or a network share before opening anything", async () => {
+    const plane = dataPlane();
+    for (const uri of [
+      "file://remote.example.test/share/state.json",
+      "file:////remote.example.test/share/state.json",
+    ]) {
+      const reply = await plane.add({ kind: "file", file: { uri } });
+      expect(reply).toEqual({
+        jsonrpc: "2.0",
+        id: 1,
+        error: {
+          code: -32602,
+          message:
+            "invalid params: a file:// uri names a path on this host, not a network share",
+        },
+      });
+    }
+    const root = await createTestTempDirectory("rea-environment-state-host-");
+    const path = join(root, "state.json");
+    await writeFile(path, JSON.stringify(renamedDocument()));
+    await expect(
+      plane.add({
+        kind: "file",
+        file: { uri: `file://localhost${pathToFileURL(path).pathname}` },
+      }),
+    ).resolves.toMatchObject({ result: {} });
+    expect(loginOf(plane.store)).toBe("renamed");
+  });
+
   it("runs batches in order and runs notifications without replying", async () => {
     const plane = dataPlane();
     const batch = await plane.post([
@@ -349,6 +410,162 @@ describe("state data plane timing and order", () => {
     // The reset arrived after the add, so it wins even though the add finished loading later.
     expect(loginOf(plane.store)).toBe("probe");
   });
+
+  it("queues every message of a batch at arrival, so a later request's reset never lands between them", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const held = heldFetcher(async () => {
+      await gate;
+      return new Response(JSON.stringify(renamedDocument()));
+    });
+    const plane = dataPlane({ fetchState: held.fetchState });
+    const batch = plane.post([
+      addByUri(1),
+      { jsonrpc: "2.0", id: 2, method: "data/get" },
+    ]);
+    await held.fetching;
+    const reset = plane.call("data/reset");
+    release();
+    const replies = (await batch).json;
+    expect(replies).toMatchObject([
+      { id: 1, result: {} },
+      { id: 2, result: { parts: [{ kind: "data" }] } },
+    ]);
+    // The get arrived with the add, before the reset, so it reports the loaded state.
+    expect(JSON.stringify(replies)).toContain('"login":"renamed"');
+    await expect(reset).resolves.toMatchObject({ result: {} });
+    expect(loginOf(plane.store)).toBe("probe");
+  });
+});
+
+describe("state data plane cancellation", () => {
+  /** A download that never answers on its own and outlives any test. */
+  const stalled = () =>
+    heldFetcher(() => new Promise<Response>(() => undefined));
+
+  it("ends the running download and skips queued calls once the server stops", async () => {
+    const stopping = new AbortController();
+    const held = stalled();
+    const plane = dataPlane(
+      { fetchState: held.fetchState, timeoutMs: 600_000 },
+      stopping.signal,
+    );
+    await plane.add({ kind: "data", data: renamedDocument() });
+    const batch = plane.post([
+      addByUri(1),
+      { jsonrpc: "2.0", id: 2, method: "data/reset" },
+    ]);
+    await held.fetching;
+    stopping.abort();
+    expect((await batch).json).toEqual([
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        error: {
+          code: -32000,
+          message: "the state document could not be downloaded",
+          data: { reason: "cancelled" },
+        },
+      },
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        error: {
+          code: -32000,
+          message: "the call was cancelled and left the state unchanged",
+          data: { reason: "cancelled" },
+        },
+      },
+    ]);
+    expect(held.signals.map((signal) => signal.aborted)).toEqual([true]);
+    // The queued reset never ran, and nothing runs after the stop.
+    expect(loginOf(plane.store)).toBe("renamed");
+    await expect(plane.call("data/reset")).resolves.toMatchObject({
+      error: { data: { reason: "cancelled" } },
+    });
+    expect(loginOf(plane.store)).toBe("renamed");
+  });
+
+  it("ends a download whose caller left, leaving the state unchanged", async () => {
+    const held = stalled();
+    const plane = dataPlane({
+      fetchState: held.fetchState,
+      timeoutMs: 600_000,
+    });
+    const leaving = new AbortController();
+    const add = plane.post(addByUri(1), leaving.signal);
+    await held.fetching;
+    leaving.abort();
+    expect((await add).json).toMatchObject({
+      error: { code: -32000, data: { reason: "cancelled" } },
+    });
+    expect(held.signals[0]?.aborted).toBe(true);
+    expect(loginOf(plane.store)).toBe("probe");
+    // Other callers' calls still run.
+    await expect(
+      plane.add({ kind: "data", data: renamedDocument() }),
+    ).resolves.toMatchObject({ result: {} });
+  });
+});
+
+describe("state data plane response budget", () => {
+  it("answers replies past the response budget with an error stating it instead of building the body", async () => {
+    const document = renamedDocument();
+    const large = {
+      rea_state: {
+        ...document.rea_state,
+        entities: document.rea_state.entities.map((entity) =>
+          entity.type === "/api/users" && entity.id === "2"
+            ? {
+                ...entity,
+                fields: {
+                  ...entity.fields,
+                  login: "x".repeat(Math.ceil(MAX_RPC_RESPONSE_BYTES / 3)),
+                },
+              }
+            : entity,
+        ),
+      },
+    };
+    const root = await createTestTempDirectory("rea-environment-state-budget-");
+    const path = join(root, "large.json");
+    await writeFile(path, JSON.stringify(large));
+    const plane = dataPlane();
+    await expect(
+      plane.add({ kind: "file", file: { uri: pathToFileURL(path).href } }),
+    ).resolves.toMatchObject({ result: {} });
+    const get = (id: number) => ({ jsonrpc: "2.0", id, method: "data/get" });
+    const batch = await plane.post([
+      get(1),
+      get(2),
+      get(3),
+      get(4),
+      { jsonrpc: "2.0", id: 5, method: "data/reset" },
+    ]);
+    // Two reads fit; the third and fourth would pass the budget, and the reset's small reply is kept.
+    expect(batch.json).toMatchObject([
+      { id: 1, result: { parts: [{ kind: "data" }] } },
+      { id: 2, result: { parts: [{ kind: "data" }] } },
+      {
+        id: 3,
+        error: {
+          code: -32000,
+          data: {
+            max_response_bytes: MAX_RPC_RESPONSE_BYTES,
+            reply_bytes: expect.any(Number),
+          },
+        },
+      },
+      { id: 4, error: { code: -32000 } },
+      { id: 5, result: {} },
+    ]);
+    expect(Buffer.byteLength(JSON.stringify(batch.json))).toBeLessThanOrEqual(
+      MAX_RPC_RESPONSE_BYTES,
+    );
+    expect(loginOf(plane.store)).toBe("probe");
+  });
 });
 
 const served: ServedEnvironment[] = [];
@@ -359,9 +576,11 @@ afterEach(async () => {
 /** Serve a state on a loopback port until the test ends. */
 const serveState = async (
   inputs: ReturnType<typeof environmentStateServeInputs>,
+  options: Pick<ServeEnvironmentOptions, "fetchState"> = {},
 ): Promise<ServedEnvironment> => {
   const entry = await serveEnvironment({
     ...inputs,
+    ...options,
     host: "127.0.0.1",
     port: 0,
   });
@@ -444,6 +663,29 @@ describe("serveEnvironment with a state", () => {
       });
       expect(missing.isError).toBe(true);
     });
+  });
+
+  it("stops without waiting for a stalled download", async () => {
+    const held = heldFetcher(() => new Promise<Response>(() => undefined));
+    const environment = await serveState(
+      { source, state },
+      { fetchState: held.fetchState },
+    );
+    const answered = fetch(new URL(ENVIRONMENT_RPC_PATH, environment.url), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(addByUri(1)),
+    }).then(
+      (response) => response.status,
+      () => "closed",
+    );
+    await held.fetching;
+    // The download's own limit is 30 s; stopping must not wait for it.
+    const started = performance.now();
+    await environment.close();
+    expect(performance.now() - started).toBeLessThan(10_000);
+    expect(held.signals[0]?.aborted).toBe(true);
+    await answered;
   });
 
   it("serves query POSTs from their recordings and leaves state-changing writes out", async () => {

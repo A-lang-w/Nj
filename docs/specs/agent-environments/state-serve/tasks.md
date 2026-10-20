@@ -24,4 +24,9 @@
       exceeds the discovery budget, check the bundle name before preparing the
       state, keep replay-only out of export plans, test a check the state
       answers differently from replay, and pin main's replay card digest.
+- [x] Address review: bound one `/agentenv` response's replies, queue a
+      batch's messages together at arrival, cancel the running download and
+      queued calls when the server stops or the caller leaves, refuse
+      `file://` uris naming another host or a UNC path, refuse view values
+      that change an entity's identity, and apply list views' required fields.
 - [x] Run static, formatting, duplication, documentation and test gates.

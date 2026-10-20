@@ -40,14 +40,12 @@ import {
   UNTRUSTED_CONTENT_INSTRUCTIONS,
 } from "../toolResultEncoding.js";
 import { RequestTrackingMcpServer } from "../RequestTrackingMcpServer.js";
-import {
-  stateDataPlane,
-  type RpcMethods,
-  type RpcOutcome,
-} from "./environmentDataPlane.js";
+import { stateDataPlane, type RpcMethods } from "./environmentDataPlane.js";
 import {
   DEFAULT_STATE_INTAKE,
   exactJsonReviver,
+  SERVER_ERROR,
+  STATE_INTAKE_LIMIT_BYTES,
   type RpcError,
   type StateFetcher,
 } from "./stateIntake.js";
@@ -139,10 +137,14 @@ type RpcReply = {
   readonly id: string | number | null;
 } & ({ readonly result: unknown } | { readonly error: RpcError });
 
-/** The reply to one JSON-RPC message, or none for a notification; a method no table serves is not found. */
-const rpcReply = async (
+/** At most this many UTF-8 bytes of replies in one `/agentenv` response: twice the largest document `data/add` loads, so a `data/get` of a loaded state fits but a batch cannot multiply it. */
+export const MAX_RPC_RESPONSE_BYTES = 2 * STATE_INTAKE_LIMIT_BYTES;
+
+/** Start one JSON-RPC message now, so its call is queued at arrival; resolves to its reply, or none for a notification. */
+const startRpc = (
   message: unknown,
   methods: RpcMethods | undefined,
+  signal: AbortSignal,
 ): Promise<RpcReply | undefined> => {
   const id =
     isRecord(message) &&
@@ -150,26 +152,96 @@ const rpcReply = async (
       ? message.id
       : null;
   if (!isRpcMessage(message))
-    return {
+    return Promise.resolve({
       jsonrpc: "2.0",
       id,
       error: { code: INVALID_REQUEST, message: "invalid request" },
-    };
+    });
   const method = String(message.method);
   // A notification still runs its method; it only gets no reply.
-  const outcome: RpcOutcome | undefined =
-    methods === undefined ? undefined : await methods(method, message.params);
-  if (!("id" in message)) return undefined;
-  return {
-    jsonrpc: "2.0",
-    id,
-    ...(outcome ?? {
-      error: { code: METHOD_NOT_FOUND, message: `method not found: ${method}` },
-    }),
+  const outcome =
+    methods === undefined
+      ? Promise.resolve(undefined)
+      : methods(method, message.params, signal);
+  const replies = "id" in message;
+  return outcome.then((settled): RpcReply | undefined =>
+    replies
+      ? {
+          jsonrpc: "2.0",
+          id,
+          ...(settled ?? {
+            error: {
+              code: METHOD_NOT_FOUND,
+              message: `method not found: ${method}`,
+            },
+          }),
+        }
+      : undefined,
+  );
+};
+
+const overBudget = (replyBytes: number): RpcError => ({
+  code: SERVER_ERROR,
+  message: `the reply would take this response past its ${String(MAX_RPC_RESPONSE_BYTES)}-byte budget; the call ran, so repeat a read in another request`,
+  data: { max_response_bytes: MAX_RPC_RESPONSE_BYTES, reply_bytes: replyBytes },
+});
+
+/** Serialize a response's replies in order within its budget; one that would pass it becomes an error stating it, unless that error is no smaller. */
+const replyEncoder = (): ((reply: RpcReply) => string) => {
+  let used = 0;
+  return (reply) => {
+    const text = JSON.stringify(reply);
+    const bytes = Buffer.byteLength(text, "utf8");
+    if (used + bytes <= MAX_RPC_RESPONSE_BYTES) {
+      used += bytes;
+      return text;
+    }
+    const refused = JSON.stringify({
+      jsonrpc: "2.0",
+      id: reply.id,
+      error: overBudget(bytes),
+    });
+    return Buffer.byteLength(refused, "utf8") < bytes ? refused : text;
   };
 };
 
-/** Answer the data plane within the body bound; without methods every request is not found. */
+const jsonResponse = (text: string, status: number): Response =>
+  new Response(text, {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+
+/** Answer a batch: every message is queued at arrival, and replies are encoded in order as each completes. */
+const answerBatch = async (
+  messages: readonly unknown[],
+  methods: RpcMethods | undefined,
+  signal: AbortSignal,
+): Promise<Response> => {
+  if (messages.length === 0)
+    return jsonRpcErrorResponse(400, INVALID_REQUEST, "invalid request");
+  if (messages.length > MAX_RPC_BATCH_MESSAGES)
+    return jsonRpcErrorResponse(
+      400,
+      INVALID_REQUEST,
+      `batch exceeds ${String(MAX_RPC_BATCH_MESSAGES)} messages`,
+    );
+  // Starting every message now keeps the batch consecutive in the arrival-order
+  // queue, so no other request's call lands between its messages.
+  const pending = messages.map((message) => startRpc(message, methods, signal));
+  // The loop below reports the first failure; later ones are not left unhandled.
+  for (const reply of pending) void reply.catch(() => undefined);
+  const encode = replyEncoder();
+  const texts: string[] = [];
+  for (const next of pending) {
+    const reply = await next;
+    if (reply !== undefined) texts.push(encode(reply));
+  }
+  return texts.length === 0
+    ? new Response(null, { status: 202 })
+    : jsonResponse(`[${texts.join(",")}]`, 200);
+};
+
+/** Answer the data plane within the body and response bounds; without methods every request is not found. */
 const answerRpc = async (
   request: Request,
   methods: RpcMethods | undefined,
@@ -184,33 +256,16 @@ const answerRpc = async (
   // Values parsing would alter become markers: such an id is refused rather than echoed as another number, and a state document carrying one is refused.
   const parsed = safeParseJson(read.text, exactJsonReviver);
   if (!parsed.ok) return jsonRpcErrorResponse(400, PARSE_ERROR, "parse error");
-  // A batch is answered message by message; notifications get no reply at all.
-  if (Array.isArray(parsed.value)) {
-    if (parsed.value.length === 0)
-      return jsonRpcErrorResponse(400, INVALID_REQUEST, "invalid request");
-    if (parsed.value.length > MAX_RPC_BATCH_MESSAGES)
-      return jsonRpcErrorResponse(
-        400,
-        INVALID_REQUEST,
-        `batch exceeds ${String(MAX_RPC_BATCH_MESSAGES)} messages`,
-      );
-    // Messages run in order, so a batch's later reads see its earlier writes.
-    const replies: RpcReply[] = [];
-    for (const message of parsed.value) {
-      const reply = await rpcReply(message, methods);
-      if (reply !== undefined) replies.push(reply);
-    }
-    return replies.length === 0
-      ? new Response(null, { status: 202 })
-      : Response.json(replies);
-  }
-  const reply = await rpcReply(parsed.value, methods);
+  // The request's signal cancels its calls when the client leaves.
+  if (Array.isArray(parsed.value))
+    return answerBatch(parsed.value, methods, request.signal);
+  const reply = await startRpc(parsed.value, methods, request.signal);
   return reply === undefined
     ? new Response(null, { status: 202 })
-    : Response.json(reply, {
-        status:
-          "error" in reply && reply.error.code === INVALID_REQUEST ? 400 : 200,
-      });
+    : jsonResponse(
+        replyEncoder()(reply),
+        "error" in reply && reply.error.code === INVALID_REQUEST ? 400 : 200,
+      );
 };
 
 /** The plain routes an agent environment serves beside `/mcp`; data-plane methods only when given. */
@@ -267,6 +322,11 @@ export const serveEnvironment = async (
   const { tools, dataPlane } = catalog.value;
   const card = environmentCard(name, tools, dataPlane);
   const answer = environmentToolAnswer(source, store);
+  // Stopping ends the running download and skips queued data-plane calls, so shutdown never waits on them.
+  const stopping = new AbortController();
+  const stop = (): void => {
+    stopping.abort(new Error("The agent environment is stopping"));
+  };
   const served = await serveStreamableHttp({
     host,
     port,
@@ -276,12 +336,16 @@ export const serveEnvironment = async (
       card,
       store === undefined
         ? undefined
-        : stateDataPlane(store, {
-            ...DEFAULT_STATE_INTAKE,
-            ...(options.fetchState === undefined
-              ? {}
-              : { fetchState: options.fetchState }),
-          }),
+        : stateDataPlane(
+            store,
+            {
+              ...DEFAULT_STATE_INTAKE,
+              ...(options.fetchState === undefined
+                ? {}
+                : { fetchState: options.fetchState }),
+            },
+            stopping.signal,
+          ),
     ),
     ...(logger === undefined ? {} : { logger }),
     onerror: (error) => {
@@ -292,5 +356,16 @@ export const serveEnvironment = async (
       options.onerror?.(error);
     },
   });
-  return ok({ ...served, card });
+  return ok({
+    ...served,
+    card,
+    prepareShutdown: () => {
+      stop();
+      return served.prepareShutdown();
+    },
+    close: () => {
+      stop();
+      return served.close();
+    },
+  });
 };

@@ -1,6 +1,7 @@
 import type { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
 import type { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import {
+  CANCELLED,
   DEFAULT_STATE_INTAKE,
   invalidParams,
   partDocument,
@@ -13,10 +14,11 @@ export type RpcOutcome =
   | { readonly result: unknown }
   | { readonly error: RpcError };
 
-/** The data-plane methods one environment serves, by JSON-RPC method name. */
+/** The data-plane methods one environment serves, by JSON-RPC method name; a call is queued when made, and `signal` cancels it. */
 export type RpcMethods = (
   method: string,
   params: unknown,
+  signal?: AbortSignal,
 ) => Promise<RpcOutcome | undefined>;
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -37,57 +39,76 @@ const documentError = (error: AnalysisInputError): RpcError => {
   );
 };
 
-/** `data/add`: exactly one part, whose document replaces the whole state only when it is valid. */
+/** What one queued call runs with: the live state, how documents arrive and what cancels it. */
+interface CallContext {
+  readonly store: EnvironmentStateStore;
+  readonly intake: StateIntake;
+  readonly cancel: AbortSignal;
+}
+
+/** `data/add`: exactly one part, whose document replaces the whole state only when it is valid and the call was not cancelled. */
 const addState = async (
-  store: EnvironmentStateStore,
+  { store, intake, cancel }: CallContext,
   params: unknown,
-  intake: StateIntake,
 ): Promise<RpcOutcome> => {
   const parts = isRecord(params) ? params.parts : undefined;
   if (!Array.isArray(parts) || parts.length !== 1)
     return { error: invalidParams("data/add takes exactly one part") };
-  const document = await partDocument(parts[0], intake);
+  const document = await partDocument(parts[0], intake, cancel);
   if (!document.ok) return { error: document.error };
+  // A file read is not interruptible, so a cancellation during it is honoured here, before the state changes.
+  if (cancel.aborted) return { error: CANCELLED };
   const replaced = store.replace(document.value);
   return replaced.ok
     ? { result: {} }
     : { error: documentError(replaced.error) };
 };
 
-/** One data-plane method over the live state, or undefined when the method is not served. */
-const runMethod = (
-  store: EnvironmentStateStore,
-  intake: StateIntake,
-  method: string,
+type Method = (
+  context: CallContext,
   params: unknown,
-): Promise<RpcOutcome> | undefined => {
-  switch (method) {
-    case "data/reset":
+) => RpcOutcome | Promise<RpcOutcome>;
+
+const METHODS: ReadonlyMap<string, Method> = new Map<string, Method>([
+  [
+    "data/reset",
+    ({ store }) => {
       store.reset();
-      return Promise.resolve({ result: {} });
-    case "data/add":
-      return addState(store, params, intake);
-    case "data/get":
-      return Promise.resolve({
-        result: { parts: [{ kind: "data", data: store.snapshot() }] },
-      });
-    default:
-      return undefined;
-  }
-};
+      return { result: {} };
+    },
+  ],
+  ["data/add", addState],
+  [
+    "data/get",
+    ({ store }) => ({
+      result: { parts: [{ kind: "data", data: store.snapshot() }] },
+    }),
+  ],
+]);
 
 /**
  * `data/reset`, `data/add` and `data/get` over one live state. Calls run one
- * at a time in arrival order across requests, so a slow load never overwrites
- * a later reset and at most one loaded document is parsed at once.
+ * at a time in the order they are made, across requests, so a slow load never
+ * overwrites a later reset and at most one loaded document is parsed at once.
+ * Once `stopped` or a call's own signal aborts, its download ends and a call
+ * not yet run is answered as cancelled.
  */
 export const stateDataPlane = (
   store: EnvironmentStateStore,
   intake: StateIntake = DEFAULT_STATE_INTAKE,
+  stopped: AbortSignal = new AbortController().signal,
 ): RpcMethods => {
   let previous: Promise<unknown> = Promise.resolve();
-  return (method, params) => {
-    const next = previous.then(() => runMethod(store, intake, method, params));
+  return (method, params, signal) => {
+    const run = METHODS.get(method);
+    if (run === undefined) return Promise.resolve(undefined);
+    const cancel =
+      signal === undefined ? stopped : AbortSignal.any([stopped, signal]);
+    const next = previous.then(() =>
+      cancel.aborted
+        ? { error: CANCELLED }
+        : run({ store, intake, cancel }, params),
+    );
     previous = next.catch(() => undefined);
     return next;
   };

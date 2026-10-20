@@ -265,6 +265,29 @@ describe("list answers", () => {
     });
   });
 
+  it("refuses a list whose member lacks a field every recording carried, never answering a partial body", () => {
+    const serving = servingOf();
+    load(serving, (entities) =>
+      entities.map((entity) => {
+        if (entity.type !== "/api/folders" || entity.id !== "fg1jo91e57e2ob")
+          return entity;
+        const { title: _title, ...fields } = entity.fields as Record<
+          string,
+          unknown
+        >;
+        return { ...entity, fields };
+      }),
+    );
+    expect(
+      refusal(serving, "get_folders", { limit: "100", page: "1" }),
+    ).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining(
+        "holds no complete /api/folders entity fg1jo91e57e2ob in /api/folders: it lacks fields this tool's responses always carried: title",
+      ),
+    });
+  });
+
   it("answers an unrecorded request line from its recording", () => {
     const serving = servingOf();
     load(serving, () => []);

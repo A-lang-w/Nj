@@ -388,7 +388,7 @@ Each read tool answers according to its view in the state:
 | View       | Answer                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `item`     | The entity the path arguments name, rendered into the recorded envelope of `envelope_ordinal`. Arguments match as replay matches them: each collection segment equals the held collection's segment as written or after percent-decoding, and the identity is the last argument percent-decoded, then as written; values are never re-split on `/`. Any entity the state holds answers, including one `data/add` loaded; query arguments only decide `replay.exact_match`. An entity the state does not hold, or one lacking a field every recording carried, is a tool error; a body is never invented. |
-| `list`     | When the arguments name one of the lines the view checked exactly (its latest recordings before the first related write; every path and query value equal to the recording's, and every recorded query parameter supplied), that recorded envelope with its array rendered from the state: every entity of the collection in state order for `membership: "all"`, or the recorded members still held.                                                                                                                                                                                                    |
+| `list`     | When the arguments name one of the lines the view checked exactly (its latest recordings before the first related write; every path and query value equal to the recording's, and every recorded query parameter supplied), that recorded envelope with its array rendered from the state: every entity of the collection in state order for `membership: "all"`, or the recorded members still held. A member lacking a field every recording carried makes the call a tool error rather than a partial list.                                                                                           |
 | `document` | When the arguments name the document's checked line exactly, the state's value for it; a tool error when the state holds none.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `recorded` | The recording, as replay answers it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 
@@ -412,21 +412,42 @@ The data plane serves three JSON-RPC methods:
 | `data/add`   | `{}` after replacing the whole state with one valid `rea-state/v1` document                               |
 | `data/get`   | `{"parts": [{"kind": "data", "data": <rea-state/v1 document>}]}` with `state_evidence_id` and the `types` |
 
-Calls run one at a time in arrival order, across requests as within a batch,
-so a reset sent while a download is loading applies after that load. `data/add`
+Calls run one at a time in arrival order across requests. Every message of a
+batch is queued when the batch arrives, so another request's call never lands
+between them and each message sees the changes of those before it; a reset
+sent while a download is loading applies after that load. `data/add`
 takes exactly one part: a `data` part whose `data` is the document, or a
 `file` part whose `file` carries `bytes` (base64 of UTF-8 JSON) or a `uri`,
-either a `file://` URL of a local regular file or an `https://` URL fetched
-without following redirects and within 30 seconds, including reading the body;
-`mimeType`, when given, is `application/json`. A loaded document is at most 32
+either a `file://` URL of a local regular file, whose host is empty or
+`localhost`, or an `https://` URL fetched without following redirects and
+within 30 seconds, including reading the body; `mimeType`, when given, is
+`application/json`. A `file://` URL naming another host, or a UNC path such as
+`file:////server/share/state.json`, is refused before anything is opened, so a
+load never reaches a network share. A loaded document is at most 32
 MiB; an inline part also stays within the 4 MiB request body bound, so larger
 states arrive by `uri`. Anything else, including `{"parts": []}`, is `-32602
 invalid params`; a download that fails or answers a non-2xx status is
 `-32000`. Errors never echo the uri or the content; a file or download failure
 names its category in `error.data.reason`: `not-found`, `permission`,
-`not-regular-file`, `changed` or `read-failed` for files, and `timeout`,
+`not-regular-file`, `changed` or `read-failed` for files, `timeout`,
 `http-status` or `network` (connection, TLS or a refused redirect) for
-downloads.
+downloads, and `cancelled` for a download the server's stop or its caller's
+departure ended.
+
+Stopping the server cancels every pending call, and a caller that leaves before
+its reply cancels its own: a download in progress ends, and calls not yet run
+are answered `-32000` with `error.data.reason` `cancelled` without running. A
+cancelled call leaves the state unchanged, and shutdown never waits for a
+download.
+
+One `/agentenv` response carries at most 64 MiB of replies, twice the 32 MiB
+a loaded document may hold: room for a `data/get` of a loaded state, while a
+batch of reads cannot multiply a large state into one body. Replies are
+measured in order as they are produced; one that would take the response past
+the budget is answered instead with `-32000` whose `error.data` gives
+`max_response_bytes` and the `reply_bytes` it would have taken. That call still
+ran, so repeat such a read in another request. A reply no larger than that
+error, such as a write's `{}`, is always kept.
 
 ```json
 {
@@ -449,7 +470,9 @@ Each entity's `type` is a state type's `collection_template`, its `collection`
 matches that template segment by segment (a template parameter matches any one
 segment), its identity field's value is its `id`, and its type, collection and
 id are unique; `view_fields` is optional and names item or list views of its
-type. Spell a collection as requests spell it, as `data/get` reports it: list
+type. Views render their values over the entity's fields, so a view's values
+must not set the type's identity field to a value whose text differs from the
+entity's `id`. Spell a collection as requests spell it, as `data/get` reports it: list
 calls find entities under the checked line's recorded path. Each document
 names a `document` view once, at its initial document's `path`. The `version`,
 and the `state_evidence_id` and `types` that `data/get` reports, must match

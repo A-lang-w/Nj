@@ -59,8 +59,11 @@ this increment: write tools are not served from the state.
   view's `checked_record_ordinals` exactly (every path and query value equal and
   no recorded query parameter unsupplied), choosing among them as replay
   chooses: every collection entity in state order for `membership: "all"`,
-  otherwise the recorded members the state still holds. Lines recorded after a
-  write or with other filters were never checked and answer from recordings.
+  otherwise the recorded members the state still holds. A member lacking one
+  of the view's `required_fields` makes the call a tool error stating that the
+  state holds no complete member, never a partial body, as for items. Lines
+  recorded after a write or with other filters were never checked and answer
+  from recordings.
 - Answer document views with the state's value when the arguments name the
   document's checked line exactly.
 - Answer recorded views, tools without a view and unrecorded requests from the
@@ -72,14 +75,30 @@ this increment: write tools are not served from the state.
   (`bytes`, a `file://` regular file or an `https://` download with a 30 s
   timeout covering the body, no redirects and a streamed 32 MiB cap;
   `mimeType` when given is `application/json`) and `data/get` (`{parts:
-  [{kind: "data", data: rea_state}]}`). Anything else is `-32602`, including
-  empty `parts`; a failed download is `-32000`; errors never echo a uri or
-  content and name a coarse failure category in `error.data.reason`. Calls run
-  one at a time in arrival order across requests, batches in order, and
+  [{kind: "data", data: rea_state}]}`). A `file://` uri whose host is neither
+  empty nor `localhost`, or whose path is a UNC path, is `-32602` before
+  anything is opened. Anything else is `-32602`, including empty `parts`; a
+  failed download is `-32000`; errors never echo a uri or content and name a
+  coarse failure category in `error.data.reason`. Calls run one at a time in
+  arrival order across requests; every message of a batch is queued when the
+  batch arrives, so no other request's call lands between them, and
   notifications run without a reply.
+- Stopping the server (`close` or `prepareShutdown`) aborts the data plane's
+  stop signal, and a request's own signal aborts when its client leaves: the
+  download in progress ends with reason `cancelled`, queued calls are answered
+  `-32000` with reason `cancelled` without running, and a `data/add` whose
+  file read finished after the cancellation does not replace the state.
+- Bound one `/agentenv` response to 64 MiB of replies (twice the intake
+  limit). Each reply is serialized and counted as it is produced, in message
+  order; one that would pass the budget is replaced by `-32000` with
+  `data: {max_response_bytes, reply_bytes}`, unless that error is no smaller
+  than the reply, so the body is never built past the budget and small write
+  replies are kept.
 - Validate `rea-state/v1` documents against the served types and views: known
   types, collections that instantiate their template, ids equal to the identity
-  field, unique keys, `view_fields` naming item or list views of the type,
+  field, unique keys, `view_fields` naming item or list views of the type
+  without setting the type's identity field to a value whose scalar text
+  differs from the entity's id (refused at that view's `fields`),
   documents naming document views once at the initial path, and the optional
   `state_evidence_id` and `types` that `data/get` reports equal to the served
   ones. Refuse numbers without an exact native value and `__proto__` members.
@@ -140,14 +159,18 @@ every answer path: item (including percent-encoded collection segments and
 ids), list `all`, list `recorded`, lines recorded after a write or with other
 filters, a line replay's tie-break would not pick, document, recorded view, tool
 without a view, unrecorded request, missing entity, missing required field and
-the body limit. Adapters tests cover the data-plane shapes, `-32602` for empty
-and malformed parts and invalid documents, inexact numbers, bytes, `file://`
-and its failure categories, injected https downloads (status, declared and
-streamed size, the timeout whether or not the fetcher honours its signal), the
-default fetch's refused redirects, arrival-order application across requests,
-batches and notifications, the card declaration, absent write tools, a served
-query `POST`, the per-mode discovery reservation and a `data/add` that changes
-the next tool answer over MCP. The mcp-boundary tests serve the state the
+the body limit, a view value that changes an entity's identity, and a list
+member missing a required field. Adapters tests cover the data-plane shapes,
+`-32602` for empty and malformed parts and invalid documents, inexact numbers,
+bytes, `file://` and its failure categories, `file://` uris naming another
+host or a UNC path, injected https downloads (status, declared and streamed
+size, the timeout whether or not the fetcher honours its signal), the default
+fetch's refused redirects, arrival-order application across requests, a batch
+another request's reset cannot split, cancellation by the server's stop and by
+a departed caller, a server that closes while a download is stalled, the
+response budget, batches and notifications, the card declaration, absent write
+tools, a served query `POST`, the per-mode discovery reservation and a
+`data/add` that changes the next tool answer over MCP. The mcp-boundary tests serve the state the
 built CLI derives from only a manifest and a capture, and `--replay-only` with
 every manifest tool, `-32601` data-plane answers and a card whose SHA-256
 equals that of the card main serves for the fixture; the process-boundary test checks the stopped document's

@@ -21,11 +21,13 @@
 5. Declare the state data plane on the card in `environmentTools.ts`, taking
    the data plane in an options object so the discovery budget reserves the
    card and descriptions actually served.
-6. Add `stateIntake.ts` for parts, files and downloads (injectable fetcher and
-   timeout, coarse failure categories) and `environmentDataPlane.ts` for the
-   three methods, run one at a time in arrival order; let `serveEnvironment.ts`
-   serve the shared catalog and answer function and run data-plane methods,
-   batches in order and notifications.
+6. Add `stateIntake.ts` for parts, files on this host and downloads
+   (injectable fetcher and timeout, cancellation, coarse failure categories)
+   and `environmentDataPlane.ts` for the three methods, run one at a time in
+   arrival order and cancelled by the server's stop or the caller's
+   departure; let `serveEnvironment.ts` serve the shared catalog and answer
+   function, queue every message of a batch at arrival, bound the replies of
+   one response and stop the data plane before closing the listener.
 7. Make `environment-serve` prepare the state under its served name after
    loading the source, add `--replay-only`, log an unavailable state as a
    warning before binding, and report `state` in the stopped document.

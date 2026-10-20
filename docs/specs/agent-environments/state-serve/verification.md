@@ -1,78 +1,63 @@
 # Verification
 
-Verified base: e96484b10a1ae3dad8541d748599da32b447495e (main with #5319 and
-#5349 merged into this branch), with the changes of this pass uncommitted.
+Verified base: 6676582675e08574146a812ae58cff67e2e53282 (this branch's head),
+with the review fixes of this pass uncommitted.
 
-Executed on the implementation worktree with Node v22.23.1 (the repository pins
-24.18.0 in `.nvmrc`, which was not installed). Every check below ran as written
-after the last source change, in this order.
+Executed on the implementation worktree on macOS with Node v22.23.1 (the
+repository pins 24.18.0 in `.nvmrc`, which was not installed). Every check
+below ran as written after the last source change, in this order.
 
 - `npm run format` then `npm run format:check`: passed (4330 files).
-- `npm run check:fast`: typecheck and lint passed (0 lint errors). The lint
-  report holds no diagnostic in any file this change touches.
+- `npm run check:fast`: typecheck and lint passed. The lint report holds 0
+  errors and no diagnostic in any file this pass touches.
 - `npx knip`: passed (exit 0, no findings).
 - `npm run jscpd`: 3.37% duplicated lines over 3373 files (2800 clones), under
-  the 3.5% gate. Five clones touch a changed file. The same jscpd arguments on
-  a copy of the base tree's `src/` and `tests/` (identical to `HEAD` for every
-  changed file) report 3.38% (2802 clones) with seven clones touching these
-  files, which include all five, so this change adds none; the bundle tests'
-  name-refusal pair and their oversized-manifest pair with
-  `environmentCapacity.test.ts` are gone.
+  the 3.5% gate; no clone involves a file this pass changed.
 - `npm run scan:todos`: passed, no markers.
 - `npm run docs:check`: the built documentation checks (6 tasks) and the README
   consistency conformance test (5 tests) passed.
-- `npx vitest run --project domain --project services`: 347 files, 5946 tests
+- `npx vitest run --project domain --project services`: 347 files, 5948 tests
   passed, 5 pre-existing skips.
-- `npm run build:cached`, then `npm run test:focused --` the serve CLI, MCP and
-  process boundaries, the export CLI boundary, the CLI startup imports, the
-  agentenv verifier identity boundary, the bundle package pin conformance test,
-  the CI change scope boundary, the analysis-view CLI and MCP boundaries, and
-  the `serveEnvironment`, `serveEnvironmentState`, `environmentCapacity` and
-  `stateIntake` adapters tests: 14 files, 329 tests passed.
-- After this file was written: `npm run format`, `npm run format:check` and
-  `npm run docs:check` passed again.
+- `npm run build:cached` (the built output already included this pass's
+  sources), then `npm run test:focused --` the serve CLI, MCP and process
+  boundaries, the export CLI boundary, the CLI startup imports, the agentenv
+  verifier identity boundary, the bundle package pin conformance test, the CI
+  change scope boundary, the analysis-view CLI and MCP boundaries, and the
+  `serveEnvironment`, `serveEnvironmentState`, `environmentCapacity` and
+  `stateIntake` adapters tests: 14 files, 335 tests passed.
+- After this file was written: `npm run format`, `npm run format:check`,
+  `npm run scan:todos` and `npm run docs:check` passed again.
 
-A state catalog over the discovery budget, through the built CLI: a capture of
-380 distinct `GET` paths projected with no template rules gives a 380-tool
-read-only manifest whose replay catalog fits the reservation and whose state
-catalog does not (300 to 360 such tools fit both, 380 to 460 only replay).
-`environment-serve` with no flag logged the warning
-`"code":"resource_constraint"` before binding, served 380 tools and stopped
-with `state: {"served": false, "reason": "unavailable", "code":
-"resource_constraint", …}`; with `--replay-only` it served the same 380 tools
-and reported `replay-only`. `environment-export` of the same pair wrote a
-bundle with `tool_count` 380, that `state`, `TOOL_COUNT = 380`, a replay check
-and a README naming the code. The same export with `--name con` was refused
-with `invalid_request` and created nothing.
+The review fixes are covered by these tests, all passing in the runs above:
 
-`--replay-only` against main: a script loaded main's (`3fca2e0c`) sources for
-the Grafana-shaped fixture in-process and compared them with the built CLI
-serving the same files with `--replay-only` and `ENVIRONMENT_NAME=renamed`. The
-card was byte-identical (11,131 bytes; its SHA-256, computed from main's
-sources, is the one the mcp-boundary test now pins), `tools/list` matched
-main's 19 tool names, descriptions and input schemas, five tool calls
-(`get_users_by_id` with `2` and `999`, `get_annotations`,
-`get_folders_by_uid`, `post_folders`) returned main's replay results, and
-`data/get` answered `-32601`.
+- Response budget: a batch of four `data/get`s over a loaded state of about a
+  third of the budget keeps two results, answers the other two with `-32000`
+  and `max_response_bytes`, keeps the trailing reset's `{}`, and its body stays
+  within the budget.
+- Batch order: a batch `[data/add (gated download), data/get]` with a
+  `data/reset` from another request sent while the download is held reports
+  the loaded state from its `data/get`, and the reset applies last.
+- Cancellation: aborting the data plane's stop signal ends a stalled download
+  (its fetcher's signal is aborted) and answers the queued reset as
+  `cancelled` without running it; a call made after the stop does not run; a
+  caller whose request signal aborts gets `cancelled` and the state is
+  unchanged. Over loopback HTTP, `close()` of a served state returned while a
+  download that never answers was in progress, and that download's signal was
+  aborted.
+- File hosts: `file://remote.example.test/...` and
+  `file:////remote.example.test/...` are refused with the network-share
+  message and no failure category; a `file://localhost/...` uri loads.
+- Loaded identity: `view_fields` setting `id` to `3`, `"3"` or `null` on user 2
+  is refused at `/rea_state/entities/7/view_fields/0/fields`; `"2"` loads.
+- List required fields: a folder without `title` makes `get_folders` a tool
+  error naming the incomplete entity.
 
-Startup, measured by starting the built CLI, timing until the listener
-announcement and reading `process.resourceUsage()` at exit, with a load average
-of 6 to 7 on a shared host. Medians of six interleaved runs:
+That each test fails without its fix is source-derived; the fixes were not
+reverted to show it.
 
-| Capture                           | Mode                   | Listen ms | CPU ms | Peak RSS MiB |
-| --------------------------------- | ---------------------- | --------- | ------ | ------------ |
-| Grafana fixture (25 KB)           | `--replay-only`        | 542       | 819    | 265          |
-| Grafana fixture (25 KB)           | default, derived state | 546       | 822    | 266          |
-| Synthetic, 1,530 records (5.2 MB) | `--replay-only`        | 610       | 934    | 277          |
-| Synthetic, 1,530 records (5.2 MB) | default, derived state | 789       | 1234   | 303          |
-
-Deriving the state costs about 180 ms, 300 ms CPU and 26 MiB peak RSS on the
-5.2 MB capture and is within noise on the fixture. The state catalog check runs
-before deriving and takes about 1.4 ms in-process for the 350-tool manifest of
-the services test, which it refuses without deriving.
-
-Not covered here: agent token usage (no agent task was run), a real AgentEnv
-framework run against a bundle or a state-served environment
-(`npm run verify:agentenv:environment` needs Docker and the pinned framework),
-a real-world capture, a real `https://` download (tests inject the fetcher or
-stub `fetch`), and write effects, which are a later increment.
+Not covered here: a Windows host (the UNC refusal ran on macOS, where
+`file:////host/share` converts to `//host/share`; the host check runs before
+any path conversion on every platform), a real `https://` download (tests
+inject the fetcher), the memory and time of a budgeted batch (not measured),
+agent token usage, a real AgentEnv framework run, a real-world capture, and
+write effects, which are a later increment.

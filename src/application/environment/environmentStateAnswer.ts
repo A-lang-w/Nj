@@ -7,6 +7,7 @@ import {
   replaceAt,
   scalarText,
   segmentsOf,
+  type JsonObject,
   type RecordedViewReason,
   type StateEntity,
   type StateItemView,
@@ -85,6 +86,27 @@ const refused = (
   new AnalysisInputError(ENVIRONMENT_SERVE_OPERATION, { userMessage }, [
     { path: ["tool"], reason: "invalid_value", expected: tool.name },
   ]);
+
+/** One entity as an item or list view shows it, or a refusal when it lacks a field the view's every recording carried; a partial body is never answered. */
+const shownEntity = (
+  tool: EnvironmentManifestTool,
+  view: StateItemView | StateListView,
+  entity: StateEntity,
+  volatile: ReadonlySet<string>,
+): Result<JsonObject, AnalysisError> => {
+  const shown = renderStateEntity(entity, view, volatile);
+  const missing = view.required_fields.filter(
+    (name) => !Object.hasOwn(shown, name),
+  );
+  return missing.length === 0
+    ? ok(shown)
+    : err(
+        refused(
+          tool,
+          `The state holds no complete ${view.type} entity ${entity.id} in ${entity.collection}: it lacks fields this tool's responses always carried: ${missing.join(", ")}.`,
+        ),
+      );
+};
 
 /** The recorded answer, labelled with why the state did not produce it. */
 const fromRecording = (
@@ -229,18 +251,13 @@ const answerItem = (
         `The state holds no ${view.type} entity ${call.id} in /${call.segments.map(({ text }) => text).join("/")}.`,
       ),
     );
-  const volatile = new Set(store.type(view.type)?.volatile_fields);
-  const shown = renderStateEntity(entity, view, volatile);
-  const missing = view.required_fields.filter(
-    (name) => !Object.hasOwn(shown, name),
+  const shown = shownEntity(
+    tool,
+    view,
+    entity,
+    new Set(store.type(view.type)?.volatile_fields),
   );
-  if (missing.length > 0)
-    return err(
-      refused(
-        tool,
-        `The state's ${view.type} entity ${entity.id} lacks fields this tool's responses always carried: ${missing.join(", ")}.`,
-      ),
-    );
+  if (!shown.ok) return shown;
   const base = source.exchanges.get(view.envelope_ordinal);
   const envelope = base === undefined ? undefined : recordedJson(base);
   if (base === undefined || envelope === undefined)
@@ -253,7 +270,7 @@ const answerItem = (
   return stateAnswer(
     serving,
     { exchange: base, exact },
-    replaceAt(envelope, view.pointer, shown),
+    replaceAt(envelope, view.pointer, shown.value),
     {
       source: "state",
       view: "item",
@@ -315,9 +332,12 @@ const answerList = (
           return entity === undefined ? [] : [entity];
         });
   const volatile = new Set(type?.volatile_fields);
-  const items = members.map((entity) =>
-    renderStateEntity(entity, view, volatile),
-  );
+  const items: JsonObject[] = [];
+  for (const entity of members) {
+    const shown = shownEntity(tool, view, entity, volatile);
+    if (!shown.ok) return shown;
+    items.push(shown.value);
+  }
   return stateAnswer(
     serving,
     { exchange: base, exact: true },

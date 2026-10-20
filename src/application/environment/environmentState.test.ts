@@ -422,6 +422,29 @@ describe("rea-state/v1 validation", () => {
     expect(problem.message).not.toContain("never echoed");
   });
 
+  it("refuses view values that give an entity another identity, and accepts its own id spelled as either scalar", () => {
+    const index = state.entities.findIndex(
+      (entity) => entity.type === "/api/users" && entity.id === "2",
+    );
+    const withView = (fields: Record<string, unknown>) =>
+      documentWith((document) => {
+        document.rea_state.entities[index]!.view_fields = [
+          { tool: "get_users_by_id", fields },
+        ];
+      });
+    for (const id of [3, "3", null])
+      expect(firstProblem(withView({ id, login: "other" }))).toEqual({
+        path: `rea_state/entities/${String(index)}/view_fields/0/fields`,
+        message:
+          "sets the type's id field to a value other than the entity's id",
+      });
+    const store = new EnvironmentStateStore(state);
+    expect(store.replace(withView({ id: "2", login: "other" })).ok).toBe(true);
+    expect(store.entity("/api/users", "/api/users", "2")?.view_fields).toEqual([
+      { tool: "get_users_by_id", fields: { id: "2", login: "other" } },
+    ]);
+  });
+
   it("refuses values parsing would change at the member holding them, without naming caller data", () => {
     const marker = Symbol("not exact JSON");
     const problem = firstProblem(

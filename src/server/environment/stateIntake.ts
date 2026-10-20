@@ -11,7 +11,7 @@ import {
 } from "../../filesystem/readStableFileBytes.js";
 import { openRegularFile } from "../../filesystem/RegularFile.js";
 
-/** Why a named file or download could not be read: a category naming neither the uri nor the content. */
+/** Why a named file or download could not be read, or a call was cancelled: a category naming neither the uri nor the content. */
 export type IntakeFailure =
   | "not-found"
   | "permission"
@@ -20,20 +20,29 @@ export type IntakeFailure =
   | "read-failed"
   | "timeout"
   | "http-status"
-  | "network";
+  | "network"
+  | "cancelled";
 
-/** A JSON-RPC error the data plane answers with; `data` locates a document problem or names an intake failure. */
+/** A JSON-RPC error the data plane answers with; `data` locates a document problem, names an intake failure or states the response budget. */
 export interface RpcError {
   readonly code: number;
   readonly message: string;
   readonly data?:
     | { readonly path: string }
-    | { readonly reason: IntakeFailure };
+    | { readonly reason: IntakeFailure }
+    | { readonly max_response_bytes: number; readonly reply_bytes: number };
 }
 
 const INVALID_PARAMS = -32602;
 /** The data plane could not complete an operation whose params were valid. */
-const SERVER_ERROR = -32000;
+export const SERVER_ERROR = -32000;
+
+/** A call the server's stop or its caller's departure ended before it could change the state. */
+export const CANCELLED: RpcError = {
+  code: SERVER_ERROR,
+  message: "the call was cancelled and left the state unchanged",
+  data: { reason: "cancelled" },
+};
 
 /** A loaded state document is at most this large, whether it arrives as bytes, a file or a download. */
 export const STATE_INTAKE_LIMIT_BYTES = 32 * 1024 * 1024;
@@ -178,14 +187,32 @@ const abortion = (signal: AbortSignal): Promise<never> => {
   return aborted;
 };
 
-/** Read a response body within the intake limit and the download's time, whether or not the fetcher ties the body to the signal. */
+/** What ends a download: its time limit or the caller's cancellation; `failure` names which, or a network failure when neither did. */
+interface DownloadBounds {
+  readonly signal: AbortSignal;
+  readonly failure: () => IntakeFailure;
+}
+
+const downloadBounds = (
+  timeoutMs: number,
+  cancel: AbortSignal,
+): DownloadBounds => {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return {
+    signal: AbortSignal.any([timeout, cancel]),
+    failure: () =>
+      cancel.aborted ? "cancelled" : timeout.aborted ? "timeout" : "network",
+  };
+};
+
+/** Read a response body within the intake limit and the download's bounds, whether or not the fetcher ties the body to the signal. */
 const readCapped = async (
   body: ReadableStream<Uint8Array> | null,
-  signal: AbortSignal,
+  bounds: DownloadBounds,
 ): Promise<Result<Buffer, RpcError>> => {
   if (body === null) return ok(Buffer.alloc(0));
   const reader = body.getReader();
-  const aborted = abortion(signal);
+  const aborted = abortion(bounds.signal);
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
@@ -201,29 +228,32 @@ const readCapped = async (
     }
   } catch {
     void reader.cancel().catch(() => undefined);
-    return err(fetchFailed(signal.aborted ? "timeout" : "network"));
+    return err(fetchFailed(bounds.failure()));
   }
 };
 
-/** Download one https document within the time and size limits. */
+/** Download one https document within the time and size limits, ending it when `cancel` aborts. */
 const downloadState = async (
   url: URL,
   intake: StateIntake,
+  cancel: AbortSignal,
 ): Promise<Result<Buffer, RpcError>> => {
-  const signal = AbortSignal.timeout(intake.timeoutMs);
-  const fetching = Promise.resolve().then(() => intake.fetchState(url, signal));
+  const bounds = downloadBounds(intake.timeoutMs, cancel);
+  const fetching = Promise.resolve().then(() =>
+    intake.fetchState(url, bounds.signal),
+  );
   let response: Response;
   try {
-    response = await Promise.race([fetching, abortion(signal)]);
+    response = await Promise.race([fetching, abortion(bounds.signal)]);
   } catch {
-    // A response that arrives after the timeout is released unread.
+    // A response that arrives after the download ended is released unread.
     void fetching
       .then(
         (late) => late.body?.cancel(),
         () => undefined,
       )
       .catch(() => undefined);
-    return err(fetchFailed(signal.aborted ? "timeout" : "network"));
+    return err(fetchFailed(bounds.failure()));
   }
   const declared = Number(response.headers.get("content-length") ?? "0");
   if (!response.ok || declared > STATE_INTAKE_LIMIT_BYTES) {
@@ -237,13 +267,33 @@ const downloadState = async (
           },
     );
   }
-  return readCapped(response.body, signal);
+  return readCapped(response.body, bounds);
 };
 
-/** The bytes a file part carries inline or names by a `file://` or `https://` uri. */
+const NETWORK_SHARE = invalidParams(
+  "a file:// uri names a path on this host, not a network share",
+);
+
+/** A path that names a host before its first segment, as `\\server\share` or `//server/share` does. */
+const UNC_PATH = /^[\\/]{2}/u;
+
+/** The local path a `file://` uri names; another host or a UNC path would open a network share, so neither is opened. */
+const localFilePath = (url: URL): Result<string, RpcError> => {
+  if (url.host !== "" && url.host !== "localhost") return err(NETWORK_SHARE);
+  let path: string;
+  try {
+    path = fileURLToPath(url);
+  } catch {
+    return err(invalidParams("a file:// uri names a local absolute path"));
+  }
+  return UNC_PATH.test(path) ? err(NETWORK_SHARE) : ok(path);
+};
+
+/** The bytes a file part carries inline or names by a `file://` or `https://` uri; `cancel` ends a download. */
 const fileBytes = async (
   file: Readonly<Record<string, unknown>>,
   intake: StateIntake,
+  cancel: AbortSignal,
 ): Promise<Result<Uint8Array, RpcError>> => {
   if (typeof file.bytes === "string" && file.uri === undefined) {
     if (!BASE64.test(file.bytes))
@@ -260,22 +310,18 @@ const fileBytes = async (
       invalidParams("a file part carries exactly one of bytes or a uri"),
     );
   const url = new URL(file.uri);
-  if (url.protocol === "https:") return downloadState(url, intake);
+  if (url.protocol === "https:") return downloadState(url, intake, cancel);
   if (url.protocol !== "file:")
     return err(invalidParams("a file uri is a file:// or https:// URL"));
-  let path: string;
-  try {
-    path = fileURLToPath(url);
-  } catch {
-    return err(invalidParams("a file:// uri names a local absolute path"));
-  }
-  return readStateFile(path);
+  const path = localFilePath(url);
+  return path.ok ? readStateFile(path.value) : path;
 };
 
-/** The state document one `data/add` part carries, parsed but not yet validated. */
+/** The state document one `data/add` part carries, parsed but not yet validated; `cancel` ends a download. */
 export const partDocument = async (
   part: unknown,
   intake: StateIntake,
+  cancel: AbortSignal,
 ): Promise<Result<unknown, RpcError>> => {
   if (isRecord(part) && part.kind === "data" && isRecord(part.data))
     return ok(part.data);
@@ -292,6 +338,6 @@ export const partDocument = async (
       mediaTypeEssence(mimeType) !== "application/json")
   )
     return err(invalidParams("a file part's mimeType is application/json"));
-  const bytes = await fileBytes(part.file, intake);
+  const bytes = await fileBytes(part.file, intake, cancel);
   return bytes.ok ? parseDocumentBytes(bytes.value) : bytes;
 };
