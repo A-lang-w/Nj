@@ -542,7 +542,7 @@ it.skipIf(process.platform !== "linux")(
 );
 
 it.skipIf(process.platform !== "linux")(
-  "treats a retained Rizin PID row with a new start time as stale after identity reuse",
+  "keeps cleanup incomplete when Rizin reports a PID replacement in its inferior inventory",
   async () => {
     directory = await mkdtemp(join(tmpdir(), "rea-rizin-reused-pid-"));
     const commandsPath = join(directory, "commands");
@@ -577,17 +577,15 @@ it.skipIf(process.platform !== "linux")(
     if (!started.ok) return;
 
     expect((await manager.close(started.value.session_id)).ok).toBe(false);
-    expect(await manager.retryCleanupFailures()).toEqual({
-      ok: true,
-      value: null,
-    });
+    const retry = await manager.retryCleanupFailures();
+    expect(retry.ok).toBe(false);
 
     expect(identityObservations[0]).toBe("100");
     expect(
       identityObservations.slice(1).every((value) => value === "200"),
     ).toBe(true);
     expect(await readFile(commandsPath, "utf8")).not.toContain("o- 12");
-    expect(manager.status(started.value.session_id)).toBeUndefined();
+    expect(manager.status(started.value.session_id)?.state).toBe("closed");
   },
 );
 

@@ -1226,10 +1226,14 @@ export class RizinDebugSessionManager {
         continue;
       }
       if (previous !== undefined && previous.startTime !== startTime) {
-        // Rizin can retain a ptrace row after the original PID has exited.
-        // The changed start time identifies a replacement process; preserve
-        // the old identity as ended and never detach or inspect the replacement.
-        continue;
+        // The old process identity ended, but a non-empty Rizin inventory may
+        // now describe a replacement task attached to this session. We cannot
+        // apply the old target's policy to it or claim there is no inferior.
+        // Retain cleanup ownership until an authoritative inventory/policy
+        // check can account for the replacement.
+        throw new Error(
+          `Rizin reported PID ${pid} with a different process identity; replacement inferior state is ambiguous.`,
+        );
       }
       currentIdentities.set(pid, {
         pid,
