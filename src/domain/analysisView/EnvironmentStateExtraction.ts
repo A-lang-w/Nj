@@ -347,9 +347,13 @@ export class EnvironmentStateExtraction {
         return;
       }
       if (found === true) continue;
-      names = (names ?? found.fields).filter((name) =>
-        found.fields.includes(name),
-      );
+      // The first recording's candidates stand; later ones intersect through a set, so a wide
+      // item costs one pass per recording.
+      if (names === undefined) names = found.fields;
+      else {
+        const matching = new Set(found.fields);
+        names = names.filter((name) => matching.has(name));
+      }
       if (found.several) for (const name of found.fields) shown.add(name);
     }
     // An identity name is only inferred from items that carry it; empty lists prove none.
