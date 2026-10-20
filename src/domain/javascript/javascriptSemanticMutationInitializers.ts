@@ -87,8 +87,9 @@ const statementPosition = (
   parents: WeakMap<t.Node, t.Node>,
   declarator?: t.VariableDeclarator,
 ): StatementPosition | null => {
+  if (!t.isStatement(statement)) return null;
   const directParent = parents.get(statement);
-  const enclosing =
+  const enclosing: t.Statement =
     (t.isExportNamedDeclaration(directParent) ||
       t.isExportDefaultDeclaration(directParent)) &&
     directParent.declaration === statement
