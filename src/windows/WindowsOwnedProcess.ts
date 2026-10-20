@@ -374,6 +374,9 @@ export class WindowsOwnedProcess extends EventEmitter {
       } else this.#schedule(idle ? 25 : 0);
     } catch (cause: unknown) {
       const failure = cause instanceof Error ? cause : new Error(String(cause));
+      // Native polling is not atomic: it may drain one stream before a later
+      // read (stderr or job state) fails. Retrying cannot recover those bytes.
+      this.#outputIncomplete = true;
       this.#failure = failure.message;
       // Native lifecycle failures belong to the error/cleanup channels, never
       // the captured stderr observation produced by the child itself.

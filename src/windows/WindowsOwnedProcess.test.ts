@@ -151,6 +151,7 @@ describe("Windows Job Object lifecycle and poll ownership", () => {
       expect(
         calls.filter(({ operation }) => operation === "process_poll"),
       ).toHaveLength(2);
+      expect(child.outputIncomplete).toBe(true);
       expect(calls.at(-1)?.operation).toBe("process_close");
     } finally {
       vi.useRealTimers();

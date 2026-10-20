@@ -192,6 +192,9 @@ interface RizinDebugSession {
   readonly inferiorTtyInode: number;
   readonly knownInferiorIdentities: Map<string, OwnedInferiorIdentity>;
   confirmedDetachedInferiorIdentity: OwnedInferiorIdentity | undefined;
+  completedDetachCommand:
+    | { readonly fd: string; readonly identity: OwnedInferiorIdentity }
+    | undefined;
   verifiedDetachResult: OwnedDebuggerDetachResult | undefined;
   inferiorInventoryComplete: boolean;
   inferiorStateUnknown: () => boolean;
@@ -462,6 +465,7 @@ export class RizinDebugSessionManager {
       inferiorTtyInode: ttyInode,
       knownInferiorIdentities: new Map(),
       confirmedDetachedInferiorIdentity: undefined,
+      completedDetachCommand: undefined,
       verifiedDetachResult: undefined,
       inferiorInventoryComplete: false,
       inferiorStateUnknown: () => !session.inferiorInventoryComplete,
@@ -1220,6 +1224,11 @@ export class RizinDebugSessionManager {
         session,
         session.confirmedDetachedInferiorIdentity,
       );
+    if (session.completedDetachCommand !== undefined)
+      return this.#verifyCompletedDetachCommand(
+        session,
+        session.completedDetachCommand,
+      );
     session.inferiorInventoryComplete = false;
     const inferior = parseRizinPtraceRows(
       await this.#runInternalCommand(session, "olj"),
@@ -1279,11 +1288,28 @@ export class RizinDebugSessionManager {
     await this.#verifyDebuggerExitPolicy(session);
     await this.#verifyInferiorOutputDescriptors(session, pid);
     await this.#runInternalCommand(session, `o- ${fd}`);
+    // The command completion marker is durable protocol state. If its readback
+    // is malformed, retain the exact identity and reconcile it on retry rather
+    // than treating an empty inventory as proof that a live target vanished.
+    session.completedDetachCommand = { fd, identity };
+    return this.#verifyCompletedDetachCommand(
+      session,
+      session.completedDetachCommand,
+    );
+  }
+
+  async #verifyCompletedDetachCommand(
+    session: RizinDebugSession,
+    completed: {
+      readonly fd: string;
+      readonly identity: OwnedInferiorIdentity;
+    },
+  ): Promise<OwnedDebuggerDetachResult> {
     const after = parseRizinPtraceRows(
       await this.#runInternalCommand(session, "olj"),
     );
     for (const [activeFd, activePid] of after) {
-      if (activeFd === fd || activePid === pid)
+      if (activeFd === completed.fd || activePid === completed.identity.pid)
         throw new Error(
           "Rizin did not confirm that the selected inferior FD was detached.",
         );
@@ -1301,8 +1327,10 @@ export class RizinDebugSessionManager {
     // Preserve this protocol proof before later identity and descriptor checks.
     // A retry can then revalidate the retained process sinks without issuing
     // another detach command or treating an empty inventory as contradictory.
-    session.confirmedDetachedInferiorIdentity = identity;
-    return this.#verifyConfirmedDetachedInferior(session, identity);
+    session.completedDetachCommand = undefined;
+    session.inferiorInventoryComplete = true;
+    session.confirmedDetachedInferiorIdentity = completed.identity;
+    return this.#verifyConfirmedDetachedInferior(session, completed.identity);
   }
 
   async #resolveInferiorRowIdentity(

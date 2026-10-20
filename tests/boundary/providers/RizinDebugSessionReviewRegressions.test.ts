@@ -314,6 +314,54 @@ process.stdin.on("data", (chunk) => {
   return provider;
 };
 
+const createMalformedDetachReadbackProvider = async (
+  pid: number,
+  commandsPath: string,
+): Promise<string> => {
+  const provider = join(directory!, "fake-rizin-malformed-detach-readback.mjs");
+  await writeFile(
+    provider,
+    `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+process.stdout.write("\\0");
+let input = "";
+let detached = false;
+let postDetachReadbacks = 0;
+let pendingDetach = false;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n"); if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    appendFileSync(${JSON.stringify(commandsPath)}, line + "\\n");
+    if (line === "olj") {
+      if (!detached) process.stdout.write(JSON.stringify([{ fd: 12, raised: true, uri: "ptrace://${pid}" }]) + "\\0");
+      else if (postDetachReadbacks++ === 0) process.stdout.write("{malformed\\0");
+      else process.stdout.write("[]\\0");
+    }
+    else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
+    else if (line.startsWith("o- ")) {
+      detached = true;
+      pendingDetach = true;
+      process.kill(${pid}, "SIGUSR1");
+    }
+    else if (line.startsWith("!echo ")) {
+      const marker = line.slice(6);
+      if (pendingDetach) {
+        pendingDetach = false;
+        setTimeout(() => process.stdout.write(marker + "\\0"), 100);
+      } else process.stdout.write(marker + "\\0");
+    }
+    else process.stdout.write("\\0");
+  }
+});
+`,
+  );
+  await chmod(provider, 0o700);
+  return provider;
+};
+
 const createLateDetachProvider = async (
   pid: number,
   providerDirectory: string,
@@ -798,6 +846,36 @@ it.skipIf(process.platform !== "linux")(
     ).toBe(true);
     expect(await readFile(commandsPath, "utf8")).not.toContain("o- 12");
     expect(manager.status(started.value.session_id)).toBeUndefined();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "reconciles a completed detach after its first inventory readback is malformed",
+  async () => {
+    const tty = await rizinTestInferiorTty();
+    const inferior = await spawnTestInferiorOnTty(tty);
+    const pid = inferior.pid;
+    expect(pid).toBeDefined();
+    if (pid === undefined) return;
+    directory = await mkdtemp(
+      join(tmpdir(), "rea-rizin-detach-readback-retry-"),
+    );
+    const commandsPath = join(directory, "commands");
+    const provider = await createMalformedDetachReadbackProvider(
+      pid,
+      commandsPath,
+    );
+    const { manager, sessionId } = await startRizinWithOwnedStop(provider);
+    expect((await manager.close(sessionId)).ok).toBe(false);
+    expect(await manager.retryCleanupFailures()).toEqual({
+      ok: true,
+      value: null,
+    });
+    expect(
+      (await readFile(commandsPath, "utf8")).match(/^o- 12$/gm),
+    ).toHaveLength(1);
+    expect(inferior.exitCode).toBeNull();
+    expect(manager.status(sessionId)).toBeUndefined();
   },
 );
 
