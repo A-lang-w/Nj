@@ -115,6 +115,44 @@ it.skipIf(process.platform === "win32").each(legacyControlNames)(
   },
 );
 
+it.each([
+  [
+    "unflagged CP949",
+    Buffer.from([0xc7, 0xd1, 0xb1, 0xdb, 0x2e, 0x74, 0x78, 0x74]),
+    false,
+    "╟╤▒█.txt",
+    [
+      "ZIP member name bytes c7 d1 b1 db 2e 74 78 74 are not flagged as UTF-8 and were read as CP437; the archiver may have written them in another legacy code page.",
+    ],
+  ],
+  ["unflagged ASCII", Buffer.from("plain.txt"), false, "plain.txt", []],
+  ["unflagged ASCII control", Buffer.from("Icon\r"), false, "Icon\r", []],
+  ["flagged UTF-8", Buffer.from("한글.txt"), true, "한글.txt", []],
+] as const)(
+  "limits legacy code page readings of %s ZIP member names",
+  async (_label, rawName, utf8Flag, logicalPath, limitations) => {
+    const root = await createTestTempDirectory("rea-zip-legacy-name-");
+    const path = join(root, "names.zip");
+    const placeholder = "x".repeat(rawName.length);
+    await writeSingleEntryZip(path, placeholder);
+    const archive = await readFile(path);
+    await writeFile(
+      path,
+      rewriteSingleEntryName(archive, placeholder, rawName, utf8Flag),
+    );
+
+    const inventory = await inventoryArtifact(path);
+    expect(inventory.coverage.status).toBe("complete");
+    expect(inventory.occurrences).toContainEqual(
+      expect.objectContaining({
+        logical_path: logicalPath,
+        hash_status: "verified",
+        limitations,
+      }),
+    );
+  },
+);
+
 it("preserves valid Info-ZIP Unicode Path overrides", async () => {
   const root = await createTestTempDirectory("rea-zip-unicode-path-");
   const path = join(root, "unicode-path.zip");
