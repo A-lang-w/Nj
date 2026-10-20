@@ -331,7 +331,7 @@ const validateCArchiveMembers = (
         return err(
           pyInstallerFailure(
             "integrity",
-            `CArchive declaration has local payload or compression: ${entry.name}`,
+            `CArchive declaration at table index ${String(entry.index)} has local payload or compression`,
           ),
         );
     } else {

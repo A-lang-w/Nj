@@ -14,7 +14,39 @@ import {
   PYTHON_39_MAGIC,
 } from "./CArchive.fixture.js";
 import { readPyzArchive } from "./PyzArchive.js";
-import type { ArtifactEntry } from "../ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactEntry,
+} from "../ArtifactReader.js";
+
+it("keeps malformed-declaration diagnostics bounded while identifying the TOC row", async () => {
+  await withPyInstallerReader(
+    cArchiveExecutable({
+      layout: "2.1",
+      pythonVersion: 309,
+      members: [
+        {
+          name: "option".repeat(200_000),
+          typeCode: "o",
+          payload: Buffer.from("unexpected"),
+          compress: false,
+        },
+      ],
+    }),
+    async (_reader, _handle, path) => {
+      const failure: unknown = await scanCanonicalArtifactInventory(path).then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+      expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+      if (!(failure instanceof ArtifactReaderFailure))
+        throw new Error("Expected a parser failure");
+      expect(failure.reason).toBe("integrity");
+      expect(failure.message.length).toBeLessThan(128);
+      expect(failure.message).toContain("table index 0");
+    },
+  );
+});
 
 for (const typeCode of ["o", "d"] as const) {
   it.each(["stored", "compressed", "flag-only"])(
