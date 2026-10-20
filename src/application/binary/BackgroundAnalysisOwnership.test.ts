@@ -127,6 +127,11 @@ describe("a close of a wedged background job", () => {
     expect(closed).not.toBe("timeout");
     // The provider is released even though no snapshot could be taken.
     expect(wedged?.closed).toBe(1);
+
+    // The slot was closed, so it is not a resource that remains.
+    const status = (await registry.status()) as Record<string, unknown>;
+    expect(status.retained_target_ids ?? []).toEqual([]);
+    expect(status.open_target_ids ?? []).toEqual([]);
   });
 });
 

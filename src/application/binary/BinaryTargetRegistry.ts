@@ -89,9 +89,33 @@ interface TargetSlot {
   readonly session: BinarySession;
   /** The target identity the current handle was minted for. */
   handleTarget: BinaryTarget | undefined;
+  /**
+   * The start permit a retained cleanup owns.
+   *
+   * A close that gave up on a start that never unwound cannot release the
+   * provider, and that provider may still be running. The retained cleanup
+   * keeps the start permit until it succeeds, so the analysis cap keeps
+   * counting the provider that is still alive.
+   */
+  retainedPermit: StartPermit | undefined;
 }
 
 type AnalysisJobState = "starting" | "ready" | "failed" | "cancelled";
+
+/**
+ * The answer of a close, and what it says about the provider cleanup.
+ *
+ * A close can fail after the provider was released: a snapshot close of a
+ * wedged start reports that no snapshot was taken, but the provider it
+ * released is gone. The registry retires a slot on the cleanup fact and
+ * reports the answer as it is, so a closed slot is never listed as retained.
+ */
+interface CloseOutcome<Value> {
+  /** The answer the caller receives. */
+  readonly answer: Result<Value, AnalysisError>;
+  /** True when the provider was released, whatever the answer says. */
+  readonly released: boolean;
+}
 
 type OpenOptions = NonNullable<Parameters<BinarySessionPort["open"]>[1]>;
 type OpenResolvedOptions = NonNullable<
@@ -119,10 +143,14 @@ interface AnalysisJob {
  * A permit is taken before a provider start and given back when the start
  * settles. A start that never settles keeps its permit until the close that
  * gave up on it releases it, so a later start is never queued behind a start
- * that will never finish.
+ * that will never finish. A close that could not release the provider keeps
+ * the permit: the provider may still be running, so the analysis cap has to
+ * count it. The retained cleanup gives the permit back when it succeeds.
  */
 interface StartPermit {
   held: boolean;
+  /** True once a retained cleanup owns this permit instead of its job. */
+  retained: boolean;
 }
 
 /**
@@ -512,7 +540,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       controller,
       startedAt,
       mode,
-      permit: { held: false },
+      permit: { held: false, retained: false },
       state: "starting",
       error: undefined,
       finishedAt: undefined,
@@ -581,7 +609,9 @@ export class BinaryTargetRegistry implements BinarySessionPort {
           : new AnalysisCancelledError("open_binary"),
       );
     } finally {
-      this.#releaseStartPermit(job.permit);
+      // A retained cleanup owns the permit when the provider it started may
+      // still be running, and only that cleanup may give the permit back.
+      if (!job.permit.retained) this.#releaseStartPermit(job.permit);
     }
   }
 
@@ -594,6 +624,25 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     job.state = state;
     job.error = error;
     job.finishedAt = Date.now();
+    if (state === "ready") return;
+    this.#separateRestoredTarget(job);
+  }
+
+  /**
+   * Keep a restored target apart from the job that did not become ready.
+   *
+   * A failed open restores the target the session held before, so the slot
+   * holds a live target that the job never opened. The handle the job was
+   * minted for names the target that never opened, so it must not select the
+   * restored one: the restored target receives its own handle, and the failed
+   * job's handle is retired with it.
+   */
+  #separateRestoredTarget(job: AnalysisJob): void {
+    const slot = job.slot;
+    const live = slot.session.activeTarget();
+    if (live === undefined) return;
+    if (sameSessionTarget(live, job.target)) return;
+    this.#syncHandle(slot, live);
   }
 
   async #waitForAutoJob(
@@ -703,7 +752,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
         ? ok(job.target)
         : err(job.error ?? new AnalysisCancelledError("open_binary"));
     }
-    const permit: StartPermit = { held: false };
+    const permit: StartPermit = { held: false, retained: false };
     const acquired = await this.#acquireStartPermit(
       "open_binary",
       options?.signal,
@@ -733,7 +782,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
         ? ok(job.target)
         : err(job.error ?? new AnalysisCancelledError("open_binary"));
     }
-    const permit: StartPermit = { held: false };
+    const permit: StartPermit = { held: false, retained: false };
     const acquired = await this.#acquireStartPermit(
       "open_binary",
       options?.signal,
@@ -780,9 +829,18 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   ): Promise<Result<null, AnalysisError>> {
     return this.#closeSlotFor(
       options,
-      (slot, behavior) => slot.session.closeAsSlot(options, behavior),
-      (slot, behavior) =>
-        this.#closeSlotWithoutTransition(slot, options, behavior),
+      async (slot, behavior) => {
+        const closed = await slot.session.closeAsSlot(options, behavior);
+        return { answer: closed, released: closed.ok };
+      },
+      async (slot, behavior) => {
+        const closed = await this.#closeSlotWithoutTransition(
+          slot,
+          options,
+          behavior,
+        );
+        return { answer: closed, released: closed.ok };
+      },
     );
   }
 
@@ -809,8 +867,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
         this.#jobs.delete(slot.id);
         continue;
       }
-      this.#retainedSlots.delete(slot.id);
-      this.#removeSlot(slot, "first-open");
+      this.#retireClosedSlot(slot);
     }
     const final = await this.#closeSlot(this.#primary, options, {
       clearRecords: true,
@@ -821,8 +878,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       this.#retainedSlots.add(this.#primary.id);
       this.#jobs.delete(this.#primary.id);
     } else {
-      this.#retainedSlots.delete(this.#primary.id);
-      this.#removeSlot(this.#primary, "first-open");
+      this.#retireClosedSlot(this.#primary);
     }
     return failure === undefined ? ok(null) : err(failure);
   }
@@ -870,6 +926,13 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       escalate === undefined
         ? await slot.session.closeAsSlot(options, behavior)
         : await escalate.call(slot.session, options, behavior);
+    if (!closed.ok) {
+      // The provider could not be released, so it may still be running. The
+      // retained cleanup keeps the start permit: the analysis cap has to
+      // count that provider until the cleanup succeeds.
+      this.#retainJobPermit(slot);
+      return closed;
+    }
     // The start that never unwound still holds the shared start permit. The
     // close gives it back, so a later open is not queued behind a start that
     // will never finish.
@@ -884,33 +947,39 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>> {
     return this.#closeSlotFor(
       options,
-      (slot, behavior) =>
-        slot.session.closeWithSnapshotAsSlot(
+      async (slot, behavior) => {
+        const closed = await slot.session.closeWithSnapshotAsSlot(
           path,
           overwrite,
           options,
           behavior,
-        ),
+        );
+        return { answer: closed, released: closed.ok };
+      },
       // A wedged start cannot be snapshotted, but the provider still has to be
       // released. The escalation closes the slot the same way the plain close
-      // does, and the snapshot is reported as not taken.
+      // does, and the snapshot is reported as not taken. The provider was
+      // released either way, so the slot is retired instead of retained.
       async (slot, behavior) => {
         const closed = await this.#closeSlotWithoutTransition(
           slot,
           options,
           behavior,
         );
-        return closed.ok
-          ? err(
-              new AnalysisCancelledError("close_binary", {
-                diagnostics: {
-                  reason:
-                    "the provider start did not unwind within the settle bound, so no analysis snapshot was taken",
-                  settle_bound_ms: this.#limits.jobSettleTimeoutMs,
-                },
-              }),
-            )
-          : closed;
+        return {
+          answer: closed.ok
+            ? err(
+                new AnalysisCancelledError("close_binary", {
+                  diagnostics: {
+                    reason:
+                      "the provider start did not unwind within the settle bound, so no analysis snapshot was taken",
+                    settle_bound_ms: this.#limits.jobSettleTimeoutMs,
+                  },
+                }),
+              )
+            : closed,
+          released: closed.ok,
+        };
       },
     );
   }
@@ -923,20 +992,20 @@ export class BinaryTargetRegistry implements BinarySessionPort {
         readonly clearRecords: boolean;
         readonly closeOwnedProviderResources: boolean;
       },
-    ) => Promise<Result<Value, AnalysisError>>,
+    ) => Promise<CloseOutcome<Value>>,
     escalate: (
       slot: TargetSlot,
       behavior: {
         readonly clearRecords: boolean;
         readonly closeOwnedProviderResources: boolean;
       },
-    ) => Promise<Result<Value, AnalysisError>>,
+    ) => Promise<CloseOutcome<Value>>,
   ): Promise<Result<Value, AnalysisError>> {
     const slot = this.#resolveCloseSlot(options.targetId);
     if (!slot.ok) return slot;
     const last = this.#openSlotCount() <= 1;
     const settled = await this.#abortJobAndWait(slot.value);
-    const closed = await (settled
+    const outcome = await (settled
       ? close(slot.value, {
           clearRecords: last,
           closeOwnedProviderResources: last,
@@ -945,9 +1014,8 @@ export class BinaryTargetRegistry implements BinarySessionPort {
           clearRecords: last,
           closeOwnedProviderResources: last,
         }));
-    if (closed.ok) {
-      this.#retainedSlots.delete(slot.value.id);
-      this.#removeSlot(slot.value, "first-open");
+    if (outcome.released) {
+      this.#retireClosedSlot(slot.value);
     } else {
       // The slot keeps its registration and its retained resource, so a later
       // close can retry the cleanup. It is no longer an open target: the
@@ -955,7 +1023,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       this.#retainedSlots.add(slot.value.id);
       this.#jobs.delete(slot.value.id);
     }
-    return closed;
+    return outcome.answer;
   }
 
   /**
@@ -1153,8 +1221,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       },
     );
     if (!closed.ok) return closed;
-    this.#retainedSlots.delete(slot.id);
-    this.#removeSlot(slot, "first-open");
+    this.#retireClosedSlot(slot);
     return ok(null);
   }
 
@@ -1342,6 +1409,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
       id: randomUUID(),
       session,
       handleTarget: undefined,
+      retainedPermit: undefined,
     };
     session.onAvailabilityChanged(() => this.#emitAvailabilityChanged());
     session.onAnalysisSnapshotChanged(() => this.#emitSnapshotChanged());
@@ -1375,6 +1443,19 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     return [...this.#slots.values()].find(
       (slot) => this.#targetForSlot(slot) !== undefined,
     );
+  }
+
+  /**
+   * Retire a slot whose provider was released.
+   *
+   * The slot no longer holds a target, so it leaves the registry, its
+   * retained resource is gone and the start permit a retained cleanup kept
+   * is given back.
+   */
+  #retireClosedSlot(slot: TargetSlot): void {
+    this.#releaseRetainedPermit(slot);
+    this.#retainedSlots.delete(slot.id);
+    this.#removeSlot(slot, "first-open");
   }
 
   #openSlotCount(): number {
@@ -1588,8 +1669,7 @@ export class BinaryTargetRegistry implements BinarySessionPort {
         this.#jobs.delete(slot.id);
         return closed;
       }
-      this.#retainedSlots.delete(slot.id);
-      this.#removeSlot(slot, "first-open");
+      this.#retireClosedSlot(slot);
     }
     return ok(null);
   }
@@ -1650,6 +1730,37 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     const job = this.#jobs.get(slot.id);
     if (job === undefined) return;
     this.#releaseStartPermit(job.permit);
+  }
+
+  /**
+   * Keep the permit of a job whose provider could not be released.
+   *
+   * The provider may still be running, so the analysis cap has to count it
+   * until the retained cleanup releases it. The job may no longer give the
+   * permit back, so the cleanup owns it from here.
+   */
+  #retainJobPermit(slot: TargetSlot): void {
+    const job = this.#jobs.get(slot.id);
+    if (job === undefined) return;
+    if (slot.retainedPermit !== undefined) return;
+    if (!job.permit.held) {
+      // The start settled while the close was running and gave the permit
+      // back, but the provider it started may still be alive. The retained
+      // cleanup takes a permit of its own.
+      slot.retainedPermit = { held: true, retained: true };
+      this.#activeStarts += 1;
+      return;
+    }
+    job.permit.retained = true;
+    slot.retainedPermit = job.permit;
+  }
+
+  /** Give back the permit a retained cleanup owns. */
+  #releaseRetainedPermit(slot: TargetSlot): void {
+    const permit = slot.retainedPermit;
+    if (permit === undefined) return;
+    slot.retainedPermit = undefined;
+    this.#releaseStartPermit(permit);
   }
 
   #emitAvailabilityChanged(): void {

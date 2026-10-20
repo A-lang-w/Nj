@@ -74,6 +74,23 @@ interface SessionBinding extends SessionRun {
 }
 
 /**
+ * The transition a request waits for.
+ *
+ * The promise settles when the transition chain is done, the retirement
+ * settles when that chain is retired, and the epoch names the chain the
+ * request belongs to. A request whose chain was retired is rejected instead
+ * of running against the target that took its place.
+ */
+interface TransitionAdmission {
+  /** The chain the request waits for. */
+  readonly promise: Promise<void>;
+  /** The epoch the chain belongs to. */
+  readonly epoch: number;
+  /** Settles when the epoch is retired. */
+  readonly retirement: Promise<void>;
+}
+
+/**
  * Owns the single active target shared by CLI and MCP adapters.
  *
  * Target transitions are serialized because switching targets tears down the
@@ -98,6 +115,19 @@ export class BinarySession
   #lifecycleGeneration = 0;
   #transition: Promise<void> = Promise.resolve();
   #transitionGeneration = 0;
+  /**
+   * The epoch of the transition chain that is still current.
+   *
+   * A forced close retires the chain that carried a start that ignored its
+   * abort, because that chain can never settle. The requests that were
+   * queued behind the abandoned start belong to the retired epoch: they
+   * addressed a target the forced close took away, so they must not run
+   * against the target that replaces it.
+   */
+  #transitionEpoch = 0;
+  /** Resolves when the current epoch is retired. */
+  #epochRetirement = createRetirement();
+  /** The requests that have not settled in the current epoch. */
   #transitionPending = 0;
   readonly #calls = new Map<Promise<unknown>, number>();
   readonly #promptCompletionControllers = new Set<AbortController>();
@@ -286,7 +316,7 @@ export class BinarySession
     ) => Promise<Result<ResolvedSessionOpen, AnalysisError>>,
     options: BinarySessionOpenOptions,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
-    return this.#serialize(async (admittedThrough) => {
+    return this.#serialize("open_binary", async (admittedThrough) => {
       const admitted = await this.#withLoadedSnapshot(options);
       if (!admitted.ok) return admitted;
       return this.#openWithinTransition(
@@ -473,7 +503,7 @@ export class BinarySession
       failure: AnalysisError | undefined,
     ) => Promise<Result<null, AnalysisError>>,
   ): Promise<Result<Result<Value, AnalysisError>, AnalysisError>> {
-    return this.#serialize(async (admittedThrough) => {
+    return this.#serialize(operationName, async (admittedThrough) => {
       if (isAborted(signal))
         return err(new AnalysisCancelledError(operationName));
       await this.#drainCalls(admittedThrough);
@@ -543,7 +573,7 @@ export class BinarySession
       readonly closeOwnedProviderResources: boolean;
     },
   ): Promise<Result<null, AnalysisError>> {
-    return this.#serialize(async (admittedThrough) => {
+    return this.#serialize("close_binary", async (admittedThrough) => {
       await this.#drainCalls(admittedThrough);
       return this.#closeActive(
         options,
@@ -582,11 +612,13 @@ export class BinarySession
       pending === undefined ? ok(null) : await this.#releaseRun(pending);
     // The wedged open still holds the transition chain. Releasing the pending
     // client does not settle it, and every later close, open and the server
-    // shutdown serialize behind it. The chain is replaced so the slot stays
+    // shutdown serialize behind it. The chain is retired so the slot stays
     // usable; the unsettled open is invalidated by the lifecycle generation
     // above, so it cannot restore a target into the closed slot when it
-    // eventually unwinds.
-    this.#transition = Promise.resolve();
+    // eventually unwinds, and the requests that were queued behind it are
+    // retired with the chain, so they cannot reach the target that replaces
+    // the closed one.
+    this.#retireTransition();
     if (!released.ok) return released;
     return this.#closeActive(
       options,
@@ -621,7 +653,7 @@ export class BinarySession
       readonly closeOwnedProviderResources: boolean;
     },
   ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>> {
-    return this.#serialize(async (admittedThrough) => {
+    return this.#serialize("close_binary", async (admittedThrough) => {
       await this.#drainCalls(admittedThrough);
       const snapshot = this.exportAnalysisSnapshot();
       if (!snapshot.ok) return snapshot;
@@ -831,7 +863,8 @@ export class BinarySession
     options?: Pick<ExecutionOptions, "signal" | "selectorOrigin">,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const generation = this.#transitionGeneration;
-    const call = this.#execute(name, arguments_, options, this.#transition);
+    const admission = this.#admission();
+    const call = this.#execute(name, arguments_, options, admission);
     this.#calls.set(call, generation);
     return call.finally(() => this.#calls.delete(call));
   }
@@ -877,7 +910,7 @@ export class BinarySession
     _waitMs?: number,
   ): Promise<Result<Value, AnalysisError>> {
     const generation = this.#transitionGeneration;
-    const transition = this.#transition;
+    const transition = this.#admission();
     const call = (async (): Promise<Result<Value, AnalysisError>> => {
       const admission = await this.#waitForTransition(
         operationName,
@@ -888,7 +921,13 @@ export class BinarySession
       return ok(
         await operation({
           execute: (name, arguments_, options) =>
-            this.#execute(name, arguments_, options, Promise.resolve()),
+            this.#execute(name, arguments_, options, {
+              // The admitted operation runs inside the transition it waited
+              // for, so its own calls do not wait for the chain again.
+              promise: Promise.resolve(),
+              epoch: transition.epoch,
+              retirement: transition.retirement,
+            }),
         }),
       );
     })();
@@ -901,12 +940,12 @@ export class BinarySession
     name: Parameters<AnalysisOperationPort["execute"]>[0],
     arguments_: Readonly<Record<string, JsonValue>>,
     options: Pick<ExecutionOptions, "signal" | "selectorOrigin"> | undefined,
-    transition: Promise<void>,
+    admission: TransitionAdmission,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const transitioned = await this.#waitForTransition(
       name,
       options?.signal,
-      transition,
+      admission,
     );
     if (!transitioned.ok) return transitioned;
     const prepared = prepareSessionExecution({
@@ -1073,17 +1112,36 @@ export class BinarySession
     return this.#active?.route ?? this.#providerRouter.initialRoute();
   }
 
-  #serialize<T>(
-    operation: (admittedThrough: number) => Promise<T>,
-  ): Promise<T> {
+  /** The transition the current requests wait for. */
+  #admission(): TransitionAdmission {
+    return {
+      promise: this.#transition,
+      epoch: this.#transitionEpoch,
+      retirement: this.#epochRetirement.promise,
+    };
+  }
+
+  #serialize<Value>(
+    operationName: string,
+    operation: (
+      admittedThrough: number,
+    ) => Promise<Result<Value, AnalysisError>>,
+  ): Promise<Result<Value, AnalysisError>> {
     for (const controller of this.#promptCompletionControllers)
       controller.abort();
+    const epoch = this.#transitionEpoch;
+    const retirement = this.#epochRetirement.promise;
     this.#transitionPending += 1;
     // Later calls wait for this transition and must not be included in its drain.
     const admittedThrough = this.#transitionGeneration++;
-    const result = this.#transition.then(
-      () => operation(admittedThrough),
-      () => operation(admittedThrough),
+    const result = Promise.race([
+      this.#transition.then(
+        () => undefined,
+        () => undefined,
+      ),
+      retirement,
+    ]).then(() =>
+      this.#admit(epoch, operationName, operation, admittedThrough),
     );
     this.#transition = result.then(
       () => undefined,
@@ -1091,13 +1149,59 @@ export class BinarySession
     );
     void result.then(
       () => {
-        this.#transitionPending -= 1;
+        this.#settlePending(epoch);
       },
       () => {
-        this.#transitionPending -= 1;
+        this.#settlePending(epoch);
       },
     );
     return result;
+  }
+
+  /**
+   * Run a queued request, unless the transition it waited for was retired.
+   *
+   * A retired transition means the lifecycle the request addressed is gone.
+   * The request reports that it was cancelled instead of running against the
+   * target that took its place.
+   */
+  async #admit<Value>(
+    epoch: number,
+    operationName: string,
+    operation: (
+      admittedThrough: number,
+    ) => Promise<Result<Value, AnalysisError>>,
+    admittedThrough: number,
+  ): Promise<Result<Value, AnalysisError>> {
+    if (epoch !== this.#transitionEpoch)
+      return err(new AnalysisCancelledError(operationName));
+    return operation(admittedThrough);
+  }
+
+  /** Give back the pending count of a request that settled. */
+  #settlePending(epoch: number): void {
+    // A retired epoch gave its pending count back when it was retired.
+    if (epoch !== this.#transitionEpoch) return;
+    this.#transitionPending -= 1;
+  }
+
+  /**
+   * Retire the transition chain and the requests that were queued behind it.
+   *
+   * A provider start that never unwinds holds the chain that carried it, and
+   * that chain can never settle. The chain is replaced so the slot stays
+   * usable, and the requests that were queued behind the abandoned start are
+   * retired with it: they addressed the target the forced close took away,
+   * so they must not run against the target that replaces it. The abandoned
+   * start stops counting as a pending request, so the requests that read the
+   * session are not blocked by a start that will never finish.
+   */
+  #retireTransition(): void {
+    this.#transitionEpoch += 1;
+    this.#transitionPending = 0;
+    this.#epochRetirement.retire();
+    this.#epochRetirement = createRetirement();
+    this.#transition = Promise.resolve();
   }
 
   async #drainCalls(admittedThrough: number): Promise<void> {
@@ -1179,40 +1283,74 @@ export class BinarySession
   async #waitForTransition(
     operation: string,
     signal: AbortSignal | undefined,
-    transition: Promise<void>,
+    admission: TransitionAdmission,
   ): Promise<Result<undefined, AnalysisCancelledError>> {
     if (signal?.aborted === true)
       return err(new AnalysisCancelledError(operation));
+    // A retired transition settles the wait: the request it carried is
+    // rejected instead of waiting for a chain that will never settle.
+    const settled = Promise.race([
+      admission.promise.then(
+        () => undefined,
+        () => undefined,
+      ),
+      admission.retirement,
+    ]);
     if (signal === undefined) {
-      await transition;
-      return ok(undefined);
+      await settled;
+      return this.#transitionOutcome(operation, admission);
     }
     return new Promise((resolve) => {
       const onAbort = (): void => {
         resolve(err(new AnalysisCancelledError(operation)));
       };
       signal.addEventListener("abort", onAbort, { once: true });
-      transition.then(
-        () => {
-          signal.removeEventListener("abort", onAbort);
-          resolve(
-            signal.aborted
-              ? err(new AnalysisCancelledError(operation))
-              : ok(undefined),
-          );
-        },
-        () => {
-          signal.removeEventListener("abort", onAbort);
-          resolve(
-            signal.aborted
-              ? err(new AnalysisCancelledError(operation))
-              : ok(undefined),
-          );
-        },
-      );
+      void settled.then(() => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(
+          signal.aborted
+            ? err(new AnalysisCancelledError(operation))
+            : this.#transitionOutcome(operation, admission),
+        );
+      });
     });
   }
+
+  /**
+   * The outcome of a request that waited for a transition.
+   *
+   * A retired transition took away the target the request addressed, so the
+   * request reports that it was cancelled instead of running against the
+   * target that took its place.
+   */
+  #transitionOutcome(
+    operation: string,
+    admission: TransitionAdmission,
+  ): Result<undefined, AnalysisCancelledError> {
+    if (admission.epoch !== this.#transitionEpoch)
+      return err(new AnalysisCancelledError(operation));
+    return ok(undefined);
+  }
 }
+
+/** A promise that a later action resolves. */
+interface Retirement {
+  readonly promise: Promise<void>;
+  /** Resolve the promise, so the requests that wait on it are released. */
+  retire(): void;
+}
+
+/** Create a promise that a later action resolves. */
+const createRetirement = (): Retirement => {
+  let retire: (() => void) | undefined;
+  const promise = new Promise<void>((resolve) => {
+    retire = resolve;
+  });
+  return {
+    promise,
+    retire: () => retire?.(),
+  };
+};
 
 const isAborted = (signal: AbortSignal | undefined): boolean =>
   signal?.aborted === true;

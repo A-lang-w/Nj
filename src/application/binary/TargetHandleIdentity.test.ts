@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { writeFile } from "node:fs/promises";
 
 import { AnalysisTargetNotOpenError } from "../../domain/analysisErrorCore.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { err, ok as resultOk } from "../../domain/result.js";
 import { observed } from "../../../tests/fixtures/analysisExecution.js";
 import {
   createBinarySessionTargets,
@@ -175,5 +177,53 @@ describe("a reused background target", () => {
     expect(registry.currentTargetId()).toBe(firstId);
     expect(registry.targets()).toHaveLength(1);
     expect(seen).toEqual([]);
+  });
+});
+
+/**
+ * A handle of a background job that did not become ready.
+ *
+ * A failed background open restores the target the session held before, so
+ * the slot holds a live target the job never opened. The handle the job was
+ * minted for names the target that never opened, so it must not select the
+ * restored one.
+ */
+describe("a background job that did not become ready", () => {
+  it("retires the handle of the failed job and keeps the restored target", async () => {
+    const [first, second] = await createBinarySessionTargets();
+    const registry = createTestBinaryTargetRegistry((target) => ({
+      execute: (operation: string) =>
+        operation === "health" && target.path === second
+          ? Promise.resolve(err(new ProviderAdapterError("fixture", "health")))
+          : Promise.resolve(observed(operation)),
+      close: () => Promise.resolve(resultOk(null)),
+    }));
+
+    // The first target is open, and the background open replaces it.
+    expect((await registry.open(first)).ok).toBe(true);
+    const firstId = registry.currentTargetId();
+    expect(firstId).toBeDefined();
+
+    const started = await registry.open(second, { analysisMode: "background" });
+    expect(started.ok).toBe(true);
+    const failedId = registry.currentTargetId();
+    expect(failedId).not.toBe(firstId);
+    await vi.waitFor(() =>
+      expect(registry.analysisState()).toMatchObject({
+        state: "failed",
+      }),
+    );
+
+    // The handle of the failed job does not select the restored target.
+    const closed = await registry.close({ targetId: failedId! });
+    expect(closed.ok).toBe(false);
+    expect(registry.activeTarget()?.path).toBe(first);
+
+    // The restored target has its own handle, and that handle closes it.
+    const restoredId = registry.currentTargetId();
+    expect(restoredId).toBeDefined();
+    expect(restoredId).not.toBe(failedId);
+    expect((await registry.close({ targetId: restoredId! })).ok).toBe(true);
+    expect(registry.targets()).toHaveLength(0);
   });
 });
