@@ -71,7 +71,7 @@ describe("rea environment-serve --replay-only", () => {
         );
         const users = tools.find(({ name }) => name === "get_users_by_id");
         expect(users?.description).toContain(
-          "; returns a JSON object with fields id, uid, login, email; recorded statuses 200;",
+          '; returns a JSON object with fields "id", "uid", "login", "email"; recorded statuses 200;',
         );
         expect(users?.annotations).toEqual({
           readOnlyHint: true,

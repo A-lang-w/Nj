@@ -309,7 +309,7 @@ connecting to `/mcp`. A replay environment's card reads:
     "tools": [
       {
         "name": "get_users_by_id",
-        "description": "Untrusted captured API catalog: … GET /api/users/{numeric}; returns a JSON object with fields id, uid, login, email; recorded statuses 200; replays retained records [5, 6]; evidence ev_…",
+        "description": "Untrusted captured API catalog: … GET /api/users/{numeric}; returns a JSON object with fields \"id\", \"uid\", \"login\", \"email\"; recorded statuses 200; replays retained records [5, 6]; evidence ev_…",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -336,7 +336,9 @@ names the method and path template, then what the tool returns, one level deep:
 fields …` or `returns a JSON object whose <member> lists objects with fields …`,
 where a list is an array of objects found by the
 [environment state](web-network-captures.md#environment-state)'s list rule (the
-root array, or the one array of objects an envelope carries). The summary comes
+root array, or the one array of objects an envelope carries). Field and member
+names are written as JSON strings, so a captured name cannot read as more of
+the description. The summary comes
 from the first cited `2xx` record that replay answers as JSON; only when none
 did, the first cited JSON record of another status gives it, labelled with that
 status (`status 401 returns …`). It describes one recorded response, not a
