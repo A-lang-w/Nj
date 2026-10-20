@@ -1,11 +1,34 @@
 import {
+  goBinarySummarySchema,
+  goBinaryViewContextSchema,
+  goBinaryViewPageSchema,
+  goBinaryViewRequestSchema,
+  projectGoBinaryView,
+} from "./goBinaryView.js";
+import {
+  projectNativeFunctionMatchingView,
+  nativeFunctionMatchingViewRequestSchema,
+  nativeFunctionMatchingViewItemsSchema,
+  nativeFunctionMatchingViewContextSchema,
+} from "./nativeFunctionMatchingView.js";
+import {
   protobufViewRequestSchema,
   protobufViewItemsSchema,
   protobufViewContextSchema,
 } from "./protobufCaptureView.js";
-import { isAbsolute } from "node:path";
+import {
+  nativeInventoryViewRequestSchema,
+  nativeInventoryViewRowSchema,
+  nativeInventoryViewContext,
+  nativeInventorySummarySchema,
+  projectNativeInventoryView,
+} from "./nativeInventoryView.js";
+import {
+  NATIVE_INVENTORY_OPERATIONS,
+  nativeInventoryOperationSchema,
+} from "../native/nativeInventory.js";
 
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { z } from "zod";
 import {
   desktopViewRequestSchema,
@@ -232,7 +255,9 @@ const nativeViewSchema = z.strictObject({
 
 /** Caller-selected projection of already completed analysis Evidence. */
 export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
+  nativeFunctionMatchingViewRequestSchema,
   summaryViewSchema,
+  goBinaryViewRequestSchema,
   desktopViewRequestSchema,
   facetViewSchema,
   itemViewSchema,
@@ -240,6 +265,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   javascriptModuleReferencesRequestSchema,
   javascriptFactsViewRequestSchema,
   nativeViewSchema,
+  nativeInventoryViewRequestSchema,
   artifactInventoryViewRequestSchema,
   wasmViewRequestSchema,
   machoViewRequestSchema,
@@ -278,14 +304,9 @@ export const analysisViewSourceSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({
     kind: z.literal("evidence-file"),
-    path: localPathStringSchema
-      .refine(isAbsolute, {
-        message:
-          "path must be an absolute local filesystem path (for example /tmp/capture.json or C:\\rea\\capture.json)",
-      })
-      .describe(
-        "Absolute local path of one completed Evidence JSON file. REA reads and authenticates it, then projects it like retained Evidence, so large captures are not charged as inline input.",
-      ),
+    path: absoluteLocalPathStringSchema.describe(
+      "Absolute local path of one completed Evidence JSON file. REA reads and authenticates it, then projects it like retained Evidence, so large captures are not charged as inline input.",
+    ),
   }),
 ]);
 
@@ -348,6 +369,7 @@ const viewResultBase = {
   parent_evidence_id: prefixedDigestSchema("ev"),
   parent_operation: z.enum([
     "inspect_binary_layout",
+    "inspect_go_binary",
     "inspect_desktop_application",
     "analyze_javascript_application",
     "analyze_function",
@@ -364,6 +386,8 @@ const viewResultBase = {
     "inspect_pcap_capture",
     "inspect_dart_aot",
     "inspect_il2cpp_metadata",
+    ...NATIVE_INVENTORY_OPERATIONS,
+    "match_native_functions",
   ]),
   parent_digest: digestSchema,
   view_digest: digestSchema,
@@ -378,6 +402,14 @@ const summaryViewResultBase = {
   view: summaryViewSchema,
   ...viewResultBase,
 } as const;
+
+/** Opt-in Go delivery retains original bytes and exposes build identity/counts. */
+export const goBinarySummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  ...goBinaryViewContextSchema.shape,
+  parent_operation: z.literal("inspect_go_binary"),
+  summary: goBinarySummarySchema,
+});
 
 /** Summary `inspect_binary_layout` detail returns; no other view kind. */
 export const binaryLayoutSummaryViewResultSchema = z.strictObject({
@@ -502,8 +534,34 @@ export const il2cppMetadataSummaryViewResultSchema = z.strictObject({
   summary: il2cppMetadataSummarySchema,
 });
 
+/** Exact inventory summary with the original observation's provider and query. */
+export const nativeInventorySummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  ...nativeInventoryViewContext,
+  parent_operation: nativeInventoryOperationSchema,
+  artifact: artifactSchema.nullable(),
+  summary: nativeInventorySummarySchema,
+});
+
+/** Compact native matching discovery retains the complete matching report. */
+export const nativeFunctionMatchingSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  artifact: z.null(),
+  parent_operation: z.literal("match_native_functions"),
+  summary: nativeFunctionMatchingViewContextSchema,
+});
+
 /** Projected facts for one selected view of retained analysis Evidence. */
 export const analysisViewResultSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    ...viewResultBase,
+    ...nativeFunctionMatchingViewContextSchema.shape,
+    kind: z.literal("function-matches"),
+    artifact: z.null(),
+    view: nativeFunctionMatchingViewRequestSchema,
+    items: nativeFunctionMatchingViewItemsSchema,
+    parent_operation: z.literal("match_native_functions"),
+  }),
   z.strictObject({
     ...viewResultBase,
     ...apiSurfaceFields,
@@ -535,25 +593,34 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     ]),
     view: environmentStateViewRequestSchema,
   }),
+  z.discriminatedUnion("parent_operation", [
+    goBinarySummaryViewResultSchema,
+    binaryLayoutSummaryViewResultSchema,
+    desktopApplicationSummaryViewResultSchema,
+    javascriptApplicationSummaryViewResultSchema,
+    artifactInventorySummaryViewResultSchema,
+    wasmArtifactSummaryViewResultSchema,
+    machoSummaryViewResultSchema,
+    interfaceBuilderSummaryViewResultSchema,
+    evmInterfaceSummaryViewResultSchema,
+    managedArtifactSummaryViewResultSchema,
+    managedMemberSummaryViewResultSchema,
+    webNetworkCaptureSummaryViewResultSchema,
+    androidPackageSummaryViewResultSchema,
+    pcapCaptureSummaryViewResultSchema,
+    dartAotSummaryViewResultSchema,
+    il2cppMetadataSummaryViewResultSchema,
+    nativeInventorySummaryViewResultSchema,
+    nativeFunctionMatchingSummaryViewResultSchema,
+  ]),
   z.strictObject({
-    ...summaryViewResultBase,
-    summary: z.union([
-      layoutSummarySchema,
-      desktopSummarySchema,
-      javascriptSummarySchema,
-      artifactInventorySummarySchema,
-      wasmSummarySchema,
-      machoSummarySchema,
-      interfaceBuilderSummarySchema,
-      evmSummarySchema,
-      managedSummarySchema,
-      managedMemberSummarySchema,
-      captureSummarySchema,
-      androidPackageSummarySchema,
-      pcapSummarySchema,
-      dartAotSummarySchema,
-      il2cppMetadataSummarySchema,
-    ]),
+    ...viewResultBase,
+    ...nativeInventoryViewContext,
+    kind: z.literal("native-inventory"),
+    parent_operation: nativeInventoryOperationSchema,
+    artifact: artifactSchema.nullable(),
+    view: nativeInventoryViewRequestSchema,
+    rows: z.array(nativeInventoryViewRowSchema),
   }),
   z.strictObject({
     kind: z.literal("protobuf"),
@@ -591,6 +658,14 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: facetViewSchema,
     facet: jsonValueSchema,
     ...viewResultBase,
+  }),
+  z.strictObject({
+    ...viewResultBase,
+    ...goBinaryViewContextSchema.shape,
+    kind: z.literal("go"),
+    parent_operation: z.literal("inspect_go_binary"),
+    view: goBinaryViewRequestSchema,
+    page: goBinaryViewPageSchema,
   }),
   z.strictObject({
     kind: z.literal("item"),
@@ -713,6 +788,8 @@ export interface AnalysisViewParent {
   readonly evidenceId: string;
   readonly operation: string;
   readonly normalizedResult: unknown;
+  readonly provider?: Evidence["provider"];
+  readonly analysisProfileDigest?: string | null;
   /** The owner proved normalizedResult belongs to a sealed, deep-frozen Evidence snapshot. */
   readonly sealedResult?: boolean;
   /** Preserve the authenticated source identity, including explicit absence. */
@@ -774,7 +851,7 @@ const unsupportedParent = (
     parentArtifactPath(parent),
     parent.operation === "capture_browser_scenario"
       ? `Parent Evidence operation "capture_browser_scenario" supports only the environment-manifest and environment-state views.`
-      : `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views. Use completed binary layout, JavaScript application, native function, artifact inventory/inspection, WASM, Mach-O, Interface Builder, EVM, managed artifact or member, Android package, Dart AOT, IL2CPP metadata, or web network capture Evidence.`,
+      : `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views. Use completed binary layout, JavaScript application, native function/inventory, artifact inventory/inspection, WASM, Mach-O, Interface Builder, EVM, managed artifact or member, Android package, Dart AOT, IL2CPP metadata, or web network capture Evidence.`,
   );
 
 const parentArtifactPath = (parent: AnalysisViewParent): string => {
@@ -800,6 +877,10 @@ const parentArtifactPath = (parent: AnalysisViewParent): string => {
 
 /** Named source owners for views that need no extra decoder or accumulator. */
 const retainedViewProjectors = new Map<string, typeof projectWasmArtifactView>([
+  ["inspect_go_binary", projectGoBinaryView],
+  ...NATIVE_INVENTORY_OPERATIONS.map(
+    (operation) => [operation, projectNativeInventoryView] as const,
+  ),
   ["inspect_desktop_application", projectDesktopApplicationView],
   ["inspect_wasm_artifact", projectWasmArtifactView],
   ["inspect_macho", projectMachoView],
@@ -810,6 +891,7 @@ const retainedViewProjectors = new Map<string, typeof projectWasmArtifactView>([
   ["inspect_android_package", projectAndroidPackageView],
   ["inspect_dart_aot", projectDartAotView],
   ["inspect_il2cpp_metadata", projectIl2cppMetadataView],
+  ["match_native_functions", projectNativeFunctionMatchingView],
   ["inspect_artifact", projectArtifactInventoryView],
   ["inventory_artifact", projectArtifactInventoryView],
 ]);

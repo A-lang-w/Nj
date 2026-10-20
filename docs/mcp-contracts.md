@@ -1,5 +1,9 @@
 # MCP runtime contracts
 
+For pairing native functions before comparing selected dossiers, see
+[native function matching](native-function-matching.md). It operates on retained
+inventories, preserves aliases/unknowns and exposes selected fact pages.
+
 Use this reference to call REA tools and interpret their replies on one MCP
 connection. Start with [tool results](#tool-results), [retained Evidence](#retained-application-evidence-inputs),
 and [session discovery](#identity-and-discovery). See [transports](#transports)
@@ -67,7 +71,13 @@ Call comparison additionally retains the Evidence relationship coverage
 checks. Ghidra and Hopper declare their observed dossier facets and complete
 provider-observed caller/callee sets, including empty sets. Missing decompiler
 output remains unavailable; complete call coverage does not claim every runtime
-target. Hopper's unavailable reference-kind metadata and reported unresolved
+target. When Ghidra's decompiler fails on one function, its dossier is still
+returned: `pseudocode`, `native_api` and `native_value_flow` are unavailable
+with the decompiler's failure as the reason, while the listing-backed facets
+are collected as usual. These failed decompiler observations and workflows
+derived from them retain Evidence but skip snapshot reuse, so a later request
+can observe backend recovery; healthy dossiers keep their existing cache policy.
+`procedure_pseudo_code` still fails for that function. Hopper's unavailable reference-kind metadata and reported unresolved
 calls still prevent equality conclusions for those dimensions. Analysis profiles
 version these declarations so older snapshots are not reused as current results.
 IDA declares the facets its selected adapter cannot provide; an empty
@@ -80,12 +90,29 @@ metadata in the supported JSON payloads (`parameters`, `raw_result`,
 
 Tool execution failures return `isError: true` and the complete canonical
 `{ "error": ... }` diagnostic as JSON in text `content`. Read that diagnostic
-for the error code, target details, partial observations, and remediation.
+for the error code, target details, partial observations, remediation, and the
+optional bounded `recovery` next step. `recovery.kind=inspect_input_contract`
+names the rejected operation: re-read that operation's advertised input schema
+(call `tools/list` if the catalog may be stale), correct the listed fields, and
+do not repeat the unchanged call. `recovery.kind=inspect_timeout_state` names
+the operation and the REA server/provider deadline; inspect session/provider
+state before retrying, and raise the MCP client's tool deadline only when the
+client ended the call before REA returned this response. These hints never
+include the complete catalog or caller arguments.
 Failures omit `structuredContent`, since each advertised `outputSchema`
 describes successful results. Successful replies retain their schema-validated
 structured data and matching text projection. Oversized errors are retained
 as Evidence before delivery of a bounded diagnostic with an export reference;
 if retention is unavailable or fails, the diagnostic reports that reason.
+
+SDK-generated input validation failures are normalized into the same canonical
+`invalid_request` text when the bounded diagnostic fits the response budget.
+The complete field/type diagnostic is preserved when normalization fits the
+response budget, including request-specific rejected fields and reasons. Oversized
+SDK diagnostics keep the existing retained-Evidence recovery path. An unknown
+tool remains an MCP JSON-RPC `-32602` error, but its message directs the caller
+to `tools/list` and an advertised operation instead of repeating the unknown
+name.
 
 `get_call_graph` returns a `graph` keyed by traversal depth and a top-level
 `limitations` array with deduplicated execution caveats. Each node keeps its
@@ -101,8 +128,9 @@ unresolved relationship reads. Cancellation remains a tool error.
 
 REA prepares complete MCP results within the pinned stdio client's 10 MiB
 receive-buffer budget, including both text and structured representations and
-room for the JSON-RPC envelope. Tool errors carry only their text
-representation and `isError` flag, so only those count against the budget. Response budget settings are captured at startup;
+room for the JSON-RPC envelope. Tool errors omit `structuredContent` from the
+wire; their text, `isError`, provenance marker and negotiated protocol framing
+count toward the wire budget. Response budget settings are captured at startup;
 restart or recreate the server to apply changes. If a result cannot fit, REA returns
 `resource_constraint` with `details.resource: "transport"` before constructing
 a document-sized string. Analysis Evidence remains complete in the current
@@ -112,6 +140,52 @@ that reference for a summary, one section/module, or a stable page, or call
 `export_evidence_bundle` with a destination path. Complete
 bundle exports stream canonical JSON into an atomically published file.
 
+On protocol revision `2026-07-28`, completed replies retain the SDK's
+`resultType: "complete"`, including the replacement for an oversized error.
+This marks completion of the MCP exchange; Evidence coverage, partial facts
+and unknowns retain their separate meaning. Legacy replies keep their existing
+framing.
+
+`list_procedures`, `search_procedures`, `list_strings`, `search_strings` and
+`list_names` accept `detail: "summary"`. Complete inline delivery remains the
+default. Summary retains the original complete Evidence and returns its row
+count, provider identity, analysis-profile digest, original query, parent Evidence
+ID, limitations and explicit unknown discovery coverage. Delivery detail is excluded from provider arguments
+and original Evidence identity.
+
+Read selected rows with `inspect_analysis_view`:
+
+```json
+{
+  "source": {
+    "kind": "retained-evidence",
+    "evidence_id": "ev_<source digest>"
+  },
+  "view": {
+    "kind": "native-inventory",
+    "offset": 0,
+    "limit": 32,
+    "fields": ["value"]
+  }
+}
+```
+
+Each row has `source_index` and `record`; parent Evidence ID plus source index
+identifies same-address alternatives. Order is the original retained order.
+Omit `fields` for complete records; a selected field list always retains
+`record.address`. Selecting `value` also retains available `string` and
+`decoding` qualifications, so native display text and unterminated fragments
+remain distinguishable. Search tools apply their existing filters before retention.
+Follow `coverage.next_offset`; exhaustion describes the retained list, not
+complete discovery of all code or strings. An unbound source keeps
+`artifact: null` and the derived Evidence keeps `subject: null`.
+
+The CLI uses the same projector. For an original complete Evidence JSON file,
+write `{"source":{"kind":"evidence-file","path":"/absolute/source.json"},"view":{"kind":"native-inventory","limit":32}}`
+to `/absolute/view-request.json`, then run
+`rea inspect-analysis-view /absolute/view-request.json --json`. This also reads
+pre-summary source records without changing their identity; no live provider is started.
+
 For oversized native function Evidence, `details.reported_limits.continuation`
 contains a ready-to-call `inspect_analysis_view` request for the retained
 pseudocode's first page. Use its `name` and `arguments` directly, then follow
@@ -120,6 +194,8 @@ limit is the view contract's default, not a guarantee that arbitrary source or
 metadata fits; reduce the limit or export when needed. Continuations are
 offered for completed `analyze_function` results only after session recording is
 acknowledged; the complete result and its retention reference remain intact.
+Oversized native inventories likewise include a ready-to-call first
+`native-inventory` page. Reduce its limit or select fields when a row is large.
 
 A broad follow-up or `get_evidence_bundle` can also exceed the response budget; exporting
 preserves the complete session without sending it through a single MCP frame.
