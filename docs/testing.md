@@ -1348,13 +1348,11 @@ producer; newer schedules that reuse qualification without producing timings do
 not hide the last full run's artifact.
 CI assigns discovered files by historical duration, with a deterministic
 fallback weight for new files, rather than dividing only by file count.
-`process-boundary` files are weighted at their full duration because that
-project runs files serially. Other projects are weighted at half their file
-duration, matching the two-worker cap, so a serial file does not look as cheap
-as a file that overlaps with another. Every
-discovered file still belongs to exactly one shard; worker limits and project
-ordering remain unchanged. Fast qualification keeps five built shards without
-coverage. The merge job rejects successful reports with missing,
+Each file keeps its full duration on one worker. Extra workers overlap other
+files in the same sequence group, and `process-boundary` runs after that
+group. Every discovered file still belongs to exactly one shard; worker limits
+and project ordering remain unchanged. Fast qualification keeps eight built
+shards without coverage. The merge job rejects successful reports with missing,
 unexpected, or duplicate portable files. Coverage instrumentation and aggregate
 thresholds remain enforced in full qualification.
 Missing or unusable history falls back to Vitest's default assignment. Only
