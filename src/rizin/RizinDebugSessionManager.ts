@@ -375,6 +375,20 @@ export class RizinDebugSessionManager {
           "Persistent Rizin debugger sessions require Linux /proc descriptor readback to verify inferior detachment and output routing.",
         ),
       );
+    const callerRunId = Object.hasOwn(this.#environment, "REA_PROCESS_RUN_ID")
+      ? this.#environment.REA_PROCESS_RUN_ID
+      : undefined;
+    if (
+      callerRunId !== undefined &&
+      (/[\r\n]/u.test(callerRunId) || /^\s|\s$/u.test(callerRunId))
+    )
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          "rizin",
+          "start_rizin_debug_session",
+          "The caller's REA_PROCESS_RUN_ID contains a line break or boundary whitespace and cannot be preserved for the inferior.",
+        ),
+      );
     if (input.inferior_tty === undefined || input.inferior_tty.length === 0)
       return err(new AnalysisInputError("start_rizin_debug_session"));
     let ttyPath: string;
@@ -427,9 +441,8 @@ export class RizinDebugSessionManager {
       // caller's value (or none) so a later sweep cannot mistake it for an
       // owned process.
       "-R",
-      Object.hasOwn(this.#environment, "REA_PROCESS_RUN_ID") &&
-      this.#environment.REA_PROCESS_RUN_ID !== undefined
-        ? `setenv=REA_PROCESS_RUN_ID=${this.#environment.REA_PROCESS_RUN_ID}`
+      callerRunId !== undefined
+        ? `setenv=REA_PROCESS_RUN_ID=${callerRunId}`
         : "unsetenv=REA_PROCESS_RUN_ID",
       "-e",
       "dbg.exitkills=false",
@@ -1240,10 +1253,11 @@ export class RizinDebugSessionManager {
       }
       return parsed.rows;
     }
-    // Preserve every identity in the valid prefix before surfacing malformed
-    // later rows. A retry must account for these targets even if its inventory
-    // omits them. Do not stop at the first identity lookup failure either.
-    for (const [, pid] of parsed.rows) {
+    // Preserve every ptrace PID observed anywhere in the partial inventory
+    // before surfacing its sticky parse error. A retry must account for these
+    // targets even if its inventory omits them. Do not stop at the first
+    // identity lookup failure either.
+    for (const pid of parsed.observedPids) {
       session.pendingInferiorPids.add(pid);
       try {
         await this.#resolveInferiorRowIdentity(session, pid);
@@ -1864,54 +1878,73 @@ export interface RizinDebugCommandResult {
 
 const parseRizinPtraceRows = (
   output: string,
-): { readonly rows: Array<[string, string]>; readonly error?: Error } => {
+): {
+  readonly rows: Array<[string, string]>;
+  readonly observedPids: readonly string[];
+  readonly error?: Error;
+} => {
   let parsed: unknown;
   try {
     parsed = JSON.parse(output);
   } catch (cause) {
     return {
       rows: [],
+      observedPids: [],
       error: new Error("Rizin returned malformed JSON for `olj`.", { cause }),
     };
   }
   if (!Array.isArray(parsed))
     return {
       rows: [],
+      observedPids: [],
       error: new Error("Rizin `olj` response is not an array."),
     };
   const rows: Array<[string, string]> = [];
+  const observedPids = new Set<string>();
+  let error: Error | undefined;
   for (const row of parsed) {
-    if (
-      typeof row !== "object" ||
-      row === null ||
-      typeof (row as { fd?: unknown }).fd !== "number" ||
-      !Number.isSafeInteger((row as { fd: number }).fd) ||
-      (row as { fd: number }).fd < 0 ||
-      typeof (row as { raised?: unknown }).raised !== "boolean" ||
-      typeof (row as { uri?: unknown }).uri !== "string"
-    )
-      return {
-        rows,
-        error: new Error(
-          "Rizin `olj` response contains a malformed descriptor row.",
-        ),
-      };
-    const uri = (row as { uri: string }).uri;
-    const match = /^ptrace:\/\/(\d+)$/u.exec(uri);
-    if (match !== null) {
-      if ((row as { raised: boolean }).raised !== true)
-        return {
-          rows,
-          error: new Error("Rizin `olj` ptrace descriptor is not active."),
-        };
-      rows.push([String((row as { fd: number }).fd), match[1]!]);
-    } else if (uri.startsWith("ptrace://"))
-      return {
-        rows,
-        error: new Error("Rizin `olj` returned a malformed ptrace URI."),
-      };
+    if (typeof row !== "object" || row === null) {
+      error ??= new Error(
+        "Rizin `olj` response contains a malformed descriptor row.",
+      );
+      continue;
+    }
+    const descriptor = row as {
+      fd?: unknown;
+      raised?: unknown;
+      uri?: unknown;
+    };
+    const uri = typeof descriptor.uri === "string" ? descriptor.uri : undefined;
+    const ptraceMatch =
+      uri === undefined ? null : /^ptrace:\/\/(\d+)$/u.exec(uri);
+    if (ptraceMatch !== null) observedPids.add(ptraceMatch[1]!);
+    const descriptorValid =
+      typeof descriptor.fd === "number" &&
+      Number.isSafeInteger(descriptor.fd) &&
+      descriptor.fd >= 0 &&
+      typeof descriptor.raised === "boolean" &&
+      uri !== undefined;
+    if (!descriptorValid) {
+      error ??= new Error(
+        "Rizin `olj` response contains a malformed descriptor row.",
+      );
+      continue;
+    }
+    if (ptraceMatch !== null) {
+      if (descriptor.raised !== true) {
+        error ??= new Error("Rizin `olj` ptrace descriptor is not active.");
+        continue;
+      }
+      rows.push([String(descriptor.fd), ptraceMatch[1]!]);
+    } else if (uri.startsWith("ptrace://")) {
+      error ??= new Error("Rizin `olj` returned a malformed ptrace URI.");
+    }
   }
-  return { rows };
+  return {
+    rows,
+    observedPids: [...observedPids],
+    ...(error === undefined ? {} : { error }),
+  };
 };
 
 /** @internal Reject a PID that changed identity during inferior detach. */

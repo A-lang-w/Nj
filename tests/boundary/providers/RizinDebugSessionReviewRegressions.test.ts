@@ -1977,13 +1977,11 @@ process.stdin.on("data", (chunk) => {
 );
 
 it.skipIf(process.platform !== "linux")(
-  "retains valid inferior identities before a malformed ptrace row on retry",
+  "retains valid PIDs after a malformed ptrace row before an empty retry inventory",
   async () => {
-    const omitted = await spawnTestInferior();
     const retained = await spawnTestInferiorOnTty(await rizinTestInferiorTty());
-    expect(omitted.pid).toBeDefined();
     expect(retained.pid).toBeDefined();
-    if (omitted.pid === undefined || retained.pid === undefined) return;
+    if (retained.pid === undefined) return;
     directory = await mkdtemp(join(tmpdir(), "rea-rizin-malformed-partial-"));
     const commandsPath = join(directory, "commands");
     const provider = join(directory, "fake-rizin-malformed-partial.mjs");
@@ -2004,8 +2002,8 @@ process.stdin.on("data", (chunk) => {
     if (line === "olj") {
       inventory += 1;
       const output = inventory === 1
-        ? JSON.stringify([{ fd: 12, raised: true, uri: "ptrace://${omitted.pid}" }, {}])
-        : JSON.stringify([{ fd: 13, raised: true, uri: "ptrace://${retained.pid}" }]);
+        ? JSON.stringify([{}, { fd: 13, raised: true, uri: "ptrace://${retained.pid}" }])
+        : "[]";
       process.stdout.write(output + "\\0");
     }
     else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
@@ -2054,10 +2052,9 @@ process.stdin.on("data", (chunk) => {
     expect((await manager.close(started.value.session_id)).ok).toBe(false);
     expect((await manager.retryCleanupFailures()).ok).toBe(false);
     expect(detachResults.at(-1)).toContain(
-      `omitted retained inferior PID ${omitted.pid}`,
+      `identified PID ${retained.pid} is still active`,
     );
     expect(await readFile(commandsPath, "utf8")).not.toContain("o- 13");
-    expect(omitted.exitCode).toBeNull();
     expect(retained.exitCode).toBeNull();
   },
 );

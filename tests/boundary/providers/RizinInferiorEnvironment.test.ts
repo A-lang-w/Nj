@@ -80,5 +80,37 @@ process.stdin.on("data", (chunk) => {
           completion_status: "complete",
         });
     });
+
+    it.each(["caller\nrun", "caller\rrun", "caller-run "])(
+      "rejects a caller run ID with unsafe profile boundaries before spawn: %j",
+      async (runId) => {
+        directory = await mkdtemp(join(tmpdir(), "rea-rizin-invalid-run-id-"));
+        const provider = join(directory, "fake-rizin.mjs");
+        const spawnMarker = join(directory, "spawned");
+        await writeFile(
+          provider,
+          `#!/usr/bin/env node
+const fs = await import("node:fs");
+fs.writeFileSync(${JSON.stringify(spawnMarker)}, "spawned");
+process.stdout.write("\\0");
+`,
+        );
+        await chmod(provider, 0o700);
+        const manager = createRizinTestManager({
+          REA_RIZIN_COMMAND: provider,
+          REA_PROCESS_RUN_ID: runId,
+        });
+        managers.push(manager);
+
+        const started = await manager.start({
+          path: "/tmp/fixture.bin",
+          inferior_tty: await rizinTestInferiorTty(),
+        });
+        expect(started.ok).toBe(false);
+        await expect(readFile(spawnMarker, "utf8")).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      },
+    );
   },
 );
