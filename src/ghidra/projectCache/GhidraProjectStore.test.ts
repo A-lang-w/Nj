@@ -869,6 +869,32 @@ describe("GhidraProjectStore resilience", () => {
     ]);
   });
 
+  it("replaces a link at a lease file without writing through it", async () => {
+    const store = newStore();
+    const miss = await store.prepare({ identity: identity(), mode: "on" });
+    await store.publish(publishable(store, miss));
+    const key = ghidraProjectCacheKey(identity());
+    const outside = await mkdtemp(join(tmpdir(), "rea-ghidra-lease-"));
+    try {
+      const ownerFile = join(outside, "owner.txt");
+      await writeFile(ownerFile, "owner");
+      const lease = join(root, "leases", `${key}.lease`);
+      await mkdir(join(root, "leases"), { recursive: true });
+      // A root other principals could write before it was tightened can hold
+      // a link at the name a lease uses.
+      await symlink(ownerFile, lease);
+      const hit = await store.prepare({ identity: identity(), mode: "on" });
+      expect(hit.ok && hit.value?.hit).toBe(true);
+      // The hit refreshes its lease without writing through the link.
+      await expect(readFile(ownerFile, "utf8")).resolves.toBe("owner");
+      const stats = await lstat(lease);
+      expect(stats.isSymbolicLink()).toBe(false);
+      expect(stats.isFile()).toBe(true);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
   it("refuses to remove an entry leased by a recent hit", async () => {
     const store = newStore();
     const miss = await store.prepare({ identity: identity(), mode: "on" });

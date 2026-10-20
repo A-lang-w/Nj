@@ -724,8 +724,13 @@ export class GhidraProjectStore {
     const path = this.#leasePath(key);
     try {
       await this.#ensureWorkingDirectory(dirname(path));
+      // A lease is re-created without following an existing entry. Another
+      // account could have planted a link at the lease name before the root
+      // was tightened, and writing through it would replace the owner's file.
+      await rm(path, { force: true }).catch(() => undefined);
       await writeFile(path, `${new Date().toISOString()}\n`, {
         encoding: "utf8",
+        flag: "wx",
         mode: 0o600,
       });
     } catch {
