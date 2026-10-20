@@ -1238,42 +1238,8 @@ export class RizinDebugSessionManager {
     const currentIdentities = new Map<string, OwnedInferiorIdentity>();
     const activeInferiors: Array<[string, string]> = [];
     for (const [fd, pid] of inferior) {
-      const previous = session.knownInferiorIdentities.get(pid);
-      const startTime = await this.#readProcessStartTime(pid);
-      if (startTime === null) {
-        if (
-          previous === undefined ||
-          !(await verifyOwnedInferiorsEnded([previous]))
-        )
-          throw new Error(
-            `Inferior PID ${pid} ended before its identity could be established.`,
-          );
-        continue;
-      }
-      if (previous !== undefined && previous.startTime !== startTime) {
-        if (
-          !(await this.#replacementIsTracedByOwnedDebugger(
-            session,
-            pid,
-            startTime,
-          ))
-        ) {
-          // Rizin may keep a ptrace IO row after the old PID exits. Linux's
-          // TracerPid identifies the tracing task; if it is not one of this
-          // live owned debugger's tasks, its later PTRACE_DETACH can only fail
-          // with ESRCH and cannot detach the replacement from another tracer.
-          // Recheck exit policy before treating this row as stale.
-          await this.#verifyDebuggerExitPolicy(session);
-          continue;
-        }
-        // The replacement is actually traced by this Rizin process. Treat it
-        // as a new identity and run all normal policy and sink checks before
-        // detaching it; the old identity is already proven ended by startTime.
-      }
-      const identity = {
-        pid,
-        startTime,
-      };
+      const identity = await this.#resolveInferiorRowIdentity(session, pid);
+      if (identity === undefined) continue;
       // Retain each owned identity as soon as it is observed. A later row or
       // partial-inventory check can fail, and a retry must still account for
       // every target already reported by Rizin.
@@ -1316,20 +1282,73 @@ export class RizinDebugSessionManager {
     const after = parseRizinPtraceRows(
       await this.#runInternalCommand(session, "olj"),
     );
-    if (
-      after.some(
-        ([activeFd, activePid]) => activeFd === fd || activePid === pid,
-      ) ||
-      after.length !== 0
-    )
-      throw new Error(
-        "Rizin did not confirm that the selected inferior FD was detached.",
-      );
+    for (const [activeFd, activePid] of after) {
+      if (activeFd === fd || activePid === pid)
+        throw new Error(
+          "Rizin did not confirm that the selected inferior FD was detached.",
+        );
+      // Rizin can retain an unrelated ptrace row after its original process
+      // ended. Reuse the same identity/tracer reconciliation as the initial
+      // inventory; any row that still names an active inferior remains fatal.
+      if (
+        (await this.#resolveInferiorRowIdentity(session, activePid)) !==
+        undefined
+      )
+        throw new Error(
+          "Rizin reported another active inferior after detaching the selected FD.",
+        );
+    }
     // Preserve this protocol proof before later identity and descriptor checks.
     // A retry can then revalidate the retained process sinks without issuing
     // another detach command or treating an empty inventory as contradictory.
     session.confirmedDetachedInferiorIdentity = identity;
     return this.#verifyConfirmedDetachedInferior(session, identity);
+  }
+
+  async #resolveInferiorRowIdentity(
+    session: RizinDebugSession,
+    pid: string,
+  ): Promise<OwnedInferiorIdentity | undefined> {
+    const previous = session.knownInferiorIdentities.get(pid);
+    const startTime = await this.#readProcessStartTime(pid);
+    if (startTime === null) {
+      if (previous === undefined)
+        throw new Error(
+          `Inferior PID ${pid} ended before its identity could be established.`,
+        );
+      // A transient ENOENT can race with PID reuse. Confirm the second lookup
+      // directly so a new identity still goes through tracer ownership checks.
+      const confirmedStartTime = await this.#readProcessStartTime(pid);
+      if (confirmedStartTime === null) return undefined;
+      if (
+        previous.startTime !== confirmedStartTime &&
+        !(await this.#replacementIsTracedByOwnedDebugger(
+          session,
+          pid,
+          confirmedStartTime,
+        ))
+      ) {
+        await this.#verifyDebuggerExitPolicy(session);
+        return undefined;
+      }
+      const identity = { pid, startTime: confirmedStartTime };
+      session.knownInferiorIdentities.set(pid, identity);
+      return identity;
+    }
+    if (
+      previous !== undefined &&
+      previous.startTime !== startTime &&
+      !(await this.#replacementIsTracedByOwnedDebugger(session, pid, startTime))
+    ) {
+      // Rizin may keep a ptrace IO row after the old PID exits. Linux's
+      // TracerPid identifies whether that row could still affect a replacement;
+      // only a fresh debugger policy readback makes a stale row ignorable.
+      await this.#verifyDebuggerExitPolicy(session);
+      return undefined;
+    }
+    const identity = { pid, startTime };
+    session.knownInferiorIdentities.set(pid, identity);
+    return identity;
   }
 
   async #verifyConfirmedDetachedInferior(

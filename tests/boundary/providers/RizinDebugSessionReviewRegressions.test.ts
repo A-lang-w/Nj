@@ -404,6 +404,49 @@ process.stdin.on("data", (chunk) => {
   return provider;
 };
 
+const createStaleRowAfterDetachProvider = async (
+  stalePid: number,
+  livePid: number,
+  commandsPath: string,
+): Promise<string> => {
+  const provider = join(directory!, "fake-rizin-stale-row-after-detach.mjs");
+  await writeFile(
+    provider,
+    `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+process.stdout.write("\\0");
+let input = "";
+let inventoryReads = 0;
+let detached = false;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n"); if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    appendFileSync(${JSON.stringify(commandsPath)}, line + "\\n");
+    if (line === "olj") {
+      inventoryReads += 1;
+      const rows = detached || inventoryReads > 2
+        ? [{ fd: 12, raised: true, uri: "ptrace://${stalePid}" }]
+        : [
+            { fd: 12, raised: true, uri: "ptrace://${stalePid}" },
+            { fd: 13, raised: true, uri: "ptrace://${livePid}" },
+          ];
+      process.stdout.write(JSON.stringify(rows) + "\\0");
+    }
+    else if (line === "e dbg.exitkills") process.stdout.write("false\\0");
+    else if (line === "o- 13") detached = true;
+    else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
+    else process.stdout.write("\\0");
+  }
+});
+`,
+  );
+  await chmod(provider, 0o700);
+  return provider;
+};
+
 const createOmittedInferiorProvider = async (
   firstPid: number,
   retainedPid: number,
@@ -755,6 +798,124 @@ it.skipIf(process.platform !== "linux")(
     ).toBe(true);
     expect(await readFile(commandsPath, "utf8")).not.toContain("o- 12");
     expect(manager.status(started.value.session_id)).toBeUndefined();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "preserves confirmed detach when an unrelated stale Rizin row survives readback",
+  async () => {
+    const tty = await rizinTestInferiorTty();
+    const inferior = await spawnTestInferiorOnTty(tty);
+    const livePid = inferior.pid;
+    expect(livePid).toBeDefined();
+    if (livePid === undefined) return;
+    const stalePid = 45_678;
+    directory = await mkdtemp(join(tmpdir(), "rea-rizin-stale-row-readback-"));
+    const commandsPath = join(directory, "commands");
+    const provider = await createStaleRowAfterDetachProvider(
+      stalePid,
+      livePid,
+      commandsPath,
+    );
+    const staleIdentityReads: string[] = [];
+    const manager = new RizinDebugSessionManager(
+      { ...process.env, REA_RIZIN_COMMAND: provider },
+      {
+        platform: "linux",
+        readProcessStartTime: async (pid) => {
+          if (pid !== String(stalePid)) return "300";
+          const observed = staleIdentityReads.length === 0 ? "100" : "200";
+          staleIdentityReads.push(observed);
+          return observed;
+        },
+        readProcessTracerPid: async () => 0,
+        readProcessTaskIds: async () => new Set(),
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          ownedProviderProcesses.push(launched.process);
+          return launched;
+        },
+      },
+    );
+    managers.push(manager);
+    const started = await manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: tty,
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    expect((await manager.close(started.value.session_id)).ok).toBe(false);
+    expect(await manager.retryCleanupFailures()).toEqual({
+      ok: true,
+      value: null,
+    });
+
+    const commands = await readFile(commandsPath, "utf8");
+    expect(commands.match(/^o- 13$/gm)).toHaveLength(1);
+    expect(manager.status(started.value.session_id)).toBeUndefined();
+    expect(inferior.exitCode).toBeNull();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "does not ignore a reused PID that appears after a transient identity read failure",
+  async () => {
+    const tty = await rizinTestInferiorTty();
+    const inferior = await spawnTestInferiorOnTty(tty);
+    const livePid = inferior.pid;
+    expect(livePid).toBeDefined();
+    if (livePid === undefined) return;
+    const stalePid = 45_679;
+    directory = await mkdtemp(join(tmpdir(), "rea-rizin-reused-row-readback-"));
+    const commandsPath = join(directory, "commands");
+    const provider = await createStaleRowAfterDetachProvider(
+      stalePid,
+      livePid,
+      commandsPath,
+    );
+    const staleIdentityReads: Array<string | null> = [
+      "100", // first observed identity
+      "200", // reused PID during retry inventory
+      "200", // replacement identity recheck
+      null, // transient disappearance in post-detach inventory
+      "300", // a different identity appears at the same PID
+      "300", // replacement identity stability check
+    ];
+    const tracerPids = [0, 777];
+    const manager = new RizinDebugSessionManager(
+      { ...process.env, REA_RIZIN_COMMAND: provider },
+      {
+        platform: "linux",
+        readProcessStartTime: async (pid) => {
+          if (pid !== String(stalePid)) return "300";
+          const next = staleIdentityReads.shift();
+          return next === undefined ? "300" : next;
+        },
+        readProcessTracerPid: async () => tracerPids.shift() ?? 777,
+        readProcessTaskIds: async () => new Set(["777"]),
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          ownedProviderProcesses.push(launched.process);
+          return launched;
+        },
+      },
+    );
+    managers.push(manager);
+    const started = await manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: tty,
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    expect((await manager.close(started.value.session_id)).ok).toBe(false);
+    expect((await manager.retryCleanupFailures()).ok).toBe(false);
+
+    const commands = await readFile(commandsPath, "utf8");
+    expect(commands.match(/^o- 13$/gm)).toHaveLength(1);
+    expect(manager.status(started.value.session_id)).toBeDefined();
+    expect(inferior.exitCode).toBeNull();
   },
 );
 

@@ -2345,20 +2345,37 @@ export const commandMayChangeInferiorOutput = (command: string): boolean => {
   const firstToken = /^\s*([^\s;]+)/u.exec(command)?.[1]?.toLowerCase();
   const mayBeTtyCommand =
     firstToken !== undefined && "tty".startsWith(firstToken);
+  // `s` is GDB's built-in alias for `step`, not a `source` abbreviation.
+  // Require the unambiguous `sour` prefix before treating it as source.
+  const mayBeSourceCommand =
+    firstToken !== undefined &&
+    firstToken.length >= 2 &&
+    firstToken !== "s" &&
+    "source".startsWith(firstToken);
   const mayDefineAlias =
     firstToken !== undefined && "alias".startsWith(firstToken);
-  const mayRunWithOutputRedirection =
+  const runCommand =
     firstToken !== undefined &&
-    ["run", "start", "starti"].some((name) => name.startsWith(firstToken)) &&
-    /[<>]{1,2}|&>/u.test(command.slice(firstToken.length));
+    ["run", "start", "starti"].some((name) => name.startsWith(firstToken));
+  const runTail = runCommand ? command.slice(firstToken.length) : "";
+  // GDB accepts an input-only redirection for the inferior. It does not change
+  // stdout/stderr, which are independently verified from the live process at
+  // close time. Keep the exception narrow: compound commands and any output
+  // redirection still revoke the startup proof.
+  const inputOnlyRunRedirection =
+    runCommand &&
+    /^\s+(?:[^<>;&|\r\n]+\s+)?<\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s<>;&|]+)\s*$/u.test(
+      runTail,
+    );
+  const mayRunWithOutputRedirection =
+    runCommand && /[<>]{1,2}|&>/u.test(runTail) && !inputOnlyRunRedirection;
   return (
     maySetInferiorTty ||
     mayBeTtyCommand ||
+    mayBeSourceCommand ||
     mayDefineAlias ||
     /\binferior-tty\b/iu.test(command) ||
-    /^\s*(?:wit(?:h)?(?:\s|$)|tty(?:\s|$)|source\b|py\w*|define\b)/iu.test(
-      command,
-    ) ||
+    /^\s*(?:wit(?:h)?(?:\s|$)|tty(?:\s|$)|py\w*|define\b)/iu.test(command) ||
     mayRunWithOutputRedirection
   );
 };
