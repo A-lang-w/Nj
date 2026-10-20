@@ -116,6 +116,7 @@ const bodyMetadata = (
   const message = object(object(record.reported)?.[side]);
   if (message === undefined) return undefined;
   const headers = new Map<string, string | undefined>();
+  let headerNamesKnown = Array.isArray(message.headers);
   if (Array.isArray(message.headers)) {
     for (const [index, item] of message.headers.entries()) {
       const pair = object(item);
@@ -136,13 +137,16 @@ const bodyMetadata = (
       const value = Array.isArray(item)
         ? text(item[1], `/${side}/headers/${index}/1`)
         : pair?.value;
-      if (typeof name === "string" && typeof value === "string") {
+      if (typeof name === "string") {
         const key = name.toLowerCase();
+        const knownValue = typeof value === "string" ? value : undefined;
         headers.set(
           key,
-          headers.has(key) && headers.get(key) !== value ? undefined : value,
+          headers.has(key) && headers.get(key) !== knownValue
+            ? undefined
+            : knownValue,
         );
-      }
+      } else headerNamesKnown = false;
     }
   }
   if (format === "har") {
@@ -158,19 +162,21 @@ const bodyMetadata = (
         typeof content?.mimeType === "string"
           ? content.mimeType
           : headers.get("content-type"),
-      encoded: false,
+      httpIdentityKnown: true,
     };
   }
   if (pointer !== `/${side}/body` && pointer !== `/${side}/content`)
     return undefined;
   return {
     contentType: headers.get("content-type"),
-    encoded: ["content-encoding", "transfer-encoding"].some(
-      (name) =>
-        // HTTP OWS is SP/HTAB; require the entire identity token, including EOF.
-        headers.has(name) &&
-        !/^[ \t]*identity[ \t]*(?![\s\S])/i.test(headers.get(name) ?? ""),
-    ),
+    httpIdentityKnown:
+      headerNamesKnown &&
+      ["content-encoding", "transfer-encoding"].every(
+        (name) =>
+          // HTTP OWS is SP/HTAB; require the entire identity token, including EOF.
+          !headers.has(name) ||
+          /^[ \t]*identity[ \t]*(?![\s\S])/i.test(headers.get(name) ?? ""),
+      ),
   };
 };
 
@@ -253,10 +259,10 @@ export const prepareCaptureProtobuf = async (
           ? automatic
           : options.framing;
       if (framing === undefined) continue;
-      if (metadata.encoded) {
+      if (!metadata.httpIdentityKnown) {
         incomplete = true;
         record.limitations.push(
-          "Selected protobuf body still has HTTP content/transfer encoding; its exact stored bytes remain opaque.",
+          "Selected protobuf body's HTTP content/transfer coding is encoded or unknown, so identity is not established; its exact stored bytes remain opaque.",
         );
         continue;
       }

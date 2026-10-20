@@ -174,6 +174,36 @@ it("uses HTTP optional whitespace for SAZ identity codings without changing raw 
   expect(parseEvidence(response.structuredContent).evidence_id).toBe(
     evidence.evidence_id,
   );
+  for (const sensitive of ["gzip", "Content-Encoding"]) {
+    const excluded = await call("inspect_web_network_capture", {
+      capture_path: path,
+      format: "saz",
+      record_ordinals: [0, 1, 2, 3],
+      protobuf: { framing: "grpc" },
+      sensitive_values: [sensitive],
+    });
+    expect(excluded.isError, JSON.stringify(excluded)).not.toBe(true);
+    const report = webNetworkCaptureSchema.parse(
+      parseEvidence(excluded.structuredContent).normalized_result,
+    );
+    expect(report.protobuf_coverage).toMatchObject({
+      status: "partial",
+      inspected_records: 4,
+    });
+    if (sensitive === "gzip")
+      expect(report.records[2]?.protobuf).toBeUndefined();
+    else
+      expect(
+        report.records.every((record) => record.protobuf === undefined),
+      ).toBe(true);
+    for (const record of report.records)
+      expect(record.binary_fields).toContainEqual(
+        expect.objectContaining({
+          pointer: "/response/body",
+          state: "retained",
+        }),
+      );
+  }
 });
 
 it("inspects native SAZ through the public CLI and MCP with equal evidence, bytes and archive coordinates", async () => {
