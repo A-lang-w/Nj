@@ -20,7 +20,8 @@ const forbidden = {
   bytes: [/Wait for an active analysis/u, /\bretry\b/iu, /fixed count/u],
   report: [/get_evidence_bundle/u, /complete CLI JSON output/u],
   input: [/evidence reply/u, /file-size allowance for the evidence/u],
-  capture: [/available host memory\. Retry/u],
+  capture: [/available host memory\. Retry/u, /live output may change/u],
+  live: [/available host memory\. Retry/u, /unchanged request/u],
   work: [/worker CPU limits and observed signal/u],
 } as const;
 
@@ -32,6 +33,7 @@ describe("fixed allowance recovery", () => {
     ["report", "transport"],
     ["input", "file-size"],
     ["capture", "memory"],
+    ["live", "memory"],
     ["work", "cpu"],
   ] as const)(
     "projects %s allowances without the generic %s fallback",
@@ -52,12 +54,14 @@ describe("fixed allowance recovery", () => {
       expect(projected.remediation.action).toContain(allowance);
       for (const pattern of forbidden[kind])
         expect(projected.remediation.action).not.toMatch(pattern);
-      if (kind === "capture") {
+      if (kind === "live")
         expect(projected.remediation.action).toContain(
           "live output may change between requests",
         );
-        expect(projected.remediation.action).not.toContain("unchanged request");
-      }
+      if (kind === "capture")
+        expect(projected.remediation.action).toContain(
+          "Repeating the unchanged request fails the same way.",
+        );
     },
   );
 });

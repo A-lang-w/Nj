@@ -149,7 +149,7 @@ export const runAdbCapture = async (
             cause,
             ...fixedAllowanceOptions(
               "The adb output capture allowance",
-              "capture",
+              limits.volatileOutput === true ? "live" : "capture",
             ),
             ...(limits.volatileOutput === true ? { retryable: true } : {}),
           },

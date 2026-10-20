@@ -213,7 +213,9 @@ it.each([true, false])(
       "The adb output capture allowance",
     );
     expect(projected.remediation.action).toContain(
-      "live output may change between requests",
+      volatileOutput
+        ? "live output may change between requests"
+        : "Repeating the unchanged request fails the same way.",
     );
   },
 );
