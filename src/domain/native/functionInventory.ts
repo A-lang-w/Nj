@@ -136,7 +136,7 @@ const addBytes = async (
 const reportedSymbol = (
   row: AddressedValue,
   known: Symbols | undefined,
-): string | null => {
+): { readonly value: string | null; readonly originKnown: boolean } => {
   const names = [
     ...(row.symbol === undefined ? [] : [row]),
     ...(known?.values.filter((symbol) => symbol.value === row.value) ?? []),
@@ -149,11 +149,13 @@ const reportedSymbol = (
     (symbol) =>
       symbol.symbol?.dynamic === false && symbol.symbol.source !== "default",
   );
-  return row.value.length === 0 ||
-    generated ||
-    (!named && isAutoName(row.value))
-    ? null
-    : row.value;
+  return {
+    value:
+      row.value.length === 0 || generated || (!named && isAutoName(row.value))
+        ? null
+        : row.value,
+    originKnown: names.some((symbol) => symbol.symbol !== undefined),
+  };
 };
 const functionFact = async (
   {
@@ -175,13 +177,14 @@ const functionFact = async (
   const fingerprint = await facts.bytes.fingerprint(body);
   for (const link of fingerprint?.links ?? []) links.add(link);
   const limitations: string[] = [];
+  const symbol = reportedSymbol(row, symbols);
   if (fingerprint === null)
     limitations.push(
       detail?.conflict
         ? "Conflicting procedure observations; body and dossier remain unknown."
         : "No complete unambiguous bytes for the observed function body.",
     );
-  if (symbols === undefined && row.symbol === undefined)
+  if (!symbol.originKnown)
     limitations.push(
       "Symbol origin unavailable; exact-name matching uses the reported name and the existing automatic-name exclusion rule.",
     );
@@ -201,7 +204,7 @@ const functionFact = async (
       evidence_links: [...links].sort(),
       limitations,
     },
-    symbol: reportedSymbol(row, symbols),
+    symbol: symbol.value,
     fingerprint: fingerprint?.key ?? null,
   };
 };

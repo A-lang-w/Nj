@@ -23,6 +23,44 @@ const compare = async (input: unknown) => {
   };
 };
 
+it("keeps symbol origin unknown when supplied metadata describes a different same-address alias", async () => {
+  const left = nativeMatchingInventory("1", [
+    { address: "0x10", value: "reported_name" },
+  ]);
+  const right = nativeMatchingInventory("2", [
+    { address: "0x20", value: "reported_name" },
+  ]);
+  const alias = createEvidence(
+    nativeMatchingTarget("1"),
+    nativeMatchingProvider,
+    {
+      operation: "list_names",
+      parameters: {},
+      result: [
+        {
+          address: "0x10",
+          value: "other_alias",
+          symbol: {
+            primary: false,
+            dynamic: false,
+            external: false,
+            type: "function",
+            source: "user_defined",
+          },
+        },
+      ],
+    },
+  );
+  const { report } = await compare({ left, right, left_observations: [alias] });
+  expect(report.summary.matched).toBe(1);
+  expect(report.matches[0]?.left[0]?.limitations).toContain(
+    "Symbol origin unavailable; exact-name matching uses the reported name and the existing automatic-name exclusion rule.",
+  );
+  expect(report.matches[0]?.left[0]?.evidence_links).toContain(
+    alias.evidence_id,
+  );
+});
+
 it("keeps informative CFG/call/string fingerprints as unresolved candidates and refuses incomplete structural observations", async () => {
   const profile = createAnalysisProfile(nativeMatchingProvider, {
     fixture: "structural-candidates-v1",
