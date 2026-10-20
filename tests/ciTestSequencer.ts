@@ -60,36 +60,42 @@ export async function readTestDurations(
   }
 }
 
-type TimedItem<T> = { item: T; key: string; duration: number | undefined };
+type TimedItem<T> = {
+  item: T;
+  key: string;
+  duration: number | undefined;
+  /**
+   * Workers that can run this file alongside its peers. Serial files use 1
+   * because their wall time is not shared. Parallel files use the lane width.
+   */
+  laneWidth?: number;
+};
 
-// process-boundary runs its files one at a time. Other projects overlap up to
-// the runner worker cap, so equal file-duration sums are not equal wall time.
-const PARALLEL_TEST_WORKERS = 2;
+const laneWidthOf = <T>(entry: TimedItem<T>): number => {
+  const laneWidth = entry.laneWidth ?? 1;
+  if (!Number.isInteger(laneWidth) || laneWidth < 1)
+    throw new RangeError("laneWidth must be a positive integer");
+  return laneWidth;
+};
 
-export function estimatedShardCost(
-  project: string,
-  durationMs: number,
+/**
+ * Schedule cost of one file. Parallel files divide by the lane width because
+ * those workers overlap; a serial file keeps its full duration as tail time.
+ */
+export function scheduleCost(
+  durationMs: number | undefined,
+  laneWidth: number,
+  unknownMs: number,
 ): number {
-  if (project === "process-boundary") return durationMs;
-  return durationMs / PARALLEL_TEST_WORKERS;
+  if (!Number.isInteger(laneWidth) || laneWidth < 1)
+    throw new RangeError("laneWidth must be a positive integer");
+  const duration = durationMs ?? unknownMs;
+  if (!Number.isFinite(duration) || duration <= 0)
+    throw new RangeError("duration must be positive");
+  return duration / laneWidth;
 }
 
-/** Weight raw durations, filling gaps from the raw median before worker sharing. */
-export function weightFileDurations(
-  entries: readonly { project: string; duration: number | undefined }[],
-): (number | undefined)[] {
-  const known = entries
-    .flatMap(({ duration }) => (duration === undefined ? [] : [duration]))
-    .sort((left, right) => left - right);
-  if (!known.length) return entries.map(() => undefined);
-  const lower = known[Math.floor((known.length - 1) / 2)]!;
-  const median = lower + (known[Math.floor(known.length / 2)]! - lower) / 2;
-  return entries.map(({ project, duration }) =>
-    estimatedShardCost(project, duration ?? median),
-  );
-}
-
-/** Distribute the longest files first, retaining every discovered specification. */
+/** Distribute the longest schedule costs first, retaining every discovered specification. */
 export function allocateByDuration<T>(
   items: readonly TimedItem<T>[],
   shardCount: number,
@@ -104,19 +110,20 @@ export function allocateByDuration<T>(
   const median = lower + (known[Math.floor(known.length / 2)]! - lower) / 2;
   const ordered = items.toSorted(
     (left, right) =>
-      (right.duration ?? median) - (left.duration ?? median) ||
+      scheduleCost(right.duration, laneWidthOf(right), median) -
+        scheduleCost(left.duration, laneWidthOf(left), median) ||
       (left.key < right.key ? -1 : left.key > right.key ? 1 : 0),
   );
   const shards = Array.from({ length: shardCount }, () => ({
-    duration: 0,
+    cost: 0,
     items: [] as T[],
   }));
   for (const entry of ordered) {
     const lightest = shards.reduce((left, right) =>
-      right.duration < left.duration ? right : left,
+      right.cost < left.cost ? right : left,
     );
     lightest.items.push(entry.item);
-    lightest.duration += entry.duration ?? median;
+    lightest.cost += scheduleCost(entry.duration, laneWidthOf(entry), median);
   }
   return shards.map(({ items }) => items);
 }
@@ -132,23 +139,26 @@ export class CiTestSequencer extends BaseSequencer {
     const durations = await readTestDurations(historyPath, root);
     if (!durations) return super.shard(files);
 
-    const timed = files.map((item) => {
+    const weighted = files.map((item) => {
       const path = relative(root, resolve(root, item.moduleId))
         .split(sep)
         .join("/");
+      const projectWorkers = item.project.config.maxWorkers;
+      // Serial projects resolve to one worker, so their duration is a tail.
+      // Parallel projects divide by the workers that overlap those files.
+      const laneWidth =
+        typeof projectWorkers === "number" &&
+        Number.isInteger(projectWorkers) &&
+        projectWorkers >= 1
+          ? projectWorkers
+          : 1;
       return {
         item,
         key: path + "\0" + item.project.name + "\0" + item.pool,
-        project: item.project.name,
         duration: durations.get(path),
+        laneWidth,
       };
     });
-    const costs = weightFileDurations(timed);
-    const weighted = timed.map((entry, index) => ({
-      item: entry.item,
-      key: entry.key,
-      duration: costs[index],
-    }));
     const shards = allocateByDuration(weighted, shard.count);
     return shards ? shards[shard.index - 1]! : super.shard(files);
   }

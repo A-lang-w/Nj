@@ -8,10 +8,9 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import {
   allocateByDuration,
-  estimatedShardCost,
   parseTestDurations,
   readTestDurations,
-  weightFileDurations,
+  scheduleCost,
 } from "../../ciTestSequencer.js";
 
 describe("CI test history", () => {
@@ -87,27 +86,6 @@ describe("CI test history", () => {
 });
 
 describe("duration shard allocation", () => {
-  it("charges serial process-boundary files their full duration and other projects one worker share", () => {
-    expect(estimatedShardCost("process-boundary", 400)).toBe(400);
-    expect(estimatedShardCost("domain", 400)).toBe(200);
-    expect(estimatedShardCost("adapters", 400)).toBe(200);
-  });
-
-  it("fills unknown files from the raw median before serial and shared weighting", () => {
-    expect(
-      weightFileDurations([
-        { project: "domain", duration: 400 },
-        { project: "process-boundary", duration: undefined },
-        { project: "adapters", duration: undefined },
-      ]),
-    ).toEqual([200, 400, 200]);
-    expect(
-      weightFileDurations([
-        { project: "process-boundary", duration: undefined },
-      ]),
-    ).toEqual([undefined]);
-  });
-
   it.prop([
     fc.uniqueArray(fc.integer({ min: 0, max: 10_000 }), {
       minLength: 1,
@@ -187,5 +165,37 @@ describe("duration shard allocation", () => {
     expect(reversedShards).toEqual(shards);
     expect(shards!.flat()).toHaveLength(items.length);
     expect(new Set(shards!.flat()).size).toBe(items.length);
+  });
+
+  it("charges serial files their full tail and overlaps parallel files", () => {
+    expect(scheduleCost(200, 2, 1)).toBe(100);
+    expect(scheduleCost(undefined, 1, 80)).toBe(80);
+    expect(() => scheduleCost(10, 0, 1)).toThrow(RangeError);
+
+    const parallel = (id: string, duration: number) => ({
+      item: id,
+      key: id,
+      duration,
+      laneWidth: 2,
+    });
+    const serial = (id: string, duration: number) => ({
+      item: id,
+      key: id,
+      duration,
+      laneWidth: 1,
+    });
+    const shards = allocateByDuration(
+      [
+        parallel("wide", 300),
+        serial("tail-a", 100),
+        serial("tail-b", 100),
+        parallel("small", 40),
+      ],
+      2,
+    );
+    expect(shards).toEqual([
+      ["wide", "small"],
+      ["tail-a", "tail-b"],
+    ]);
   });
 });
