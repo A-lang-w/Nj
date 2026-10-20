@@ -32,9 +32,13 @@ describe.skipIf(process.platform !== "linux")(
   "inferior standard input verification",
   () => {
     it("treats the null device as independent of the debugger", async () => {
+      const verifyOwnedIdentity = vi.fn(async () => undefined);
       await expect(
-        withChild("ignore", (pid) => verifyInferiorInputSink(pid, terminal)),
+        withChild("ignore", (pid) =>
+          verifyInferiorInputSink(pid, terminal, verifyOwnedIdentity),
+        ),
       ).resolves.toBe("not-inherited");
+      expect(verifyOwnedIdentity).toHaveBeenCalledTimes(2);
     });
 
     it("treats an open regular input file as independent of the debugger", async () => {
@@ -89,7 +93,7 @@ describe.skipIf(process.platform !== "linux")(
             verifyOwnedIdentity,
           ),
         ).resolves.toBe("not-inherited");
-        expect(verifyOwnedIdentity).toHaveBeenCalledTimes(2);
+        expect(verifyOwnedIdentity).toHaveBeenCalledTimes(3);
       } finally {
         if (child.exitCode === null) {
           const exited = new Promise<void>((resolve, reject) => {

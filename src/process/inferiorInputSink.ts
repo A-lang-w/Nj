@@ -29,6 +29,7 @@ export const verifyInferiorInputSink = async (
     throw new Error(
       "Inferior input descriptors can only be verified through Linux /proc.",
     );
+  await verifyOwnedIdentity?.();
   const descriptorPath = `/proc/${pid}/fd/0`;
   let destination: string;
   try {
@@ -64,17 +65,23 @@ export const verifyInferiorInputSink = async (
   const observed = await stat(descriptorPath);
   const isCharacterDevice =
     (observed.mode & fsConstants.S_IFMT) === fsConstants.S_IFCHR;
+  let classification: InferiorInputSink;
   if (
     isCharacterDevice &&
     observed.dev === terminal.dev &&
     observed.ino === terminal.ino &&
     (await realpath(destination)) === terminal.path
-  )
-    return "durable";
-  if (isCharacterDevice && destination === NULL_DEVICE) return "not-inherited";
-  if ((observed.mode & fsConstants.S_IFMT) === fsConstants.S_IFREG)
-    return "not-inherited";
-  throw new Error(
-    "Inferior standard input is neither the selected terminal, the null device, nor an open regular file; its independence from the debugger is unverified.",
-  );
+  ) {
+    classification = "durable";
+  } else if (isCharacterDevice && destination === NULL_DEVICE) {
+    classification = "not-inherited";
+  } else if ((observed.mode & fsConstants.S_IFMT) === fsConstants.S_IFREG) {
+    classification = "not-inherited";
+  } else {
+    throw new Error(
+      "Inferior standard input is neither the selected terminal, the null device, nor an open regular file; its independence from the debugger is unverified.",
+    );
+  }
+  await verifyOwnedIdentity?.();
+  return classification;
 };
