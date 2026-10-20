@@ -61,3 +61,12 @@ any path conversion on every platform), a real `https://` download (tests
 inject the fetcher), the memory and time of a budgeted batch (not measured),
 agent token usage, a real AgentEnv framework run, a real-world capture, and
 write effects, which are a later increment.
+
+After refusing bodies too deep for the state's own nesting (a recorded body
+must nest at most the JSON depth limit minus 16 levels to enter the state):
+`npm run check:fast`, `npm run format:check`, `npx knip`, `npm run scan:todos`
+passed; `npm run jscpd`: 3.37% over 3373 files; `npx vitest run --project
+domain --project services`: 347 files, 5950 tests passed, 5 pre-existing
+skips; `npm run build:cached`, then `npm run test:focused --` the serve CLI,
+MCP and process boundaries, the export CLI boundary and the two serve adapter
+tests: 6 files, 48 tests passed.

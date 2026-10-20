@@ -327,6 +327,23 @@ it("leaves recorded the views it cannot reproduce, with the reason", () => {
   expect(state.entities).toEqual([]);
 });
 
+it("leaves a body too deep for the state's own nesting recorded instead of failing to seal", () => {
+  let deep: JsonValue = { theme: "dark" };
+  for (let level = 0; level < 995; level += 1) deep = { nested: deep };
+  const state = stateOf(
+    captureOf([
+      ["GET", "/api/settings", deep],
+      ["PUT", "/api/settings", { theme: "light" }],
+    ]),
+  );
+  expect(state.documents).toEqual([]);
+  expect(viewOf(state, "get_settings")).toEqual({
+    tool: "get_settings",
+    shape: "recorded",
+    reason: "body-unusable",
+  });
+});
+
 it("holds a written path's non-entity read as a document", () => {
   const state = stateOf(
     captureOf([

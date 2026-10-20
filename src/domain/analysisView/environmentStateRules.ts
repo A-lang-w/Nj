@@ -297,6 +297,24 @@ export const jsonBytes = (value: JsonValue): number => {
   return ENTRY_BYTES;
 };
 
+/** Whether a JSON value nests more than `limit` levels below its root. */
+export const deeperThan = (value: JsonValue, limit: number): boolean => {
+  const pending: { readonly value: JsonValue; readonly depth: number }[] = [
+    { value, depth: 0 },
+  ];
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    if (next.depth > limit) return true;
+    const children = Array.isArray(next.value)
+      ? next.value
+      : isObject(next.value)
+        ? Object.values(next.value)
+        : [];
+    for (const child of children)
+      pending.push({ value: child, depth: next.depth + 1 });
+  }
+  return false;
+};
+
 /** JSON parsers keep a `__proto__` member that plain object construction would turn into a prototype. */
 export const hasPrototypeKey = (value: JsonValue): boolean =>
   Array.isArray(value)

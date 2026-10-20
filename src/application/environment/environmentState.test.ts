@@ -17,6 +17,7 @@ import {
 } from "../../../tests/fixtures/environmentServe.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import {
   inspectAnalysisView,
   inspectAnalysisViewValidated,
@@ -223,6 +224,28 @@ describe("prepareServedState", () => {
     expect(prepareServedState(source, fixture.capture)).toEqual({
       state,
       report: { served: true, evidence_id: fixture.state.evidence_id },
+    });
+  });
+
+  it("derives a state when a body leaves no room for the state's own nesting", () => {
+    let deep: JsonValue = { theme: "dark" };
+    for (let level = 0; level < 995; level += 1) deep = { nested: deep };
+    const deepFixture = environmentStateServeFixture(
+      timedCaptureEvidence([
+        ["GET", "/api/settings", deep],
+        ["PUT", "/api/settings", { theme: "light" }],
+      ]),
+    );
+    const deepSource = loadEnvironmentSource(
+      deepFixture.manifest,
+      deepFixture.capture,
+    );
+    if (!deepSource.ok) throw deepSource.error;
+    expect(
+      prepareServedState(deepSource.value, deepFixture.capture).report,
+    ).toEqual({
+      served: true,
+      evidence_id: deepFixture.state.evidence_id,
     });
   });
 

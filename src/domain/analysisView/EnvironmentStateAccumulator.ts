@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { parseExactJson } from "../exactJsonNumber.js";
-import type { JsonValue } from "../jsonValue.js";
+import { MAX_JSON_DEPTH, type JsonValue } from "../jsonValue.js";
 import { ok, type Result } from "../result.js";
 import {
   WEB_NETWORK_CAPTURE_LIMITS,
@@ -15,6 +15,7 @@ import {
 import { EnvironmentStateExtraction } from "./EnvironmentStateExtraction.js";
 import type { TemplateRule } from "./environmentManifestRules.js";
 import {
+  deeperThan,
   hasPrototypeKey,
   isStateWrite,
   type ParsedBody,
@@ -52,6 +53,13 @@ type StateFields = Pick<
 /** Bodies beyond this many UTF-8 bytes are not parsed into state; their views stay recorded. */
 export const STATE_BODY_LIMIT_BYTES = 256 * 1024;
 
+/**
+ * Levels the state's own nesting adds above a recorded value: Evidence, a `data/get` reply and a
+ * JSON-RPC response hold a body's members about ten levels down, so a body must leave this much
+ * room under the JSON depth limit to be sealed and served.
+ */
+const STATE_NESTING_DEPTH = 16;
+
 /** A recorded response body as state JSON: a JSON-like media type, complete UTF-8 text within the state body limit, exact numbers and no `__proto__` member; otherwise undefined. */
 export const stateBodyJson = (
   contentType: string | null,
@@ -67,7 +75,11 @@ export const stateBodyJson = (
   )
     return undefined;
   const value = parseExactJson(body.bodyText);
-  return value === undefined || hasPrototypeKey(value) ? undefined : value;
+  return value === undefined ||
+    hasPrototypeKey(value) ||
+    deeperThan(value, MAX_JSON_DEPTH - STATE_NESTING_DEPTH)
+    ? undefined
+    : value;
 };
 
 const timingSchema = z.object({
