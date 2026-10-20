@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AnalysisCancelledError } from "../analysisErrorCore.js";
 
 import {
   compatibleSlice,
@@ -16,6 +17,7 @@ import {
 import {
   DYLIB_RESOLUTION_LIMITATIONS,
   deriveFindings,
+  isLazyLoadCommand,
   type TracedRootSlice,
 } from "./dylibResolutionFindings.js";
 
@@ -45,19 +47,28 @@ const dependencyCommandSchema = z.enum([
   "LC_LOAD_WEAK_DYLIB",
   "LC_REEXPORT_DYLIB",
   "LC_LAZY_LOAD_DYLIB",
+  "LC_LAZY_LOAD_DYLIB_INFO",
   "LC_LOAD_UPWARD_DYLIB",
 ]);
 
 const dependencySchema = z.strictObject({
   command: dependencyCommandSchema,
-  encoding: z.enum(["dylib_command", "dylib_use_command"]),
+  encoding: z.enum([
+    "dylib_command",
+    "dylib_use_command",
+    "lazy_load_dylib_info",
+  ]),
   install_name: z.string(),
   weak: z.boolean(),
   upward: z.boolean(),
   reexport: z.boolean(),
   delayed_init: z.boolean(),
-  current_version: z.string(),
-  compatibility_version: z.string(),
+  /**
+   * Null for `lazy_load_dylib_info`: that payload has no version fields.
+   * Classic dylib commands still carry both versions.
+   */
+  current_version: z.string().nullable(),
+  compatibility_version: z.string().nullable(),
 });
 
 /** Observed dylib-loading facts of one Mach-O slice. */
@@ -516,7 +527,10 @@ const traceProcess = async (
     context.byInstallName.set(rootSlice.install_name, context.root);
   const pending = [context.root];
   while (pending.length > 0) {
-    signal?.throwIfAborted();
+    if (signal?.aborted)
+      throw new AnalysisCancelledError("trace_dylib_resolution", {
+        cause: signal.reason,
+      });
     const loader = pending.pop() ?? "";
     const current = context.loaded.get(loader);
     if (current === undefined) continue;
@@ -524,8 +538,8 @@ const traceProcess = async (
     for (const dependency of current.slice.dependencies) {
       const edge = await resolveDependency(dependency, loader, context);
       edges.push(edge);
-      // dyld loads LC_LAZY_LOAD_DYLIB images on first use, not at launch.
-      if (dependency.command === "LC_LAZY_LOAD_DYLIB") continue;
+      // dyld loads lazy images on first use, not at launch.
+      if (isLazyLoadCommand(dependency.command)) continue;
       const image = edge.resolution.image;
       if (image === null || context.loaded.has(image)) continue;
       const facts = context.images.get(image);

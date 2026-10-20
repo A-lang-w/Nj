@@ -478,7 +478,7 @@ describe("target-free MCP workflow", () => {
       ).isError,
     ).not.toBe(true);
     await mcp.callTool({ name: "close_binary", arguments: {} });
-  }, 10_000);
+  });
 });
 
 describe("MCP snapshot open ordering", () => {
@@ -578,10 +578,26 @@ describe("json depth bounds over MCP", () => {
         right: input.right,
       },
     });
-    const text = JSON.stringify(result.content);
-    expect(result.isError, text).toBe(true);
-    expect(text).toContain("Input validation");
-    expect(text).toContain("maximum nesting depth");
+    expect(result.isError, JSON.stringify(result.content)).toBe(true);
+    expect(parseMcpToolError(result)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        recovery: {
+          kind: "inspect_input_contract",
+          operation: "compare_process_captures",
+        },
+        details: {
+          operation: "compare_process_captures",
+          issues: [
+            {
+              path: [],
+              reason: "invalid_value",
+              message: `left.parameters: JSON value exceeds maximum nesting depth of ${MAX_JSON_DEPTH}`,
+            },
+          ],
+        },
+      },
+    });
   }, 10_000);
 });
 

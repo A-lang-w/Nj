@@ -107,6 +107,11 @@ Through MCP, pass the same object as the `capture_browser_scenario` arguments.
 The final step's DOM and accessibility artifacts retain the page state at that
 capture time inline. REA still launches and cleans up the browser profile.
 
+Action `timeout_ms` and `wait_for_timeout.duration_ms` accept integers from 1
+through 2,147,483,647 milliseconds, matching the underlying timer representation.
+Larger values receive an input error before browser launch. Omit `timeout_ms`
+to keep an action pending until completion or request cancellation.
+
 The click's `timeout_ms` covers the click action. A non-navigating `fetch` or
 delayed render can finish later, so use `wait_for` to observe a page-specific
 ready condition before final capture. A page that updates synchronously can
@@ -143,6 +148,27 @@ explicit-port loopback CDP endpoint. The Playwright driver preserves this
 distinction: it closes and deletes provider-owned profiles, but only disconnects
 from an external CDP browser. Real-browser verification checks both outcomes and
 confirms that an attached external browser remains alive.
+
+That cleanup requires REA to remain running. Abrupt termination, including
+Windows process-tree termination or POSIX `SIGKILL`, can leave the launch
+profile and Playwright artifacts behind. A profile can retain cookies, history,
+cache and origin storage. Later REA runs currently do not reclaim these paths.
+Playwright 1.58.2 can also leave an artifacts directory when launch preparation
+fails before a browser process exists, such as for a missing executable.
+POSIX wrappers can request awaited cancellation with `SIGINT` or `SIGTERM`;
+Windows process termination is not an equivalent graceful-cancellation channel.
+Do not identify owned artifacts by directory prefix or creation time alone.
+See [#4659](https://github.com/morluto/rea/issues/4659) for the remaining recovery
+and wrapper-cancellation work.
+
+Keeping that browser alive does not guarantee its emulation state survives.
+Chromium can clear caller-owned `navigator.platform` emulation when a page CDP
+session disconnects, including sessions that sent no emulation commands. REA
+cannot snapshot the other client's complete user-agent/client-hint settings and
+does not replay a partial reconstruction. Use launch mode to keep this effect
+inside a provider-owned browser, or have the external owning client reapply its
+complete configuration after capture. Connected captures report this limitation;
+see [issue #4089](https://github.com/morluto/rea/issues/4089).
 
 `environment.locale` sets Intl formatting in both modes. Launch also sets
 `navigator.language`, `navigator.languages`, and the request `Accept-Language`.
