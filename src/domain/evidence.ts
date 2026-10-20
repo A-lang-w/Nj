@@ -11,6 +11,7 @@ import {
 } from "./analysisProfile.js";
 import {
   BINARY_ARCHITECTURES,
+  RAW_ONLY_ARCHITECTURES,
   type BinaryArchitecture,
   type BinaryTarget,
 } from "./binaryTargetTypes.js";
@@ -23,6 +24,7 @@ import {
 } from "./jsonValue.js";
 import {
   freezeJsonSnapshot,
+  canBorrowParsedJsonSnapshot,
   isImmutableJsonSnapshot,
 } from "./immutableJson.js";
 import { digestSchema } from "./../domain/digests.js";
@@ -56,6 +58,7 @@ const subjectFormatSchema = z.enum([
   "hsp",
   "app-pack",
   "asar",
+  "godot-pck",
   "dmg",
   "pkg",
   "plist",
@@ -77,7 +80,10 @@ const subjectBaseSchema = z.strictObject({
 const subjectSchema = z.discriminatedUnion("format", [
   subjectBaseSchema.extend({
     format: subjectFormatSchema.exclude(["raw-binary"]),
-    architecture: z.enum(BINARY_ARCHITECTURES).exclude(["6502"]).nullable(),
+    architecture: z
+      .enum(BINARY_ARCHITECTURES)
+      .exclude([...RAW_ONLY_ARCHITECTURES])
+      .nullable(),
   }),
   subjectBaseSchema.extend({
     format: z.literal("raw-binary"),
@@ -284,8 +290,12 @@ export const parseEvidence = (input: unknown): Evidence => {
 };
 
 /** Authenticate and seal a ledger-owned snapshot; external mutable values are copied first. */
-export const immutableEvidence = (input: unknown): Evidence =>
-  rememberImmutableEvidence(parseEvidence(input));
+export const immutableEvidence = (input: unknown): Evidence => {
+  const parsed = parseEvidence(input);
+  return rememberImmutableEvidence(
+    canBorrowParsedJsonSnapshot(input, parsed) ? input : parsed,
+  );
+};
 
 /** Rebind display path metadata when an authenticated record names this target. */
 export const rebindEvidenceToTargetPath = (

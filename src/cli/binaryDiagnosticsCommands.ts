@@ -1,5 +1,4 @@
 import { z } from "incur";
-import { resolve } from "node:path";
 import {
   createRecordedCrashService,
   createBinaryLayoutService,
@@ -15,6 +14,7 @@ import { inspectPeResourcesInputSchema } from "../domain/native/peResources.js";
 import { inspectWindowsMinidumpInputSchema } from "../domain/native/windowsMinidump.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
 /** Inspect operator-selected files through the same shared workflow as MCP. */
 export const registerBinaryDiagnosticsCommands = (
@@ -41,7 +41,7 @@ export const registerBinaryDiagnosticsCommands = (
               () =>
                 pe.inspect(
                   {
-                    path: resolve(args.path),
+                    path: absoluteCallerPath(args.path),
                     max_file_bytes: options.maxFileBytes,
                     max_entries: options.maxEntries,
                   },
@@ -50,6 +50,7 @@ export const registerBinaryDiagnosticsCommands = (
               pe,
               "rea-pe-resources",
               "inspect_pe_resources",
+              signal,
             ),
         );
       }),
@@ -97,7 +98,7 @@ export const registerBinaryDiagnosticsCommands = (
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectBinaryLayout, async () => {
           const result = await service.inspectAndClose(
-            { path: resolve(args.path) },
+            { path: absoluteCallerPath(args.path) },
             { signal },
           );
           return result.ok ? result.value : projectAnalysisError(result.error);
@@ -124,7 +125,7 @@ export const registerBinaryDiagnosticsCommands = (
         logCliCommand(logger, CLI_COMMANDS.inspectRecordedCrash, async () => {
           const result = await recorded.inspectAndClose(
             {
-              path: resolve(args.path),
+              path: absoluteCallerPath(args.path),
               include_debugger_context: options.debuggerContext,
             },
             { signal },

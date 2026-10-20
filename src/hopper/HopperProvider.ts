@@ -26,12 +26,14 @@ import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.
 import { err, ok } from "../domain/result.js";
 import { HopperApplicationLauncher } from "./BridgeLauncher.js";
 import {
+  hopperDeclinedArchitectureReason,
   hopperLoaderArgsForTarget,
   resolveHopperAnalysisProfile,
 } from "./HopperAnalysisProfile.js";
 import { mapHopperFileOffset } from "./HopperFileOffset.js";
 import { HopperRegexSearch } from "./HopperRegexSearch.js";
 import { HopperClient } from "./HopperClient.js";
+import { projectHopperNameInventory } from "./HopperNameInventory.js";
 import { hopperMachOImageSchema } from "./HopperMachOImage.js";
 
 import {
@@ -129,17 +131,14 @@ export class HopperProvider implements AnalysisProviderCandidate {
         reason: null,
         diagnostics,
       };
-    if (isElfMetadataArchitecture(target.architecture))
+    if (
+      isElfMetadataArchitecture(target.architecture) ||
+      target.architecture === "hexagon"
+    )
       return {
         status: "unsupported",
         code: "architecture_unsupported",
-        reason: `REA's Hopper adapter does not admit ${
-          target.architecture === "mips"
-            ? "MIPS"
-            : target.architecture === "riscv"
-              ? "RISC-V"
-              : "PowerPC"
-        } targets.`,
+        reason: hopperDeclinedArchitectureReason(target.architecture),
         diagnostics,
       };
     if (target.format === "raw-binary")
@@ -276,7 +275,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
       rawResult: JsonValue | null = null,
     ) =>
       createAnalysisExecution(normalized, executionProvider, {
-        // Only the file-offset mapping differs from Hopper's reply.
+        // Retain the source reply when an adapter-owned projection changes it.
         rawResult,
         ...(profile === undefined ? {} : { analysisProfile: profile }),
         ...(operation === "procedure_callers" ||
@@ -318,15 +317,18 @@ export class HopperProvider implements AnalysisProviderCandidate {
           operation === "address_to_file_offset"
             ? await mapHopperFileOffset(target, result.value, options?.signal)
             : result;
-        return mapped.ok
-          ? ok(
-              projectExecution(
-                operation,
-                mapped.value,
-                mapped === result ? null : result.value,
-              ),
-            )
-          : mapped;
+        if (!mapped.ok) return mapped;
+        const inventory =
+          operation === "list_names"
+            ? projectHopperNameInventory(mapped.value)
+            : { result: mapped.value, changed: false };
+        return ok(
+          projectExecution(
+            operation,
+            inventory.result,
+            inventory.changed || mapped !== result ? result.value : null,
+          ),
+        );
       },
       executeIfReady: async (operation, parameters, options) => {
         if (operation !== "list_documents" && operation !== "list_procedures")
