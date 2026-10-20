@@ -38,16 +38,29 @@ unparsed module-text line. A missing record is an unknown, not proof of a
 non-Go binary; observed metadata does not authenticate its claims. Function,
 source and type recovery remain a separate native-analysis question.
 
+## Model files
+
+Use `inspect_model_artifact` (`inspect-model-artifact PATH`) for local GGUF v2/v3
+and safetensors declarations without a model runtime. Header-only mode does not
+read weights or establish full-file identity. `hash: "full"` explicitly streams
+all bytes. Retained `model-artifact` views page `metadata`, `tensors` and derived
+`types`, with exact batch filters and selected fields. Arrays retain typed counts
+and eight-element previews; omitted values, unknown types and runtime behavior
+stay explicit. See [model files](https://github.com/morluto/rea/blob/main/docs/model-artifacts.md).
+
 ## IL2CPP metadata
 
 Use `inspect_il2cpp_metadata` for an explicit local Unity `global-metadata.dat`
-(versions 29, 31 and 39) when the question concerns assembly images, type or method names,
-namespaces or index ranges. No `open_binary`, Unity installation or target
+(versions 24, 27, 29, 31 and 39) when the question concerns assembly images,
+names, member owners, string literals, namespaces or index ranges. No `open_binary`, Unity installation or target
 execution is required. The CLI equivalent is `inspect-il2cpp-metadata PATH`.
 MCP defaults to counts with complete retained Evidence. Query `sections`,
-`images`, `types` or `methods` through `inspect_analysis_view`; use exact names,
+`images`, `types`, `methods`, `fields`, `properties`, `events`, `parameters` or
+`string_literals` through `inspect_analysis_view`; use exact names,
 batch indices and selected fields. Row indices are scoped by artifact SHA-256
-and collection; page offsets count filtered matches. Preserve
+and collection; page offsets count filtered matches. Parameters support batch
+`method_indices` to read one method's parameters directly. Historical reports
+without member collections retain unknown counts rather than empty inventories. Preserve
 artifact SHA-256 and index widths. Unrecognized magic may mean encryption and
 is unsupported, not decrypted. Linking names to `GameAssembly` or
 `UnityFramework` code addresses remains a separate native-analysis question.

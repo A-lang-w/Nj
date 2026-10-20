@@ -391,29 +391,26 @@ const waitForWindow = async (
   signal?: AbortSignal,
 ): Promise<EndReason> =>
   await new Promise<EndReason>((resolve, reject) => {
+    const timerController = new AbortController();
     let settled = false;
     let removeEnd = (): void => {};
-    const finish = (reason: EndReason): void => {
+    const settle = (complete: () => void): void => {
       if (settled) return;
       settled = true;
       timerController.abort();
       signal?.removeEventListener("abort", onAbort);
       removeEnd();
-      resolve(reason);
+      complete();
     };
-    const onAbort = (): void => {
-      if (settled) return;
-      settled = true;
-      timerController.abort();
-      signal?.removeEventListener("abort", onAbort);
-      removeEnd();
-      reject(
-        new AnalysisCancelledError("observe_web_session", {
-          cause: signal?.reason,
-        }),
-      );
-    };
-    const timerController = new AbortController();
+    const finish = (reason: EndReason): void => settle(() => resolve(reason));
+    const onAbort = (): void =>
+      settle(() => {
+        reject(
+          new AnalysisCancelledError("observe_web_session", {
+            cause: signal?.reason,
+          }),
+        );
+      });
     signal?.addEventListener("abort", onAbort, { once: true });
     if (signal?.aborted === true) onAbort();
     if (!settled) removeEnd = capture.onEnd(finish);
@@ -424,13 +421,7 @@ const waitForWindow = async (
       timerController.signal,
     ).then(
       () => finish("window_elapsed"),
-      (cause: unknown) => {
-        if (settled) return;
-        settled = true;
-        signal?.removeEventListener("abort", onAbort);
-        removeEnd();
-        reject(cause);
-      },
+      (cause: unknown) => settle(() => reject(cause)),
     );
   });
 

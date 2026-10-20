@@ -55,6 +55,8 @@ export interface AnalysisExecution {
   readonly rawResult: JsonValue | null;
   readonly provider: ProviderIdentity;
   readonly analysisProfile?: AnalysisProfileCommitment;
+  /** Result-specific veto of snapshot replay; Evidence remains retainable. */
+  readonly cachePolicy?: "live";
   readonly limitations: readonly string[];
   /** Provider-owned completeness assessment for caller/callee observations. */
   readonly relationshipCoverage?: RelationshipCoverage;
@@ -72,6 +74,7 @@ export interface AnalysisExecution {
 interface CreateAnalysisExecutionOptions {
   readonly rawResult?: unknown;
   readonly analysisProfile?: AnalysisProfileCommitment;
+  readonly cachePolicy?: "live";
   readonly limitations?: readonly string[];
   readonly relationshipCoverage?: RelationshipCoverage;
   readonly referencesTruncated?: boolean;
@@ -108,6 +111,9 @@ export function createAnalysisExecution(
         ? null
         : jsonValueSchema.parse(options.rawResult),
     provider,
+    ...(options.cachePolicy === undefined
+      ? {}
+      : { cachePolicy: options.cachePolicy }),
     ...(options.analysisProfile === undefined
       ? {}
       : { analysisProfile: structuredClone(options.analysisProfile) }),
@@ -143,6 +149,12 @@ export const createAnalysisExecutionEvidence = (
     result: execution.result,
     rawResult: execution.rawResult,
     limitations: execution.limitations,
+    ...(execution.analysisProfile === undefined
+      ? {}
+      : { analysisProfile: execution.analysisProfile }),
+    ...(execution.relationshipCoverage === undefined
+      ? {}
+      : { relationshipCoverage: execution.relationshipCoverage }),
     locations: execution.locations,
     confidence,
   });
@@ -203,8 +215,8 @@ export interface AnalysisClientContext {
   readonly runId: string;
 }
 
-/** One lifecycle owner for descriptor cleanup and abortable inspection work. */
-export interface FileCloseResourceOwner {
+/** One lifecycle owner for retained resources and abortable inspection work. */
+export interface RetainedResourceScope {
   retain(
     owner: {
       close(): Promise<void>;
@@ -225,16 +237,25 @@ export interface ProviderIdentity {
 /** Typed analysis profile resolved before provider startup; null means unresolved. */
 export interface AnalysisProfileResolution {
   readonly profile: AnalysisProfileCommitment | null;
+  /** Keep provider-private facts bound to this selection without Evidence serialization. */
+  readonly createClient?: AnalysisProviderBoundClientFactory;
 }
+
+export type AnalysisProviderBoundClientFactory = (
+  target: BinaryTarget,
+  profile: AnalysisProfileCommitment,
+  context?: AnalysisClientContext,
+) => AnalysisClient;
 
 /** Cancellation context for side-effect-free provider profile resolution. */
 export interface AnalysisProviderInspectionOptions {
   readonly signal?: AbortSignal;
   readonly scope?: ProviderInspectionScope;
+  readonly resourceScope?: RetainedResourceScope;
 }
 
 export interface AnalysisProfileResolutionOptions extends AnalysisProviderInspectionOptions {
-  readonly fileCloseResources?: FileCloseResourceOwner;
+  readonly resourceScope?: RetainedResourceScope;
 }
 
 interface CapabilityEffects {
@@ -267,6 +288,8 @@ export type CapabilityDescriptor = CapabilityAvailability & {
    * exclusions apply to every policy.
    */
   readonly cachePolicy?: "snapshot" | "live";
+  /** Exact source profile for an operation implemented by a versioned local reader. */
+  readonly analysisProfile?: AnalysisProfileCommitment;
   readonly provider: ProviderIdentity;
   readonly operation: Exclude<AnalysisOperation, "health">;
   readonly effects: CapabilityEffects;
@@ -305,6 +328,12 @@ export type ProviderAvailability =
 
 /** Provider-owned target support observation before profile resolution. */
 export type ProviderTargetSupport =
+  | {
+      readonly status: "unknown";
+      readonly code: null;
+      readonly reason: string;
+      readonly diagnostics: Readonly<Record<string, JsonValue>>;
+    }
   | {
       readonly status: "supported";
       readonly code: null;
@@ -351,6 +380,10 @@ export interface AnalysisProviderCandidate extends AnalysisProvider {
     | AnalysisProviderReadinessSnapshot
     | Promise<AnalysisProviderReadinessSnapshot>;
   inspectTargetSupport(target: BinaryTarget): ProviderTargetSupport;
+  inspectTargetSupportWithOptions?(
+    target: BinaryTarget,
+    options?: AnalysisProviderInspectionOptions,
+  ): Promise<ProviderTargetSupport>;
   /** Observe retained candidate cleanup without starting or retrying work. */
   hasPendingOwnedResources?(): boolean;
   /** Release candidate resources that are independent of any active client. */
