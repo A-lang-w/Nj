@@ -48,6 +48,36 @@ const isRegularFile = async (path: string): Promise<boolean> => {
   }
 };
 
+const MAX_PENDING_WINDOWS_PATH_PROBES = 8;
+let pendingWindowsPathProbes = 0;
+
+const probeWindowsPathEntry = (
+  isFile: (path: string) => boolean | Promise<boolean>,
+  path: string,
+): Promise<boolean> => {
+  if (pendingWindowsPathProbes >= MAX_PENDING_WINDOWS_PATH_PROBES)
+    throw new Error(
+      "Windows provider PATH lookup capacity is exhausted by filesystem probes that have not settled.",
+    );
+  pendingWindowsPathProbes += 1;
+  let probe: Promise<boolean>;
+  try {
+    probe = Promise.resolve(isFile(path));
+  } catch (cause) {
+    pendingWindowsPathProbes -= 1;
+    throw cause;
+  }
+  void probe.then(
+    () => {
+      pendingWindowsPathProbes -= 1;
+    },
+    () => {
+      pendingWindowsPathProbes -= 1;
+    },
+  );
+  return probe;
+};
+
 /** Resolve against every selected PATH entry within a cancellable startup budget. */
 export const resolveWindowsProviderExecutable = async (
   executable: string,
@@ -98,7 +128,7 @@ export const resolveWindowsProviderExecutable = async (
           : absolute(entry, `${executable}${extension}`);
         // Keep a handler on a late filesystem rejection after cancellation.
         const found = await waitForAbortable(
-          Promise.resolve(isFile(candidate)),
+          probeWindowsPathEntry(isFile, candidate),
           deadline.signal,
         );
         if (found === ABORTED) deadline.signal.throwIfAborted();

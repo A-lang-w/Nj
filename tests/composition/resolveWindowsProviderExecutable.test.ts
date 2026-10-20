@@ -139,7 +139,13 @@ describe("resolveWindowsProviderExecutable", async () => {
     async (mode) => {
       vi.useFakeTimers();
       const controller = new AbortController();
-      const isFile = vi.fn(() => new Promise<boolean>(() => {}));
+      let resolveProbe!: (found: boolean) => void;
+      const isFile = vi.fn(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolveProbe = resolve;
+          }),
+      );
       try {
         const result = resolveWindowsProviderExecutable(
           "objdump",
@@ -158,11 +164,59 @@ describe("resolveWindowsProviderExecutable", async () => {
         else await vi.advanceTimersByTimeAsync(100);
         await rejected;
         expect(isFile).toHaveBeenCalledTimes(1);
+        resolveProbe(false);
       } finally {
         vi.useRealTimers();
       }
     },
   );
+});
+
+describe("bounded Windows PATH probes", () => {
+  it("bounds probes that remain pending after their lookup is cancelled", async () => {
+    const pending: Array<(found: boolean) => void> = [];
+    const isFile = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          pending.push(resolve);
+        }),
+    );
+    const controller = new AbortController();
+    const cancelled = resolveWindowsProviderExecutable(
+      "objdump",
+      { PATH: "D:\\tools", PATHEXT: ".EXE" },
+      { cwd: "D:\\work", isFile, signal: controller.signal },
+    );
+    controller.abort();
+    await expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
+
+    const retained = Array.from({ length: 7 }, () =>
+      resolveWindowsProviderExecutable(
+        "objdump",
+        { PATH: "D:\\tools", PATHEXT: ".EXE" },
+        { cwd: "D:\\work", isFile },
+      ),
+    );
+    expect(isFile).toHaveBeenCalledTimes(8);
+    await expect(
+      resolveWindowsProviderExecutable(
+        "objdump",
+        { PATH: "D:\\tools", PATHEXT: ".EXE" },
+        { cwd: "D:\\work", isFile },
+      ),
+    ).rejects.toThrow(/capacity is exhausted/u);
+
+    pending.forEach((resolve) => resolve(false));
+    isFile.mockImplementation(() => Promise.resolve(false));
+    await expect(Promise.all(retained)).resolves.toHaveLength(7);
+    await expect(
+      resolveWindowsProviderExecutable(
+        "objdump",
+        { PATH: "D:\\tools", PATHEXT: ".EXE" },
+        { cwd: "D:\\work", isFile },
+      ),
+    ).resolves.toBe("objdump");
+  });
 });
 
 describe("admitted Windows provider lookup", () => {
