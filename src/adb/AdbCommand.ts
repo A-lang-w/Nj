@@ -146,6 +146,8 @@ export const runAdbCapture = async (
               "The adb output capture allowance",
               "capture",
             ),
+            // Device output can shrink between calls. Version text stays non-retryable.
+            retryable: true,
           },
         ),
       );
