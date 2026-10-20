@@ -29,6 +29,7 @@ it("lists modules from a supported PYZ and leaves an unknown magic opaque", asyn
   );
   expect(opaque.ok).toBe(true);
   if (!opaque.ok || opaque.value.kind !== "opaque") return;
+  expect(opaque.value.pythonMagic).toEqual(Buffer.alloc(4));
   expect(opaque.value.limitation).toContain("left opaque");
 });
 

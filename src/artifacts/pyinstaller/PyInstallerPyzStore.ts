@@ -16,6 +16,11 @@ import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
 import { pyInstallerMemberStream } from "./PyInstallerMemberStream.js";
 import type { CArchiveEntry } from "./CArchiveLayout.js";
 import type { PyInstallerMember } from "./CArchiveMembers.js";
+import { pyInstallerFileAdmissionFailure } from "./PyInstallerFileAdmission.js";
+
+// Each outer-compressed image retains one inode and its identity until close.
+// This is a per-reader filesystem capacity budget, independent of byte budgets.
+const MAX_PRIVATE_PYZ_IMAGES = 128;
 
 interface StoredImage {
   readonly path: string;
@@ -33,6 +38,15 @@ export class PyInstallerPyzStore {
   #serial = 0;
   readonly #owners = new Map<FileHandle, OwnedFileHandle>();
   readonly #images = new Map<FileHandle, StoredImage>();
+
+  reserveImages(count: number): void {
+    if (count > MAX_PRIVATE_PYZ_IMAGES)
+      throw new ArtifactReaderFailure(
+        "limit",
+        "PyInstaller compressed PYZ images exceed the 128-file private storage budget",
+        { boundary: "capacity" },
+      );
+  }
 
   async spool(
     handle: FileHandle,
@@ -162,7 +176,7 @@ export class PyInstallerPyzStore {
     } catch (cause: unknown) {
       if (cause instanceof RegularFileAdmissionFailure)
         this.#owners.set(cause.owner.handle, cause.owner);
-      throw cause;
+      throw pyInstallerFileAdmissionFailure(path, cause);
     }
   }
 

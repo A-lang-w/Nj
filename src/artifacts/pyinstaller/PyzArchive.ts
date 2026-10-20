@@ -37,7 +37,7 @@ export type PyzArchive =
     }
   | {
       readonly kind: "opaque";
-      readonly pythonMagic: Buffer | undefined;
+      readonly pythonMagic: Buffer;
       readonly sha256: string;
       readonly limitation: string;
     };
@@ -117,7 +117,7 @@ const parsePyzParts = (
   if (pythonVersion === undefined)
     return ok({
       kind: "opaque",
-      pythonMagic: undefined,
+      pythonMagic,
       sha256,
       limitation: `PYZ Python magic ${pythonMagic.toString("hex")} is not in the supported set; the member was left opaque.`,
     });

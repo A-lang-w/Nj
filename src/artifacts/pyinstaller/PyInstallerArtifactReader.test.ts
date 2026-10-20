@@ -283,6 +283,11 @@ it("leaves an unsupported PYZ magic as one opaque member", async () => {
     (occurrence) => occurrence.logical_path === "PYZ.pyz",
   );
   expect(pyz).toMatchObject({ entry_kind: "file" });
+  expect(pyz?.format_metadata).toMatchObject({
+    pyz_python_magic: "00000000",
+    pyz_python_version: null,
+    pyz_status: "opaque",
+  });
   expect(pyz?.limitations.join(" ")).toContain("left opaque");
   expect(
     snapshot.occurrences.some((occurrence) =>

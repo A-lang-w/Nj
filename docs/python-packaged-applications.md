@@ -77,6 +77,10 @@ have a 16 MiB budget; CArchive tables have a 32 MiB budget. Parsed facts have a
 including metadata, bookkeeping and conservative reservations for namespace
 objects and possible case-collision annotations at each path component. These
 reservations happen before normalization or trie allocation.
+Outer-compressed PYZ images have a separate per-reader capacity of 128 private
+files, bounding retained inodes and image identities. The complete image count
+is admitted before any temporary file is created; excess images return a
+capacity failure. This is a resource policy, not a PyInstaller format limit.
 Only a zero-byte read establishes EOF; short successful descriptor reads fill
 the bounded range. Compressed members must consume their complete declared
 input span; trailing junk and concatenated streams are refused.
@@ -87,6 +91,8 @@ Supported final Python bytecode magic values cover Python 3.7 through 3.14.
 Supported marshal directory values are lists, tuples, strings, integers and
 bytes. An unsupported magic or directory stays an opaque member with a
 limitation and `pyz_status: "opaque"`; its module contents remain unknown.
+Observed `pyz_python_magic` bytes remain available even when their Python version
+is unknown.
 The directory declares compressed module lengths, so uncompressed declared
 sizes and source spans inside decoded data remain unknown.
 

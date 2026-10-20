@@ -51,7 +51,6 @@ export const scriptPythonMagic = (
   for (const archive of archives) {
     const magic = archive.pythonMagic;
     if (
-      magic === undefined ||
       pythonVersionForMagic(magic) !==
         `${String(version.major)}.${String(version.minor)}` ||
       (selected !== undefined && !selected.equals(magic))
@@ -123,9 +122,9 @@ export const cArchiveEntryMetadata = (
   directory_record_offset: entry.tocRecordOffset,
   directory_record_size: entry.tocRecordLength,
   pyz_sha256: archive?.sha256 ?? null,
-  pyz_python_magic: archive?.pythonMagic?.toString("hex") ?? null,
+  pyz_python_magic: archive?.pythonMagic.toString("hex") ?? null,
   pyz_python_version:
-    archive === undefined || archive.pythonMagic === undefined
+    archive === undefined
       ? null
       : (pythonVersionForMagic(archive.pythonMagic) ?? null),
   pyz_entry_count: archive?.kind === "entries" ? archive.entries.length : null,

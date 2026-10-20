@@ -14,9 +14,7 @@ import {
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
-  NonRegularFileReadError,
   RegularFileAdmissionFailure,
-  RegularFileOperationCancelled,
   openRegularFile,
   sameRegularFileState,
   type StableRegularFileDescriptor,
@@ -49,6 +47,7 @@ import {
 } from "./pyinstaller/CArchiveMembers.js";
 import { readPyzArchive, type PyzArchive } from "./pyinstaller/PyzArchive.js";
 import type { PyInstallerFailure } from "./pyinstaller/PyInstallerFailure.js";
+import { pyInstallerFileAdmissionFailure } from "./pyinstaller/PyInstallerFileAdmission.js";
 
 const MAX_PARSED_FACT_BYTES = 32 * 1024 * 1024;
 const MAX_RETAINED_ENTRY_BYTES = 64 * 1024 * 1024;
@@ -367,7 +366,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     } catch (cause: unknown) {
       if (cause instanceof RegularFileAdmissionFailure)
         this.#owner = cause.owner;
-      throw openFailure(this.path, cause);
+      throw pyInstallerFileAdmissionFailure(this.path, cause);
     }
   }
 
@@ -403,6 +402,15 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     signal: AbortSignal | undefined,
   ): Promise<ReadonlyMap<CArchiveEntry, PyzImage>> {
     const images = new Map<CArchiveEntry, PyzImage>();
+    // Admit the complete filesystem footprint before the first private write.
+    this.#pyzStore.reserveImages(
+      toc.reduce(
+        (count, entry) =>
+          count +
+          (entry.typeCode === "z" && entry.compressionFlag === 1 ? 1 : 0),
+        0,
+      ),
+    );
     for (const entry of toc) {
       if (entry.typeCode !== "z") continue;
       abortIfNeeded(signal);
@@ -580,31 +588,3 @@ export class PyInstallerArtifactReader implements ArtifactReader {
 
 const failure = (error: PyInstallerFailure): ArtifactReaderFailure =>
   new ArtifactReaderFailure(error.reason, error.message);
-
-const openFailure = (path: string, cause: unknown): ArtifactReaderFailure => {
-  if (cause instanceof ArtifactReaderFailure) return cause;
-  if (cause instanceof RegularFileOperationCancelled)
-    return new ArtifactReaderFailure(
-      "cancelled",
-      "PyInstaller file admission cancelled",
-      { cause: cause.reason },
-    );
-  if (cause instanceof RegularFileAdmissionFailure)
-    return ArtifactReaderFailure.withCleanup(
-      openFailure(path, cause.cause),
-      ArtifactReaderFailure.cleanupObservation(cause.cleanupCause, path),
-    );
-  if (cause instanceof NonRegularFileReadError)
-    return new ArtifactReaderFailure(
-      "format",
-      `PyInstaller source is not a regular file: ${path}`,
-      { cause },
-    );
-  return new ArtifactReaderFailure(
-    "io",
-    "PyInstaller archive could not be opened",
-    {
-      cause,
-    },
-  );
-};
