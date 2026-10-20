@@ -18,6 +18,15 @@ export const GHIDRA_PROJECT_LOCK_DIRECTORY = "locks";
 export const GHIDRA_PROJECT_STAGING_DIRECTORY = "staging";
 export const GHIDRA_PROJECT_LEASE_DIRECTORY = "leases";
 
+/**
+ * Subdirectory of the cache root that holds the copies a root rebuild makes
+ * before it publishes them.
+ *
+ * The copies are not stored entries: a stored entry is named by its digest,
+ * so the store never counts them and the rebuild owns them instead.
+ */
+export const GHIDRA_PROJECT_REPAIR_STAGING_DIRECTORY = "repair-staging";
+
 /** Immutable identity inputs used to derive a cache key. */
 export interface GhidraProjectCacheIdentity {
   readonly providerId: string;

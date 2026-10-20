@@ -60,7 +60,7 @@ replays in the later session.
   copied, and a rebuild that cannot complete leaves the stored projects where
   they were.
 - The rebuild copies each stored project into a private staging directory
-  beside the root and publishes it by an atomic rename, so a project is never
+  inside the root and publishes it by an atomic rename, so a project is never
   visible at its final path while it is still being copied. A rebuild that
   stops part-way therefore leaves no half-copied project that a later session
   could read as a cache hit; the next session imports the target again and
@@ -69,8 +69,15 @@ replays in the later session.
   directory. The store never counts them, because they are not stored entries,
   so the next session and `cache-prune` reclaim them instead of letting them
   fill the disk for good. The copies of a rebuild that is still running are
-  left alone: the rebuild holds a lock beside the root, and a lock left behind
-  by a session that died is treated as abandoned.
+  left alone: the rebuild holds a lock beside the root, and the reclamation
+  takes that same lock before it measures and removes the copies, so it can
+  never delete the copies of a rebuild that is running. A lock left behind by
+  a session that died is treated as abandoned, and the copies it left are
+  reclaimed with it.
+- The staging directory is inside the cache root, which is the one directory
+  REA owns, so the reclamation only removes state REA created. A directory
+  beside the root is left alone, even when it carries the name of the staging
+  directory.
 - One session rebuilds the root at a time. The rebuild holds a lock beside the
   root, and a session that finds the lock held reports the root as busy
   instead of reading or discarding a project another session is copying. A

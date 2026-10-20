@@ -1,4 +1,4 @@
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import {
   access,
   chmod,
@@ -168,7 +168,7 @@ describe("Windows cache root repair", () => {
     expect(outcome).toEqual({ status: "repaired", preservedEntries: 1 });
     // The stored project survives the rebuild.
     await expect(readFile(join(root, "entry"), "utf8")).resolves.toBe("stored");
-    expect(created).toEqual([root, join(parent, "cache.repair-staging")]);
+    expect(created).toEqual([root, join(root, "repair-staging")]);
     expect(verified).toEqual([root, root]);
     // The set-aside root is removed after the replacement is in place.
     await expect(readdir(parent)).resolves.toEqual(["cache"]);
@@ -546,7 +546,11 @@ describe("Windows cache root repair failures", () => {
           host: privateRootHost({
             async createPrivateDirectory(path) {
               await mkdir(path, { recursive: true });
-              // The replacement cannot be removed, so both roots stay.
+              // Only the replacement cannot be removed, so both roots stay.
+              // The staging directory that holds the copies is created like
+              // any other private directory, or the repair could never
+              // remove it.
+              if (path !== root) return path;
               await mkdir(join(path, "held"));
               await writeFile(join(path, "held", "project"), "held");
               await chmod(join(path, "held"), 0o500);
@@ -642,7 +646,7 @@ describe("Windows cache root repair leftovers", () => {
     const parent = await tempRoot();
     const root = join(parent, "cache");
     await mkdir(root);
-    const copies = join(parent, "cache.repair-staging");
+    const copies = join(root, "repair-staging");
     await mkdir(join(copies, "entry"), { recursive: true });
     await writeFile(join(copies, "entry", "project"), "copied");
     return { parent, root, copies };
@@ -691,6 +695,63 @@ describe("Windows cache root repair leftovers", () => {
       }),
     ).resolves.toEqual({ status: "ready" });
     await expect(lstat(copies)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("keeps a directory beside the root that REA did not create", async () => {
+    const parent = await tempRoot();
+    const root = join(parent, "cache");
+    await mkdir(root);
+    // The cache root is a path the caller chose, so a sibling of it can hold
+    // anything. REA never created this one and does not own it.
+    const sibling = join(parent, "cache.repair-staging");
+    await mkdir(sibling);
+    await writeFile(join(sibling, "project"), "not REA's");
+    await expect(
+      ensureGhidraProjectCacheRoot(root, {
+        platform: "win32",
+        host: privateRootHost(),
+      }),
+    ).resolves.toEqual({ status: "ready" });
+    // The reclamation only removes state inside the store root, so the
+    // unrelated directory and its contents survive.
+    await expect(readFile(join(sibling, "project"), "utf8")).resolves.toBe(
+      "not REA's",
+    );
+  });
+
+  it("reclaims the copies while it holds the repair lock", async () => {
+    const { parent, root, copies } = await interruptedRepair();
+    // Enough copies that the reclamation takes several steps, so the lock it
+    // holds can be observed while it runs.
+    for (let index = 0; index < 100; index += 1)
+      await writeFile(join(copies, `copy-${index}`), "copied");
+    const lock = join(parent, "cache.repair");
+    const reclamation = ensureGhidraProjectCacheRoot(root, {
+      platform: "win32",
+      host: privateRootHost(),
+    });
+    let settled = false;
+    void reclamation.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    // The copies are reclaimed under the repair lock, so a repair that
+    // starts while they are measured cannot lose them to the reclamation.
+    let held = false;
+    while (!settled) {
+      await new Promise((resolve) => setImmediate(resolve));
+      if (existsSync(lock)) held = true;
+    }
+    await expect(reclamation).resolves.toEqual({ status: "ready" });
+    expect(held).toBe(true);
+    await expect(lstat(copies)).rejects.toMatchObject({ code: "ENOENT" });
+    // The lock is released once the copies are gone, so the next session can
+    // rebuild the root.
+    await expect(access(lock)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 
