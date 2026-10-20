@@ -21,7 +21,7 @@ export const registerX64dbgTools = (
     toolRegistrationOptions(discover),
     async () => {
       const result = await logToolExecution(logger, discover.name, async () =>
-        ok(discoverX64dbg({ platform: process.platform, environment })),
+        ok(await discoverX64dbg({ platform: process.platform, environment })),
       );
       if (!result.ok) return delivery.toCallToolResult(result, discover);
       return delivery.toCallToolResult(

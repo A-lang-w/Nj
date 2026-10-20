@@ -1,4 +1,4 @@
-import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { open, stat } from "node:fs/promises";
 import { win32 } from "node:path";
 
 /** BYO x64dbg provider identity. Discovery never starts a debugger session. */
@@ -17,7 +17,12 @@ export type X64dbgExecutableCapability = {
   readonly source: X64dbgCandidateSource;
   readonly architecture: X64dbgArchitecture | null;
   readonly size_bytes: number;
-  readonly architecture_status: "pe_header" | "unrecognized_header";
+  readonly architecture_status:
+    | "pe_header"
+    | "unrecognized_header"
+    | "header_read_failed";
+  /** Why the header could not be read; null when it was read. */
+  readonly header_read_error: string | null;
 };
 
 export type X64dbgDiscoveryStatus =
@@ -41,40 +46,52 @@ export type X64dbgDiscoveryResult = {
 export interface X64dbgDiscoveryHost {
   readonly platform: NodeJS.Platform;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
-  /** Returns file size when the path is a regular file, otherwise undefined. */
-  readonly fileSize?: (path: string) => number | undefined;
-  /** Reads at most `length` bytes from the start of the file. */
-  readonly readHead?: (path: string, length: number) => Uint8Array | undefined;
+  /** Resolves file size when the path is a regular file, otherwise undefined. */
+  readonly fileSize?: (path: string) => Promise<number | undefined>;
+  /** Reads at most `length` bytes from the start of the file; rejects on I/O failure. */
+  readonly readHead?: (path: string, length: number) => Promise<Uint8Array>;
 }
 
 export const X64DBG_COMMAND_ENV = "REA_X64DBG_COMMAND";
 
 const PE_HEADER_READ_BYTES = 4096;
 
-const defaultFileSize = (path: string): number | undefined => {
+// Asynchronous so a slow mapped drive or UNC share cannot block the MCP
+// server's event loop while peer tools and cancellation are waiting.
+const defaultFileSize = async (path: string): Promise<number | undefined> => {
   try {
-    const stats = statSync(path);
+    const stats = await stat(path);
     return stats.isFile() ? stats.size : undefined;
   } catch {
     return undefined;
   }
 };
 
-const defaultReadHead = (
+const defaultReadHead = async (
   path: string,
   length: number,
-): Uint8Array | undefined => {
-  let descriptor: number | undefined;
+): Promise<Uint8Array> => {
+  const handle = await open(path, "r");
   try {
-    descriptor = openSync(path, "r");
     const buffer = new Uint8Array(length);
-    const read = readSync(descriptor, buffer, 0, length, 0);
-    return buffer.subarray(0, read);
-  } catch {
-    return undefined;
+    const { bytesRead } = await handle.read(buffer, 0, length, 0);
+    return buffer.subarray(0, bytesRead);
   } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
+    await handle.close();
   }
+};
+
+/** Windows environment names are case-insensitive; snapshots may upper-case them. */
+const environmentValue = (
+  environment: Readonly<NodeJS.ProcessEnv>,
+  name: string,
+): string | undefined => {
+  const exact = environment[name];
+  if (exact !== undefined) return exact;
+  const wanted = name.toUpperCase();
+  for (const [key, value] of Object.entries(environment))
+    if (key.toUpperCase() === wanted && value !== undefined) return value;
+  return undefined;
 };
 
 /** Classify a PE image by its COFF machine field without executing it. */
@@ -94,15 +111,15 @@ export const peArchitecture = (head: Uint8Array): X64dbgArchitecture | null => {
 export const wellKnownX64dbgPaths = (
   environment: Readonly<NodeJS.ProcessEnv>,
 ): readonly string[] => {
+  const localAppData = environmentValue(environment, "LOCALAPPDATA");
+  const systemDrive = environmentValue(environment, "SystemDrive");
   const roots = [
-    environment.ProgramFiles,
-    environment["ProgramFiles(x86)"],
-    environment.LOCALAPPDATA === undefined
+    environmentValue(environment, "ProgramFiles"),
+    environmentValue(environment, "ProgramFiles(x86)"),
+    localAppData === undefined
       ? undefined
-      : win32.join(environment.LOCALAPPDATA, "Programs"),
-    environment.SystemDrive === undefined
-      ? undefined
-      : `${environment.SystemDrive}\\`,
+      : win32.join(localAppData, "Programs"),
+    systemDrive === undefined ? undefined : `${systemDrive}\\`,
   ].filter((root): root is string => root !== undefined && root.length > 0);
   const paths: string[] = [];
   for (const root of roots)
@@ -116,15 +133,28 @@ export const wellKnownX64dbgPaths = (
   return [...new Set(paths)];
 };
 
-const describe = (
+const describe = async (
   path: string,
   source: X64dbgCandidateSource,
   host: X64dbgDiscoveryHost,
-): X64dbgExecutableCapability | undefined => {
-  const size = (host.fileSize ?? defaultFileSize)(path);
+): Promise<X64dbgExecutableCapability | undefined> => {
+  const size = await (host.fileSize ?? defaultFileSize)(path);
   if (size === undefined) return undefined;
-  const head = (host.readHead ?? defaultReadHead)(path, PE_HEADER_READ_BYTES);
-  const architecture = head === undefined ? null : peArchitecture(head);
+  let head: Uint8Array;
+  try {
+    head = await (host.readHead ?? defaultReadHead)(path, PE_HEADER_READ_BYTES);
+  } catch (error) {
+    // A permission or I/O failure is not an unsupported header.
+    return {
+      path,
+      source,
+      architecture: null,
+      size_bytes: size,
+      architecture_status: "header_read_failed",
+      header_read_error: error instanceof Error ? error.message : String(error),
+    };
+  }
+  const architecture = peArchitecture(head);
   return {
     path,
     source,
@@ -132,6 +162,7 @@ const describe = (
     size_bytes: size,
     architecture_status:
       architecture === null ? "unrecognized_header" : "pe_header",
+    header_read_error: null,
   };
 };
 
@@ -142,10 +173,13 @@ const describe = (
  * status instead of thrown, so callers composing optional providers are not
  * affected by this adapter being unavailable.
  */
-export const discoverX64dbg = (
+export const discoverX64dbg = async (
   host: X64dbgDiscoveryHost,
-): X64dbgDiscoveryResult => {
-  const configuredRaw = host.environment[X64DBG_COMMAND_ENV]?.trim();
+): Promise<X64dbgDiscoveryResult> => {
+  const configuredRaw = environmentValue(
+    host.environment,
+    X64DBG_COMMAND_ENV,
+  )?.trim();
   const configured =
     configuredRaw === undefined || configuredRaw.length === 0
       ? null
@@ -166,7 +200,7 @@ export const discoverX64dbg = (
     };
   try {
     if (configured !== null) {
-      const found = describe(configured, "environment", host);
+      const found = await describe(configured, "environment", host);
       return found === undefined
         ? {
             ...base,
@@ -181,9 +215,11 @@ export const discoverX64dbg = (
             executables: [found],
           };
     }
-    const executables = wellKnownX64dbgPaths(host.environment).flatMap(
-      (path) => describe(path, "well-known-path", host) ?? [],
-    );
+    const executables: X64dbgExecutableCapability[] = [];
+    for (const path of wellKnownX64dbgPaths(host.environment)) {
+      const found = await describe(path, "well-known-path", host);
+      if (found !== undefined) executables.push(found);
+    }
     return executables.length === 0
       ? {
           ...base,

@@ -10,7 +10,12 @@ export const x64dbgExecutableSchema = z.strictObject({
   source: z.enum(["environment", "well-known-path"]),
   architecture: z.enum(["x64", "x86"]).nullable(),
   size_bytes: z.number().int().nonnegative(),
-  architecture_status: z.enum(["pe_header", "unrecognized_header"]),
+  architecture_status: z.enum([
+    "pe_header",
+    "unrecognized_header",
+    "header_read_failed",
+  ]),
+  header_read_error: z.string().nullable(),
 });
 
 export const x64dbgDiscoverySchema = z.strictObject({

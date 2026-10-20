@@ -17,7 +17,7 @@ export const registerX64dbgCommands = (
       "Report BYO x64dbg availability and architecture from file metadata without launching it",
     args: z.object({}),
     run: () =>
-      logCliCommand(logger, CLI_COMMANDS.discoverX64dbg, async () =>
+      logCliCommand(logger, CLI_COMMANDS.discoverX64dbg, () =>
         discoverX64dbg({ platform: process.platform, environment }),
       ),
   });
