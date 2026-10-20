@@ -40,11 +40,13 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform)).for(
     const executable =
       provider === "kuna" ? join(root, "kuna") : join(jdk, "bin", "java");
     const probeArgument = provider === "kuna" ? "--version" : "--list-modules";
+    const runIdField =
+      provider === "jadx" ? ",runId:process.env.REA_PROCESS_RUN_ID" : "";
     await writeFile(
       executable,
       `#!${process.execPath}
 if (!process.argv.slice(2).includes(${JSON.stringify(probeArgument)})) process.exit(7);
-require("node:fs").writeFileSync(${JSON.stringify(ready)}, JSON.stringify({pid: process.pid, runId: process.env.REA_PROCESS_RUN_ID}));
+require("node:fs").writeFileSync(${JSON.stringify(ready)}, JSON.stringify({pid: process.pid${runIdField}}));
 process.on("SIGTERM", () => {});
 setInterval(() => { if (require("node:fs").existsSync(${JSON.stringify(release)})) process.exit(0); }, 25).unref();
 setTimeout(() => process.exit(99), 20000);
@@ -94,14 +96,26 @@ setTimeout(() => process.exit(99), 20000);
           { timeout: 10_000 },
         )
         .toBe(true);
-      const observed = z
-        .strictObject({
-          pid: z.number().int().positive(),
-          // The Kuna direct-exec probe is not part of an owned process group,
-          // so its inherited run ID is intentionally irrelevant here.
-          runId: z.string().optional(),
-        })
-        .parse(JSON.parse(await readFile(ready, "utf8")));
+      const readyRecord: unknown = JSON.parse(await readFile(ready, "utf8"));
+      const observed: {
+        readonly pid: number;
+        readonly runId?: string | undefined;
+      } =
+        provider === "jadx"
+          ? z
+              .strictObject({
+                pid: z.number().int().positive(),
+                runId: z.string().uuid(),
+              })
+              .parse(readyRecord)
+          : z
+              .strictObject({
+                pid: z.number().int().positive(),
+                // The Kuna direct-exec probe can inherit a run ID, but it is
+                // not part of an owned process group.
+                runId: z.string().optional(),
+              })
+              .parse(readyRecord);
       if (provider === "jadx") {
         if (observed.runId === undefined)
           throw new Error("Missing JADX run token");
