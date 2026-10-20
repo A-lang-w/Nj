@@ -19,6 +19,15 @@ export const nulFreeStringSchema = z
 /** A selected local filesystem path: nonempty and free of NUL bytes. */
 export const localPathStringSchema = nulFreeStringSchema.min(1);
 
+/** Fully-resolved host absolute path rejecting path traversal and drive-relative paths. */
+export const hostAbsolutePathSchema = localPathStringSchema
+  .refine(
+    (val) => isAbsolute(val) && !val.startsWith("/") && !val.split(/[\\/]+/).includes(".."),
+    {
+      message: "Path must be a fully resolved host-absolute path without traversal segments.",
+    },
+  );
+
 /** Test lexical containment on the host platform; callers must resolve symlinks first. */
 export const isPathWithinRoot = (root: string, path: string): boolean => {
   const value = relative(root, path);
