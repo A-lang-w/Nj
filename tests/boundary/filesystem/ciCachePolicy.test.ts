@@ -241,14 +241,23 @@ it("shares static task snapshots only after validation using the npm cache owner
     deep.findIndex((step) => step.run === "npm run check:ci:deep"),
   );
   const knipWith = z
-    .object({ path: z.string(), key: z.string() })
+    .object({
+      path: z.string(),
+      key: z.string(),
+      "restore-keys": z.string(),
+    })
     .parse(knipRestore?.with);
   expect(knipWith.path).toBe("node_modules/.cache/knip");
-  expect(knipWith.key).not.toContain("github.sha");
+  expect(knipWith.key).toContain("${{ github.sha }}");
+  expect(knipWith["restore-keys"]).not.toContain("github.sha");
+  expect(knipWith["restore-keys"].startsWith("knip-meta-v1-")).toBe(true);
   expect(knipSave?.if).toContain(
     "steps.knip-cache.outputs.cache-hit != 'true'",
   );
-  expect(knipSave?.with).toEqual(knipWith);
+  expect(knipSave?.with).toEqual({
+    path: "node_modules/.cache/knip",
+    key: "${{ steps.knip-cache.outputs.cache-primary-key }}",
+  });
 });
 
 it("passes the npm cache owner's selected path to package installation", async () => {
@@ -298,9 +307,20 @@ it("exports turbo remote-cache credentials wherever a workflow runs turbo", asyn
       );
       if (!runsTurbo) continue;
       const env = { ...workflow.env, ...job.env };
-      expect(env.TURBO_TOKEN, `${file}:${name}`).toBe(
-        "${{ secrets.TURBO_TOKEN }}",
+      const token = z.string().parse(env.TURBO_TOKEN);
+      const cache = z.string().parse(env.TURBO_CACHE);
+      expect(token, `${file}:${name}`).toContain("secrets.TURBO_TOKEN");
+      expect(token, `${file}:${name}`).toContain("|| ''");
+      expect(token, `${file}:${name}`).not.toBe("${{ secrets.TURBO_TOKEN }}");
+      for (const event of ["push", "schedule", "workflow_dispatch", "workflow_call"])
+        expect(token, `${file}:${name}`).toContain(
+          `github.event_name == '${event}'`,
+        );
+      expect(token, `${file}:${name}`).not.toContain(
+        "github.event_name == 'pull_request'",
       );
+      expect(cache, `${file}:${name}`).toContain("local:rw,remote:r");
+      expect(cache, `${file}:${name}`).toContain("local:rw,remote:rw");
       expect(env.TURBO_TEAM, `${file}:${name}`).toBe("${{ vars.TURBO_TEAM }}");
     }
   }

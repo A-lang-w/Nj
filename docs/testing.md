@@ -1334,13 +1334,17 @@ as restore-only consumers. The static job also restores its Turbo snapshot;
 each task revalidates its own input hash before reusing outputs or diagnostics.
 The Node pin and npm install settings are global hash inputs. Knip runs only
 in full qualification, with `--cache` and a GitHub cache of
-`node_modules/.cache/knip` keyed by the Knip and TypeScript config rather than
-the commit SHA. That cache is an AST cache keyed by file mtime and size, so a
+`node_modules/.cache/knip`. The saved key includes the commit SHA. Restore uses
+the configuration prefix, so the next trusted full run can publish a refreshed
+snapshot. That cache is an AST cache keyed by file mtime and size, so a
 fresh checkout often misses it; Turbo still hashes the Knip task inputs. Knip
 includes its ignore rules and VitePress
 entry, so changes to those inputs cannot reuse an older successful check.
-Jobs that run Turbo export `TURBO_TOKEN` and `TURBO_TEAM`. Empty values leave
-the local Turbo cache in place.
+Jobs that run Turbo export `TURBO_TEAM`. `TURBO_TOKEN` is set only when the
+ref is the default branch and the event is push, schedule, workflow_dispatch,
+or workflow_call. Pull requests receive an empty token and
+`TURBO_CACHE=local:rw,remote:r`, so they cannot publish remote cache entries.
+An empty token leaves the local Turbo cache in place.
 
 The shared npm-cache action caches downloads, not `node_modules`, and every
 consumer still runs `npm ci`. Keys cover the runner OS, actual Node architecture,

@@ -29,11 +29,13 @@ concurrency:
 
 env:
   HUSKY: "0"
-  # Remote cache stays local when either value is empty. Set Actions secret
-  # TURBO_TOKEN and variable TURBO_TEAM. OIDC can mint TURBO_TOKEN via
-  # vercel/setup-turborepo-remote-cache-action; do not commit a token.
-  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+  # Set Actions secret TURBO_TOKEN and variable TURBO_TEAM. OIDC can mint
+  # TURBO_TOKEN via vercel/setup-turborepo-remote-cache-action; do not commit a token.
+  # Writes only on the default branch for push, schedule, manual dispatch,
+  # and workflow_call. Pull requests get an empty token and remote read-only mode.
+  TURBO_TOKEN: "${{ (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call')) && secrets.TURBO_TOKEN || '' }}"
   TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+  TURBO_CACHE: "${{ (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call')) && 'local:rw,remote:rw' || 'local:rw,remote:r' }}"
 
 jobs:
   changes:
@@ -208,8 +210,10 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: node_modules/.cache/knip
-          key: knip-meta-v1-${{ runner.os }}-${{ hashFiles('knip.json', 'tsconfig.json', 'package.json', 'package-lock.json') }}
-          restore-keys: knip-meta-v1-${{ runner.os }}-
+          # Each trusted commit publishes a new entry. Restore still matches the
+          # configuration prefix from the previous successful full run.
+          key: knip-meta-v1-${{ runner.os }}-${{ hashFiles('knip.json', 'tsconfig.json', 'package.json', 'package-lock.json') }}-${{ github.sha }}
+          restore-keys: knip-meta-v1-${{ runner.os }}-${{ hashFiles('knip.json', 'tsconfig.json', 'package.json', 'package-lock.json') }}-
       - name: Run deep static checks
         run: npm run check:ci:deep
       - name: Save validated deep static task cache
@@ -227,7 +231,7 @@ jobs:
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: node_modules/.cache/knip
-          key: knip-meta-v1-${{ runner.os }}-${{ hashFiles('knip.json', 'tsconfig.json', 'package.json', 'package-lock.json') }}
+          key: ${{ steps.knip-cache.outputs.cache-primary-key }}
 
   test-source:
     name: Source tests
