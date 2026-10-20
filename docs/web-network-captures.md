@@ -492,7 +492,7 @@ changed between one tool's observations with no recorded write between is named
 in the type's `volatile_fields`, keeping the latest value. A value that changed
 across a write under another root may be that write's effect, so every tool of
 its type is a recorded view with reason `fields-differ`; so is a value one tool
-read before a write and another tool read after it. Entities are ordered
+read before a write and another tool read after it. Repeated reads of one full request line also keep the type recorded when list membership changes across a write, including transitions to or from an empty list, or when entity fields are added or removed. Different query strings remain distinct request lines. Entities are ordered
 by type, collection and first sighting; that order is a list's state order.
 Every entity cites its `record_ordinals`.
 

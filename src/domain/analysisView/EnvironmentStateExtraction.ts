@@ -56,6 +56,12 @@ class StateBudgetExhausted extends Error {}
 
 type Candidate = Pick<StatePlan, "tool" | "item" | "type">;
 
+interface ObservedMembership {
+  record: StateRecordFacts;
+  readonly ids: Set<string>;
+  capacity: number;
+}
+
 const entityKey = (type: string, collection: string, id: string): string =>
   compositeKey([type, collection, id]);
 
@@ -332,6 +338,12 @@ export class EnvironmentStateExtraction {
   }
 
   #observePlan(plan: StatePlan): void {
+    // Only lists whose observations span a write need membership snapshots, including empty lists.
+    const memberships =
+      !plan.item &&
+      this.#writeWithin(plan.recordings[0]!, plan.recordings.at(-1)!)
+        ? new Map<string, ObservedMembership>()
+        : undefined;
     for (const record of plan.recordings)
       this.#withBody(record.ordinal, (body) => {
         const located = body === undefined ? undefined : at(body, plan.pointer);
@@ -339,13 +351,47 @@ export class EnvironmentStateExtraction {
           ? isObject(located)
             ? [located]
             : []
-          : Array.isArray(located)
-            ? located.filter(isObject)
-            : [];
+          : body === undefined
+            ? []
+            : (listItems(body, plan.pointer) ?? []);
+        if (memberships !== undefined)
+          this.#observeMembership(plan, record, objects, memberships);
         objects.forEach((object, index) =>
           this.#observe(plan, record, object, index),
         );
       });
+  }
+
+  /** Compare one request line's membership before discarding older recordings; reuse its bounded set. */
+  #observeMembership(
+    plan: StatePlan,
+    record: StateRecordFacts,
+    objects: readonly JsonObject[],
+    memberships: Map<string, ObservedMembership>,
+  ): void {
+    const line = requestLine(record);
+    let previous = memberships.get(line);
+    const earlier = previous?.record;
+    if (previous === undefined) {
+      this.#retain(ENTRY_BYTES * 2 + textBytes(line.length));
+      previous = { record, ids: new Set(), capacity: 0 };
+      memberships.set(line, previous);
+    }
+    // Reserve the peak membership representation before growing the set, including numeric ID text.
+    if (objects.length > previous.capacity) {
+      this.#retain((objects.length - previous.capacity) * ENTRY_BYTES * 4);
+      previous.capacity = objects.length;
+    }
+    const field = this.#identity.get(plan.type)!.field;
+    let changed = previous.ids.size !== objects.length;
+    for (const object of objects)
+      if (!previous.ids.delete(scalarText(object[field])!)) changed = true;
+    if (previous.ids.size > 0) changed = true;
+    if (earlier !== undefined && changed && this.#writeWithin(earlier, record))
+      this.#rewritten.add(plan.type);
+    previous.ids.clear();
+    for (const object of objects) previous.ids.add(scalarText(object[field])!);
+    previous.record = record;
   }
 
   /** Record one observed entity object; a value that changes between one tool's own observations is volatile. */

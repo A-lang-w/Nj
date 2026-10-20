@@ -234,8 +234,10 @@ export const apiBaseLengths = (
   const groups = new Map<string, string[][]>();
   for (const template of templates) {
     const segments = segmentsOf(template);
-    const group = groups.get(segments[0] ?? "") ?? [];
-    groups.set(segments[0] ?? "", [...group, segments]);
+    const first = segments[0] ?? "";
+    const group = groups.get(first);
+    if (group === undefined) groups.set(first, [segments]);
+    else group.push(segments);
   }
   return new Map(
     [...groups.entries()].map(([first, members]) => {

@@ -206,6 +206,7 @@ it("reserves request text even when another event's body was not captured", () =
         normalizedResult: { ...capture, events: { ...capture.events, items } },
         limitations: [],
       },
+      "environment-manifest",
       new EnvironmentManifestAccumulator(8 * 1024 * 1024),
     );
     expect(projected).toMatchObject({

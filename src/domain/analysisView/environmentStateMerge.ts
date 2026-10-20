@@ -100,11 +100,12 @@ export const classifyEntityChanges = (
     timeline.forEach((after, index) => {
       const line = JSON.stringify(lineOf(after));
       const repeat = lastOfLine.get(line);
-      const differs = repeat === undefined ? [] : changed(repeat, after);
-      if (repeat !== undefined && differs.length > 0) {
-        if (writeBetween(repeat, after)) rewritten.add(entity.type);
-        else
-          for (const name of differs)
+      if (repeat !== undefined) {
+        if (writeBetween(repeat, after)) {
+          // Key additions/removals are changes too, even when every shared field is unchanged.
+          if (!same(repeat.object, after.object)) rewritten.add(entity.type);
+        } else
+          for (const name of changed(repeat, after))
             volatile.set(
               entity.type,
               (volatile.get(entity.type) ?? new Set()).add(name),
