@@ -104,7 +104,9 @@ it("withholds mutating Rizin from a fixed analysis source without a mutation lif
         name: "execute_rizin_command",
         arguments: { path: "package.json", command: "iI" },
       }),
-    ).rejects.toThrow("Tool execute_rizin_command not found");
+    ).rejects.toThrow(
+      "The requested MCP tool is not advertised by this REA server.",
+    );
   } finally {
     await client.close();
     await server.close();
