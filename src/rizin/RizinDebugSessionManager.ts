@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { isUtf8 } from "node:buffer";
-import { open, readlink, realpath, stat } from "node:fs/promises";
+import {
+  open,
+  readFile,
+  readlink,
+  readdir,
+  realpath,
+  stat,
+} from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { isatty } from "node:tty";
 
@@ -243,6 +250,8 @@ export class RizinDebugSessionManager {
   readonly #stopProcess: typeof stopOwnedDebuggerProcess;
   readonly #spawnProcess: typeof spawnOwnedProviderProcess;
   readonly #readProcessStartTime: (pid: string) => Promise<string | null>;
+  readonly #readProcessTracerPid: (pid: string) => Promise<number>;
+  readonly #readProcessTaskIds: (pid: string) => Promise<ReadonlySet<string>>;
   readonly #onInferiorDetachVerified:
     | ((result: OwnedDebuggerDetachResult) => void)
     | undefined;
@@ -260,6 +269,11 @@ export class RizinDebugSessionManager {
       readonly spawnProcess?: typeof spawnOwnedProviderProcess;
       /** @internal Test seam for deterministic Linux process identity checks. */
       readonly readProcessStartTime?: (pid: string) => Promise<string | null>;
+      /** @internal Test seams for identifying the tracer of a reused inferior PID. */
+      readonly readProcessTracerPid?: (pid: string) => Promise<number>;
+      readonly readProcessTaskIds?: (
+        pid: string,
+      ) => Promise<ReadonlySet<string>>;
       /** @internal Test seam called after all detach checks have completed. */
       readonly onInferiorDetachVerified?: (
         result: OwnedDebuggerDetachResult,
@@ -277,6 +291,10 @@ export class RizinDebugSessionManager {
     this.#spawnProcess = options.spawnProcess ?? spawnOwnedProviderProcess;
     this.#readProcessStartTime =
       options.readProcessStartTime ?? readLinuxProcessStartTime;
+    this.#readProcessTracerPid =
+      options.readProcessTracerPid ?? readLinuxProcessTracerPid;
+    this.#readProcessTaskIds =
+      options.readProcessTaskIds ?? readLinuxProcessTaskIds;
     this.#onInferiorDetachVerified = options.onInferiorDetachVerified;
   }
 
@@ -1226,14 +1244,24 @@ export class RizinDebugSessionManager {
         continue;
       }
       if (previous !== undefined && previous.startTime !== startTime) {
-        // The old process identity ended, but a non-empty Rizin inventory may
-        // now describe a replacement task attached to this session. We cannot
-        // apply the old target's policy to it or claim there is no inferior.
-        // Retain cleanup ownership until an authoritative inventory/policy
-        // check can account for the replacement.
-        throw new Error(
-          `Rizin reported PID ${pid} with a different process identity; replacement inferior state is ambiguous.`,
-        );
+        if (
+          !(await this.#replacementIsTracedByOwnedDebugger(
+            session,
+            pid,
+            startTime,
+          ))
+        ) {
+          // Rizin may keep a ptrace IO row after the old PID exits. Linux's
+          // TracerPid identifies the tracing task; if it is not one of this
+          // live owned debugger's tasks, its later PTRACE_DETACH can only fail
+          // with ESRCH and cannot detach the replacement from another tracer.
+          // Recheck exit policy before treating this row as stale.
+          await this.#verifyDebuggerExitPolicy(session);
+          continue;
+        }
+        // The replacement is actually traced by this Rizin process. Treat it
+        // as a new identity and run all normal policy and sink checks before
+        // detaching it; the old identity is already proven ended by startTime.
       }
       currentIdentities.set(pid, {
         pid,
@@ -1305,6 +1333,44 @@ export class RizinDebugSessionManager {
     ).trim();
     if (exitKills !== "false")
       throw new Error("Rizin dbg.exitkills readback did not confirm false.");
+  }
+
+  async #replacementIsTracedByOwnedDebugger(
+    session: RizinDebugSession,
+    pid: string,
+    startTime: string,
+  ): Promise<boolean> {
+    const tracerPid = await this.#readProcessTracerPid(pid);
+    if (!Number.isSafeInteger(tracerPid) || tracerPid < 0)
+      throw new Error(`Inferior PID ${pid} has an invalid TracerPid value.`);
+    let tracedByOwnedDebugger = false;
+    if (tracerPid !== 0) {
+      const debuggerPid = session.launched.process.pid;
+      if (
+        debuggerPid === undefined ||
+        session.exited ||
+        session.launched.process.exitCode !== null ||
+        session.launched.process.signalCode !== null
+      )
+        throw new Error(
+          "The owned Rizin process is no longer available to verify the replacement inferior tracer.",
+        );
+      const taskIds = await this.#readProcessTaskIds(String(debuggerPid));
+      if (
+        session.exited ||
+        session.launched.process.exitCode !== null ||
+        session.launched.process.signalCode !== null
+      )
+        throw new Error(
+          "The owned Rizin process exited while its replacement inferior tracer was being verified.",
+        );
+      tracedByOwnedDebugger = taskIds.has(String(tracerPid));
+    }
+    assertRizinProcessStartTimeStable(
+      startTime,
+      await this.#readProcessStartTime(pid),
+    );
+    return tracedByOwnedDebugger;
   }
 
   async #verifyInferiorOutputDescriptors(
@@ -1423,6 +1489,21 @@ export class RizinDebugSessionManager {
         );
   }
 }
+
+const readLinuxProcessTracerPid = async (pid: string): Promise<number> => {
+  const status = await readFile(`/proc/${pid}/status`, "utf8");
+  const tracerPid = /^TracerPid:\s*(\d+)\s*$/m.exec(status)?.[1];
+  if (tracerPid === undefined)
+    throw new Error(`Inferior PID ${pid} has no readable TracerPid status.`);
+  const parsed = Number(tracerPid);
+  if (!Number.isSafeInteger(parsed))
+    throw new Error(`Inferior PID ${pid} has an invalid TracerPid status.`);
+  return parsed;
+};
+
+const readLinuxProcessTaskIds = async (
+  pid: string,
+): Promise<ReadonlySet<string>> => new Set(await readdir(`/proc/${pid}/task`));
 
 export interface RizinDebugCommandResult {
   readonly command: string;

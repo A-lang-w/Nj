@@ -301,6 +301,8 @@ const createReusedPidPtraceProvider = async (
 import { appendFileSync } from "node:fs";
 process.stdout.write("\\0");
 let input = "";
+let detached = false;
+let exitPolicyReadbacks = 0;
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   input += chunk;
@@ -308,8 +310,9 @@ process.stdin.on("data", (chunk) => {
     const boundary = input.indexOf("\\n"); if (boundary < 0) break;
     const line = input.slice(0, boundary); input = input.slice(boundary + 1);
     appendFileSync(${JSON.stringify(commandsPath)}, line + "\\n");
-    if (line === "olj") process.stdout.write(JSON.stringify([{ fd: 12, raised: true, uri: "ptrace://${pid}" }]) + "\\0");
-    else if (line === "e dbg.exitkills") process.stdout.write("true\\0");
+    if (line === "olj") process.stdout.write((detached ? "[]" : JSON.stringify([{ fd: 12, raised: true, uri: "ptrace://${pid}" }])) + "\\0");
+    else if (line === "e dbg.exitkills") process.stdout.write((exitPolicyReadbacks++ === 0 ? "true" : "false") + "\\0");
+    else if (line === "o- 12") detached = true;
     else if (line.startsWith("!echo ")) process.stdout.write(line.slice(6) + "\\0");
     else process.stdout.write("\\0");
   }
@@ -542,7 +545,7 @@ it.skipIf(process.platform !== "linux")(
 );
 
 it.skipIf(process.platform !== "linux")(
-  "keeps cleanup incomplete when Rizin reports a PID replacement in its inferior inventory",
+  "reconciles a stale Rizin PID row only when the replacement is not traced by the owned debugger",
   async () => {
     directory = await mkdtemp(join(tmpdir(), "rea-rizin-reused-pid-"));
     const commandsPath = join(directory, "commands");
@@ -561,6 +564,8 @@ it.skipIf(process.platform !== "linux")(
           identityObservations.push(observed);
           return observed;
         },
+        readProcessTracerPid: async () => 0,
+        readProcessTaskIds: async () => new Set(),
         spawnProcess: async (options) => {
           const launched = await spawnOwnedProviderProcess(options);
           ownedProviderProcesses.push(launched.process);
@@ -577,15 +582,134 @@ it.skipIf(process.platform !== "linux")(
     if (!started.ok) return;
 
     expect((await manager.close(started.value.session_id)).ok).toBe(false);
-    const retry = await manager.retryCleanupFailures();
-    expect(retry.ok).toBe(false);
+    expect((await manager.retryCleanupFailures()).ok).toBe(false);
+    expect(await manager.retryCleanupFailures()).toEqual({
+      ok: true,
+      value: null,
+    });
 
     expect(identityObservations[0]).toBe("100");
     expect(
       identityObservations.slice(1).every((value) => value === "200"),
     ).toBe(true);
     expect(await readFile(commandsPath, "utf8")).not.toContain("o- 12");
+    expect(manager.status(started.value.session_id)).toBeUndefined();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "re-verifies output policy and descriptors for a replacement traced by the owned debugger",
+  async () => {
+    const inferior = await spawnTestInferiorOnTty(await rizinTestInferiorTty());
+    const pid = inferior.pid;
+    expect(pid).toBeDefined();
+    if (pid === undefined) return;
+    directory = await mkdtemp(
+      join(tmpdir(), "rea-rizin-attached-replacement-"),
+    );
+    const commandsPath = join(directory, "commands");
+    const provider = await createReusedPidPtraceProvider(
+      pid,
+      directory,
+      commandsPath,
+    );
+    const identityObservations: string[] = [];
+    const manager = new RizinDebugSessionManager(
+      { ...process.env, REA_RIZIN_COMMAND: provider },
+      {
+        platform: "linux",
+        readProcessStartTime: async () => {
+          const observed = identityObservations.length === 0 ? "100" : "200";
+          identityObservations.push(observed);
+          return observed;
+        },
+        readProcessTracerPid: async () => 777,
+        readProcessTaskIds: async () => new Set(["777"]),
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          ownedProviderProcesses.push(launched.process);
+          return launched;
+        },
+      },
+    );
+    managers.push(manager);
+    const started = await manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: await rizinTestInferiorTty(),
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    expect((await manager.close(started.value.session_id)).ok).toBe(false);
+    expect((await manager.retryCleanupFailures()).ok).toBe(false);
+    expect(await manager.retryCleanupFailures()).toEqual({
+      ok: true,
+      value: null,
+    });
+
+    expect(identityObservations[0]).toBe("100");
+    expect(
+      identityObservations.slice(1).every((value) => value === "200"),
+    ).toBe(true);
+    expect(await readFile(commandsPath, "utf8")).toContain("o- 12");
+    expect(manager.status(started.value.session_id)).toBeUndefined();
+    expect(inferior.exitCode).toBeNull();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "retains cleanup when Rizin cannot determine whether a replacement is still traced",
+  async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-rizin-unknown-replacement-"));
+    const commandsPath = join(directory, "commands");
+    const provider = await createReusedPidPtraceProvider(
+      45_678,
+      directory,
+      commandsPath,
+    );
+    const identityObservations: string[] = [];
+    let tracerKnown = false;
+    const manager = new RizinDebugSessionManager(
+      { ...process.env, REA_RIZIN_COMMAND: provider },
+      {
+        platform: "linux",
+        readProcessStartTime: async () => {
+          const observed = identityObservations.length === 0 ? "100" : "200";
+          identityObservations.push(observed);
+          return observed;
+        },
+        readProcessTracerPid: async () => {
+          if (!tracerKnown) throw new Error("injected unreadable TracerPid");
+          return 0;
+        },
+        readProcessTaskIds: async () => new Set(),
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          ownedProviderProcesses.push(launched.process);
+          return launched;
+        },
+      },
+    );
+    managers.push(manager);
+    const started = await manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: await rizinTestInferiorTty(),
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    expect((await manager.close(started.value.session_id)).ok).toBe(false);
+    expect((await manager.retryCleanupFailures()).ok).toBe(false);
+    expect(await readFile(commandsPath, "utf8")).not.toContain("o- 12");
     expect(manager.status(started.value.session_id)?.state).toBe("closed");
+
+    tracerKnown = true;
+    expect((await manager.retryCleanupFailures()).ok).toBe(false);
+    expect(await manager.retryCleanupFailures()).toEqual({
+      ok: true,
+      value: null,
+    });
+    expect(manager.status(started.value.session_id)).toBeUndefined();
   },
 );
 
