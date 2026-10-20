@@ -128,3 +128,16 @@ the same scripts (ids differ, so each side maps its ids to names):
   served. The read of the digit-free workflow failed in the first build (the
   state held only its list fields) and agrees in the second, apart from ids the
   seed generates.
+
+## After the review round
+
+The branch merged main at 52c84f6f, then kept each shared position's values
+with the parameter that observed them (one donor per naming rule, the literal
+taking the donor that observed it, else the earliest it is spelled like),
+summarised each donor's spelling once, and let one observation form a
+fixed-length family, as the requirement states. Two new tests, a mixed-rule
+position and a single observed workflow id, fail on the previous head and pass
+here. The gates above passed again (domain and services 7255 passed with 5
+pre-existing skips; the focused boundaries 76; `jscpd` 3.49%). Over the 50
+showcase captures the tools with and without `prefix-variance` are unchanged,
+name for name: 69 literal tools templated, 25 of them writes.
