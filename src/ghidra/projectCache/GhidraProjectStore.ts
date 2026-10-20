@@ -722,19 +722,23 @@ export class GhidraProjectStore {
   /** Record that a hit is in use so a concurrent prune leaves it alone. */
   async #touchLease(key: string): Promise<void> {
     const path = this.#leasePath(key);
+    const temporary = `${path}.${randomUUID()}.tmp`;
     try {
       await this.#ensureWorkingDirectory(dirname(path));
-      // A lease is re-created without following an existing entry. Another
-      // account could have planted a link at the lease name before the root
-      // was tightened, and writing through it would replace the owner's file.
-      await rm(path, { force: true }).catch(() => undefined);
-      await writeFile(path, `${new Date().toISOString()}\n`, {
+      // The lease is written beside its final name and renamed into place.
+      // The rename replaces the name atomically and never follows a link at
+      // the destination, so the lease is never absent while a hit is using it
+      // and a link planted before the root was tightened is replaced instead
+      // of followed.
+      await writeFile(temporary, `${new Date().toISOString()}\n`, {
         encoding: "utf8",
         flag: "wx",
         mode: 0o600,
       });
+      await rename(temporary, path);
     } catch {
       // A lease is a best-effort eviction guard; a hit stays valid without it.
+      await rm(temporary, { force: true }).catch(() => undefined);
     }
   }
 
