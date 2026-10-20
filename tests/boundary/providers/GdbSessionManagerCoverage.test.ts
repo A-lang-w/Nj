@@ -28,6 +28,12 @@ import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSess
 import { createProviderSpawnTracker } from "../../support/gdbProviderSpawnTracking.js";
 import { parseLinuxProcessStat } from "../../../src/process/LinuxProcessStat.js";
 import { expectGdbSessionStarted } from "./gdbTestHelpers.js";
+import {
+  createBinarySessionTargets,
+  createCacheProvider,
+  createDeferred,
+  createTestBinarySession,
+} from "../../fixtures/binarySession.js";
 
 let directory: string | undefined;
 const managers: GdbSessionManager[] = [];
@@ -896,6 +902,273 @@ it("closes an idle session when its quoted executable contains groups=[", async 
     commands.filter((command) => command.includes("list-thread-groups")),
   ).toHaveLength(1);
   expect(commands).toContain("-gdb-exit");
+}, 10_000);
+
+it("releases binary open only after an exited GDB inferior is proven ended", async () => {
+  const [target, replacement] = await createBinarySessionTargets();
+  const binarySession = createTestBinarySession(createCacheProvider([]));
+  expect((await binarySession.open(target)).ok).toBe(true);
+  const inferiorPid = "424242";
+  let inferiorAlive = true;
+  let identityCaptured!: () => void;
+  const captured = new Promise<void>((resolve) => {
+    identityCaptured = resolve;
+  });
+  let running!: () => void;
+  const observedRun = new Promise<void>((resolve) => {
+    running = resolve;
+  });
+  const fake = createFakeSpawner((child, token, command) => {
+    if (command.includes('console "run"')) {
+      child.stdout.write(
+        `=thread-group-started,id="i1",pid="${inferiorPid}"\n${token}^running\n*running,thread-id="all"\n`,
+      );
+      running();
+    } else child.stdout.write(`${token}^done\n`);
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    readInferiorProcessStartTime: async (pid) => {
+      if (pid !== inferiorPid || !inferiorAlive) return null;
+      identityCaptured();
+      return "inferior-start-time";
+    },
+  });
+  const started = await expectGdbSessionStarted(manager);
+  const run = manager.execute(started.value.session_id, "run");
+  await observedRun;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  let ownerSettled = false;
+  const gdbOwnerCompletion = manager.waitForInferiorStop(
+    started.value.session_id,
+  );
+  void gdbOwnerCompletion.then(() => {
+    ownerSettled = true;
+  });
+  binarySession.retainExternalMutationOwner(gdbOwnerCompletion);
+  let openingSettled = false;
+  const opening = binarySession.open(replacement).then((result) => {
+    openingSettled = true;
+    return result;
+  });
+  await captured;
+  fake.children[0]?.exitLeader(9);
+  fake.children[0]?.closeInheritedOutput();
+  await run;
+  const closeResult = await manager.close(started.value.session_id);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  expect(closeResult.ok).toBe(false);
+  expect(manager.status(started.value.session_id)).toBeDefined();
+  expect(ownerSettled).toBe(false);
+  expect(openingSettled).toBe(false);
+  expect(binarySession.activeTarget()?.path).toBe(target);
+
+  inferiorAlive = false;
+  const retryResult = await manager.close(started.value.session_id);
+  expect(retryResult).toMatchObject({
+    ok: true,
+    value: { target_state: "none_observed" },
+  });
+  expect(manager.status(started.value.session_id)).toBeUndefined();
+  await gdbOwnerCompletion;
+  expect(ownerSettled).toBe(true);
+  expect((await opening).ok).toBe(true);
+  await binarySession.close();
+}, 10_000);
+
+it("keeps evaluated remote target unknown after GDB exits despite a local PID collision", async () => {
+  const inferiorPid = "424242";
+  let identityReads = 0;
+  let coincidentalLocalProcessAlive = true;
+  const fake = createFakeSpawner((child, token, command) => {
+    if (command.includes('console "run"'))
+      child.stdout.write(
+        `=thread-group-started,id="i1",pid="${inferiorPid}"\n${token}^running\n*running,thread-id="all"\n`,
+      );
+    else child.stdout.write(`${token}^done\n`);
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    readInferiorProcessStartTime: async () => {
+      identityReads += 1;
+      return coincidentalLocalProcessAlive
+        ? "coincidental-local-process"
+        : null;
+    },
+  });
+  const started = await expectGdbSessionStarted(manager);
+  expect(
+    (
+      await manager.execute(
+        started.value.session_id,
+        'eval "target extended-remote %s", "localhost:1234"',
+      )
+    ).ok,
+  ).toBe(true);
+  const run = manager.execute(started.value.session_id, "run");
+  fake.children[0]?.exitLeader(9);
+  fake.children[0]?.closeInheritedOutput();
+  await run;
+
+  const closeResult = await manager.close(started.value.session_id);
+  expect(closeResult.ok).toBe(false);
+  expect(identityReads).toBe(0);
+  expect(manager.status(started.value.session_id)).toBeDefined();
+  coincidentalLocalProcessAlive = false;
+  expect((await manager.close(started.value.session_id)).ok).toBe(false);
+  expect(identityReads).toBe(0);
+  expect(manager.status(started.value.session_id)).toBeDefined();
+}, 10_000);
+
+it("keeps target identity untrusted after the `sou` source abbreviation", async () => {
+  const [target, replacement] = await createBinarySessionTargets();
+  const binarySession = createTestBinarySession(createCacheProvider([]));
+  expect((await binarySession.open(target)).ok).toBe(true);
+  const inferiorPid = "424242";
+  let localProcessAlive = true;
+  let identityReads = 0;
+  let runStarted!: () => void;
+  const observedRun = new Promise<void>((resolve) => {
+    runStarted = resolve;
+  });
+  const fake = createFakeSpawner((child, token, command) => {
+    if (command.includes('console "run"')) {
+      child.stdout.write(
+        `=thread-group-started,id="i1",pid="${inferiorPid}"\n${token}^running\n*running,thread-id="all"\n`,
+      );
+      runStarted();
+    } else child.stdout.write(`${token}^done\n`);
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    readInferiorProcessStartTime: async () => {
+      identityReads += 1;
+      return localProcessAlive ? "coincidental-local-process" : null;
+    },
+  });
+  const started = await expectGdbSessionStarted(manager);
+  expect(
+    (await manager.execute(started.value.session_id, "sou /tmp/remote.gdb")).ok,
+  ).toBe(true);
+  const run = manager.execute(started.value.session_id, "run");
+  await observedRun;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  const releaseForTestCleanup = createDeferred<void>();
+  let ownerSettled = false;
+  const ownerCompletion = manager.waitForInferiorStop(started.value.session_id);
+  void ownerCompletion.then(() => {
+    ownerSettled = true;
+  });
+  binarySession.retainExternalMutationOwner(
+    Promise.race([ownerCompletion, releaseForTestCleanup.promise]),
+  );
+  let openingSettled = false;
+  const opening = binarySession.open(replacement).then((result) => {
+    openingSettled = true;
+    return result;
+  });
+  fake.children[0]?.exitLeader(9);
+  fake.children[0]?.closeInheritedOutput();
+  await run;
+  localProcessAlive = false;
+
+  expect((await manager.close(started.value.session_id)).ok).toBe(false);
+  expect(identityReads).toBe(0);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(ownerSettled).toBe(false);
+  expect(openingSettled).toBe(false);
+  expect(binarySession.activeTarget()?.path).toBe(target);
+
+  releaseForTestCleanup.resolve();
+  expect((await opening).ok).toBe(true);
+  await binarySession.close();
+}, 10_000);
+
+it("ignores stale inferior identity reads when a PID is reused", async () => {
+  const [target, replacement] = await createBinarySessionTargets();
+  const binarySession = createTestBinarySession(createCacheProvider([]));
+  expect((await binarySession.open(target)).ok).toBe(true);
+  const inferiorPid = "424242";
+  const staleRead = createDeferred<string | null>();
+  const currentRead = createDeferred<string | null>();
+  const staleReadStarted = createDeferred<void>();
+  const currentReadStarted = createDeferred<void>();
+  let identityReads = 0;
+  let inferiorAlive = true;
+  let currentStartTime = "new-start-time";
+  let runCount = 0;
+  const fake = createFakeSpawner((child, token, command) => {
+    if (!command.includes('console "run"')) {
+      child.stdout.write(`${token}^done\n`);
+      return;
+    }
+    runCount += 1;
+    child.stdout.write(
+      `=thread-group-started,id="i1",pid="${inferiorPid}"\n${token}^running\n*running,thread-id="all"\n`,
+    );
+    if (runCount === 1)
+      child.stdout.write(
+        '*stopped,reason="exited-normally",stopped-threads="all"\n',
+      );
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    readInferiorProcessStartTime: async (pid) => {
+      if (pid !== inferiorPid) return null;
+      identityReads += 1;
+      if (identityReads === 1) {
+        staleReadStarted.resolve();
+        return staleRead.promise;
+      }
+      if (identityReads === 2) {
+        currentReadStarted.resolve();
+        return currentRead.promise;
+      }
+      return inferiorAlive ? currentStartTime : null;
+    },
+  });
+  const started = await expectGdbSessionStarted(manager);
+  expect((await manager.execute(started.value.session_id, "run")).ok).toBe(
+    true,
+  );
+  await staleReadStarted.promise;
+  const activeRun = manager.execute(started.value.session_id, "run");
+  await currentReadStarted.promise;
+  currentRead.resolve(currentStartTime);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  staleRead.resolve("old-start-time");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  let ownerSettled = false;
+  const ownerCompletion = manager.waitForInferiorStop(started.value.session_id);
+  void ownerCompletion.then(() => {
+    ownerSettled = true;
+  });
+  binarySession.retainExternalMutationOwner(ownerCompletion);
+  let openingSettled = false;
+  const opening = binarySession.open(replacement).then((result) => {
+    openingSettled = true;
+    return result;
+  });
+  fake.children[0]?.exitLeader(9);
+  fake.children[0]?.closeInheritedOutput();
+  await activeRun;
+
+  expect((await manager.close(started.value.session_id)).ok).toBe(false);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(ownerSettled).toBe(false);
+  expect(openingSettled).toBe(false);
+  expect(binarySession.activeTarget()?.path).toBe(target);
+
+  inferiorAlive = false;
+  currentStartTime = "";
+  expect(await manager.close(started.value.session_id)).toMatchObject({
+    ok: true,
+    value: { target_state: "none_observed" },
+  });
+  await ownerCompletion;
+  expect(ownerSettled).toBe(true);
+  expect((await opening).ok).toBe(true);
+  await binarySession.close();
 }, 10_000);
 
 it("reports incomplete stop if GDB exits while close waits in the serialized queue", async () => {
@@ -2171,7 +2444,7 @@ it("retains ownership when descriptor readback omits input confirmation", async 
 
   expect(retried).toMatchObject({
     ok: true,
-    value: { target_state: "unknown" },
+    value: { target_state: "none_observed" },
   });
   expect(manager.status(started.value.session_id)).toBeUndefined();
 });
@@ -2388,7 +2661,7 @@ it.each([
       manager.close(started.value.session_id),
     ).resolves.toMatchObject({
       ok: true,
-      value: { target_state: "unknown" },
+      value: { target_state: "none_observed" },
     });
     expect(manager.status(started.value.session_id)).toBeUndefined();
   } finally {

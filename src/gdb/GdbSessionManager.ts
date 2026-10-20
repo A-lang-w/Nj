@@ -26,6 +26,7 @@ import {
 } from "../process/ProviderProcess.js";
 import {
   closeOwnedDebuggerSessions,
+  readLinuxProcessStartTime,
   stopOwnedDebuggerProcess,
   type OwnedDebuggerDetachResult,
   type OwnedDebuggerStopResult,
@@ -479,6 +480,11 @@ interface GdbSession {
   readonly inferiorStateUnknown: () => boolean;
   readonly verifyInferiorsEndedAfterExit: () => Promise<boolean>;
   readonly knownInferiorIdentities: Map<string, OwnedInferiorIdentity>;
+  readonly inferiorIdentityCaptureGenerations: Map<string, number>;
+  readonly inferiorIdentityCaptures: Set<Promise<void>>;
+  nextInferiorIdentityCaptureGeneration: number;
+  inferiorIdentityCaptureFailed: boolean;
+  inferiorIdentityCaptureUntrusted: boolean;
   readonly inferiorTty: string | undefined;
   readonly maxCommandOutputBytes: number;
   readonly stdoutSettled: Promise<void>;
@@ -514,6 +520,7 @@ interface GdbSession {
   commandAbandoned: string | undefined;
   abandonedToken: number | undefined;
   inferiorRunning: boolean;
+  inferiorDispositionConfirmed: boolean;
   inferiorStopWaiters: Set<() => void>;
   executionGeneration: number;
   threadInfoVerificationPending: boolean;
@@ -813,14 +820,30 @@ export class GdbSessionManager {
       detachInferior: () => this.#detachInferior(session),
       inferiorStateUnknown: () => !session.noInferiorVerified,
       verifyInferiorsEndedAfterExit: async () => {
+        if (!(await this.#waitForStdoutSettlement(session))) return false;
+        await Promise.all(session.inferiorIdentityCaptures);
+        if (
+          session.inferiorIdentityCaptureFailed ||
+          session.inferiorIdentityCaptureUntrusted
+        )
+          return false;
         const ended = await verifyOwnedInferiorsEnded(
           session.knownInferiorIdentities.values(),
           this.#readInferiorProcessStartTime,
         );
-        if (ended) session.knownInferiorIdentities.clear();
+        if (ended) {
+          this.#clearInferiorIdentities(session);
+          session.noInferiorVerified = true;
+          this.#confirmInferiorStopped(session);
+        }
         return ended;
       },
       knownInferiorIdentities: new Map(),
+      inferiorIdentityCaptureGenerations: new Map(),
+      inferiorIdentityCaptures: new Set(),
+      nextInferiorIdentityCaptureGeneration: 0,
+      inferiorIdentityCaptureFailed: false,
+      inferiorIdentityCaptureUntrusted: false,
       inferiorTty,
       maxCommandOutputBytes: this.#maxCommandOutputBytes,
       stdoutSettled,
@@ -852,6 +875,7 @@ export class GdbSessionManager {
       commandAbandoned: undefined,
       abandonedToken: undefined,
       inferiorRunning: false,
+      inferiorDispositionConfirmed: false,
       inferiorStopWaiters: new Set(),
       executionGeneration: 0,
       threadInfoVerificationPending: false,
@@ -878,7 +902,6 @@ export class GdbSessionManager {
     );
     launched.process.once("exit", (code, signalCode) => {
       session.exited = true;
-      this.#confirmInferiorStopped(session);
       session.exitCode = code;
       session.exitSignal = signalCode;
       void this.#waitForStdoutSettlement(session).then(() =>
@@ -1229,7 +1252,16 @@ export class GdbSessionManager {
           return err(new AnalysisInputError("gdb_console"));
         if (!interrupt) {
           session.noInferiorVerified = false;
-          session.knownInferiorIdentities.clear();
+          if (isGdbTargetIdentityBoundaryCommand(command)) {
+            session.inferiorIdentityCaptureUntrusted = true;
+            this.#clearInferiorIdentities(session);
+          } else if (isGdbExecutionCommand(command)) {
+            this.#clearInferiorIdentities(session);
+            session.inferiorIdentityCaptureFailed = false;
+          } else {
+            this.#clearInferiorIdentities(session);
+            session.inferiorIdentityCaptureFailed = true;
+          }
         }
         if (commandMayChangeInferiorOutput(command))
           session.inferiorTtyVerified = false;
@@ -1256,6 +1288,17 @@ export class GdbSessionManager {
             }
           }
           const result = await request;
+          if (
+            isGdbTargetDispositionCommand(command) &&
+            /^\d+\^done(?:,|$)/u.test(result.mi)
+          ) {
+            // A successful explicit kill/detach is the disposition proof that
+            // a GDB process-exit notification cannot provide for a remote
+            // target. Release the owner only after the correlated MI result.
+            session.inferiorDispositionConfirmed = true;
+            this.#clearInferiorIdentities(session);
+            this.#confirmInferiorStopped(session);
+          }
           const evidence = createEvidence(
             undefined,
             { id: "gnu.gdb", name: "GNU GDB", version: null },
@@ -1425,15 +1468,15 @@ export class GdbSessionManager {
     };
   }
 
-  /** Resolve only after MI confirms all inferiors stopped or GDB exits. */
+  /** Resolve only after MI confirms a stop or disposition releases the target. */
   waitForInferiorStop(sessionId: string): Promise<void> {
     const session = this.#sessions.get(sessionId);
+    if (session === undefined) return Promise.resolve();
     if (
-      session === undefined ||
-      session.exited ||
-      (!session.inferiorRunning &&
-        !session.interruptPending &&
-        ![...session.pending.values()].some((pending) => pending.interrupt))
+      !(session.exited && !session.inferiorDispositionConfirmed) &&
+      !session.inferiorRunning &&
+      !session.interruptPending &&
+      ![...session.pending.values()].some((pending) => pending.interrupt)
     )
       return Promise.resolve();
     return new Promise<void>((resolve) => {
@@ -1464,8 +1507,14 @@ export class GdbSessionManager {
             stopped.reason,
           ),
         );
+      if (!session.inferiorDispositionConfirmed && !session.noInferiorVerified)
+        return err(
+          this.#retainUnknownTargetStateFailure(session, "close_gdb_session"),
+        );
       this.#sessions.delete(sessionId);
-      return ok({ target_state: "unknown" });
+      return ok({
+        target_state: session.noInferiorVerified ? "none_observed" : "unknown",
+      });
     }
     try {
       return await this.#serialize(
@@ -1481,8 +1530,22 @@ export class GdbSessionManager {
                   stopped.reason,
                 ),
               );
+            if (
+              !session.inferiorDispositionConfirmed &&
+              !session.noInferiorVerified
+            )
+              return err(
+                this.#retainUnknownTargetStateFailure(
+                  session,
+                  "close_gdb_session",
+                ),
+              );
             this.#sessions.delete(sessionId);
-            return ok({ target_state: "unknown" });
+            return ok({
+              target_state: session.noInferiorVerified
+                ? "none_observed"
+                : "unknown",
+            });
           }
           if (
             session.abandonedToken !== undefined ||
@@ -1577,6 +1640,15 @@ export class GdbSessionManager {
               "close_gdb_session",
               stopped.reason,
             ),
+        );
+      if (
+        session.exited &&
+        !session.inferiorDispositionConfirmed &&
+        !session.noInferiorVerified
+      )
+        return err(
+          [...session.cleanupFailures].at(-1) ??
+            this.#retainUnknownTargetStateFailure(session, "close_gdb_session"),
         );
       this.#sessions.delete(session.id);
     }
@@ -1763,7 +1835,12 @@ export class GdbSessionManager {
       if (line.startsWith("*running")) {
         session.executionGeneration += 1;
         session.inferiorRunning = true;
+        session.inferiorDispositionConfirmed = false;
       }
+      const startedInferior =
+        /^=thread-group-started,id="[^"]+",pid="(\d+)"(?:,|$)/u.exec(line);
+      if (startedInferior !== null)
+        this.#captureInferiorIdentity(session, startedInferior[1] ?? "");
       if (line.startsWith("*stopped")) {
         const stoppedThreads =
           /(?:^|,)stopped-threads=("all"|\[[^\]]*\])(?:,|$)/u.exec(line)?.[1];
@@ -1794,13 +1871,17 @@ export class GdbSessionManager {
       const token = Number(match[1]);
       if (session.abandonedToken === token) {
         session.abandonedToken = undefined;
-        if (match[2] === "running") session.inferiorRunning = true;
+        if (match[2] === "running") {
+          session.inferiorRunning = true;
+          session.inferiorDispositionConfirmed = false;
+        }
       }
       const pending = session.pending.get(token);
       if (pending === undefined) continue;
       if (match[2] === "running") {
         session.executionGeneration += 1;
         session.inferiorRunning = true;
+        session.inferiorDispositionConfirmed = false;
         pending.terminalRecord = line;
         pending.awaitingInferiorStop = true;
         if (pending.interrupt) {
@@ -1884,7 +1965,41 @@ export class GdbSessionManager {
 
   #confirmInferiorStopped(session: GdbSession): void {
     session.inferiorRunning = false;
+    session.inferiorDispositionConfirmed = true;
     this.#releaseInferiorStopWaitersIfSettled(session);
+  }
+
+  #captureInferiorIdentity(session: GdbSession, pid: string): void {
+    if (session.inferiorIdentityCaptureUntrusted || pid.length === 0) {
+      session.inferiorIdentityCaptureFailed = true;
+      return;
+    }
+    const generation = ++session.nextInferiorIdentityCaptureGeneration;
+    session.inferiorIdentityCaptureGenerations.set(pid, generation);
+    session.knownInferiorIdentities.delete(pid);
+    let capture!: Promise<void>;
+    capture = (async () => {
+      try {
+        const startTime = await (
+          this.#readInferiorProcessStartTime ?? readLinuxProcessStartTime
+        )(pid);
+        if (session.inferiorIdentityCaptureGenerations.get(pid) !== generation)
+          return;
+        if (startTime === null) session.inferiorIdentityCaptureFailed = true;
+        else session.knownInferiorIdentities.set(pid, { pid, startTime });
+      } catch {
+        if (session.inferiorIdentityCaptureGenerations.get(pid) === generation)
+          session.inferiorIdentityCaptureFailed = true;
+      } finally {
+        session.inferiorIdentityCaptures.delete(capture);
+      }
+    })();
+    session.inferiorIdentityCaptures.add(capture);
+  }
+
+  #clearInferiorIdentities(session: GdbSession): void {
+    session.knownInferiorIdentities.clear();
+    session.inferiorIdentityCaptureGenerations.clear();
   }
 
   #releaseInferiorStopWaitersIfSettled(session: GdbSession): void {
@@ -2037,7 +2152,14 @@ export class GdbSessionManager {
       }))
       .then((stopped) => {
         if (stopped.status !== "incomplete") {
-          this.#confirmInferiorStopped(session);
+          // Stopping the debugger process does not prove that a remote target
+          // stopped or was detached. Only preserve/release its owner when MI
+          // already confirmed a stop or a disposition established no target.
+          if (
+            session.inferiorDispositionConfirmed ||
+            session.noInferiorVerified
+          )
+            this.#confirmInferiorStopped(session);
           for (const failure of session.cleanupFailures)
             failure.resolveCleanup();
           session.cleanupFailures.clear();
@@ -2062,6 +2184,29 @@ export class GdbSessionManager {
       operation,
       `The owned GDB process could not be confirmed stopped: ${reason}`,
       { ...options, cleanup: { reason, resources: [session.id] } },
+    );
+    session.cleanupFailures.add(failure);
+    return failure;
+  }
+
+  #retainUnknownTargetStateFailure(
+    session: GdbSession,
+    operation: string,
+  ): AnalysisError {
+    const reason =
+      "GDB exited without confirming that the remote target stopped or was disposed; its state remains unknown and the binary mutation owner is retained.";
+    const failure = new AnalysisCapabilityUnavailableError(
+      "gdb",
+      operation,
+      reason,
+      {
+        retryable: true,
+        userMessage:
+          "The GDB process exited while its target state was unconfirmed. Analysis remains blocked to protect the target.",
+        remediationAction:
+          "Confirm target exit or disposition through a live debugger before retrying analysis. This exited session cannot verify that state automatically.",
+        cleanup: { reason, resources: [session.id] },
+      },
     );
     session.cleanupFailures.add(failure);
     return failure;
@@ -2098,11 +2243,12 @@ export class GdbSessionManager {
       throw new Error("GDB could not confirm its inferior state.");
     // A new MI inspection replaces the old snapshot. If it reports multiple
     // inferiors, no earlier PID can stand in for the current unknown inventory.
-    session.knownInferiorIdentities.clear();
+    this.#clearInferiorIdentities(session);
     const inferiorPids = gdbThreadGroupPids(groups.mi);
     if (inferiorPids?.length === 0) {
-      session.knownInferiorIdentities.clear();
+      this.#clearInferiorIdentities(session);
       session.noInferiorVerified = true;
+      this.#confirmInferiorStopped(session);
       return { status: "no-inferior" };
     }
     session.noInferiorVerified = false;
@@ -2147,7 +2293,9 @@ export class GdbSessionManager {
       !/^\d+\^done(?:,|$)/u.test(detached.mi)
     )
       throw new Error("GDB did not confirm inferior detachment.");
-    session.knownInferiorIdentities.clear();
+    this.#clearInferiorIdentities(session);
+    session.inferiorDispositionConfirmed = true;
+    this.#confirmInferiorStopped(session);
     return {
       status: "detached",
       outputSink: "durable",
@@ -2189,13 +2337,13 @@ export class GdbSessionManager {
     session.pending.clear();
   }
 
-  async #waitForStdoutSettlement(session: GdbSession): Promise<void> {
+  async #waitForStdoutSettlement(session: GdbSession): Promise<boolean> {
     let timer!: ReturnType<typeof setTimeout>;
     try {
-      await Promise.race([
-        session.stdoutSettled,
-        new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, 1_000);
+      return await Promise.race([
+        session.stdoutSettled.then(() => true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), 1_000);
           timer.unref?.();
         }),
       ]);
@@ -2883,3 +3031,47 @@ export const isGdbInterruptCommand = (command: string): boolean =>
 /** Only explicit target disposition may run while its debugger retains ownership. */
 export const isGdbTargetDispositionCommand = (command: string): boolean =>
   command.trim() === "kill" || command.trim() === "detach";
+
+const isGdbExecutionCommand = (command: string): boolean =>
+  /^(?:run|start|continue|step|next|stepi|nexti|finish|advance|until)(?:\s|$)/u.test(
+    command.trimStart(),
+  );
+
+const isGdbTargetIdentityBoundaryCommand = (command: string): boolean => {
+  const normalized = command.trimStart().toLowerCase();
+  const commandName = /^[^\s]+/u.exec(normalized)?.[0] ?? "";
+  return (
+    ["target", "tar", "targ", "targe", "t"].includes(commandName) ||
+    [
+      "source",
+      "sourc",
+      "sour",
+      "sou",
+      "so",
+      "python",
+      "py",
+      "define",
+      "def",
+      "alias",
+      "ali",
+      "unalias",
+      "unal",
+      "shell",
+      "!",
+      "eval",
+      "eva",
+      "ev",
+      "with",
+      "wit",
+      "wi",
+      "command",
+      "commands",
+      "comm",
+      "document",
+      "doc",
+      "if",
+      "while",
+      "wh",
+    ].includes(commandName)
+  );
+};
