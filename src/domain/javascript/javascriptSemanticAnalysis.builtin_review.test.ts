@@ -7,10 +7,8 @@ import {
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 
-const ordinaryTargetChanged = (write: string): boolean => {
-  const parsed = parseJavaScriptSource(
-    `const holder={fs:require('fs')};${write}consume(holder.fs);`,
-  );
+const referenceChanged = (source: string, writesOnly = false): boolean => {
+  const parsed = parseJavaScriptSource(source);
   if (parsed === null) throw new Error("Expected parsed receiver fixture");
   const index = completeSemanticSteps(
     indexJavaScriptBindingsWithReceiversSteps(parsed.program),
@@ -22,8 +20,18 @@ const ordinaryTargetChanged = (write: string): boolean => {
   const reference = last.expression.arguments[0];
   if (!t.isMemberExpression(reference))
     throw new Error("Expected selected data slot");
+  if (writesOnly)
+    return index
+      .effectsForReferenceAt(last.expression, reference)
+      .effects.some(
+        ({ kind, timing }) => kind === "member-write" && timing !== "after",
+      );
   return index.referenceMayHaveChangedAt(last.expression, reference);
 };
+const ordinaryTargetChanged = (write: string): boolean =>
+  referenceChanged(
+    `const holder={fs:require('fs')};${write}consume(holder.fs);`,
+  );
 
 it.each([
   "import fs from 'node:fs';",
@@ -1654,5 +1662,96 @@ it.each([true, false])(
         `const get=Object.prototype.valueOf.bind(${moduleReceiver ? "module" : "{}"});Object.assign=(t,f)=>{f().require=replacement};Object.assign({},get);require('fs').readFileSync('kept');`,
       ).configurationOperations.map((x) => x.key),
     ).toEqual(moduleReceiver ? [] : ["kept"]);
+  },
+);
+
+it.each(
+  [
+    {
+      save: "Object.defineProperty.bind(null,target,'readFileSync')",
+      call: "define({value:custom})",
+    },
+    {
+      save: "Reflect.defineProperty.bind(null,target,'readFileSync')",
+      call: "define({value:custom})",
+    },
+    {
+      save: "Object.defineProperties.bind(null,target)",
+      call: "define({readFileSync:{value:custom}})",
+    },
+    {
+      save: "Object.assign.bind(null,target)",
+      call: "define({readFileSync:custom})",
+    },
+  ].flatMap((entry) =>
+    [false, true].flatMap((capturedBuiltin) =>
+      [false, true].map((member) => ({ ...entry, capturedBuiltin, member })),
+    ),
+  ),
+)(
+  "writes the captured descriptor/assign target: $save / $capturedBuiltin / $member",
+  ({ save, call, capturedBuiltin, member }) => {
+    if (member && !capturedBuiltin) {
+      // Check the mutation owner directly: storing a namespace in a member is
+      // independently an escape and cannot serve as a positive effect oracle.
+      expect(
+        referenceChanged(
+          `const untouched={readFileSync:known};const holder={target:{}};const define=${save.replaceAll("target", "holder.target")};holder.target=untouched;${call};consume(untouched.readFileSync);`,
+          true,
+        ),
+      ).toBe(false);
+      return;
+    }
+    const original = capturedBuiltin ? "require('fs')" : "{}";
+    const later = capturedBuiltin ? "{}" : "require('fs')";
+    const target = member ? "holder.target" : "target";
+    const setup = member
+      ? `const holder={target:${original}};`
+      : `let target=${original};`;
+    expect(
+      analyzeJavaScriptSemantics(
+        `${setup}const define=${save.replaceAll("target", target)};${target}=${later};require('fs').readFileSync('before');${call};require('fs').readFileSync('after');`,
+      ).configurationOperations.map(({ key }) => key),
+    ).toEqual(capturedBuiltin ? ["before"] : ["before", "after"]);
+  },
+);
+
+it.each([
+  "function patch(){Reflect.set=(target,key,value)=>target[key]=value;}patch();",
+  "const patch=()=>{Reflect.set=(target,key,value)=>target[key]=value;};patch();",
+  "(()=>{Reflect.set=(target,key,value)=>target[key]=value;})();",
+  "function patch(){Object.assign(Reflect,{set:(target,key,value)=>target[key]=value});}patch();",
+  "function patch(){Object.defineProperty(Reflect,'set',{value:(target,key,value)=>target[key]=value});}patch();",
+  "function outer(){function patch(){Reflect.set=(target,key,value)=>target[key]=value;}patch();}outer();",
+])("retains intrinsic replacements made in another activation: %s", (setup) => {
+  expect(
+    analyzeJavaScriptSemantics(
+      `${setup}const fs=require('fs');Reflect.set(fs,'readFileSync',custom,{});fs.readFileSync('wrong');`,
+    ).configurationOperations,
+  ).toEqual([]);
+});
+
+it("keeps unrelated intrinsic helper writes separate", () => {
+  expect(
+    analyzeJavaScriptSemantics(
+      "function patch(){Reflect.deleteProperty=custom;}patch();const fs=require('fs');Reflect.set(fs,'readFileSync',custom,{});fs.readFileSync('kept');",
+    ).configurationOperations.map(({ key }) => key),
+  ).toEqual(["kept"]);
+});
+
+it.each([
+  "function Box(){this.owner=module;return 1;}",
+  "function Box(){this.owner=module;return undefined;}",
+  "function Box(){this.owner=module;return null;}",
+  "function Box(){this.owner=module;if(flag)return {};}",
+  "class Box{constructor(){this.owner=module;return 1;}}",
+])(
+  "retains constructed instance contents independently of return expressions: %s",
+  (setup) => {
+    expect(
+      analyzeJavaScriptSemantics(
+        `${setup}Object.assign=(t,v)=>{v.owner.require=replacement};Object.assign({},new Box());require('fs').readFileSync('wrong');`,
+      ).configurationOperations,
+    ).toEqual([]);
   },
 );

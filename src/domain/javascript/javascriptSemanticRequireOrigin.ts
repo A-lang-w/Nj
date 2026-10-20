@@ -1175,10 +1175,14 @@ const writesModuleRequire = (
             readAt,
             ...(written ? { written } : {}),
           });
+      } else if (t.isNewExpression(value)) {
+        // Construction can expose instance fields even when an explicit return
+        // is primitive or a return branch is skipped. Ordinary function return
+        // references cannot prove that the resulting instance is module-free.
+        return true;
       } else if (
         t.isCallExpression(value) ||
-        t.isOptionalCallExpression(value) ||
-        t.isNewExpression(value)
+        t.isOptionalCallExpression(value)
       ) {
         // Bound intrinsic references were expanded above at their capture sites.
         const bound = interop.boundIntrinsic(value);

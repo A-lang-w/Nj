@@ -728,6 +728,7 @@ export function* collectSemanticMemberMutationsSteps(
     node: t.Node,
     mutation: t.Node,
     path: PropertyPath = [],
+    originAt: t.Node = mutation,
   ): void => {
     if (path.length === 0) {
       const pending = [node];
@@ -745,7 +746,7 @@ export function* collectSemanticMemberMutationsSteps(
             pending.push(initializer.node);
       }
     }
-    markValue(node, path, new Set(), "escape", mutation);
+    markValue(node, path, new Set(), "escape", mutation, originAt);
   };
   function expandedValues(
     expression: t.Node,
@@ -1015,12 +1016,20 @@ export function* collectSemanticMemberMutationsSteps(
               : [interop.staticPropertyKey(descriptors) ?? null];
           if (!moduleNamespace)
             for (const key of keys)
-              markValue(target, [key], new Set(), "write", node);
+              markValue(
+                target,
+                [key],
+                new Set(),
+                "write",
+                node,
+                inputReadAt(target, node),
+              );
           if (
             moduleNamespace ||
             (origin !== undefined && semanticBuiltinNamespace(origin))
           ) {
-            for (const argument of args.slice(1)) markEscaped(argument, node);
+            for (const argument of args.slice(1))
+              markEscaped(argument, node, [], inputReadAt(argument, node));
             return;
           }
         }
@@ -1046,7 +1055,14 @@ export function* collectSemanticMemberMutationsSteps(
                 )
               : [null];
             for (const key of keys)
-              markValue(args[0]!, [key], new Set(), "write", node);
+              markValue(
+                args[0]!,
+                [key],
+                new Set(),
+                "write",
+                node,
+                inputReadAt(args[0]!, node),
+              );
           }
         }
         if (
@@ -1075,7 +1091,7 @@ export function* collectSemanticMemberMutationsSteps(
                   node,
                   inputReadAt(args[3], node),
                 );
-              markEscaped(args[1]!, node);
+              markEscaped(args[1]!, node, [], inputReadAt(args[1]!, node));
               return;
             }
             const builtinUnchanged =
@@ -1114,8 +1130,9 @@ export function* collectSemanticMemberMutationsSteps(
               dataProperty || ownData || wrapperRequireData;
             if (invokesSetter || path[0] === null) {
               // A setter can mutate shared children of its `this` receiver.
-              markEscaped(target, node);
-              if (args[3] !== undefined) markEscaped(args[3], node);
+              markEscaped(target, node, [], inputReadAt(target, node));
+              if (args[3] !== undefined)
+                markEscaped(args[3], node, [], inputReadAt(args[3], node));
             } else {
               if (args[3] === undefined || !dataDescriptor)
                 markValue(
@@ -1146,11 +1163,12 @@ export function* collectSemanticMemberMutationsSteps(
               ) {
                 // Unknown and inherited descriptors may invoke a setter with
                 // the effective receiver, exposing all of its shared children.
-                markEscaped(args[3] ?? target, node);
+                const receiver = args[3] ?? target;
+                markEscaped(receiver, node, [], inputReadAt(receiver, node));
               }
             }
-            markEscaped(args[1]!, node);
-            markEscaped(args[2]!, node);
+            markEscaped(args[1]!, node, [], inputReadAt(args[1]!, node));
+            markEscaped(args[2]!, node, [], inputReadAt(args[2]!, node));
           });
           return;
         }
@@ -1175,9 +1193,18 @@ export function* collectSemanticMemberMutationsSteps(
               bindings: new Set(),
               effect: "escape",
               mutation: node,
-              originAt: node,
+              originAt:
+                args === undefined
+                  ? node
+                  : inputReadAt(argument.argument, node),
             });
-          else markEscaped(argument, node);
+          else
+            markEscaped(
+              argument,
+              node,
+              [],
+              args === undefined ? node : inputReadAt(argument, node),
+            );
         // Constructing a member does not pass its container as `this`.
         if (!t.isNewExpression(node)) {
           const mapLookup = isIntrinsicMapLookup(node, state);

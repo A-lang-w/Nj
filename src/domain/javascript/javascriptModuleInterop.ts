@@ -98,6 +98,65 @@ export const createSemanticModuleInterop = (
   const calls = new WeakMap<t.Node, InteropOrigin>();
   const intrinsicBindings = new Map<string, readonly string[] | null>();
   const writes = new Map<string, SemanticPropertyPathWriteIndex>();
+  const deferredIntrinsicWrites = new SemanticPropertyPathWriteIndex();
+  let inertPrefixEnd: number | undefined;
+  const capturePrecedesActivation = (capture: t.Node): boolean => {
+    if (inertPrefixEnd === undefined) {
+      inertPrefixEnd = -Infinity;
+      // Imports can run before the first statement regardless of source order.
+      if (
+        !state.program.body.some(
+          (node) =>
+            t.isImportDeclaration(node) ||
+            ((t.isExportNamedDeclaration(node) ||
+              t.isExportAllDeclaration(node)) &&
+              node.source !== null),
+        )
+      ) {
+        prefix: for (const statement of state.program.body) {
+          if (
+            t.isFunctionDeclaration(statement) ||
+            t.isEmptyStatement(statement)
+          )
+            continue;
+          if (
+            !t.isVariableDeclaration(statement) ||
+            !["var", "let", "const"].includes(statement.kind)
+          )
+            break;
+          for (const declaration of statement.declarations) {
+            if (!t.isIdentifier(declaration.id)) break prefix;
+            const value = declaration.init;
+            if (
+              value != null &&
+              !t.isFunctionExpression(value) &&
+              !t.isArrowFunctionExpression(value) &&
+              !readExactJavaScriptLiteral(value).found &&
+              !t.isBigIntLiteral(value)
+            ) {
+              const { root, members } = electronMemberPath(value);
+              if (
+                !isUnshadowedGlobal(root, state, "Object") ||
+                !Object.values(INTRINSICS).some(
+                  (path) =>
+                    path.length === members.length + 1 &&
+                    path.slice(1).every((key, i) => key === members[i]),
+                )
+              )
+                break prefix;
+            }
+            inertPrefixEnd = declaration.end ?? -Infinity;
+          }
+        }
+      }
+    }
+    // Only an inert initial prefix proves that no source-local callable could
+    // have run yet. A function declaration's position alone proves no ordering.
+    return (
+      semanticTopLevelEffectIsOrderable(capture, state.parentsByNode) &&
+      (capture.end ?? Infinity) <= inertPrefixEnd
+    );
+  };
   // Retain assigned values with their owning slot and write site. Bucket by
   // the exact prefix before any selector so unrelated slots are not rescanned.
   const assignedValues = new Map<
@@ -127,7 +186,11 @@ export const createSemanticModuleInterop = (
   ) => {
     const scope =
       node === undefined ? "intrinsic" : opaqueMutationPath(node).join(".");
-    let index = writes.get(scope);
+    const deferred =
+      scope !== "intrinsic" &&
+      path[0] === "intrinsic" &&
+      typeof path[1] === "string";
+    let index = deferred ? deferredIntrinsicWrites : writes.get(scope);
     if (index === undefined) {
       index = new SemanticPropertyPathWriteIndex();
       writes.set(scope, index);
@@ -136,7 +199,10 @@ export const createSemanticModuleInterop = (
       path[0] === "opaque-intrinsic" ? ["intrinsic"] : path,
       // A write takes effect after evaluating its inputs. Its source start
       // precedes nested RHS calls even though those calls still see the old slot.
-      node?.end ?? -Infinity,
+      // A write to a known intrinsic owner in another activation has no proven
+      // ordering relative to this read. Unknown global roots and opaque-call
+      // fallbacks retain the existing scoped uncertainty.
+      deferred ? -Infinity : (node?.end ?? -Infinity),
     );
     if (
       ((t.isAssignmentExpression(node) &&
@@ -165,6 +231,8 @@ export const createSemanticModuleInterop = (
       ? (capture.start ?? -1)
       : Infinity;
     return (
+      (deferredIntrinsicWrites.precedes(path, Infinity) &&
+        !capturePrecedesActivation(capture)) ||
       writes.get("intrinsic")?.precedes(path, offset) === true ||
       (scope !== "intrinsic" &&
         writes.get(scope)?.precedes(path, offset) === true)

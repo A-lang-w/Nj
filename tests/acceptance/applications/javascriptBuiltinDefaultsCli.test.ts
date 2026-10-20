@@ -14,6 +14,9 @@ const execute = promisify(execFile);
 
 const writeReceiverReviewSources = async (root: string): Promise<void> => {
   const sources = [
+    "let fs=require('fs');const define=Object.defineProperty.bind(null,fs,'readFileSync');fs={};define({value:custom});require('fs').readFileSync('wrong-bound-descriptor-target');",
+    "function patch(){Reflect.set=(target,key,value)=>target[key]=value;}patch();const fs=require('fs');Reflect.set(fs,'readFileSync',custom,{});fs.readFileSync('wrong-helper-intrinsic-write');",
+    "function Box(){this.owner=module;return 1;}Object.assign=(t,v)=>{v.owner.require=replacement};Object.assign({},new Box());require('fs').readFileSync('wrong-primitive-constructor-return');",
     "const getter={get:()=>({})};getter.get=()=>module;const box={};box.owner=getter.get();Object.assign=(t,v)=>{v.require=replacement};Object.assign({},box.owner);require('fs').readFileSync('wrong-replaced-getter');",
     "class Box{owner=module}Object.assign=(t,v)=>{v.owner.require=replacement};Object.assign({},new Box());require('fs').readFileSync('wrong-constructor-module-field');",
     "const get=Object.prototype.valueOf.bind(module);Object.assign=(t,f)=>{f().require=replacement};Object.assign({},get);require('fs').readFileSync('wrong-bound-this');",
