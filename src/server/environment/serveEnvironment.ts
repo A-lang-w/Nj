@@ -145,17 +145,24 @@ type RpcReply = {
 /** At most this many UTF-8 bytes of replies in one `/agentenv` response: twice the largest document `data/add` loads, so a `data/get` of a loaded state fits but a batch cannot multiply it. */
 export const MAX_RPC_RESPONSE_BYTES = 2 * STATE_INTAKE_LIMIT_BYTES;
 
+/** The id a message's reply carries: its own string or number id, otherwise null. */
+const replyIdOf = (message: unknown): string | number | null =>
+  isRecord(message) &&
+  (typeof message.id === "string" || typeof message.id === "number")
+    ? message.id
+    : null;
+
+/** Every invalid message is answered; a valid one is unless it is a notification. */
+const expectsReply = (message: unknown): boolean =>
+  !isRpcMessage(message) || "id" in message;
+
 /** Start one JSON-RPC message now, so its call is queued at arrival; resolves to its reply, or none for a notification. */
 const startRpc = (
   message: unknown,
   methods: RpcMethods | undefined,
   signal: AbortSignal,
 ): Promise<RpcReply | undefined> => {
-  const id =
-    isRecord(message) &&
-    (typeof message.id === "string" || typeof message.id === "number")
-      ? message.id
-      : null;
+  const id = replyIdOf(message);
   if (!isRpcMessage(message))
     return Promise.resolve({
       jsonrpc: "2.0",
@@ -168,7 +175,7 @@ const startRpc = (
     methods === undefined
       ? Promise.resolve(undefined)
       : methods(method, message.params, signal);
-  const replies = "id" in message;
+  const replies = expectsReply(message);
   return outcome.then((settled): RpcReply | undefined =>
     replies
       ? {
@@ -191,22 +198,43 @@ const overBudget = (replyBytes: number): RpcError => ({
   data: { max_response_bytes: MAX_RPC_RESPONSE_BYTES, reply_bytes: replyBytes },
 });
 
+/** The largest budget error a message's reply can be replaced by. */
+const refusalBytes = (message: unknown): number =>
+  Buffer.byteLength(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: replyIdOf(message),
+      error: overBudget(Number.MAX_SAFE_INTEGER),
+    }),
+    "utf8",
+  );
+
 /**
- * Serialize a response's replies in order within its budget. Each reply is measured in bounded
- * parts before it is assembled, and parts past the budget are counted but not kept, so a reply
- * that would pass the budget is never built; it becomes an error stating it, unless that error
- * is no smaller.
+ * Serialize a response's replies in order within its budget. Every reply still to come keeps room
+ * for its budget error, and a batch keeps room for its brackets and commas, so a refusal always
+ * fits and the body never passes the budget. Each reply is measured in bounded parts before it is
+ * assembled, and parts past the budget are counted but not kept, so a reply that would pass it is
+ * never built; it becomes an error stating it, unless that error is no smaller.
  */
-const replyEncoder = (): ((reply: RpcReply) => string) => {
-  let used = 0;
+const replyEncoder = (
+  messages: readonly unknown[],
+  framed: boolean,
+): ((reply: RpcReply) => string) => {
+  const refusals = messages.filter(expectsReply).map(refusalBytes);
+  let reserved = refusals.reduce((sum, bytes) => sum + bytes, 0);
+  let used = framed ? 2 + Math.max(0, refusals.length - 1) : 0;
+  let index = 0;
   return (reply) => {
+    reserved -= refusals[index] ?? 0;
+    index += 1;
+    const room = MAX_RPC_RESPONSE_BYTES - used - reserved;
     const parts: string[] = [];
     let bytes = 0;
     for (const part of bufferedJsonParts(jsonParts(reply))) {
       bytes += Buffer.byteLength(part, "utf8");
-      if (used + bytes <= MAX_RPC_RESPONSE_BYTES) parts.push(part);
+      if (bytes <= room) parts.push(part);
     }
-    if (used + bytes <= MAX_RPC_RESPONSE_BYTES) {
+    if (bytes <= room) {
       used += bytes;
       return parts.join("");
     }
@@ -215,9 +243,13 @@ const replyEncoder = (): ((reply: RpcReply) => string) => {
       id: reply.id,
       error: overBudget(bytes),
     });
-    return Buffer.byteLength(refused, "utf8") < bytes
-      ? refused
-      : JSON.stringify(reply);
+    const refusedBytes = Buffer.byteLength(refused, "utf8");
+    if (refusedBytes < bytes) {
+      used += refusedBytes;
+      return refused;
+    }
+    used += bytes;
+    return JSON.stringify(reply);
   };
 };
 
@@ -246,7 +278,7 @@ const answerBatch = async (
   const pending = messages.map((message) => startRpc(message, methods, signal));
   // The loop below reports the first failure; later ones are not left unhandled.
   for (const reply of pending) void reply.catch(() => undefined);
-  const encode = replyEncoder();
+  const encode = replyEncoder(messages, true);
   const texts: string[] = [];
   // Taking each settled reply off the queue releases it, and any state it holds, once encoded.
   for (let next = pending.shift(); next !== undefined; next = pending.shift()) {
@@ -280,7 +312,7 @@ const answerRpc = async (
   return reply === undefined
     ? new Response(null, { status: 202 })
     : jsonResponse(
-        replyEncoder()(reply),
+        replyEncoder([parsed.value], false)(reply),
         "error" in reply && reply.error.code === INVALID_REQUEST ? 400 : 200,
       );
 };

@@ -91,7 +91,9 @@ this increment: write tools are not served from the state.
 - Bound one `/agentenv` response to 64 MiB of replies (twice the intake
   limit). Each reply is measured in bounded JSON parts as it is produced, in
   message order, and assembled only when it fits, so a reply past the budget is
-  counted but never serialized whole; it is replaced by `-32000` with
+  counted but never serialized whole. Room is kept for every later reply's
+  budget error and for a batch's brackets and commas, so the body never
+  passes the budget; a reply that does not fit is replaced by `-32000` with
   `data: {max_response_bytes, reply_bytes}`, unless that error is no smaller
   than the reply, so the body is never built past the budget and small write
   replies are kept.

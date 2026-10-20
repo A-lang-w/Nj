@@ -444,8 +444,9 @@ One `/agentenv` response carries at most 64 MiB of replies, twice the 32 MiB
 a loaded document may hold: room for a `data/get` of a loaded state, while a
 batch of reads cannot multiply a large state into one body. Replies are
 measured in order as they are produced, in bounded parts and before they are
-assembled, so one that would take the response past the budget is never built
-whole and is answered instead with `-32000` whose `error.data` gives
+assembled, and room is kept for every later reply's budget error and the
+batch's brackets and commas, so one that would take the response past the
+budget is never built whole and is answered instead with `-32000` whose `error.data` gives
 `max_response_bytes` and the `reply_bytes` it would have taken. That call still
 ran, so repeat such a read in another request. A reply no larger than that
 error, such as a write's `{}`, is always kept.
