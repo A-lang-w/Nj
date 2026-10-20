@@ -23,9 +23,12 @@ const windowsLookup = (cwd: string, files: readonly string[]) => {
 it("drains a canceled PATH filesystem probe before service shutdown completes", async () => {
   let resolveProbe!: (found: boolean) => void;
   const isFile = vi.fn(
-    () =>
+    (_path: string, signal?: AbortSignal) =>
       new Promise<boolean>((resolve) => {
         resolveProbe = resolve;
+        // Model an owned probe process that receives termination but does not
+        // exit until the test confirms physical process completion.
+        signal?.addEventListener("abort", () => undefined, { once: true });
       }),
   );
   const commands = createReverseEngineeringCommandPort(
@@ -364,15 +367,21 @@ describe("admitted Windows provider lookup", () => {
     async (mode) => {
       vi.useFakeTimers();
       const controller = new AbortController();
-      let rejectProbe!: (cause: unknown) => void;
       let started!: () => void;
       const probing = new Promise<void>((resolve) => {
         started = resolve;
       });
-      const isFile = vi.fn(() => {
+      const isFile = vi.fn((_path: string, signal?: AbortSignal) => {
         started();
         return new Promise<boolean>((_resolve, reject) => {
-          rejectProbe = reject;
+          signal?.addEventListener(
+            "abort",
+            () =>
+              reject(
+                signal?.reason ?? new DOMException("Aborted", "AbortError"),
+              ),
+            { once: true },
+          );
         });
       });
       const run = vi.fn(async () => ({ stdout: "", stderr: "" }));
@@ -436,7 +445,6 @@ describe("admitted Windows provider lookup", () => {
             },
           });
         await closing;
-        rejectProbe(new Error("late network failure"));
         await Promise.resolve();
         expect(isFile).toHaveBeenCalledTimes(1);
         expect(run).not.toHaveBeenCalled();

@@ -468,6 +468,42 @@ it("keeps an externally mutated session unbound until cleanup is retried", async
   await session.close();
 });
 
+it("retains external-writer cleanup failure alongside analysis-client close failure", async () => {
+  const [target] = await createBinarySessionTargets();
+  const writerFailure = new ProviderCleanupError("rizin", ["debugger-writer"], {
+    reason: "writer still owns the target",
+  });
+  const clientFailure = new HopperStartError();
+  let closeAttempts = 0;
+  const session = createTestBinarySession(() => ({
+    execute: () => Promise.resolve(ok(null)),
+    close: () =>
+      Promise.resolve(
+        ++closeAttempts === 1 ? err(clientFailure) : resultOk(null),
+      ),
+  }));
+  expect((await session.open(target)).ok).toBe(true);
+
+  const result = await session.withAdmittedExternalMutation(
+    target,
+    undefined,
+    async () => err(writerFailure),
+    (_value, error) => error,
+  );
+
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      cause: expect.objectContaining({
+        errors: [clientFailure, writerFailure],
+      }),
+    },
+  });
+  expect(writerFailure.cleanupIncomplete).toBe(true);
+  writerFailure.resolveCleanup();
+  expect((await session.close()).ok).toBe(true);
+});
+
 describe("opening previewed targets", () => {
   it("rechecks the active target after another serialized transition", async () => {
     const [first, second] = await createBinarySessionTargets();

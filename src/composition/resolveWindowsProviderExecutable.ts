@@ -1,4 +1,5 @@
 import { stat } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { win32 } from "node:path";
 
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
@@ -9,13 +10,17 @@ export interface WindowsExecutableLookup {
   /** Windows-formatted working directory; defaults to the process CWD. */
   readonly cwd?: string;
   /** Test seam for Windows paths when running on a non-Windows host. */
-  readonly isFile?: (path: string) => boolean | Promise<boolean>;
+  readonly isFile?: (
+    path: string,
+    signal?: AbortSignal,
+  ) => boolean | Promise<boolean>;
   readonly signal?: AbortSignal | undefined;
   /** Total startup lookup budget, including stalled network filesystem probes. */
   readonly timeoutMs?: number;
   /** Track non-cancellable filesystem probes until their physical completion. */
   readonly onProbe?: (probe: Promise<unknown>) => void;
 }
+type WindowsFileProbe = NonNullable<WindowsExecutableLookup["isFile"]>;
 
 /**
  * `\\server\share\...` and `//server/share/...` are UNC roots. A single
@@ -43,7 +48,11 @@ const splitWindowsPath = (value: string): readonly string[] => {
   });
 };
 
-const isRegularFile = async (path: string): Promise<boolean> => {
+const isRegularFile = async (
+  path: string,
+  signal?: AbortSignal,
+): Promise<boolean> => {
+  if (isUncPath(path)) return isRegularFileInOwnedProcess(path, signal);
   try {
     return (await stat(path)).isFile();
   } catch {
@@ -51,13 +60,58 @@ const isRegularFile = async (path: string): Promise<boolean> => {
   }
 };
 
+const isRegularFileInOwnedProcess = (
+  path: string,
+  signal?: AbortSignal,
+): Promise<boolean> =>
+  new Promise((resolve, reject) => {
+    const isAborted = (): boolean => signal?.aborted === true;
+    if (isAborted()) {
+      reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        "const fs=require('node:fs');try{process.exitCode=fs.statSync(process.argv[1]).isFile()?0:1}catch{process.exitCode=1}",
+        path,
+      ],
+      {
+        stdio: "ignore",
+        windowsHide: true,
+        env:
+          process.env.SystemRoot === undefined
+            ? {}
+            : { SystemRoot: process.env.SystemRoot },
+      },
+    );
+    const cleanup = (): void => signal?.removeEventListener("abort", onAbort);
+    const onAbort = (): void => {
+      child.kill();
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    child.once("error", (cause) => {
+      cleanup();
+      reject(cause);
+    });
+    child.once("exit", (code) => {
+      cleanup();
+      if (isAborted())
+        reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+      else resolve(code === 0);
+    });
+    if (isAborted()) onAbort();
+  });
+
 const MAX_PENDING_WINDOWS_PATH_PROBES = 8;
 let pendingWindowsPathProbes = 0;
 
 const probeWindowsPathEntry = (
-  isFile: (path: string) => boolean | Promise<boolean>,
+  isFile: WindowsFileProbe,
   path: string,
   onProbe?: (probe: Promise<unknown>) => void,
+  signal?: AbortSignal,
 ): Promise<boolean> => {
   if (pendingWindowsPathProbes >= MAX_PENDING_WINDOWS_PATH_PROBES)
     throw Object.assign(
@@ -69,7 +123,7 @@ const probeWindowsPathEntry = (
   pendingWindowsPathProbes += 1;
   let probe: Promise<boolean>;
   try {
-    probe = Promise.resolve(isFile(path));
+    probe = Promise.resolve(isFile(path, signal));
   } catch (cause) {
     pendingWindowsPathProbes -= 1;
     throw cause;
@@ -136,7 +190,12 @@ export const resolveWindowsProviderExecutable = async (
           : absolute(entry, `${executable}${extension}`);
         // Keep a handler on a late filesystem rejection after cancellation.
         const found = await waitForAbortable(
-          probeWindowsPathEntry(isFile, candidate, lookup.onProbe),
+          probeWindowsPathEntry(
+            isFile,
+            candidate,
+            lookup.onProbe,
+            deadline.signal,
+          ),
           deadline.signal,
         );
         if (found === ABORTED) deadline.signal.throwIfAborted();

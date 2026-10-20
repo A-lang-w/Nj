@@ -569,23 +569,42 @@ export class BinarySession
     // External writers own their cleanup independently of analysis clients.
     // Settle that owner within this transition before deciding close completion.
     await options.afterResourceClose?.();
+    let closeFailure = !closed.ok ? closed.error : resourceFailure;
     if (!closed.ok && resourceFailure !== undefined)
-      return err(
-        analysisErrorWithCleanupFailure(
-          closed.error,
-          resourceFailure,
-          "close_binary",
-        ),
+      closeFailure = analysisErrorWithCleanupFailure(
+        closed.error,
+        resourceFailure,
+        "close_binary",
       );
-    if (!closed.ok) return closed;
-    if (resourceFailure !== undefined) return err(resourceFailure);
-    if (clearRecords) {
-      // Closing analysis resources cannot acknowledge another owner's writer.
-      // That owner resolves its retained failure only after confirmed cleanup.
-      if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true)
-        return err(this.#externalMutationCleanupFailure);
+    // Closing analysis resources cannot acknowledge another owner's writer.
+    // Include that independent failure in this result and retain it until its
+    // owner confirms cleanup, even when this transition is retiring only the
+    // analysis client rather than clearing all session records.
+    if (
+      this.#externalMutationCleanupFailure?.cleanupIncomplete === true &&
+      closeFailure !== undefined
+    ) {
+      closeFailure =
+        closeFailure === this.#externalMutationCleanupFailure
+          ? this.#externalMutationCleanupFailure
+          : analysisErrorWithCleanupFailure(
+              closeFailure,
+              this.#externalMutationCleanupFailure,
+              "close_binary",
+            );
+    } else if (
+      clearRecords &&
+      this.#externalMutationCleanupFailure?.cleanupIncomplete !== true
+    ) {
       this.#externalMutationCleanupFailure = undefined;
     }
+    if (
+      clearRecords &&
+      closeFailure === undefined &&
+      this.#externalMutationCleanupFailure?.cleanupIncomplete === true
+    )
+      closeFailure = this.#externalMutationCleanupFailure;
+    if (closeFailure !== undefined) return err(closeFailure);
     return ok(null);
   }
 
