@@ -212,10 +212,6 @@ try {
   report.failure = String(cause?.stack ?? cause);
   process.exitCode = 1;
 } finally {
-  await writeFile(
-    join(values.output, "transcript.json"),
-    JSON.stringify(transcript),
-  );
   if (
     !(await finalizeRetainedQueryReceipt({
       report,
@@ -225,6 +221,7 @@ try {
       serverLog,
       serverLogFinished,
       output: values.output,
+      transcript,
     }))
   )
     process.exitCode = 1;

@@ -133,6 +133,21 @@ tests) pass again. A real SDK selected query and complete export also pass
 against that rebuilt runtime, retaining the original parent identity and all
 165 dependencies. These checks do not relabel the frozen timing cohort.
 
+A review found that a transcript-write failure could skip the SDK driver's
+cleanup. The shared finalizer now closes owned resources before publishing the
+optional transcript and records publication failures separately. All 11 receipt
+failure tests pass. A real selected SDK task and full export pass again; the
+same task with an injected transcript-write failure exits 1, preserves its
+answer and failure receipt, and verifies that the process family was cleaned.
+These qualification runs do not replace the frozen performance measurements.
+
+CI also exposes two existing baseline failures. On unmodified `c374c2fe7`,
+`src/cliJsonPaths.test.ts` has the same three URL-message assertion failures.
+The duplication gate is already above its 3.5% threshold: 31,737 / 899,602 lines
+(3.52789%) on baseline versus 31,748 / 900,474 (3.52570%) on the initial PR head.
+These were reproduced separately with the pinned toolchain, bounded resources
+and verified cleanup; this PR leaves those unrelated failures unchanged.
+
 The broader metadata audit also read three real Rust binaries. Alpine ripgrep
 14.1.1-r0's original `.dep-v0` matches native `readelf` coordinates and independent
 zlib/JSON decoding: 42 packages, 88 indexed edges, root index 33. The other two

@@ -39,7 +39,7 @@
         "U": "https://github.com/BurntSushi/ripgrep",
         "L": "MIT OR Unlicense",
         "o": "ripgrep",
-        "m": "André Klitzing <aklitzing@gmail.com>",
+        "m": "Andr\u00e9 Klitzing <aklitzing@gmail.com>",
         "t": "1726419920",
         "c": "4e899d119e4c983a938436d6f397a509521225d1",
         "D": "so:libc.musl-x86_64.so.1 so:libgcc_s.so.1 so:libpcre2-8.so.0",
@@ -1078,11 +1078,13 @@
     "Real artifacts cover Linux ELF. PE/Mach-O exercised only by authored format fixtures."
   ],
   "verification_tooling_sha256": {
-    "go-build-views.mjs": "7c164e4d6e5385637290f96c0e69f2ba66b6c37e6f50148ae81ca480bbcec35f",
+    "go-build-views.mjs": "f9956e234feeaf6e61acd448338351020b3f232e8a945da399edc4649e514e52",
     "go-build-view-oracle.py": "aa496eadc682cd5c917d24e75406409de1c0cdb2a9413aca6d2124abb59bb95c",
     "go-build-view-costs.py": "cdfdd6ca1c73c1f3b630833087fdeed3b8ede4d86cfd52615d84d819861c7d7e",
     "go-build-wire.py": "ef1a1ed73d0a04f90c6e0442607042ea7593f6061b7c0ebec2684f0af6c341d0",
-    "go-build-wire-costs.py": "42db48e8c0025bd869b88dccf40fb906fc7f3ea349f219fe0bbb9cabd438f046"
+    "go-build-wire-costs.py": "42db48e8c0025bd869b88dccf40fb906fc7f3ea349f219fe0bbb9cabd438f046",
+    "retained-query-finalization.mjs": "64e077bd02b0a96a5d508accd87a6c090246e4470635d8df56922aba0ef7a895",
+    "test_retained_queries.py": "058a30a242916b8437e1f8c465e90be8a458839688b601596d3ce6abdfee9371"
   },
   "final_qualification": {
     "base": "c374c2fe7",
@@ -1094,5 +1096,26 @@
     "real_sdk_selected_query_and_full_export": "passed; original parent identity and all165 dependencies preserved",
     "resource_payload_and_cleanup_verified": true,
     "no_observed_oom": true
+  },
+  "review_qualification": {
+    "receipt_failure_tests": 11,
+    "real_sdk_selected_query_full_export": "passed after finalizer change; original parent identity preserved",
+    "real_sdk_transcript_write_failure": "expected exit 1; transcript-file failure retained; owned process-family cleanup verified",
+    "baseline_ci_failures": {
+      "base": "c374c2fe7",
+      "cliJsonPaths.test.ts": "3 URL error-message assertion failures reproduced unchanged",
+      "jscpd_base": {
+        "duplicated_lines": 31737,
+        "lines": 899602,
+        "percentage": 3.5278934462128806
+      },
+      "jscpd_initial_pr": {
+        "duplicated_lines": 31748,
+        "lines": 900474,
+        "percentage": 3.525698687580097
+      },
+      "threshold": 3.5
+    },
+    "timing_cohort": "unchanged; these are separate qualification runs"
   }
 }
