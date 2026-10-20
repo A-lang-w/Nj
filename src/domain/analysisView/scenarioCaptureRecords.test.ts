@@ -158,6 +158,7 @@ it("reserves retained request-body expansion before schema decoding or projectio
         normalizedResult: capture,
         limitations: [],
       },
+      "environment-manifest",
       new EnvironmentManifestAccumulator(128 * 1024),
     );
     expect(projected).toMatchObject({

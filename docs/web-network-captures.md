@@ -419,6 +419,93 @@ recorded body is charged as temporary bytes before it is parsed. Retained state 
 temporary work must fit together within the 96 MiB projection representation
 budget; exceeding it returns `resource_constraint` without a partial manifest.
 
+## Environment state
+
+Pass the same parent to `inspect_analysis_view` with
+`view: {"kind":"environment-state"}` to extract the initial state the
+capture's reads observed, and a render plan per read tool that reproduces those
+reads from it. Where the environment manifest names an application's tools, the
+state holds its data: entities by type and identity, plus documents for written
+paths whose reads are not entities. Use the `template_rules` of the manifest the
+state accompanies so tool names match; the view groups records the same way.
+
+```json
+{
+  "name": "inspect_analysis_view",
+  "arguments": {
+    "source": { "kind": "retained-evidence", "evidence_id": "ev_..." },
+    "view": {
+      "kind": "environment-state",
+      "template_rules": [
+        "after-uid-literal",
+        "opaque-token",
+        "sibling-variance"
+      ]
+    }
+  }
+}
+```
+
+Records on the primary origin are ordered by recorded start time, or by record
+order when any start time is missing (`timeline`), as for a
+`capture_browser_scenario` parent. A `POST`, `PUT`, `PATCH` or `DELETE` with a
+2xx or 3xx status, or no status, may change state, unless it is a `POST` whose
+path has a segment such as `search`, `query`, `list`, `find`, `fuzzy`,
+`count` or `stats`, which queries state instead. A type's state comes from its
+successful reads that finished before the first such write under the same root:
+the path's API base (the literal segments every tool sharing its first segment
+has), any `v1`-style version segments, then one more segment. A read that
+overlaps that write in time is left out.
+
+Each `GET` tool whose template ends in a parameter is an item tool, and its
+type's `collection_template` is the template without that parameter; any other
+`GET` tool is a list tool of its own template. An item tool proves its type's
+`id_field` when every initial response carries the requested path value in the
+same field, at the root or in one wrapper member (`id_basis: "path-parameter"`).
+Otherwise the field is the first of `id`, `uid`, `uuid`, `_id`, `ID`, `UID`,
+`Id`, `guid`, `key`, `slug` and `name` that every listed item carries as a
+distinct string or number (`id_basis: "field-name"`). A list is the response
+array, or the one array of objects in an envelope that is not itself an entity.
+
+`entities` merge every initial observation of one identity within one
+collection path: an item view's latest values win over a list view's, a view
+whose latest values differ keeps them in `view_fields`, and a field whose value
+changed between one tool's observations with no related write between is named
+in the type's `volatile_fields`, keeping the latest value. Entities are ordered
+by type, collection and first sighting; that order is a list's state order.
+Every entity cites its `record_ordinals`.
+
+`views` lists one plan per read tool in tool order:
+
+| Shape      | Plan                                                                                                                                                                                                                                                            |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `item`     | The entity object at `pointer` (the root or one member), the ordered `fields` the view shows and the `required_fields` every recording had, and `envelope_ordinal`: the recording whose response, with the entity replaced, every item response shares          |
+| `list`     | The array at `pointer`, its `fields`, `membership` (`all`: every entity of the collection in state order, when each recording listed exactly that and had no query; `recorded`: the entities each recording listed) and `counters` that equal the number listed |
+| `document` | The path's latest initial value, held in `documents`                                                                                                                                                                                                            |
+| `recorded` | A `reason` the tool replays its recordings instead                                                                                                                                                                                                              |
+
+An item or list plan is kept only when it reproduces the latest initial
+recording of each request line from the state, comparing JSON values without
+regard to member order; a volatile field compares its recorded value. Each
+plan lists the `checked_record_ordinals`. Otherwise the tool is a recorded view
+with reason `envelope-varies`, `fields-differ` or `list-differs`; the other
+reasons are `query-body` (a query `POST`), `no-init-recording`,
+`body-unusable`, `not-entity`, `no-identity` and `query-varies` (a document
+read under several queries). A body is usable when its content type is
+JSON-like, it is UTF-8 text of at most 256 KiB, every number survives native
+conversion exactly, and no member is named `__proto__`.
+
+Values in the state are recorded data, so the view refuses the same parents as
+the manifest, including those inspected with `sensitive_values`, and a
+`capture_browser_scenario` parent must have selected response bodies. Types and
+identity are inferences, so the Evidence is always inferred. `unknowns` states
+that the state establishes no authorization model, no way the application
+computes responses or derived values, and no effects of writes. The state
+accumulator charges the manifest's admission and grouping, every record line,
+each body as temporary bytes before it is decoded and parsed, and every value
+it keeps, within the same 96 MiB budget. The view performs no network activity
+and serves nothing.
+
 ## Resource and lifecycle boundaries
 
 Complete evidence has a 32 MiB input, 96 MiB decoder reply and 64-level nesting
