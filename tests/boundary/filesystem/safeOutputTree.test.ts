@@ -20,6 +20,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
+import { SafeOutputSourceFailure } from "../../../src/artifacts/SafeOutputSourceFailure.js";
 import { SafeOutputTreeCreationFailure } from "../../../src/artifacts/SafeOutputTreeCreationFailure.js";
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { readArtifactFileChunks } from "../../../src/artifacts/readArtifactFileChunks.js";
@@ -735,13 +736,20 @@ describe("safe artifact output source lifetime", () => {
         const failure = await pending;
         expect(failure).toBeInstanceOf(ArtifactReaderFailure);
         expect(failure).toMatchObject({ reason: "path" });
-        expect((failure as ArtifactReaderFailure).cleanup?.reason).toContain(
-          "source cleanup failure",
+        const sourceFailures = (failure as SafeOutputSourceFailure)
+          .sourceFailures;
+        expect(sourceFailures).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ message: "source cleanup failure" }),
+          ]),
         );
         if (earlyError)
-          expect((failure as ArtifactReaderFailure).cleanup?.reason).toContain(
-            "early source failure",
+          expect(sourceFailures).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({ message: "early source failure" }),
+            ]),
           );
+        expect((failure as ArtifactReaderFailure).cleanup).toBeUndefined();
         expect(source.closed).toBe(true);
         await tree.rollback();
       }

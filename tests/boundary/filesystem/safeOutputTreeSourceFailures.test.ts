@@ -8,8 +8,10 @@ import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js"
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { withArtifactRegularFile } from "../../../src/artifacts/ArtifactFileOperation.js";
 import { readArtifactFileChunks } from "../../../src/artifacts/readArtifactFileChunks.js";
+import { translateArtifactFailure } from "../../../src/artifacts/ArtifactOperationFailure.js";
+import { firmwareFailure } from "../../../src/firmware/FirmwareFailures.js";
 import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
-import { SafeOutputSourceCleanupFailure } from "../../../src/artifacts/SafeOutputSourceCleanupFailure.js";
+import { SafeOutputSourceFailure } from "../../../src/artifacts/SafeOutputSourceFailure.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it.each([false, true])(
@@ -36,9 +38,11 @@ it.each([false, true])(
       expect(failure).toMatchObject({
         reason: "path",
         cause: { reason: "path" },
-        cleanup: { reason: cleanup.message, resources: [] },
       });
-      expect((failure as ArtifactReaderFailure).cleanupLeases).toBeUndefined();
+      expect((failure as SafeOutputSourceFailure).sourceFailures).toContain(
+        cleanup,
+      );
+      expect((failure as ArtifactReaderFailure).cleanup).toBeUndefined();
       expect(source.closed).toBe(true);
       expect(source.listenerCount("error")).toBe(0);
     } finally {
@@ -53,11 +57,20 @@ it.each([false, true])(
 
 it.each(
   (["integrity", "cancelled"] as const).flatMap((reason) =>
-    [false, true].map((failCleanup) => ({ reason, failCleanup })),
+    [false, true].flatMap((failCleanup) =>
+      [false, true].flatMap((emitClose) =>
+        [false, true].map((deferred) => ({
+          reason,
+          failCleanup,
+          emitClose,
+          deferred,
+        })),
+      ),
+    ),
   ),
 )(
   "preserves an interrupted write without inventing cleanup failure: %j",
-  async ({ reason, failCleanup }) => {
+  async ({ reason, failCleanup, emitClose, deferred }) => {
     const root = await createTestTempDirectory("rea-source-interrupted-");
     const tree = await SafeOutputTree.create(join(root, "output"));
     const controller = new AbortController();
@@ -69,12 +82,15 @@ it.each(
     const cleanup = new Error("deferred cleanup failed");
     const source = new Readable({
       autoDestroy: false,
+      emitClose,
       read() {
         this.push(Buffer.from("owned"));
         this.push(null);
       },
       destroy(error, callback) {
-        setImmediate(() => callback(failCleanup ? cleanup : error));
+        if (deferred)
+          setImmediate(() => callback(failCleanup ? cleanup : error));
+        else callback(failCleanup ? cleanup : error);
       },
     });
     try {
@@ -86,12 +102,29 @@ it.each(
       expect(typed.reason).toBe(reason);
       if (reason === "cancelled")
         expect(typed.cancellation?.reason).toBe(cancellation);
+      expect(typed.cleanup).toBeUndefined();
       if (failCleanup)
-        expect(typed.cleanup).toEqual({
-          reason: cleanup.message,
-          resources: [],
-        });
-      else expect(typed.cleanup).toBeUndefined();
+        expect((typed as SafeOutputSourceFailure).sourceFailures).toContain(
+          cleanup,
+        );
+      for (const translated of [
+        translateArtifactFailure("extract_artifact", typed),
+        firmwareFailure(typed, {
+          engine: "unblob",
+          operation: "extract_firmware",
+        }),
+      ]) {
+        expect(translated.cleanupIncomplete).toBe(false);
+        expect(translated.secondaryFailures).toHaveLength(failCleanup ? 1 : 0);
+        if (reason === "cancelled") expect(translated.cause).toBe(cancellation);
+        if (failCleanup) {
+          const secondary = translated.secondaryFailures[0];
+          expect(
+            secondary?.cause === cleanup ||
+              (secondary?.cause as Error)?.cause === cleanup,
+          ).toBe(true);
+        }
+      }
       expect(source.closed).toBe(true);
     } finally {
       expect(await tree.rollback()).toEqual({
@@ -127,12 +160,21 @@ it.each([false, true])(
       const pending = tree
         .write("../outside", source, { bytes: 0, sha256: "" })
         .catch((cause: unknown) => cause);
-      const peer = new Error("source failure with unknown cleanup owner");
+      const peer = new ArtifactReaderFailure(
+        "io",
+        "source failure with unknown cleanup owner",
+        {
+          cleanup: {
+            reason: "source failure with unknown cleanup owner",
+            resources: [],
+          },
+        },
+      );
       if (unknownPeer) source.emit("error", peer);
       const failure = await pending;
       expect(failure).toBeInstanceOf(ArtifactReaderFailure);
-      expect(failure).toBeInstanceOf(SafeOutputSourceCleanupFailure);
-      const typed = failure as SafeOutputSourceCleanupFailure;
+      expect(failure).toBeInstanceOf(SafeOutputSourceFailure);
+      const typed = failure as SafeOutputSourceFailure;
       expect(typed.reason).toBe("path");
       expect(typed.cleanup?.resources).toEqual([input]);
       expect(typed.cleanup?.reason).toContain("source descriptor close failed");
@@ -148,9 +190,20 @@ it.each([false, true])(
         (failure) => failure === cleanup,
       );
       expect(retainedSource).toBe(cleanup);
+      const translated = [
+        translateArtifactFailure("extract_artifact", typed),
+        firmwareFailure(typed, {
+          engine: "unblob",
+          operation: "extract_firmware",
+        }),
+      ];
+      for (const error of translated)
+        expect(error.cleanupIncomplete).toBe(true);
       await (
         retainedSource as ArtifactReaderFailure
       ).cleanupLeases?.[0]?.release();
+      for (const error of translated)
+        expect(error.cleanupIncomplete).toBe(unknownPeer);
       await expect(handle.stat()).rejects.toMatchObject({ code: "EBADF" });
     } finally {
       await lease.release();

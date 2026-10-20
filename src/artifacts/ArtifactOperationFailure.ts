@@ -6,6 +6,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { SafeOutputSourceFailure } from "./SafeOutputSourceFailure.js";
 import {
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
@@ -34,6 +35,14 @@ export const translateArtifactFailure = (
       },
     );
     bindArtifactFileCleanup(cause, error);
+    if (cause instanceof SafeOutputSourceFailure)
+      for (const failure of cause.sourceFailures)
+        error.retainSecondaryFailure(
+          translateArtifactFailure(
+            operation,
+            ArtifactReaderFailure.from(failure),
+          ),
+        );
     return error;
   }
   // Caller-selection and unsupported-target failures are already typed; keep

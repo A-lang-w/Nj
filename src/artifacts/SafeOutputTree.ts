@@ -9,7 +9,7 @@ import {
   type FileHandle,
 } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
-import { finished, type Readable } from "node:stream";
+import type { Readable } from "node:stream";
 import { setImmediate, setTimeout } from "node:timers/promises";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { streamChunkToBuffer } from "./StreamBytes.js";
@@ -21,7 +21,7 @@ import {
 } from "./ArtifactPaths.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { SafeOutputSourceCleanupFailure } from "./SafeOutputSourceCleanupFailure.js";
+import { SafeOutputSourceFailure } from "./SafeOutputSourceFailure.js";
 import { SafeOutputTreeCreationFailure } from "./SafeOutputTreeCreationFailure.js";
 import { hashOutputFile } from "./SafeOutputTreeReadback.js";
 import { removeOwnedTree } from "./SafeOutputTreeCleanup.js";
@@ -176,14 +176,6 @@ export class SafeOutputTree {
     };
     if (source.errored !== null) observeSourceFailure(source.errored);
     source.on("error", observeSourceFailure);
-    let stopObservingSource!: () => void;
-    const sourceCompletion = new Promise<Error | undefined>((resolve) => {
-      stopObservingSource = finished(
-        source,
-        { readable: true, writable: false },
-        (error) => resolve(error ?? undefined),
-      );
-    });
     try {
       this.#assertWritable();
       if (!Number.isSafeInteger(expected.bytes) || expected.bytes < 0)
@@ -245,8 +237,6 @@ export class SafeOutputTree {
         hash.update(chunk);
         await writeAll(ownedHandle.handle, chunk);
       }
-      const sourceFailure = await sourceCompletion;
-      if (sourceFailure !== undefined) throw sourceFailure;
       if (bytes !== expected.bytes)
         throw new ArtifactReaderFailure(
           "integrity",
@@ -279,26 +269,24 @@ export class SafeOutputTree {
           "integrity",
           `Durable readback verification failed: ${path}`,
         );
+      await joinSourceDestruction(source);
+      if (sourceFailures.size > 0) throw sourceFailures.values().next().value;
+      abortIfNeeded(signal);
       return { relativePath: path, sha256, bytesWritten: bytes };
     } catch (cause: unknown) {
       try {
         source.destroy();
-        // Destruction can finish without an event when emitClose is false.
-        // Keep observing errors through the queued destroy notifications, then
-        // join the resource state even if finished() has already seen an error.
-        await setImmediate();
-        while (!source.closed) await setTimeout(10);
+        await joinSourceDestruction(source);
       } catch (cleanupCause: unknown) {
         observeSourceFailure(cleanupCause);
       }
-      const cleanupFailures = [...sourceFailures].filter(
+      const secondaryFailures = [...sourceFailures].filter(
         (failure) => failure !== cause,
       );
-      if (cleanupFailures.length > 0)
-        throw new SafeOutputSourceCleanupFailure(cause, cleanupFailures);
+      if (secondaryFailures.length > 0)
+        throw new SafeOutputSourceFailure(cause, secondaryFailures);
       throw cause;
     } finally {
-      stopObservingSource();
       source.off("error", observeSourceFailure);
     }
   }
@@ -668,6 +656,14 @@ const writeAll = async (
       );
     offset += bytesWritten;
   }
+};
+
+/** Join started destruction, including silent auto-destroy after normal end. */
+const joinSourceDestruction = async (source: Readable): Promise<void> => {
+  // Let queued end/destroy notifications run before observing the resource state.
+  // A completed readable side need not destroy an open duplex writable side.
+  await setImmediate();
+  while (source.destroyed && !source.closed) await setTimeout(10);
 };
 
 const normalizeDestinationPath = (

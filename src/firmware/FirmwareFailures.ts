@@ -1,5 +1,6 @@
 import type { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { SafeOutputSourceFailure } from "../artifacts/SafeOutputSourceFailure.js";
 import {
   ArtifactFileCleanupFailure,
   artifactFileCancellationCause,
@@ -61,6 +62,17 @@ const timeoutFailure = (
 
 /** Translate the producing file owner's outcome without guessing from a later signal. */
 export const firmwareFailure = (
+  cause: unknown,
+  context: FirmwareFailureContext,
+): AnalysisError => {
+  const error = classifyFirmwareFailure(cause, context);
+  if (cause instanceof SafeOutputSourceFailure)
+    for (const failure of cause.sourceFailures)
+      error.retainSecondaryFailure(firmwareFailure(failure, context));
+  return error;
+};
+
+const classifyFirmwareFailure = (
   cause: unknown,
   context: FirmwareFailureContext,
 ): AnalysisError => {
