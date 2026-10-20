@@ -1236,6 +1236,7 @@ export class GhidraClient {
       return;
     }
     this.#processSnapshot = event.snapshot;
+    if (event.type === "output-close") return;
     this.#options.onDiagnostic?.({
       type: "launcher-exit",
       code: event.code,
