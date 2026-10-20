@@ -5,6 +5,7 @@ import {
 import { err, ok } from "../domain/result.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import type { Result } from "../domain/result.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import type { LifecycleToolRegistration } from "./registerSessionTools.js";
@@ -89,8 +90,53 @@ export const registerCloseLifecycleTool = ({
         );
       throw sessionClose.reason;
     }
+    if (reverseCleanup.status === "rejected") {
+      if (
+        snapshotReceipt !== undefined &&
+        sessionClose.status === "fulfilled" &&
+        sessionClose.value.ok
+      ) {
+        const reverseFailure = new AnalysisOutputError(
+          closeContract.name,
+          "Reverse-engineering cleanup failed unexpectedly.",
+          {
+            cause: reverseCleanup.reason,
+            cleanup: {
+              reason: "cleanup callback rejected unexpectedly",
+              resources: ["reverse-engineering cleanup"],
+            },
+          },
+        );
+        const resourceFailure =
+          resourceClose.status === "rejected"
+            ? new AnalysisOutputError(
+                closeContract.name,
+                "Process capture cleanup failed unexpectedly.",
+                {
+                  cause: resourceClose.reason,
+                  cleanup: {
+                    reason: "cleanup callback rejected unexpectedly",
+                    resources: ["process capture cleanup"],
+                  },
+                },
+              )
+            : resourceClose.value.ok
+              ? undefined
+              : resourceClose.value.error;
+        const failure =
+          resourceFailure === undefined
+            ? reverseFailure
+            : analysisErrorWithCleanupFailure(
+                reverseFailure,
+                resourceFailure,
+              ).bindCleanupDependencies([reverseFailure, resourceFailure]);
+        return err(
+          failure.retainDiagnostics(snapshotReceipt(sessionClose.value.value)),
+        );
+      }
+      throw reverseCleanup.reason;
+    }
     if (resourceClose.status === "rejected") throw resourceClose.reason;
-    if (reverseCleanup.status === "rejected") throw reverseCleanup.reason;
     const closed = sessionClose.value;
     const resources = resourceClose.value;
     const reverse = reverseCleanup.value;

@@ -107,6 +107,52 @@ describe("close lifecycle reverse cleanup ordering", () => {
     });
   });
 
+  it("preserves a successful snapshot receipt when reverse cleanup rejects", async () => {
+    const receipt = {
+      path: "/tmp/analysis.json",
+      bytes: 321,
+      primitive_entries: 2,
+      workflow_entries: 1,
+      evidence_records: 3,
+    };
+    const session = {
+      closeWithSnapshot: async () => ok(receipt),
+    } as unknown as BinarySessionPort;
+    const { handler } = register({
+      session,
+      closeProcessResources: async () =>
+        err(new ProviderCleanupError("test-provider", ["capture"], {})),
+      retry: async () => {
+        throw new Error("unexpected cleanup rejection");
+      },
+    });
+
+    const result = await handler({
+      snapshot_path: receipt.path,
+      overwrite: false,
+    });
+    if (
+      typeof result !== "object" ||
+      result === null ||
+      !("error" in result) ||
+      !(result.error instanceof Error)
+    )
+      throw new Error("Expected a retained cleanup error");
+    expect(
+      projectAnalysisError(result.error as AnalysisOutputError),
+    ).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        diagnostics: {
+          saved_snapshot: receipt,
+          cleanup_error: {
+            details: { resources: ["capture"] },
+          },
+        },
+      },
+    });
+  });
+
   it("retries reverse cleanup only after the session close has settled", async () => {
     const order: string[] = [];
     let release!: () => void;
