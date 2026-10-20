@@ -674,7 +674,10 @@ export class BinaryTargetRegistry implements BinarySessionPort {
    */
   async #closeSlot(
     slot: TargetSlot,
-    options: Pick<ExecutionOptions, "progress">,
+    options: Pick<ExecutionOptions, "progress"> & {
+      readonly retainProviderDocuments?: boolean;
+      readonly targetId?: string;
+    },
     behavior: {
       readonly clearRecords: boolean;
       readonly closeOwnedProviderResources: boolean;
