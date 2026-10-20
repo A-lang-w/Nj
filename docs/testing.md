@@ -282,7 +282,7 @@ foreign token is read again on the confirmation table, a pre-existing PID is
 read again when its parent or group changes, an unchanged pre-existing row
 stays unread, an unbounded confirmation
 chain stays unresolved, lineage reads a row again when its launcher-tree
-membership changes, a cached lineage token is read again on the next refresh, an initial descendant whose token already matched is read again on a later refresh,
+membership changes, a cached lineage token is read again on the next refresh, an initial descendant whose token already matched is read again on a later refresh, the launcher is read again on that refresh and a missing or unowned launcher PID stays unavailable,
 a group that reappears after it was processed is revalidated once, a further
 reappearance stays unresolved, lineage publishes one row per PID, and lineage does not publish a
 verified empty descendant list while that row remains unexamined. A readable token with unavailable

@@ -395,6 +395,73 @@ describe("identityless lineage refresh follows tree membership", () => {
   });
 });
 
+describe("identityless lineage refresh rechecks the launcher", () => {
+  const row = (
+    pid: number,
+    parentPid: number,
+    processGroupId = pid,
+  ): ProcessTableEntry => ({
+    pid,
+    parentPid,
+    processGroupId,
+    state: "S",
+    command: `pid-${String(pid)}`,
+  });
+
+  it("does not publish lineage when the launcher PID is gone on a later refresh", async () => {
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([row(100, 1, 100), row(102, 100), row(101, 100)])
+      .mockResolvedValue([row(102, 100)]);
+    await expect(
+      observeOwnedProcessLineage(ownership, {
+        listProcesses,
+        environment: (pid) =>
+          pid === 101
+            ? Promise.reject(
+                new Error("process exited during environment read"),
+              )
+            : Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" }),
+        signalGroup: vi.fn(),
+      }),
+    ).resolves.toMatchObject({
+      status: "unavailable",
+      reason: "owned launcher exited during lineage validation",
+    });
+  });
+
+  it("rejects a refresh whose launcher PID is no longer owned", async () => {
+    let launcherReads = 0;
+    const environment = vi.fn((pid: number) => {
+      if (pid === 101)
+        return Promise.reject(
+          new Error("process exited during environment read"),
+        );
+      if (pid !== 100)
+        return Promise.resolve({ REA_PROCESS_RUN_ID: "run-token" });
+      launcherReads += 1;
+      return Promise.resolve(
+        launcherReads === 1 ? { REA_PROCESS_RUN_ID: "run-token" } : {},
+      );
+    });
+    const listProcesses = vi
+      .fn<ProcessOwnershipHost["listProcesses"]>()
+      .mockResolvedValueOnce([row(100, 1, 100), row(102, 100), row(101, 100)])
+      .mockResolvedValue([row(100, 1, 100), row(102, 100)]);
+    await expect(
+      observeOwnedProcessLineage(ownership, {
+        listProcesses,
+        environment,
+        signalGroup: vi.fn(),
+      }),
+    ).resolves.toMatchObject({
+      status: "unavailable",
+      reason: "process lineage contains an unowned or PID-reused process",
+    });
+    expect(launcherReads).toBe(2);
+  });
+});
+
 describe("identityless lineage refresh rechecks an initial descendant", () => {
   const row = (
     pid: number,

@@ -500,7 +500,8 @@ interface ExaminedLineageRefresh {
  * read again when its parent, process group, or launcher-tree membership
  * changes. A row whose token was already read is read again on every later
  * refresh, because those fields do not identify a process generation.
- * Unchanged rows from the initial snapshot are not read again.
+ * Unchanged rows from the initial snapshot are not read again. The launcher
+ * is read on every refresh; a missing or unowned launcher PID is unavailable.
  */
 const classifyIdentitylessLineageRefresh = async (
   ownership: OwnedProcessGroup,
@@ -517,6 +518,28 @@ const classifyIdentitylessLineageRefresh = async (
     }
   | { readonly status: "unavailable"; readonly reason: string }
 > => {
+  const refreshedLauncher = refreshed.find(
+    (process) => process.pid === launcherPid,
+  );
+  if (refreshedLauncher === undefined)
+    return {
+      status: "unavailable",
+      reason: "owned launcher exited during lineage validation",
+    };
+  for await (const { observation } of readProcessRunTokens(host, [
+    refreshedLauncher,
+  ])) {
+    if (observation.state !== "readable")
+      return {
+        status: "unavailable",
+        reason: `process ownership could not be revalidated for PID ${String(launcherPid)}: ${observation.reason}`,
+      };
+    if (observation.runId !== ownership.runId)
+      return {
+        status: "unavailable",
+        reason: "process lineage contains an unowned or PID-reused process",
+      };
+  }
   const inTree = new Set(
     descendantsOf([launcherPid], refreshed).map(({ pid }) => pid),
   );
