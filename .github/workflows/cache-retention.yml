@@ -48,6 +48,10 @@ jobs:
           CI_REPOSITORY: ${{ github.repository }}
           CACHE_PREFIX: rea-static-v1-${{ runner.os }}-${{ runner.arch }}-
           CACHE_KEEP_KEY: rea-static-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-${{ github.event.workflow_run.head_sha }}
+          CACHE_DEEP_PREFIX: rea-static-deep-v1-${{ runner.os }}-${{ runner.arch }}-
+          CACHE_DEEP_KEEP_KEY: rea-static-deep-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-${{ github.event.workflow_run.head_sha }}
+          CACHE_KNIP_PREFIX: knip-meta-v1-${{ runner.os }}-
+          CACHE_KNIP_KEEP_KEY: knip-meta-v1-${{ runner.os }}-${{ hashFiles('knip.json', 'tsconfig.json', 'package.json', 'package-lock.json') }}-${{ github.event.workflow_run.head_sha }}
           CACHE_PORTABLE_PREFIX: rea-portable-build-v2-${{ runner.os }}-${{ runner.arch }}-
           DEDUPE_NPM_DOWNLOADS: "true"
         run: node scripts/ci/cache-retention.mjs

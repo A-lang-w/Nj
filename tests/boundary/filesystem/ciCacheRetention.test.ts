@@ -64,6 +64,31 @@ describe("Turbo snapshot retention", () => {
     ).toEqual([1, 2]);
   });
 
+  it("keeps two generations of the deep and Knip snapshot families", () => {
+    const deep = "rea-static-deep-v1-Linux-X64-";
+    const knip = "knip-meta-v1-Linux-";
+    expect(
+      selectPrefixDeletions(
+        [
+          cache(1, `${deep}old`, "2026-10-20T01:00:00Z"),
+          cache(2, `${deep}mid`, "2026-10-20T02:00:00Z"),
+          cache(3, `${deep}new`, "2026-10-20T03:00:00Z"),
+        ],
+        { prefix: deep, keepKey: `${deep}new` },
+      ).map((entry) => entry.id),
+    ).toEqual([1]);
+    expect(
+      selectPrefixDeletions(
+        [
+          cache(4, `${knip}old`, "2026-10-20T01:00:00Z"),
+          cache(5, `${knip}mid`, "2026-10-20T02:00:00Z"),
+          cache(6, `${knip}new`, "2026-10-20T03:00:00Z"),
+        ],
+        { prefix: knip, keepKey: `${knip}new` },
+      ).map((entry) => entry.id),
+    ).toEqual([4]);
+  });
+
   it("retains the newest portable snapshots without a caller keep key", () => {
     const portable = "rea-portable-build-v2-Linux-X64-";
     const deletions = selectPrefixDeletions(
@@ -83,6 +108,9 @@ describe("Turbo snapshot retention", () => {
     ).toThrow(/one Turbo family/u);
     expect(() =>
       selectPrefixDeletions([], { prefix: "rea-static-v1-" }),
+    ).toThrow(/one Turbo family/u);
+    expect(() =>
+      selectPrefixDeletions([], { prefix: "knip-meta-v1-" }),
     ).toThrow(/one Turbo family/u);
     expect(() =>
       selectPrefixDeletions(
@@ -187,6 +215,43 @@ describe("npm download duplicate retention", () => {
     expect(() => selectNpmDownloadDuplicateDeletions([withoutRef])).toThrow(
       /ref/u,
     );
+  });
+
+  it("does not delete the only copy when pagination repeats its id", () => {
+    const key = "npm-download-Linux-x64-lock";
+    const version = "a".repeat(64);
+    const ref = "refs/heads/main";
+    const deletions = selectNpmDownloadDuplicateDeletions([
+      cache(
+        5,
+        key,
+        "2026-10-20T01:00:00Z",
+        "2026-10-20T02:00:00Z",
+        179,
+        version,
+        ref,
+      ),
+      cache(
+        5,
+        key,
+        "2026-10-20T01:00:00Z",
+        "2026-10-20T04:00:00Z",
+        179,
+        version,
+        ref,
+      ),
+    ]);
+    expect(deletions).toEqual([]);
+  });
+
+  it("aborts when the same id is listed with a different version", () => {
+    const key = "npm-download-Linux-x64-lock";
+    expect(() =>
+      selectNpmDownloadDuplicateDeletions([
+        cache(5, key, "2026-10-20T01:00:00Z", undefined, 179, "a".repeat(64)),
+        cache(5, key, "2026-10-20T01:00:00Z", undefined, 179, "b".repeat(64)),
+      ]),
+    ).toThrow(/inconsistent/u);
   });
 
   it("refuses a Turbo snapshot in the download list", () => {
@@ -325,6 +390,48 @@ describe("retention orchestration", () => {
     });
     expect(result.dryRun).toBe(true);
     expect(result.plan[0]?.deletions.map((entry) => entry.id)).toEqual([1]);
+  });
+});
+
+describe("repeated cache ids", () => {
+  const repository = "morluto/rea";
+  const prefix = "rea-static-v1-Linux-X64-";
+
+  it("treats one cache id on two pages as a single snapshot", () => {
+    const keepKey = `${prefix}saved`;
+    const deletions = selectPrefixDeletions(
+      [
+        cache(1, `${prefix}old`, "2026-10-20T01:00:00Z"),
+        cache(2, `${prefix}mid`, "2026-10-20T02:00:00Z"),
+        cache(3, keepKey, "2026-10-20T03:00:00Z", "2026-10-20T03:00:00Z"),
+        cache(3, keepKey, "2026-10-20T03:00:00Z", "2026-10-20T04:00:00Z"),
+      ],
+      { prefix, keepKey },
+    );
+    expect(deletions.map((entry) => entry.id)).toEqual([1]);
+  });
+
+  it("does not delete when one cache id is listed with inconsistent fields", async () => {
+    const deleted: number[] = [];
+    const repeated = cache(3, `${prefix}new`, "2026-10-20T03:00:00Z");
+    await expect(
+      retainCaches({
+        repository,
+        request: async () => ({
+          actions_caches: [
+            cache(1, `${prefix}old`, "2026-10-20T01:00:00Z"),
+            cache(2, `${prefix}mid`, "2026-10-20T02:00:00Z"),
+            repeated,
+            { ...repeated, version: "b".repeat(64) },
+          ],
+        }),
+        deleteCache: async (id) => {
+          deleted.push(id);
+        },
+        families: [{ prefix, keepKey: `${prefix}new` }],
+      }),
+    ).rejects.toThrow(/inconsistent/u);
+    expect(deleted).toEqual([]);
   });
 });
 

@@ -370,6 +370,31 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
   expect(retentionEnv.GH_TOKEN).toBe("${{ github.token }}");
   const ci = (await readWorkflows()).find(({ file }) => file === "ci.yml");
   expect(JSON.stringify(ci?.workflow)).not.toContain('"actions":"write"');
+  const deepSteps = ci?.workflow.jobs?.["static-deep"]?.steps ?? [];
+  const publishedKey = (id: string) =>
+    z
+      .string()
+      .parse(
+        z
+          .record(z.string(), z.unknown())
+          .parse(deepSteps.find((step) => step.id === id)?.with).key,
+      );
+  const savedOnThisRun = "${{ github.event.workflow_run.head_sha }}";
+  const deepPrefix = "rea-static-deep-v1-${{ runner.os }}-${{ runner.arch }}-";
+  const knipPrefix = "knip-meta-v1-${{ runner.os }}-";
+  expect(retentionEnv.CACHE_DEEP_PREFIX).toBe(deepPrefix);
+  expect(retentionEnv.CACHE_DEEP_KEEP_KEY).toBe(
+    publishedKey("static-cache").replaceAll(
+      "${{ github.sha }}",
+      savedOnThisRun,
+    ),
+  );
+  expect(publishedKey("static-cache").startsWith(deepPrefix)).toBe(true);
+  expect(retentionEnv.CACHE_KNIP_PREFIX).toBe(knipPrefix);
+  expect(retentionEnv.CACHE_KNIP_KEEP_KEY).toBe(
+    publishedKey("knip-cache").replaceAll("${{ github.sha }}", savedOnThisRun),
+  );
+  expect(publishedKey("knip-cache").startsWith(knipPrefix)).toBe(true);
 });
 
 it("publishes each hosted npm download cache from one writer", async () => {

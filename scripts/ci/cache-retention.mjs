@@ -16,7 +16,9 @@ const RETAINED_CACHE_GENERATIONS = 2;
 
 const PREFIX_PATTERNS = [
   /^rea-static-v1-[A-Za-z0-9]+-[A-Za-z0-9]+-$/u,
+  /^rea-static-deep-v1-[A-Za-z0-9]+-[A-Za-z0-9]+-$/u,
   /^rea-portable-build-v2-[A-Za-z0-9]+-[A-Za-z0-9]+-$/u,
+  /^knip-meta-v1-[A-Za-z0-9]+-$/u,
 ];
 
 /** Reject prefixes that could match npm downloads or another platform. */
@@ -26,7 +28,7 @@ export function assertRetentionPrefix(prefix) {
     !PREFIX_PATTERNS.some((pattern) => pattern.test(prefix))
   )
     throw new Error(
-      "Cache retention prefix must be one Turbo family for one OS and architecture",
+      "Cache retention prefix must be one Turbo family for one OS and architecture, or one Knip metadata family for one OS",
     );
 }
 
@@ -57,6 +59,36 @@ function normalizeCache(cache, index) {
   return { id, key, version, ref, createdAt, accessedAt, size };
 }
 
+function sameStableIdentity(left, right) {
+  return (
+    left.key === right.key &&
+    left.version === right.version &&
+    left.ref === right.ref &&
+    left.size === right.size &&
+    left.createdAt === right.createdAt
+  );
+}
+
+// The list API orders by last access. A restore between pages can place one
+// id on two pages. That is still one cache: collapse it, or abort when the
+// pages disagree, before any id can be both kept and deleted.
+function uniqueById(entries) {
+  const byId = new Map();
+  for (const entry of entries) {
+    const existing = byId.get(entry.id);
+    if (existing === undefined) {
+      byId.set(entry.id, entry);
+      continue;
+    }
+    if (!sameStableIdentity(existing, entry))
+      throw new Error(
+        `Cache id ${String(entry.id)} was listed with inconsistent fields`,
+      );
+    if (entry.accessedAt > existing.accessedAt) byId.set(entry.id, entry);
+  }
+  return [...byId.values()];
+}
+
 function byNewest(left, right) {
   if (left.createdAt !== right.createdAt)
     return right.createdAt - left.createdAt;
@@ -83,7 +115,7 @@ export function selectPrefixDeletions(
     )
       throw new Error("Cache retention keep key must extend its prefix");
   }
-  const entries = caches.map(normalizeCache);
+  const entries = uniqueById(caches.map(normalizeCache));
   for (const entry of entries)
     if (!entry.key.startsWith(prefix))
       throw new Error(
@@ -107,7 +139,7 @@ export function selectPrefixDeletions(
  * only a matching version inside its visible scope.
  */
 export function selectNpmDownloadDuplicateDeletions(caches) {
-  const entries = caches.map(normalizeCache);
+  const entries = uniqueById(caches.map(normalizeCache));
   for (const entry of entries)
     if (!entry.key.startsWith("npm-download-"))
       throw new Error(
@@ -220,16 +252,27 @@ function repositoryFromEnv(env) {
   return repository;
 }
 
+function familyWithKeepKey(env, prefixName, keepName) {
+  const prefix = env[prefixName];
+  const keepKey = env[keepName];
+  const hasPrefix = typeof prefix === "string" && prefix.length > 0;
+  const hasKeepKey = typeof keepKey === "string" && keepKey.length > 0;
+  if (!hasPrefix && !hasKeepKey) return undefined;
+  if (!hasPrefix || !hasKeepKey)
+    throw new Error(`${keepName} is required with ${prefixName}`);
+  return { prefix, keepKey };
+}
+
 function familiesFromEnv(env) {
-  const families = [];
-  if (env.CACHE_PREFIX) {
-    const keepKey = env.CACHE_KEEP_KEY;
-    if (!keepKey)
-      throw new Error("CACHE_KEEP_KEY is required with CACHE_PREFIX");
-    families.push({ prefix: env.CACHE_PREFIX, keepKey });
-  }
-  if (env.CACHE_PORTABLE_PREFIX)
-    families.push({ prefix: env.CACHE_PORTABLE_PREFIX });
+  const families = [
+    familyWithKeepKey(env, "CACHE_PREFIX", "CACHE_KEEP_KEY"),
+    familyWithKeepKey(env, "CACHE_DEEP_PREFIX", "CACHE_DEEP_KEEP_KEY"),
+    familyWithKeepKey(env, "CACHE_KNIP_PREFIX", "CACHE_KNIP_KEEP_KEY"),
+    typeof env.CACHE_PORTABLE_PREFIX === "string" &&
+    env.CACHE_PORTABLE_PREFIX.length > 0
+      ? { prefix: env.CACHE_PORTABLE_PREFIX }
+      : undefined,
+  ].filter((family) => family !== undefined);
   if (families.length === 0 && env.DEDUPE_NPM_DOWNLOADS !== "true")
     throw new Error(
       "Cache retention requires CACHE_PREFIX or CACHE_PORTABLE_PREFIX or npm dedupe",
