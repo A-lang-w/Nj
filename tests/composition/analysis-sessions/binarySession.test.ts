@@ -473,7 +473,11 @@ it("retains external-writer cleanup failure alongside analysis-client close fail
   const writerFailure = new ProviderCleanupError("rizin", ["debugger-writer"], {
     reason: "writer still owns the target",
   });
-  const clientFailure = new HopperStartError();
+  const clientFailure = new ProviderCleanupError(
+    "fixture",
+    ["analysis-client"],
+    { reason: "analysis client cleanup is pending" },
+  );
   let closeAttempts = 0;
   const session = createTestBinarySession(() => ({
     execute: () => Promise.resolve(ok(null)),
@@ -499,8 +503,18 @@ it("retains external-writer cleanup failure alongside analysis-client close fail
       }),
     },
   });
-  expect(writerFailure.cleanupIncomplete).toBe(true);
+  if (result.ok)
+    throw new Error("Expected both cleanup owners to remain pending");
+  const aggregate = result.error;
+  expect(aggregate.cleanupIncomplete).toBe(true);
+  expect(aggregate.cleanupResources).toEqual([
+    "analysis-client",
+    "debugger-writer",
+  ]);
+  clientFailure.resolveCleanup();
   writerFailure.resolveCleanup();
+  expect(aggregate.cleanupIncomplete).toBe(false);
+  expect(aggregate.cleanupResources).toEqual([]);
   expect((await session.close()).ok).toBe(true);
 });
 

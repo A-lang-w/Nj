@@ -569,13 +569,17 @@ export class BinarySession
     // External writers own their cleanup independently of analysis clients.
     // Settle that owner within this transition before deciding close completion.
     await options.afterResourceClose?.();
+    const closeFailureDependencies = [
+      ...(!closed.ok ? [closed.error] : []),
+      ...resourceFailures,
+    ];
     let closeFailure = !closed.ok ? closed.error : resourceFailure;
     if (!closed.ok && resourceFailure !== undefined)
       closeFailure = analysisErrorWithCleanupFailure(
         closed.error,
         resourceFailure,
         "close_binary",
-      );
+      ).bindCleanupDependencies(closeFailureDependencies);
     // Closing analysis resources cannot acknowledge another owner's writer.
     // Include that independent failure in this result and retain it until its
     // owner confirms cleanup, even when this transition is retiring only the
@@ -591,7 +595,10 @@ export class BinarySession
               closeFailure,
               this.#externalMutationCleanupFailure,
               "close_binary",
-            );
+            ).bindCleanupDependencies([
+              ...closeFailureDependencies,
+              this.#externalMutationCleanupFailure,
+            ]);
     } else if (
       clearRecords &&
       this.#externalMutationCleanupFailure?.cleanupIncomplete !== true
