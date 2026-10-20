@@ -209,10 +209,16 @@ describe("provider process output and cleanup primitives", () => {
     });
 
     await expect(supervisor.waitForOutputClose(2_000)).resolves.toBe(true);
-    expect(supervisor.snapshot()).toMatchObject({
-      stdout: { text: "a�b", invalidUtf8: true },
-      stderr: { text: "c�d", invalidUtf8: true },
-    });
+    const decode = vi.spyOn(TextDecoder.prototype, "decode");
+    try {
+      expect(supervisor.snapshot()).toMatchObject({
+        stdout: { text: "a�b", invalidUtf8: true },
+        stderr: { text: "c�d", invalidUtf8: true },
+      });
+      expect(decode).not.toHaveBeenCalled();
+    } finally {
+      decode.mockRestore();
+    }
     await expect(supervisor.stop()).resolves.toMatchObject({
       status: "already-exited",
     });
