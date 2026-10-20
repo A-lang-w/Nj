@@ -13,6 +13,7 @@ import {
   type StateView,
 } from "./environmentStateRules.js";
 import {
+  documentBodyProblem,
   updatedEntity,
   updatedFields,
   writtenDocument,
@@ -34,6 +35,7 @@ import {
 } from "./environmentStateWriteObserve.js";
 import {
   pathValuesOf,
+  type FieldRule,
   type InsertRule,
   type StateWritePlan,
   type WriteCall,
@@ -52,6 +54,11 @@ export interface WriteDraft {
   contradictedBy: number | undefined;
   sideEffect: boolean;
   calls: number;
+  /** The fields each modelled update call showed and sent, which later rules must agree with. */
+  readonly updates: {
+    readonly shown: ReadonlySet<string>;
+    readonly sent: ReadonlySet<string>;
+  }[];
 }
 
 /** Response bodies, request bodies and budget the effects read. */
@@ -77,6 +84,8 @@ export interface EffectContext {
   readonly observed: (ordinal: number) => void;
   /** Whether an unmodelled write may have changed the entity since the state last saw it. */
   readonly unknown: (type: string, collection: string, id: string) => boolean;
+  /** A document's value in the initial state, which serving also reads member types from. */
+  readonly initialDocument: (tool: string) => JsonValue | undefined;
 }
 
 /** One recorded write: the record, its timeline index, its tool, and whether its plan only takes the recorded outcome. */
@@ -233,6 +242,28 @@ const refineUpdate = (
   ];
 };
 
+/** Whether a rule changes its field on calls that do not send it: serving applies it to every call that could. */
+const unsentChange = (rule: FieldRule): boolean =>
+  rule.rule === "increment" || rule.rule === "slug";
+
+/** Whether a rule a later call showed would have changed a field an earlier call showed unchanged without sending. */
+const contradictsEarlierCalls = (
+  draft: WriteDraft,
+  rules: readonly FieldRule[],
+): boolean => {
+  const ruled = new Set(draft.plan.rules.map((rule) => rule.field));
+  return rules.some(
+    (rule) =>
+      unsentChange(rule) &&
+      !ruled.has(rule.field) &&
+      draft.updates.some(
+        ({ shown, sent }) =>
+          shown.has(rule.field) &&
+          (rule.rule !== "slug" || sent.has(rule.from)),
+      ),
+  );
+};
+
 /** Build an update plan from its exemplar, or add what a later call showed. */
 const buildUpdate = (
   context: EffectContext,
@@ -321,6 +352,15 @@ export const applyUpdate = (
     refuse(draft, step, "unexplained-change");
     return recorded();
   }
+  // Rules for unsent changes hold for every call, so each call must agree with those of the others.
+  if (
+    built(draft) &&
+    !unknown &&
+    contradictsEarlierCalls(draft, explained.rules)
+  ) {
+    refuse(draft, step, "unexplained-change");
+    return recorded();
+  }
   buildUpdate(context, draft, step, { after, explained, idField });
   // Serving reads the plan's observation, so the gate does too; generated values are this call's.
   const written = updatedFields(
@@ -329,8 +369,21 @@ export const applyUpdate = (
     { ...call, id },
     (rule) => after.object[rule.field] ?? null,
   );
-  if (!written.ok) refuse(draft, step, "unexplained-change");
-  if (!written.ok || unknown) return recorded();
+  const disagrees =
+    written.ok &&
+    draft.plan.rules.some(
+      (rule) =>
+        unsentChange(rule) &&
+        Object.hasOwn(after.object, rule.field) &&
+        !same(written.value[rule.field], after.object[rule.field]),
+    );
+  if (!written.ok || (disagrees && !unknown))
+    refuse(draft, step, "unexplained-change");
+  if (!written.ok || disagrees || unknown) return recorded();
+  const shown = Object.keys(after.object);
+  const sentMembers = Object.keys(body);
+  context.io.retain(64 + [...shown, ...sentMembers].join("").length * 2);
+  draft.updates.push({ shown: new Set(shown), sent: new Set(sentMembers) });
   context.io.retain(64 + JSON.stringify(written.value).length * 2);
   context.state.put(updatedEntity(entity, written.value));
   // A later read that also shows an unmodelled change checks only the members this call sent.
@@ -412,7 +465,18 @@ export const applyDocument = (
         identity: null,
       },
     });
-  const written = writtenDocument(draft.plan, value, callOf(step, body));
+  const call = callOf(step, body);
+  // Serving refuses a body its check refuses, so such a call cannot confirm the plan.
+  if (
+    documentBodyProblem(draft.plan, call, {
+      initial: context.initialDocument(tool),
+      current: value,
+    }) !== undefined
+  ) {
+    refuse(draft, step, "unexplained-change");
+    return UNKNOWN;
+  }
+  const written = writtenDocument(draft.plan, value, call);
   if (!written.ok) {
     refuse(draft, step, "no-observation");
     return UNKNOWN;

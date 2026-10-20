@@ -17,9 +17,13 @@ import {
   renamedBook,
   type Book,
 } from "../../../tests/fixtures/environmentStateWrites.js";
+import type { TimedCaptureRow } from "../../../tests/fixtures/analysisView.js";
 import type { ReplayArguments } from "./environmentReplay.js";
 import { servedCatalog } from "./environmentState.js";
-import { environmentToolDefinitions } from "./environmentTools.js";
+import {
+  environmentToolArguments,
+  environmentToolDefinitions,
+} from "./environmentTools.js";
 
 /** The book the first served create of "New Book" makes: the next id, one second past the served clock's start. */
 const NEW_BOOK = book(3, "New Book", bookClock(13));
@@ -353,5 +357,54 @@ describe("paged list lines", () => {
       body: [FIRST_BOOK, SECOND_BOOK],
       state: { source: "recording", reason: "unrecorded-request" },
     });
+  });
+});
+
+describe("path values", () => {
+  const orgBook = (id: number, org: string, name: string): Book => ({
+    id,
+    org,
+    name,
+  });
+  const ALPHA = orgBook(1, "my org1", "Alpha");
+  const BETA = orgBook(2, "acme2", "Beta");
+  const GAMMA = orgBook(3, "my org1", "Gamma");
+  const DELTA = orgBook(4, "acme2", "Delta");
+  /** Books under two organisations, one whose name the paths percent-encode, and a create under each. */
+  const ROWS: readonly TimedCaptureRow[] = [
+    ["GET", "/api/orgs/my%20org1/books", [ALPHA]],
+    ["GET", "/api/orgs/acme2/books", [BETA]],
+    ["GET", "/api/orgs/my%20org1/books/1", ALPHA],
+    ["GET", "/api/orgs/acme2/books/2", BETA],
+    ["POST", "/api/orgs/my%20org1/books", GAMMA, 201, { name: "Gamma" }],
+    ["GET", "/api/orgs/my%20org1/books", [ALPHA, GAMMA]],
+    ["POST", "/api/orgs/acme2/books", DELTA, 201, { name: "Delta" }],
+    ["GET", "/api/orgs/acme2/books", [BETA, DELTA]],
+  ];
+
+  it("stores a parent path value decoded, as the gate learned it, whichever spelling the call uses", () => {
+    for (const spelling of ["my%20org1", "my org1"]) {
+      const books = servedFrom(ROWS);
+      const tool = books.source.manifest.tools.find(
+        (candidate) => candidate.method === "POST",
+      )!;
+      expect(books.state.writes.get(tool.name)).toMatchObject({
+        served: true,
+        rules: expect.arrayContaining([
+          expect.objectContaining({ field: "org", rule: "path" }),
+        ]),
+      });
+      const [org] = environmentToolArguments(tool).path.values();
+      books.answer(tool.name, { [org!]: spelling, body: { name: "Epsilon" } });
+      const created = books.store
+        .snapshot()
+        .rea_state.entities.find(
+          (entity) => entity.fields["name"] === "Epsilon",
+        );
+      expect(created).toMatchObject({
+        collection: "/api/orgs/my%20org1/books",
+        fields: { org: "my org1" },
+      });
+    }
   });
 });

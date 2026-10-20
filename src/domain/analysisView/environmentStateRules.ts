@@ -204,15 +204,18 @@ export const same = (
     : canonicalJson(left, "Environment state") ===
       canonicalJson(right, "Environment state");
 
-/** The decoded final path segment, which an item request names its entity by. */
-export const lastSegmentValue = (path: string): string => {
-  const segment = segmentsOf(path).at(-1) ?? "";
+/** A path segment percent-decoded, or as written when it does not decode. */
+export const decodedSegment = (segment: string): string => {
   try {
     return decodeURIComponent(segment);
   } catch {
     return segment;
   }
 };
+
+/** The decoded final path segment, which an item request names its entity by. */
+export const lastSegmentValue = (path: string): string =>
+  decodedSegment(segmentsOf(path).at(-1) ?? "");
 
 /** A path's non-empty segments, so a trailing slash names the same collection. */
 export const normalizedPath = (path: string): string =>

@@ -620,8 +620,9 @@ echo when stored as sent; a member stored differently is accepted only with its
 recorded value (`body.fixed`) and stores the value the call that showed it
 recorded (the `value` of its `constant` rule), and a field it changed without
 sending must be a clock, an increment or a slug, or the plan is
-`unexplained-change`. Every member the first call sent is required, except by
-`PATCH` and `POST` updates.
+`unexplained-change`; an increment or slug must hold for every call of the
+tool. Every member the first call sent is required, except by `PATCH` and
+`POST` updates.
 
 The view then replays the timeline on a copy of the initial state. Modelled
 writes apply their effect; only a `2xx` write is modelled or an example, and

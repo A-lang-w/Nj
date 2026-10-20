@@ -65,7 +65,9 @@ identity the client sends is an echo:
 1. **Echo.** A body member of the same name with an equal value.
 2. **Copy.** A body string of 8 or more characters, found at a JSON pointer of
    the body (the shallowest match).
-3. **Path.** The value of a path parameter of the call.
+3. **Path.** The value of a path parameter of the call, percent-decoded.
+   Serving decodes it from the collection the call names, whichever spelling
+   the call uses.
 4. **Slug.** The slug of a body string member: lower case, runs of other
    characters joined by `-`.
 5. **Identity.** The type's `id_field` is generated. A sequence when it is an
@@ -107,7 +109,9 @@ explained as one of:
 - an increment by one;
 - a slug of an echoed member.
 
-Any other change is `unexplained-change`.
+Any other change is `unexplained-change`. An increment or a slug applies to
+every call that could take it, so a call that leaves such a field as it was
+while another call of the tool changes it is also `unexplained-change`.
 
 **Deletes.** A delete removes the entity. Its response is the exemplar's
 response, with the entity re-rendered when the response carries it.
@@ -115,7 +119,9 @@ response, with the entity re-rendered when the response carries it.
 **Documents.** A document write merges the body's members (replaces them, for
 `PUT`) into the document object that holds most of them: the root or one
 member. Document reads answer only on their recorded line, so a write is
-served only at the path the state holds the document at.
+served only at the path the state holds the document at. A recorded write
+whose body serving would refuse (a member of another JSON type than the
+document holds) is `unexplained-change`.
 
 **Responses.** A write answers with the status and content type of one
 recorded response:
@@ -165,7 +171,9 @@ members they sent.
 from the state:
 
 - an item read of a state-backed item view;
-- a list or document read on one of its view's checked request lines.
+- a list or document read on one of its view's checked request lines,
+  matched as serving matches a call to a line: path and query values
+  decoded, the query in any order.
 
 **Comparison.** The read's answer is the full response serving would give from
 the copy: an item read's entity rendered into its item view's base recording,
@@ -190,7 +198,8 @@ body, for an entity the copy does not hold agrees with it.
   checked again.
 - A list that fails only for where one create placed its entity passes when
   another of that create's insert candidates reproduces it, which then
-  becomes the plan's rule.
+  becomes the plan's rule, unless an earlier list check relied on the rule
+  (an item read's confirmation does not fix it).
 - The read that supplied a create's or update's observation does not check
   it.
 

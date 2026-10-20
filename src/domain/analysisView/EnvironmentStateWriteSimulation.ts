@@ -18,9 +18,11 @@ import {
   checkDocumentRead,
   checkItemRead,
   checkListRead,
+  checkedLines,
   collectionTarget,
   entityTarget,
   isAbsence,
+  requestLine,
   succeeded,
   withBodies,
   writtenFieldChecks,
@@ -60,9 +62,6 @@ export interface WriteSimulationInput {
   readonly io: WriteIo;
 }
 
-const requestLine = (record: StateRecordFacts): string =>
-  record.path + (record.query ?? "");
-
 const APPLY = {
   create: applyCreate,
   update: applyUpdate,
@@ -82,7 +81,7 @@ export class EnvironmentStateWriteSimulation {
   readonly #toolOf = new Map<number, StateToolFacts>();
   readonly #types = new Map<string, StateType>();
   /** Each list or document view's checked request lines, with the recording a call of the line is answered on. */
-  readonly #checkedLines = new Map<string, ReadonlyMap<string, number>>();
+  readonly #checkedLines: ReadonlyMap<string, ReadonlyMap<string, number>>;
   readonly #observations = new Set<number>();
   readonly #taint: WriteTaint;
   /** Modelled writes per target since its last check, with the fields each wrote (null: all). */
@@ -99,6 +98,8 @@ export class EnvironmentStateWriteSimulation {
   }[] = [];
   /** Entities a create inserted, by target, with the create's tool. */
   readonly #inserted = new Map<string, string>();
+  /** Creates whose insert rule a passing list check relied on, so it is no longer changed. */
+  readonly #placed = new Set<string>();
 
   constructor(input: WriteSimulationInput) {
     this.#input = input;
@@ -108,22 +109,7 @@ export class EnvironmentStateWriteSimulation {
     for (const tool of input.tools)
       for (const ordinal of tool.record_ordinals)
         this.#toolOf.set(ordinal, tool);
-    const byOrdinal = new Map(
-      input.records.map((record) => [record.ordinal, record]),
-    );
-    for (const view of input.views.values())
-      if (view.shape !== "recorded" && view.shape !== "item")
-        this.#checkedLines.set(
-          view.tool,
-          new Map(
-            view.checked_record_ordinals.flatMap((ordinal) => {
-              const record = byOrdinal.get(ordinal);
-              return record === undefined
-                ? []
-                : [[requestLine(record), ordinal] as const];
-            }),
-          ),
-        );
+    this.#checkedLines = checkedLines(input);
     this.#taint = new WriteTaint(
       [...this.#types.keys()],
       new Map(
@@ -156,6 +142,7 @@ export class EnvironmentStateWriteSimulation {
         contradictedBy: undefined,
         sideEffect: false,
         calls: 0,
+        updates: [],
       });
     }
     this.#input.records.forEach((record, index) => this.#step(record, index));
@@ -188,6 +175,8 @@ export class EnvironmentStateWriteSimulation {
       observed: (ordinal) => this.#observations.add(ordinal),
       unknown: (type, collection, id) =>
         this.#taint.unknown(type, collection, id),
+      initialDocument: (tool) =>
+        this.#input.documents.find((document) => document.tool === tool)?.value,
     };
   }
 
@@ -363,8 +352,10 @@ export class EnvironmentStateWriteSimulation {
       outcome.pass ||
       (view.shape === "list" && this.#retryInsert(view, record, exercised));
     if (pass)
-      for (const name of exercised)
+      for (const name of exercised) {
         this.#drafts.get(name)!.confirmed.push(record.ordinal);
+        if (view.shape === "list") this.#placed.add(name);
+      }
     else if (this.#interfered(keys)) {
       // An unmodelled write since these writes may explain the difference: check their own members only.
       if (view.shape === "item") this.#checkMembers(view, record);
@@ -488,7 +479,8 @@ export class EnvironmentStateWriteSimulation {
     if (creates.size !== 1) return false;
     const [name] = creates;
     const draft = this.#drafts.get(name!)!;
-    if (!exercised.has(name!) || draft.confirmed.length > 0) return false;
+    // An item read confirms the entity, not where a list places it.
+    if (!exercised.has(name!) || this.#placed.has(name!)) return false;
     for (const candidate of draft.candidates.slice(1)) {
       for (const entity of inserted) this.#state.remove(entity);
       for (const entity of inserted) {

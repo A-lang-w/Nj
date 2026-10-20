@@ -10,6 +10,7 @@ import {
   FIRST_BOOK,
   SECOND_BOOK,
   THIRD_BOOK,
+  book,
   bookClock,
   environmentStateViewOf,
   renamedBook,
@@ -99,6 +100,29 @@ describe("reads compared as the served environment answers them", () => {
       gated(deletedFromFiltered([FIRST_BOOK]), "delete_books_by_id"),
     ).toMatchObject({ served: true, checked_record_ordinals: [4] });
   });
+
+  /** A delete confirmed by an item read, then the filtered list recorded with its query reordered. */
+  const deletedThenReordered = (listed: readonly Book[]): TimedCaptureRow[] => [
+    ["GET", "/api/books/1", FIRST_BOOK],
+    ["GET", "/api/books/2", SECOND_BOOK],
+    ["GET", "/api/books?shelf=a&sort=id", [FIRST_BOOK, SECOND_BOOK]],
+    ["DELETE", "/api/books/2", "", 204],
+    ["GET", "/api/books/2", BOOK_NOT_FOUND, 404],
+    ["GET", "/api/books?sort=id&shelf=a", [...listed]],
+  ];
+
+  it("checks a list read on a checked line however its query is ordered, as serving matches it", () => {
+    // The item read already checked the delete, so a list still showing the book marks it a side effect.
+    expect(
+      gated(
+        deletedThenReordered([FIRST_BOOK, SECOND_BOOK]),
+        "delete_books_by_id",
+      ),
+    ).toMatchObject({ served: false, reason: "side-effect" });
+    expect(
+      gated(deletedThenReordered([FIRST_BOOK]), "delete_books_by_id"),
+    ).toMatchObject({ served: true, checked_record_ordinals: [4] });
+  });
 });
 
 describe("update constants", () => {
@@ -159,6 +183,70 @@ describe("write examples", () => {
       exemplar_ordinal: 5,
       checked_record_ordinals: [6],
       contradicted_by: null,
+    });
+  });
+});
+
+describe("update rules learned from a later call", () => {
+  const versioned = (entry: Book, version: number): Book => ({
+    ...entry,
+    version,
+  });
+  /** Two renames, of the first and the second book, each answered at the version given. */
+  const renames = (first: number, second: number): TimedCaptureRow[] => {
+    const firstAfter = versioned(
+      renamedBook(FIRST_BOOK, "Renamed Book", 3),
+      first,
+    );
+    const secondAfter = versioned(
+      renamedBook(SECOND_BOOK, "Second Edition", 5),
+      second,
+    );
+    return [
+      [
+        "GET",
+        "/api/books",
+        [versioned(FIRST_BOOK, 1), versioned(SECOND_BOOK, 1)],
+      ],
+      ["GET", "/api/books/1", versioned(FIRST_BOOK, 1)],
+      ["GET", "/api/books/2", versioned(SECOND_BOOK, 1)],
+      ["PATCH", "/api/books/1", firstAfter, 200, { name: "Renamed Book" }],
+      ["GET", "/api/books/1", firstAfter],
+      ["PATCH", "/api/books/2", secondAfter, 200, { name: "Second Edition" }],
+      ["GET", "/api/books/2", secondAfter],
+    ];
+  };
+
+  it("leaves an update unserved when one call increments a field another left as it was", () => {
+    for (const [first, second] of [
+      [1, 2],
+      [2, 1],
+    ] as const)
+      expect(gated(renames(first, second), "patch_books_by_id")).toMatchObject({
+        served: false,
+        reason: "unexplained-change",
+      });
+    expect(gated(renames(2, 2), "patch_books_by_id")).toMatchObject({
+      served: true,
+      rules: expect.arrayContaining([{ field: "version", rule: "increment" }]),
+      checked_record_ordinals: [4, 6],
+    });
+  });
+});
+
+describe("insert rules", () => {
+  it("still learns where a list places a create after an item read confirmed it", () => {
+    const alpha = book(3, "Alpha", bookClock(3));
+    const rows: TimedCaptureRow[] = [
+      ...BOOK_INIT_ROWS,
+      ["POST", "/api/books", alpha, 201, { name: "Alpha" }],
+      ["GET", "/api/books/3", alpha],
+      ["GET", "/api/books", [alpha, FIRST_BOOK, SECOND_BOOK]],
+    ];
+    expect(gated(rows, "post_books")).toMatchObject({
+      served: true,
+      insert: { rule: "sorted", field: "name", direction: "ascending" },
+      checked_record_ordinals: [4, 5],
     });
   });
 });

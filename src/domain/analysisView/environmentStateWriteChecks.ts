@@ -1,8 +1,13 @@
 import type { JsonValue } from "../jsonValue.js";
-import { compositeKey } from "../unicodeCodePointOrder.js";
+import { iterateUrlQueryParameters } from "../recordedTransportUrl.js";
+import {
+  compareUnicodeCodePoints as compare,
+  compositeKey,
+} from "../unicodeCodePointOrder.js";
 import {
   at,
   collectionPathOf,
+  decodedSegment,
   isObject,
   lastSegmentValue,
   listItems,
@@ -11,13 +16,56 @@ import {
   replaceAt,
   same,
   scalarText,
+  segmentsOf,
   type JsonObject,
   type StateDocument,
   type StateEntity,
   type StateItemView,
   type StateListView,
   type StateRecordFacts,
+  type StateToolFacts,
+  type StateView,
 } from "./environmentStateRules.js";
+
+/**
+ * A read's request line as serving names one: its path segments and query values decoded, the
+ * query in any order. A query repeating a name is no call's arguments, so it keeps its spelling.
+ */
+export const requestLine = (record: StateRecordFacts): string => {
+  const query = [...iterateUrlQueryParameters(record.query ?? "")];
+  if (new Set(query.map(([name]) => name)).size !== query.length)
+    return compositeKey([record.path, record.query ?? ""]);
+  return compositeKey([
+    segmentsOf(record.path).map(decodedSegment),
+    query.sort(([left], [right]) => compare(left, right)),
+  ]);
+};
+
+/** Each list or document view's checked lines, by request line, as serving answers a call: from the first checked line it names, in the tool's recorded order. */
+export const checkedLines = (input: {
+  readonly tools: readonly StateToolFacts[];
+  readonly records: readonly StateRecordFacts[];
+  readonly views: ReadonlyMap<string, StateView>;
+}): Map<string, ReadonlyMap<string, number>> => {
+  const byOrdinal = new Map(
+    input.records.map((record) => [record.ordinal, record]),
+  );
+  const tools = new Map(input.tools.map((tool) => [tool.name, tool]));
+  const byView = new Map<string, ReadonlyMap<string, number>>();
+  for (const view of input.views.values()) {
+    if (view.shape === "recorded" || view.shape === "item") continue;
+    const checked = new Set(view.checked_record_ordinals);
+    const lines = new Map<string, number>();
+    for (const ordinal of tools.get(view.tool)?.record_ordinals ?? []) {
+      const record = byOrdinal.get(ordinal);
+      if (!checked.has(ordinal) || record === undefined) continue;
+      const line = requestLine(record);
+      if (!lines.has(line)) lines.set(line, ordinal);
+    }
+    byView.set(view.tool, lines);
+  }
+  return byView;
+};
 
 export const entityTarget = (type: string, collection: string, id: string) =>
   `e${compositeKey([type, collection, id])}`;

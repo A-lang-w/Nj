@@ -82,6 +82,19 @@ describe("served document writes", () => {
     expect(settings.answer(READ_SETTINGS, { id: "1" }).body).toEqual(blue);
   });
 
+  it("leaves a document write unserved when its recording changed a member's JSON type, which serving would refuse", () => {
+    const retyped = { theme: 5, meta: LIGHT.meta };
+    const settings = servedFrom([
+      ["GET", "/api/orgs/1/settings", DARK],
+      ["PATCH", "/api/orgs/1/settings", retyped, 200, retyped],
+      ["GET", "/api/orgs/1/settings", retyped],
+    ]);
+    expect(settings.state.writes.get(PATCH_SETTINGS)).toMatchObject({
+      served: false,
+      reason: "unexplained-change",
+    });
+  });
+
   it("changes the document only at the path the state holds it", () => {
     const settings = servedFrom(SETTINGS_ROWS);
     expectRefusedUnchanged(settings, [

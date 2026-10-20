@@ -236,6 +236,26 @@ export const updatedFields = (
   return ok(written);
 };
 
+/** Why a document write's body does not fit what the capture showed: members its plan accepts, as the JSON types the document holds, a member a replacing write dropped keeping the type the initial document showed. */
+export const documentBodyProblem = (
+  plan: Pick<StateWritePlan, "body" | "observation">,
+  call: WriteCall,
+  documents: {
+    readonly initial: JsonValue | undefined;
+    readonly current: JsonValue;
+  },
+): string | undefined => {
+  if (plan.body === null) return "The tool has no modelled body.";
+  const pointer = plan.observation?.pointer ?? "";
+  const members = (value: JsonValue | undefined): JsonObject => {
+    const object = value === undefined ? undefined : at(value, pointer);
+    return isObject(object) ? object : {};
+  };
+  return bodyProblem(plan.body, call, {
+    entity: { ...members(documents.initial), ...members(documents.current) },
+  });
+};
+
 /** A document after a write: the body's members merged into, or replacing, the object at the pointer. */
 export const writtenDocument = (
   plan: Pick<StateWritePlan, "merge" | "observation">,

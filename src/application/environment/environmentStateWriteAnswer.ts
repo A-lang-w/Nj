@@ -1,6 +1,6 @@
 import {
-  bodyProblem,
   createdFields,
+  documentBodyProblem,
   updatedEntity,
   updatedFields,
   valueAt,
@@ -9,10 +9,11 @@ import {
   type GenerateValue,
 } from "../../domain/analysisView/environmentStateWriteApply.js";
 import { insertIndex } from "../../domain/analysisView/environmentStateWriteExplain.js";
-import type {
-  GeneratedRule,
-  StateWritePlan,
-  WriteCall,
+import {
+  pathValuesOf,
+  type GeneratedRule,
+  type StateWritePlan,
+  type WriteCall,
 } from "../../domain/analysisView/environmentStateWriteRules.js";
 import {
   formatClock,
@@ -23,7 +24,6 @@ import {
   spelledLike,
 } from "../../domain/analysisView/environmentStateWriteValues.js";
 import {
-  at,
   isObject,
   scalarText,
   type JsonObject,
@@ -275,7 +275,12 @@ const answerCreate = (
     collection: members,
     observed,
   });
-  const fields = createdFields(plan, observed, call, values.generate);
+  // The gate learned path rules from the recorded path, decoded; the collection is this call's.
+  const created = {
+    ...call,
+    pathValues: pathValuesOf(tool.path_template, collection) ?? call.pathValues,
+  };
+  const fields = createdFields(plan, observed, created, values.generate);
   if (!fields.ok) return err(refused(tool, fields.error));
   const field = unloadableMember(fields.value);
   if (field !== undefined) return err(unloadable(tool, `Field ${field}`));
@@ -439,17 +444,12 @@ const documentTarget = (
         `The state holds this document only at ${held.path}; the environment models writes to it only there.`,
       ),
     );
-  const pointer = plan.observation?.pointer ?? "";
-  const members = (value: JsonValue | undefined): JsonObject => {
-    const object = value === undefined ? undefined : at(value, pointer);
-    return isObject(object) ? object : {};
-  };
   const initial = serving.store.state.documents.find(
     (document) => document.tool === held.tool,
   );
-  // A member a replacing write dropped keeps the type the capture showed.
-  const problem = bodyProblem(plan.body, call, {
-    entity: { ...members(initial?.value), ...members(held.value) },
+  const problem = documentBodyProblem(plan, call, {
+    initial: initial?.value,
+    current: held.value,
   });
   return problem === undefined ? ok(held) : err(refused(tool, problem));
 };
