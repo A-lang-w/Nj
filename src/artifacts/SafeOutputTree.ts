@@ -21,6 +21,7 @@ import {
 } from "./ArtifactPaths.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { SafeOutputSourceCleanupFailure } from "./SafeOutputSourceCleanupFailure.js";
 import { SafeOutputTreeCreationFailure } from "./SafeOutputTreeCreationFailure.js";
 import { hashOutputFile } from "./SafeOutputTreeReadback.js";
 import { removeOwnedTree } from "./SafeOutputTreeCleanup.js";
@@ -169,6 +170,12 @@ export class SafeOutputTree {
   ): Promise<SafeOutputFile> {
     // Own errors before asynchronous destination setup, without starting reads.
     // Retain the observer through destruction, including late cleanup errors.
+    const sourceFailures = new Set<unknown>();
+    const observeSourceFailure = (failure: unknown): void => {
+      sourceFailures.add(failure);
+    };
+    if (source.errored !== null) observeSourceFailure(source.errored);
+    source.on("error", observeSourceFailure);
     let stopObservingSource!: () => void;
     const sourceCompletion = new Promise<Error | undefined>((resolve) => {
       stopObservingSource = finished(
@@ -225,7 +232,8 @@ export class SafeOutputTree {
       const hash = createHash("sha256");
       let bytes = 0;
       await this.#assertLineage(lineage);
-      for await (const raw of source) {
+      // This owner joins destruction and records its failures on early exit.
+      for await (const raw of source.iterator({ destroyOnReturn: false })) {
         abortIfNeeded(signal);
         const chunk = streamChunkToBuffer(raw);
         if (chunk.length > expected.bytes - bytes)
@@ -280,12 +288,18 @@ export class SafeOutputTree {
         // join the resource state even if finished() has already seen an error.
         await setImmediate();
         while (!source.closed) await setTimeout(10);
-      } catch {
-        // Preserve the write refusal or failure as the caller-visible error.
+      } catch (cleanupCause: unknown) {
+        observeSourceFailure(cleanupCause);
       }
+      const cleanupFailures = [...sourceFailures].filter(
+        (failure) => failure !== cause,
+      );
+      if (cleanupFailures.length > 0)
+        throw new SafeOutputSourceCleanupFailure(cause, cleanupFailures);
       throw cause;
     } finally {
       stopObservingSource();
+      source.off("error", observeSourceFailure);
     }
   }
 

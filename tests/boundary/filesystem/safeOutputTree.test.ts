@@ -735,6 +735,13 @@ describe("safe artifact output source lifetime", () => {
         const failure = await pending;
         expect(failure).toBeInstanceOf(ArtifactReaderFailure);
         expect(failure).toMatchObject({ reason: "path" });
+        expect((failure as ArtifactReaderFailure).cleanup?.reason).toContain(
+          "source cleanup failure",
+        );
+        if (earlyError)
+          expect((failure as ArtifactReaderFailure).cleanup?.reason).toContain(
+            "early source failure",
+          );
         expect(source.closed).toBe(true);
         await tree.rollback();
       }
