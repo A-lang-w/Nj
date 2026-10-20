@@ -218,7 +218,9 @@ describe("planEnvironmentBundle", () => {
     expect(readme).not.toContain("agent-env run grafana-example");
     expect(readme).toContain("## What the environment serves");
     expect(readme).not.toContain("What replay means");
-    expect(readme).toContain("write tools are not served yet");
+    expect(readme).toContain(
+      "write tools are served only where the capture's later reads confirmed\ntheir effect",
+    );
     expect(readme).toContain(
       "`rea environment-serve --replay-only` serves pure replay",
     );

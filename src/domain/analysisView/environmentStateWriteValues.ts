@@ -127,16 +127,14 @@ const isAlphanumeric = (character: string | undefined): boolean =>
 export const delimitedOffsets = (text: string, token: string): number[] => {
   const offsets: number[] = [];
   if (token.length === 0) return offsets;
-  for (
-    let at = text.indexOf(token);
-    at >= 0;
-    at = text.indexOf(token, at + token.length)
-  )
-    if (
-      !isAlphanumeric(text[at - 1]) &&
-      !isAlphanumeric(text[at + token.length])
-    )
-      offsets.push(at);
+  let at = text.indexOf(token);
+  while (at >= 0) {
+    const delimited =
+      !isAlphanumeric(text[at - 1]) && !isAlphanumeric(text[at + token.length]);
+    if (delimited) offsets.push(at);
+    // A rejected match may overlap a delimited one, so the search moves on by one character.
+    at = text.indexOf(token, at + (delimited ? token.length : 1));
+  }
   return offsets;
 };
 

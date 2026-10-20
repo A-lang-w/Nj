@@ -150,6 +150,7 @@ const writePlanSchema = z.strictObject({
       "contradicted",
       "side-effect",
       "unconfirmed",
+      "incomplete-entities",
     ])
     .nullable(),
   exemplar_ordinal: ordinalSchema

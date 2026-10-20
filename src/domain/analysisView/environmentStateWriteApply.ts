@@ -292,7 +292,7 @@ export const writtenResponse = (
   );
 };
 
-/** An entity with updated fields; view-specific values of the fields that changed give way to the new values. */
+/** An entity with updated fields: view-specific values of the fields that changed give way to the new values, and it cites no records. */
 export const updatedEntity = (
   entity: StateEntity,
   fields: JsonObject,
@@ -302,9 +302,11 @@ export const updatedEntity = (
       (field) => !same(entity.fields[field], fields[field]),
     ),
   );
+  // Written values are no longer the ones the cited records show.
   return {
     ...entity,
     fields,
+    record_ordinals: [],
     view_fields: entity.view_fields
       .map((view) => ({
         tool: view.tool,

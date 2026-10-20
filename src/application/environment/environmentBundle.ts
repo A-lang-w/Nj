@@ -282,7 +282,8 @@ server derives the state the capture observed, the \`environment-state\` view
 of the capture with the manifest's template rules, and serves from it: read
 tools answer from the state where it backs them and from their recordings
 otherwise, \`/agentenv\` serves \`data/reset\`, \`data/add\` and \`data/get\` on
-it, and write tools are not served yet. When the state cannot be derived, or
+it, and write tools are served only where the capture's later reads confirmed
+their effect. When the state cannot be derived, or
 its catalog exceeds the discovery budget, the server logs why and replays
 instead: each MCP tool call selects the retained record whose path and query
 values best match the arguments and returns that record's recorded status,

@@ -491,6 +491,29 @@ export class EnvironmentStateWriteSimulation {
     return false;
   }
 
+  /** Whether an update or delete that answers with the entity can answer for an initial entity: one holds every field its recorded response shows. */
+  #renders(plan: StateWritePlan): boolean {
+    const { response } = plan;
+    if (
+      (plan.effect !== "update" && plan.effect !== "delete") ||
+      response?.shape !== "entity"
+    )
+      return true;
+    const shown = this.#input.io.withBody(response.ordinal, (body) => {
+      const object =
+        body === undefined ? undefined : at(body, response.pointer ?? "");
+      return isObject(object) ? Object.keys(object) : undefined;
+    });
+    return (
+      shown === undefined ||
+      this.#input.entities.some(
+        (entity) =>
+          entity.type === plan.target &&
+          shown.every((field) => Object.hasOwn(entity.fields, field)),
+      )
+    );
+  }
+
   #verdict(draft: WriteDraft): StateWritePlan {
     const plan = draft.plan;
     if (plan.reason === null) {
@@ -500,6 +523,7 @@ export class EnvironmentStateWriteSimulation {
         plan.contradicted_by = draft.contradictedBy;
       } else if (draft.sideEffect) plan.reason = "side-effect";
       else if (draft.confirmed.length === 0) plan.reason = "unconfirmed";
+      else if (!this.#renders(plan)) plan.reason = "incomplete-entities";
     }
     plan.served = plan.reason === null;
     plan.checked_record_ordinals = [...new Set(draft.confirmed)];

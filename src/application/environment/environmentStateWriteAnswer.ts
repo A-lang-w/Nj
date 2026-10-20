@@ -126,9 +126,18 @@ const generator = (
     readonly collection: readonly StateEntity[];
     readonly observed: JsonObject;
   },
-): GenerateValue => {
+): {
+  readonly generate: GenerateValue;
+  readonly taken: Map<string, number>;
+} => {
   const { store } = serving;
-  const write = store.nextWrite();
+  const write = store.pendingWrite();
+  const taken = new Map<string, number>();
+  const sequence = (key: string, held: number): number => {
+    const value = store.sequenceAfter(key, held);
+    taken.set(key, value);
+    return value;
+  };
   const ofType = store.ofType(request.plan.target ?? "");
   const unused = (field: string, make: (attempt: number) => string): string => {
     const held = new Set(
@@ -140,7 +149,7 @@ const generator = (
     }
     return make(GENERATION_ATTEMPTS);
   };
-  return (rule: GeneratedRule): JsonValue => {
+  const generate = (rule: GeneratedRule): JsonValue => {
     const exemplar = target.observed[rule.field] ?? "";
     const seed = (attempt: number) =>
       `${store.state.evidenceId}:${request.tool.name}:${rule.field}:${String(write.count)}:${String(attempt)}`;
@@ -150,7 +159,7 @@ const generator = (
       case "sequence":
         return spelledLike(
           exemplar,
-          store.nextSequence(
+          sequence(
             `${request.tool.name} ${rule.field} ${rule.scope === "collection" ? target.name : ""}`,
             nextInteger(
               rule.scope === "collection" ? target.collection : ofType,
@@ -166,7 +175,7 @@ const generator = (
         if (rule.generator === "sequence")
           return spelledLike(
             exemplar,
-            store.nextSequence(
+            sequence(
               `${request.plan.target ?? ""} ${rule.field} ${target.name}`,
               nextInteger(target.collection, rule.field),
             ),
@@ -178,6 +187,7 @@ const generator = (
         );
     }
   };
+  return { generate, taken };
 };
 
 /** A write's answer on its recorded response's status and content type: a rendered body, none, or the recorded one. */
@@ -240,16 +250,12 @@ const answerCreate = (
       ),
     );
   const members = serving.store.inCollection(type, collection);
-  const fields = createdFields(
-    plan,
+  const values = generator(serving, request, {
+    name: collection,
+    collection: members,
     observed,
-    call,
-    generator(serving, request, {
-      name: collection,
-      collection: members,
-      observed,
-    }),
-  );
+  });
+  const fields = createdFields(plan, observed, call, values.generate);
   if (!fields.ok) return err(refused(tool, fields.error));
   const id = scalarText(fields.value[idField]);
   if (
@@ -291,6 +297,7 @@ const answerCreate = (
       fields.value,
     ),
   );
+  serving.store.commitWrite(values.taken);
   return answer;
 };
 
@@ -327,15 +334,16 @@ const answerUpdate = (
   if (!target.ok) return target.error;
   const entity = target.value;
   const observed = observedEntity(serving, plan) ?? {};
+  const values = generator(serving, request, {
+    name: entity.collection,
+    collection: serving.store.inCollection(entity.type, entity.collection),
+    observed,
+  });
   const written = updatedFields(
     plan,
     { before: entity.fields, observed },
     { ...call, id: entity.id },
-    generator(serving, request, {
-      name: entity.collection,
-      collection: serving.store.inCollection(entity.type, entity.collection),
-      observed,
-    }),
+    values.generate,
   );
   if (!written.ok) return err(refused(tool, written.error));
   const answer = writeAnswer(
@@ -350,7 +358,10 @@ const answerUpdate = (
       id: entity.id,
     },
   );
-  if (answer.ok) serving.store.update(updatedEntity(entity, written.value));
+  if (answer.ok) {
+    serving.store.update(updatedEntity(entity, written.value));
+    serving.store.commitWrite(values.taken);
+  }
   return answer;
 };
 
@@ -373,7 +384,10 @@ const answerDelete = (
       id: entity.id,
     },
   );
-  if (answer.ok) serving.store.remove(entity);
+  if (answer.ok) {
+    serving.store.remove(entity);
+    serving.store.commitWrite(new Map());
+  }
   return answer;
 };
 
@@ -409,7 +423,10 @@ const answerDocument = (
               );
         })()
       : writeAnswer(serving, request, { fields: undefined, id: "" }, state);
-  if (answer.ok) serving.store.setDocument(plan.target ?? "", written.value);
+  if (answer.ok) {
+    serving.store.setDocument(plan.target ?? "", written.value);
+    serving.store.commitWrite(new Map());
+  }
   return answer;
 };
 

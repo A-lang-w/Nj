@@ -59,18 +59,19 @@ the exemplar.
   lists. With neither, the reason is `no-observation`.
 
 **Field rules for creates.** Each field of the observed entity gets the first
-rule that explains its value:
+rule that explains its value. Rules that read the call come first, so an
+identity the client sends is an echo:
 
-1. **Identity.** The type's `id_field` is generated. A sequence when it is an
+1. **Echo.** A body member of the same name with an equal value.
+2. **Copy.** A body string of 8 or more characters, found at a JSON pointer of
+   the body (the shallowest match).
+3. **Path.** The value of a path parameter of the call.
+4. **Slug.** The slug of a body string member: lower case, runs of other
+   characters joined by `-`.
+5. **Identity.** The type's `id_field` is generated. A sequence when it is an
    integer (or a string of digits); otherwise a UUID when it has the
    `8-4-4-4-12` hex shape; otherwise a token of the same length and character
    classes.
-2. **Echo.** A body member of the same name with an equal value.
-3. **Copy.** A body string of 8 or more characters, found at a JSON pointer of
-   the body.
-4. **Path.** The value of a path parameter of the call.
-5. **Slug.** The slug of an echoed string member: lower case, runs of other
-   characters joined by `-`.
 6. **Clock.** A timestamp within 10 minutes of the exemplar's start time. The
    format is kept: ISO-8601 with its separator, fraction digits and zone, or
    epoch seconds or milliseconds.
@@ -82,8 +83,9 @@ rule that explains its value:
    value.
 10. **Constant.** Otherwise the exemplar's value.
 
-When a constant contains a path value of the exemplar's call as a delimited
-token, the create is served only for calls naming the exemplar's collection.
+When a constant, or the text a template keeps, contains a path value of the
+exemplar's call as a delimited token, the create is served only for calls
+naming the exemplar's collection.
 
 **Body members of a create.** A member is either accepted or not:
 
@@ -136,10 +138,23 @@ The view replays every primary-origin record in timeline order on a copy of
 the initial state.
 
 **Writes.** A modelled write applies its effect, using the values it recorded
-for generated fields and the stored values for fields it transformed. Any
-other successful write taints the types whose collection paths are
-segment-prefix related to its path (parameters match any segment). Later
-checks of a tainted type are skipped.
+for generated fields and the stored values for fields it transformed. A
+modelled write whose call the plan does not explain brings its entity to the
+recorded outcome instead, without attribution.
+
+Any other successful write is unmodelled, and what it may have changed
+depends on where its path lies relative to each type's collection paths
+(segment-prefix related, parameters matching any segment):
+
+- **Below an item path:** the named entity is unknown until a read shows it
+  again. When the path names no held entity, every entity of that collection
+  is unknown.
+- **At a collection path:** that collection is not checked again.
+- **Above collection paths:** everything under the path is not checked again.
+
+An item read of an unknown entity shows it again: the copy takes its recorded
+values. Writes that changed it since its last check are checked only on the
+members they sent.
 
 **Reads.** A read is checked when the served environment would answer it
 from the state:
@@ -149,20 +164,27 @@ from the state:
 
 **Comparison.** The read's answer is rendered from the copy and compared with
 the recording, as the read gate compares, with volatile fields taking the
-observed values. A recorded 404 or 410 for an entity the copy does not hold
-agrees with it.
+observed values. A recorded 400, 404 or 410, or a 2xx with a JSON `null`
+body, for an entity the copy does not hold agrees with it.
 
 **Attribution.**
 
 - A check exercises the write tools that changed its entity or collection
   since the previous check of it. A pass confirms them and a mismatch
   contradicts them.
+- A mismatch after an unmodelled write that followed those writes is checked
+  only on the members they sent: such a write may explain the rest.
 - A mismatch on an entity or collection that no write changed contradicts,
   as `side-effect`, the modelled writes since that previous check whose paths
   are segment-prefix related to the read's path.
-- After a check, the copy takes the recorded values of the checked entity
-  objects. A collection whose membership mismatched is not checked again.
-- The read that supplied a create's observation does not check that create.
+- After a failed item check, the copy takes the read's recorded values (or
+  drops the entity on a recorded absence). A list whose check failed is not
+  checked again.
+- A list that fails only for where one create placed its entity passes when
+  another of that create's insert candidates reproduces it, which then
+  becomes the plan's rule.
+- The read that supplied a create's or update's observation does not check
+  it.
 
 **Verdicts.** A plan is served when at least one check confirms it and none
 contradicts it. Otherwise the reason, in this precedence, is:
@@ -170,7 +192,12 @@ contradicts it. Otherwise the reason, in this precedence, is:
 1. the first build reason;
 2. `contradicted`, with `contradicted_by` naming the first contradicting read;
 3. `side-effect`;
-4. `unconfirmed`.
+4. `unconfirmed`;
+5. `incomplete-entities`: an update or delete that answers with the entity,
+   when no initial entity holds every field its recorded answer shows (for
+   example a delete that answers with an edit view of the entity the reads
+   never showed), so it could answer only for entities the environment itself
+   created.
 
 `checked_record_ordinals` lists the confirming reads.
 
@@ -199,27 +226,38 @@ changes it atomically, so every MCP session and `data/get` see one state.
 - a create in another collection when the plan is tied to its own;
 - a rendered response missing a recorded field.
 
-When the tool, or the type's item view, recorded a 404 or 410 response, an
-update or delete of a missing entity answers with that recording instead.
+When the tool, or else an item view of the type, recorded a 400, 404 or 410
+response, an update or delete of a missing entity answers with the latest such
+recording instead.
 
 **Clock and generators.** The store's clock starts at `write_clock` and
 advances one second before each served write; clock fields take its value in
 their recorded format.
 
-- **Sequences:** one more than the largest current value in their scope.
+- **Sequences:** one more than both the largest current value in their scope
+  and the largest value they generated, so a deleted entity's value is not
+  reused, as database sequences do not reuse values.
 - **UUIDs and tokens:** derived from a SHA-256 of the state Evidence id, the
   tool, the field and a write counter, skipping values the type already holds.
 
-`data/reset` and `data/add` restart the clock and the counter.
+`data/reset` and `data/add` restart the clock, the counter and the
+sequences.
 
 **Missing entities.** An item read of an entity the state does not hold
-answers with the tool's latest recorded 404 or 410 response when it has one,
-labelled as a state answer for a missing entity. Otherwise it stays a tool
-error.
+answers with the tool's latest recorded 400, 404 or 410 response when it has
+one, labelled `state.view: "missing"`. Otherwise it stays a tool error.
+
+**Lists of a whole collection.** Written entities matter only if lists show
+them, so the read gate's `membership: "all"` also covers a line that only pages
+its list (`limit`, `offset`, `page`, `per_page`, `perpage`, `page_size`,
+`pagesize`, `size`, `start`, `_start`, `_end`) when its recording listed the
+whole collection. A list call with no query argument answers from such a line
+of an `all` view, with `replay.exact_match` false. A call that asks for a page
+still answers from its recording.
 
 **Provenance.** Write answers carry `state: {source: "state", view: "create" |
-"update" | "delete" | "document", type, collection, id}`. The document variant
-has `path` instead of `type`, `collection` and `id`.
+"update" | "delete", type, collection, id}`, or `{source: "state", view:
+"document-write", path}`.
 
 **Data plane and export.**
 
@@ -239,8 +277,10 @@ These stay unserved, or are labelled in the description:
 - reordering after an update;
 - membership of filtered or paged lists, which answer their recorded members;
 - write paths the manifest left literal;
-- writes in `capture_browser_scenario` captures, which retain no request
-  bodies;
+- writes whose request body the capture did not retain;
+- referential rules on delete: a delete removes the entity alone, so an
+  application that refuses to delete a referenced entity, or deletes its
+  dependents with it, is not modelled;
 - authorization.
 
 ## Acceptance

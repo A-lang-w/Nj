@@ -19,7 +19,8 @@ export type WriteReason =
   | "unexplained-change"
   | "contradicted"
   | "side-effect"
-  | "unconfirmed";
+  | "unconfirmed"
+  | "incomplete-entities";
 
 /** Rules that generate a value when served; the gate takes the recorded value instead. */
 export type GeneratedRule =

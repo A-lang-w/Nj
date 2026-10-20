@@ -40,7 +40,7 @@ export interface CreateEvidence {
   readonly type: readonly JsonObject[];
 }
 
-/** The JSON pointer of the first string in document order equal to `value`, searched inside the body. */
+/** The JSON pointer of a string equal to `value` inside the body, the shallowest first (breadth-first, members in order). */
 const bodyPointerOf = (body: JsonValue, value: string): string | undefined => {
   const pending: { readonly value: JsonValue; readonly pointer: string }[] = [
     { value: body, pointer: "" },
@@ -221,7 +221,13 @@ export const explainCreate = (
   return {
     rules,
     body: bodyOf(evidence.call.body, echoed, Object.keys(evidence.call.body)),
-    tied: constants.some((field) =>
+    // A template rebuilds only its generated value, so other text it keeps ties it like a constant.
+    tied: [
+      ...constants,
+      ...rules.flatMap((rule) =>
+        rule.rule === "template" ? [rule.field] : [],
+      ),
+    ].some((field) =>
       tokens.some((token) => containsDelimited(evidence.entity[field]!, token)),
     ),
   };

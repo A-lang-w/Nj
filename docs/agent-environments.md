@@ -414,12 +414,12 @@ member reports which applied:
 
 Each read tool answers according to its view in the state:
 
-| View       | Answer                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `item`     | The entity the path arguments name, rendered into the recorded envelope of `envelope_ordinal`. Arguments match as replay matches them: each collection segment equals the held collection's segment as written or after percent-decoding, and the identity is the last argument percent-decoded, then as written; values are never re-split on `/`. Any entity the state holds answers, including one `data/add` loaded; query arguments only decide `replay.exact_match`. An entity the state does not hold, or one lacking a field every recording carried, is a tool error; a body is never invented. |
-| `list`     | When the arguments name one of the lines the view checked exactly (its latest recordings before the first related write; every path and query value equal to the recording's, and every recorded query parameter supplied), that recorded envelope with its array rendered from the state: every entity of the collection in state order for `membership: "all"`, or the recorded members still held. A member lacking a field every recording carried makes the call a tool error rather than a partial list.                                                                                           |
-| `document` | When the arguments name the document's checked line exactly, the state's value for it; a tool error when the state holds none.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `recorded` | The recording, as replay answers it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| View       | Answer                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `item`     | The entity the path arguments name, rendered into the recorded envelope of `envelope_ordinal`. Arguments match as replay matches them: each collection segment equals the held collection's segment as written or after percent-decoding, and the identity is the last argument percent-decoded, then as written; values are never re-split on `/`. Any entity the state holds answers, including one `data/add` loaded; query arguments only decide `replay.exact_match`. An entity the state does not hold answers the tool's latest recorded 400, 404 or 410 response with `state.view` `missing`, or is a tool error when none was recorded; one lacking a field every recording carried is a tool error; a body is never invented. |
+| `list`     | When the arguments name one of the lines the view checked exactly (its latest recordings before the first related write; every path and query value equal to the recording's, and every recorded query parameter supplied), that recorded envelope with its array rendered from the state: every entity of the collection in state order for `membership: "all"`, or the recorded members still held. A call with no query argument to a `membership: "all"` view answers from a checked line that only pages its list. A member lacking a field every recording carried makes the call a tool error rather than a partial list.                                                                                                        |
+| `document` | When the arguments name the document's checked line exactly, the state's value for it; a tool error when the state holds none.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `recorded` | The recording, as replay answers it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 A list or document call that names no checked line, including a line recorded
 after a write or with other query values, answers from the recording. Every
@@ -428,10 +428,38 @@ naming the entity, collection or document path, or `{"source": "recording",
 "reason": …}` with the view's reason, `no-view` or `unrecorded-request`. A
 state answer carries the base record's status, content type and `replay`
 provenance with `truncated: false`; one whose JSON would exceed 256 KiB is
-refused as a `resource_constraint` tool error rather than cut. Serving is
-read-only: `POST`, `PUT`, `PATCH` and `DELETE` tools, other than query `POST`s,
-are not served, so nothing a call does changes the state. Query `POST`s stay
-served and answer from their recordings with the reason `query-body`.
+refused as a `resource_constraint` tool error rather than cut. Query `POST`s
+stay served and answer from their recordings with the reason `query-body`.
+
+`POST`, `PUT`, `PATCH` and `DELETE` tools are served only when the state's
+[write plan](web-network-captures.md#environment-state) for them is served:
+the capture's later reads confirmed the effect the plan models. Other write
+tools are not served, so no call claims a change it does not make. A served
+write changes the live state, which every MCP session and `data/get` then see:
+
+| Effect     | Call                                                                                                                                                                                                                                 |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `create`   | Adds an entity to the collection the path names, built from the observed entity with each ruled field taken from the call or generated, at the plan's `insert` position. A plan tied to its exemplar's collection writes only there. |
+| `update`   | Sets the sent members on the entity the path names, constants for members accepted only with their recorded value, and the clock, increment and slug changes the plan models.                                                        |
+| `delete`   | Removes the entity the path names.                                                                                                                                                                                                   |
+| `document` | Merges the body into the plan's document object, or replaces it for `PUT`.                                                                                                                                                           |
+
+Its answer has the status and content type of the plan's recorded response,
+with the written entity or its identity rendered in, no body, or the recorded
+body. A call whose body is not an object, sends a member the capture did not
+show stored, sends a fixed member with another value or a member of another
+JSON type, or lacks a required member is a tool error naming the accepted
+members; so is a rendered answer missing a field the recorded response
+carried, and an update or delete of an entity the state does not hold answers
+the recorded 400, 404 or 410 of the tool or of an item view of the type, if
+any. A refused call leaves the state unchanged. Values a write generates are
+deterministic: the clock starts at `write_clock` and advances one second per
+served write, sequences take one past both the largest held value and the
+largest they generated, and UUIDs and tokens derive from the state Evidence
+id, tool, field and write count, skipping held values. `data/reset` and
+`data/add` restart the clock, counter and sequences, so the same calls after a
+reset give the same state. Answers carry `state: {"source": "state", "view":
+"create" | "update" | "delete", …}` or `"document-write"`.
 
 The data plane serves three JSON-RPC methods:
 

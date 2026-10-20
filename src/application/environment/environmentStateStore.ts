@@ -66,20 +66,22 @@ export class EnvironmentStateStore {
     return ok(undefined);
   }
 
-  /** Count one served write: its number since the last reset or load, and its clock instant one second per write after the state's start. */
-  nextWrite(): { readonly count: number; readonly clockMs: number } {
-    this.#writes += 1;
-    return {
-      count: this.#writes,
-      clockMs: this.#clockStart + this.#writes * 1000,
-    };
+  /** The write a served call would be: its number since the last reset or load, and its clock instant, one second past the previous applied write. */
+  pendingWrite(): { readonly count: number; readonly clockMs: number } {
+    const count = this.#writes + 1;
+    return { count, clockMs: this.#clockStart + count * 1000 };
   }
 
-  /** The next value of a sequence: one past both the largest held value and the largest it generated. */
-  nextSequence(key: string, held: number): number {
-    const value = Math.max(held, (this.#sequences.get(key) ?? 0) + 1);
-    this.#sequences.set(key, value);
-    return value;
+  /** Count an applied write and keep the sequence values it took, so a refused call takes none. */
+  commitWrite(sequences: ReadonlyMap<string, number>): void {
+    this.#writes += 1;
+    for (const [key, value] of sequences)
+      this.#sequences.set(key, Math.max(value, this.#sequences.get(key) ?? 0));
+  }
+
+  /** The next value of a sequence: one past both the largest held value and the largest an applied write took. */
+  sequenceAfter(key: string, held: number): number {
+    return Math.max(held, (this.#sequences.get(key) ?? 0) + 1);
   }
 
   #restart(): void {
