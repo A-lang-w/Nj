@@ -362,7 +362,7 @@ const checkedLine = (
   return selectReplayExchange(tool, lines, args)?.exchange;
 };
 
-/** For a list of a whole collection, a call that supplies no query argument answers from a checked line that only pages it; a requested page answers from its recording. */
+/** For a list of a whole collection, a call that supplies no query argument answers from a checked line of the collection its path arguments name that only pages it, chosen as replay chooses; a requested page answers from its recording. */
 const unfilteredLine = (
   source: EnvironmentSource,
   tool: EnvironmentManifestTool,
@@ -370,14 +370,23 @@ const unfilteredLine = (
   args: ReplayArguments,
 ): RecordedExchange | undefined => {
   const query = environmentToolArguments(tool).query;
-  if ([...query.values()].some((argument) => args[argument] !== undefined))
+  const segments = callSegments(tool, args);
+  if (
+    segments === undefined ||
+    [...query.values()].some((argument) => args[argument] !== undefined)
+  )
     return undefined;
-  return checked
-    .map((ordinal) => source.exchanges.get(ordinal))
-    .find(
-      (exchange): exchange is RecordedExchange =>
-        exchange !== undefined && pagesOnly(exchange.query ?? undefined),
-    );
+  const lines = new Map<number, RecordedExchange>();
+  for (const ordinal of checked) {
+    const exchange = source.exchanges.get(ordinal);
+    if (
+      exchange !== undefined &&
+      pagesOnly(exchange.query ?? undefined) &&
+      collectionMatch(collectionPathOf(exchange, false), segments) !== undefined
+    )
+      lines.set(ordinal, exchange);
+  }
+  return selectReplayExchange(tool, lines, args)?.exchange;
 };
 
 type StateDocumentView = Extract<StateView, { shape: "document" }>;

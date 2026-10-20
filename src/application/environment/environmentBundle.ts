@@ -52,7 +52,7 @@ export interface EnvironmentServedCheck {
 export interface EnvironmentBundlePlan {
   readonly name: string;
   readonly packageSource: EnvironmentPackageSource;
-  /** Tools the bundle serves: every manifest tool for replay, the read tools from a state. */
+  /** Tools the bundle serves: every manifest tool for replay; from a state, the read tools and the served write tools. */
   readonly toolCount: number;
   readonly check: EnvironmentServedCheck | null;
   /** Whether the bundle serves from the state, as `environment-serve` reports it. */
