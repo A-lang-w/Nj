@@ -35,7 +35,10 @@ export const parsePackerIndicators = (
             region_index: region.index,
             name: region.name,
             family,
-            location: { offset: region.raw.offset, bytes: region.raw.bytes },
+            location: facts.nameLocations.get(region.index) ?? {
+              offset: region.raw.offset,
+              bytes: region.raw.bytes,
+            },
           },
         ];
   });

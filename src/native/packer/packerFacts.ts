@@ -23,6 +23,38 @@ export const shannonEntropy = (bytes: Uint8Array): number | null => {
   return Math.round(entropy * 10000) / 10000;
 };
 
+/**
+ * Entropy over file ranges under one shared work budget. Declared regions may
+ * overlap arbitrarily, so repeated ranges are cached and the total number of
+ * scanned bytes is capped; regions past the budget report null entropy.
+ */
+export const entropyMeter = (bytes: Buffer) => {
+  let remaining = bytes.length * 4 + 0x100000;
+  let exhausted = false;
+  const cache = new Map<string, number | null>();
+  return {
+    measure: (offset: number, length: number): number | null => {
+      if (length === 0) return null;
+      const key = `${String(offset)}:${String(length)}`;
+      if (cache.has(key)) return cache.get(key) ?? null;
+      if (length > remaining) {
+        exhausted = true;
+        return null;
+      }
+      remaining -= length;
+      const value = shannonEntropy(bytes.subarray(offset, offset + length));
+      cache.set(key, value);
+      return value;
+    },
+    get exhausted() {
+      return exhausted;
+    },
+  };
+};
+
+export const ENTROPY_BUDGET_LIMITATION =
+  "Declared regions overlap beyond the entropy work budget; some regions report null entropy.";
+
 export const hexAddress = (value: bigint | number): string =>
   `0x${value.toString(16)}`;
 
@@ -140,12 +172,31 @@ export const deriveIndicators = (input: IndicatorInput): PackerIndicator[] => {
         `The entry point is in writable and executable region ${String(entry.index)}.`,
       );
   }
+  // ELF reports segments and the sections inside them; overlapping views of
+  // the same bytes are one observation, not independent support.
+  const fileRanges: { start: number; end: number }[] = [];
+  const virtualRanges: { start: bigint; end: bigint }[] = [];
+  const newFileRange = (region: PackerRegion) => {
+    const start = region.raw.offset;
+    const end = start + region.raw.bytes;
+    if (fileRanges.some((r) => start < r.end && r.start < end)) return false;
+    fileRanges.push({ start, end });
+    return true;
+  };
+  const newVirtualRange = (region: PackerRegion) => {
+    const start = BigInt(region.virtual_address);
+    const end = start + BigInt(region.virtual_size);
+    if (virtualRanges.some((r) => start < r.end && r.start < end)) return false;
+    virtualRanges.push({ start, end });
+    return true;
+  };
   for (const region of input.regions) {
     if (
       region.executable &&
       region.entropy !== null &&
       region.raw.bytes >= HIGH_ENTROPY_MIN_BYTES &&
-      region.entropy >= HIGH_ENTROPY
+      region.entropy >= HIGH_ENTROPY &&
+      newFileRange(region)
     )
       add(
         "high_entropy_executable_region",
@@ -155,7 +206,8 @@ export const deriveIndicators = (input: IndicatorInput): PackerIndicator[] => {
     if (
       region.executable &&
       region.virtual_size >= VIRTUAL_ONLY_MIN_BYTES &&
-      region.virtual_size >= Math.max(1, region.raw.bytes) * 4
+      region.virtual_size >= Math.max(1, region.raw.bytes) * 4 &&
+      newVirtualRange(region)
     )
       add(
         "virtual_only_region",

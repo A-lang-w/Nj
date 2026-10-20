@@ -2,11 +2,15 @@ import type {
   PackerIndicators,
   PackerRegion,
 } from "../../domain/native/packerIndicators.js";
-import { formatFailure, hexAddress, shannonEntropy } from "./packerFacts.js";
+import {
+  ENTROPY_BUDGET_LIMITATION,
+  entropyMeter,
+  formatFailure,
+  hexAddress,
+} from "./packerFacts.js";
 import { clampRange, decodeName, type ImageFacts } from "./imageFacts.js";
 
 const SCN_EXECUTE = 0x20000000;
-const SCN_CODE = 0x20;
 const SCN_READ = 0x40000000;
 const SCN_WRITE = 0x80000000;
 const MAX_IMPORT_LIBRARIES = 4096;
@@ -47,14 +51,22 @@ const need = (bytes: Buffer, offset: number, length: number): void => {
 
 class ImportFailure extends Error {}
 
-const rvaToOffset = (sections: readonly Section[], rva: number): number => {
+/**
+ * Map an RVA range to file bytes; the whole range must stay inside one
+ * section's file-backed bytes, so walks never drift into adjacent sections.
+ */
+const rvaToOffset = (
+  sections: readonly Section[],
+  rva: number,
+  length = 1,
+): number => {
   for (const section of sections) {
     const extent = Math.max(section.virtualSize, section.size);
     if (rva >= section.rva && rva < section.rva + extent) {
       const delta = rva - section.rva;
-      if (delta >= section.size)
+      if (delta + length > section.size)
         throw new ImportFailure(
-          `RVA 0x${rva.toString(16)} is not backed by file bytes.`,
+          `RVA 0x${rva.toString(16)} + ${String(length)} is not backed by file bytes of its section.`,
         );
       return section.offset + delta;
     }
@@ -64,12 +76,27 @@ const rvaToOffset = (sections: readonly Section[], rva: number): number => {
   );
 };
 
-const cString = (bytes: Buffer, offset: number): string => {
-  if (offset >= bytes.length)
-    throw new ImportFailure("Import name leaves the artifact.");
-  const end = bytes.indexOf(0, offset);
-  if (end === -1 || end - offset > MAX_IMPORT_NAME)
-    throw new ImportFailure("Import name is unterminated or too long.");
+/** A NUL-terminated string that must end inside the section holding its RVA. */
+const cString = (
+  bytes: Buffer,
+  sections: readonly Section[],
+  rva: number,
+): string => {
+  const offset = rvaToOffset(sections, rva);
+  const section = sections.find(
+    (item) =>
+      rva >= item.rva && rva < item.rva + Math.max(item.virtualSize, item.size),
+  );
+  const limit = Math.min(
+    bytes.length,
+    section === undefined ? offset : section.offset + section.size,
+    offset + MAX_IMPORT_NAME + 1,
+  );
+  const end = bytes.subarray(0, limit).indexOf(0, offset);
+  if (end === -1)
+    throw new ImportFailure(
+      "Import name is unterminated within its section or too long.",
+    );
   return bytes.toString("latin1", offset, end);
 };
 
@@ -87,23 +114,19 @@ const readImports = (
     const loaderFound = new Set<string>();
     let functionCount = 0;
     let ordinalCount = 0;
-    let at = rvaToOffset(sections, rva);
-    for (;;) {
-      if (at + 20 > bytes.length)
-        throw new ImportFailure("Import descriptor leaves the artifact.");
+    for (let descriptorRva = rva; ; descriptorRva += 20) {
+      const at = rvaToOffset(sections, descriptorRva, 20);
       const lookup = bytes.readUInt32LE(at);
       const nameRva = bytes.readUInt32LE(at + 12);
       const thunk = bytes.readUInt32LE(at + 16);
       if (lookup === 0 && nameRva === 0 && thunk === 0) break;
       if (libraries.length >= MAX_IMPORT_LIBRARIES)
         throw new ImportFailure("Import library budget exhausted.");
-      libraries.push(cString(bytes, rvaToOffset(sections, nameRva)));
+      libraries.push(cString(bytes, sections, nameRva));
       let nonLoader = 0;
       const width = plus ? 8 : 4;
-      let entry = rvaToOffset(sections, lookup === 0 ? thunk : lookup);
-      for (;;) {
-        if (entry + width > bytes.length)
-          throw new ImportFailure("Import thunk leaves the artifact.");
+      for (let entryRva = lookup === 0 ? thunk : lookup; ; entryRva += width) {
+        const entry = rvaToOffset(sections, entryRva, width);
         const value = plus
           ? bytes.readBigUInt64LE(entry)
           : BigInt(bytes.readUInt32LE(entry));
@@ -119,15 +142,14 @@ const readImports = (
         } else {
           const name = cString(
             bytes,
-            rvaToOffset(sections, Number(value & 0x7fffffffn)) + 2,
+            sections,
+            Number(value & 0x7fffffffn) + 2,
           );
           if (LOADER_STYLE.has(name)) loaderFound.add(name);
           else nonLoader++;
         }
-        entry += width;
       }
       nonLoaderPerLibrary.push(nonLoader);
-      at += 20;
     }
     const loader = [...loaderFound].sort();
     return {
@@ -188,10 +210,19 @@ export const readPePackerFacts = (bytes: Buffer): ImageFacts => {
   let incomplete = false;
   const sections: Section[] = [];
   const regions: PackerRegion[] = [];
-  let mappedEnd = table + sectionCount * 40;
+  const entropy = entropyMeter(bytes);
+  const nameLocations = new Map<number, { offset: number; bytes: number }>();
+  // SizeOfHeaders (same offset in PE32 and PE32+) covers aligned header padding.
+  const sizeOfHeaders =
+    optionalSize >= 64 ? bytes.readUInt32LE(optional + 60) : 0;
+  let mappedEnd = Math.max(
+    table + sectionCount * 40,
+    Math.min(sizeOfHeaders, bytes.length),
+  );
   for (let index = 0; index < sectionCount; index++) {
     const at = table + index * 40;
     const { name, name_hex } = decodeName(bytes.subarray(at, at + 8));
+    nameLocations.set(index, { offset: at, bytes: name.length });
     const section = {
       virtualSize: bytes.readUInt32LE(at + 8),
       rva: bytes.readUInt32LE(at + 12),
@@ -220,10 +251,9 @@ export const readPePackerFacts = (bytes: Buffer): ImageFacts => {
       flags_value: characteristics,
       readable: (characteristics & SCN_READ) !== 0,
       writable: (characteristics & SCN_WRITE) !== 0,
-      executable: (characteristics & (SCN_EXECUTE | SCN_CODE)) !== 0,
-      entropy: shannonEntropy(
-        bytes.subarray(raw.offset, raw.offset + raw.bytes),
-      ),
+      // IMAGE_SCN_CNT_CODE describes contents; only MEM_EXECUTE grants execution.
+      executable: (characteristics & SCN_EXECUTE) !== 0,
+      entropy: entropy.measure(raw.offset, raw.bytes),
     });
   }
   const entryIndex = sections.findIndex(
@@ -239,6 +269,16 @@ export const readPePackerFacts = (bytes: Buffer): ImageFacts => {
     security.value !== 0 && security.size !== 0
       ? clampRange(bytes.length, security.value, security.size)
       : undefined;
+  if (certificate?.truncated === true) {
+    incomplete = true;
+    limitations.push(
+      "The certificate table declares bytes beyond the end of the file; it is not treated as a complete certificate-only overlay.",
+    );
+  }
+  if (entropy.exhausted) {
+    incomplete = true;
+    limitations.push(ENTROPY_BUDGET_LIMITATION);
+  }
   return {
     format: plus ? "pe32-plus" : "pe32",
     machine,
@@ -254,10 +294,11 @@ export const readPePackerFacts = (bytes: Buffer): ImageFacts => {
     imports: readImports(bytes, sections, directory(1).value, plus),
     mappedEnd,
     certificateTable:
-      certificate === undefined
+      certificate === undefined || certificate.truncated
         ? null
         : { offset: certificate.offset, bytes: certificate.bytes },
     elfWithoutSections: false,
+    nameLocations,
     limitations: [
       ...limitations,
       "PE virtual addresses and the entry point are reported as RVAs relative to the image base.",

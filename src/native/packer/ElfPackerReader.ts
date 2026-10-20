@@ -1,5 +1,10 @@
 import type { PackerRegion } from "../../domain/native/packerIndicators.js";
-import { formatFailure, hexAddress, shannonEntropy } from "./packerFacts.js";
+import {
+  ENTROPY_BUDGET_LIMITATION,
+  entropyMeter,
+  formatFailure,
+  hexAddress,
+} from "./packerFacts.js";
 import { clampRange, decodeName, type ImageFacts } from "./imageFacts.js";
 
 const PT_LOAD = 1;
@@ -11,6 +16,8 @@ const SHF_WRITE = 1n;
 const SHF_ALLOC = 2n;
 const SHF_EXECINSTR = 4n;
 const MAX_HEADERS = 65535;
+const SHN_XINDEX = 0xffff;
+const PN_XNUM = 0xffff;
 const MAX_NAME = 256;
 
 const size = (value: bigint, what: string): number => {
@@ -53,19 +60,42 @@ export const readElfPackerFacts = (bytes: Buffer): ImageFacts => {
   const phentsize = u16(at + 2);
   const phnum = u16(at + 4);
   const shentsize = u16(at + 6);
-  const shnum = u16(at + 8);
-  const shstrndx = u16(at + 10);
+  let shnum = u16(at + 8);
+  let shstrndx = u16(at + 10);
   const headerSize = elf64 ? 64 : 52;
   const phMin = elf64 ? 56 : 32;
   const shMin = elf64 ? 64 : 40;
   if (phnum > 0 && phentsize < phMin)
     formatFailure("ELF program header entries are too small.");
-  if (phnum >= MAX_HEADERS || shnum >= MAX_HEADERS)
-    formatFailure("Extended ELF header counts are not supported.");
+  if (phnum === PN_XNUM)
+    formatFailure("Extended ELF program header counts are not supported.");
+  // Extended section numbering: e_shnum == 0 with a section table, or
+  // e_shstrndx == SHN_XINDEX, keeps the real values in section header 0.
+  if ((shnum === 0 && shoff !== 0) || shstrndx === SHN_XINDEX) {
+    if (shentsize < shMin)
+      formatFailure("ELF section header entries are too small.");
+    need(shoff, shMin);
+    if (shnum === 0) {
+      const count = size(
+        word(elf64 ? shoff + 32 : shoff + 20),
+        "section count",
+      );
+      if (count === 0)
+        formatFailure("ELF declares a section table with zero sections.");
+      if (count > MAX_HEADERS * 4)
+        formatFailure(
+          "ELF extended section count exceeds the supported range.",
+        );
+      shnum = count;
+    }
+    if (shstrndx === SHN_XINDEX) shstrndx = u32(shoff + (elf64 ? 40 : 24));
+  }
   if (phnum > 0) need(phoff, phnum * phentsize);
   const limitations: string[] = [];
   let incomplete = false;
   const regions: PackerRegion[] = [];
+  const entropy = entropyMeter(bytes);
+  const nameLocations = new Map<number, { offset: number; bytes: number }>();
   let mappedEnd = Math.max(
     headerSize,
     phnum > 0 ? phoff + phnum * phentsize : 0,
@@ -100,9 +130,7 @@ export const readElfPackerFacts = (bytes: Buffer): ImageFacts => {
       readable: access.r,
       writable: access.w,
       executable: access.x,
-      entropy: shannonEntropy(
-        bytes.subarray(raw.offset, raw.offset + raw.bytes),
-      ),
+      entropy: entropy.measure(raw.offset, raw.bytes),
     };
     regions.push(value);
     return value;
@@ -111,9 +139,20 @@ export const readElfPackerFacts = (bytes: Buffer): ImageFacts => {
   let entryFileOffset: number | null = null;
   for (let index = 0; index < phnum; index++) {
     const base = phoff + index * phentsize;
-    if (u32(base) !== PT_LOAD) continue;
-    const flags = elf64 ? u32(base + 4) : u32(base + 24);
     const offset = size(word(elf64 ? base + 8 : base + 4), "segment offset");
+    if (u32(base) !== PT_LOAD) {
+      // Non-load segments (notes, dynamic, ...) still own file bytes, so they
+      // bound the overlay even though they are not reported as regions.
+      const declared = size(
+        word(elf64 ? base + 32 : base + 16),
+        "segment size",
+      );
+      const range = clampRange(bytes.length, offset, declared);
+      if (range.bytes > 0)
+        mappedEnd = Math.max(mappedEnd, range.offset + range.bytes);
+      continue;
+    }
+    const flags = elf64 ? u32(base + 4) : u32(base + 24);
     const vaddr = word(elf64 ? base + 16 : base + 8);
     const filesz = size(word(elf64 ? base + 32 : base + 16), "segment size");
     const memsz = size(word(elf64 ? base + 40 : base + 20), "segment size");
@@ -157,21 +196,44 @@ export const readElfPackerFacts = (bytes: Buffer): ImageFacts => {
         size: size(word(elf64 ? base + 32 : base + 20), "section size"),
       };
     };
-    const strings = shstrndx < shnum ? header(shstrndx) : undefined;
-    const nameOf = (offset: number) => {
-      if (strings === undefined || offset >= strings.size) return null;
-      const start = strings.offset + offset;
-      if (start >= bytes.length) return null;
-      return decodeName(
-        bytes.subarray(start, Math.min(bytes.length, start + MAX_NAME)),
+    const strings =
+      shstrndx !== 0 && shstrndx < shnum ? header(shstrndx) : undefined;
+    if (shstrndx !== 0 && strings === undefined) {
+      incomplete = true;
+      limitations.push(
+        `ELF section-name table index ${String(shstrndx)} is outside the section table; section names are not reported.`,
       );
+    }
+    let namesEscaped = false;
+    // A name must be NUL-terminated inside the declared string table.
+    const nameOf = (offset: number) => {
+      if (strings === undefined) return null;
+      const tableEnd = Math.min(bytes.length, strings.offset + strings.size);
+      const start = strings.offset + offset;
+      const terminator =
+        offset < strings.size && start < tableEnd
+          ? bytes
+              .subarray(0, Math.min(tableEnd, start + MAX_NAME))
+              .indexOf(0, start)
+          : -1;
+      if (terminator === -1) {
+        namesEscaped = true;
+        return null;
+      }
+      return { start, value: decodeName(bytes.subarray(start, terminator)) };
     };
     for (let index = 1; index < shnum; index++) {
       const section = header(index);
       const nobits = section.type === SHT_NOBITS;
+      const name = nameOf(section.name);
+      if (name !== null)
+        nameLocations.set(regions.length, {
+          offset: name.start,
+          bytes: name.value.name.length,
+        });
       region(
         "section",
-        nameOf(section.name),
+        name?.value ?? null,
         section.address,
         section.size,
         section.offset,
@@ -184,6 +246,16 @@ export const readElfPackerFacts = (bytes: Buffer): ImageFacts => {
         },
       );
     }
+    if (namesEscaped) {
+      incomplete = true;
+      limitations.push(
+        "Some ELF section names are not terminated inside the section-name table; those names are not reported.",
+      );
+    }
+  }
+  if (entropy.exhausted) {
+    incomplete = true;
+    limitations.push(ENTROPY_BUDGET_LIMITATION);
   }
   return {
     format: elf64 ? "elf64" : "elf32",
@@ -197,6 +269,7 @@ export const readElfPackerFacts = (bytes: Buffer): ImageFacts => {
     imports: { status: "not_applicable" },
     mappedEnd,
     certificateTable: null,
+    nameLocations,
     elfWithoutSections: shnum === 0 && (type === 2 || type === 3),
     limitations: [
       ...limitations,

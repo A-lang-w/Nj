@@ -18,6 +18,11 @@ export interface ImageFacts {
   readonly mappedEnd: number;
   readonly certificateTable: { offset: number; bytes: number } | null;
   readonly elfWithoutSections: boolean;
+  /** File bytes holding each region's name, keyed by region index. */
+  readonly nameLocations: ReadonlyMap<
+    number,
+    { offset: number; bytes: number }
+  >;
   readonly limitations: string[];
   readonly incomplete: boolean;
 }
