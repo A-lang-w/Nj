@@ -4770,6 +4770,221 @@ const iterationReviewCases = [
 ] as const;
 const consumerRouteReviewCases = [
   [
+    "failed argument spread does not activate stored body",
+    "const connect=()=>new Socket(URL);try{connect(...null)}catch{}const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
+    "stored class remains dormant without construction",
+    "const Client=class{socket=new Socket(URL)};const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "multiple stored class constructions precede initialization",
+    "const Client=class{socket=new Socket(URL)};try{new Client()}catch{}try{new Client()}catch{}const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "multiple initialized stored class constructions",
+    "const Client=class{socket=new Socket(URL)};const Socket=globalThis.WebSocket;new Client();new Client();",
+    true,
+  ],
+  [
+    "caught class construction preserves later initialized instance",
+    "const Client=class{socket=new Socket(URL)};try{new Client()}catch{}const Socket=globalThis.WebSocket;new Client();",
+    true,
+  ],
+  [
+    "stored caller apply preserves callback offset",
+    "const invoke=run=>run();invoke.apply(null,[()=>new Socket(URL)]);const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "replaced call helper cannot activate callback",
+    "const invoke=run=>run();invoke.call=()=>{};invoke.call(null,()=>new Socket(URL));const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "bound caller argument offset stays unresolved",
+    "const invoke=(ignored,run)=>run();invoke.bind(null,0)(()=>new Socket(URL));const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "prototype setter invalidates function import options",
+    "export{};Object.setPrototypeOf(Function.prototype,{with:null});const{WebSocket:Socket}=await import('ws',()=>{});new Socket(URL);",
+    false,
+  ],
+  [
+    "caught early failure with inert finally permits later call",
+    "const connect=()=>new Socket(URL);try{connect()}catch{}finally{0}const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
+    "throwing finally prevents later call",
+    "const connect=()=>new Socket(URL);try{connect()}catch{}finally{throw 0}const Socket=globalThis.WebSocket;connect();",
+    false,
+  ],
+  [
+    "intervening abrupt statement prevents later call",
+    "const connect=()=>new Socket(URL);try{connect()}catch{}throw 0;const Socket=globalThis.WebSocket;connect();",
+    false,
+  ],
+  [
+    "uncaught activation alongside caught activation blocks later call",
+    "const connect=()=>new Socket(URL);try{connect()}catch{}connect();const Socket=globalThis.WebSocket;connect();",
+    false,
+  ],
+  [
+    "captured constructor in normal catch resumes later call",
+    "const connect=()=>new Socket(URL);try{connect()}catch{const ignored=0}const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
+    "blocked earlier iteration binding cannot borrow later wait",
+    "(async()=>{for(const[x=await 0]of(function*(){yield null;yield[];new Socket(URL)})()){}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "later blocked binding stops already deferred generator",
+    "(async()=>{for(const[x=await 0]of(function*(){yield[];yield null;new Socket(URL)})()){}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "failed call argument does not activate stored body",
+    "const connect=()=>new Socket(URL);try{connect(null.value)}catch{}const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
+    "failed new argument does not activate stored constructor",
+    "function connect(){new Socket(URL)}try{new connect(null.value)}catch{}const Socket=globalThis.WebSocket;new connect();",
+    true,
+  ],
+  [
+    "failed tag substitution does not activate stored tag",
+    "const connect=()=>new Socket(URL);try{connect`${null.value}`}catch{}const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
+    "replacement static field leaves instance method dormant",
+    "(new(class{static effect=(this.prototype.run=()=>{});run(){new Socket(URL)}})()).run();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "unchanged instance method runs before initialization",
+    "(new(class{run(){new Socket(URL)}})()).run();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "inert static field preserves instance selection",
+    "(new(class{static effect=1;run(){new Socket(URL)}})()).run();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "earlier iteration binding wait persists",
+    "(async()=>{for(const[x=await 0]of(function*(){yield[];yield[1];new Socket(URL)})()){}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "later iteration binding wait resumes generator",
+    "(async()=>{for(const[x=await 0]of(function*(){yield[1];yield[];new Socket(URL)})()){}})();const Socket=globalThis.WebSocket;",
+    true,
+  ],
+  [
+    "defined iteration bindings never wait",
+    "(async()=>{for(const[x=await 0]of(function*(){yield[1];yield[2];new Socket(URL)})()){}})();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "function prototype chain replacement invalidates import options",
+    "export{};Function.prototype.__proto__={with:null};const options=()=>{};const{WebSocket:Socket}=await import('ws',options);new Socket(URL);",
+    false,
+  ],
+  [
+    "array prototype chain replacement invalidates import options",
+    "export{};Array.prototype.__proto__={with:null};const{WebSocket:Socket}=await import('ws',[]);new Socket(URL);",
+    false,
+  ],
+  [
+    "prototype change after fulfilled import keeps captured origin",
+    "export{};const{WebSocket:Socket}=await import('ws',()=>{});Function.prototype.__proto__={with:null};new Socket(URL);",
+    true,
+  ],
+  [
+    "unrelated prototype change keeps function import options",
+    "export{};Array.prototype.__proto__={with:null};const{WebSocket:Socket}=await import('ws',()=>{});new Socket(URL);",
+    true,
+  ],
+  [
+    "stored class field construction precedes initialization",
+    "const Client=class{socket=new Socket(URL)};new Client();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "stored class field construction follows initialization",
+    "const Client=class{socket=new Socket(URL)};const Socket=globalThis.WebSocket;new Client();",
+    true,
+  ],
+  [
+    "class declaration field construction precedes initialization",
+    "class Client{socket=new Socket(URL)}new Client();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "stored class constructor precedes initialization",
+    "const Client=class{constructor(){new Socket(URL)}};new Client();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "aliased stored class construction precedes initialization",
+    "const Client=class{socket=new Socket(URL)};const Alias=Client;new Alias();const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "stored caller maps callback before initialization",
+    "const invoke=run=>run();invoke(()=>new Socket(URL));const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "stored caller maps callback after initialization",
+    "const invoke=run=>run();const Socket=globalThis.WebSocket;invoke(()=>new Socket(URL));",
+    true,
+  ],
+  [
+    "stored caller helper preserves callback offset",
+    "const invoke=run=>run();invoke.call(null,()=>new Socket(URL));const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "aliased stored caller maps callback before initialization",
+    "const invoke=run=>run();const alias=invoke;alias(()=>new Socket(URL));const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "caught early body failure retains later successful activation",
+    "const connect=()=>new Socket(URL);try{connect()}catch{}const Socket=globalThis.WebSocket;connect();",
+    true,
+  ],
+  [
+    "uncaught early body failure cannot prove later activation",
+    "const connect=()=>new Socket(URL);connect();const Socket=globalThis.WebSocket;connect();",
+    false,
+  ],
+  [
+    "single caught preinitialization body remains invalid",
+    "const connect=()=>new Socket(URL);try{connect()}catch{}const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "all stored activations precede initialization",
+    "const connect=()=>new Socket(URL);try{connect()}catch{}try{connect()}catch{}const Socket=globalThis.WebSocket;",
+    false,
+  ],
+  [
+    "catch does not initialize later binding on throw",
+    "const connect=()=>new Socket(URL);try{connect()}catch{throw 0}const Socket=globalThis.WebSocket;connect();",
+    false,
+  ],
+  [
     "throwing array async iterator cannot prove wait",
     "const values=[];values[Symbol.asyncIterator]=()=>{throw 0};(async()=>{for(const x of(function*(){yield 0;new Socket(URL)})()){try{for await(const y of values){}}catch{}}})();const Socket=globalThis.WebSocket;",
     false,

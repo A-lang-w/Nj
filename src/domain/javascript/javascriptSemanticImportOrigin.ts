@@ -26,7 +26,10 @@ import {
 } from "./javascriptSymbolicControlFlow.js";
 import { semanticLiteralOwnKeysStable } from "./javascriptSemanticLiteralProjection.js";
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
-import { semanticPrototypeLookupMayChange } from "./javascriptSemanticPropertyPaths.js";
+import {
+  semanticPrototypeLookupMayChange,
+  semanticPropertyPathKeyMatches,
+} from "./javascriptSemanticPropertyPaths.js";
 
 /** Identity, initialization and prior relevant mutations are separate obligations. */
 const importOptionValue = (
@@ -186,8 +189,19 @@ const importOptionsCanComplete = (
   ];
   return prototypes.every(
     (name) =>
-      !state.ambientWrites.covers(["global", name, "prototype", "with"]) &&
-      !state.ambientEscapes.covers(["global", name, "prototype", "with"]),
+      !state.ambientReferenceEffects.some(
+        (effect) =>
+          semanticEffectTiming(capture, effect.node, state) !== "after" &&
+          effect.path
+            .slice(0, 3)
+            .every((key, index) =>
+              semanticPropertyPathKeyMatches(
+                key,
+                ["global", name, "prototype"][index]!,
+              ),
+            ) &&
+          semanticPrototypeLookupMayChange(effect.path.slice(3), "with"),
+      ),
   );
 };
 

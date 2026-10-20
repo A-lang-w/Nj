@@ -449,16 +449,25 @@ class ErrorEvidenceTransport implements Transport {
           : "Restart REA with a larger REA_MCP_MAX_RESPONSE_BYTES and matching client receive buffer, then retry. The original error could not be retained by this server.",
       },
     );
+    // This transport runs after the SDK's wire codec. Replace the tool payload
+    // while retaining its protocol envelope, including the revision's result
+    // discriminator and server identity metadata.
+    const {
+      content: _content,
+      structuredContent: _structuredContent,
+      isError: _isError,
+      _meta,
+      ...envelope
+    } = message.result;
+    const replacement = this.delivery.toErrorToolResult(failure, targetContent);
     return {
       ...message,
       result: {
-        ...this.delivery.toErrorToolResult(failure, targetContent),
-        // The SDK stamps `resultType` on modern-era results before this
-        // transport sees them; the replacement must keep the stamp or a
-        // 2026-07-28 client discards REA's structured error entirely.
-        ...(typeof message.result.resultType === "string"
-          ? { resultType: message.result.resultType }
-          : {}),
+        ...envelope,
+        ...replacement,
+        ...(_meta === undefined && replacement._meta === undefined
+          ? {}
+          : { _meta: { ..._meta, ...replacement._meta } }),
       },
     };
   }

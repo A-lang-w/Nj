@@ -24,6 +24,7 @@ export const semanticInitializerPrecedesRead = ({
   parents,
   initializerContexts,
   readContexts,
+  readFailureCanRecover,
 }: {
   readonly initializer: t.Node;
   readonly read: t.Node;
@@ -31,6 +32,11 @@ export const semanticInitializerPrecedesRead = ({
   readonly parents: WeakMap<t.Node, t.Node>;
   readonly initializerContexts: readonly SemanticExecutionFrame[];
   readonly readContexts: readonly SemanticExecutionFrame[];
+  /** An invalid earlier activation may throw and recover before a valid one. */
+  readonly readFailureCanRecover?: (
+    initializer: SemanticExecutionFrame,
+    read: SemanticExecutionFrame,
+  ) => boolean;
 }): boolean | undefined => {
   let current: t.Node | undefined = initializer;
   while (
@@ -72,14 +78,36 @@ export const semanticInitializerPrecedesRead = ({
       ? undefined
       : semanticPatternInitializationPrecedesRead(bindingNode, read, parents);
   if (patternOrder !== undefined) return patternOrder;
-  return !initializerContexts.some(
-    (before) =>
-      before.owner === shared.owner &&
-      readContexts.some(
-        (after) =>
-          after.owner === shared.owner &&
-          (before.point.end ?? Infinity) >= (after.point.start ?? -1),
+  const before = initializerContexts.filter(
+    (frame) => frame.owner === shared.owner,
+  );
+  const after = readContexts.filter((frame) => frame.owner === shared.owner);
+  const precedes = (
+    initialization: SemanticExecutionFrame,
+    activation: SemanticExecutionFrame,
+  ): boolean =>
+    (initialization.point.end ?? Infinity) < (activation.point.start ?? -1);
+  if (
+    after.every((activation) =>
+      before.every((initialization) => precedes(initialization, activation)),
+    )
+  )
+    return true;
+  // Initialization validity remains universal by default. A caller that owns
+  // failed-read recovery can retain a distinct later successful activation;
+  // merely finding one later source position is not sufficient.
+  return (
+    readFailureCanRecover !== undefined &&
+    after.some((activation) =>
+      before.every((initialization) => precedes(initialization, activation)),
+    ) &&
+    after.every((activation) =>
+      before.every(
+        (initialization) =>
+          precedes(initialization, activation) ||
+          readFailureCanRecover(initialization, activation),
       ),
+    )
   );
 };
 
@@ -210,6 +238,15 @@ export type JavaScriptSemanticIterationCardinality =
   | "empty"
   | "nonempty"
   | "unknown";
+
+/** Whether a method's computed key executes in the enclosing environment. */
+export const semanticComputedMethodKey = (
+  parent: t.Node | undefined,
+  child: t.Node,
+): boolean =>
+  (t.isObjectMethod(parent) || t.isClassMethod(parent)) &&
+  parent.computed &&
+  parent.key === child;
 
 /** Exact source-only cardinality for literal loop heads. */
 export const semanticIterationCardinality = (

@@ -36,26 +36,30 @@ interface PatternWaitCache {
   readonly blockedIndex: number | null;
 }
 
-/** Each preceding owned yield must force the consumer's binding through a wait. */
-export const semanticGeneratorBindingsAlwaysSuspend = (
+/** Fold completed consumer bindings without losing waits or borrowing past exits. */
+export const semanticGeneratorBindingPhase = (
   read: t.Node,
   body: t.Node,
   pattern: t.Node,
   state: JavaScriptSemanticAnalysisState,
   ordered: (node: t.Node) => readonly t.Node[],
   maySuspend: (node: t.Node) => boolean,
-  bindingSuspends: (pattern: t.Node, value: t.Node | undefined) => boolean,
-): boolean => {
+  bindingCompletion: (
+    pattern: t.Node,
+    value: t.Node | undefined,
+  ) => PatternCompletion,
+): PatternCompletion => {
   const facts = generatorPrefixes(body, ordered, maySuspend, state);
   const count = facts.before.get(read) ?? -1;
-  return (
-    count > 0 &&
-    facts.yielded
-      .slice(0, count)
-      .every((yielded) =>
-        bindingSuspends(pattern, yielded.argument ?? undefined),
-      )
-  );
+  let phase: PatternCompletion = "completed";
+  for (const yielded of facts.yielded.slice(0, Math.max(0, count))) {
+    phase = combinePatternCompletion(
+      phase,
+      bindingCompletion(pattern, yielded.argument ?? undefined),
+    );
+    if (patternStopped(phase)) break;
+  }
+  return phase;
 };
 
 interface GeneratorPrefixFacts {

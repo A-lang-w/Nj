@@ -370,6 +370,19 @@ export const semanticFinalClassMember = (
       (!isStatic && t.isClassMethod(member) && member.kind === "constructor")
     )
       return undefined;
+    // Static field evaluation can replace instance prototype members before
+    // construction. It is not skipped merely because the selected slot is an
+    // instance member; only inert field values preserve that selection.
+    if (
+      !isStatic &&
+      javaScriptClassField(member) &&
+      member.static &&
+      member.value != null &&
+      !readExactJavaScriptLiteral(member.value).found &&
+      !t.isFunctionExpression(member.value) &&
+      !t.isArrowFunctionExpression(member.value)
+    )
+      return undefined;
     if (
       (!t.isClassMethod(member) && !javaScriptClassField(member)) ||
       member.static !== isStatic
