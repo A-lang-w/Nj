@@ -442,3 +442,73 @@ it("preserves a private-image read failure when its descriptor close also fails"
     expect(borrowed.fd).toBeGreaterThanOrEqual(0);
   });
 });
+
+it.each([false, true])(
+  "shares owned carrier admission across callers and joins late admission (owner closes: %s)",
+  async (ownerCloses) => {
+    const bytes = archive(Buffer.from("shared admission"));
+    await withReader(bytes, async (_borrowedReader, borrowed, path) => {
+      const reader = new PyInstallerArtifactReader(path);
+      const entered = deferred(),
+        release = deferred();
+      const handles = new Set<FileHandle>();
+      const stat = borrowed.stat;
+      const spy = vi
+        .spyOn(Object.getPrototypeOf(borrowed), "stat")
+        .mockImplementation(async function (
+          this: FileHandle,
+          ...args: unknown[]
+        ) {
+          if (this !== borrowed) {
+            handles.add(this);
+            entered.resolve();
+            await release.promise;
+          }
+          return Reflect.apply(stat, this, args);
+        });
+      const caller = new AbortController(),
+        reason = new Error("one admission waiter leaves");
+      const first = reader
+        .prepareContainer(hash(bytes), caller.signal)
+        .catch((cause: unknown) => cause);
+      const peer = reader
+        .prepareContainer(hash(bytes))
+        .catch((cause: unknown) => cause);
+      let closing: Promise<void> | undefined;
+      try {
+        await entered.promise;
+        await setImmediate();
+        expect(handles.size).toBe(1);
+        caller.abort(reason);
+        if (ownerCloses) {
+          let closed = false;
+          closing = reader.close().then(() => {
+            closed = true;
+          });
+          await setImmediate();
+          expect(closed).toBe(false);
+        }
+        release.resolve();
+        expect(await first).toMatchObject({
+          reason: "cancelled",
+          cause: reason,
+        });
+        if (ownerCloses) {
+          expect(await peer).toMatchObject({ reason: "cancelled" });
+          await closing;
+        } else expect(await peer).toBeUndefined();
+        await reader.close();
+        for (const handle of handles) expect(handle.fd).toBe(-1);
+      } finally {
+        release.resolve();
+        await Promise.allSettled([first, peer]);
+        spy.mockRestore();
+        await reader.close();
+        await closing;
+        for (const handle of handles) {
+          await handle.close();
+        }
+      }
+    });
+  },
+);

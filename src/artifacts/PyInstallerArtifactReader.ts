@@ -72,6 +72,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
   readonly format = "pyinstaller" as const;
   #owner: OwnedFileHandle | undefined;
   #source: StableRegularFileDescriptor | undefined;
+  #opening: Promise<FileHandle> | undefined;
   #closed = false;
   readonly #scope = new ArtifactResourceScope();
   readonly #lifecycle = new AbortController();
@@ -312,16 +313,41 @@ export class PyInstallerArtifactReader implements ArtifactReader {
   }
 
   async #openHandle(signal?: AbortSignal): Promise<FileHandle> {
+    abortIfNeeded(signal);
     if (this.#closed)
       throw new ArtifactReaderFailure(
         "unavailable",
         "PyInstaller archive is closed",
       );
     if (this.#source !== undefined) return this.#source.handle;
+    // Admission belongs to the reader. A departing caller cannot cancel a peer
+    // or replace a late descriptor owner; every caller joins the same admission.
+    this.#opening ??= this.#admit();
+    let handle: FileHandle;
+    try {
+      handle = await this.#opening;
+    } catch (cause: unknown) {
+      if (
+        cause instanceof ArtifactReaderFailure &&
+        cause.reason === "cancelled" &&
+        signal?.aborted
+      )
+        throw new ArtifactReaderFailure("cancelled", cause.message, {
+          cause: signal.reason,
+          cleanup: cause.cleanup,
+          cleanupLeases: cause.cleanupLeases,
+        });
+      throw cause;
+    }
+    abortIfNeeded(signal);
+    return handle;
+  }
+
+  async #admit(): Promise<FileHandle> {
     try {
       const handle = await openRegularFile(this.path, {
         symlinks: "reject",
-        signal,
+        signal: this.#lifecycle.signal,
       });
       this.#owner = new OwnedFileHandle(handle);
       this.#source = { handle, initial: await handle.stat() };
@@ -525,13 +551,7 @@ const openFailure = (path: string, cause: unknown): ArtifactReaderFailure => {
     );
   if (cause instanceof RegularFileAdmissionFailure)
     return ArtifactReaderFailure.withCleanup(
-      cause.cause instanceof NonRegularFileReadError
-        ? new ArtifactReaderFailure(
-            "format",
-            `PyInstaller source is not a regular file: ${path}`,
-            { cause: cause.cause },
-          )
-        : cause.cause,
+      openFailure(path, cause.cause),
       ArtifactReaderFailure.cleanupObservation(cause.cleanupCause, path),
     );
   if (cause instanceof NonRegularFileReadError)
