@@ -40,6 +40,21 @@ const sources = [
     source:
       'const connect=()=>new Socket("wss://example.test/helper-read");connect.call(null,connect.call=()=>{});const Socket=globalThis.WebSocket;',
   },
+  {
+    file: "base-field.js",
+    source:
+      'class Base{field=new Socket("wss://example.test/base-field")}class Derived extends Base{}new Derived();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "promise-executor.js",
+    source:
+      'new Promise(()=>new Socket("wss://example.test/promise-executor"));const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "destructured-getter.js",
+    source:
+      'const{run}={get run(){return new Socket("wss://example.test/destructured-getter")}};const Socket=globalThis.WebSocket;',
+  },
 ] as const;
 
 it("retains reviewed callback and descriptor endpoints with source provenance", async () => {

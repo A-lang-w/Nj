@@ -37,6 +37,7 @@ import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
+  isUnshadowedGlobal,
 } from "./javascriptSemanticState.js";
 import {
   semanticAwaitedResultSites,
@@ -66,6 +67,7 @@ import {
   semanticPropertyPathKeyMatches,
 } from "./javascriptSemanticPropertyPaths.js";
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
+import { semanticClassCandidates } from "./javascriptSemanticObjectReferences.js";
 
 /** A direct return preserves the value separately from the completed activation. */
 const webSocketReturnedOwner = (
@@ -147,7 +149,11 @@ const webSocketFreshMethodSelection = (
   node: t.Function | t.Class,
   value: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): t.MemberExpression | t.OptionalMemberExpression | undefined => {
+):
+  | t.MemberExpression
+  | t.OptionalMemberExpression
+  | t.ObjectExpression
+  | undefined => {
   const parent = state.parentsByNode.get(value);
   const property =
     (t.isObjectMethod(node) || t.isClassMethod(node)) &&
@@ -175,14 +181,12 @@ const webSocketFreshMethodSelection = (
       return undefined;
     object = webSocketOuterExpression(construction, state);
   }
-  const member = state.parentsByNode.get(object);
-  if (
-    (!t.isMemberExpression(member) && !t.isOptionalMemberExpression(member)) ||
-    member.object !== object
-  )
-    return undefined;
-  const key = semanticStaticPropertyKey(member.property, member.computed);
-  return key !== null &&
+  const key = semanticStaticPropertyKey(
+    property.key,
+    "computed" in property && property.computed,
+  );
+  const final =
+    key !== null &&
     (t.isObjectExpression(literal)
       ? semanticFinalObjectMember(
           literal,
@@ -194,9 +198,72 @@ const webSocketFreshMethodSelection = (
           key,
           isStatic,
           t.isClassMethod(property) && property.kind === "set" ? "set" : "get",
-        )) === property
+        )) === property;
+  if (!final) return undefined;
+  if (
+    t.isObjectExpression(literal) &&
+    t.isObjectMethod(property) &&
+    property.kind === "get"
+  ) {
+    const consumer = state.parentsByNode.get(object);
+    const pattern =
+      t.isVariableDeclarator(consumer) && consumer.init === object
+        ? consumer.id
+        : t.isAssignmentExpression(consumer, { operator: "=" }) &&
+            consumer.right === object
+          ? consumer.left
+          : undefined;
+    if (t.isObjectPattern(pattern)) {
+      const first = pattern.properties[0];
+      if (
+        t.isObjectProperty(first) &&
+        semanticStaticPropertyKey(first.key, first.computed) === key
+      )
+        return literal;
+    }
+  }
+  const member = state.parentsByNode.get(object);
+  if (
+    (!t.isMemberExpression(member) && !t.isOptionalMemberExpression(member)) ||
+    member.object !== object
+  )
+    return undefined;
+  return semanticStaticPropertyKey(member.property, member.computed) === key
     ? member
     : undefined;
+};
+
+/** A native Promise constructor invokes its literal executor before returning. */
+const webSocketNativePromiseExecutor = (
+  node: t.Function | t.Class,
+  value: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): t.NewExpression | undefined => {
+  if (!t.isFunction(node) || node.generator) return undefined;
+  const invocation = state.parentsByNode.get(value);
+  if (
+    !t.isNewExpression(invocation) ||
+    invocation.arguments[0] !== value ||
+    !isUnshadowedGlobal(invocation.callee, state, "Promise") ||
+    invocation.arguments
+      .slice(1)
+      .some(
+        (argument) =>
+          t.isSpreadElement(argument) || !syntaxEvaluationCannotThrow(argument),
+      )
+  )
+    return undefined;
+  const selected = ["global", "Promise"];
+  return state.ambientReferenceEffects.some(
+    ({ path, node: effect }) =>
+      path.length <= selected.length &&
+      path.every((key, index) =>
+        semanticPropertyPathKeyMatches(key, selected[index] ?? ""),
+      ) &&
+      semanticEffectTiming(invocation, effect, state) !== "after",
+  )
+    ? undefined
+    : invocation;
 };
 
 /** Known caller activations order helper lookup independently of lexical source order. */
@@ -666,6 +733,7 @@ const webSocketImmediateInvocation = (
   | t.Decorator
   | t.MemberExpression
   | t.OptionalMemberExpression
+  | t.ObjectExpression
   | undefined => {
   const value = webSocketOuterExpression(node, state);
   const selection = webSocketFreshMethodSelection(node, value, state);
@@ -686,6 +754,10 @@ const webSocketImmediateInvocation = (
     return semanticValueWriteSite(selection, state.parentsByNode) !== undefined
       ? selection
       : undefined;
+  if (selection === undefined) {
+    const promise = webSocketNativePromiseExecutor(node, value, state);
+    if (promise !== undefined) return promise;
+  }
   let callee =
     selection === undefined
       ? value
@@ -1283,7 +1355,47 @@ const webSocketClassConstruction = (
   if (declaration === undefined) return undefined;
   const invocation =
     calls.get(declaration) ?? webSocketImmediateInvocation(declaration, state);
-  return t.isNewExpression(invocation) ? invocation : undefined;
+  if (t.isNewExpression(invocation)) return invocation;
+
+  const implicitlyConstructs = (
+    derived: t.Class,
+    seen: Set<t.Class> = new Set(),
+  ): boolean => {
+    if (derived === declaration) return true;
+    if (
+      seen.has(derived) ||
+      derived.superClass == null ||
+      derived.body.body.some(
+        (member) => t.isClassMethod(member) && member.kind === "constructor",
+      )
+    )
+      return false;
+    seen.add(derived);
+    const bases = semanticClassCandidates(derived.superClass, state);
+    return (
+      bases.length === 1 &&
+      bases[0] !== undefined &&
+      implicitlyConstructs(bases[0], seen)
+    );
+  };
+  const constructions = new Set<t.NewExpression>();
+  for (const [activation, call] of calls)
+    if (
+      t.isClass(activation) &&
+      t.isNewExpression(call) &&
+      implicitlyConstructs(activation)
+    )
+      constructions.add(call);
+  for (const call of state.callSites) {
+    if (!t.isNewExpression(call)) continue;
+    for (const candidate of semanticClassCandidates(call.callee, state))
+      if (
+        implicitlyConstructs(candidate) &&
+        webSocketImmediateInvocation(candidate, state) === call
+      )
+        constructions.add(call);
+  }
+  return constructions.size === 1 ? [...constructions][0] : undefined;
 };
 
 /** Legacy decorator application follows its class's keys and static values. */

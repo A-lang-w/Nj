@@ -8489,4 +8489,26 @@ describe("web bundle invocation and descriptor review follow-ups", () => {
       socketEndpoints(source).map((items) => items.map((item) => item.value)),
     ).toEqual([[], []]);
   });
+
+  it.each([
+    [
+      "base fields reached through implicit subclass construction",
+      'class Base{field=new Socket("wss://example.test/base-field")}class Derived extends Base{}new Derived();const Socket=globalThis.WebSocket;',
+    ],
+    [
+      "a native Promise executor invoked synchronously",
+      'new Promise(()=>new Socket("wss://example.test/promise-executor"));const Socket=globalThis.WebSocket;',
+    ],
+    [
+      "a fresh getter selected by object destructuring",
+      'const{run}={get run(){return new Socket("wss://example.test/destructured-getter")}};const Socket=globalThis.WebSocket;',
+    ],
+  ] as const)(
+    "suppresses %s before the constructor binding",
+    (_name, source) => {
+      expect(
+        socketEndpoints(source).map((items) => items.map((item) => item.value)),
+      ).toEqual([[], []]);
+    },
+  );
 });

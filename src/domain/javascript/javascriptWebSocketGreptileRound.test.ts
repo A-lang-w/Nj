@@ -68,3 +68,33 @@ it("orders helper selection before argument writes", () => {
     `),
   ).toEqual([]);
 });
+
+it.each([
+  [
+    "enters base fields when an implicit subclass is constructed",
+    `
+      class Base { field = new Socket("wss://example.test/base-field"); }
+      class Derived extends Base {}
+      new Derived();
+      const Socket = globalThis.WebSocket;
+    `,
+  ],
+  [
+    "enters a native Promise executor synchronously",
+    `
+      new Promise(() => new Socket("wss://example.test/promise-executor"));
+      const Socket = globalThis.WebSocket;
+    `,
+  ],
+  [
+    "enters a fresh getter selected by object destructuring",
+    `
+      const { run } = {
+        get run() { return new Socket("wss://example.test/destructured-getter"); }
+      };
+      const Socket = globalThis.WebSocket;
+    `,
+  ],
+] as const)("%s", (_name, source) => {
+  expect(endpoints(source)).toEqual([]);
+});
