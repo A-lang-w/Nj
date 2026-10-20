@@ -8,13 +8,11 @@ import type {
 } from "../application/Doctor.js";
 import { readKunaConfiguration } from "./KunaConfiguration.js";
 import type { FileCloseResourceOwner } from "../application/AnalysisProvider.js";
-import {
-  RegularFileCleanupFailure,
-  regularFileCancellation,
-} from "../filesystem/OwnedRegularFile.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
   inspectKunaInstallation,
+  kunaInstallationCancellation,
   type KunaReadinessFailure,
 } from "./KunaInstallation.js";
 import {
@@ -53,10 +51,11 @@ export const inspectKunaProvider = async (
     });
   } catch (cause: unknown) {
     if (!(cause instanceof RegularFileCleanupFailure)) {
-      const cancellation = regularFileCancellation(cause);
+      const cancellation = kunaInstallationCancellation(cause);
       if (cancellation !== undefined)
         throw new AnalysisCancelledError("doctor", {
           cause: cancellation.reason,
+          diagnostics: cancellation.diagnostics,
         });
       throw cause;
     }

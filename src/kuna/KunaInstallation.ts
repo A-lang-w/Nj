@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { JsonValue } from "../domain/jsonValue.js";
+import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
@@ -14,6 +14,7 @@ import {
 import type { FileCloseResourceOwner } from "../application/AnalysisProvider.js";
 import {
   RegularFileCleanupFailure,
+  RegularFileCancelled,
   regularFileCancellation,
   withOwnedRegularFile,
 } from "../filesystem/OwnedRegularFile.js";
@@ -74,6 +75,31 @@ export interface KunaInstallationOptions {
   readonly probeTimeoutMs?: number;
   readonly fileCloseResources: FileCloseResourceOwner;
 }
+
+/** Cancellation facts normalized by the installation inspection that observed them. */
+interface KunaInstallationCancellation {
+  readonly reason: unknown;
+  readonly diagnostics?: Readonly<Record<string, JsonValue>>;
+}
+
+class CancelledKunaInstallation extends Error {
+  readonly _tag = "CancelledKunaInstallation";
+  constructor(
+    readonly cancellation: KunaInstallationCancellation,
+    cause: unknown,
+  ) {
+    super("Kuna installation inspection cancelled", { cause });
+    this.name = this._tag;
+  }
+}
+
+/** Consumers project the owner's facts without reinterpreting generic file outcomes. */
+export const kunaInstallationCancellation = (
+  cause: unknown,
+): KunaInstallationCancellation | undefined =>
+  cause instanceof CancelledKunaInstallation
+    ? cause.cancellation
+    : regularFileCancellation(cause);
 
 /** One installation inspection's file owners and their originating errors. */
 export interface KunaFileCloseScope {
@@ -208,6 +234,10 @@ export const inspectKunaInstallation = async (
 
   let fingerprint: { readonly sha256: string; readonly bytes: number };
   let script: boolean;
+  const observed: {
+    completed_hash?: { readonly sha256: string; readonly bytes: number };
+    script?: boolean;
+  } = {};
   try {
     ({ fingerprint, script } = await options.fileCloseResources.run(
       async () => {
@@ -216,20 +246,51 @@ export const inspectKunaInstallation = async (
           retainFailedClose: (owner) =>
             options.fileCloseResources.retain(owner, executable),
         });
+        observed.completed_hash = fingerprint;
+        assertRegularFileActive(options.signal);
         const script = await startsWithShebang(
           executable,
           options.fileCloseResources,
         );
+        observed.script = script;
         assertRegularFileActive(options.signal);
         return { fingerprint, script };
       },
     ));
   } catch (cause: unknown) {
-    if (
-      cause instanceof RegularFileCleanupFailure ||
-      regularFileCancellation(cause) !== undefined
-    )
-      throw cause;
+    if (cause instanceof RegularFileCleanupFailure) throw cause;
+    const cancellation = regularFileCancellation(cause);
+    if (cancellation !== undefined) {
+      // Only the fingerprint read observes a signal during descriptor close.
+      // Its completed value survives in RegularFileCancelled even though the
+      // await did not return. Later cancellation keeps our already parsed facts.
+      const completedHash =
+        observed.completed_hash ??
+        (cause instanceof RegularFileCancelled
+          ? jsonValueSchema.parse(cause.outcome.value)
+          : undefined);
+      throw new CancelledKunaInstallation(
+        {
+          reason: cancellation.reason,
+          diagnostics: {
+            kuna_installation: {
+              status: "partial",
+              command,
+              executable,
+              version,
+              verified: version === KUNA_VERIFIED_VERSION,
+              ...(completedHash === undefined
+                ? {}
+                : { completed_hash: completedHash }),
+              ...(observed.script === undefined
+                ? {}
+                : { script: observed.script }),
+            },
+          },
+        },
+        cause,
+      );
+    }
     return failure(
       "executable_missing",
       `Cannot fingerprint ${executable}: ${message(stableFileHashCause(cause))}`,
