@@ -367,6 +367,35 @@ it("cancels immediately after the startup prompt before sending configuration co
   expect(fake.children[0]?.killSignals).toEqual(["SIGTERM"]);
 });
 
+it("keeps the caller reason when a cancelled startup's stop stays incomplete", async () => {
+  const controller = new AbortController();
+  const reason = Object.freeze({ requested: "stop-during-incomplete-cleanup" });
+  const fake = createFakeSpawner(
+    (child, token) => {
+      child.stdout.write(`${token}^done\n`);
+    },
+    { deferPrompt: true, afterPrompt: () => controller.abort(reason) },
+  );
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    stopProcess: async () => ({
+      status: "incomplete",
+      reason: "simulated unconfirmed cancellation stop",
+    }),
+  });
+
+  const started = await manager.start(controller.signal);
+
+  expect(started).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError" },
+  });
+  if (started.ok) return;
+  expect(started.error.cause).toBe(reason);
+  expect(
+    (started.error as { cleanup?: { reason?: string } }).cleanup?.reason,
+  ).toContain("simulated unconfirmed cancellation stop");
+});
+
 it("rejects a GDB exit queued with the final startup response", async () => {
   const fake = createFakeSpawner((child, token, command) => {
     child.stdout.write(`${token}^done\n`);
