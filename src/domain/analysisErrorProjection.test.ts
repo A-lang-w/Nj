@@ -25,6 +25,59 @@ import { ProviderSelectionError } from "./providerSelectionError.js";
 import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
 import { nativeCallPartialObservationSchema } from "./native/nativeCallPartialObservation.js";
 
+describe("agent recovery metadata", () => {
+  it("names the input contract for malformed analysis arguments", () => {
+    const projected = projectAnalysisError(
+      new AnalysisInputError("inspect_analysis_view", undefined, [
+        {
+          path: ["view", "kind"],
+          reason: "invalid_value",
+          expected: ["summary", "module"],
+        },
+      ]),
+    );
+
+    expect(projected).toMatchObject({
+      recovery: {
+        kind: "inspect_input_contract",
+        operation: "inspect_analysis_view",
+      },
+      remediation: {
+        action:
+          "Read the declared input schema or CLI usage for inspect_analysis_view; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.",
+      },
+    });
+    expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
+  });
+
+  it("separates timeout-state inspection from client deadline recovery", () => {
+    const projected = projectAnalysisError(
+      new AnalysisTimeoutError("inspect_binary_layout", 2_500),
+    );
+
+    expect(projected).toMatchObject({
+      code: "provider_timeout",
+      recovery: {
+        kind: "inspect_timeout_state",
+        operation: "inspect_binary_layout",
+        timeout_ms: 2_500,
+      },
+      message: expect.stringContaining("server/provider deadline"),
+      remediation: {
+        action: expect.stringContaining("provider diagnostics"),
+      },
+    });
+    expect(projected.message).toContain("not a client-side timeout");
+    expect(projected.remediation.action).not.toContain(
+      "raise its tool deadline",
+    );
+    expect(projected.remediation.action).not.toMatch(
+      /declared timeout controls|larger server\/provider budget/u,
+    );
+    expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
+  });
+});
+
 describe("capability failure retry disposition", () => {
   it.each([
     { options: {}, retryable: false, category: "unsupported_provider" },

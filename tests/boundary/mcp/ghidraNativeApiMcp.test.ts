@@ -88,6 +88,60 @@ it.each([
 );
 
 describe("Ghidra MCP native API evidence", () => {
+  it("retains transient failure Evidence without freezing the composed API inspection", async () => {
+    let failed = true;
+    const harness = await connectGhidraMcp(
+      "ghidra-native-api-recovery",
+      async (operation) => {
+        if (operation !== "analyze_function")
+          throw new Error(`Unexpected operation: ${operation}`);
+        const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+        if (failed)
+          dossier.native_api = {
+            available: false,
+            reason: "Injected backend failure",
+            residual_unknowns: ["Retry after recovery."],
+          };
+        return ok(
+          jsonValueSchema.parse({
+            value: dossier,
+            limitations: [],
+            ...(failed ? { cache_policy: "live" } : {}),
+          }),
+        );
+      },
+    );
+    try {
+      const inspect = async () => {
+        const reply = await harness.mcp.callTool({
+          name: "inspect_native_api",
+          arguments: { procedure: "fixture_main" },
+        });
+        expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
+        return sessionEvidence(harness.session, reply.structuredContent);
+      };
+      const degraded = await inspect();
+      expect(degraded.normalized_result).toMatchObject({
+        boundary: { available: false },
+      });
+      const snapshot = harness.session.exportAnalysisSnapshot();
+      if (!snapshot.ok) throw snapshot.error;
+      expect(snapshot.value.entries).toEqual([]);
+      expect(snapshot.value.workflow_entries).toEqual([]);
+      expect(harness.session.evidenceById(degraded.evidence_id)).toEqual(
+        degraded,
+      );
+      failed = false;
+      expect((await inspect()).normalized_result).toMatchObject({
+        boundary: { available: true },
+      });
+      await inspect();
+      expect(harness.calls).toEqual(["analyze_function", "analyze_function"]);
+    } finally {
+      await harness.close();
+    }
+  }, 30_000);
+
   it("returns complete native API boundaries without output-cap unknowns", async () => {
     const harness = await connectGhidraMcp("ghidra-native-api");
     const { mcp, session } = harness;
@@ -195,7 +249,11 @@ it("retains unavailable Ghidra native API observations across provenance and exa
           reason: residual,
           residual_unknowns: [residual],
         },
-        residual_unknowns: [residual],
+        // The provider's boundary unknown, plus the absent indirect-branch inventory.
+        residual_unknowns: [
+          residual,
+          "Which indirect branches does this function contain? The provider did not report an indirect-branch inventory.",
+        ],
       });
       return evidence;
     };
@@ -227,7 +285,8 @@ it("retains unavailable Ghidra native API observations across provenance and exa
     const unknownPage = toolContract("list_unknowns").outputSchema.parse(
       listed.structuredContent,
     ).result;
-    expect(unknownPage.total).toBe(3);
+    // Two automatic unknowns for each of the three result Evidence records.
+    expect(unknownPage.total).toBe(6);
     expect(unknownPage.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -244,9 +303,16 @@ it("retains unavailable Ghidra native API observations across provenance and exa
         }),
       ]),
     );
+    const indirectBranchQuestion =
+      "Which indirect branches does this function contain? The provider did not report an indirect-branch inventory.";
     expect(
-      unknownPage.items.every(({ question }) => question.includes(residual)),
-    ).toBe(true);
+      unknownPage.items.filter(({ question }) => question.includes(residual)),
+    ).toHaveLength(3);
+    expect(
+      unknownPage.items.filter(({ question }) =>
+        question.includes(indirectBranchQuestion),
+      ),
+    ).toHaveLength(3);
   } finally {
     await harness.close();
   }

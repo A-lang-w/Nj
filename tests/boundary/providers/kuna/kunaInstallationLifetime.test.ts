@@ -1,4 +1,3 @@
-import { regularFileCancellation } from "../../../../src/filesystem/OwnedRegularFile.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const gates = vi.hoisted(() => {
@@ -62,8 +61,11 @@ vi.mock("../../../../src/filesystem/RegularFile.js", async (importOriginal) => {
 });
 
 import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
-import type { FileCloseResourceOwner } from "../../../../src/application/AnalysisProvider.js";
-import { inspectKunaInstallation } from "../../../../src/kuna/KunaInstallation.js";
+import type { RetainedResourceScope } from "../../../../src/application/AnalysisProvider.js";
+import {
+  inspectKunaInstallation,
+  kunaInstallationCancellation,
+} from "../../../../src/kuna/KunaInstallation.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { writeFakeKuna } from "./fakeKuna.js";
 import { session } from "./kunaSessionFixture.js";
@@ -89,7 +91,7 @@ it
     const root = await createTestTempDirectory("rea-kuna-inspection-lifetime-");
     const executable = await writeFakeKuna(root);
     const scope = new ArtifactResourceScope();
-    const fileCloseResources: FileCloseResourceOwner = {
+    const resourceScope: RetainedResourceScope = {
       retain: (owner, resource) =>
         scope.retain({
           kind: "lease",
@@ -101,7 +103,7 @@ it
     const controller = new AbortController();
     const inspection = inspectKunaInstallation(
       { REA_KUNA_COMMAND: executable },
-      { fileCloseResources, signal: controller.signal },
+      { resourceScope, signal: controller.signal },
     );
 
     const inspectionOutcome = inspection.then(
@@ -138,7 +140,7 @@ it
       const failure: unknown = await inspection.catch(
         (cause: unknown) => cause,
       );
-      const cancellation = regularFileCancellation(failure);
+      const cancellation = kunaInstallationCancellation(failure);
       expect(cancellation).toBeDefined();
       expect(cancellation?.reason).toBe(controller.signal.reason);
       await expect(cleanup).resolves.toBeUndefined();

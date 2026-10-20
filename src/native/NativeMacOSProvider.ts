@@ -8,6 +8,7 @@ import {
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
+  APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
   NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY,
   nativeMacOSCapabilities,
 } from "./NativeMacOSProviderMetadata.js";
@@ -237,6 +238,7 @@ class NativeMacOSClient implements AnalysisClient {
         );
         return ok(
           createAnalysisExecution(result, result.provider, {
+            analysisProfile: APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
             locations: [{ kind: "artifact-path", path: this.target.path }],
             limitations: result.result.coverage.flatMap(({ reason }) =>
               reason === null ? [] : [reason],
@@ -958,8 +960,8 @@ class NativeMacOSClient implements AnalysisClient {
 
 const nativeCommandCleanupFailure = (
   failures: readonly NativeCommandCleanupFailure[],
-): ProviderCleanupError =>
-  new ProviderCleanupError(
+): ProviderCleanupError => {
+  const failure = new ProviderCleanupError(
     IDENTITY.id,
     [...new Set(failures.flatMap(({ resources }) => resources))],
     {
@@ -970,6 +972,18 @@ const nativeCommandCleanupFailure = (
       })),
     },
   );
+  if (
+    failures.length === 0 ||
+    failures.some(({ marker }) => marker === undefined)
+  )
+    return failure;
+  const markers = failures.flatMap(({ marker }) =>
+    marker === undefined ? [] : [marker],
+  );
+  return markers.length === 0
+    ? failure
+    : failure.bindCleanupDependencies(markers);
+};
 
 /** Each file workflow retains its own exact resource set through client close. */
 const closeNativeFileScope = async (
@@ -1021,6 +1035,29 @@ const translateCommandFailure = (
   operation: NativeToolName,
   failure: NativeCommandFailure,
 ): AnalysisError => {
+  const cleanupOwners = [
+    ...failure.cleanupFailures,
+    ...(failure.cleanupOwner === undefined
+      ? []
+      : [
+          {
+            owner: failure.cleanupOwner,
+            marker: failure.cleanupMarker,
+            reason:
+              failure.cleanupFailure ??
+              "native command cleanup remains incomplete",
+            resources: failure.cleanupResources,
+          },
+        ]),
+  ];
+  const markers = cleanupOwners.flatMap(({ marker }) =>
+    marker === undefined ? [] : [marker],
+  );
+  const bindCleanup = (error: AnalysisError): AnalysisError =>
+    cleanupOwners.length === 0 ||
+    cleanupOwners.some(({ marker }) => marker === undefined)
+      ? error
+      : error.bindCleanupDependencies([...new Set(markers)]);
   const preparation = failure.preparationFailure;
   if (preparation !== undefined) {
     const marker = preparation.cleanupFailure;
@@ -1069,9 +1106,9 @@ const translateCommandFailure = (
               ...options,
               cause: preparation.cancellation.reason,
             });
-    return marker === undefined
-      ? error
-      : error.bindCleanupDependencies([marker]);
+    return bindCleanup(
+      marker === undefined ? error : error.bindCleanupDependencies([marker]),
+    );
   }
   const capturedOutput =
     failure.capture === null
@@ -1098,42 +1135,55 @@ const translateCommandFailure = (
   };
   if (failure.reason === "unavailable") {
     const reason = `${failure.tool} is unavailable through xcrun.`;
-    return new AnalysisCapabilityUnavailableError(
-      IDENTITY.id,
-      operation,
-      reason,
-      { ...errorOptions, userMessage: reason },
+    return bindCleanup(
+      new AnalysisCapabilityUnavailableError(IDENTITY.id, operation, reason, {
+        ...errorOptions,
+        userMessage: reason,
+      }),
     );
   }
   if (failure.reason === "cancelled")
-    return new AnalysisCancelledError(operation, errorOptions);
+    return bindCleanup(
+      new AnalysisCancelledError(operation, {
+        ...errorOptions,
+        ...(failure.cancellation === undefined
+          ? {}
+          : { cause: failure.cancellation.reason }),
+      }),
+    );
   if (failure.reason === "timeout")
-    return new AnalysisTimeoutError(
-      operation,
-      NATIVE_COMMAND_TIMEOUT_MS,
-      errorOptions,
+    return bindCleanup(
+      new AnalysisTimeoutError(
+        operation,
+        NATIVE_COMMAND_TIMEOUT_MS,
+        errorOptions,
+      ),
     );
   if (failure.reason === "output-limit")
-    return new AnalysisResourceConstraintError(
-      operation,
-      "memory",
-      `Native command output exceeded ${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)} bytes; complete output is required for analysis.`,
-      { max_output_bytes: NATIVE_COMMAND_OUTPUT_BUDGET_BYTES },
-      errorOptions,
+    return bindCleanup(
+      new AnalysisResourceConstraintError(
+        operation,
+        "memory",
+        `Native command output exceeded ${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)} bytes; complete output is required for analysis.`,
+        { max_output_bytes: NATIVE_COMMAND_OUTPUT_BUDGET_BYTES },
+        errorOptions,
+      ),
     );
-  return new ProviderAdapterError(IDENTITY.id, operation, {
-    cause: failure,
-    ...errorOptions,
-    diagnostics: {
-      tool: failure.tool,
-      reason: failure.reason,
-      exit_code: failure.capture?.exitCode ?? failure.exitCode,
-      signal: failure.capture?.signal ?? null,
-      stdout_bytes: failure.capture?.stdoutBytes ?? 0,
-      stderr_bytes: failure.capture?.stderrBytes ?? 0,
-      ...(failure.detail === null ? {} : { detail: failure.detail }),
-    },
-  });
+  return bindCleanup(
+    new ProviderAdapterError(IDENTITY.id, operation, {
+      cause: failure,
+      ...errorOptions,
+      diagnostics: {
+        tool: failure.tool,
+        reason: failure.reason,
+        exit_code: failure.capture?.exitCode ?? failure.exitCode,
+        signal: failure.capture?.signal ?? null,
+        stdout_bytes: failure.capture?.stdoutBytes ?? 0,
+        stderr_bytes: failure.capture?.stderrBytes ?? 0,
+        ...(failure.detail === null ? {} : { detail: failure.detail }),
+      },
+    }),
+  );
 };
 
 const translateCodeSignExitFailure = (

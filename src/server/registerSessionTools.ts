@@ -1,3 +1,4 @@
+import { registerNativeFunctionMatchingTool } from "./registerNativeFunctionMatchingTool.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { workflowUnknownInput } from "../application/investigation/WorkflowUnknown.js";
@@ -15,7 +16,7 @@ import { ProcessCaptureError } from "../process/capture/ProcessCaptureError.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import { binaryTargetSummary } from "../application/binary/BinaryTargetSummary.js";
 import { UnknownRegistryError } from "../domain/unknownRegistryError.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { ProcessCapture } from "../domain/process/processCaptureParsing.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -309,6 +310,7 @@ export const registerSessionTools = (
           await processResources.retryCleanup();
           return ok(null);
         } catch (cause: unknown) {
+          if (cause instanceof AnalysisError) return err(cause);
           return err(
             new ProcessCaptureError(
               "process capture cleanup remains incomplete",
@@ -374,6 +376,7 @@ export const registerSessionTools = (
   registerProcessComparisonTool(server, session, compareContract);
   registerArtifactComparisonTool(server, session, compareArtifactsContract);
   registerFunctionComparisonTool(server, session, compareFunctionsContract);
+  registerNativeFunctionMatchingTool(server, session, logger);
   registerBundleComparisonTool(
     server,
     session,
