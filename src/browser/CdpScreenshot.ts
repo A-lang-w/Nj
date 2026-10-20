@@ -90,7 +90,6 @@ export const captureCdpScreenshot = async (
     );
   } finally {
     removeListener();
-    await context.connection.send("Page.disable", {}, context.sessionId).catch(() => {});
   }
   const encoded = cdpStringValue(result?.data);
   const bytes =
