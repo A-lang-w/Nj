@@ -56,6 +56,7 @@ const MIN_QUEUED_FRAME_CHARGE_BYTES = 64;
 const MAX_COMMAND_FRAMES = 4096;
 const MAX_RECENT_FRAME_BYTES = 16 * 1024;
 const MAX_DIAGNOSTIC_BYTES = 64 * 1024;
+const MAX_LINUX_PID = 4_194_303;
 
 export const RIZIN_DEBUGGER_PROVIDER_IDENTITY = {
   id: "rizin.debugger",
@@ -1593,36 +1594,37 @@ export class RizinDebugSessionManager {
       return identity;
     };
     const previous = session.knownInferiorIdentities.get(pid);
-    const startTime = await this.#readProcessStartTime(pid);
+    let startTime = await this.#readProcessStartTime(pid);
     if (startTime === null) {
       if (previous === undefined) {
         // A PID reported by Rizin but not yet identified may have exited
         // before the caller can resolve it. Require a second absent read
         // before releasing the retained row.
-        if ((await this.#readProcessStartTime(pid)) === null)
+        const confirmedStartTime = await this.#readProcessStartTime(pid);
+        if (confirmedStartTime === null) return resolved(undefined);
+        // The PID may have been reused between the absent first read and this
+        // confirmation. Continue through the normal tracer ownership check.
+        startTime = confirmedStartTime;
+      } else {
+        // A transient ENOENT can race with PID reuse. Confirm the second lookup
+        // directly so a new identity still goes through tracer ownership checks.
+        const confirmedStartTime = await this.#readProcessStartTime(pid);
+        if (confirmedStartTime === null) return resolved(undefined);
+        if (
+          previous.startTime !== confirmedStartTime &&
+          !(await this.#replacementIsTracedByOwnedDebugger(
+            session,
+            pid,
+            confirmedStartTime,
+          ))
+        ) {
+          await this.#verifyDebuggerExitPolicy(session);
           return resolved(undefined);
-        throw new Error(
-          `Inferior PID ${pid} ended before its identity could be established.`,
-        );
+        }
+        const identity = { pid, startTime: confirmedStartTime };
+        session.knownInferiorIdentities.set(pid, identity);
+        return resolved(identity);
       }
-      // A transient ENOENT can race with PID reuse. Confirm the second lookup
-      // directly so a new identity still goes through tracer ownership checks.
-      const confirmedStartTime = await this.#readProcessStartTime(pid);
-      if (confirmedStartTime === null) return resolved(undefined);
-      if (
-        previous.startTime !== confirmedStartTime &&
-        !(await this.#replacementIsTracedByOwnedDebugger(
-          session,
-          pid,
-          confirmedStartTime,
-        ))
-      ) {
-        await this.#verifyDebuggerExitPolicy(session);
-        return resolved(undefined);
-      }
-      const identity = { pid, startTime: confirmedStartTime };
-      session.knownInferiorIdentities.set(pid, identity);
-      return resolved(identity);
     }
     if (
       (previous === undefined || previous.startTime !== startTime) &&
@@ -1912,7 +1914,7 @@ export interface RizinDebugCommandResult {
   readonly backend: string | null;
 }
 
-const parseRizinPtraceRows = (
+export const parseRizinPtraceRows = (
   output: string,
 ): {
   readonly rows: Array<[string, string]>;
@@ -1953,7 +1955,18 @@ const parseRizinPtraceRows = (
     const uri = typeof descriptor.uri === "string" ? descriptor.uri : undefined;
     const ptraceMatch =
       uri === undefined ? null : /^ptrace:\/\/(\d+)$/u.exec(uri);
-    if (ptraceMatch !== null) observedPids.add(ptraceMatch[1]!);
+    const rawPid = ptraceMatch?.[1];
+    const numericPid = rawPid === undefined ? Number.NaN : Number(rawPid);
+    const pid =
+      rawPid !== undefined &&
+      rawPid.length <= 7 &&
+      numericPid > 0 &&
+      numericPid <= MAX_LINUX_PID
+        ? String(numericPid)
+        : undefined;
+    if (rawPid !== undefined && pid === undefined)
+      error ??= new Error("Rizin `olj` returned an invalid Linux PID.");
+    if (pid !== undefined) observedPids.add(pid);
     const descriptorValid =
       typeof descriptor.fd === "number" &&
       Number.isSafeInteger(descriptor.fd) &&
@@ -1966,12 +1979,12 @@ const parseRizinPtraceRows = (
       );
       continue;
     }
-    if (ptraceMatch !== null) {
+    if (ptraceMatch !== null && pid !== undefined) {
       if (descriptor.raised !== true) {
         error ??= new Error("Rizin `olj` ptrace descriptor is not active.");
         continue;
       }
-      rows.push([String(descriptor.fd), ptraceMatch[1]!]);
+      rows.push([String(descriptor.fd), pid]);
     } else if (uri.startsWith("ptrace://")) {
       error ??= new Error("Rizin `olj` returned a malformed ptrace URI.");
     }

@@ -8,6 +8,7 @@ import { afterEach, expect, it } from "vitest";
 
 import {
   assertRizinEmptyInferiorInventory,
+  parseRizinPtraceRows,
   RizinDebugSessionManager,
 } from "../../../src/rizin/RizinDebugSessionManager.js";
 import {
@@ -39,6 +40,17 @@ it("accepts only ended retained identities for an empty Rizin inventory", async 
   await expect(
     assertRizinEmptyInferiorInventory([identity], async () => null),
   ).resolves.toBeUndefined();
+});
+
+it("does not retain an out-of-range PID from a Rizin ptrace row", () => {
+  const parsed = parseRizinPtraceRows(
+    JSON.stringify([
+      { fd: 12, raised: true, uri: `ptrace://${"9".repeat(5_000)}` },
+    ]),
+  );
+  expect(parsed.rows).toEqual([]);
+  expect(parsed.observedPids).toEqual([]);
+  expect(parsed.error?.message).toContain("invalid Linux PID");
 });
 
 const startRizinWithProvider = async (
@@ -1054,6 +1066,59 @@ it.skipIf(process.platform !== "linux")(
 
     expect(closed.ok, closed.ok ? "" : closed.error.message).toBe(true);
     expect(manager.status(started.value.session_id)).toBeUndefined();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "reconciles a PID reused between its first absent read and identity confirmation",
+  async () => {
+    const pid = 45_681;
+    const provider = await createRetryEmptyInventoryProvider(pid);
+    const startTimes: Array<string | null> = [null, "200", "200", null];
+    const tracerReads: string[] = [];
+    const outcomes: string[] = [];
+    const manager = new RizinDebugSessionManager(
+      { ...process.env, REA_RIZIN_COMMAND: provider },
+      {
+        platform: "linux",
+        readProcessStartTime: async (observedPid) => {
+          expect(observedPid).toBe(String(pid));
+          return startTimes.shift() ?? null;
+        },
+        readProcessTracerPid: async (observedPid) => {
+          tracerReads.push(observedPid);
+          return 777;
+        },
+        readProcessTaskIds: async () => new Set(["777"]),
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          ownedProviderProcesses.push(launched.process);
+          return launched;
+        },
+        stopProcess: async (session) => {
+          try {
+            const detached = await session.detachInferior?.();
+            outcomes.push(detached?.status ?? "missing-detach");
+          } catch (cause) {
+            outcomes.push(
+              cause instanceof Error ? cause.message : String(cause),
+            );
+          }
+          return { status: "incomplete", reason: "injected retained debugger" };
+        },
+      },
+    );
+    managers.push(manager);
+    const started = await manager.start({
+      path: "/tmp/fixture.bin",
+      inferior_tty: await rizinTestInferiorTty(),
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    expect((await manager.close(started.value.session_id)).ok).toBe(false);
+    expect(tracerReads).toContain(String(pid));
+    expect(outcomes[0]).toContain("disappeared or was reused during detach");
   },
 );
 
