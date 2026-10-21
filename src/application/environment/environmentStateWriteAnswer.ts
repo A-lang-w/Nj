@@ -1,6 +1,7 @@
 import {
   createdFields,
   documentBodyProblem,
+  renewUuids,
   updatedEntity,
   updatedFields,
   valueAt,
@@ -19,7 +20,6 @@ import {
   formatClock,
   integerOf,
   isUuid,
-  renewUuids,
   seededToken,
   seededUuid,
   spelledLike,

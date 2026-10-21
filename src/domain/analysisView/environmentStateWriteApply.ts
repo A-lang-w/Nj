@@ -20,10 +20,32 @@ import type {
 } from "./environmentStateWriteRules.js";
 import {
   integerOf,
+  isUuid,
   replaceDelimited,
   slugOf,
   spelledLike,
 } from "./environmentStateWriteValues.js";
+
+/** The value with every UUID inside it replaced by `fresh(uuid, index)`, one replacement per distinct UUID. */
+export const renewUuids = (
+  value: JsonValue,
+  fresh: (uuid: string, index: number) => string,
+): JsonValue => {
+  const renewed = new Map<string, string>();
+  const renew = (item: JsonValue): JsonValue => {
+    if (isUuid(item)) {
+      if (!renewed.has(item)) renewed.set(item, fresh(item, renewed.size));
+      return renewed.get(item)!;
+    }
+    if (Array.isArray(item)) return item.map(renew);
+    return isObject(item)
+      ? Object.fromEntries(
+          Object.entries(item).map(([key, child]) => [key, renew(child)]),
+        )
+      : item;
+  };
+  return renew(value);
+};
 
 /** The value a generated rule takes: recorded values in the gate, the store's generators when served. */
 export type GenerateValue = (rule: GeneratedRule) => JsonValue;

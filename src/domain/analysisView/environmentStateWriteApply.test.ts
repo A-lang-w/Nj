@@ -5,6 +5,7 @@ import type { JsonObject, StateEntity } from "./environmentStateRules.js";
 import {
   bodyProblem,
   createdFields,
+  renewUuids,
   updatedEntity,
   updatedFields,
   valueAt,
@@ -542,4 +543,25 @@ it("drops view-specific values of the fields an update changed and cites no reco
   expect(updatedEntity(entity, entity.fields).view_fields).toEqual(
     entity.view_fields,
   );
+});
+
+const RENEW_ID = (n: number): string =>
+  `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+
+it("renews every distinct UUID once and keeps everything else", () => {
+  const renewed = renewUuids(
+    {
+      first: RENEW_ID(1),
+      again: RENEW_ID(1),
+      rows: [{ id: RENEW_ID(2), text: "Step 0" }],
+      note: "kept",
+    },
+    (uuid, index) => `${uuid}:${String(index)}`,
+  );
+  expect(renewed).toEqual({
+    first: `${RENEW_ID(1)}:0`,
+    again: `${RENEW_ID(1)}:0`,
+    rows: [{ id: `${RENEW_ID(2)}:1`, text: "Step 0" }],
+    note: "kept",
+  });
 });

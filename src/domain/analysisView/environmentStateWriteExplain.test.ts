@@ -8,6 +8,7 @@ import {
   explainUpdate,
   insertCandidates,
   insertIndex,
+  renewedUuids,
   responseShapeOf,
   type CreateEvidence,
   type UpdateEvidence,
@@ -675,3 +676,25 @@ it(
     expect(ruleFor(result.rules, "note")).toBeUndefined();
   },
 );
+
+const ID = (n: number): string =>
+  `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const steps = (...ids: number[]): JsonValue =>
+  ids.map((id, index) => ({ id: ID(id), text: `Step ${String(index)}` }));
+
+it("finds the UUIDs a value renewed when nothing else in it changed", () => {
+  expect(renewedUuids(steps(1, 2), steps(3, 4))).toEqual(
+    new Map([
+      [ID(2), ID(4)],
+      [ID(1), ID(3)],
+    ]),
+  );
+  expect(renewedUuids(steps(1, 2), steps(1, 2))).toBeUndefined();
+  // Another text, another length, a UUID moved to another row, one UUID renewed twice.
+  expect(
+    renewedUuids(steps(1), [{ id: ID(3), text: "Step one" }]),
+  ).toBeUndefined();
+  expect(renewedUuids(steps(1, 2), steps(3))).toBeUndefined();
+  expect(renewedUuids(steps(1, 2), steps(2, 1))).toBeUndefined();
+  expect(renewedUuids([ID(1), ID(1)], [ID(3), ID(4)])).toBeUndefined();
+});

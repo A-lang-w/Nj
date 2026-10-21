@@ -7,8 +7,6 @@ import {
   integerOf,
   isUuid,
   readClock,
-  renewedUuids,
-  renewUuids,
   replaceDelimited,
   seededToken,
   seededUuid,
@@ -255,39 +253,4 @@ it("draws tokens from the whole alphabet the recorded token uses", () => {
   expect(seededToken("seed-a", "k9x2m7q4z1w8")).not.toBe(
     seededToken("seed-b", "k9x2m7q4z1w8"),
   );
-});
-
-const ID = (n: number): string =>
-  `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
-const steps = (...ids: number[]): JsonValue =>
-  ids.map((id, index) => ({ id: ID(id), text: `Step ${String(index)}` }));
-
-it("finds the UUIDs a value renewed when nothing else in it changed", () => {
-  expect(renewedUuids(steps(1, 2), steps(3, 4))).toEqual(
-    new Map([
-      [ID(2), ID(4)],
-      [ID(1), ID(3)],
-    ]),
-  );
-  expect(renewedUuids(steps(1, 2), steps(1, 2))).toBeUndefined();
-  // Another text, another length, a UUID moved to another row, one UUID renewed twice.
-  expect(
-    renewedUuids(steps(1), [{ id: ID(3), text: "Step one" }]),
-  ).toBeUndefined();
-  expect(renewedUuids(steps(1, 2), steps(3))).toBeUndefined();
-  expect(renewedUuids(steps(1, 2), steps(2, 1))).toBeUndefined();
-  expect(renewedUuids([ID(1), ID(1)], [ID(3), ID(4)])).toBeUndefined();
-});
-
-it("renews every distinct UUID once and keeps everything else", () => {
-  const renewed = renewUuids(
-    { first: ID(1), again: ID(1), rows: steps(2), note: "kept" },
-    (uuid, index) => `${uuid}:${String(index)}`,
-  );
-  expect(renewed).toEqual({
-    first: `${ID(1)}:0`,
-    again: `${ID(1)}:0`,
-    rows: [{ id: `${ID(2)}:1`, text: "Step 0" }],
-    note: "kept",
-  });
 });
