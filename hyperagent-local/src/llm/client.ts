@@ -149,6 +149,93 @@ async function nextChunkWithTimeout(
   }
 }
 
+export type ChatToolDefinition = {
+  type: "function";
+  function: {
+    name: string;
+    description?: string;
+    parameters: Record<string, unknown>;
+  };
+};
+
+/**
+ * Non-streaming completion used for MCP tool rounds. Returns assistant
+ * content and/or tool_calls so the caller can execute tools and continue.
+ */
+export async function completeOnce(
+  messages: OpenAI.ChatCompletionMessageParam[],
+  model: string,
+  options: StreamCompletionOptions & {
+    tools?: ChatToolDefinition[];
+  },
+): Promise<{
+  content: string | null;
+  toolCalls: Array<{
+    id: string;
+    name: string;
+    arguments: string;
+  }>;
+  finishReason: string | null;
+}> {
+  const {
+    temperature = DEFAULT_TEMPERATURE,
+    maxTokens = DEFAULT_MAX_TOKENS,
+    userId,
+    signal,
+    tools,
+  } = options;
+  if (signal?.aborted) {
+    throw new DOMException("Stream aborted before start", "AbortError");
+  }
+  try {
+    const completion = await llmClient.chat.completions.create(
+      {
+        model,
+        messages,
+        temperature,
+        max_tokens: maxTokens,
+        stream: false,
+        ...(tools && tools.length > 0
+          ? { tools, tool_choice: "auto" as const }
+          : {}),
+      },
+      { signal },
+    );
+    const choice = completion.choices[0];
+    const message = choice?.message;
+    const usage = completion.usage;
+    if (
+      usage &&
+      typeof usage.prompt_tokens === "number" &&
+      typeof usage.completion_tokens === "number"
+    ) {
+      recordUsage(userId, model, usage.prompt_tokens, usage.completion_tokens);
+    }
+    const toolCalls = (message?.tool_calls ?? [])
+      .filter((tc) => tc.type === "function" && tc.function?.name)
+      .map((tc) => ({
+        id: tc.id,
+        name: tc.function!.name,
+        arguments: tc.function!.arguments ?? "{}",
+      }));
+    return {
+      content: message?.content ?? null,
+      toolCalls,
+      finishReason: choice?.finish_reason ?? null,
+    };
+  } catch (err) {
+    const safeMsg =
+      err instanceof Error
+        ? err.message.replace(/sk-[A-Za-z0-9_-]+/g, "[REDACTED]")
+        : "Unknown error";
+    logger.error(
+      "[llm-compat] Failed to create chat completion. Verify baseURL, apiKey, and model are compatible with your provider.",
+      { error: safeMsg },
+    );
+    throw new Error(safeMsg);
+  }
+}
+
 export async function* streamCompletion(
   messages: OpenAI.ChatCompletionMessageParam[],
   model: string = config.llmModel,

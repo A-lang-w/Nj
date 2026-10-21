@@ -2,6 +2,8 @@ import { useEffect, useRef, useMemo, useState } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import { useThreadsStore } from "@/stores/threads-store";
+import { useAgentsStore } from "@/stores/agents-store";
+import { useUiStore } from "@/stores/ui-store";
 import { useStreamingChat } from "@/hooks/use-streaming-chat";
 import { useSubmitGuard } from "@/hooks/use-submit-guard";
 import { sseClient } from "@/lib/sse-client";
@@ -11,6 +13,7 @@ import { ArrowLeft, Bot, AlertTriangle } from "lucide-react";
 import { LoadingIndicator } from "@/components/ui/LoadingIndicator";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { COLORS } from "@/lib/theme-colors";
+import type { Thread } from "@/types/api";
 
 export function ThreadDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -18,6 +21,10 @@ export function ThreadDetailPage() {
   const location = useLocation();
   const threadId = Number(id);
   const activeThread = useThreadsStore((state) => state.activeThread);
+  const updateThread = useThreadsStore((state) => state.updateThread);
+  const agents = useAgentsStore((s) => s.agents);
+  const fetchAgents = useAgentsStore((s) => s.fetchAgents);
+  const activeWorkspaceId = useUiStore((s) => s.activeWorkspaceId);
   const { isStreaming, streamingContent, streamIncomplete, streamError } =
     useThreadsStore(
       useShallow((state) => ({
@@ -29,6 +36,8 @@ export function ThreadDetailPage() {
     );
   const fetchThread = useThreadsStore((state) => state.fetchThread);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [headerError, setHeaderError] = useState<string | null>(null);
   // The composer clears on submit, so a failed send must keep the text here
   // for Resend — otherwise the draft is silently lost with zero feedback.
   const [sendError, setSendError] = useState<string | null>(null);
@@ -64,6 +73,7 @@ export function ThreadDetailPage() {
     // the old thread's message into the new one.
     setSendError(null);
     setFailedDraft(null);
+    setHeaderError(null);
     if (!Number.isInteger(threadId) || threadId <= 0) {
       setLoadError("Thread not found");
       return;
@@ -75,6 +85,57 @@ export function ThreadDetailPage() {
       );
     });
   }, [fetchThread, threadId]);
+
+  useEffect(() => {
+    void fetchAgents(activeWorkspaceId);
+  }, [fetchAgents, activeWorkspaceId]);
+
+  useEffect(() => {
+    if (activeThread?.id === threadId) {
+      setTitleDraft(activeThread.title || "");
+    }
+  }, [activeThread?.id, activeThread?.title, threadId]);
+
+  const saveTitle = async () => {
+    if (!activeThread || activeThread.id !== threadId) return;
+    const next = titleDraft.trim() || "Untitled";
+    if (next === (activeThread.title || "Untitled")) return;
+    try {
+      setHeaderError(null);
+      await updateThread(threadId, { title: next });
+    } catch (err) {
+      setHeaderError(
+        err instanceof Error ? err.message : "Failed to rename thread",
+      );
+      setTitleDraft(activeThread.title || "");
+    }
+  };
+
+  const saveAgent = async (agentId: number | null) => {
+    if (!activeThread || activeThread.id !== threadId) return;
+    if (agentId === activeThread.agentId) return;
+    try {
+      setHeaderError(null);
+      await updateThread(threadId, { agentId });
+    } catch (err) {
+      setHeaderError(
+        err instanceof Error ? err.message : "Failed to change agent",
+      );
+    }
+  };
+
+  const saveStatus = async (status: Thread["status"]) => {
+    if (!activeThread || activeThread.id !== threadId) return;
+    if (status === activeThread.status) return;
+    try {
+      setHeaderError(null);
+      await updateThread(threadId, { status });
+    } catch (err) {
+      setHeaderError(
+        err instanceof Error ? err.message : "Failed to update status",
+      );
+    }
+  };
 
   // Autostart the assistant reply after landing here from /threads/new: the
   // first message is already persisted, but nothing starts the chat request.
@@ -217,18 +278,18 @@ export function ThreadDetailPage() {
     >
       {/* Header */}
       <div
-        className="flex items-center gap-3 px-6 py-4"
+        className="flex flex-col gap-2 px-6 py-4"
         style={{ borderBottom: `1px solid ${COLORS.border}` }}
       >
-        <button
-          onClick={() => navigate("/threads")}
-          className="min-h-[44px] min-w-[44px] rounded-lg p-2 transition-colors hover:opacity-80"
-          style={{ color: COLORS.textSecondary }}
-          aria-label="Back to threads list"
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </button>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate("/threads")}
+            className="min-h-[44px] min-w-[44px] rounded-lg p-2 transition-colors hover:opacity-80"
+            style={{ color: COLORS.textSecondary }}
+            aria-label="Back to threads list"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
           <div
             className="flex h-8 w-8 items-center justify-center rounded-lg"
             style={{
@@ -238,13 +299,76 @@ export function ThreadDetailPage() {
           >
             <Bot className="h-4 w-4" />
           </div>
-          <h1
-            className="text-lg font-semibold"
-            style={{ color: COLORS.textPrimary }}
+          <label htmlFor="thread-title" className="sr-only">
+            Thread title
+          </label>
+          <input
+            id="thread-title"
+            value={titleDraft}
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onBlur={() => void saveTitle()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                (e.target as HTMLInputElement).blur();
+              }
+            }}
+            className="min-w-0 flex-1 rounded-md border bg-transparent px-2 py-1 text-lg font-semibold focus:outline-none focus:ring-1"
+            style={{
+              color: COLORS.textPrimary,
+              borderColor: COLORS.border,
+            }}
+          />
+          <label htmlFor="thread-status" className="sr-only">
+            Thread status
+          </label>
+          <select
+            id="thread-status"
+            value={activeThread.status}
+            onChange={(e) =>
+              void saveStatus(e.target.value as Thread["status"])
+            }
+            className="rounded-md border px-2 py-1 text-sm min-h-[44px]"
+            style={{
+              borderColor: COLORS.border,
+              backgroundColor: COLORS.inputBg,
+              color: COLORS.textPrimary,
+            }}
           >
-            {activeThread.title || "Untitled thread"}
-          </h1>
+            <option value="active">Active</option>
+            <option value="archived">Archived</option>
+            <option value="completed">Completed</option>
+          </select>
+          <label htmlFor="thread-agent" className="sr-only">
+            Thread agent
+          </label>
+          <select
+            id="thread-agent"
+            value={activeThread.agentId ?? ""}
+            onChange={(e) => {
+              const raw = e.target.value;
+              void saveAgent(raw === "" ? null : Number(raw));
+            }}
+            className="max-w-[180px] rounded-md border px-2 py-1 text-sm min-h-[44px]"
+            style={{
+              borderColor: COLORS.border,
+              backgroundColor: COLORS.inputBg,
+              color: COLORS.textPrimary,
+            }}
+          >
+            <option value="">General</option>
+            {agents.map((agent) => (
+              <option key={agent.id} value={agent.id}>
+                {agent.name}
+              </option>
+            ))}
+          </select>
         </div>
+        {headerError && (
+          <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+            {headerError}
+          </p>
+        )}
       </div>
 
       {/* Messages */}
@@ -325,6 +449,9 @@ export function ThreadDetailPage() {
             onStop={stopStream}
             isStreaming={isStreaming}
             threadId={threadId}
+            agents={agents}
+            selectedAgentId={activeThread.agentId}
+            onAgentChange={(agentId) => void saveAgent(agentId)}
             disabled={
               !activeThread || activeThread.id !== threadId || isSubmitting
             }

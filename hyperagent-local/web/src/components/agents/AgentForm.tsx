@@ -22,10 +22,14 @@ export function AgentForm({ onClose, agent }: AgentFormProps) {
     agent?.systemPrompt ?? "You are a helpful assistant.",
   );
   const [model, setModel] = useState(agent?.model ?? "claude-opus-5-5");
+  const [toolsJsonText, setToolsJsonText] = useState(
+    JSON.stringify(agent?.toolsJson ?? [], null, 2),
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errors, setErrors] = useState<{
     name?: string;
     systemPrompt?: string;
+    tools?: string;
   }>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -41,10 +45,25 @@ export function AgentForm({ onClose, agent }: AgentFormProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newErrors: { name?: string; systemPrompt?: string } = {};
+    const newErrors: {
+      name?: string;
+      systemPrompt?: string;
+      tools?: string;
+    } = {};
     if (!name.trim()) newErrors.name = "Name is required.";
     if (!systemPrompt.trim())
       newErrors.systemPrompt = "System prompt is required.";
+    let tools: unknown[] = [];
+    try {
+      const parsed: unknown = JSON.parse(toolsJsonText || "[]");
+      if (!Array.isArray(parsed)) {
+        newErrors.tools = "Tools must be a JSON array.";
+      } else {
+        tools = parsed;
+      }
+    } catch {
+      newErrors.tools = "Tools must be valid JSON.";
+    }
     setErrors(newErrors);
     if (Object.keys(newErrors).length > 0) return;
     setIsSubmitting(true);
@@ -56,7 +75,8 @@ export function AgentForm({ onClose, agent }: AgentFormProps) {
           description: description.trim() || null,
           systemPrompt: systemPrompt.trim(),
           model,
-        });
+          tools,
+        } as Partial<Agent> & { tools: unknown[] });
       } else {
         await createAgent({
           workspaceId: activeWorkspaceId,
@@ -64,7 +84,8 @@ export function AgentForm({ onClose, agent }: AgentFormProps) {
           description: description.trim() || undefined,
           systemPrompt: systemPrompt.trim(),
           model,
-        });
+          tools,
+        } as Partial<Agent> & { tools: unknown[] });
       }
       onClose();
     } catch (err) {
@@ -215,6 +236,39 @@ export function AgentForm({ onClose, agent }: AgentFormProps) {
                 <option value="z-ai/glm-5.3">GLM 5.3</option>
                 <option value="gpt-6-astra">GPT-6 Astra</option>
               </select>
+            </div>
+            <div>
+              <label
+                htmlFor="agent-tools"
+                className="block text-sm font-medium text-slate-700 dark:text-slate-300"
+              >
+                Tools (JSON array)
+              </label>
+              <textarea
+                id="agent-tools"
+                rows={4}
+                value={toolsJsonText}
+                onChange={(e) => {
+                  setToolsJsonText(e.target.value);
+                  if (errors.tools)
+                    setErrors((prev) => ({ ...prev, tools: undefined }));
+                }}
+                aria-invalid={!!errors.tools}
+                aria-describedby={
+                  errors.tools ? "agent-tools-error" : undefined
+                }
+                spellCheck={false}
+                className={`mt-1 block w-full rounded-lg border bg-white px-3 py-2 font-mono text-xs focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:bg-slate-950 dark:text-white ${errors.tools ? "border-red-500" : "border-slate-300 dark:border-slate-700"}`}
+              />
+              {errors.tools && (
+                <p
+                  id="agent-tools-error"
+                  className="mt-1 text-xs text-red-600 dark:text-red-400"
+                  role="alert"
+                >
+                  {errors.tools}
+                </p>
+              )}
             </div>
             {submitError && (
               <p

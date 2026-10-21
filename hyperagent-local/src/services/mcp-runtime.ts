@@ -4,6 +4,17 @@ import { logger } from "../lib/logger.js";
 export interface McpToolSummary {
   name: string;
   description?: string;
+  inputSchema?: Record<string, unknown>;
+}
+
+export interface McpToolBinding {
+  /** OpenAI function name: mcp__<server>__<tool> */
+  openaiName: string;
+  serverName: string;
+  toolName: string;
+  config: Record<string, unknown>;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
 }
 
 export interface McpServerProbeResult {
@@ -141,11 +152,23 @@ export async function probeStdioMcpServer(
             const tools = msg.result.tools
               .filter((t) => typeof t.name === "string" && t.name.length > 0)
               .slice(0, MAX_TOOLS)
-              .map((t) => ({
-                name: t.name as string,
-                description:
-                  typeof t.description === "string" ? t.description : undefined,
-              }));
+              .map((t) => {
+                const rawSchema = (t as { inputSchema?: unknown }).inputSchema;
+                const inputSchema =
+                  rawSchema != null &&
+                  typeof rawSchema === "object" &&
+                  !Array.isArray(rawSchema)
+                    ? (rawSchema as Record<string, unknown>)
+                    : undefined;
+                return {
+                  name: t.name as string,
+                  description:
+                    typeof t.description === "string"
+                      ? t.description
+                      : undefined,
+                  inputSchema,
+                };
+              });
             finish({
               serverName,
               transportType: "stdio",
@@ -255,6 +278,242 @@ export async function probeEnabledMcpServers(
     });
   }
   return results;
+}
+
+function sanitizeToolSegment(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40);
+}
+
+export function mcpOpenAiToolName(
+  serverName: string,
+  toolName: string,
+): string {
+  return `mcp__${sanitizeToolSegment(serverName)}__${sanitizeToolSegment(toolName)}`;
+}
+
+/**
+ * Build OpenAI tool bindings from successful stdio probes.
+ */
+export function buildMcpToolBindings(
+  probes: McpServerProbeResult[],
+  servers: Array<{
+    name: string;
+    transportType: string;
+    configJson: unknown;
+  }>,
+): McpToolBinding[] {
+  const byName = new Map(
+    servers.map((s) => [
+      s.name,
+      s.configJson != null &&
+      typeof s.configJson === "object" &&
+      !Array.isArray(s.configJson)
+        ? (s.configJson as Record<string, unknown>)
+        : {},
+    ]),
+  );
+  const bindings: McpToolBinding[] = [];
+  for (const probe of probes) {
+    if (!probe.ok || probe.transportType !== "stdio") continue;
+    const config = byName.get(probe.serverName) ?? {};
+    for (const tool of probe.tools) {
+      bindings.push({
+        openaiName: mcpOpenAiToolName(probe.serverName, tool.name),
+        serverName: probe.serverName,
+        toolName: tool.name,
+        config,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+      });
+    }
+  }
+  return bindings.slice(0, MAX_TOOLS);
+}
+
+export function bindingsToOpenAiTools(bindings: McpToolBinding[]): Array<{
+  type: "function";
+  function: {
+    name: string;
+    description?: string;
+    parameters: Record<string, unknown>;
+  };
+}> {
+  return bindings.map((b) => ({
+    type: "function" as const,
+    function: {
+      name: b.openaiName,
+      description:
+        b.description ?? `MCP tool ${b.toolName} from server ${b.serverName}`,
+      parameters: b.inputSchema ?? {
+        type: "object",
+        properties: {},
+      },
+    },
+  }));
+}
+
+/**
+ * Invoke tools/call on a stdio MCP server. Bounded by timeout.
+ */
+export async function callStdioMcpTool(
+  config: Record<string, unknown>,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+  const cfg = config as StdioConfig;
+  const command = typeof cfg.command === "string" ? cfg.command.trim() : "";
+  if (!command) {
+    return {
+      ok: false,
+      error: "config.command is required for stdio transport",
+    };
+  }
+  const spawnArgs = asStringArray(cfg.args);
+  const cwd = typeof cfg.cwd === "string" ? cfg.cwd : undefined;
+  const env = asEnv(cfg.env);
+
+  return await new Promise((resolve) => {
+    let settled = false;
+    const finish = (
+      result: { ok: true; text: string } | { ok: false; error: string },
+    ) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // already exited
+      }
+      resolve(result);
+    };
+
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = spawn(command, spawnArgs, {
+        cwd,
+        env,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch (err) {
+      resolve({
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      finish({
+        ok: false,
+        error: `tools/call timed out after ${PROBE_TIMEOUT_MS}ms`,
+      });
+    }, PROBE_TIMEOUT_MS);
+
+    let stdout = "";
+    let initialized = false;
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      stdout += chunk;
+      let newline = stdout.indexOf("\n");
+      while (newline !== -1) {
+        const line = stdout.slice(0, newline).trim();
+        stdout = stdout.slice(newline + 1);
+        newline = stdout.indexOf("\n");
+        if (!line) continue;
+        try {
+          const msg = JSON.parse(line) as {
+            id?: unknown;
+            result?: unknown;
+            error?: { message?: unknown };
+          };
+          if (msg.id === 1 && !initialized) {
+            initialized = true;
+            child.stdin?.write(
+              `${JSON.stringify({
+                jsonrpc: "2.0",
+                method: "notifications/initialized",
+              })}\n`,
+            );
+            child.stdin?.write(
+              `${JSON.stringify({
+                jsonrpc: "2.0",
+                id: 2,
+                method: "tools/call",
+                params: { name: toolName, arguments: args },
+              })}\n`,
+            );
+            continue;
+          }
+          if (msg.id === 2) {
+            if (msg.error) {
+              finish({
+                ok: false,
+                error:
+                  typeof msg.error.message === "string"
+                    ? msg.error.message
+                    : "tools/call failed",
+              });
+              return;
+            }
+            const text = formatToolCallResult(msg.result);
+            finish({ ok: true, text });
+          }
+        } catch {
+          // ignore partial frames
+        }
+      }
+    });
+
+    child.on("error", (err) => {
+      finish({ ok: false, error: err.message });
+    });
+    child.on("exit", (code) => {
+      if (!settled) {
+        finish({
+          ok: false,
+          error: `process exited with code ${code ?? "null"} before tools/call`,
+        });
+      }
+    });
+
+    child.stdin?.write(
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "hyperagent-local", version: "0.1.0" },
+        },
+      })}\n`,
+    );
+  });
+}
+
+function formatToolCallResult(result: unknown): string {
+  if (result == null) return "(empty tool result)";
+  if (typeof result === "string") return result.slice(0, 32_000);
+  if (typeof result === "object" && result !== null && "content" in result) {
+    const content = (result as { content: unknown }).content;
+    if (Array.isArray(content)) {
+      return content
+        .map((part) => {
+          if (part != null && typeof part === "object" && "text" in part) {
+            return String((part as { text: unknown }).text);
+          }
+          return JSON.stringify(part);
+        })
+        .join("\n")
+        .slice(0, 32_000);
+    }
+  }
+  try {
+    return JSON.stringify(result).slice(0, 32_000);
+  } catch {
+    return String(result).slice(0, 32_000);
+  }
 }
 
 /**

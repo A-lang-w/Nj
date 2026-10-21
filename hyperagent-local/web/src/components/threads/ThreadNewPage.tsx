@@ -227,6 +227,9 @@ export function ThreadNewPage() {
             onStop={() => {}}
             isStreaming={false}
             disabled={isSubmitting}
+            agents={agents}
+            selectedAgentId={selectedAgentId}
+            onAgentChange={setSelectedAgentId}
           />
         </div>
       </div>

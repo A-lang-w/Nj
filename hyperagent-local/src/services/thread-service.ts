@@ -1,4 +1,6 @@
+import { readFile } from "node:fs/promises";
 import { eq, desc, and } from "drizzle-orm";
+import type OpenAI from "openai";
 import {
   DEFAULT_CONTEXT_TOKENS,
   DEFAULT_PAGE_LIMIT,
@@ -15,7 +17,7 @@ import {
 } from "../db/schema.js";
 import { emitEvent } from "../domain/events.js";
 import { logger } from "../lib/logger.js";
-import { streamCompletion } from "../llm/client.js";
+import { completeOnce, streamCompletion } from "../llm/client.js";
 import {
   safeParseJson,
   skillTriggerPatternsSchema,
@@ -23,7 +25,18 @@ import {
 } from "../db/validators.js";
 import { Ok, Err, StorageError } from "../lib/result.js";
 import type { Result } from "../lib/result.js";
-import { formatAgentTools, probeEnabledMcpServers } from "./mcp-runtime.js";
+import {
+  bindingsToOpenAiTools,
+  buildMcpToolBindings,
+  callStdioMcpTool,
+  formatAgentTools,
+  probeEnabledMcpServers,
+  type McpToolBinding,
+} from "./mcp-runtime.js";
+
+const MAX_FILE_INJECT_BYTES = 32_768;
+const MAX_FILES_TO_INJECT = 4;
+const MAX_MCP_TOOL_ROUNDS = 3;
 
 /**
  * Creates a new thread within a workspace and emits a creation event.
@@ -352,6 +365,7 @@ async function buildAugmentedSystemPrompt(
         filename: files.filename,
         mimeType: files.mimeType,
         sizeBytes: files.sizeBytes,
+        storagePath: files.storagePath,
       })
       .from(files)
       .where(
@@ -360,14 +374,40 @@ async function buildAugmentedSystemPrompt(
       .orderBy(desc(files.createdAt))
       .limit(20);
     if (threadFiles.length > 0) {
+      const indexLines = threadFiles.map(
+        (f) =>
+          `- id=${f.id} ${f.filename} (${f.mimeType}, ${f.sizeBytes} bytes)`,
+      );
+      const textBodies: string[] = [];
+      let injected = 0;
+      for (const f of threadFiles) {
+        if (injected >= MAX_FILES_TO_INJECT) break;
+        if (
+          !isTextLikeMime(f.mimeType) ||
+          f.sizeBytes > MAX_FILE_INJECT_BYTES
+        ) {
+          continue;
+        }
+        try {
+          const raw = await readFile(f.storagePath, "utf8");
+          const clipped = raw.slice(0, MAX_FILE_INJECT_BYTES);
+          textBodies.push(
+            `### ${f.filename} (id=${f.id})\n\`\`\`\n${clipped}\n\`\`\``,
+          );
+          injected += 1;
+        } catch (err) {
+          logger.warn("Failed to read thread attachment for chat context", {
+            fileId: f.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
       sections.push(
         "## Thread attachments\n" +
-          threadFiles
-            .map(
-              (f) =>
-                `- id=${f.id} ${f.filename} (${f.mimeType}, ${f.sizeBytes} bytes). Download via GET /api/files/${f.id}/content when the user needs the bytes.`,
-            )
-            .join("\n"),
+          indexLines.join("\n") +
+          (textBodies.length > 0
+            ? "\n\n### Inline text contents\n" + textBodies.join("\n\n")
+            : ""),
       );
     }
   } catch (err) {
@@ -414,7 +454,7 @@ async function buildAugmentedSystemPrompt(
       sections.push(
         "## MCP servers (local)\n" +
           lines.join("\n") +
-          "\nPrefer answering with the tools and skills above when they apply. Tool execution is not wired into this chat loop; describe which tool the user should run or how to invoke it.",
+          "\nEnabled stdio MCP tools are callable during this chat turn when the model requests them.",
       );
     }
   } catch (err) {
@@ -425,6 +465,111 @@ async function buildAugmentedSystemPrompt(
   }
 
   return sections.join("\n\n");
+}
+
+function isTextLikeMime(mimeType: string): boolean {
+  const mime = mimeType.toLowerCase();
+  return (
+    mime.startsWith("text/") ||
+    mime === "application/json" ||
+    mime === "application/xml" ||
+    mime === "application/javascript" ||
+    mime.endsWith("+json") ||
+    mime.endsWith("+xml")
+  );
+}
+
+async function loadMcpBindingsForWorkspace(
+  workspaceId: number,
+): Promise<McpToolBinding[]> {
+  const servers = await db
+    .select({
+      name: mcpServers.name,
+      transportType: mcpServers.transportType,
+      configJson: mcpServers.configJson,
+    })
+    .from(mcpServers)
+    .where(
+      and(
+        eq(mcpServers.workspaceId, workspaceId),
+        eq(mcpServers.isEnabled, true),
+      ),
+    )
+    .limit(8);
+  if (servers.length === 0) return [];
+  const probes = await probeEnabledMcpServers(servers);
+  return buildMcpToolBindings(probes, servers);
+}
+
+/**
+ * Runs up to {@link MAX_MCP_TOOL_ROUNDS} non-streaming tool rounds, then
+ * returns the message list ready for the final streamed answer.
+ */
+async function runMcpToolRounds(
+  llmMessages: OpenAI.ChatCompletionMessageParam[],
+  model: string,
+  bindings: McpToolBinding[],
+  userId: number,
+  abortSignal?: AbortSignal,
+): Promise<OpenAI.ChatCompletionMessageParam[]> {
+  if (bindings.length === 0) return llmMessages;
+  const tools = bindingsToOpenAiTools(bindings);
+  const byName = new Map(bindings.map((b) => [b.openaiName, b]));
+  const working: OpenAI.ChatCompletionMessageParam[] = [...llmMessages];
+
+  for (let round = 0; round < MAX_MCP_TOOL_ROUNDS; round++) {
+    if (abortSignal?.aborted) break;
+    const result = await completeOnce(working, model, {
+      userId,
+      signal: abortSignal,
+      tools,
+    });
+    // No tool calls: leave working as-is so the streamed completion produces
+    // the user-visible reply (avoids duplicating a non-streamed answer).
+    if (result.toolCalls.length === 0) {
+      break;
+    }
+    working.push({
+      role: "assistant",
+      content: result.content,
+      tool_calls: result.toolCalls.map((tc) => ({
+        id: tc.id,
+        type: "function" as const,
+        function: { name: tc.name, arguments: tc.arguments },
+      })),
+    });
+    for (const call of result.toolCalls) {
+      const binding = byName.get(call.name);
+      let toolText: string;
+      if (!binding) {
+        toolText = `Unknown tool: ${call.name}`;
+      } else {
+        let parsedArgs: Record<string, unknown> = {};
+        try {
+          const raw = JSON.parse(call.arguments || "{}") as unknown;
+          if (raw != null && typeof raw === "object" && !Array.isArray(raw)) {
+            parsedArgs = raw as Record<string, unknown>;
+          }
+        } catch {
+          parsedArgs = {};
+        }
+        const invoked = await callStdioMcpTool(
+          binding.config,
+          binding.toolName,
+          parsedArgs,
+        );
+        toolText = invoked.ok
+          ? invoked.text
+          : `Tool error (${binding.serverName}/${binding.toolName}): ${invoked.error}`;
+      }
+      working.push({
+        role: "tool",
+        tool_call_id: call.id,
+        content: toolText,
+      });
+    }
+  }
+  return working;
 }
 
 async function prepareLlmMessages(
@@ -627,12 +772,40 @@ export async function streamAssistantResponse(
       maxContextTokens,
     );
 
+    const [threadRow] = await db
+      .select({ workspaceId: threads.workspaceId })
+      .from(threads)
+      .where(eq(threads.id, threadId))
+      .limit(1);
+    let messagesForStream: OpenAI.ChatCompletionMessageParam[] = llmMessages;
+    if (threadRow?.workspaceId != null) {
+      try {
+        const bindings = await loadMcpBindingsForWorkspace(
+          threadRow.workspaceId,
+        );
+        if (bindings.length > 0 && !abortSignal?.aborted) {
+          messagesForStream = await runMcpToolRounds(
+            llmMessages,
+            model,
+            bindings,
+            userId,
+            abortSignal,
+          );
+        }
+      } catch (err) {
+        logger.warn("MCP tool rounds failed; continuing with plain stream", {
+          threadId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     let fullContent = "";
     let completed = false;
     let streamError: unknown = null;
     let firstDeltaEmitted = false;
     try {
-      for await (const chunk of streamCompletion(llmMessages, model, {
+      for await (const chunk of streamCompletion(messagesForStream, model, {
         signal: abortSignal,
         userId,
       })) {

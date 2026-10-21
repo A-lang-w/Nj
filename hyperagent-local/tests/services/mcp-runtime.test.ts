@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  callStdioMcpTool,
   formatAgentTools,
+  mcpOpenAiToolName,
   probeStdioMcpServer,
 } from "../../src/services/mcp-runtime.js";
 
@@ -75,7 +77,56 @@ describe("probeStdioMcpServer", () => {
     });
     expect(result.ok).toBe(true);
     expect(result.tools).toEqual([
-      { name: "ping", description: "Return pong" },
+      { name: "ping", description: "Return pong", inputSchema: undefined },
     ]);
+  });
+
+  it("calls tools/call on a stdio echo server", async () => {
+    const script = `
+      let buf = "";
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", (chunk) => {
+        buf += chunk;
+        let i;
+        while ((i = buf.indexOf("\\n")) !== -1) {
+          const line = buf.slice(0, i).trim();
+          buf = buf.slice(i + 1);
+          if (!line) continue;
+          const msg = JSON.parse(line);
+          if (msg.method === "initialize") {
+            process.stdout.write(JSON.stringify({
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: {
+                protocolVersion: "2024-11-05",
+                capabilities: { tools: {} },
+                serverInfo: { name: "echo", version: "0.0.1" },
+              },
+            }) + "\\n");
+          } else if (msg.method === "tools/call") {
+            process.stdout.write(JSON.stringify({
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: {
+                content: [{ type: "text", text: "pong:" + (msg.params?.arguments?.x ?? "") }],
+              },
+            }) + "\\n");
+          }
+        }
+      });
+    `;
+    const result = await callStdioMcpTool(
+      { command: process.execPath, args: ["-e", script] },
+      "ping",
+      { x: "hi" },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.text).toContain("pong:hi");
+  });
+
+  it("builds stable openai tool names", () => {
+    expect(mcpOpenAiToolName("My Server!", "do stuff")).toBe(
+      "mcp__My_Server___do_stuff",
+    );
   });
 });
