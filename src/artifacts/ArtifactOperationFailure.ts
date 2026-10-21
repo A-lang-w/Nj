@@ -1,5 +1,6 @@
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
+  AnalysisAccessDeniedError,
   AnalysisInputError,
   AnalysisCancelledError,
   AnalysisUnsupportedTargetError,
@@ -43,6 +44,7 @@ export const translateArtifactFailure = (
     cause instanceof AnalysisInputError ||
     cause instanceof AnalysisCancelledError ||
     cause instanceof AnalysisUnsupportedTargetError ||
+    cause instanceof AnalysisAccessDeniedError ||
     cause instanceof BinaryTargetError
   )
     return cause;
