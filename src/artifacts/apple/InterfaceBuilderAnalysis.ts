@@ -5,6 +5,7 @@ import { appleResourceKeyFields } from "../../domain/apple/appleAssetCatalog.js"
 import {
   interfaceBuilderConnectionFieldNames,
   isInterfaceBuilderConnectionClass,
+  isSourceLessAppKitAnnotationConnector,
   isUIKitRuntimeConnectionClass,
 } from "../../domain/apple/interfaceBuilderKeyedArchive.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
@@ -54,12 +55,6 @@ import {
 const MAX_AGGREGATE_INPUT_BYTES = 32 * 1024 * 1024;
 const MAX_AGGREGATE_DECODE_BYTES = 256 * 1024 * 1024;
 const MAX_REPORTED_OMITTED_ARCHIVES = 64;
-const APPKIT_SINGLE_OBJECT_ANNOTATION_CONNECTORS = new Set([
-  "NSIBHelpConnector",
-  "NSNibAXAttributeConnector",
-  "NSIBUserDefinedRuntimeAttributesConnector",
-]);
-
 /** Decode compiled Interface Builder archives from a local app bundle. */
 export const analyzeInterfaceBuilderBundle = async (input: {
   readonly bundlePath: string;
@@ -616,14 +611,9 @@ const projectNibArchive = (
     if (!isInterfaceBuilderConnectionClass(className)) continue;
     const values = object.values;
     const connectionFields = interfaceBuilderConnectionFieldNames(className);
-    // These known AppKit annotation records name one object and omit NSSource;
-    // unknown connector classes with that shape remain unresolved evidence.
-    if (
-      !uiKit &&
-      APPKIT_SINGLE_OBJECT_ANNOTATION_CONNECTORS.has(className) &&
-      !Object.hasOwn(values, connectionFields.source)
-    )
-      continue;
+    // A source-less known AppKit annotation names one object, not a connection.
+    // Unknown connectors and annotations with an encoded source remain evidence.
+    if (isSourceLessAppKitAnnotationConnector(className, values)) continue;
     const source = reference(values[connectionFields.source]);
     if (source === null) {
       unresolvedConnections += 1;

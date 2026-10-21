@@ -34,6 +34,12 @@ const connection = z.strictObject({
 type InterfaceBuilderObject = z.infer<typeof objectNode>;
 type InterfaceBuilderConnection = z.infer<typeof connection>;
 
+const APPKIT_SINGLE_OBJECT_ANNOTATION_CONNECTORS = new Set([
+  "NSIBHelpConnector",
+  "NSNibAXAttributeConnector",
+  "NSIBUserDefinedRuntimeAttributesConnector",
+]);
+
 /** UIKit runtime connection classes store their endpoints and labels under UI-prefixed keys. */
 export const isUIKitRuntimeConnectionClass = (className: string): boolean =>
   /^UIRuntime\w*Connection$/u.test(className);
@@ -44,6 +50,14 @@ export const isInterfaceBuilderConnectionClass = (className: string): boolean =>
   // Keep unfamiliar AppKit connector records so projection can report their
   // missing owner as unresolved instead of silently dropping their identity.
   (className.startsWith("NS") && className.endsWith("Connector"));
+
+/** These AppKit records annotate one object and only mean a connection if a source key is encoded. */
+export const isSourceLessAppKitAnnotationConnector = (
+  className: string,
+  values: Readonly<Record<string, unknown>>,
+): boolean =>
+  APPKIT_SINGLE_OBJECT_ANNOTATION_CONNECTORS.has(className) &&
+  !Object.hasOwn(values, "NSSource");
 
 /** The connection class selects the source archive field namespace. */
 export const interfaceBuilderConnectionFieldNames = (className: string) =>
@@ -424,6 +438,7 @@ const parseKeyedArchive = (
       // AppKit and UIKit archive the same endpoint roles under their own
       // class-specific field namespaces; the source is the outlet owner.
       const connectionFields = interfaceBuilderConnectionFieldNames(className);
+      if (isSourceLessAppKitAnnotationConnector(className, fields)) continue;
       const source = uiKit
         ? archivedObjectReference(fields[connectionFields.source])
         : firstObjectReference(

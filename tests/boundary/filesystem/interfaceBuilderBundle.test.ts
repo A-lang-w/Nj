@@ -834,6 +834,94 @@ cliTest(
   },
 );
 
+cliTest(
+  "compiled CLI omits only source-less keyed archive annotation connectors",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-ib-keyed-annotations-");
+    const bundle = join(root, "Example.app");
+    const contents = join(bundle, "Contents");
+    const resources = join(contents, "Resources");
+    await mkdir(resources, { recursive: true });
+    await mkdir(join(contents, "MacOS"), { recursive: true });
+    await writeFile(
+      join(contents, "MacOS", "App"),
+      thinMach(0xfeedfacf, 0x0100000c),
+    );
+    await writeFile(
+      join(contents, "Info.plist"),
+      "<plist><dict><key>CFBundleExecutable</key><string>App</string></dict></plist>",
+    );
+    await writeFile(
+      join(resources, "Annotations.nib"),
+      buildBinary({
+        $archiver: "NSKeyedArchiver",
+        $version: 100000,
+        $objects: [
+          "$null",
+          {
+            $class: { UID: 9 },
+            NSSource: { UID: 7 },
+            NSDestination: { UID: 8 },
+            NSLabel: "outlet",
+          },
+          { $class: { UID: 10 }, NSDestination: { UID: 8 } },
+          { $class: { UID: 11 }, AXDestinationArchiveKey: { UID: 8 } },
+          { $class: { UID: 12 }, NSObject: { UID: 8 } },
+          { $class: { UID: 13 }, NSDestination: { UID: 8 } },
+          {
+            $class: { UID: 10 },
+            NSSource: null,
+            NSDestination: { UID: 8 },
+          },
+          { $class: { UID: 14 } },
+          { $class: { UID: 14 } },
+          {
+            $classname: "NSNibOutletConnector",
+            $classes: ["NSNibOutletConnector", "NSNibConnector", "NSObject"],
+          },
+          {
+            $classname: "NSIBHelpConnector",
+            $classes: ["NSIBHelpConnector", "NSObject"],
+          },
+          {
+            $classname: "NSNibAXAttributeConnector",
+            $classes: ["NSNibAXAttributeConnector", "NSObject"],
+          },
+          {
+            $classname: "NSIBUserDefinedRuntimeAttributesConnector",
+            $classes: ["NSIBUserDefinedRuntimeAttributesConnector", "NSObject"],
+          },
+          {
+            $classname: "NSFutureConnector",
+            $classes: ["NSFutureConnector", "NSObject"],
+          },
+          { $classname: "NSView", $classes: ["NSView", "NSObject"] },
+        ],
+        $top: { root: { UID: 1 } },
+      }),
+    );
+
+    const output = await cli.run({
+      arguments: ["decode-interface-builder", bundle, "--json"],
+      environment: { REA_LOG_LEVEL: "silent", REA_ANALYSIS_PROVIDER: "auto" },
+    });
+    expect(output.exitCode, output.stderr).toBe(0);
+    const result = interfaceBuilderAnalysisSchema.parse(
+      parseEvidence(output.json).normalized_result,
+    );
+    expect(result.documents[0]?.connection_count).toBe(3);
+    expect(result.graph.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "connections:Contents/Resources/Annotations.nib",
+        status: "partial",
+        reason: "connection_unresolved",
+        examined: 1,
+        omitted: 2,
+      }),
+    );
+  },
+);
+
 it("projects an NIBArchive binding as an unsupported partial connection", async () => {
   const root = await createTestTempDirectory("rea-ib-nibarchive-binding-");
   const bundle = join(root, "Example.app");
@@ -1627,11 +1715,12 @@ describe("NIBArchive connectors with unusable sources", () => {
   });
 
   it.each([
-    ["nil", null],
-    ["a non-reference value", 7],
+    ["NSNibOutletConnector", "nil", null],
+    ["NSNibOutletConnector", "a non-reference value", 7],
+    ["NSIBHelpConnector", "nil", null],
   ] as const)(
-    "still counts an AppKit connector whose NSSource is %s as ownerless",
-    async (_label, source) => {
+    "still counts %s whose NSSource is %s as ownerless",
+    async (className, _label, source) => {
       const root = await createTestTempDirectory("rea-ib-unusable-source-");
       const bundle = join(root, "Example.app");
       await mkdir(bundle, { recursive: true });
@@ -1642,20 +1731,21 @@ describe("NIBArchive connectors with unusable sources", () => {
             "NSCustomObject",
             "NSButton",
             "NSNibOutletConnector",
+            "NSIBHelpConnector",
             "NSString",
           ],
           objects: [
             { classIndex: 0, values: {} },
             { classIndex: 1, values: {} },
             {
-              classIndex: 2,
+              classIndex: className === "NSNibOutletConnector" ? 2 : 3,
               values: {
                 NSSource: source,
                 NSDestination: { ref: 1 },
                 NSLabel: { ref: 3 },
               },
             },
-            { classIndex: 3, values: { "NS.bytes": "button" } },
+            { classIndex: 4, values: { "NS.bytes": "button" } },
           ],
         }),
       );
