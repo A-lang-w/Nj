@@ -120,7 +120,6 @@ nativeTest(
           "process.stdout.write('ready\\n');setTimeout(()=>process.stdout.write('sqlite-timeout-marker'),100);setInterval(()=>{},1000)",
         ],
       });
-      await waitForProviderProcessReady(launched.process);
       return {
         ...launched,
         cleanup: async () =>
