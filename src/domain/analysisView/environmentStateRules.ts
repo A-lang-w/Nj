@@ -192,13 +192,19 @@ const PAGE_SIZE_PARAMETERS = new Set([
   "size",
 ]);
 
-/** The most items a query's page holds: its smallest whole-number page-size value, or undefined without one. */
+/** The most items a query's page holds: its smallest whole-number page-size value or `_start`–`_end` range width, or undefined without one. */
 export const pageSize = (query: string | undefined): number | undefined => {
-  let size: number | undefined;
-  for (const [name, value] of iterateUrlQueryParameters(query ?? ""))
-    if (PAGE_SIZE_PARAMETERS.has(name.toLowerCase()) && /^\d+$/u.test(value))
-      size = Math.min(size ?? Infinity, Number(value));
-  return size;
+  let size = Infinity;
+  const range = { start: 0, end: Infinity };
+  for (const [name, value] of iterateUrlQueryParameters(query ?? "")) {
+    const key = name.toLowerCase();
+    if (!/^\d+$/u.test(value)) continue;
+    if (PAGE_SIZE_PARAMETERS.has(key)) size = Math.min(size, Number(value));
+    else if (key === "_start") range.start = Number(value);
+    else if (key === "_end") range.end = Number(value);
+  }
+  const width = Math.min(size, Math.max(range.end - range.start, 0));
+  return Number.isFinite(width) ? width : undefined;
 };
 
 /** Identity field names tried, in order, when no path parameter proves one. */

@@ -31,6 +31,7 @@ import {
   explainCreate,
   insertCandidates,
   insertIndex,
+  nextInteger,
   responseShapeOf,
 } from "./environmentStateWriteExplain.js";
 import {
@@ -38,7 +39,8 @@ import {
   newEntityIn,
   type Observed,
 } from "./environmentStateWriteObserve.js";
-import type { WriteCall } from "./environmentStateWriteRules.js";
+import type { FieldRule, WriteCall } from "./environmentStateWriteRules.js";
+import { integerOf } from "./environmentStateWriteValues.js";
 
 /** The id a response names alone: a scalar body, or an object's id field or single scalar member. */
 const respondedId = (
@@ -142,6 +144,59 @@ const buildCreate = (
   draft.observed = evidence.observed.object;
 };
 
+type SequenceRule = Extract<FieldRule, { rule: "sequence" }>;
+
+/** The sequences a create's plan generates, each with the key serving counts it under. */
+const sequencesOf = (
+  draft: WriteDraft,
+  collection: string,
+): { readonly rule: SequenceRule; readonly key: string }[] =>
+  draft.plan.rules.flatMap((rule) =>
+    rule.rule === "sequence"
+      ? [
+          {
+            rule,
+            key:
+              rule.scope === "collection"
+                ? `${rule.field} ${collection}`
+                : rule.field,
+          },
+        ]
+      : [],
+  );
+
+/** Whether a later call's sequences hold what serving generates: one past the largest value their scope holds or started with, and past the plan's last. */
+const followsSequences = (
+  context: EffectContext,
+  draft: WriteDraft,
+  created: Pick<StateEntity, "type" | "collection" | "fields">,
+): boolean =>
+  sequencesOf(draft, created.collection).every(({ rule, key }) => {
+    const scope = [
+      ...context.state.ofType(created.type),
+      ...context.startedWith(created.type),
+    ].filter(
+      (entity) =>
+        rule.scope === "type" || entity.collection === created.collection,
+    );
+    const next = Math.max(
+      nextInteger(fieldsOf(scope), rule.field) ?? 1,
+      (draft.sequences.get(key) ?? 0) + 1,
+    );
+    return integerOf(created.fields[rule.field]) === next;
+  });
+
+/** Record the values a create's sequences took, which the next call follows. */
+const takeSequences = (
+  draft: WriteDraft,
+  created: Pick<StateEntity, "collection" | "fields">,
+): void => {
+  for (const { rule, key } of sequencesOf(draft, created.collection)) {
+    const value = integerOf(created.fields[rule.field]);
+    if (value !== undefined) draft.sequences.set(key, value);
+  }
+};
+
 /** Add a created entity to the state at the plan's insert position, or last before the plan has one. */
 const insertCreated = (
   context: EffectContext,
@@ -205,8 +260,9 @@ export const applyCreate = (
     return recorded();
   }
   const call = { ...callOf(step, body), body };
-  if (!built(draft))
-    buildCreate(context, draft, step, { observed, call, collection });
+  // The exemplar defines the plan's sequences; each later call must follow them.
+  const later = built(draft);
+  if (!later) buildCreate(context, draft, step, { observed, call, collection });
   const fields = createdFields(
     draft.plan,
     draft.observed!,
@@ -217,11 +273,18 @@ export const applyCreate = (
   if (
     !fields.ok ||
     id === undefined ||
-    context.state.entity(type, collection, id) !== undefined
+    context.state.entity(type, collection, id) !== undefined ||
+    (later &&
+      !followsSequences(context, draft, {
+        type,
+        collection,
+        fields: fields.value,
+      }))
   ) {
     refuse(draft, step, "unexplained-change");
     return recorded();
   }
+  takeSequences(draft, { collection, fields: fields.value });
   const inserted = insertCreated(context, draft, entity(fields.value, id));
   return {
     kind: "applied",
