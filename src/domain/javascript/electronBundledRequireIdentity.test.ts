@@ -18,6 +18,18 @@ const CONSUMER =
 const electronOf = (source: string) =>
   analyzeJavaScriptStaticSource(source).electron;
 
+const expectUnresolved = (source: string) => {
+  const electron = electronOf(source);
+  expect(electron.browser_windows).toEqual([]);
+  // Only direct observations come from this identity; the separate
+  // wrapper-substitution path keeps its own resolution basis.
+  expect(
+    electron.ipc.filter(
+      ({ resolution_basis: basis }) => basis !== "wrapper-substitution",
+    ),
+  ).toEqual([]);
+};
+
 describe("Electron identity through Webpack externals", () => {
   it("follows the default-export getter produced by webpack n.n", () => {
     const source = bootstrap(
@@ -142,15 +154,7 @@ describe("Electron identity through Webpack externals", () => {
       bootstrap(EXTERNAL, CONSUMER.replace("n(45840)", "n(45841)")),
     ],
   ])("keeps %s unresolved", (_name, source) => {
-    const electron = electronOf(source);
-    expect(electron.browser_windows).toEqual([]);
-    // Only direct observations come from this identity; the separate
-    // wrapper-substitution path keeps its own resolution basis.
-    expect(
-      electron.ipc.filter(
-        ({ resolution_basis: basis }) => basis !== "wrapper-substitution",
-      ),
-    ).toEqual([]);
+    expectUnresolved(source);
   });
 });
 
@@ -214,15 +218,7 @@ describe("Webpack externals with a tampered runtime", () => {
       ),
     ],
   ])("keeps %s unresolved", (_name, source) => {
-    const electron = electronOf(source);
-    expect(electron.browser_windows).toEqual([]);
-    // Only direct observations come from this identity; the separate
-    // wrapper-substitution path keeps its own resolution basis.
-    expect(
-      electron.ipc.filter(
-        ({ resolution_basis: basis }) => basis !== "wrapper-substitution",
-      ),
-    ).toEqual([]);
+    expectUnresolved(source);
   });
 });
 
@@ -287,15 +283,7 @@ describe("Webpack externals with a tampered loader or module object", () => {
       ),
     ],
   ])("keeps %s unresolved", (_name, source) => {
-    const electron = electronOf(source);
-    expect(electron.browser_windows).toEqual([]);
-    // Only direct observations come from this identity; the separate
-    // wrapper-substitution path keeps its own resolution basis.
-    expect(
-      electron.ipc.filter(
-        ({ resolution_basis: basis }) => basis !== "wrapper-substitution",
-      ),
-    ).toEqual([]);
+    expectUnresolved(source);
   });
 
   it.each([
@@ -368,7 +356,7 @@ describe("Webpack externals through the loader's completion paths", () => {
       ),
     ],
   ])("keeps a loader that %s unresolved", (_name, source) => {
-    expect(electronOf(source).browser_windows).toEqual([]);
+    expectUnresolved(source);
   });
 
   it.each([
