@@ -438,16 +438,16 @@ it("does not resolve package-relative names against malformed package syntax", (
 
 it("preserves exact activity-alias targets and marks malformed references unknown", () => {
   const inventory = parseAndroidManifestComponents(
-    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity-alias android:name=".Whitespace" android:targetActivity=" .Target "/><activity-alias android:name=".Empty" android:targetActivity=""/><activity-alias android:name=".Valid" android:targetActivity=".Target"/><activity-alias android:name=".Missing"/></application></manifest>',
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name=".Target"/><activity-alias android:name=".Whitespace" android:targetActivity=" .Target "/><activity-alias android:name=".Empty" android:targetActivity=""/><activity-alias android:name=".Valid" android:targetActivity=".Target"/><activity-alias android:name=".Missing"/><activity-alias android:name=".Later" android:targetActivity=".DeclaredLater"/><activity android:name=".DeclaredLater"/></application></manifest>',
     "complete",
     "33",
   );
   expect(inventory.items.map(({ target_activity }) => target_activity)).toEqual(
-    [" .Target ", "", ".Target", null],
+    [null, " .Target ", "", ".Target", null, ".DeclaredLater", null],
   );
   expect(inventory.status).toBe("partial");
   expect(inventory.limitations.join(" ")).toContain(
-    "activity-alias targetActivity value(s)",
+    "do not match a preceding activity declaration",
   );
 });
 
@@ -564,6 +564,24 @@ it("bounds total authority bytes across providers", () => {
   expect(inventory.items[1]?.authorities).toEqual([]);
   expect(inventory.status).toBe("partial");
   expect(inventory.limitations.join(" ")).toContain("total authority bytes");
+});
+
+it("preserves malformed provider authority segments and marks them unknown", () => {
+  const inventory = parseAndroidManifestComponents(
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><provider android:name=".Provider" android:authorities=" com.example.p ;;com.example.q;"/></application></manifest>',
+    "complete",
+    "33",
+  );
+  expect(inventory.items[0]?.authorities).toEqual([
+    " com.example.p ",
+    "",
+    "com.example.q",
+    "",
+  ]);
+  expect(inventory.status).toBe("partial");
+  expect(inventory.limitations.join(" ")).toContain(
+    "provider authority segment(s) are empty or have surrounding whitespace",
+  );
 });
 
 it("leaves later names declared when the resolved-name budget is spent", () => {

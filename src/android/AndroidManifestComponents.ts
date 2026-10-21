@@ -61,7 +61,7 @@ export interface AndroidManifestComponent {
   readonly categories: readonly string[];
   /** Declared android:foregroundServiceType on services; null otherwise. */
   readonly foreground_service_type: string | null;
-  /** Declared android:authorities on providers, split on ";". */
+  /** Exact declared provider authority segments, split on ";"; malformed segments remain raw. */
   readonly authorities: readonly string[] | null;
   /** Exact declared android:targetActivity on activity-alias; malformed references remain raw and make the inventory partial. */
   readonly target_activity: string | null;
@@ -227,21 +227,22 @@ const intentValues = (
 const providerAuthorities = (
   declared: string,
   byteLimit: number,
-): { authorities: string[]; truncated: boolean; bytes: number } => {
+): {
+  authorities: string[];
+  truncated: boolean;
+  bytes: number;
+  malformed: number;
+} => {
   const authorities: string[] = [];
   let truncated = false;
   let bytes = 0;
+  let malformed = 0;
   let start = 0;
   while (start <= declared.length) {
     const separator = declared.indexOf(";", start);
     const end = separator < 0 ? declared.length : separator;
-    const trimmedValue = declared.slice(start, end).trim();
-    if (trimmedValue.length === 0) {
-      if (separator < 0) break;
-      start = separator + 1;
-      continue;
-    }
-    const valueBytes = Buffer.byteLength(trimmedValue);
+    const value = declared.slice(start, end);
+    const valueBytes = Buffer.byteLength(value);
     if (
       authorities.length >= ANDROID_MANIFEST_LIMITS.authorities ||
       valueBytes > byteLimit - bytes
@@ -249,12 +250,13 @@ const providerAuthorities = (
       truncated = true;
       break;
     }
-    authorities.push(trimmedValue);
+    if (value.length === 0 || value !== value.trim()) malformed += 1;
+    authorities.push(value);
     bytes += valueBytes;
     if (separator < 0) break;
     start = separator + 1;
   }
-  return { authorities, truncated, bytes };
+  return { authorities, truncated, bytes, malformed };
 };
 
 /**
@@ -311,6 +313,7 @@ export const parseAndroidManifestComponents = (
   let unresolvedTargetActivities = 0;
   let unresolvedTokens = 0;
   let invalidNames = 0;
+  let malformedAuthoritySegments = 0;
   let providerPermissionOverridesUnknown = 0;
   let invalidExported = 0;
   let unknownFilteredExportDefaults = 0;
@@ -326,6 +329,7 @@ export const parseAndroidManifestComponents = (
     const element = node as Element;
     if (element.nodeName !== "application") continue;
     applicationSeen = true;
+    const precedingActivityNames = new Set<string>();
     const declaredApplicationPermission = androidAttribute(
       element,
       "permission",
@@ -404,6 +408,8 @@ export const parseAndroidManifestComponents = (
         else if (!nameFits) unresolvedNames += 1;
         else nameBudget -= resolvedBytes;
       }
+      if (component.nodeName === "activity" && nameFits)
+        precedingActivityNames.add(name);
       let authorities: readonly string[] | null = null;
       if (component.nodeName === "provider") {
         if (
@@ -411,12 +417,13 @@ export const parseAndroidManifestComponents = (
           androidAttribute(component, "writePermission") !== null
         )
           providerPermissionOverridesUnknown += 1;
-        const declaredAuthorities = trimmed(component, "authorities");
+        const declaredAuthorities = androidAttribute(component, "authorities");
         if (declaredAuthorities !== null) {
           const split = providerAuthorities(
             declaredAuthorities,
             authorityBudget,
           );
+          malformedAuthoritySegments += split.malformed;
           if (split.truncated) {
             truncated = true;
             capacityTruncated = true;
@@ -482,26 +489,35 @@ export const parseAndroidManifestComponents = (
         component.nodeName === "activity-alias"
           ? androidAttribute(component, "targetActivity")
           : null;
-      if (targetActivity !== null) {
-        const targetName = targetActivity.trim();
-        const targetNeedsPackage =
-          targetName.startsWith(".") || !targetName.includes(".");
-        const targetUnresolved = containsUnresolvedToken(targetName);
-        const targetInvalid =
-          targetName.length === 0 ||
-          targetName !== targetActivity ||
-          (!targetUnresolved &&
-            !hasSupportedJavaBinaryClassNameSyntax(targetName));
-        if (
-          targetInvalid ||
-          targetUnresolved ||
-          (targetNeedsPackage &&
-            (packageName === null ||
-              packageHasInvalidWhitespace ||
-              packageHasUnresolvedToken ||
-              packageHasUnsupportedClassNameSyntax))
-        )
+      if (component.nodeName === "activity-alias") {
+        if (targetActivity === null) {
           unresolvedTargetActivities += 1;
+        } else {
+          const targetName = targetActivity.trim();
+          const targetNeedsPackage =
+            targetName.startsWith(".") || !targetName.includes(".");
+          const targetUnresolved = containsUnresolvedToken(targetName);
+          const targetInvalid =
+            targetName.length === 0 ||
+            targetName !== targetActivity ||
+            (!targetUnresolved &&
+              !hasSupportedJavaBinaryClassNameSyntax(targetName));
+          const targetPackageKnown =
+            packageName !== null &&
+            !packageHasInvalidWhitespace &&
+            !packageHasUnresolvedToken &&
+            !packageHasUnsupportedClassNameSyntax;
+          const targetResolved =
+            !targetInvalid &&
+            !targetUnresolved &&
+            (!targetNeedsPackage || targetPackageKnown);
+          const targetIdentity =
+            targetNeedsPackage && targetPackageKnown
+              ? resolveAndroidComponentName(packageName, targetName)
+              : targetName;
+          if (!targetResolved || !precedingActivityNames.has(targetIdentity))
+            unresolvedTargetActivities += 1;
+        }
       }
       const exportedLiteral =
         declaredExported === "true"
@@ -598,6 +614,12 @@ export const parseAndroidManifestComponents = (
     );
     truncated = true;
   }
+  if (malformedAuthoritySegments > 0) {
+    limitations.push(
+      `${String(malformedAuthoritySegments)} provider authority segment(s) are empty or have surrounding whitespace; exact segments are retained and their registration is not established.`,
+    );
+    truncated = true;
+  }
   if (providerDefaultsUnknown > 0)
     limitations.push(
       `${String(providerDefaultsUnknown)} provider(s) omit android:exported and the target SDK is unknown, so Android's export default for them is not established.`,
@@ -614,7 +636,7 @@ export const parseAndroidManifestComponents = (
   }
   if (unresolvedTargetActivities > 0) {
     limitations.push(
-      `${String(unresolvedTargetActivities)} activity-alias targetActivity value(s) are empty, malformed, contain an unresolved resource/placeholder, or cannot be resolved against the manifest package; each exact declared value is retained.`,
+      `${String(unresolvedTargetActivities)} activity-alias targetActivity value(s) are empty, malformed, unresolved against the manifest package, or do not match a preceding activity declaration; each exact declared value is retained.`,
     );
     truncated = true;
   }
