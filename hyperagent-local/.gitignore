@@ -1,0 +1,14 @@
+node_modules/
+dist/
+data/
+.env
+.env.local
+*.db
+*.db-wal
+*.db-shm
+.turbo/
+.claude/
+*.tsbuildinfo
+# web build
+web/dist/
+uploads/

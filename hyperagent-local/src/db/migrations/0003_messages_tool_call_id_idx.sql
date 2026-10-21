@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS "messages_tool_call_id_idx" ON "messages" ("tool_call_id");

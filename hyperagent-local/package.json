@@ -1,0 +1,44 @@
+{
+  "name": "hyperagent-local",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc --noEmit && tsup src/index.ts --format esm --dts --clean",
+    "start": "node dist/index.js",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:backup": "bash scripts/backup-db.sh",
+    "test:scripts": "bash scripts/test-restore-integration.sh",
+    "db:migrate:safe": "bash scripts/migrate-with-backup.sh",
+    "db:seed": "tsx src/db/seed.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "oxlint src/ web/src",
+    "format": "oxfmt src/"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.14.0",
+    "@hono/zod-validator": "^0.9.1",
+    "better-sqlite3": "^13.0.3",
+    "dotenv": "^18.0.7",
+    "drizzle-orm": "^0.39.0",
+    "hono": "^4.7.0",
+    "jose": "^6.0.0",
+    "nanoid": "^5.1.0",
+    "openai": "4.85.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.15.0",
+    "drizzle-kit": "^0.31.0",
+    "oxfmt": "^0.72.0",
+    "oxlint": "^1.87.0",
+    "tsup": "^8.4.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.1.0"
+  }
+}

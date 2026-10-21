@@ -1,0 +1,183 @@
+@font-face {
+  font-family: "seasonSans";
+  src: url("/fonts/SeasonSansVF.woff2") format("woff2");
+  font-weight: 300 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "seasonSans Fallback";
+  src: local("Arial");
+  ascent-override: 102.85%;
+  descent-override: 26.79%;
+  line-gap-override: 0%;
+  size-adjust: 94.8%;
+  font-weight: 300 900;
+}
+@font-face {
+  font-family: "Geist";
+  src: url("/fonts/Geist-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Fallback";
+  src: local("Arial");
+  ascent-override: 95%;
+  descent-override: 25%;
+  line-gap-override: 0%;
+  size-adjust: 100%;
+}
+@font-face {
+  font-family: "GeistMono";
+  src: url("/fonts/GeistMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: rgb(6, 6, 6);
+    --foreground: rgb(235, 235, 235);
+    --card: rgba(255, 255, 255, 0.04);
+    --card-foreground: rgb(237, 237, 237);
+    --popover: rgb(13, 13, 13);
+    --popover-foreground: rgb(237, 237, 237);
+    --primary: rgb(237, 237, 237);
+    --primary-foreground: rgb(9, 9, 9);
+    --secondary: rgba(255, 255, 255, 0.08);
+    --secondary-foreground: rgb(237, 237, 237);
+    --muted: rgba(255, 255, 255, 0.06);
+    --muted-foreground: rgb(153, 153, 153);
+    --accent: rgba(255, 255, 255, 0.12);
+    --accent-foreground: rgb(237, 237, 237);
+    --destructive: #e40014;
+    --success: #009767;
+    --warning: #dd7400;
+    --info: #155dfc;
+    --border: rgba(255, 255, 255, 0.08);
+    --input: rgb(6, 6, 6);
+    --ring: rgb(
+      200,
+      200,
+      200
+    ); /* primary-400: the 20%-white ring was ~1.7:1 on the canvas, invisible */
+    --radius: 0.875rem;
+    --sidebar: rgb(13, 13, 13);
+    --sidebar-foreground: rgb(237, 237, 237);
+    --sidebar-border: rgba(255, 255, 255, 0.08);
+  }
+
+  *,
+  *::before,
+  *::after {
+    border-color: var(--border);
+  }
+
+  html,
+  body,
+  #root {
+    background-color: var(--background) !important;
+    color: var(--foreground) !important;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    font-family:
+      "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family:
+      "seasonSans", "seasonSans Fallback", ui-sans-serif, system-ui, sans-serif;
+  }
+
+  h1 {
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--foreground);
+    margin: 0;
+  }
+
+  /* Focus-visible rings for keyboard accessibility */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  button:focus-visible,
+  [role="button"]:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  /* Custom scrollbar styling for dark theme */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+
+  /* Firefox scrollbar styling */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+  }
+
+  /*
+   * Destructive/action controls: always visible on touch / no-hover pointers.
+   * On fine-pointer hover devices, hide until group hover or focus-within.
+   */
+  .reveal-on-hover {
+    opacity: 1;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .reveal-on-hover {
+      opacity: 0;
+    }
+
+    .group:hover .reveal-on-hover,
+    .group:focus-within .reveal-on-hover,
+    .reveal-on-hover:focus-visible {
+      opacity: 1;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
