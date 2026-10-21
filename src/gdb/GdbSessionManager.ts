@@ -1645,6 +1645,7 @@ export class GdbSessionManager {
         joined ??
         (match === null ? undefined : session.pending.get(Number(match[1])));
       if (pending === undefined) continue;
+      const token = pending.token;
       const terminalRecord = joined?.joinedShellCompletion ?? line;
       if (match?.[2] === "running") {
         pending.terminalRecord = terminalRecord;
