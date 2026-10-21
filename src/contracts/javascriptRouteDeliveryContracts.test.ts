@@ -60,3 +60,33 @@ describe.each(cases)("%s delivery contract", (name, base) => {
     },
   );
 });
+
+it.each([{ detail: "complete" }, { detail: "summary", view }])(
+  "preserves web deadline validation through $detail delivery",
+  (delivery) => {
+    const contract = toolContract("analyze_web_bundle");
+    const base = cases[1][1];
+    const invalid = contract.inputSchema.safeParse({
+      ...base,
+      ...delivery,
+      analysis_timeout_ms: 40_000,
+      total_analysis_timeout_ms: 30_000,
+    });
+    expect(invalid.success).toBe(false);
+    if (!invalid.success)
+      expect(invalid.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ path: ["analysis_timeout_ms"] }),
+        ]),
+      );
+    const deadlines = {
+      command_timeout_ms: 2_000,
+      analysis_timeout_ms: 10_000,
+      total_analysis_timeout_ms: 20_000,
+      source_map_fetch_timeout_ms: 3_000,
+    };
+    expect(
+      contract.inputSchema.parse({ ...base, ...delivery, ...deadlines }),
+    ).toMatchObject({ ...delivery, ...deadlines });
+  },
+);

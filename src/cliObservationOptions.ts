@@ -1,5 +1,6 @@
 import { javascriptRouteDeliveryOptions } from "./cli/javascriptRouteDelivery.js";
 import { z } from "incur";
+import { webRuntimeCommandTimeoutSchema } from "./domain/browserDeadline.js";
 import { javaScriptAnalysisResourceControlsSchema } from "./domain/javascript/javascriptAnalysisResourceControls.js";
 import { javaScriptSourcePathsSchema } from "./domain/javascript/javascriptSourceSelection.js";
 
@@ -18,7 +19,16 @@ export const browserScopeOptions = {
     .array(z.string().min(1))
     .optional()
     .describe("Optional exact-origin filter"),
+  commandTimeoutMs: webRuntimeCommandTimeoutSchema,
 };
+
+/** Keep an omitted command deadline absent so Evidence records the caller selection only. */
+export const selectedCommandTimeout = (
+  commandTimeoutMs: number | undefined,
+): { readonly command_timeout_ms?: number } =>
+  commandTimeoutMs === undefined
+    ? {}
+    : { command_timeout_ms: commandTimeoutMs };
 
 export const browserPageInspectionOptions = z.object({
   ...browserScopeOptions,
@@ -59,6 +69,7 @@ export const electronPageInspectionOptions = z.object({
     .boolean()
     .default(false)
     .describe("Include JavaScript source text"),
+  commandTimeoutMs: webRuntimeCommandTimeoutSchema,
 });
 
 export const javascriptApplicationOptions = z.object({
