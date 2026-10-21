@@ -545,6 +545,21 @@ describe("absolute Electron Framework symlinks", () => {
     });
   };
 
+  const expectHopLimit = async (path: string) => {
+    const result = await provider.inspect({ path });
+    expect(result.ok, path).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [
+        expect.objectContaining({
+          path: ["path"],
+          message: expect.stringContaining("hop limit exceeded"),
+        }),
+      ],
+    });
+  };
+
   it("follows an absolute Versions/Current link that stays inside", async () => {
     const relative = await versionedFramework(
       "rea-electron-fuses-absolute-relative-",
@@ -620,6 +635,18 @@ describe("absolute Electron Framework symlinks", () => {
     await expectEscapes(
       join(framework, "Versions", "Current", "Electron Framework"),
     );
+  });
+
+  it("rejects an absolute Current cycle instead of falling back to Versions/A", async () => {
+    const { app, framework } = await versionedFramework(
+      "rea-electron-fuses-absolute-cycle-",
+    );
+    const current = join(framework, "Versions", "Current");
+    // A valid A binary exists, so this also proves the failed Current walk is
+    // not mistaken for absence and silently replaced by the fallback.
+    await symlink(current, current);
+
+    await expectHopLimit(app);
   });
 });
 
