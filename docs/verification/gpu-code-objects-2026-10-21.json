@@ -1569,5 +1569,338 @@
       "Final normal-workflow measurements precede the last guard that exposes failed target discovery as partial; this guard only changes unresolved observations.",
       "Baseline browser and WASM CLI-schema CI failures remain separately reproduced on unmodified main."
     ]
+  },
+  "payload_admission_and_ptx_coverage": {
+    "source_revision": "893e04d22f2316d1c2794048161176d0e307d10a",
+    "source_tree": "c2cc1a45c911a34de187b6c6220c608604aedc5c",
+    "qualification": {
+      "focused_passed": 67,
+      "additional_source_admission_passed": 3,
+      "source_run_overlaps_one_existing_focused_case": true
+    },
+    "ownership": "PTX parsing emits kernel facts with typed coverage; inventory forwards it rather than reinterpreting nullable fields. Shared work admission reserves uncompressed input once, compressed input plus output atomically, before payload reads/allocations; AMD note reads use the same owner.",
+    "sparse_hip_control": {
+      "aliases": 12,
+      "payload_size_bytes": 134217728,
+      "full_payload_reads_observed": 4,
+      "capacity_without_payload_read": 8,
+      "retained_kernels": 4,
+      "before_behavior": "Source-derived: old ordering would read rejected alias payloads before consulting the cumulative allowance; it was not run to exhaustion."
+    },
+    "compiler_control": {
+      "command": [
+        "/home/yann/yann/rea-5345-lab/toolchains/cuda_nvcc-unpacked/cuda_nvcc-linux-x86_64-12.9.86-archive/bin/ptxas",
+        "-arch=sm_80",
+        "/home/yann/yann/rea-5345-lab/pointer-parameter.ptx",
+        "-o",
+        "/home/yann/yann/rea-5345-lab/pointer-parameter.cubin"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    "public_cli_oracle": {
+      "pointer": {
+        "command": [
+          "node",
+          "scripts/rea.mjs",
+          "inspect-gpu-code-objects",
+          "/home/yann/yann/rea-5345-lab/pointer-parameter.ptx",
+          "--analysis",
+          "kernels",
+          "--detail",
+          "summary",
+          "--view",
+          "{\"collection\":\"targets\"}",
+          "--evidence_output",
+          "/home/yann/yann/rea-5345-lab/ptx-pointer-validated-evidence.json",
+          "--json"
+        ],
+        "artifact": {
+          "bytes_read": 302,
+          "file_size": 135,
+          "path": "/home/yann/yann/rea-5345-lab/pointer-parameter.ptx",
+          "sha256": "fcabf9ca3bea80be8a9a2e55f1f2235423705609c63fecc7c04924ab468d1dcb"
+        },
+        "coverage": {
+          "discovery": "complete",
+          "discovery_scope": "supported-section-names-and-standalone-formats",
+          "examined_sections": 0,
+          "payloads": "partial",
+          "unknown_section_names": 0
+        },
+        "kernel": {
+          "id": "file@0/entry@35",
+          "limitations": [
+            "PTX registers are virtual declarations, not physical allocations. Parameter offsets/sizes and entry-local static shared bytes are derived from supported declarations; module shared bytes, dynamic allocation, device ABI and runtime allocation were not verified.",
+            "Unsupported PTX parameter declarations or overflowing layouts leave parameter sizes/offsets and the total byte count unknown."
+          ],
+          "location": {
+            "container_id": "file@0",
+            "offset": 53,
+            "section_index": null,
+            "section_name": null,
+            "size": 81
+          },
+          "name": "pointer_parameter",
+          "object_id": "file@0",
+          "parameter_bytes": null,
+          "parameter_count": 2,
+          "parameters": [
+            {
+              "hidden": null,
+              "name": null,
+              "offset": null,
+              "ordinal": 0,
+              "size": null,
+              "type": ".u64"
+            },
+            {
+              "hidden": null,
+              "name": "n",
+              "offset": null,
+              "ordinal": 1,
+              "size": 4,
+              "type": ".u32"
+            }
+          ],
+          "private_bytes": null,
+          "registers": {
+            "agpr": null,
+            "physical": null,
+            "sgpr": null,
+            "vgpr": null,
+            "virtual": []
+          },
+          "representation": "ptx-declarations",
+          "shared_bytes": 0,
+          "sources": {
+            "parameters": {
+              "container_id": "file@0",
+              "offset": 53,
+              "section_index": null,
+              "section_name": null,
+              "size": 81
+            },
+            "private": null,
+            "registers": null,
+            "shared": null
+          },
+          "symbol": null
+        }
+      },
+      "windows": {
+        "command": [
+          "node",
+          "scripts/rea.mjs",
+          "inspect-gpu-code-objects",
+          "/home/yann/yann/rea-5345-lab/fixtures/nvjpeg64_12.dll",
+          "--analysis",
+          "kernels",
+          "--detail",
+          "summary",
+          "--view",
+          "{\"collection\":\"targets\"}",
+          "--evidence_output",
+          "/home/yann/yann/rea-5345-lab/final-review-windows-validated-evidence.json",
+          "--json"
+        ],
+        "kernel_count": 3968,
+        "object_count": 176,
+        "prior_factual_fields_and_ptx_bytes_exact": true,
+        "new_partial_ptx_objects": 8,
+        "new_explicit_parameter_limitations": 59,
+        "coverage": {
+          "discovery": "complete",
+          "discovery_scope": "supported-section-names-and-standalone-formats",
+          "examined_sections": 8,
+          "payloads": "partial",
+          "unknown_section_names": 0
+        }
+      }
+    },
+    "real_producers": {
+      "count": 9,
+      "all_payload_coverage": "complete"
+    },
+    "tasks": {
+      "ptx-coverage-focused": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "npm",
+          "run",
+          "test:focused",
+          "--",
+          "src/gpu/PtxKernels.test.ts",
+          "tests/boundary/gpu/codeObjects.test.ts",
+          "tests/acceptance/gpuCodeObjectsCli.test.ts"
+        ],
+        "exit_code": 0,
+        "wall_s": 106.22117376599999,
+        "cpu_s": 171.538923,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 3492151296,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      "payload-budget-focused": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "npm",
+          "run",
+          "test:focused",
+          "--",
+          "src/gpu/PtxKernels.test.ts",
+          "src/gpu/GpuInventory.test.ts",
+          "tests/boundary/gpu/codeObjects.test.ts",
+          "tests/acceptance/gpuCodeObjectsCli.test.ts",
+          "tests/process-global/gpuFileLifetime.test.ts"
+        ],
+        "exit_code": 0,
+        "wall_s": 142.44056975799685,
+        "cpu_s": 211.52848500000002,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 3478200320,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      "compressed-admission-tests": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "npm",
+          "run",
+          "test:local",
+          "--",
+          "src/gpu/GpuInventory.test.ts"
+        ],
+        "exit_code": 0,
+        "wall_s": 3.3343061989980924,
+        "cpu_s": 3.755217,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 477700096,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      "final-review-producers": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "node",
+          "--import",
+          "tsx",
+          "/home/yann/yann/rea-5345-lab/probe.mts"
+        ],
+        "exit_code": 0,
+        "wall_s": 1.1484615720000875,
+        "cpu_s": 1.099774,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 122732544,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      "final-review-real-cli": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "python3",
+          "/home/yann/yann/rea-5345-lab/verify-final-review.py"
+        ],
+        "exit_code": 0,
+        "wall_s": 10.10232881200136,
+        "cpu_s": 11.301614,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 512335872,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      "final-review-check": {
+        "command": ["taskset", "-c", "0,1", "npm", "run", "check"],
+        "exit_code": 0,
+        "wall_s": 135.34464124299848,
+        "cpu_s": 266.56255,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 5371879424,
+        "sample_ms": 20,
+        "guard_stop": null
+      },
+      "final-review-docs": {
+        "command": ["taskset", "-c", "0,1", "npm", "run", "docs:check"],
+        "exit_code": 0,
+        "wall_s": 13.528166624997539,
+        "cpu_s": 17.260022,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 804327424,
+        "sample_ms": 20,
+        "guard_stop": null
+      }
+    },
+    "failed_validation_attempts": [
+      {
+        "reason": "Verifier treated exported Evidence bundle as a bare record; fixed to read records[0].",
+        "task": {
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "python3",
+            "/home/yann/yann/rea-5345-lab/verify-final-review.py"
+          ],
+          "exit_code": 1,
+          "wall_s": 4.254547918000753,
+          "cpu_s": 4.326556,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 382095360,
+          "sample_ms": 20,
+          "guard_stop": null
+        }
+      },
+      {
+        "reason": "Retry attempted to reuse an existing Evidence export path; CLI refused overwrite. Existing export preserved; new paths used.",
+        "task": {
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "python3",
+            "/home/yann/yann/rea-5345-lab/verify-final-review.py"
+          ],
+          "exit_code": 1,
+          "wall_s": 5.362011795001308,
+          "cpu_s": 5.3208850000000005,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 379301888,
+          "sample_ms": 20,
+          "guard_stop": null
+        }
+      },
+      {
+        "reason": "Prior snapshot comparison wrongly required complete PTX coverage to remain unchanged. All factual fields were equal; 8 PTX objects/59 kernels now correctly expose existing unknown parameter layouts. Updated oracle checks exact facts plus these intended uncertainty changes.",
+        "task": {
+          "command": [
+            "taskset",
+            "-c",
+            "0,1",
+            "python3",
+            "/home/yann/yann/rea-5345-lab/verify-final-review.py"
+          ],
+          "exit_code": 1,
+          "wall_s": 18.017960425997444,
+          "cpu_s": 16.76444,
+          "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+          "peak_family_rss_bytes": 507072512,
+          "sample_ms": 20,
+          "guard_stop": null
+        }
+      }
+    ],
+    "performance_scope": "The complete/selected MCP timing and token comparisons above remain pinned to their measured revision. This later change strengthens work admission and uncertainty propagation; no new general latency/CPU/memory improvement is inferred."
   }
 }

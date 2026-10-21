@@ -232,3 +232,55 @@ The final Windows CLI task took 5.446 seconds / 5.916 CPU seconds / 498,192,384
 peak family RSS bytes. The six HIP wrapper CLI tasks took 15.696 seconds /
 16.427 CPU seconds / 382,410,752 peak family RSS bytes. All completed tasks stayed
 within the 8 GiB family guard.
+
+## Payload admission and PTX uncertainty follow-up
+
+At `893e04d`, PTX parsing owns typed per-kernel coverage and limitations for
+unknown parameter layouts, shared declarations and virtual register counts.
+Inventory forwards that coverage to objects, reports and historical pages.
+The old register-only interpretation in inventory was removed.
+
+A 67-case focused run passed across five files, including parser, public CLI/MCP,
+provider boundary and lifecycle tests. Three source admission cases also passed
+(one overlaps the focused run). NVIDIA `ptxas 12.9.86` accepted a pointer-parameter
+PTX control; the public CLI retained its unknown layout and reported partial
+coverage. A released nvJPEG example independently extracted by cuobjdump uses
+`.param .u64 .ptr .align 1`; this remains outside supported layout interpretation.
+
+The revised Windows DLL report retains all 176 object factual fields, all 3,968
+kernel factual fields and all 10 exact PTX byte identities. Eight PTX objects and
+59 kernels now expose their pre-existing unknown parameter layouts with partial
+coverage and added limitations. The earlier complete payload-coverage claim for
+those PTX objects is superseded; decoded numerical facts are unchanged. Nine real
+producer artifacts still retain complete payload coverage.
+
+The shared work owner now reserves uncompressed payload input once, and compressed
+input plus decoded output atomically, before reading/allocating. CCOB uses the
+same admission owner as payload analysis and AMD note reads. The allowance is
+512 MiB of that work, with 128 MiB per input/output buffer. Admitted failed work
+remains charged. A real sparse HIP file contains twelve aliases of one 128 MiB
+ELF payload: file-read instrumentation observed four full payload reads and eight
+capacity refusals with no payload read or decoded digest; the earlier four kernel
+facts survive. CUDA and CCOB oversized-output controls likewise prove refusal
+before the compressed input read. Old rejected-alias rereads are source-derived;
+they were not run to exhaustion.
+
+The nine-producer pass took 1.148 seconds / 1.100 CPU seconds / 122,732,544 peak
+family RSS bytes. The pointer-PTX and released-DLL public CLI tasks together took
+10.102 seconds / 11.302 CPU seconds / 512,335,872 peak family RSS bytes. The focused
+run took 142.441 seconds / 211.528 CPU seconds / 3,478,200,320 peak family RSS bytes,
+including the required artifact build. No resource guard stopped these tasks.
+The earlier MCP cost pairs remain pinned to their measured revisions; no new
+speedup is inferred from this follow-up.
+
+Three verifier attempts are retained as unsuccessful in the JSON record: an
+incorrect bare-record assumption for the Evidence bundle, refusal to overwrite
+an existing export, and a stale expectation that the now-corrected PTX coverage
+would stay complete. The successful comparison requires all factual values and
+PTX bytes to match while checking the intended uncertainty changes explicitly.
+
+`npm run check` passed at this source revision, including type/lint/format, module
+boundaries and architecture guards: 135.345 seconds / 266.563 CPU seconds /
+5,371,879,424 sampled peak family RSS bytes; no resource guard stop.
+
+`npm run docs:check` also passed, including all five README conformance cases.
