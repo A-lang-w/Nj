@@ -12,6 +12,46 @@ import { buildJavaScriptArtifactGraph } from "../../../../src/application/javasc
 
 const sources = [
   {
+    file: "capability-name-0.mjs",
+    source:
+      'export {};const pending=new Promise(async function(resolve){({resolve:0});await 0;new Socket("wss://example.test/property-name-0");resolve()});await pending;const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "capability-name-1.mjs",
+    source:
+      'export {};const pending=new Promise(async function(resolve){({}).resolve;await 0;new Socket("wss://example.test/property-name-1");resolve()});await pending;const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "capability-name-2.mjs",
+    source:
+      'export {};const pending=new Promise(async function(resolve){({resolve(){}});await 0;new Socket("wss://example.test/property-name-2");resolve()});await pending;const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "capability-name-3.mjs",
+    source:
+      'export {};const pending=new Promise(async function(resolve){class K{resolve(){}}await 0;new Socket("wss://example.test/property-name-3");resolve()});await pending;const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "capability-name-4.mjs",
+    source:
+      'export {};const pending=new Promise(async function(resolve){resolve:for(;;){break resolve;}await 0;new Socket("wss://example.test/property-name-4");resolve()});await pending;const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "capability-name-5.mjs",
+    source:
+      'export {};const pending=new Promise(async function(resolve){{const {resolve}= {resolve:0};}await 0;new Socket("wss://example.test/property-name-5");resolve()});await pending;const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "capability-name-6.mjs",
+    source:
+      'export {};const pending=new Promise(async function(resolve){({eval:0});await 0;new Socket("wss://example.test/property-name-6");resolve()});await pending;const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "capability-name-7.mjs",
+    source:
+      'export {};const pending=new Promise(async function(resolve){({arguments:0});await 0;new Socket("wss://example.test/property-name-7");resolve()});await pending;const Socket=globalThis.WebSocket;',
+  },
+  {
     file: "callback.js",
     endpoint: "wss://example.test/pair",
     source:

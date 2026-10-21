@@ -610,7 +610,14 @@ const webSocketExecutorSettlesAfterRead = (
     for (let cursor = 0; cursor < pending.length; cursor++) {
       const node = pending[cursor];
       if (node === undefined) continue;
-      if (t.isIdentifier(node)) {
+      // Property names, labels and binding declarations do not expose a
+      // settlement capability even when their spelling matches its parameter.
+      const parent = state.parentsByNode.get(node);
+      if (
+        t.isIdentifier(node) &&
+        parent !== undefined &&
+        t.isReferenced(node, parent, state.parentsByNode.get(parent))
+      ) {
         // Dynamic scope and an ordinary executor's arguments object can expose
         // settlement capabilities without a named parameter reference.
         if (

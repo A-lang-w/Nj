@@ -8454,6 +8454,41 @@ describe("web bundle literal consumers and iteration phases", () => {
   );
 });
 
+describe("web bundle Promise capability reference roles", () => {
+  it.each([
+    ["object key", "({resolve:0});"],
+    ["member name", "({}).resolve;"],
+    ["object method", "({resolve(){}});"],
+    ["class method", "class K{resolve(){}}"],
+    ["label", "resolve:for(;;){break resolve;}"],
+    ["destructuring binding", "{const {resolve}= {resolve:0};}"],
+    ["eval property", "({eval:0});"],
+    ["arguments property", "({arguments:0});"],
+  ] as const)("ignores a %s in both consumers", (_name, prefix) => {
+    const source = `export {};const pending=new Promise(async function(resolve){${prefix}await 0;new Socket("wss://example.test/property-name");resolve()});await pending;const Socket=globalThis.WebSocket;`;
+    expect(
+      socketEndpoints(source).map((items) => items.map((item) => item.value)),
+    ).toEqual([[], []]);
+  });
+  it.each([
+    ["shorthand value", "({resolve});"],
+    ["computed key", "({[resolve]:0});"],
+    ["member receiver", "resolve.name;"],
+    ["call argument", "consume(resolve);"],
+  ] as const)(
+    "retains a real %s reference in both consumers",
+    (_name, prefix) => {
+      const source = `export {};const pending=new Promise(async resolve=>{${prefix}await 0;new Socket("wss://example.test/real-reference");resolve()});await pending;const Socket=globalThis.WebSocket;`;
+      expect(
+        socketEndpoints(source).map((items) => items.map((item) => item.value)),
+      ).toEqual([
+        ["wss://example.test/real-reference"],
+        ["wss://example.test/real-reference"],
+      ]);
+    },
+  );
+});
+
 describe("web bundle invocation and descriptor review follow-ups", () => {
   it.each([
     [

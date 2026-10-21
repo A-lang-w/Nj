@@ -207,3 +207,36 @@ it.each([
 ] as const)("%s", (_name, source, expected) => {
   expect(endpoints(source)).toEqual(expected);
 });
+
+it.each([
+  ["object key", "({resolve:0});"],
+  ["member name", "({}).resolve;"],
+  ["object method", "({resolve(){}});"],
+  ["class method", "class K{resolve(){}}"],
+  ["label", "resolve:for(;;){break resolve;}"],
+  ["destructuring binding", "{const {resolve}= {resolve:0};}"],
+  ["eval property", "({eval:0});"],
+  ["arguments property", "({arguments:0});"],
+] as const)(
+  "does not treat a %s as a settlement reference",
+  (_name, prefix) => {
+    expect(
+      endpoints(
+        `export {};const pending=new Promise(async function(resolve){${prefix}await 0;new Socket("wss://example.test/property-name");resolve()});await pending;const Socket=globalThis.WebSocket;`,
+      ),
+    ).toEqual([]);
+  },
+);
+
+it.each([
+  ["shorthand value", "({resolve});"],
+  ["computed key", "({[resolve]:0});"],
+  ["member receiver", "resolve.name;"],
+  ["call argument", "consume(resolve);"],
+] as const)("keeps a real %s reference conservative", (_name, prefix) => {
+  expect(
+    endpoints(
+      `export {};const pending=new Promise(async resolve=>{${prefix}await 0;new Socket("wss://example.test/real-reference");resolve()});await pending;const Socket=globalThis.WebSocket;`,
+    ),
+  ).toEqual(["wss://example.test/real-reference"]);
+});
