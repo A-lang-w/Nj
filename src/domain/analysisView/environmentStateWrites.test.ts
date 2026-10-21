@@ -11,9 +11,11 @@ import {
   BOOK_ROWS,
   BOOK_WRITE_CLOCK,
   FIRST_BOOK,
+  OFFSET_LIST_ROWS,
   SECOND_BOOK,
   THIRD_BOOK,
   book,
+  offsetListed,
   bookClock,
   environmentStateViewOf,
   rawCaptureEvidence,
@@ -150,6 +152,37 @@ describe("served write plans", () => {
       "name",
       "slug",
     ]);
+  });
+});
+
+describe("clock spellings per view", () => {
+  it("serves a create that a list spelling clocks otherwise than item reads confirms", () => {
+    const state = stateOf(OFFSET_LIST_ROWS);
+    const offset = { ...ISO_SECONDS, zone: "+00:00" };
+    expect(state.views.find((view) => view.tool === "get_books")).toMatchObject(
+      {
+        membership: "all",
+        clock_formats: { created_at: offset, updated_at: offset },
+      },
+    );
+    expect(
+      state.views.find((view) => view.tool === "get_books_by_id"),
+    ).not.toHaveProperty("clock_formats");
+    expect(planOf(state, "post_books")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4, 5],
+    });
+  });
+
+  it("learns no spelling for a field the view spells both ways", () => {
+    const state = stateOf([
+      ["GET", "/api/books", [FIRST_BOOK, offsetListed(SECOND_BOOK)]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+    ]);
+    expect(
+      state.views.find((view) => view.tool === "get_books"),
+    ).not.toHaveProperty("clock_formats");
   });
 });
 

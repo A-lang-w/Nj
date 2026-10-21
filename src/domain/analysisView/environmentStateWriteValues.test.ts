@@ -8,6 +8,7 @@ import {
   isUuid,
   readClock,
   replaceDelimited,
+  respellClock,
   seededToken,
   seededUuid,
   slugOf,
@@ -253,4 +254,25 @@ it("draws tokens from the whole alphabet the recorded token uses", () => {
   expect(seededToken("seed-a", "k9x2m7q4z1w8")).not.toBe(
     seededToken("seed-b", "k9x2m7q4z1w8"),
   );
+});
+
+it("respells a clock in another format, keeping digits past milliseconds when the zone has the same offset", () => {
+  const utc = iso("T", 6, "+00:00");
+  expect(respellClock("2026-10-21T17:06:13.710410Z", utc)).toBe(
+    "2026-10-21T17:06:13.710410+00:00",
+  );
+  expect(respellClock("2026-10-21 17:06:13Z", utc)).toBe(
+    "2026-10-21T17:06:13.000000+00:00",
+  );
+  expect(respellClock("2026-10-21T17:06:13.710410Z", iso("T", 0, "Z"))).toBe(
+    "2026-10-21T17:06:13Z",
+  );
+  // Another offset or an epoch spelling is formatted from the instant.
+  expect(
+    respellClock("2026-10-21T17:06:13.710410Z", iso("T", 3, "+02:00")),
+  ).toBe("2026-10-21T19:06:13.710+02:00");
+  expect(
+    respellClock("2026-10-21T17:06:13Z", { kind: "epoch", unit: "s" }),
+  ).toBe(Date.UTC(2026, 9, 21, 17, 6, 13) / 1000);
+  expect(respellClock("not a clock", utc)).toBe("not a clock");
 });

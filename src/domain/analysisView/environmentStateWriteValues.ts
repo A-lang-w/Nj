@@ -94,6 +94,29 @@ export const formatClock = (ms: number, format: ClockFormat): JsonValue => {
   return `${pad(at.getUTCFullYear(), 4)}-${pad(at.getUTCMonth() + 1, 2)}-${pad(at.getUTCDate(), 2)}${format.separator}${pad(at.getUTCHours(), 2)}:${pad(at.getUTCMinutes(), 2)}:${pad(at.getUTCSeconds(), 2)}${fraction}${format.zone}`;
 };
 
+/**
+ * A clock value spelled in another format: the same digits under the other separator, fraction width and an equal
+ * zone, so digits past milliseconds survive; a zone at another offset or an epoch value is re-formatted from the instant.
+ */
+export const respellClock = (
+  value: JsonValue,
+  format: ClockFormat,
+): JsonValue => {
+  const clock = readClock(value);
+  if (clock === undefined) return value;
+  const match = typeof value === "string" ? ISO_INSTANT.exec(value) : null;
+  if (
+    match === null ||
+    format.kind !== "iso" ||
+    zoneMinutes(match[9] ?? "") !== zoneMinutes(format.zone)
+  )
+    return formatClock(clock.ms, format);
+  const digits = (match[8] ?? "")
+    .padEnd(format.fraction, "0")
+    .slice(0, format.fraction);
+  return `${match[1]!}-${match[2]!}-${match[3]!}${format.separator}${match[5]!}:${match[6]!}:${match[7]!}${digits === "" ? "" : `.${digits}`}${format.zone}`;
+};
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
 export const isUuid = (value: JsonValue | undefined): value is string =>
