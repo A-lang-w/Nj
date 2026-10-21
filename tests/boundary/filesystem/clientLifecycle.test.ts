@@ -76,8 +76,8 @@ describe("client configuration filesystem lifecycle", () => {
       "qoder",
       "droid",
       "zcode",
-      "dsh",
       "puku_cli",
+      "dsh",
       "grok_bot",
     ]);
     expect(
