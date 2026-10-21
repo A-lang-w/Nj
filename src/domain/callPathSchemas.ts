@@ -12,13 +12,7 @@ const evidenceIdSchema = prefixedDigestSchema("ev");
 /** Default number of shortest paths to return when the caller omits a capacity. */
 export const DEFAULT_CALL_PATH_MAX_PATHS = 64;
 
-/**
- * Bound the serialized `paths` field to 2 MiB. REA's smallest accepted MCP
- * response budget is 10 MiB and successful MCP results carry both structured
- * JSON and its text representation. This leaves at least 4 MiB for those two
- * representations of other result fields and their envelopes. The byte bound,
- * rather than a graph-independent path count, controls representation growth.
- */
+/** Bound the serialized `paths` field, including its per-path citations. */
 export const CALL_PATH_REPRESENTATION_BUDGET_BYTES = 2 * 1024 * 1024;
 
 /** Strict input for explicit call-path reconstruction from complete dossiers. */
