@@ -9,7 +9,7 @@ were made against live applications on six disposable Linux VMs, each restored f
   `npm run format:check`, `npx knip`, `npm run scan:todos`, `npm run docs:check`, `npm run verify:test-discovery` and
   `npm run mcp-catalog:check`: passed.
 - `npm run jscpd`: 3.43% duplicated lines over 3753 files.
-- `npx vitest run --project domain --project services`: 7751 passed, 5 pre-existing skips.
+- `npx vitest run --project domain --project services`: 7755 passed, 5 pre-existing skips.
 - `npm run test:prepare`, then `npm run test:focused --` the environment serve and export CLI boundaries, the serve
   and served-writes MCP boundaries, the analysis-view CLI and MCP boundaries, the compact input schema boundary and
   tool schema validity: 8 files, 79 passed.
@@ -17,10 +17,13 @@ were made against live applications on six disposable Linux VMs, each restored f
 ## Tests
 
 - Gate: a list that spells clocks `+00:00` where item reads spell `Z` learns both spellings, the item view learns none,
-  and a create read back by both is served; a list that spells a field both ways learns nothing.
+  and a create read back by both is served; a create whose clock has a fraction is served where the list's spelling was
+  learned from whole seconds; a list that spells a field both ways, at the stored instant or another, learns nothing.
 - Serving: a served create lists with the list's spelling and reads back with the item's.
-- Unit: re-spelling keeps digits past milliseconds for an equal offset, and formats another offset or an epoch spelling
-  from the instant.
+- Unit: re-spelling keeps a value's fraction digits at any offset and across a date change, pads them to the format's
+  width without dropping any, and formats an epoch spelling from the instant; an epoch value's milliseconds become
+  fraction digits.
+- Schema: a view clock spelling wider than nine fraction digits is refused.
 - The gate and serving tests fail on `264ce410`, the write-plan head they were written on.
 
 ## Pilot recordings

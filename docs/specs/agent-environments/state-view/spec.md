@@ -39,10 +39,12 @@ later increments.
 - An item or list view whose recordings always spell a clock field's instant
   otherwise than the entity's stored value (`Z` against `+00:00`, another
   separator or fraction width) names that spelling in `clock_formats`; a field
-  it also shows as stored, or spells two ways, gets none. A stored value the
-  view never recorded, such as one a write made, is rendered in that spelling:
-  the same digits under the view's separator, fraction width and zone when the
-  zone has the same offset, otherwise formatted from the instant.
+  it also shows as stored, or spells two ways (counting values at another
+  instant), gets none. A stored value the view never recorded, such as one a
+  write made, is rendered in that spelling: its wall clock in the view's zone,
+  under the view's separator, with its own fraction digits padded with zeros to
+  the view's width and none dropped; an epoch spelling is computed from the
+  instant.
 - A list has `all` membership only when no item-total envelope member (`total`,
   `count` and their compounds, not page counts) differs from the number of
   entities it lists and no `has_more`, `next` or next-page token is set.

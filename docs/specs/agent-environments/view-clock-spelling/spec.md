@@ -15,14 +15,14 @@ and left the create unserved, and serving would have listed the wrong spelling.
 - **Learning.** While checking that an item or list view reproduces its recordings, the gate compares each recorded
   object's clock fields with the entity's stored values. A field whose recorded value always names the same instant in
   one other spelling gets that spelling in the view's optional `clock_formats`. A field the view also shows as stored, or
-  spells two ways, gets none.
-- **Rendering.** A stored value the view never recorded, such as one a write made, is rendered in the view's spelling.
-  When the zones have the same offset the digits are kept, with the view's separator, fraction width (truncated or padded
-  with zeros) and zone, so digits past milliseconds survive. Another offset or an epoch spelling is formatted from the
-  instant.
+  spells two ways, counting values that name another instant, gets none. A spelling has at most nine fraction digits.
+- **Rendering.** A stored value the view never recorded, such as one a write made, is rendered in the view's spelling:
+  its wall clock in the view's zone, under the view's separator, with its own fraction digits padded with zeros to the
+  view's width. No digit is dropped, so a width learned from whole seconds does not cut a later value's fraction. An
+  epoch spelling is computed from the instant.
 
-The gate, serving and `data/get` render through the same function, so a served create lists with the list's spelling and
-reads back with the item's.
+The gate and serving render through the same function, so a served create lists with the list's spelling and reads back
+with the item's. `data/get` returns the stored values.
 
 ## Acceptance
 

@@ -30,7 +30,7 @@ const clockFormatSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("iso"),
     separator: z.enum(["T", " "]),
-    fraction: z.number().int().nonnegative(),
+    fraction: z.number().int().nonnegative().max(9),
     zone: z.string(),
   }),
   z.strictObject({ kind: z.literal("epoch"), unit: z.enum(["s", "ms"]) }),

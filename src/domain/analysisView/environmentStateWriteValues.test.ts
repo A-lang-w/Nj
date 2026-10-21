@@ -256,7 +256,7 @@ it("draws tokens from the whole alphabet the recorded token uses", () => {
   );
 });
 
-it("respells a clock in another format, keeping digits past milliseconds when the zone has the same offset", () => {
+it("respells a clock in another format, padding its fraction digits to the format's width but dropping none", () => {
   const utc = iso("T", 6, "+00:00");
   expect(respellClock("2026-10-21T17:06:13.710410Z", utc)).toBe(
     "2026-10-21T17:06:13.710410+00:00",
@@ -265,14 +265,31 @@ it("respells a clock in another format, keeping digits past milliseconds when th
     "2026-10-21T17:06:13.000000+00:00",
   );
   expect(respellClock("2026-10-21T17:06:13.710410Z", iso("T", 0, "Z"))).toBe(
-    "2026-10-21T17:06:13Z",
+    "2026-10-21T17:06:13.710410Z",
   );
-  // Another offset or an epoch spelling is formatted from the instant.
-  expect(
-    respellClock("2026-10-21T17:06:13.710410Z", iso("T", 3, "+02:00")),
-  ).toBe("2026-10-21T19:06:13.710+02:00");
+  // An epoch spelling is formatted from the instant.
   expect(
     respellClock("2026-10-21T17:06:13Z", { kind: "epoch", unit: "s" }),
   ).toBe(Date.UTC(2026, 9, 21, 17, 6, 13) / 1000);
   expect(respellClock("not a clock", utc)).toBe("not a clock");
+});
+
+it("respells a clock at another offset with its own fraction digits, across a date change", () => {
+  expect(
+    respellClock("2026-10-21T17:06:13.710410Z", iso("T", 6, "+02:00")),
+  ).toBe("2026-10-21T19:06:13.710410+02:00");
+  expect(
+    respellClock("2026-10-21T23:30:00.000321Z", iso(" ", 6, "+05:30")),
+  ).toBe("2026-10-22 05:00:00.000321+05:30");
+  expect(
+    respellClock("2026-10-21T01:00:00.5+01:00", iso("T", 3, "-03:00")),
+  ).toBe("2026-10-20T21:00:00.500-03:00");
+  // An epoch value's milliseconds are its fraction digits.
+  const epochMs = Date.UTC(2026, 9, 21, 17, 6, 13, 250);
+  expect(respellClock(epochMs, iso("T", 0, "Z"))).toBe(
+    "2026-10-21T17:06:13.25Z",
+  );
+  expect(respellClock(epochMs, iso("T", 3, "+00:00"))).toBe(
+    "2026-10-21T17:06:13.250+00:00",
+  );
 });

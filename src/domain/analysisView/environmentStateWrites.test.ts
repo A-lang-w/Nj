@@ -174,6 +174,38 @@ describe("clock spellings per view", () => {
     });
   });
 
+  it("serves a create whose clock has a fraction where the list spelling was learned from whole seconds", () => {
+    const third = book(3, "Third Book", "2026-10-17T18:00:03.250Z");
+    const state = stateOf([
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK].map(offsetListed)],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["POST", "/api/books", third, 201, { name: "Third Book" }],
+      ["GET", "/api/books/3", third],
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK, third].map(offsetListed)],
+    ]);
+    expect(planOf(state, "post_books")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4, 5],
+    });
+  });
+
+  it("learns no spelling for a field another recorded value spells as stored, at another instant", () => {
+    const moved = {
+      ...SECOND_BOOK,
+      created_at: "2026-10-01T09:30:00Z",
+      updated_at: "2026-10-01T09:30:00Z",
+    };
+    const state = stateOf([
+      ["GET", "/api/books", [offsetListed(FIRST_BOOK), moved]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+    ]);
+    const list = state.views.find((view) => view.tool === "get_books");
+    expect(list).toMatchObject({ shape: "list" });
+    expect(list).not.toHaveProperty("clock_formats");
+  });
+
   it("learns no spelling for a field the view spells both ways", () => {
     const state = stateOf([
       ["GET", "/api/books", [FIRST_BOOK, offsetListed(SECOND_BOOK)]],

@@ -89,14 +89,22 @@ class FieldUnion {
 class ClockSpellings {
   /** Per field: the view's spelling, or null once the view also showed the stored spelling or another one. */
   readonly #formats = new Map<string, ClockFormat | null>();
+  /** Per field, the spellings of shown clocks that name another instant than the stored value. */
+  readonly #others = new Map<string, ClockFormat[]>();
 
   note(stored: JsonObject, shown: JsonObject): void {
     for (const [field, value] of Object.entries(shown)) {
+      const now = readClock(value);
+      if (now === undefined) continue;
       const was = Object.hasOwn(stored, field)
         ? readClock(stored[field])
         : undefined;
-      const now = readClock(value);
-      if (was === undefined || now === undefined || was.ms !== now.ms) continue;
+      if (was === undefined || was.ms !== now.ms) {
+        const others = this.#others.get(field) ?? [];
+        if (!others.some((format) => same(format, now.format)))
+          this.#others.set(field, [...others, now.format]);
+        continue;
+      }
       const spelled = same(stored[field], value) ? null : now.format;
       const held = this.#formats.get(field);
       this.#formats.set(
@@ -108,10 +116,14 @@ class ClockSpellings {
     }
   }
 
-  /** The view member, when the view spells any field otherwise. */
+  /** The view member, when the view spells any field otherwise, and in that spelling only. */
   get view(): { readonly clock_formats?: Record<string, ClockFormat> } {
     const formats = [...this.#formats].filter(
-      (entry): entry is [string, ClockFormat] => entry[1] !== null,
+      (entry): entry is [string, ClockFormat] =>
+        entry[1] !== null &&
+        (this.#others.get(entry[0]) ?? []).every((format) =>
+          same(format, entry[1]),
+        ),
     );
     return formats.length === 0
       ? {}
