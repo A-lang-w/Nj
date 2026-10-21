@@ -905,6 +905,7 @@ const bareModuleCandidate = (
           ? resolveFileCandidates(
               input,
               fileCandidates(candidate, input.moduleKind),
+              input.context === "module-specifier" ? candidate : undefined,
             )
           : null;
     if (packageResolution !== null) {
