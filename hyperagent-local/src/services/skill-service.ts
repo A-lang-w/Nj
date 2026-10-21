@@ -46,11 +46,16 @@ export async function createSkill(
     emitEvent("skill.created", { id: skill.id, workspaceId });
     return Ok(skill);
   } catch (err) {
-    return Err(
-      new StorageError(
-        err instanceof Error ? err.message : "Failed to create skill",
-      ),
-    );
+    const message =
+      err instanceof Error ? err.message : "Failed to create skill";
+    if (/UNIQUE|unique/i.test(message)) {
+      return Err(
+        new StorageError(
+          `A skill named "${name}" already exists in this workspace`,
+        ),
+      );
+    }
+    return Err(new StorageError(message));
   }
 }
 
@@ -225,11 +230,16 @@ export async function updateSkill(
     }
     return Ok(updated ?? null);
   } catch (err) {
-    return Err(
-      new StorageError(
-        err instanceof Error ? err.message : "Failed to update skill",
-      ),
-    );
+    const message =
+      err instanceof Error ? err.message : "Failed to update skill";
+    if (/UNIQUE|unique/i.test(message) && updates.name) {
+      return Err(
+        new StorageError(
+          `A skill named "${updates.name}" already exists in this workspace`,
+        ),
+      );
+    }
+    return Err(new StorageError(message));
   }
 }
 
