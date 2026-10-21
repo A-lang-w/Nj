@@ -493,7 +493,9 @@ export function* buildJavaScriptRouteInventorySteps(
     const base = source.base_path?.value;
     return base === undefined || path === base || path.startsWith(`${base}/`)
       ? path
-      : `${base}${path}`;
+      : path === "/"
+        ? base
+        : `${base}${path}`;
   };
   const roots = new Set<string>();
   for (const { input, source, metadataPath } of contexts) {

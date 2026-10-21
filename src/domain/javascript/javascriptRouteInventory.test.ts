@@ -210,3 +210,32 @@ it("keeps TypeScript page filename provenance separate from syntax ranges", () =
     source_range: null,
   });
 });
+
+it("coalesces inferred deployment roots without rewriting explicit trailing slashes", () => {
+  const result = build([
+    source(
+      "root-call",
+      "router.push('/');",
+      "https://example.test/app/_next/static/chunks/runtime.js",
+    ),
+    source(
+      "root-page",
+      "",
+      "https://example.test/app/_next/static/chunks/app/page.tsx",
+    ),
+    source("explicit.js", "router.push('/app');router.push('/app/');"),
+  ]);
+  expect(result.routes.map(({ path }) => path)).toEqual(["/app", "/app/"]);
+  const root = result.routes.find(({ path }) => path === "/app")!;
+  expect(root.source_count).toBe(3);
+  const page = result.occurrences.find(({ origin }) => origin === "source-url");
+  expect(page).toMatchObject({
+    route_id: root.id,
+    unprefixed_path: "/",
+    inferred_base_path: "/app",
+    source_range: null,
+  });
+  expect(result.unknowns.some(({ kind }) => kind === "inferred-base")).toBe(
+    true,
+  );
+});

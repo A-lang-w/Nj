@@ -187,6 +187,16 @@ it("excludes generic config paths and SVG data while retaining navigation candid
 });
 it.each([
   ["/_next/static/chunks/app/page-123.js", "/"],
+  ["https://example.test/app/_next/static/chunks/app/page.tsx", "/"],
+  [
+    "https://example.test/app/_next/static/chunks/app/reports/page.js",
+    "/reports",
+  ],
+  [
+    "https://example.test/app/_next/static/chunks/pages/reports/page.js",
+    undefined,
+  ],
+  ["app/app/page.tsx", "/app"],
   ["static/chunks/app/(account)/reports/[id]/page-deadbeef.js", "/reports/:id"],
   ["app/docs/[...slug]/page.js", "/docs/:slug+"],
   ["app/(account)/reports/[id]/page.tsx", "/reports/:id"],

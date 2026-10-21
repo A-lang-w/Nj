@@ -23,6 +23,10 @@ export const nextAppRoutePath = (raw: string): string | undefined => {
       return;
     }
   }
+  // A deployment prefix may itself contain an `app` segment. Only the chunk
+  // path following Next's asset boundary can describe an App Router module.
+  const assetRoot = value.indexOf("/_next/");
+  if (assetRoot >= 0) value = value.slice(assetRoot + "/_next/".length);
   const match =
     /(?:^|\/)app\/(?:(.*?)\/)?page(?:-[^/?#]+\.js|\.(?:[cm]?jsx?|tsx?)|)(?:[?#].*)?$/u.exec(
       value,
