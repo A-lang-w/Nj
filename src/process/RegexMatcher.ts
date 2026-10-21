@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 
 import { z } from "zod";
@@ -27,6 +28,12 @@ const WORKER_HEAP_MIB = 128;
  * 4 GiB when pointer compression is on. A later read is not the value Node
  * applied, so a percentage flag leaves the effective heap unestablished
  * instead of the 128 MiB request or an absolute flag.
+ *
+ * `process.env.NODE_OPTIONS` is not that launch value. A preload can clear or
+ * rewrite it after V8 has already applied the original flags, and those flags
+ * are not copied into `process.execArgv`. The launch string is the
+ * `NODE_OPTIONS` entry in the process initial environment when that block can
+ * be read. Otherwise the effective heap stays unestablished.
  */
 const OLD_SPACE_FLAG = /^--max[-_]old[-_]space[-_]size(?:=(.*))?$/u;
 const OLD_SPACE_PERCENT_FLAG =
@@ -93,8 +100,9 @@ const parsedOldSpaceMiB = (
 };
 
 /**
- * Derive the worker old-generation heap from the launch flags Node already
- * applied. The raw `NODE_OPTIONS` string is not retained.
+ * Derive the worker old-generation heap from launch flags the caller already
+ * recovered. The raw `NODE_OPTIONS` string is not retained. This does not read
+ * `process.env`.
  */
 export const resolveRegexWorkerHeap = (
   execArgv: readonly string[],
@@ -127,15 +135,76 @@ export const resolveRegexWorkerHeap = (
   return limit;
 };
 
-/** Launch flags are fixed for this process; a later `NODE_OPTIONS` edit does not change them. */
-const launchRegexWorkerHeap = resolveRegexWorkerHeap(
+/** Provenance of the `NODE_OPTIONS` value Node applied before user code ran. */
+export type LaunchNodeOptions =
+  | { readonly kind: "recovered"; readonly value: string | undefined }
+  | { readonly kind: "unrecoverable" };
+
+const nodeOptionsKey = Buffer.from("NODE_OPTIONS=");
+
+/** First `NODE_OPTIONS` entry, matching `getenv`. The surrounding block is not retained. */
+const nodeOptionsFromEnviron = (
+  raw: Buffer,
+): string | undefined | "invalid" => {
+  let offset = 0;
+  while (offset < raw.length) {
+    const end = raw.indexOf(0, offset);
+    const entryEnd = end === -1 ? raw.length : end;
+    const entry = raw.subarray(offset, entryEnd);
+    if (
+      entry.length >= nodeOptionsKey.length &&
+      entry.subarray(0, nodeOptionsKey.length).equals(nodeOptionsKey)
+    ) {
+      try {
+        return new TextDecoder("utf-8", { fatal: true }).decode(
+          entry.subarray(nodeOptionsKey.length),
+        );
+      } catch {
+        return "invalid";
+      }
+    }
+    if (end === -1) break;
+    offset = end + 1;
+  }
+  return undefined;
+};
+
+/**
+ * Linux keeps the `execve` environment in `/proc/self/environ` after
+ * `process.env` is rewritten. Other platforms have no equivalent immutable
+ * block, so the launch value stays unrecoverable there.
+ */
+export const readLaunchNodeOptions = (): LaunchNodeOptions => {
+  if (process.platform !== "linux") return { kind: "unrecoverable" };
+  let raw: Buffer;
+  try {
+    raw = readFileSync("/proc/self/environ");
+  } catch {
+    return { kind: "unrecoverable" };
+  }
+  const value = nodeOptionsFromEnviron(raw);
+  return value === "invalid"
+    ? { kind: "unrecoverable" }
+    : { kind: "recovered", value };
+};
+
+/** Heap for this process. Unrecoverable `NODE_OPTIONS` provenance stays unknown. */
+export const resolveLaunchRegexWorkerHeap = (
+  execArgv: readonly string[],
+  launchNodeOptions: LaunchNodeOptions,
+): RegexWorkerHeapLimit =>
+  launchNodeOptions.kind === "unrecoverable"
+    ? { kind: "unknown" }
+    : resolveRegexWorkerHeap(execArgv, launchNodeOptions.value);
+
+const launchRegexWorkerHeap = resolveLaunchRegexWorkerHeap(
   process.execArgv,
-  process.env.NODE_OPTIONS,
+  readLaunchNodeOptions(),
 );
 
 const heapBound = (heap: RegexWorkerHeapLimit): string => {
   if (heap.kind === "unknown")
-    return "The worker requests 128 MiB. A launch --max-old-space-size or --max-old-space-size-percentage is set and the effective old-generation heap was not established.";
+    return "The worker requests 128 MiB. The effective old-generation heap was not established from the launch flags. --max-old-space-size and --max-old-space-size-percentage can change that request.";
   const override =
     "A positive Node --max-old-space-size, including NODE_OPTIONS, overrides the 128 MiB worker request";
   return heap.overridden

@@ -2,8 +2,10 @@ import { expect, it } from "vitest";
 
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
+  readLaunchNodeOptions,
   regexMatchingLimitation,
   regexWorkerHeapError,
+  resolveLaunchRegexWorkerHeap,
   resolveRegexWorkerHeap,
   type RegexWorkerHeapLimit,
 } from "./RegexMatcher.js";
@@ -157,6 +159,38 @@ it.each([
     expect(resolveRegexWorkerHeap(execArgv, nodeOptions)).toEqual(heap);
   },
 );
+
+it("does not treat a rewritten NODE_OPTIONS value as the launch heap", () => {
+  const previous = process.env.NODE_OPTIONS;
+  const rewritten = "--max-old-space-size=61-rewritten";
+  process.env.NODE_OPTIONS = rewritten;
+  try {
+    const launch = readLaunchNodeOptions();
+    if (process.platform === "linux") {
+      expect(launch.kind).toBe("recovered");
+      if (launch.kind === "recovered")
+        expect(launch.value ?? "").not.toContain("61-rewritten");
+    } else {
+      expect(launch).toEqual({ kind: "unrecoverable" });
+    }
+    expect(
+      resolveLaunchRegexWorkerHeap(["--max-old-space-size=256"], {
+        kind: "unrecoverable",
+      }),
+    ).toEqual({ kind: "unknown" });
+    if (launch.kind === "recovered") {
+      expect(launch.value).not.toBe(rewritten);
+      expect(
+        resolveLaunchRegexWorkerHeap(["--max-old-space-size=32"], launch),
+      ).toEqual(
+        resolveRegexWorkerHeap(["--max-old-space-size=32"], launch.value),
+      );
+    }
+  } finally {
+    if (previous === undefined) delete process.env.NODE_OPTIONS;
+    else process.env.NODE_OPTIONS = previous;
+  }
+});
 
 it("describes the effective heap and keeps the deadline fixed", () => {
   for (const heap of [

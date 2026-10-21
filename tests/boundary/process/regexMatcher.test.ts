@@ -12,7 +12,9 @@ import {
   regexMatchingDeadlineError,
   regexMatchingLimitation,
   regexWorkerHeapError,
+  resolveLaunchRegexWorkerHeap,
   resolveRegexWorkerHeap,
+  readLaunchNodeOptions,
 } from "../../../src/process/RegexMatcher.js";
 
 const workerHeapProbe = `
@@ -55,9 +57,9 @@ const probeWorkerHeap = (
 };
 
 it("names the fixed regex deadline and the effective worker heap", () => {
-  const heap = resolveRegexWorkerHeap(
+  const heap = resolveLaunchRegexWorkerHeap(
     process.execArgv,
-    process.env.NODE_OPTIONS,
+    readLaunchNodeOptions(),
   );
   expect(REGEX_MATCHING_LIMITATION).toBe(regexMatchingLimitation(heap));
   expect(REGEX_MATCHING_LIMITATION).toContain("5-second matching deadline");
@@ -131,12 +133,12 @@ it("lets --max-old-space-size-percentage override an absolute heap in either ord
     onlyAbsolute,
   ])
     expect(observed.resourceOld).toBe(128);
-  expect(
-    relativeHeapGap(alone.heap, percentageThenAbsolute.heap),
-  ).toBeLessThan(0.05);
-  expect(
-    relativeHeapGap(alone.heap, absoluteThenPercentage.heap),
-  ).toBeLessThan(0.05);
+  expect(relativeHeapGap(alone.heap, percentageThenAbsolute.heap)).toBeLessThan(
+    0.05,
+  );
+  expect(relativeHeapGap(alone.heap, absoluteThenPercentage.heap)).toBeLessThan(
+    0.05,
+  );
   expect(relativeHeapGap(alone.heap, onlyAbsolute.heap)).toBeGreaterThan(0.25);
   for (const execArgv of [
     [percentage],

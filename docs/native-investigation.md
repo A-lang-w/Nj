@@ -210,6 +210,10 @@ REA, including `NODE_OPTIONS`, overrides that request and sets the effective
 heap. `--max-old-space-size-percentage` takes precedence over that flag in
 either order. REA does not turn the percentage into a MiB, so the effective
 heap stays unestablished instead of the 128 MiB request or the absolute flag.
+The reported `NODE_OPTIONS` value is the process initial environment when that
+block can be read. A later edit to the environment is not the value Node
+applied, and an unreadable initial value leaves the effective heap
+unestablished.
 Literal mode retains Unicode casefold matching.
 
 ## Bounded static traces
