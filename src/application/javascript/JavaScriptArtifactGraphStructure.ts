@@ -613,7 +613,11 @@ const createFileTarget = (
           json_parse_status: json?.status ?? null,
           json_top_level_keys: json?.top_level_keys ?? [],
           omitted_json_top_level_keys:
-            json === undefined ? 0 : json.omitted_top_level_keys,
+            json === undefined
+              ? isJsonModuleTarget(file.path, file.kind)
+                ? null
+                : 0
+              : json.omitted_top_level_keys,
           vendor_markers: javascript?.vendors ?? [],
         },
         evidence: artifactObservationEvidence({
