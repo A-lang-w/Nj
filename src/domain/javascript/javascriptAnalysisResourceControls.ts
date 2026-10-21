@@ -75,9 +75,10 @@ const semanticControl = {
     fileCeiling: "semantic_graph_file_node_ceiling",
     totalDefault: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticNodes,
     perFileDefault: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticNodesPerFile,
-    cli: "--max-semantic-nodes and --max-semantic-nodes-per-file",
-    unaffected:
-      "Raising them does not raise max_semantic_unknowns, max_heap_mb, transfer ceilings, or the parent result budget.",
+    cliTotal: "--max-semantic-nodes",
+    cliPerFile: "--max-semantic-nodes-per-file",
+    doesNotRaise:
+      "max_semantic_unknowns, max_heap_mb, transfer ceilings, or the parent result budget",
   },
   unknowns: {
     total: "max_semantic_unknowns",
@@ -87,29 +88,32 @@ const semanticControl = {
     totalDefault: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticUnknowns,
     perFileDefault:
       JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticUnknownsPerFile,
-    cli: "--max-semantic-unknowns and --max-semantic-unknowns-per-file",
-    unaffected:
-      "Raising them does not raise max_semantic_nodes, max_heap_mb, transfer ceilings, or the parent result budget.",
+    cliTotal: "--max-semantic-unknowns",
+    cliPerFile: "--max-semantic-unknowns-per-file",
+    doesNotRaise:
+      "max_semantic_nodes, max_heap_mb, transfer ceilings, or the parent result budget",
   },
 } as const;
 
-const semanticCeilingPhrase = (
+const semanticAdjustment = (
   name: string,
   value: number,
   fallback: number,
 ): string =>
   value >= JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM
-    ? `${name} at ${String(value)} (the maximum ${String(JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM)}; do not increase it further)`
-    : `${name} at ${String(value)} (default ${String(fallback)}; an integer from 1 to ${String(JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM)})`;
+    ? `${name} is already ${String(value)}, the maximum ${String(JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM)}. Do not increase it further.`
+    : `${name} is ${String(value)} (default ${String(fallback)}; an integer from 1 to ${String(JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM)})`;
 
 /**
- * Name both effective semantic retention ceilings. Callers know retention was
- * truncated, not whether the total or per-file ceiling caused it.
+ * Name the caller arguments for one semantic retention ceiling.
+ * Coverage limits list both effective values. The limitation claims only
+ * the ceilings that stopped retention.
  */
 export const javaScriptSemanticCeilingCoverage = (
   kind: "nodes" | "unknowns",
   total: number,
   perFile: number,
+  reached: { readonly total: boolean; readonly perFile: boolean },
 ): {
   readonly limits: ApplicationCoverage["limits"];
   readonly limitation: string;
@@ -121,8 +125,39 @@ export const javaScriptSemanticCeilingCoverage = (
     { name: control.total, value: total, unit: "items" },
     { name: control.perFile, value: perFile, unit: "items" },
   ];
-  const subject = kind === "nodes" ? "node" : "unknown";
-  const limitation = `Semantic ${subject} retention is bounded by the effective ceilings ${semanticCeilingPhrase(control.total, total, control.totalDefault)} and ${semanticCeilingPhrase(control.perFile, perFile, control.perFileDefault)}. These active limits apply together; either one can truncate retention. Set ${control.total} and ${control.perFile} on the next analyze_javascript_application call (CLI: ${control.cli}). The change applies to that next analysis and does not restart the worker or the REA server. ${control.unaffected} Coverage reports the same effective values as ${control.ceiling} and ${control.fileCeiling}.`;
+  const reachedControls = [
+    ...(reached.total
+      ? [
+          {
+            name: control.total,
+            value: total,
+            fallback: control.totalDefault,
+            cli: control.cliTotal,
+          },
+        ]
+      : []),
+    ...(reached.perFile
+      ? [
+          {
+            name: control.perFile,
+            value: perFile,
+            fallback: control.perFileDefault,
+            cli: control.cliPerFile,
+          },
+        ]
+      : []),
+  ];
+  if (reachedControls.length === 0)
+    throw new RangeError(
+      "Semantic ceiling coverage requires a ceiling that stopped retention",
+    );
+  const reachedText = reachedControls
+    .map((item) => semanticAdjustment(item.name, item.value, item.fallback))
+    .join(" and ");
+  const names = reachedControls.map((item) => item.name).join(" and ");
+  const cli = reachedControls.map((item) => item.cli).join(" and ");
+  const raising = reachedControls.length === 1 ? "Raising it" : "Raising them";
+  const limitation = `Semantic ${kind === "nodes" ? "node" : "unknown"} retention reached ${reachedText}. Set ${names} on the next analyze_javascript_application call (CLI: ${cli}). The change applies to that next analysis and does not restart the worker or the REA server. ${raising} does not raise ${control.doesNotRaise}. Coverage reports the same effective values as ${control.ceiling} and ${control.fileCeiling}.`;
   return { limits, limitation };
 };
 

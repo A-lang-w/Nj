@@ -597,9 +597,9 @@ The default semantic capacities are 100000 nodes across the application and
 `--max-semantic-nodes-per-file`), each from 1 to 1000000. The per-file offer is
 also bounded by the remaining application capacity. Raising these controls does
 not bypass worker heap, execution deadline or parent result admission. Truncated
-coverage reports both effective node ceilings and names `max_semantic_nodes`
-and `max_semantic_nodes_per_file`. Omitted relationships remain
-unknown.
+coverage lists both effective ceilings, `max_semantic_nodes` and
+`max_semantic_nodes_per_file`. The limitation names only the ceiling that
+stopped retention. Omitted relationships remain unknown.
 
 Unknown records have independent defaults of 100000 across the application and
 20000 per source. Select `max_semantic_unknowns` and
@@ -607,9 +607,10 @@ Unknown records have independent defaults of 100000 across the application and
 `--max-semantic-unknowns-per-file`), each from 1 to 1000000. The parent offers the
 remaining capacity to the worker, and rejects excess records before adoption.
 Unknown admission happens before canonical identity and provenance construction.
-When capacity is exhausted, coverage is partial and truncated and names both
-effective unknown ceilings together with `max_semantic_unknowns` and
-`max_semantic_unknowns_per_file`. `coverage.omitted_unknown_occurrences` counts examined
+When capacity is exhausted, coverage is partial and truncated. Coverage lists
+both effective unknown ceilings, `max_semantic_unknowns` and
+`max_semantic_unknowns_per_file`. The limitation names only the ceiling that
+stopped retention. `coverage.omitted_unknown_occurrences` counts examined
 emission occurrences by family and reason, including repeated emissions. It does
 not claim distinct discarded identities or count frontiers in unexamined source.
 Omitted unknown provenance and IDs are not retained. Existing source, node,
