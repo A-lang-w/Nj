@@ -1,7 +1,7 @@
 # Static JavaScript route inventory verification
 
 Issue: [#4772](https://github.com/morluto/rea/issues/4772). Qualified runtime:
-`7c5e2ab1765cbcfeb0514c989f17c49b6ab1219b`, tree `60737d872f01d310d09960cb3e5aec50d20e93cf`,
+`56dda3b9fdbd51f8c11e921fe922d7d8e1757b00`, tree `426da09af675ac4d882367e794e14e4a7a0d9748`,
 on main base `67a6477f011ae358fc333e5a6e26c86d932654ed`. All current corpus, public-interface and delivery measurements use that runtime.
 The entire source corpus was freshly analyzed after the latest syntax-owner
 change; earlier checkpoint replays remain identified in their pinned records. The JSON retains exact source digests,
@@ -23,13 +23,13 @@ Downloaded the 29 homepage-referenced nextjs.org scripts (1,533,098 bytes) and
 and SHA-256. Saved bytes were independently rehashed and checked for lossless
 UTF-8 decoding before writing this record. Sources were read as data.
 
-Production isolated workers completed 64/67 source jobs, retaining route-fact
-checkpoints for 65/67 sources. 3 jobs reached the unchanged 15-second deadline;
-1 of those retained route facts. Unavailable sources and partial enumeration
+Production isolated workers completed 65/67 source jobs, retaining route-fact
+checkpoints for 65/67 sources. 2 jobs reached the unchanged 15-second deadline;
+0 of those retained route facts. Unavailable sources and partial enumeration
 remain visible. Each worker had a caller-selected 512 MiB old-space limit and
 one semantic projection node; route syntax precedes semantic projection. The
-complete probe took 200.349 s elapsed, 300.432 CPU s and
-485,130,240 sampled peak family RSS bytes. No resource guard
+complete probe took 196.580 s elapsed, 293.789 CPU s and
+481,873,920 sampled peak family RSS bytes. No resource guard
 stopped it. These captures do not establish lazy/server-only code, reachability
 or a complete application route denominator.
 
@@ -56,7 +56,7 @@ it. Actual CLI and SDK `analyze_web_bundle` calls captured that inert source via
 CDP and returned all 18 patterns, its original URL and exact SHA-256.
 Selected-source parsing was `complete` and candidate enumeration
 `partial`; application coverage stayed unknown. The verifier took
-10.117 s elapsed, 12.912 CPU s and 2,178,109,440 sampled
+9.882 s elapsed, 12.570 CPU s and 2,196,746,240 sampled
 peak family RSS bytes. Owned browser-group and temporary-profile cleanup succeeded.
 This qualifies passive capture, not the published application's UI behavior.
 
@@ -76,9 +76,9 @@ that default catalog cost is not measured by this comparison.
 | ------------------------------------------------------------- | --------------------------------: | -----------------------------: |
 | Estimated tokens, used input declarations + all calls/replies |                         1,938,036 |                         58,786 |
 | Estimated tokens, entire catalog + all calls/replies          |                         3,027,094 |                      1,147,844 |
-| Elapsed seconds, including startup and cleanup                |                            13.854 |                         12.597 |
-| CPU seconds, process family                                   |                            18.054 |                         16.516 |
-| Peak sampled process-family RSS bytes                         |                     1,696,665,600 |                  1,331,994,624 |
+| Elapsed seconds, including startup and cleanup                |                            13.704 |                         12.253 |
+| CPU seconds, process family                                   |                            17.951 |                         16.284 |
+| Peak sampled process-family RSS bytes                         |                     1,565,143,040 |                  1,285,775,360 |
 
 The primary question required two calls with complete delivery and one with
 selected delivery: used declarations plus primary replies estimate
@@ -92,8 +92,8 @@ is unmeasured. Timing varied between runs: the earlier `135c56bc2` qualification
 selected delivery and remains pinned at `38f2f9637`. These samples establish no
 stable latency or underlying analysis-speedup claim.
 
-Complete-mode view calls took 2071.4, 31.2, 16.0, 11.7 ms; selected-mode historical calls took
-2159.4, 19.8, 12.9 ms. First calls include cold client/tool preparation that was not separately
+Complete-mode view calls took 2071.4, 33.7, 20.1, 12.7 ms; selected-mode historical calls took
+2079.0, 19.8, 17.8 ms. First calls include cold client/tool preparation that was not separately
 profiled. The immutable-snapshot cache does not establish zero preparation cost.
 Projection preserves complete Evidence materialization.
 
@@ -103,6 +103,19 @@ waited family usage with inherited shell usage removed. Profiles retain payload
 status and an 8 GiB family / 420-second stop guard; no qualifying run hit it.
 
 ## Review regressions and executed checks
+
+Effective route fields and configuration ownership share nullable exact property
+keys: an unknown computed key invalidates earlier values and cannot revive a
+hidden child as an independent root; the legal empty-string key stays distinct.
+Only compiled Next chunk paths accept hashed page names, so source helper files
+cannot establish page anchors. Erased-wrapper syntax has one shared owner;
+computed-expression ancestry passes through wrappers in one bounded linear walk.
+Existing AST/semantic/Electron wrapper suites exercise the shared-owner refactor.
+
+The 1 MiB view allowance includes the 81-byte digest field appended by sealing.
+Tests measure the actual sealed output: an exact-limit summary is accepted;
+summary and row pages above that final limit return typed retained-parent resource
+errors. Seven boundary regressions failed before these corrections.
 
 - Optional route facts fit the actual bytes remaining after legacy findings at
   both worker serialization owners. A real 12,000-registration, 1,452,889-byte
@@ -132,7 +145,11 @@ status and an 8 GiB family / 420-second stop guard; no qualifying run hit it.
   dynamic navigation, including variable/member destinations, records an unknown
   at the whole expression; fragments are
   not complete paths. Recognized navigation owns object and array destination
-  data; callable/class definitions remain independent. Unrelated containers
+  data; callable/class definitions remain independent. Effective local
+  pathname literals are extracted before their object descendants are owned
+  ([Next URL-object contract](https://nextjs.org/docs/pages/api-reference/functions/use-router#with-url-object)).
+  Authority/unknown fields remain gaps; nested query/search/hash href data
+  cannot become another navigation candidate. Unrelated containers
   preserve bundled module constants. Relative literal destinations retain a gap
   instead of inventing a runtime base; known external URLs remain excluded.
 - Based and unbased generic constants/anchors compare the same application
@@ -155,7 +172,7 @@ route Evidence. Stable/ambiguous ancestry and late-cancellation regressions fail
 before the fix. Existing SDK cancellation tests also verify retained facts, prior
 Evidence and subsequent request recovery.
 
-Current execution: **208/208 source regressions** and **33/33 production-worker /
+Current execution: **434/434 source/owner regressions** and **33/33 production-worker /
 public CLI/SDK tests** passed, including source deletion before exported-Evidence
 queries, Turbopack-shaped modules, dynamic prefixes and independent component
 route tables. Exact advertised-input tests explicitly select the full profile;
