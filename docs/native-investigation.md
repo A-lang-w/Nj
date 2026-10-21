@@ -354,9 +354,10 @@ complete observation.
   libraries, stay undetermined. See
   [Apple application analysis](apple-application-analysis.md#dylib-load-resolution).
 
-The four app resource commands below, including `inspect_plist` /
-`rea inspect-plist <app>`, use a separate read-only resource session when the
-CLI input is a bundle directory. They do not require `CFBundleExecutable`,
+The four app resource commands, `inspect_plist`, `inspect_asset_catalog`,
+`inspect_keyed_archive`, and `decode_interface_builder`, use a separate read-only
+resource session when the CLI input is a bundle directory. They do not require
+`CFBundleExecutable`,
 resolve a program by filename convention, or establish executable identity.
 For MCP, select the app with `open_bundle_resources` before querying its
 resources. `inspect_plist` defaults to the selected bundle's Info.plist and
