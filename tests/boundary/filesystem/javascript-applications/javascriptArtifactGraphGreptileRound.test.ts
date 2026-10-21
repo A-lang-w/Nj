@@ -12,6 +12,50 @@ import { buildJavaScriptArtifactGraph } from "../../../../src/application/javasc
 
 const sources = [
   {
+    file: "bare-binding-0.js",
+    source:
+      '(async()=>{try{for(const{missing=await 0,[await 0]:x}of(function*(){yield;new Socket("wss://example.test/bare");yield{}})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "bare-binding-1.js",
+    source:
+      '(async()=>{try{for(const[x=await 0]of(function*(){yield;new Socket("wss://example.test/bare-array");yield[]})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "bare-binding-2.js",
+    source:
+      '(async()=>{try{for(const{missing=await 0,[await 0]:x}of(function*(){yield undefined;new Socket("wss://example.test/explicit-undefined");yield{}})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "bare-binding-3.js",
+    source:
+      '(async()=>{try{for(const{missing=await 0,[await 0]:x}of(function*(){yield null;new Socket("wss://example.test/null");yield{}})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "bare-binding-4.js",
+    endpoint: "wss://example.test/bare-default",
+    source:
+      '(async()=>{const[{missing=await 0,[await 0]:x}={},next]=(function*(){yield;new Socket("wss://example.test/bare-default");yield{}})(); })();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "bare-binding-5.js",
+    endpoint: "wss://example.test/bare-scalar",
+    source:
+      '(async()=>{const[value=await 0,next]=(function*(){yield;new Socket("wss://example.test/bare-scalar");yield 1})(); })();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "bare-binding-6.js",
+    source:
+      '(async()=>{try{for(const{missing=await 0,[await 0]:x}of(function*(){try{yield}finally{new Socket("wss://example.test/bare-cleanup")}})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "bare-binding-7.js",
+    endpoint: "wss://example.test/bare-initialized-cleanup",
+    source:
+      'const Socket=globalThis.WebSocket;(async()=>{try{for(const{missing=await 0,[await 0]:x}of(function*(){try{yield}finally{new Socket("wss://example.test/bare-initialized-cleanup")}})()){} }catch{}})();',
+  },
+
+  {
     file: "wrapped-class.js",
     source:
       '(new(0,class{run([x]){}})()).run((function*(){new Socket("wss://example.test/wrapped-class");yield 0})());const Socket=globalThis.WebSocket;',

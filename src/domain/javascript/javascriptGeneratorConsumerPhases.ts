@@ -53,7 +53,7 @@ export const semanticGeneratorBindingPhase = (
   maySuspend: (node: t.Node) => boolean,
   bindingCompletion: (
     pattern: t.Node,
-    value: t.Node | undefined,
+    value: t.Node | null,
   ) => PatternCompletion,
 ): PatternCompletion => {
   const facts = generatorPrefixes(body, ordered, maySuspend, state);
@@ -62,7 +62,7 @@ export const semanticGeneratorBindingPhase = (
   for (const yielded of facts.yielded.slice(0, Math.max(0, count))) {
     phase = combinePatternCompletion(
       phase,
-      bindingCompletion(pattern, yielded.argument ?? undefined),
+      bindingCompletion(pattern, yielded.argument ?? null),
     );
     if (patternStopped(phase)) break;
   }
@@ -675,10 +675,12 @@ const patternCompletedSuspension = (
   return phase;
 };
 
-/** Binding consumers share coercion, selected defaults and completed target work. */
+/** Binding consumers share coercion, selected defaults and completed target work.
+ * A null input is known undefined (a bare yield); undefined is an unknown input.
+ */
 export const semanticPatternCompletion = (
   pattern: t.Node,
-  value: t.Node | undefined,
+  value: t.Node | null | undefined,
   state: JavaScriptSemanticAnalysisState,
   suspended: (node: t.Node) => boolean,
   executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
@@ -691,7 +693,7 @@ export const semanticPatternCompletion = (
       ? { known: false }
       : {
           known: true,
-          node: value,
+          ...(value === null ? {} : { node: value }),
           ...(ownedResultEscape === undefined ? {} : { ownedResultEscape }),
         },
     state,

@@ -5,6 +5,47 @@ import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 const cases = [
   [
+    "bare yield blocks object binding",
+    '(async()=>{try{for(const{missing=await 0,[await 0]:x}of(function*(){yield;new Socket("wss://example.test/bare");yield{}})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "bare yield blocks array binding",
+    '(async()=>{try{for(const[x=await 0]of(function*(){yield;new Socket("wss://example.test/bare-array");yield[]})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "explicit undefined blocks binding",
+    '(async()=>{try{for(const{missing=await 0,[await 0]:x}of(function*(){yield undefined;new Socket("wss://example.test/explicit-undefined");yield{}})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "null blocks binding",
+    '(async()=>{try{for(const{missing=await 0,[await 0]:x}of(function*(){yield null;new Socket("wss://example.test/null");yield{}})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "bare yield selects object default",
+    '(async()=>{const[{missing=await 0,[await 0]:x}={},next]=(function*(){yield;new Socket("wss://example.test/bare-default");yield{}})(); })();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/bare-default"],
+  ],
+  [
+    "bare yield selects scalar default",
+    '(async()=>{const[value=await 0,next]=(function*(){yield;new Socket("wss://example.test/bare-scalar");yield 1})(); })();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/bare-scalar"],
+  ],
+  [
+    "bare yield cleanup precedes waits",
+    '(async()=>{try{for(const{missing=await 0,[await 0]:x}of(function*(){try{yield}finally{new Socket("wss://example.test/bare-cleanup")}})()){} }catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "initialized bare yield cleanup",
+    'const Socket=globalThis.WebSocket;(async()=>{try{for(const{missing=await 0,[await 0]:x}of(function*(){try{yield}finally{new Socket("wss://example.test/bare-initialized-cleanup")}})()){} }catch{}})();',
+    ["wss://example.test/bare-initialized-cleanup"],
+  ],
+
+  [
     "wrapped class after prefix wait",
     '(async()=>{(new (await 0,class{run([x]){}})()).run((function*(){new Socket("wss://example.test/wrapped-after-wait");yield 0})())})();const Socket=globalThis.WebSocket;',
     ["wss://example.test/wrapped-after-wait"],

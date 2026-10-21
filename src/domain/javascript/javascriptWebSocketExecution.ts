@@ -1113,7 +1113,7 @@ const webSocketSuspensionFacts = (
 /** Catch and loop heads consume the same ordered binding facts as destructuring. */
 const webSocketBindingCompletion = (
   pattern: t.Node,
-  value: t.Node | undefined,
+  value: t.Node | null | undefined,
   state: JavaScriptSemanticAnalysisState,
   ownedResultEscape?: t.Node,
   normalContinuation = false,
