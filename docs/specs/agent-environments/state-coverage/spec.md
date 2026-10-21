@@ -18,10 +18,13 @@ tool, view kind, provider, network activity or write effect.
   item or list plan holds its latest initial value as a `document` when its
   initial reads have one request line, whether or not the capture writes its
   path, unless its value changed between two of those reads across any
-  recorded write (even under another root), which leaves it `fields-differ`. More request lines give `path-varies` when they differ by path (a
-  template with a parameter before its end) and `query-varies` when they share
-  one path. With every such read now a document, `path-varies`, `query-varies`
-  or `body-unusable`, the unreachable `not-entity` reason leaves the result
+  recorded write (even under another root), which leaves it `fields-differ`. A
+  value whose rendered JSON exceeds 256 KiB stays `rendered-oversize` and is
+  replayed from the recorded body, which itself fit. More request lines give
+  `path-varies` when they differ by path (a template with a parameter before
+  its end) and `query-varies` when they share one path. With every such read
+  now a document, `path-varies`, `query-varies`, `body-unusable` or
+  `rendered-oversize`, the unreachable `not-entity` reason leaves the result
   schema, and `no-identity` names item tools only. A document holds the value
   of its one `path`.
 - When no path parameter proves an identity and no identity name identifies
@@ -80,8 +83,10 @@ Grafana-shaped fixture covers documents for its read-only paths (its one-member
 team list among them) and object, array and enveloped-list descriptions;
 synthetic sources cover the `2xx` preference over an earlier error body, the
 first of several JSON records, the labelled fallback, the manifest's statuses,
-empty, scalar and fieldless bodies, a truncated member name, non-JSON bodies
-and the catalog budget; the in-process and compiled MCP servers advertise the
+empty, scalar and fieldless bodies, a truncated member name, a name whose
+JSON quoting exceeds the sample, a recorded body under 256 KiB whose rendered
+JSON exceeds it, non-JSON bodies and the catalog budget; the in-process and
+compiled MCP servers advertise the
 hints. A filtered list may still answer with one element whose identity name
 repeats the requested value; list filters, pagination, lossless big integers
 and cross-endpoint entity linking remain out of scope. Documents inline whole

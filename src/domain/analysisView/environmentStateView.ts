@@ -82,6 +82,7 @@ const viewSchema = z.discriminatedUnion("shape", [
       "fields-differ",
       "envelope-varies",
       "list-differs",
+      "rendered-oversize",
     ]),
   }),
 ]);
