@@ -1,11 +1,15 @@
 import { createHash } from "node:crypto";
+import type { Stats } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
+import { PassThrough } from "node:stream";
 
 import { describe, expect, it } from "vitest";
 
+import { digestFile } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { TestReverseEngineeringService as ReverseEngineeringService } from "../support/reverseEngineeringService.js";
+import { providerSnapshot } from "../support/reverseEngineeringCompositionFixtures.js";
 import { createReverseEngineeringService } from "../../src/composition/reverseEngineering.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
@@ -523,6 +527,77 @@ it("retains partial Evidence when a provider command times out", async () => {
       expect(projected.message).toContain("120000 ms");
       expect(projected.remediation.action).toContain("120000");
     }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("keeps a selected architecture deadline on Evidence", async () => {
+  const service = new ReverseEngineeringService({
+    run: async () => ({ stdout: "elf64-x86-64\n", stderr: "" }),
+  });
+  const selected = await service.inspectWithObjdump({
+    operation: "architectures",
+    command_timeout_ms: 5_000,
+  });
+  expect(selected.ok).toBe(true);
+  if (!selected.ok) return;
+  expect(selected.value.parameters).toMatchObject({
+    operation: "architectures",
+    command_timeout_ms: 5_000,
+  });
+  expect(selected.value.parameters).not.toHaveProperty("path");
+
+  const omitted = await service.inspectWithObjdump({
+    operation: "architectures",
+  });
+  expect(omitted.ok).toBe(true);
+  if (!omitted.ok) return;
+  expect(omitted.value.parameters).not.toHaveProperty("command_timeout_ms");
+});
+
+it("shares one preflight deadline across stat and digest", async () => {
+  const stat = async (): Promise<Stats> => {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    return { isFile: () => true } as Stats;
+  };
+  const open = () => {
+    const stream = new PassThrough();
+    return stream as unknown as ReturnType<
+      typeof import("node:fs").createReadStream
+    >;
+  };
+  const started = performance.now();
+  await expect(
+    digestFile("/tmp/rea-preflight-deadline", undefined, stat, 200, open),
+  ).rejects.toMatchObject({ code: "ETIMEDOUT" });
+  expect(performance.now() - started).toBeLessThan(280);
+});
+
+it("forwards selected and omitted deadlines through the production command runner", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "rea-owned-timeout-"));
+  const path = join(directory, "fixture.bin");
+  await writeFile(path, "before");
+  const timeouts: number[] = [];
+  const service = new ReverseEngineeringService({
+    runOwned: async (_spawn, limits) => {
+      timeouts.push(limits.timeoutMs);
+      return providerSnapshot();
+    },
+  });
+  try {
+    const selected = await service.executeRizinCommand({
+      path,
+      command: "i",
+      command_timeout_ms: 5_000,
+    });
+    expect(selected.ok).toBe(true);
+    const omitted = await service.executeRizinCommand({
+      path,
+      command: "i",
+    });
+    expect(omitted.ok).toBe(true);
+    expect(timeouts).toEqual([5_000, 120_000]);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

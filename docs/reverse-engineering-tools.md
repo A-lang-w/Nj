@@ -29,7 +29,7 @@ rea inspect-with-objdump ./program dwarf --follow-debug-links
 
 Captured stdout and stderr are retained up to a 16 MiB combined limit; `output_truncated` marks output beyond that limit. That cap has no runtime override.
 
-`inspect_with_objdump`, `rea list-objdump-architectures`, and one-shot `execute_rizin_command` accept `command_timeout_ms` (CLI: `--command-timeout-ms`). Omitted means 120000. The integer range is 1 to 2147483647. The same budget applies separately to target preflight (stat and digest) and to the one-shot command. It applies on the next call; no restart is required. It does not raise the 16 MiB cap, a Ghidra or Hopper startup deadline, or a debugger session deadline.
+`inspect_with_objdump`, `rea list-objdump-architectures`, and one-shot `execute_rizin_command` accept `command_timeout_ms` (CLI: `--command-timeout-ms`). Omitted means 120000. The integer range is 1 to 2147483647. Target preflight shares one budget across stat and digest. The one-shot command receives that budget again. It applies on the next call; no restart is required. It does not raise the 16 MiB cap, a Ghidra or Hopper startup deadline, or a debugger session deadline.
 
 ## GDB
 
@@ -51,7 +51,7 @@ close_gdb_session {"session_id":"…"}
 
 Persistent command Evidence retains the caller-selected and resolved startup paths in `parameters.launch_provenance`. These paths describe launch provenance, not the current target after unrestricted commands. `rizin_debug_session_status.output_invalid_utf8` reports whether lossy frame decoding has been observed during the session. Command Evidence sets `output_invalid_utf8` only when loss was observed in frames collected for that command, including retained partial output; earlier startup or command frames do not mark later valid output as lossy.
 
-Session status retains up to 64 recent protocol frames. Each history entry keeps a complete-character UTF-8 prefix of at most 16 KiB, plus a truncation marker when needed; `recent_output_truncated` reports omitted history. This history budget also accounts for replacement characters from invalid UTF-8. It does not shorten command Evidence, which has its own 16 MiB output budget. Rizin debug startup waits 30000 ms and each command frame waits 120000 ms. This release has no runtime override for those deadlines, the frame byte cap, session capacity, or the pending-command queue. The one-shot `command_timeout_ms` setting does not change a debug session.
+Session status retains up to 64 recent protocol frames. Each history entry keeps a complete-character UTF-8 prefix of at most 16 KiB, plus a truncation marker when needed; `recent_output_truncated` reports omitted history. This history budget also accounts for replacement characters from invalid UTF-8. It does not shorten command Evidence, which has its own 16 MiB output budget. Rizin debug startup waits 30000 ms and each command frame waits 120000 ms. This release has no runtime override for those deadlines, the 16777216 byte frame cap, the 16777216 byte command-output cap, the 4096 frame command cap, session capacity, or the pending-command queue. Evidence names the cap that stopped the command. The one-shot `command_timeout_ms` setting does not change a debug session.
 
 ```sh
 rea debug-with-rizin --inferior-tty /dev/pts/7 ./program dr

@@ -115,10 +115,18 @@ const createRizinCommandEvidence = ({
     ],
   });
 
+type RizinOutputLimit =
+  | "command_output_bytes"
+  | "frame_bytes"
+  | "command_frames"
+  | "queued_frames";
+
 interface RizinCommandCapture {
   readonly output: string;
   readonly outputTruncated: boolean;
   readonly outputInvalidUtf8: boolean;
+  /** Cap that first stopped this capture. Absent when output is complete. */
+  readonly outputLimit?: RizinOutputLimit;
 }
 
 interface RizinCommandInterruption {
@@ -719,7 +727,11 @@ export class RizinDebugSessionManager {
           "Output contains all NUL frames through an explicit command-completion marker; backend output interleaved before that marker cannot be distinguished from command output.",
           ...(captured.outputTruncated
             ? [
-                `The Rizin command exceeded the ${String(this.#maxCommandOutputBytes)} byte output or ${String(MAX_FRAME_BYTES)} byte frame limit. This release has no runtime override. Retained output is partial and command completion is unknown.${cleanupFailure === undefined ? " The owned debugger session was stopped." : ` The owned debugger session remains retained because cleanup could not be verified: ${cleanupFailure}`}`,
+                rizinCaptureStoppedSentence(
+                  captured.outputLimit,
+                  this.#maxCommandOutputBytes,
+                  cleanupFailure,
+                ),
               ]
             : []),
           "The command is unrestricted and may access local files, the shell, network, or mutate the target.",
@@ -1428,6 +1440,28 @@ const bufferedRizinFrame = (session: RizinDebugSession, truncated: boolean) => {
   };
 };
 
+const rizinCaptureStoppedSentence = (
+  limit: RizinOutputLimit | undefined,
+  maxCommandOutputBytes: number,
+  cleanupFailure: string | undefined,
+): string => {
+  const cap =
+    limit === "command_frames"
+      ? `the ${String(MAX_COMMAND_FRAMES)} frame command limit`
+      : limit === "frame_bytes"
+        ? `the ${String(MAX_FRAME_BYTES)} byte frame limit`
+        : limit === "queued_frames"
+          ? `the queued frame limit of ${String(MAX_QUEUED_FRAMES)} frames or ${String(MAX_QUEUED_FRAME_BYTES)} bytes`
+          : limit === "command_output_bytes"
+            ? `the ${String(maxCommandOutputBytes)} byte output limit`
+            : "a capture limit";
+  const cleanup =
+    cleanupFailure === undefined
+      ? " The owned debugger session was stopped."
+      : ` The owned debugger session remains retained because cleanup could not be verified: ${cleanupFailure}`;
+  return `The Rizin command exceeded ${cap}. This release has no runtime override. Retained output is partial and command completion is unknown.${cleanup}`;
+};
+
 const waitForCommandFrames = async (
   session: RizinDebugSession,
   marker: string,
@@ -1440,15 +1474,25 @@ const waitForCommandFrames = async (
   let outputBytes = 0;
   let outputInvalidUtf8 = false;
   let outputTruncated = false;
+  let outputLimit: RizinOutputLimit | undefined;
   let frameCount = 0;
-  const snapshot = () => ({
-    output: output.join("\n"),
-    outputTruncated: outputTruncated || session.commandOutputDropped,
-    outputInvalidUtf8,
-  });
+  const noteLimit = (limit: RizinOutputLimit): void => {
+    outputTruncated = true;
+    outputLimit ??= limit;
+  };
+  const snapshot = (): RizinCommandCapture => {
+    const dropped = session.commandOutputDropped;
+    const limit = outputLimit ?? (dropped ? "queued_frames" : undefined);
+    return {
+      output: output.join("\n"),
+      outputTruncated: outputTruncated || dropped,
+      outputInvalidUtf8,
+      ...(limit === undefined ? {} : { outputLimit: limit }),
+    };
+  };
   const append = (frame: RizinFrame): boolean => {
     outputInvalidUtf8 ||= frame.invalidUtf8;
-    outputTruncated ||= frame.truncated;
+    if (frame.truncated) noteLimit("frame_bytes");
     const markerIndex = frame.text.indexOf(marker);
     const text =
       markerIndex < 0 ? frame.text : frame.text.slice(0, markerIndex);
@@ -1457,7 +1501,7 @@ const waitForCommandFrames = async (
     const remaining = maxCommandOutputBytes - outputBytes - separatorBytes;
     const bytes = Buffer.byteLength(text, "utf8");
     if (bytes > remaining) {
-      outputTruncated = true;
+      noteLimit("command_output_bytes");
       const retained = truncateUtf8(text, remaining);
       if (retained.length > 0) output.push(retained);
       outputBytes = maxCommandOutputBytes;
@@ -1478,7 +1522,7 @@ const waitForCommandFrames = async (
       session.queuedFrameBytes -= queued.queueChargeBytes;
       frameCount += 1;
       if (frameCount > MAX_COMMAND_FRAMES) {
-        outputTruncated = true;
+        noteLimit("command_frames");
         break;
       }
       markerSeen = append(queued.frame);
@@ -1546,12 +1590,15 @@ const waitForCommandFrames = async (
     frameCount += 1;
     if (frameCount > MAX_COMMAND_FRAMES) {
       session.protocolError = `Rizin emitted more than ${String(MAX_COMMAND_FRAMES)} frames for one command. This release has no runtime override. The session was stopped because output correlation is ambiguous.`;
-      outputTruncated = true;
+      noteLimit("command_frames");
       return ok(snapshot());
     }
     const markerSeen = append(received);
     if (outputTruncated) {
-      session.protocolError ??= `Rizin command output exceeded the ${String(MAX_COMMAND_OUTPUT_BYTES)} byte (16 MiB) command limit. This release has no runtime override.`;
+      if (outputLimit === "command_output_bytes")
+        session.protocolError ??= `Rizin command output exceeded the ${String(maxCommandOutputBytes)} byte (16 MiB) command limit. This release has no runtime override.`;
+      else if (outputLimit === "frame_bytes")
+        session.protocolError ??= `Rizin emitted a NUL frame exceeding the ${String(MAX_FRAME_BYTES)} byte (16 MiB) protocol limit. This release has no runtime override.`;
       return ok(snapshot());
     }
     if (markerSeen) return ok(snapshot());

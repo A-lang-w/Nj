@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { commandEvidenceDetailSchema } from "./commandObservation.js";
 
-/** Omitted one-shot objdump/rizin wall clock, including target preflight. */
+/** Omitted one-shot objdump/rizin wall clock. Preflight shares it; the command gets it again. */
 export const DEFAULT_REVERSE_COMMAND_TIMEOUT_MS = 120_000;
 /** Node timer ceiling. Larger deadlines would be clamped instead of honored. */
 export const MAX_REVERSE_COMMAND_TIMEOUT_MS = 2_147_483_647;
@@ -14,7 +14,7 @@ export const reverseCommandTimeoutSchema = z
   .max(MAX_REVERSE_COMMAND_TIMEOUT_MS)
   .exactOptional()
   .describe(
-    "Wall-clock budget in milliseconds applied separately to target preflight (stat and digest) and to the one-shot command (default 120000 each). Omitted means 120000. Applies on the next call. Does not raise the 16 MiB combined output cap, Ghidra or Hopper startup deadlines, or debugger session deadlines.",
+    "Wall-clock budget in milliseconds. Target preflight shares one budget across stat and digest, and the one-shot command receives that budget again (default 120000 each). Omitted means 120000. Applies on the next call. Does not raise the 16 MiB combined output cap, Ghidra or Hopper startup deadlines, or debugger session deadlines.",
   );
 
 const commandTimeoutMsField = {

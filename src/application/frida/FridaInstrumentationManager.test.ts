@@ -17,10 +17,8 @@ import {
   AnalysisInputError,
   AnalysisTimeoutError,
 } from "../../domain/analysisErrorCore.js";
-import {
-  FridaInstrumentationManager,
-  fridaCaptureLimitations,
-} from "../../frida/FridaInstrumentationManager.js";
+import { FridaInstrumentationManager } from "../../frida/FridaInstrumentationManager.js";
+import { fridaCaptureLimitations } from "../../frida/fridaCaptureLimits.js";
 
 const signal = <Handler extends (...args: never[]) => void>() => {
   let connected: Handler | undefined;
@@ -246,11 +244,27 @@ describe("FridaInstrumentationManager", () => {
     expect(
       fridaCaptureLimitations({ messages_truncated: true }).join("\n"),
     ).toContain("16777216");
+    const field = fridaCaptureLimitations({
+      messages: [{ type_truncated: true }],
+    }).join("\n");
+    expect(field).toContain("4096");
+    expect(field).not.toContain("16777216");
+    const text = fridaCaptureLimitations({
+      messages: [
+        {
+          description_truncated: true,
+          payload: { messages_truncated: true, type_truncated: true },
+        },
+      ],
+    }).join("\n");
+    expect(text).toContain("32768");
+    expect(text).not.toContain("16777216");
+    expect(text).not.toContain("4096");
     expect(
       fridaCaptureLimitations({
-        messages: [{ type_truncated: true }],
-      }).join("\n"),
-    ).toContain("no runtime override");
+        messages: [{ payload: { messages_truncated: true } }],
+      }),
+    ).toEqual([]);
   });
 
   it("attaches by PID when Frida omits the target from process lookup", async () => {
@@ -1280,7 +1294,7 @@ it("bounds oversized Frida message metadata before retaining it", async () => {
   });
   expect(loaded.ok).toBe(true);
   if (loaded.ok) {
-    expect(loaded.value.messagesTruncated).toBe(true);
+    expect(loaded.value.messagesTruncated).toBe(false);
     const message = loaded.value.messages[0];
     expect(message).toMatchObject({
       description_truncated: true,
@@ -1347,10 +1361,10 @@ it.each([
       expect(message[field]).toBe(retained);
       expect(message[`${field}_truncated`] ?? false).toBe(truncated);
     }
-    expect(loaded.value.messagesTruncated).toBe(truncated);
+    expect(loaded.value.messagesTruncated).toBe(false);
     expect(manager.status(started.value.sessionId)).toMatchObject({
       messages: [message],
-      messagesTruncated: truncated,
+      messagesTruncated: false,
     });
   },
 );
@@ -1498,7 +1512,10 @@ it.each([false, true])(
     expect(loaded.error.script.messages).toContainEqual(
       expect.objectContaining({ payload: "during cleanup" }),
     );
-    expect(loaded.error.script.messagesTruncated).toBe(true);
+    expect(loaded.error.script.messagesTruncated).toBe(false);
+    expect(loaded.error.script.messages).toContainEqual(
+      expect.objectContaining({ description_truncated: true }),
+    );
     expect(loaded.error.diagnostics).toEqual(
       rejectNative ? { native_failure: nativeFailure.message } : undefined,
     );

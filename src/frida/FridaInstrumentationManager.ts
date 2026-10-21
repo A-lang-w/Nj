@@ -40,53 +40,18 @@ import {
   unknownFridaScript,
   unknownFridaSession,
 } from "../application/frida/fridaInputErrors.js";
+import {
+  MAX_BINARY_MESSAGE_BYTES,
+  MAX_CAPTURE_JSON_NODES,
+  MAX_JSON_DEPTH,
+  MAX_MESSAGE_METADATA_BYTES,
+  MAX_MESSAGE_TEXT_BYTES,
+  MAX_MESSAGE_TYPE_BYTES,
+  MAX_SESSION_CAPTURE_BYTES,
+  type FridaOwnedCaptureLimit,
+} from "./fridaCaptureLimits.js";
 
-const MAX_SESSION_CAPTURE_BYTES = 16 * 1024 * 1024;
-const MAX_MESSAGE_METADATA_BYTES = 128 * 1024;
-const MAX_MESSAGE_TYPE_BYTES = 4 * 1024;
-const MAX_MESSAGE_TEXT_BYTES = 32 * 1024;
-// Bound the in-memory object graph as well as its serialized JSON byte size.
-const MAX_CAPTURE_JSON_NODES = 250_000;
-const MAX_BINARY_MESSAGE_BYTES = Math.floor(
-  ((MAX_SESSION_CAPTURE_BYTES - 1024 * 1024) * 3) / 4,
-);
 const DEVICE_LOOKUP_TIMEOUT_MS = 1_000;
-
-/** Limitations for capture caps that already dropped part of an observation. */
-export const fridaCaptureLimitations = (result: unknown): readonly string[] => {
-  const limitations: string[] = [];
-  if (resultHasFlag(result, "messages_truncated"))
-    limitations.push(
-      `Frida session message capture reached its ${String(MAX_SESSION_CAPTURE_BYTES)} byte budget. This release has no runtime override.`,
-    );
-  if (resultHasFieldTruncation(result))
-    limitations.push(
-      `A Frida message field reached a fixed capture cap (metadata ${String(MAX_MESSAGE_METADATA_BYTES)} bytes, type ${String(MAX_MESSAGE_TYPE_BYTES)} bytes, text ${String(MAX_MESSAGE_TEXT_BYTES)} bytes, or ${String(MAX_CAPTURE_JSON_NODES)} JSON nodes). This release has no runtime override.`,
-    );
-  return limitations;
-};
-
-const resultHasFlag = (value: unknown, flag: string): boolean => {
-  if (typeof value !== "object" || value === null) return false;
-  if (Array.isArray(value))
-    return value.some((item) => resultHasFlag(item, flag));
-  return Object.entries(value).some(
-    ([key, child]) =>
-      (key === flag && child === true) || resultHasFlag(child, flag),
-  );
-};
-
-const resultHasFieldTruncation = (value: unknown): boolean => {
-  if (typeof value !== "object" || value === null) return false;
-  if (Array.isArray(value)) return value.some(resultHasFieldTruncation);
-  return Object.entries(value).some(
-    ([key, child]) =>
-      (key.endsWith("_truncated") &&
-        key !== "messages_truncated" &&
-        child === true) ||
-      resultHasFieldTruncation(child),
-  );
-};
 
 export const FRIDA_PROVIDER_IDENTITY = {
   id: "frida",
@@ -985,6 +950,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
           readonly value: JsonValue;
           readonly truncated: boolean;
           readonly bytes: number;
+          readonly limit?: FridaOwnedCaptureLimit;
         }
       | undefined;
     if (payload !== undefined) {
@@ -999,9 +965,9 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
           value: { payload_unavailable: true },
           truncated: true,
           bytes: Buffer.byteLength('{"payload_unavailable":true}'),
+          limit: "unrepresentable",
         };
       }
-      if (payloadResult.truncated) markMessageTruncated(managed, scriptId);
     }
     let binaryResult: Record<string, JsonValue> = {};
     if (data !== null) {
@@ -1020,11 +986,16 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
       if (secrets.some((secret) => data.includes(secret, 0, "utf8"))) {
         binaryResult = { data_redacted: true };
       } else if (data.byteLength > messageBinaryLimit) {
+        const sessionConstrained =
+          messageBinaryLimit < MAX_BINARY_MESSAGE_BYTES;
         binaryResult = {
           data_truncated: true,
           data_bytes: data.byteLength,
+          data_capture_limit: sessionConstrained
+            ? "session_bytes"
+            : "binary_bytes",
         };
-        markMessageTruncated(managed, scriptId);
+        if (sessionConstrained) markMessageTruncated(managed, scriptId);
       } else {
         binaryResult = { data_base64: data.toString("base64") };
       }
@@ -1054,13 +1025,6 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
             MAX_MESSAGE_TEXT_BYTES,
             secrets,
           );
-    if (
-      type.truncated ||
-      description?.truncated === true ||
-      stack?.truncated === true ||
-      fileName?.truncated === true
-    )
-      markMessageTruncated(managed, scriptId);
     const observation: JsonValue = {
       script_id: scriptId,
       type: type.value,
@@ -1069,7 +1033,14 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
         ? {}
         : {
             payload: payloadResult.value,
-            ...(payloadResult.truncated ? { payload_truncated: true } : {}),
+            ...(payloadResult.truncated
+              ? {
+                  payload_truncated: true,
+                  ...(payloadResult.limit === undefined
+                    ? {}
+                    : { payload_capture_limit: payloadResult.limit }),
+                }
+              : {}),
           }),
       ...(description === undefined
         ? {}
@@ -1319,93 +1290,107 @@ const boundedRedactedString = (
   return { value: chunks.join(""), truncated };
 };
 
+type BoundedJson = {
+  readonly value: JsonValue;
+  readonly truncated: boolean;
+  readonly limit?: FridaOwnedCaptureLimit;
+};
+
+const clipped = (limit: FridaOwnedCaptureLimit): BoundedJson => ({
+  value: null,
+  truncated: true,
+  limit,
+});
+
 const boundedJsonValue = (
   input: unknown,
   maximumBytes: number,
   secrets: readonly string[],
-): {
-  readonly value: JsonValue;
-  readonly truncated: boolean;
-  readonly bytes: number;
-} => {
+): BoundedJson & { readonly bytes: number } => {
   const seen = new WeakSet<object>();
   let remainingNodes = MAX_CAPTURE_JSON_NODES;
   const visit = (
     value: unknown,
     budget: number,
     depth: number,
-  ): { readonly value: JsonValue; readonly truncated: boolean } => {
+  ): BoundedJson => {
     remainingNodes -= 1;
-    if (remainingNodes < 0) return { value: null, truncated: true };
-    if (depth > 64 || budget < 8) return { value: null, truncated: true };
+    if (remainingNodes < 0) return clipped("json_nodes");
+    if (depth > MAX_JSON_DEPTH) return clipped("json_depth");
+    if (budget < 8) return clipped("payload_bytes");
     if (value === null) return { value: null, truncated: false };
-    if (typeof value === "boolean" || typeof value === "number")
-      return {
-        value:
-          typeof value === "number" && !Number.isFinite(value) ? null : value,
-        truncated: typeof value === "number" && !Number.isFinite(value),
-      };
+    if (typeof value === "boolean" || typeof value === "number") {
+      if (typeof value === "number" && !Number.isFinite(value))
+        return clipped("unrepresentable");
+      return { value, truncated: false };
+    }
     if (typeof value === "string") {
       const bounded = boundedRedactedString(
         value,
         Math.max(0, budget - 2),
         secrets,
       );
-      return { value: bounded.value, truncated: bounded.truncated };
+      return bounded.truncated
+        ? { value: bounded.value, truncated: true, limit: "payload_bytes" }
+        : { value: bounded.value, truncated: false };
     }
-    if (typeof value !== "object") return { value: null, truncated: true };
-    if (seen.has(value)) return { value: null, truncated: true };
+    if (typeof value !== "object") return clipped("unrepresentable");
+    if (seen.has(value)) return clipped("unrepresentable");
     seen.add(value);
     try {
       if (Array.isArray(value)) {
         const output: JsonValue[] = [];
         let usedBytes = 2;
-        let truncated = false;
+        let limit: FridaOwnedCaptureLimit | undefined;
         for (let index = 0; index < value.length; index += 1) {
           const separatorBytes = output.length === 0 ? 0 : 1;
           const remaining = budget - usedBytes - separatorBytes - 1;
           if (remaining < 8) {
-            truncated = true;
+            limit ??= "payload_bytes";
             break;
           }
           const item = visit(value[index] ?? null, remaining, depth + 1);
           const itemBytes = Buffer.byteLength(JSON.stringify(item.value));
           if (itemBytes > remaining) {
-            truncated = true;
+            limit ??= "payload_bytes";
             break;
           }
           output.push(item.value);
           usedBytes += separatorBytes + itemBytes;
-          truncated ||= item.truncated;
-          if (item.truncated) break;
+          if (item.truncated) {
+            limit ??= item.limit;
+            break;
+          }
         }
-        if (output.length < value.length) truncated = true;
-        return { value: output, truncated };
+        if (output.length < value.length) limit ??= "payload_bytes";
+        return limit === undefined
+          ? { value: output, truncated: false }
+          : { value: output, truncated: true, limit };
       }
       const output: Record<string, JsonValue> = {};
       let usedBytes = 2;
       let entries = 0;
-      let truncated = false;
+      let limit: FridaOwnedCaptureLimit | undefined;
       for (const rawKey in value) {
         if (!Object.hasOwn(value, rawKey)) continue;
         const separatorBytes = entries === 0 ? 0 : 1;
         const keyLimit = Math.max(0, budget - usedBytes - separatorBytes - 10);
         const boundedKey = boundedRedactedString(rawKey, keyLimit, secrets);
         if (boundedKey.truncated) {
-          truncated = true;
+          limit ??= "payload_bytes";
           break;
         }
         const key = boundedKey.value;
         const keyBytes = jsonStringByteLength(key) + 1;
         const remaining = budget - usedBytes - separatorBytes - keyBytes - 1;
         if (remaining < 8) {
-          truncated = true;
+          limit ??= "payload_bytes";
           break;
         }
         const entry = visit(Reflect.get(value, rawKey), remaining, depth + 1);
         const entryBytes = Buffer.byteLength(JSON.stringify(entry.value));
         if (entryBytes > remaining) {
-          truncated = true;
+          limit ??= "payload_bytes";
           break;
         }
         Object.defineProperty(output, key, {
@@ -1416,10 +1401,14 @@ const boundedJsonValue = (
         });
         entries += 1;
         usedBytes += separatorBytes + keyBytes + entryBytes;
-        truncated ||= entry.truncated;
-        if (entry.truncated) break;
+        if (entry.truncated) {
+          limit ??= entry.limit;
+          break;
+        }
       }
-      return { value: output, truncated };
+      return limit === undefined
+        ? { value: output, truncated: false }
+        : { value: output, truncated: true, limit };
     } finally {
       seen.delete(value);
     }
@@ -1427,7 +1416,12 @@ const boundedJsonValue = (
   const result = visit(input, maximumBytes, 0);
   const bytes = Buffer.byteLength(JSON.stringify(result.value));
   return bytes > maximumBytes
-    ? { value: null, truncated: true, bytes: Buffer.byteLength("null") }
+    ? {
+        value: null,
+        truncated: true,
+        bytes: Buffer.byteLength("null"),
+        limit: result.limit ?? "payload_bytes",
+      }
     : { ...result, bytes };
 };
 

@@ -21,7 +21,7 @@ import {
   summarizeRetainedAnalysis,
   type AnalysisViewRetention,
 } from "../analysisView/AnalysisViewService.js";
-import { fridaCaptureLimitations } from "../../frida/FridaInstrumentationManager.js";
+import { fridaCaptureLimitations } from "../../frida/fridaCaptureLimits.js";
 import { unknownFridaSession } from "./fridaInputErrors.js";
 import { FridaScriptLoadCancelledError } from "./FridaInstrumentationPort.js";
 import type {

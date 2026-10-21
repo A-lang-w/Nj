@@ -755,7 +755,12 @@ export class ReverseEngineeringService {
         operation,
         parameters: {
           ...(absolutePath === undefined
-            ? { operation: "architectures" }
+            ? {
+                operation: "architectures",
+                ...(typeof parameters.command_timeout_ms === "number"
+                  ? { command_timeout_ms: parameters.command_timeout_ms }
+                  : {}),
+              }
             : parameters),
           provider_executable: command,
           command_arguments: [...args],
@@ -971,20 +976,32 @@ const reverseCommandTimeoutGuidance = (
   } The new value applies on the next call; no restart is required. The ${String(MAX_COMBINED_OUTPUT_BYTES)} byte (16 MiB) combined output cap has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
 });
 
-const digestFile = async (
+export const digestFile = async (
   path: string,
   signal?: AbortSignal,
   stat: (path: string) => Promise<Stats> = statPath,
   timeoutMs: number = DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
+  open: (
+    path: string,
+  ) => ReturnType<typeof createReadStream> = createReadStream,
 ): Promise<string> => {
+  const startedAt = performance.now();
   const info = await statWithDeadline(path, signal, stat, timeoutMs);
   if (!info.isFile())
     throw Object.assign(new Error("Artifact digest requires a regular file"), {
       code: "EINVAL",
     });
+  const remainingMs = Math.max(
+    0,
+    Math.ceil(timeoutMs - (performance.now() - startedAt)),
+  );
+  if (remainingMs === 0)
+    throw Object.assign(new Error("Artifact digest timed out"), {
+      code: "ETIMEDOUT",
+    });
   return new Promise<string>((resolveDigest, rejectDigest) => {
     const hash = createHash("sha256");
-    const stream = createReadStream(path);
+    const stream = open(path);
     const timer = setTimeout(
       () =>
         stream.destroy(
@@ -992,7 +1009,7 @@ const digestFile = async (
             code: "ETIMEDOUT",
           }),
         ),
-      timeoutMs,
+      remainingMs,
     );
     const abort = (): void => {
       stream.destroy(new AnalysisCancelledError("artifact_digest"));
