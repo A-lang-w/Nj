@@ -1938,5 +1938,72 @@
       "tests/boundary/mcp/browserMcp.test.ts": "bf9d0ad7f8061d2d7963de6a126ef4ed108a9e4eccc8107cedcd4360ac7fe096",
       "tests/boundary/mcp/retainedApplicationEvidenceMcp.test.ts": "1d0d7121d339100e72f454d2b0a34a307a2e3609df3c416dca3674844761a6ba"
     }
+  },
+  "accounting_followup": {
+    "original_cost_script_sha256": "aa9e71a730e8f9a853fe0e285e09796b84babc50ad685e18e7bc52326263adf6",
+    "current_cost_script_sha256": "ad32e6726f892be16cc7d352118f7e9f9f0a85649d9edd1049b5d73483df8078",
+    "change": "Document receipt redirection and accounting; append .log to the entire directory basename rather than replacing its suffix.",
+    "original_records_reprocessed_without_changes": true,
+    "additional_real_dotted_directory_validation": {
+      "case": "reproduce.sdk.1",
+      "kind": "SDK",
+      "profile": "default",
+      "artifact_sha256": "9a86e9ca47902a869fdf1886f4cf17714f4fa5655427128beadff498cfb392db",
+      "tool_count": 213,
+      "calls": [
+        {
+          "name": "inspect_rust_binary",
+          "elapsed_ms": 502.6376340000006,
+          "is_error": false
+        },
+        {
+          "name": "inspect_analysis_view",
+          "elapsed_ms": 2992.545244000001,
+          "is_error": false
+        },
+        {
+          "name": "inspect_analysis_view",
+          "elapsed_ms": 9.582700000000841,
+          "is_error": false
+        },
+        {
+          "name": "inspect_rust_binary",
+          "elapsed_ms": 6.301149999999325,
+          "is_error": true
+        },
+        {
+          "name": "export_evidence_bundle",
+          "elapsed_ms": 37.41663999999946,
+          "is_error": false
+        }
+      ],
+      "parent_evidence_id": "ev_8c9124795a5cf45c2bf816bbfa0ced9c3025550e72d4e3facf5fb2e266d3dadb",
+      "parent_semantic_sha256": "df1930ee07a13eb4b47c91f2834c4b0f8d99089e051a02083c7c3cf03bb30467",
+      "token_estimates": {
+        "input_catalog_once": 47868,
+        "arguments": 289,
+        "text_replies": 3562,
+        "whole_task": 51719,
+        "raw_catalog_including_output_schemas": 750743
+      },
+      "actual_model_usage": null,
+      "wall_seconds": 8.687,
+      "cpu_seconds": 8.489351,
+      "kernel_family_peak_bytes_including_page_cache": 870670336,
+      "resource_stop": null,
+      "cleanup_verified": true,
+      "final_whole_scope_counters": null,
+      "guard_sources_sha256": {
+        "resource-run.py": "7a9642ab86ba34290564f636eb080cacf38b4185a254028680b238bff172993b",
+        "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+      },
+      "log_sha256": "3d3390f3886b8905d5735ae484e0f142017716482d7e838ae5f5648a4513b79e",
+      "receipt_sha256": {
+        "report.json": "fa45533fd6909cfa1267f1b9c12af2c3d402ada69e95e97049f6cfb8149f9687",
+        "catalog.json": "56a48174c029aa3abfb9a56e38a40d021919899c5736f129d24c684cfaf01962",
+        "transcript.json": "ae7e65f061e7628d2c21562e1da0fe81168f73e6e124bf32b9d5fecffe88078d"
+      }
+    },
+    "included_in_original_performance_cohorts": false
   }
 }

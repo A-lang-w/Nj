@@ -105,7 +105,12 @@ python3 experiments/analysis-efficiency/mcp-input-catalog-oracle.py /absolute/ri
 python3 experiments/analysis-efficiency/resource-run.py --observe-payload-exit -- \
   node experiments/analysis-efficiency/mcp-input-catalog.mjs \
   --runtime /absolute/runtime --artifact /absolute/ripgrep \
-  --oracle /absolute/oracle.json --output /absolute/new-output
+  --oracle /absolute/oracle.json --output /absolute/new-output \
+  > /absolute/new-output.log 2>&1
+
+# In an analysis environment with tiktoken==0.12.0 installed:
+python3 experiments/analysis-efficiency/mcp-input-catalog-costs.py \
+  --output /absolute/costs.json /absolute/new-output
 ```
 
 Repeat against baseline/candidate runtimes with the setting omitted. Explicit
@@ -114,6 +119,12 @@ Repeat against baseline/candidate runtimes with the setting omitted. Explicit
 settings; authentication/profile files and raw binaries are never committed.
 Use [the cost script](mcp-input-catalog-costs.py) with the pinned tokenizer to
 account for complete SDK tasks and separately recorded model usage.
+
+Keep the sibling log: accounting requires its authenticated resource receipt.
+Its name appends `.log` to the entire case-directory basename, including dots.
+A real `reproduce.sdk.1` Zellij task and its accounting completed successfully;
+reprocessing every original record with this path fix leaves all costs equal.
+This additional check is not part of the original performance cohorts.
 
 ## Latest-main integration and validation
 

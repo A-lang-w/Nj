@@ -12,7 +12,7 @@ def compact(value):
 
 
 def resource(case):
-    path = case.with_suffix(".log")
+    path = case.with_name(case.name + ".log")
     scope = next(json.loads(line) for line in reversed(path.read_text().splitlines())
                  if line.startswith('{"resource_scope":'))
     observation = scope["payload_resource_observation"]
