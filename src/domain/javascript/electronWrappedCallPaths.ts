@@ -9,7 +9,11 @@ import {
   type SymbolicEnvironment,
   type SymbolicFunction,
 } from "./javascriptSymbolicValues.js";
-import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
+import {
+  resolveSemanticBindingState,
+  semanticResolutionBlocked,
+  type JavaScriptSemanticAnalysisState,
+} from "./javascriptSemanticState.js";
 import type { JavaScriptElectronIdentity } from "./javascriptSemanticAnalysis.js";
 import type { JavaScriptAnalysisAccumulator } from "./javascriptStaticAnalysisState.js";
 import type {
@@ -273,13 +277,62 @@ export const collectElectronWrappedCallPaths = (
       ? only.value
       : undefined;
   };
+  const activationCaptures = new WeakMap<SymbolicFunction, boolean>();
+  /**
+   * Whether the handler closes over a binding of a function this trace
+   * activated, such as a wrapper parameter or a factory local. Each activation
+   * may bind a different value, so such a closure is not one fact the call
+   * site determines. Bindings of unactivated scopes, such as module or bundle
+   * factory scope, and the handler's own bindings are shared by every trace.
+   */
+  const capturesActivationBindings = (fn: SymbolicFunction): boolean => {
+    const cached = activationCaptures.get(fn);
+    if (cached !== undefined) return cached;
+    const captures = closesOverActivation(fn);
+    activationCaptures.set(fn, captures);
+    return captures;
+  };
+  const closesOverActivation = (fn: SymbolicFunction): boolean => {
+    const activated = new Set<t.Node>();
+    for (
+      let env: SymbolicEnvironment | undefined = fn.environment;
+      env;
+      env = env.parent
+    )
+      if (env.activation !== undefined && env.scopeNode !== undefined)
+        activated.add(env.scopeNode);
+    // Scopes from the handler out to the outermost activated function.
+    const enclosing: string[] = [];
+    let activatedScopes = 0;
+    for (
+      let current = state.parentsByNode.get(fn.node);
+      current;
+      current = state.parentsByNode.get(current)
+    ) {
+      const scopeId = state.scopeByNode.get(current)?.scopeId;
+      if (scopeId !== undefined) enclosing.push(scopeId);
+      if (activated.has(current)) activatedScopes = enclosing.length;
+    }
+    if (activatedScopes === 0) return false;
+    const scopes = new Set(enclosing.slice(0, activatedScopes));
+    let captures = false;
+    t.traverseFast(fn.node, (node) => {
+      if (captures || !t.isIdentifier(node)) return;
+      const parent = state.parentsByNode.get(node);
+      if (parent !== undefined && !t.isReferenced(node, parent)) return;
+      const binding = resolveSemanticBindingState(state, node, node.name);
+      captures =
+        binding === undefined
+          ? semanticResolutionBlocked(state, node, node.name)
+          : scopes.has(binding.scopeId);
+    });
+    return captures;
+  };
   /**
    * Whether a registration's handler at an IPC site is this substituted
    * handler independent of any invocation: the same function value in the
-   * site's lexical environment, capturing no value an invocation bound, or no
-   * handler argument at all. One function node created in different
-   * activations, such as a closure over a wrapper parameter, may capture
-   * different values, so it is a distinct handler.
+   * site's lexical environment that closes over no traced activation's
+   * bindings, or no handler argument at all.
    */
   const siteDeterminesHandler = (
     node: t.CallExpression | t.OptionalCallExpression,
@@ -295,29 +348,9 @@ export const collectElectronWrappedCallPaths = (
     return (
       only?.kind === "function" &&
       only.node === fn.node &&
-      !capturesBoundValues(fn.environment, only.environment) &&
+      !capturesActivationBindings(fn) &&
       !only.conditions?.length
     );
-  };
-  /** Whether an environment binds values its lexical counterpart does not. */
-  const capturesBoundValues = (
-    captured: SymbolicEnvironment,
-    lexical: SymbolicEnvironment,
-  ): boolean => {
-    const shared = new Set<SymbolicEnvironment>();
-    for (
-      let env: SymbolicEnvironment | undefined = lexical;
-      env;
-      env = env.parent
-    )
-      shared.add(env);
-    for (
-      let env: SymbolicEnvironment | undefined = captured;
-      env && !shared.has(env);
-      env = env.parent
-    )
-      if (env.values.size > 0) return true;
-    return false;
   };
   const hasConditions = (value: SymbolicValue): boolean =>
     symbolicVariants(value).some((variant) => variant.conditions?.length);
@@ -536,7 +569,10 @@ export const collectElectronWrappedCallPaths = (
         (context.entryKind === "bridge-member" &&
           recorded.observedRendererListener) ||
         recorded.invocations.has(ipcInvocationKey(invocationLocation)) ||
-        reachedThroughSameCalls(recorded, valueKey, context.calls));
+        // A closure over this invocation's bindings is its own handler, even
+        // when a shorter entry already traced the same calls.
+        (reachedThroughSameCalls(recorded, valueKey, context.calls) &&
+          (fn === undefined || !capturesActivationBindings(fn))));
     const findingGuarded =
       context.conditions.length > 0 || hasConditions(first) || guardedDispatch;
     // Registry facts do not establish every bridge entry's reachability. Only

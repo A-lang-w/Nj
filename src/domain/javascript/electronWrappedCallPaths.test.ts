@@ -552,6 +552,66 @@ it.each([
       .sort(),
   ).toEqual(["first.on", "second.on"]);
 });
+it("keeps a parameterless factory's closure as a per-invocation handler", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    const CH = "ch";
+    const make = () => { const value = Math.random(); return () => value; };
+    function register() {
+      const handler = make();
+      ipcRenderer.on(CH, handler);
+    }
+    contextBridge.exposeInMainWorld("api", { on: () => register() });
+  `);
+  expect(
+    result.electron.ipc
+      .filter(({ mode }) => mode === "listen")
+      .map(({ resolution_basis }) => resolution_basis ?? "direct"),
+  ).toEqual(["direct", "wrapper-substitution"]);
+});
+it("resolves a module-level handler in place when the entry binds an unused parameter", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    const CH = "ch";
+    const handler = () => {};
+    contextBridge.exposeInMainWorld("api", {
+      on: unused => ipcRenderer.on(CH, handler),
+    });
+  `);
+  expect(result.electron.ipc).toEqual([
+    expect.objectContaining({
+      mode: "listen",
+      channel: "ch",
+      resolution_basis: "wrapper-substitution",
+    }),
+  ]);
+  expect(result.parse_status).toBe("complete");
+});
+it.each([
+  ["a named local", 'const handler = () => tag; register("same", handler);'],
+  ["an inline argument", 'register("same", () => tag);'],
+  [
+    "a nested helper",
+    'const inner = () => register("same", () => tag); inner();',
+  ],
+])("keeps closures that separate outer calls create through %s", (_, body) => {
+  const result = analyzeJavaScriptStaticSource(`
+      const { ipcMain } = require("electron");
+      function register(ch, handler) { ipcMain.on(ch, handler); }
+      function setup(tag) { ${body} }
+      setup("first");
+      setup("second");
+    `);
+  const invocations = result.electron.ipc
+    .filter(
+      ({ channel, resolution_basis }) =>
+        channel === "same" && resolution_basis === "wrapper-substitution",
+    )
+    .map(({ invocation_location }) => JSON.stringify(invocation_location));
+  // Both outer calls stay, beside the shorter entry that traced the same
+  // wrapper call without either caller's value.
+  expect(new Set(invocations).size).toBe(3);
+});
 it("counts one exposed renderer listener callsite once and retains its bridge path", () => {
   const result = analyzeJavaScriptStaticSource(`
     const {contextBridge,ipcRenderer}=require("electron");
