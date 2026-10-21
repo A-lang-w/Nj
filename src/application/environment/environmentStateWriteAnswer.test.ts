@@ -536,6 +536,25 @@ describe("collections a create chooses", () => {
         ?.collection,
     ).toBe("/api/orgs/acme1/books");
   });
+
+  it("refuses an empty parent segment before storing an unreadable collection", () => {
+    const books = servedFrom(ROWS);
+    const tool = books.source.manifest.tools.find(
+      (candidate) => candidate.method === "POST",
+    )!;
+    const [org] = environmentToolArguments(tool).path.values();
+    const before = books.snapshot();
+    expect(
+      books.refusal(tool.name, { [org!]: "", body: { name: "Invalid" } }),
+    ).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("path argument to be non-empty"),
+    });
+    expect(books.snapshot()).toBe(before);
+    expect(
+      books.store.knownCollectionsOf("/api/orgs/{org}/books"),
+    ).not.toContain("/api/orgs//books");
+  });
 });
 
 describe("missing entities after a delete", () => {

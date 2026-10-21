@@ -30,7 +30,10 @@ import {
   prepareServedState,
 } from "./environmentState.js";
 import { STATE_INTAKE_LIMIT_BYTES } from "./environmentStateDocument.js";
-import { EnvironmentStateStore } from "./environmentStateStore.js";
+import {
+  EnvironmentStateStore,
+  ENVIRONMENT_COLLECTION_HISTORY_LIMIT_BYTES,
+} from "./environmentStateStore.js";
 
 const fixture = environmentStateServeFixture();
 const { source, state } = environmentStateServeInputs(fixture);
@@ -148,6 +151,53 @@ describe("loadEnvironmentState", () => {
     expect(
       loadEnvironmentState(fixture.state, environmentServeSource()).ok,
     ).toBe(false);
+  });
+});
+
+describe("served collection history", () => {
+  it("refuses a new collection before retained collection and sequence history exceeds its budget", () => {
+    const store = new EnvironmentStateStore(state);
+    const original = state.entities[0];
+    if (original === undefined) throw new Error("Expected a seeded entity");
+    let refused: ReturnType<typeof store.insert> | undefined;
+    for (let index = 0; index < 2000; index += 1) {
+      const before = JSON.stringify(store.snapshot());
+      const result = store.insert(
+        {
+          ...original,
+          collection: `/api/history/${String(index)}-${"x".repeat(900)}`,
+          id: `history-${String(index)}`,
+        },
+        0,
+      );
+      if (!result.ok) {
+        refused = result;
+        expect(JSON.stringify(store.snapshot())).toBe(before);
+        break;
+      }
+      const inserted = store.entity(
+        original.type,
+        `/api/history/${String(index)}-${"x".repeat(900)}`,
+        `history-${String(index)}`,
+      );
+      if (inserted === undefined) throw new Error("Expected inserted entity");
+      store.remove(inserted);
+    }
+    expect(refused?.ok).toBe(false);
+    if (refused?.ok !== false)
+      throw new Error("Expected a history budget refusal");
+    expect(refused.error).toMatchObject({
+      resource: "capacity",
+      retryable: false,
+      reportedLimits: {
+        collection_history_bytes: expect.any(Number),
+        max_collection_history_bytes:
+          ENVIRONMENT_COLLECTION_HISTORY_LIMIT_BYTES,
+      },
+      remediationAction: expect.stringContaining("Reset the served state"),
+    });
+    expect(refused.error.reason).toContain("retained metadata budget");
+    expect(store.knownCollectionsOf(original.type).length).toBeLessThan(2000);
   });
 });
 

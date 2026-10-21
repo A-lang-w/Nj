@@ -265,7 +265,12 @@ const answerCreate = (
   );
   const observed = observedEntity(serving, plan);
   if (collection === undefined || observed === undefined)
-    return err(refused(tool, `Tool ${tool.name} needs every path argument.`));
+    return err(
+      refused(
+        tool,
+        `Tool ${tool.name} needs every path argument to be non-empty.`,
+      ),
+    );
   if (plan.collection !== null && plan.collection !== collection)
     return err(
       refused(

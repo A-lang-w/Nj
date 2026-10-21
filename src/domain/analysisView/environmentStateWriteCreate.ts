@@ -199,10 +199,15 @@ const followsGenerated = (
       return (
         JSON.stringify(readClock(value)?.format) === JSON.stringify(rule.format)
       );
+    if (rule.rule === "unique")
+      return (
+        isUuid(value) &&
+        !context.state
+          .ofType(created.type)
+          .some((held) => held.fields[rule.field] === value)
+      );
     return (
-      (rule.rule !== "unique" &&
-        (rule.rule !== "identity" || rule.generator !== "uuid")) ||
-      isUuid(value)
+      rule.rule !== "identity" || rule.generator !== "uuid" || isUuid(value)
     );
   }) && followsSequences(context, draft, created);
 

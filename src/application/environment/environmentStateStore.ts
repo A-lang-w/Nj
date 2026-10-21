@@ -19,6 +19,34 @@ import {
   type StateContent,
 } from "./environmentStateDocument.js";
 
+/** Bound estimated collection and sequence-key metadata retained after served creates are deleted. */
+export const ENVIRONMENT_COLLECTION_HISTORY_LIMIT_BYTES = 1024 * 1024;
+
+const collectionHistoryCost = (
+  state: EnvironmentState,
+  type: string,
+  collection: string,
+): number => {
+  const sequenceKeys = new Set<string>();
+  for (const plan of state.writes.values()) {
+    if (!plan.served || plan.target !== type) continue;
+    for (const rule of plan.rules) {
+      if (rule.rule === "sequence" && rule.scope === "collection")
+        sequenceKeys.add(`${plan.tool} ${rule.field} ${collection}`);
+      else if (rule.rule === "identity" && rule.generator === "sequence")
+        sequenceKeys.add(`${type} ${rule.field} ${collection}`);
+    }
+  }
+  return (
+    64 +
+    Buffer.byteLength(collection, "utf8") +
+    [...sequenceKeys].reduce(
+      (bytes, key) => bytes + 64 + Buffer.byteLength(key, "utf8"),
+      0,
+    )
+  );
+};
+
 /** What `data/get` reports: the current state as a `rea-state/v1` document. */
 export interface StateSnapshot {
   readonly rea_state: {
@@ -91,6 +119,8 @@ export class EnvironmentStateStore {
   #started: readonly StateEntity[] = [];
   /** Every collection spelling a type's entities have been held under since the last reset or load, kept when a collection empties. */
   readonly #knownCollections = new Map<string, string[]>();
+  /** Estimated retained collection and sequence-key metadata, reset with the serving history. */
+  #collectionHistoryBytes = 0;
   /** The collections of the Evidence's own state, which stay known after any load. */
   #evidenceCollections: ReadonlyMap<string, readonly string[]> = new Map();
 
@@ -176,6 +206,7 @@ export class EnvironmentStateStore {
     this.#started = this.#content.entities;
     // A reset or load knows the Evidence's spellings and its own, never those of a state it replaced.
     this.#knownCollections.clear();
+    this.#collectionHistoryBytes = 0;
     this.#remember(this.#evidenceCollections);
     this.#remember(this.#typeCollections);
   }
@@ -184,7 +215,14 @@ export class EnvironmentStateStore {
     for (const [type, collections] of named) {
       const known = this.#knownCollections.get(type) ?? [];
       for (const collection of collections)
-        if (!known.includes(collection)) known.push(collection);
+        if (!known.includes(collection)) {
+          known.push(collection);
+          this.#collectionHistoryBytes += collectionHistoryCost(
+            this.state,
+            type,
+            collection,
+          );
+        }
       this.#knownCollections.set(type, known);
     }
   }
@@ -209,6 +247,30 @@ export class EnvironmentStateStore {
       jsonBytes(entity) + (entities.length > 0 ? 1 : 0),
     );
     if (!bytes.ok) return bytes;
+    const known = this.#knownCollections.get(entity.type) ?? [];
+    if (!known.includes(entity.collection)) {
+      const historyBytes =
+        this.#collectionHistoryBytes +
+        collectionHistoryCost(this.state, entity.type, entity.collection);
+      if (historyBytes > ENVIRONMENT_COLLECTION_HISTORY_LIMIT_BYTES)
+        return err(
+          new AnalysisResourceConstraintError(
+            ENVIRONMENT_SERVE_OPERATION,
+            "capacity",
+            "Served collection and sequence history would exceed its retained metadata budget",
+            {
+              max_collection_history_bytes:
+                ENVIRONMENT_COLLECTION_HISTORY_LIMIT_BYTES,
+              collection_history_bytes: historyBytes,
+            },
+            {
+              retryable: false,
+              remediationAction:
+                "Reset the served state to clear collection history, then use fewer distinct collection paths.",
+            },
+          ),
+        );
+    }
     const members = this.inCollection(entity.type, entity.collection);
     const anchor =
       index < members.length
