@@ -17,7 +17,7 @@ const now = Date.now();
 function artifact(id: number, overrides: Record<string, unknown> = {}) {
   return {
     id: id + 100,
-    name: "test-timings",
+    name: "test-timings-full",
     expired: false,
     created_at: new Date(now - 60_000).toISOString(),
     workflow_run: {
@@ -122,20 +122,21 @@ it("selects the latest trusted full run that actually published timing history",
       14: run(14, { path: ".github/workflows/release.yml" }),
       11: run(11, { event: "workflow_dispatch" }),
     },
+    { tier: "full" },
   );
 
   expect(JSON.parse(result.stdout)).toEqual({
     run_id: "11",
-    artifact_name: "test-timings",
+    artifact_name: "test-timings-full",
   });
-  expect(output).toBe("run-id=11\nartifact-name=test-timings\n");
-  expect(calls).toContain("name=test-timings");
+  expect(output).toBe("run-id=11\nartifact-name=test-timings-full\n");
+  expect(calls).toContain("name=test-timings-full");
   expect(calls).toContain("per_page=100");
   expect(calls.match(/actions\/runs\//gu)).toHaveLength(3);
   expect(calls).not.toContain("actions/workflows");
 });
 
-it("rejects expired, foreign, old, and non-full run candidates", async () => {
+it("rejects expired, foreign, old, and pull-request candidates", async () => {
   const { result, output } = await invoke(
     [
       artifact(15, { expired: true }),
@@ -150,6 +151,7 @@ it("rejects expired, foreign, old, and non-full run candidates", async () => {
     {
       12: run(12, { event: "pull_request" }),
     },
+    { tier: "full" },
   );
 
   expect(JSON.parse(result.stdout)).toEqual({
@@ -160,7 +162,14 @@ it("rejects expired, foreign, old, and non-full run candidates", async () => {
 });
 
 it("writes an empty run id when GitHub history is unavailable", async () => {
-  const { result, output } = await invoke([], {}, { apiError: true });
+  const { result, output } = await invoke(
+    [],
+    {},
+    {
+      apiError: true,
+      tier: "full",
+    },
+  );
   expect(JSON.parse(result.stdout)).toEqual({
     run_id: "",
     artifact_name: "",
@@ -178,6 +187,7 @@ it("bounds run lookups to five artifacts even when inventory has more", async ()
         run(id, index < 5 ? { conclusion: "failure" } : {}),
       ]),
     ),
+    { tier: "full" },
   );
 
   expect(JSON.parse(result.stdout)).toEqual({
@@ -204,11 +214,10 @@ it("returns empty history without querying for an invalid repository identity", 
   expect(calls).toBe("");
 });
 
-it("selects a default-branch fast push ahead of legacy full history", async () => {
+it("selects fast history without reading the full-tier artifact", async () => {
   const { result, calls } = await invoke(
     [
       artifact(32, {
-        name: "test-timings",
         created_at: new Date(now - 30_000).toISOString(),
       }),
       artifact(31, {
@@ -236,51 +245,16 @@ it("selects a default-branch fast push ahead of legacy full history", async () =
     artifact_name: "test-timings-fast",
   });
   expect(calls).toContain("name=test-timings-fast");
-  expect(calls).not.toMatch(/(?:^|\s)name=test-timings(?:\s|$)/m);
+  expect(calls).not.toContain("name=test-timings-full");
   expect(calls.match(/actions\/runs\//gu)).toHaveLength(1);
 });
 
-it("rejects pull-request fast history and falls back to legacy timings", async () => {
+it("ignores pull-request fast history instead of borrowing another artifact", async () => {
   const { result, calls } = await invoke(
-    [
-      artifact(41, { name: "test-timings-fast" }),
-      artifact(40, { name: "test-timings" }),
-    ],
+    [artifact(41, { name: "test-timings-fast" }), artifact(40)],
     {
       41: run(41, { event: "pull_request" }),
       40: run(40, { event: "workflow_dispatch" }),
-    },
-    { tier: "fast" },
-  );
-
-  expect(JSON.parse(result.stdout)).toEqual({
-    run_id: "40",
-    artifact_name: "test-timings",
-  });
-  expect(calls).toContain("name=test-timings-fast");
-  expect(calls).toMatch(/(?:^|\s)name=test-timings(?:\s|$)/m);
-});
-
-it("keeps an unqualified fast candidate from being replaced by legacy history", async () => {
-  const fastFailures = [55, 54, 53, 52, 51];
-  const { result, calls } = await invoke(
-    [
-      ...fastFailures.map((id, index) =>
-        artifact(id, {
-          name: "test-timings-fast",
-          created_at: new Date(now - index * 1_000).toISOString(),
-        }),
-      ),
-      artifact(50, { name: "test-timings" }),
-    ],
-    {
-      ...Object.fromEntries(
-        fastFailures.map((id) => [
-          id,
-          run(id, { event: "push", conclusion: "failure" }),
-        ]),
-      ),
-      50: run(50, { event: "schedule" }),
     },
     { tier: "fast" },
   );
@@ -290,8 +264,21 @@ it("keeps an unqualified fast candidate from being replaced by legacy history", 
     artifact_name: "",
   });
   expect(calls).toContain("name=test-timings-fast");
-  expect(calls).not.toMatch(/(?:^|\s)name=test-timings(?:\s|$)/m);
-  expect(calls.match(/actions\/runs\//gu)).toHaveLength(5);
+  expect(calls).not.toContain("name=test-timings-full");
+  expect(calls.match(/actions\/runs\//gu)).toHaveLength(1);
+});
+
+it("leaves history empty when the tier did not publish an artifact", async () => {
+  const { result, output, calls } = await invoke([artifact(70)], {
+    70: run(70, { event: "schedule" }),
+  });
+
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "",
+    artifact_name: "",
+  });
+  expect(output).toBe("run-id=\nartifact-name=\n");
+  expect(calls).toBe("");
 });
 
 it("selects full-tier history without using a newer fast artifact", async () => {

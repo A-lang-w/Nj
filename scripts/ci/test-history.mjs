@@ -4,8 +4,6 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { normalizeWorkflowRun } from "./workflow-run.mjs";
 
-const LEGACY_ARTIFACT = "test-timings";
-const LEGACY_EVENTS = ["schedule", "workflow_dispatch"];
 const TIER_EVENTS = ["push", "schedule", "workflow_dispatch"];
 const TIER_PROFILES = {
   fast: { artifactName: "test-timings-fast", events: TIER_EVENTS },
@@ -32,6 +30,12 @@ function findTimingRun({
     !positiveId(repositoryId)
   )
     return EMPTY_SELECTION;
+  const profile = Object.hasOwn(TIER_PROFILES, tier)
+    ? TIER_PROFILES[tier]
+    : null;
+  // Reused and other tiers do not publish shard history. Missing history uses
+  // Vitest's own assignment rather than another tier's artifact.
+  if (!profile) return EMPTY_SELECTION;
   const deadline = Date.now() + 20_000;
   const api = (...arguments_) => {
     const remaining = deadline - Date.now();
@@ -81,14 +85,11 @@ function findTimingRun({
       )
       .slice(0, MAX_CANDIDATES);
 
-    let sawTrustedCandidates = false;
     for (const artifact of candidates) {
       const run = normalizeWorkflowRun(
         api(`repos/${repository}/actions/runs/${artifact.workflow_run.id}`),
       );
       const runAge = now - Date.parse(run?.created_at);
-      const trustedEvent = events.includes(run.event);
-      if (trustedEvent) sawTrustedCandidates = true;
       if (
         typeof run?.created_at === "string" &&
         Number.isFinite(runAge) &&
@@ -98,36 +99,18 @@ function findTimingRun({
         run.status === "completed" &&
         run.conclusion === "success" &&
         run.workflowPath?.file === ".github/workflows/ci.yml" &&
-        trustedEvent &&
+        events.includes(run.event) &&
         run.head_branch === branch &&
         run.head_repository?.full_name === repository
       )
-        return { runId: String(run.id), sawTrustedCandidates: true };
+        return String(run.id);
     }
-    return { runId: "", sawTrustedCandidates };
+    return "";
   };
 
-  // Fast shards run without coverage. Packing them with the latest full-suite
-  // weights leaves a shard idle after those files speed up and piles the
-  // remaining long files onto the others. Each tier keeps its own artifact.
-  // A trusted candidate that does not qualify must not fall back to the other
-  // tier: an empty result uses Vitest's own assignment. Untrusted producers,
-  // including pull requests, still fall back to legacy history.
-  const profile = Object.hasOwn(TIER_PROFILES, tier)
-    ? TIER_PROFILES[tier]
-    : null;
-  if (profile) {
-    const primary = search(profile);
-    if (primary.runId)
-      return { runId: primary.runId, artifactName: profile.artifactName };
-    if (primary.sawTrustedCandidates) return EMPTY_SELECTION;
-  }
-  const legacy = search({
-    artifactName: LEGACY_ARTIFACT,
-    events: LEGACY_EVENTS,
-  });
-  return legacy.runId
-    ? { runId: legacy.runId, artifactName: LEGACY_ARTIFACT }
+  const runId = search(profile);
+  return runId
+    ? { runId, artifactName: profile.artifactName }
     : EMPTY_SELECTION;
 }
 

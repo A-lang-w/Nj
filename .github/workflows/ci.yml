@@ -409,9 +409,8 @@ jobs:
         with:
           save: ${{ github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
       - run: npm run test:prepare
-      # Fast and full shards measure different file costs. Download the
-      # matching history so a speedup in one tier does not leave the other
-      # packed with stale weights. The legacy artifact remains the fallback.
+      # Fast and full shards measure different file costs. Download only the
+      # matching history so one tier cannot pack the other with its weights.
       - name: Find available trusted timing history
         id: history
         continue-on-error: true

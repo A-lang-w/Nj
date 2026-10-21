@@ -527,9 +527,8 @@ and only from a push, schedule, or manual run. Fast runs publish
 publish it: the lookup reads one unpaginated artifact page, and pull-request
 artifacts would crowd out the default branch. The build job downloads the
 artifact that matches its tier, so fast shards use durations measured without
-coverage and full shards keep coverage-weighted durations. When that tier has no
-qualifying artifact yet, the job falls back to the legacy `test-timings` artifact
-from a successful scheduled or manual run. The download is that small
+coverage and full shards keep coverage-weighted durations. A tier with no
+qualifying artifact leaves history unset. The download is that small
 checkout-relative timing file, not the coverage/JUnit bundle. Timing weights come from Vitest module
 diagnostics and include tests and hooks, worker preparation, environment,
 imports, and setup. Import timings already include transform waits, which are
@@ -1401,10 +1400,11 @@ The build job finds the newest trusted timing artifact for its tier
 (`test-timings-fast` or `test-timings-full`) from a successful default-branch
 push, schedule, or manual CI run, and includes that same report in each shard's
 snapshot. The bounded lookup verifies the producer. Pull-request runs and other
-branches are not producers. A tier with no qualifying artifact falls back to
-legacy `test-timings` from a successful scheduled or manual run, so newer
-schedules that reuse qualification without producing timings do not hide the
-last published artifact. On 2026-10-21 the newest full history was run
+branches are not producers. A tier with no qualifying artifact leaves history
+unset, and Vitest uses its own assignment. A later schedule that reuses
+qualification without uploading timings leaves the previous artifact in place.
+
+On 2026-10-21 the newest full history was run
 `39545047294`, recorded before compiled-CLI session reuse. Fast run
 `39552964873` packed its eight built shards from that history, and those shard
 jobs executed for 319–591 seconds. Replaying that run's file durations through
