@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import { open, stat } from "node:fs/promises";
 import { z } from "zod";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { JavaScriptModuleSemanticIr } from "../../domain/javascript/javascriptModuleSemanticIr.js";
@@ -66,6 +67,37 @@ export const javaScriptTransferByteBudget = (
     Math.max(TRANSFER_BYTES, Math.floor(resultBudgetBytes / 8)),
   );
 
+/** Fixed transfer ceilings. Neither argument nor `max_heap_mb` raises them. */
+export const javaScriptTransferCeilingRemediation = (
+  transferFileBytes: number,
+): string =>
+  `This release has no runtime override for the ${String(JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES)}-byte transfer record ceiling or the transfer file ceiling (effective ${String(transferFileBytes)} bytes, maximum ${String(MAX_TRANSFER_BYTES)} bytes). Raising max_heap_mb does not raise either ceiling. Selecting fewer source_paths does not raise them. Repeating the unchanged request fails the same way.`;
+
+/** Reattach transfer recovery after a worker protocol frame drops remediation. */
+export const javaScriptForwardedTransferRemediation = (
+  limits: Readonly<Record<string, JsonValue>> | null,
+): string | undefined => {
+  const transferFileBytes = limits?.transfer_file_bytes;
+  if (
+    typeof limits?.transfer_record_bytes !== "number" &&
+    typeof transferFileBytes !== "number"
+  )
+    return undefined;
+  return javaScriptTransferCeilingRemediation(
+    typeof transferFileBytes === "number"
+      ? transferFileBytes
+      : MAX_TRANSFER_BYTES,
+  );
+};
+
+const javaScriptTransferCeilingReason = (
+  recordBytes: number,
+  transferFileBytes: number,
+): string =>
+  recordBytes > FRAME_BYTES
+    ? `A complete JavaScript fact exceeds the ${String(FRAME_BYTES)}-byte transfer record ceiling. This release has no runtime override.`
+    : `Complete JavaScript file facts exceed the effective transfer file ceiling of ${String(transferFileBytes)} bytes (maximum ${String(MAX_TRANSFER_BYTES)} bytes). This release has no runtime override.`;
+
 const assertTransferByteBudget = (transferBytes: number): void => {
   if (
     !Number.isSafeInteger(transferBytes) ||
@@ -89,14 +121,15 @@ const encodeTransferRecord = (
     throw new AnalysisResourceConstraintError(
       "analyze_javascript_application",
       "transport",
-      size > FRAME_BYTES
-        ? "A complete JavaScript fact exceeds the transfer record byte budget"
-        : "Complete JavaScript file facts exceed the transfer byte budget",
+      javaScriptTransferCeilingReason(size, transferBytes),
       {
         transfer_record_bytes: FRAME_BYTES,
         transfer_file_bytes: transferBytes,
         record_bytes: size,
         transfer_bytes_at_least: previousBytes + size,
+      },
+      {
+        remediationAction: javaScriptTransferCeilingRemediation(transferBytes),
       },
     );
   return { line, size, kind: record.kind };

@@ -70,7 +70,13 @@ it("bounds unknowns independently of retained nodes and accounts for examined om
     expect.arrayContaining([
       { name: "semantic_graph_unknown_ceiling", value: 2, unit: "items" },
       { name: "semantic_graph_file_unknown_ceiling", value: 2, unit: "items" },
+      { name: "max_semantic_unknowns", value: 2, unit: "items" },
+      { name: "max_semantic_unknowns_per_file", value: 2, unit: "items" },
     ]),
+  );
+  expect(graph.limitations.join("\n")).toContain("max_semantic_unknowns");
+  expect(graph.limitations.join("\n")).toContain(
+    "Omission coverage counts examined emission occurrences",
   );
   expect(javaScriptSemanticGraphSchema.parse(graph)).toEqual(graph);
   expect(

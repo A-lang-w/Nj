@@ -597,7 +597,8 @@ The default semantic capacities are 100000 nodes across the application and
 `--max-semantic-nodes-per-file`), each from 1 to 1000000. The per-file offer is
 also bounded by the remaining application capacity. Raising these controls does
 not bypass worker heap, execution deadline or parent result admission. Truncated
-coverage reports both effective node ceilings; omitted relationships remain
+coverage reports both effective node ceilings and names `max_semantic_nodes`
+and `max_semantic_nodes_per_file`. Omitted relationships remain
 unknown.
 
 Unknown records have independent defaults of 100000 across the application and
@@ -607,7 +608,8 @@ Unknown records have independent defaults of 100000 across the application and
 remaining capacity to the worker, and rejects excess records before adoption.
 Unknown admission happens before canonical identity and provenance construction.
 When capacity is exhausted, coverage is partial and truncated and names both
-effective unknown ceilings. `coverage.omitted_unknown_occurrences` counts examined
+effective unknown ceilings together with `max_semantic_unknowns` and
+`max_semantic_unknowns_per_file`. `coverage.omitted_unknown_occurrences` counts examined
 emission occurrences by family and reason, including repeated emissions. It does
 not claim distinct discarded identities or count frontiers in unexamined source.
 Omitted unknown provenance and IDs are not retained. Existing source, node,
@@ -620,12 +622,20 @@ checkpoint at its 8 MiB bound with the same 6x retention expansion used at
 admission. Earlier checkpoints are already charged to retained bytes; the
 remaining inventory does not multiply the reserve. Streamed file transfers keep the default 512 MiB
 allowance, and can grow with the parent's offered retention budget (8x byte
-expansion), up to 2 GiB. Individual records remain bounded to 8 MiB. The parent
+expansion), up to 2 GiB. Individual records remain bounded to 8 MiB. Exceeding
+either ceiling says this release has no runtime override and that raising
+`max_heap_mb` does not raise it. The parent
 still independently checks actual bytes, record overhead, digests and source
 identities before adopting results.
 
 A source that exhausts the analyzer heap does not terminate the CLI/MCP
-process. Completed static facts are retained, other files can still be analyzed,
+process. The failure names `max_heap_mb` (CLI `--max-heap-mb`), the effective
+mebibytes, the inclusive range 128 to 16384, and the 1024 MiB default. A
+changed value applies on the next analysis, which starts a new worker. It does
+not change a worker that is already running and does not require restarting
+the REA server. Raising `max_heap_mb` does not raise the parent result budget,
+transfer record or transfer file ceilings, the CLI/MCP process heap, or fixed
+parser limits. Completed static facts are retained, other files can still be analyzed,
 and unexamined semantic relationships remain explicit unknowns. The parent
 also checks transfer expansion and accumulated results against its remaining
 heap before accepting semantic facts. A resource-limited result has partial

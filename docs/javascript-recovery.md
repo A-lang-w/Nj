@@ -129,10 +129,11 @@ equivalence remain unknown. No network fetching occurs.
 
 ## Resource policy and verification
 
-Each operation uses one worker, a 1 GiB address-space ceiling and a 120-second
-deadline; it accepts up to 64 MiB of total input across all selected files and
-128 MiB/10000 entries of staged
-output, with 8 MiB per diagnostic/report stream. Exceeding a limit is an explicit
+Each operation uses one worker, a 1 GiB address-space ceiling and a 120000 ms
+deadline. That deadline has no runtime override: raising `analysis_timeout_ms`
+or `max_heap_mb` does not raise it. The operation accepts up to 64 MiB of total
+input across all selected files and 128 MiB/10000 entries of staged output,
+with 8 MiB per diagnostic/report stream. Exceeding a limit is an explicit
 failure with rollback. Selected inputs beyond the total input allowance return a
 non-retryable `resource_constraint` with `resource: "file-size"` and
 `reported_limits.maximum_input_bytes`/`remaining_input_bytes`; input that is not

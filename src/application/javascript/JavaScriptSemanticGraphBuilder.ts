@@ -53,6 +53,7 @@ import {
   JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS,
   JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
   javaScriptAnalysisCoverageLimits,
+  javaScriptSemanticCeilingCoverage,
 } from "../../domain/javascript/javascriptAnalysisResourceControls.js";
 import { projectSemanticFunctionFingerprints } from "./JavaScriptSemanticGraphFingerprintProjection.js";
 import {
@@ -291,6 +292,21 @@ export const createJavaScriptSemanticGraphProjection = (
         unknownIdsByFamily.set(unknown.family, [unknown.unknown_id]);
       else identifiers.push(unknown.unknown_id);
     }
+    const unknownCeilingCoverage = unknownsDropped
+      ? javaScriptSemanticCeilingCoverage(
+          "unknowns",
+          unknownCeiling,
+          fileUnknownCeiling,
+        )
+      : undefined;
+    const nodeCeilingCoverage =
+      truncatedFiles > 0
+        ? javaScriptSemanticCeilingCoverage(
+            "nodes",
+            nodeCeiling,
+            fileNodeCeiling,
+          )
+        : undefined;
     const graph = factory({
       schema: "JavaScriptSemanticRelationGraph",
       root_artifact_sha256: rootArtifactSha256,
@@ -317,34 +333,8 @@ export const createJavaScriptSemanticGraphProjection = (
           truncatedFiles > 0 || unavailableFiles > 0 ? null : 0,
         limits: [
           ...executionLimits.values(),
-          ...(unknownsDropped
-            ? [
-                {
-                  name: "semantic_graph_unknown_ceiling",
-                  value: unknownCeiling,
-                  unit: "items" as const,
-                },
-                {
-                  name: "semantic_graph_file_unknown_ceiling",
-                  value: fileUnknownCeiling,
-                  unit: "items" as const,
-                },
-              ]
-            : []),
-          ...(truncatedFiles > 0
-            ? [
-                {
-                  name: "semantic_graph_node_ceiling",
-                  value: nodeCeiling,
-                  unit: "items" as const,
-                },
-                {
-                  name: "semantic_graph_file_node_ceiling",
-                  value: fileNodeCeiling,
-                  unit: "items" as const,
-                },
-              ]
-            : []),
+          ...(unknownCeilingCoverage?.limits ?? []),
+          ...(nodeCeilingCoverage?.limits ?? []),
         ],
         families: JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => ({
           family,
@@ -356,11 +346,14 @@ export const createJavaScriptSemanticGraphProjection = (
         })),
       },
       limitations: [
-        ...(unknownsDropped
-          ? [
-              "Semantic unknown retention reached an effective capacity. Omission coverage counts examined emission occurrences by family and reason, including repeats; it does not count unexamined source frontiers or distinct discarded identities.",
-            ]
-          : []),
+        ...(unknownCeilingCoverage === undefined
+          ? []
+          : [
+              `${unknownCeilingCoverage.limitation} Omission coverage counts examined emission occurrences by family and reason, including repeats; it does not count unexamined source frontiers or distinct discarded identities.`,
+            ]),
+        ...(nodeCeilingCoverage === undefined
+          ? []
+          : [nodeCeilingCoverage.limitation]),
         "The semantic graph contains static syntax observations and conservative relationship candidates; it does not claim runtime execution.",
         "Local data flow does not claim control-flow-sensitive reaching definitions or arbitrary dynamic property resolution.",
         "Promise ownership covers explicit unshadowed Promise construction, static factories, aggregation, chaining, and await syntax only.",

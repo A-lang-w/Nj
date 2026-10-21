@@ -748,6 +748,14 @@ it("bounds semantic node projection and reports the ceiling in coverage", () => 
       ({ name }) => name === "semantic_graph_node_ceiling",
     ),
   ).toBe(true);
+  expect(graph.coverage.limits).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ name: "max_semantic_nodes" }),
+      expect.objectContaining({ name: "max_semantic_nodes_per_file" }),
+    ]),
+  );
+  expect(graph.limitations.join("\n")).toContain("max_semantic_nodes");
+  expect(graph.limitations.join("\n")).toContain("1 to 1000000");
 });
 
 it("leaves a small application complete and untruncated", () => {
