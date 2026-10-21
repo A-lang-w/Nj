@@ -26,7 +26,10 @@ import {
   type InspectRustBinaryInput,
   type RustBinary,
 } from "../domain/rust/rustBinary.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import {
+  fixedAllowanceOptions,
+  type FixedAllowanceKind,
+} from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readRustBinaryImage } from "./RustBinaryImage.js";
@@ -36,6 +39,7 @@ import {
   RUST_OUTPUT_BYTES,
   RustAuditableFormatFailure,
   RustAuditableResourceFailure,
+  type RustAuditableConstraint,
 } from "./RustAuditableReader.js";
 
 /** Bundled reader identity. Embedded package versions are separate observed facts. */
@@ -191,30 +195,29 @@ const rustcLimitation = (
   ];
 };
 
+/** Each admission bound names the fixed allowance its recovery cannot raise. */
+const RESOURCE_ALLOWANCES = {
+  memory: ["This Rust inspection allowance", "parser"],
+  transport: ["The Rust complete-report allowance", "report"],
+  capacity: ["The rustc commit-path inventory", "count"],
+  cpu: ["The WebAssembly section-walk allowance", "work"],
+} as const satisfies Record<
+  RustAuditableConstraint["resource"],
+  readonly [string, FixedAllowanceKind]
+>;
+
 const failureForPrimary = (cause: unknown, path: string): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof RustAuditableResourceFailure)
+  if (cause instanceof RustAuditableResourceFailure) {
+    const [allowance, kind] = RESOURCE_ALLOWANCES[cause.constraint.resource];
     return new AnalysisResourceConstraintError(
       OPERATION,
       cause.constraint.resource,
       `Selected artifact ${path}: ${cause.message}`,
       cause.constraint.reported_limits,
-      {
-        cause,
-        ...fixedAllowanceOptions(
-          cause.constraint.resource === "capacity"
-            ? "The rustc commit-path inventory"
-            : cause.constraint.resource === "transport"
-              ? "The Rust complete-report allowance"
-              : "This Rust inspection allowance",
-          cause.constraint.resource === "capacity"
-            ? "count"
-            : cause.constraint.resource === "transport"
-              ? "report"
-              : "parser",
-        ),
-      },
+      { cause, ...fixedAllowanceOptions(allowance, kind) },
     );
+  }
   if (cause instanceof RustAuditableFormatFailure)
     return cause.kind === "unsupported"
       ? new AnalysisUnsupportedTargetError(OPERATION, path, cause.message, {

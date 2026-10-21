@@ -151,13 +151,18 @@ mcpTest(
         arguments: { path: flood },
       });
       expect(walk.isError).toBe(true);
-      expect(parseMcpToolError(walk).error).toMatchObject({
+      const walkError = parseMcpToolError(walk).error;
+      expect(walkError).toMatchObject({
         code: "resource_constraint",
+        retryable: false,
         details: {
           resource: "cpu",
           reported_limits: { maximum_wasm_sections: 65_536 },
         },
       });
+      expect(walkError.remediation.action).toContain(
+        "The WebAssembly section-walk allowance is a fixed work allowance.",
+      );
     } finally {
       await session.close();
     }
