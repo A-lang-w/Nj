@@ -6,6 +6,10 @@ import type {
 import type { JavaScriptSemanticIr } from "../../domain/javascript/javascriptSemanticIr.js";
 import type { JavaScriptModuleSemanticIr } from "../../domain/javascript/javascriptModuleSemanticIr.js";
 import type {
+  ExternalSourceMapSection,
+  InvalidSourceMapSection,
+} from "../../domain/sourceMapEnvelope.js";
+import type {
   JavaScriptArtifactFile,
   JavaScriptArtifactFileKind,
 } from "../../domain/javascript/javascriptArtifactFiles.js";
@@ -20,6 +24,9 @@ interface JavaScriptPackageValues {
   readonly name: string | null;
   readonly version: string | null;
   readonly main: string | null;
+  readonly main_status: "default" | "declared" | "invalid";
+  /** Node launch declaration; an empty string requests the package index fallback. */
+  readonly main_entrypoint: string;
   readonly renderer: string | null;
 }
 
@@ -35,6 +42,8 @@ export type JavaScriptPackageObservation = JavaScriptStructuredObservation &
         readonly name: null;
         readonly version: null;
         readonly main: null;
+        readonly main_status: "unavailable";
+        readonly main_entrypoint: null;
         readonly renderer: null;
         readonly limitation: string;
       }
@@ -60,6 +69,8 @@ export interface JavaScriptHtmlInlineScriptsObservation {
 
 /** One original source declared by a local source map. */
 export interface JavaScriptSourceMapOriginal {
+  /** Indexed-map section containing this declaration; empty for regular maps. */
+  readonly section_path: readonly number[];
   /** Index within the leaf map's sources and sourcesContent arrays. */
   readonly source_index: number;
   /** Index across the flattened map's leaf declarations. */
@@ -79,8 +90,10 @@ export type JavaScriptSourceMapObservation = JavaScriptStructuredObservation &
       }
     | {
         readonly status: "invalid";
-        readonly sources: readonly [];
+        readonly sources: readonly JavaScriptSourceMapOriginal[];
         readonly limitation: string;
+        readonly external_sections?: readonly ExternalSourceMapSection[];
+        readonly invalid_sections?: readonly InvalidSourceMapSection[];
       }
   );
 
@@ -169,6 +182,22 @@ export interface AnalyzedJavaScriptArtifactFile<
     readonly limits: Readonly<Record<string, JsonValue>> | null;
   };
 }
+
+/**
+ * A JavaScript source selected for analysis whose worker produced no facts.
+ * The analysis failure carries the reason; the null parse status alone reads
+ * as "nothing there" instead of "not analyzed".
+ */
+export const isSkippedJavaScriptAnalysis = (
+  entry: Pick<
+    AnalyzedJavaScriptArtifactFile,
+    "file" | "javascript" | "analysis_failure"
+  >,
+): boolean =>
+  entry.file.kind === "javascript" &&
+  entry.file.text.included &&
+  entry.javascript === null &&
+  entry.analysis_failure !== undefined;
 
 /** Complete static-analysis projection before graph construction. */
 export interface JavaScriptArtifactAnalysis<
