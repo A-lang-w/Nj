@@ -216,15 +216,16 @@ const webSocketFreshMethodSelection = (
           ? consumer.left
           : undefined;
     if (t.isObjectPattern(pattern)) {
-      const first = pattern.properties[0];
-      if (
-        t.isObjectProperty(first) &&
-        semanticStaticPropertyKey(first.key, first.computed) === key
-      )
+      const selected = pattern.properties.find(
+        (property): property is t.ObjectProperty =>
+          t.isObjectProperty(property) &&
+          semanticStaticPropertyKey(property.key, property.computed) === key,
+      );
+      if (selected !== undefined)
         // Getter entry follows the selected pattern key. Returning the RHS
         // literal here would incorrectly place the getter before an awaited
         // computed key has finished evaluating.
-        return first;
+        return selected;
     }
   }
   const member = state.parentsByNode.get(object);
@@ -654,15 +655,20 @@ const webSocketStoredCalls = (
     calls = new WeakMap();
     // Install before identity queries: projections may reenter execution facts.
     facts.storedCalls = calls;
-    const parameterSuppliers: {
+    type ParameterSupplier = {
       readonly bindingId: string;
       readonly fn: t.Function;
       readonly owner: t.Function;
       readonly call: WebSocketCallSite;
-    }[] = [];
+    };
+    const suppliersByParameter = new Map<string, ParameterSupplier[]>();
     const candidates: (WebSocketStoredCall & {
       readonly fn: t.Function | t.Class;
     })[] = [];
+    const indexedCandidates = new WeakMap<
+      t.Function | t.Class,
+      WeakMap<WebSocketCallSite, Set<t.Node>>
+    >();
     for (const call of state.callSites) {
       // Callee/argument/substitution evaluation must finish before entry. A
       // definite prefix failure is not an activation of the selected body.
@@ -693,13 +699,17 @@ const webSocketStoredCalls = (
           exact !== undefined &&
           t.isFunction(exact.node) &&
           owner !== undefined
-        )
-          parameterSuppliers.push({
+        ) {
+          const supplier = {
             bindingId: binding.bindingId,
             fn: exact.node,
             owner,
             call,
-          });
+          };
+          const suppliers = suppliersByParameter.get(binding.bindingId) ?? [];
+          suppliers.push(supplier);
+          suppliersByParameter.set(binding.bindingId, suppliers);
+        }
       }
     }
     const addCandidates = (
@@ -726,16 +736,14 @@ const webSocketStoredCalls = (
       for (const fn of new Set(functions)) {
         if (t.isNewExpression(call) && !javaScriptFunctionCanConstruct(fn))
           continue;
-        if (
-          candidates.some(
-            (candidate) =>
-              candidate.fn === fn &&
-              candidate.call === call &&
-              candidate.activation?.owner === activation?.owner &&
-              candidate.activation?.call === activation?.call,
-          )
-        )
-          continue;
+        let byCall = indexedCandidates.get(fn);
+        if (byCall === undefined)
+          indexedCandidates.set(fn, (byCall = new WeakMap()));
+        let owners = byCall.get(call);
+        if (owners === undefined) byCall.set(call, (owners = new Set()));
+        const activationCall = activation?.call ?? call;
+        if (owners.has(activationCall)) continue;
+        owners.add(activationCall);
         const candidate =
           activation === undefined
             ? { fn, call, parameters }
@@ -747,7 +755,20 @@ const webSocketStoredCalls = (
     for (const call of state.callSites) {
       if (syntaxEvaluationAlwaysThrows(call)) continue;
       addCandidates(call, noCallbackParameters);
-      for (const supplier of parameterSuppliers) {
+      const rawTarget = webSocketStoredCallTarget(
+        t.isTaggedTemplateExpression(call) ? call.tag : call.callee,
+        state,
+        call,
+        noCallbackParameters,
+        false,
+      );
+      const targetBinding = t.isIdentifier(rawTarget)
+        ? resolveSemanticBindingState(state, rawTarget, rawTarget.name)
+        : undefined;
+      if (targetBinding?.kind !== "parameter") continue;
+      for (const supplier of suppliersByParameter.get(
+        targetBinding.bindingId,
+      ) ?? []) {
         const parameters = new Map<string, readonly t.Function[]>([
           [supplier.bindingId, [supplier.fn]],
         ]);
@@ -1697,6 +1718,56 @@ const webSocketParameterResume = (
     : undefined;
 };
 
+const generatorPatternConsumers = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  Map<
+    string,
+    { readonly pattern: t.ArrayPattern; readonly read: t.Identifier } | null
+  >
+>();
+
+/** Resolve an iterator's one immutable stored consumer without guessing among aliases. */
+const webSocketSinglePatternConsumer = (
+  bindingId: string,
+  state: JavaScriptSemanticAnalysisState,
+):
+  | { readonly pattern: t.ArrayPattern; readonly read: t.Identifier }
+  | undefined => {
+  let cached = generatorPatternConsumers.get(state);
+  if (cached === undefined)
+    generatorPatternConsumers.set(state, (cached = new Map()));
+  if (cached.has(bindingId)) return cached.get(bindingId) ?? undefined;
+  const reads: t.Identifier[] = [];
+  const pending: t.Node[] = [state.program];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (node === undefined) break;
+    if (t.isIdentifier(node)) {
+      const binding = resolveSemanticBindingState(state, node, node.name);
+      if (binding?.bindingId === bindingId) {
+        const parent = state.parentsByNode.get(node);
+        if (!(t.isVariableDeclarator(parent) && parent.id === node))
+          reads.push(node);
+      }
+    }
+    pending.push(...childNodes(node));
+  }
+  if (reads.length !== 1) {
+    cached.set(bindingId, null);
+    return undefined;
+  }
+  const consumer = reads[0]!;
+  const parent = state.parentsByNode.get(consumer);
+  const selected =
+    t.isVariableDeclarator(parent) &&
+    parent.init === consumer &&
+    t.isArrayPattern(parent.id)
+      ? { pattern: parent.id, read: consumer }
+      : undefined;
+  cached.set(bindingId, selected ?? null);
+  return selected;
+};
+
 /** Direct iteration, literal parameters and iterable spreads resume a fresh generator in-turn. */
 const webSocketGeneratorResume = (
   invocation: t.Node,
@@ -1728,6 +1799,38 @@ const webSocketGeneratorResume = (
         ? member.left
         : undefined;
   if (t.isArrayPattern(pattern) && pattern.elements.length > 0) return pattern;
+  if (
+    t.isVariableDeclarator(member) &&
+    member.init === result &&
+    t.isIdentifier(member.id)
+  ) {
+    const binding = resolveSemanticBindingState(
+      state,
+      member.id,
+      member.id.name,
+    );
+    if (
+      binding !== undefined &&
+      !binding.mutable &&
+      binding.initializers.length === 1 &&
+      binding.referenceInitializers.length === 0
+    ) {
+      const consumer = webSocketSinglePatternConsumer(binding.bindingId, state);
+      if (
+        consumer !== undefined &&
+        consumer.pattern.elements.length > 0 &&
+        semanticInitializerPrecedesRead({
+          initializer: result,
+          read: consumer.read,
+          bindingNode: member.id,
+          parents: state.parentsByNode,
+          initializerContexts: webSocketExecutionContexts(result, state),
+          readContexts: webSocketExecutionContexts(consumer.read, state),
+        }) === true
+      )
+        return consumer.pattern;
+    }
+  }
   const parameter = webSocketParameterResume(result, state);
   if (parameter !== undefined) return parameter;
   if (t.isSpreadElement(member) && member.argument === result) {

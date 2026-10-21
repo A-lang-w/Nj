@@ -207,6 +207,28 @@ const sources = [
       'const{run}={get run(){return new Socket("wss://example.test/destructured-getter")}};const Socket=globalThis.WebSocket;',
   },
   {
+    file: "later-destructured-getter.js",
+    source:
+      'const{unused,run}={get run(){new Socket("wss://example.test/second")}};const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "failed-callback-alias.js",
+    endpoint: "wss://example.test/argument",
+    source:
+      'const invoke=run=>run();const connect=()=>new Socket("wss://example.test/argument");function earlier(){try{invoke(alias)}catch{}}earlier();const alias=connect;const Socket=globalThis.WebSocket;invoke(connect);',
+  },
+  {
+    file: "native-string-iterator.js",
+    endpoint: "wss://example.test/iterator",
+    source:
+      '(async()=>{const values=(function*(){yield "a";yield undefined;try{}finally{new Socket("wss://example.test/iterator")}})();const [[x],y=await 0]=values})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "throwing-string-iterator.js",
+    source:
+      'String.prototype[Symbol.iterator]=function*(){throw Error("stop")};(async()=>{const values=(function*(){yield "a";yield undefined;try{}finally{new Socket("wss://example.test/iterator")}})();const [[x],y=await 0]=values})();const Socket=globalThis.WebSocket;',
+  },
+  {
     file: "getter-key-wait.js",
     endpoint: "wss://example.test/getter-key-wait",
     source:

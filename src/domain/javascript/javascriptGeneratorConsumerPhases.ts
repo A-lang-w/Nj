@@ -27,9 +27,12 @@ import {
 import { semanticAssignmentTargetCompletion } from "./javascriptSemanticExpressionResults.js";
 import type { SemanticExecutionFrame } from "./javascriptSemanticEvaluationOrder.js";
 import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
+import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
+import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
 
 interface PatternWaitCache {
   readonly effects: JavaScriptSemanticAnalysisState["literalMemberEffects"];
+  readonly ambientEffectCount: number;
   readonly iterationUnknown: boolean | undefined;
   readonly ownedResultEscape: t.Node | undefined;
   readonly index: number | null;
@@ -554,6 +557,23 @@ const patternCompletedSuspension = (
     if (value.known && value.node !== undefined) {
       const iterable = patternValueNode(value.node);
       const literal = readExactJavaScriptLiteral(iterable);
+      const stringIteratorChanged = state.ambientReferenceEffects.some(
+        ({ path, node: effect }) =>
+          path.length <= 4 &&
+          path.every((key, index) =>
+            semanticPropertyPathKeyMatches(
+              key,
+              ["global", "String", "prototype", "@@iterator"][index] ?? "",
+            ),
+          ) &&
+          semanticEffectTiming(pattern, effect, state) !== "after",
+      );
+      if (
+        literal.found &&
+        typeof literal.value === "string" &&
+        stringIteratorChanged
+      )
+        return "unproven";
       // A visible boxed-primitive iterator prevents a definite acquisition
       // failure, but does not prove that its hooks complete before cleanup.
       if (
@@ -722,6 +742,7 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
   if (
     cached !== undefined &&
     cached.effects === state.literalMemberEffects &&
+    cached.ambientEffectCount === state.ambientReferenceEffects.length &&
     cached.iterationUnknown === state.arrayIterationUnknown &&
     cached.ownedResultEscape === ownedResultEscape
   )
@@ -729,6 +750,7 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
   const cache = (index: number | null, blockedIndex: number | null): void => {
     facts.firstPatternWait.set(pattern, {
       effects: state.literalMemberEffects,
+      ambientEffectCount: state.ambientReferenceEffects.length,
       iterationUnknown: state.arrayIterationUnknown,
       ownedResultEscape,
       index,

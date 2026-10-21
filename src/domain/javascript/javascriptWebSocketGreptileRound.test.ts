@@ -9,6 +9,50 @@ const endpoints = (source: string): string[] => {
 };
 
 it.each([
+  {
+    name: "later destructured getter before WebSocket initialization",
+    source:
+      'const { unused, run } = { get run() { new Socket("wss://example.test/second"); } }; const Socket = globalThis.WebSocket;',
+    expected: [],
+  },
+  {
+    name: "failed early callback alias does not hide the valid later callback",
+    source:
+      'const invoke = run => run(); const connect = () => new Socket("wss://example.test/argument"); function earlier() { try { invoke(alias); } catch {} } earlier(); const alias = connect; const Socket = globalThis.WebSocket; invoke(connect);',
+    expected: ["wss://example.test/argument"],
+  },
+  {
+    name: "native String iteration reaches the later destructuring wait",
+    source:
+      '(async()=>{const values=(function*(){yield "a";yield undefined;try{}finally{new Socket("wss://example.test/iterator")}})();const [[x],y=await 0]=values})();const Socket=globalThis.WebSocket;',
+    expected: ["wss://example.test/iterator"],
+  },
+  {
+    name: "throwing String iterator blocks the unreachable later default",
+    source:
+      'String.prototype[Symbol.iterator]=function*(){throw Error("stop")};(async()=>{const values=(function*(){yield "a";yield undefined;try{}finally{new Socket("wss://example.test/iterator")}})();const [[x],y=await 0]=values})();const Socket=globalThis.WebSocket;',
+    expected: [],
+  },
+])("%s", ({ source, expected }) => {
+  expect(endpoints(source)).toEqual(expected);
+});
+
+it("indexes callback candidates by the parameter actually called", () => {
+  const count = 100;
+  const calls = Array.from(
+    { length: count },
+    (_, index) =>
+      `invoke(() => new Socket("wss://example.test/callback-${index}"));`,
+  ).join("\n");
+  const found = endpoints(
+    `const Socket=globalThis.WebSocket;const invoke=run=>run();${calls}`,
+  );
+  expect(found).toHaveLength(count);
+  expect(found).toContain("wss://example.test/callback-0");
+  expect(found).toContain(`wss://example.test/callback-${count - 1}`);
+});
+
+it.each([
   [
     "keeps callback suppliers paired with their invocation",
     `
