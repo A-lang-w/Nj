@@ -17,6 +17,8 @@ assert.ok(
     "missing-schema",
     "duplicate-first",
     "duplicate-last",
+    "override",
+    "request-options",
   ].includes(mode),
 );
 assert.equal(typeof target, "string");
@@ -28,10 +30,22 @@ let catalogRequests = 0;
 let corruptedReplies = 0;
 let toolCalls = 0;
 let connection = 0;
+const toolTimeouts = [];
 Client.prototype.request = async function (input, options) {
   if (input.method === "tools/list") catalogRequests++;
-  if (input.method === "tools/call") toolCalls++;
+  if (input.method === "tools/call") {
+    toolCalls++;
+    toolTimeouts.push(options?.timeout ?? null);
+  }
   const result = await request.call(this, input, options);
+  if (
+    mode === "override" &&
+    input.method === "tools/call" &&
+    input.params.name === "binary_session"
+  ) {
+    corruptedReplies++;
+    return { ...result, structuredContent: { result: 777 } };
+  }
   if (input.method === "tools/list") {
     if (mode === "missing-schema")
       return {
@@ -157,6 +171,24 @@ try {
   else
     await artifact.withBundleResourcesMcp(target, async (client) => {
       if (mode === "reuse") await Promise.all([status(client), status(client)]);
+      if (mode === "override")
+        await artifact.artifactMcpCall(
+          client,
+          { name: "binary_session", arguments: {} },
+          {
+            toolDefinition: {
+              name: "binary_session",
+              inputSchema: { type: "object" },
+              outputSchema: { type: "object" },
+            },
+          },
+        );
+      if (mode === "request-options")
+        await artifact.artifactMcpCall(
+          client,
+          { name: "binary_session", arguments: {} },
+          { timeout: 12_345 },
+        );
     });
 } catch (cause) {
   error = {
@@ -171,6 +203,7 @@ process.stdout.write(
     catalogRequests,
     corruptedReplies,
     toolCalls,
+    toolTimeouts,
     error: error ?? null,
   }) + "\n",
 );

@@ -14,6 +14,7 @@ const observationSchema = z.strictObject({
   catalogRequests: z.number().int().nonnegative(),
   corruptedReplies: z.number().int().nonnegative(),
   toolCalls: z.number().int().nonnegative(),
+  toolTimeouts: z.array(z.number().nullable()),
   error: z
     .strictObject({
       name: z.string(),
@@ -52,6 +53,7 @@ it("validates the real resource admission reply against its advertised schema", 
     catalogRequests: 1,
     corruptedReplies: 0,
     toolCalls: 1,
+    toolTimeouts: [null],
     error: null,
   });
 });
@@ -97,6 +99,20 @@ it("rejects an omitted output schema before calling the advertised tool", async 
   expect(result.accepted).toBe(false);
   expect(result.toolCalls).toBe(0);
   expect(result.error?.message).toMatch(/omitted its output schema/u);
+});
+
+it("rejects a supplied schema override before dispatching that call", async () => {
+  const result = await probe("override");
+  expect(result.accepted).toBe(false);
+  expect(result.toolCalls).toBe(1);
+  expect(result.error?.message).toMatch(/owns the advertised schema/u);
+});
+
+it("preserves explicit request timeouts on schema-bound calls", async () => {
+  const result = await probe("request-options");
+  expect(result.accepted).toBe(true);
+  expect(result.catalogRequests).toBe(1);
+  expect(result.toolTimeouts).toEqual([null, 12_345]);
 });
 
 it.each(["duplicate-first", "duplicate-last"])(

@@ -264,6 +264,8 @@ tool without compiling unrelated catalog schemas. REA registers process-static
 tool contracts; bindings share one discovery per negotiated connection and are
 discarded on reconnect or failed discovery. Keep raw artifact calls on this
 shared path and retain explicit request options such as timeouts.
+Caller-supplied tool definitions are rejected: the helper owns selection from
+the advertised catalog so a stale or permissive schema cannot bypass it.
 
 The regression fixture changes only `canonical_path` in a real stdio response
 to a number. The old helper accepts that response; the named schema must reject

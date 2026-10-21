@@ -51,8 +51,12 @@ const advertisedTool = async (client, name) => {
 /** Call an advertised tool with SDK output validation of its actual schema. */
 export async function artifactMcpCall(client, parameters, options = {}) {
   options.signal?.throwIfAborted();
-  const toolDefinition =
-    options.toolDefinition ?? (await advertisedTool(client, parameters.name));
+  assert.equal(
+    options.toolDefinition,
+    undefined,
+    "Artifact verification owns the advertised schema; pass request options only",
+  );
+  const toolDefinition = await advertisedTool(client, parameters.name);
   assert.notEqual(
     toolDefinition.outputSchema,
     undefined,
