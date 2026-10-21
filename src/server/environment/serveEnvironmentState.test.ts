@@ -5,7 +5,7 @@ import {
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { timedCaptureEvidence } from "../../../tests/fixtures/analysisView.js";
 import {
@@ -14,6 +14,8 @@ import {
 } from "../../../tests/fixtures/environmentServe.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
+import { ArtifactResourceRetryFailure } from "../../artifacts/ArtifactResourceScope.js";
+import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import {
   environmentCard,
   STATE_INTAKE_EXTENSION,
@@ -91,6 +93,33 @@ const dataPlane = (
 
 const loginOf = (store: EnvironmentStateStore) =>
   store.entity("/api/users", "/api/users", "2")?.fields.login;
+
+/** The `file://` uri of a fresh file holding the renamed document. */
+const renamedStateUri = async (): Promise<string> => {
+  const root = await createTestTempDirectory("rea-environment-state-close-");
+  const path = join(root, "state.json");
+  await writeFile(path, JSON.stringify(renamedDocument()));
+  return pathToFileURL(path).href;
+};
+
+/** Fail every close of the first state file opened while `failing()` holds, recording its owner; restored when the test ends. */
+const failFirstFileClose = (failing: () => boolean = () => true) => {
+  const owners: OwnedFileHandle[] = [];
+  const close = OwnedFileHandle.prototype.close;
+  const spy = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(async function (this: OwnedFileHandle) {
+      if (owners.length === 0) owners.push(this);
+      if (this === owners[0] && failing())
+        throw new Error("injected state file close failure");
+      await close.call(this);
+    });
+  onTestFinished(async () => {
+    spy.mockRestore();
+    for (const owner of owners) if (owner.handle.fd >= 0) await owner.close();
+  });
+  return owners;
+};
 
 /** A `data/add` message loading the document an https uri names. */
 const addByUri = (
@@ -353,6 +382,31 @@ describe("state data plane intake", () => {
     const notified = await plane.post({ jsonrpc: "2.0", method: "data/reset" });
     expect(notified.status).toBe(202);
     expect(loginOf(plane.store)).toBe("probe");
+  });
+});
+
+describe("state data plane file closes", () => {
+  it("keeps a state file whose close failed and closes it before the next file read", async () => {
+    const plane = dataPlane();
+    const uri = await renamedStateUri();
+    let failing = true;
+    const owners = failFirstFileClose(() => failing);
+    const failed = await plane.add({ kind: "file", file: { uri } });
+    expect(failed).toMatchObject({
+      error: {
+        code: -32000,
+        message: expect.stringContaining("could not be closed"),
+      },
+    });
+    expect(JSON.stringify(failed)).not.toContain(uri);
+    expect(loginOf(plane.store)).toBe("probe");
+    expect(owners[0]?.handle.fd).toBeGreaterThanOrEqual(0);
+    failing = false;
+    await expect(
+      plane.add({ kind: "file", file: { uri } }),
+    ).resolves.toMatchObject({ result: {} });
+    expect(owners[0]?.handle.fd).toBe(-1);
+    expect(loginOf(plane.store)).toBe("renamed");
   });
 });
 
@@ -796,6 +850,46 @@ describe("serveEnvironment with a state", () => {
     expect(performance.now() - started).toBeLessThan(10_000);
     expect(held.signals[0]?.aborted).toBe(true);
     await answered;
+  });
+
+  it("refuses file reads while an earlier state file stays open, and reports it on close until it closes", async () => {
+    const environment = await serveState({ source, state });
+    const uri = await renamedStateUri();
+    let failing = true;
+    const owners = failFirstFileClose(() => failing);
+    const add = async (part: unknown) =>
+      (
+        await fetch(new URL(ENVIRONMENT_RPC_PATH, environment.url), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "data/add",
+            params: { parts: [part] },
+          }),
+        })
+      ).json();
+    await expect(add({ kind: "file", file: { uri } })).resolves.toMatchObject({
+      error: {
+        code: -32000,
+        message: expect.stringContaining("could not be closed"),
+      },
+    });
+    await expect(add({ kind: "file", file: { uri } })).resolves.toMatchObject({
+      error: { code: -32000, message: expect.stringContaining("still open") },
+    });
+    // Documents that need no file still load.
+    await expect(
+      add({ kind: "data", data: renamedDocument() }),
+    ).resolves.toMatchObject({ result: {} });
+    await expect(environment.close()).rejects.toBeInstanceOf(
+      ArtifactResourceRetryFailure,
+    );
+    expect(owners[0]?.handle.fd).toBeGreaterThanOrEqual(0);
+    failing = false;
+    await expect(environment.close()).resolves.toBeUndefined();
+    expect(owners[0]?.handle.fd).toBe(-1);
   });
 
   it("serves query POSTs from their recordings and leaves state-changing writes out", async () => {

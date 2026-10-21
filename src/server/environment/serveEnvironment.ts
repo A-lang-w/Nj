@@ -18,6 +18,7 @@ import {
   type EnvironmentToolAnswer,
 } from "../../application/environment/environmentStateAnswer.js";
 import { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
   environmentCard,
   REPLAY_CATALOG_INSTRUCTIONS,
@@ -376,6 +377,8 @@ export const serveEnvironment = async (
   const stop = (): void => {
     stopping.abort(new Error("The agent environment is stopping"));
   };
+  // A state file whose close failed stays owned here: later file reads retry it, and close reports it if it is still open.
+  const stateFiles = new ArtifactResourceScope();
   const served = await serveStreamableHttp({
     host,
     port,
@@ -394,6 +397,7 @@ export const serveEnvironment = async (
                 : { fetchState: options.fetchState }),
             },
             stopping.signal,
+            stateFiles,
           ),
     ),
     ...(logger === undefined ? {} : { logger }),
@@ -412,9 +416,10 @@ export const serveEnvironment = async (
       stop();
       return served.prepareShutdown();
     },
-    close: () => {
+    close: async () => {
       stop();
-      return served.close();
+      await served.close();
+      await stateFiles.close();
     },
   });
 };

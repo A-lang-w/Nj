@@ -1,6 +1,9 @@
-import type { FileHandle } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
+import {
+  ArtifactResourceRetryFailure,
+  type ArtifactResourceScope,
+} from "../../artifacts/ArtifactResourceScope.js";
 import { STATE_INTAKE_LIMIT_BYTES } from "../../application/environment/environmentStateDocument.js";
 import { mediaTypeEssence } from "../../domain/analysisView/webNetworkRouteTemplates.js";
 import { isExactJsonNumber } from "../../domain/exactJsonNumber.js";
@@ -10,7 +13,10 @@ import {
   RegularFileCapacityError,
   readStableFileBytes,
 } from "../../filesystem/readStableFileBytes.js";
-import { openRegularFile } from "../../filesystem/RegularFile.js";
+import {
+  RegularFileCleanupFailure,
+  withOwnedRegularFile,
+} from "../../filesystem/OwnedRegularFile.js";
 
 /** Why a named file or download could not be read, or a call was cancelled: a category naming neither the uri nor the content. */
 export type IntakeFailure =
@@ -139,39 +145,53 @@ const parseDocumentBytes = (bytes: Uint8Array): Result<unknown, RpcError> => {
     : err(invalidParams("the file is not JSON"));
 };
 
-/** Read one regular file within the intake limit and close it before answering. */
+const CLOSE_FAILED: RpcError = {
+  code: SERVER_ERROR,
+  message:
+    "the state file could not be closed; the server retries the close before the next file read and at shutdown",
+};
+
+const STILL_OPEN: RpcError = {
+  code: SERVER_ERROR,
+  message:
+    "an earlier state file is still open after its close failed, so no file was read",
+};
+
+/** Read one regular file within the intake limit; a descriptor whose close fails stays with `files`, which retries it before each later read. */
 const readStateFile = async (
   path: string,
+  files: ArtifactResourceScope,
 ): Promise<Result<Buffer, RpcError>> => {
-  let handle: FileHandle;
   try {
-    handle = await openRegularFile(path, { symlinks: "follow" });
-  } catch (cause: unknown) {
-    return err(unreadable(fileFailure(cause)));
-  }
-  let read: Result<Buffer, RpcError>;
-  try {
-    read = ok(
-      await readStableFileBytes(handle, path, STATE_INTAKE_LIMIT_BYTES, {
-        symlinks: "follow",
-      }),
+    return ok(
+      await files.run(() =>
+        withOwnedRegularFile(
+          path,
+          {
+            symlinks: "follow",
+            retainFailedClose: (owner) =>
+              files.retain({
+                kind: "file-handle",
+                resource: path,
+                handle: owner,
+              }),
+          },
+          (handle) =>
+            readStableFileBytes(handle, path, STATE_INTAKE_LIMIT_BYTES, {
+              symlinks: "follow",
+            }),
+        ),
+      ),
     );
   } catch (cause: unknown) {
-    read = err(
+    if (cause instanceof RegularFileCleanupFailure) return err(CLOSE_FAILED);
+    if (cause instanceof ArtifactResourceRetryFailure) return err(STILL_OPEN);
+    return err(
       cause instanceof RegularFileCapacityError
         ? TOO_LARGE
         : unreadable(fileFailure(cause)),
     );
   }
-  try {
-    await handle.close();
-  } catch {
-    return err({
-      code: SERVER_ERROR,
-      message: "the state file could not be closed after reading",
-    });
-  }
-  return read;
 };
 
 /** Settles only by rejecting when the signal aborts; the rejection is always handled. */
@@ -294,6 +314,7 @@ const fileBytes = async (
   file: Readonly<Record<string, unknown>>,
   intake: StateIntake,
   cancel: AbortSignal,
+  files: ArtifactResourceScope,
 ): Promise<Result<Uint8Array, RpcError>> => {
   if (typeof file.bytes === "string" && file.uri === undefined) {
     if (!BASE64.test(file.bytes))
@@ -314,14 +335,15 @@ const fileBytes = async (
   if (url.protocol !== "file:")
     return err(invalidParams("a file uri is a file:// or https:// URL"));
   const path = localFilePath(url);
-  return path.ok ? readStateFile(path.value) : path;
+  return path.ok ? readStateFile(path.value, files) : path;
 };
 
-/** The state document one `data/add` part carries, parsed but not yet validated; `cancel` ends a download. */
+/** The state document one `data/add` part carries, parsed but not yet validated; `cancel` ends a download and `files` owns file descriptors whose close failed. */
 export const partDocument = async (
   part: unknown,
   intake: StateIntake,
   cancel: AbortSignal,
+  files: ArtifactResourceScope,
 ): Promise<Result<unknown, RpcError>> => {
   if (isRecord(part) && part.kind === "data" && isRecord(part.data))
     return ok(part.data);
@@ -338,6 +360,6 @@ export const partDocument = async (
       mediaTypeEssence(mimeType) !== "application/json")
   )
     return err(invalidParams("a file part's mimeType is application/json"));
-  const bytes = await fileBytes(part.file, intake, cancel);
+  const bytes = await fileBytes(part.file, intake, cancel, files);
   return bytes.ok ? parseDocumentBytes(bytes.value) : bytes;
 };

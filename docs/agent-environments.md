@@ -442,6 +442,12 @@ are answered `-32000` with `error.data.reason` `cancelled` without running. A
 cancelled call leaves the state unchanged, and shutdown never waits for a
 download.
 
+A `file://` state file whose close fails stays owned by the server, and
+the `data/add` gets `-32000`. The next `file://` load retries that close first
+and, while it still fails, answers `-32000` without reading another file;
+inline and `https://` documents still load. Closing the server retries it once
+more and fails with the unfinished close rather than dropping the descriptor.
+
 One `/agentenv` response carries at most 64 MiB of replies, twice the 32 MiB
 a loaded document may hold: room for a `data/get` of a loaded state, while a
 batch of reads cannot multiply a large state into one body. Replies are
