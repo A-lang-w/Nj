@@ -224,7 +224,9 @@ static napi_value readOutput(napi_env env, Handle& read, bool& ended) {
       if (!PeekNamedPipe(read.get(), nullptr, 0, nullptr, &available, nullptr)) {
         require(GetLastError() == ERROR_BROKEN_PIPE,
                 "Observe owned process output failed");
-        read.reset();
+        // Broken pipe is EOF for the bytes already queued. A failed close keeps
+        // this handle for process_close instead of dropping those bytes.
+        read.release();
         ended = true;
         break;
       }
@@ -411,7 +413,7 @@ napi_value processCall(napi_env env, const std::wstring& operation, const std::v
   require(args.size() == 1, "Wrong native process handle argument count", L"", ERROR_INVALID_PARAMETER);
   auto& process = static_cast<Process&>(resource(env, args[0], Kind::Process));
   if (operation == L"process_stdin_close") {
-    process.stdinWrite.reset();
+    requireReleased(process.stdinWrite, "Close owned process stdin failed");
     return null(env);
   }
   if (operation == L"process_poll") {
@@ -446,8 +448,15 @@ napi_value processCall(napi_env env, const std::wstring& operation, const std::v
   }
   if (operation == L"process_close") {
     // Closing the job is the crash-safe authority; no PID enumeration is used.
-    process.job.reset(); process.process.reset(); process.stdoutRead.reset(); process.stderrRead.reset(); process.stdinWrite.reset();
-    process.notifications.reset();
+    // A failed close leaves that handle on this process so a later close can
+    // retry it. The process stays open until every owned handle is released.
+    retryRetainedNativeHandles();
+    requireReleased(process.job, "Close owned Job Object failed");
+    requireReleased(process.process, "Close owned process failed");
+    requireReleased(process.stdoutRead, "Close owned process stdout failed");
+    requireReleased(process.stderrRead, "Close owned process stderr failed");
+    requireReleased(process.stdinWrite, "Close owned process stdin failed");
+    requireReleased(process.notifications, "Close owned process notifications failed");
     process.closed = true;
     return null(env);
   }
