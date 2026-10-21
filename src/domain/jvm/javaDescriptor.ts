@@ -11,8 +11,11 @@
  * which this reader does not reproduce.
  */
 
-/** HotSpot applies the JSR 202 unqualified-name rules from this class version. */
-const UNQUALIFIED_NAME_MIN_MAJOR = 49;
+/**
+ * Class version 49 (Java 5, HotSpot `JAVA_1_5_VERSION`): HotSpot applies the
+ * JSR 202 unqualified-name rules and parses LocalVariableTypeTable from here.
+ */
+export const JAVA_5_MAJOR_VERSION = 49;
 
 /** JVMS §4.3.2: an array type has at most 255 dimensions. */
 const MAX_ARRAY_DIMENSIONS = 255;
@@ -62,7 +65,7 @@ export const isLegalFieldName = (
   name: string,
   majorVersion: number,
 ): boolean =>
-  majorVersion >= UNQUALIFIED_NAME_MIN_MAJOR
+  majorVersion >= JAVA_5_MAJOR_VERSION
     ? isUnqualifiedName(name, false)
     : isLegacyIdentifier(name, false);
 
@@ -81,7 +84,7 @@ export const isLegalFieldDescriptor = (
   const end = descriptor.indexOf(";", at + 1);
   if (end !== descriptor.length - 1) return false;
   const className = descriptor.slice(at + 1, end);
-  return majorVersion >= UNQUALIFIED_NAME_MIN_MAJOR
+  return majorVersion >= JAVA_5_MAJOR_VERSION
     ? isUnqualifiedName(className, true)
     : isLegacyIdentifier(className, true);
 };

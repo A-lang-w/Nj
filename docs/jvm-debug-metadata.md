@@ -104,13 +104,13 @@ The normalized result binds every fact to exact identity:
 
 ### Method debugging state
 
-| `state`          | Meaning                                                                                                    |
-| ---------------- | ---------------------------------------------------------------------------------------------------------- |
-| `present`        | both line and local-variable tables decoded; or line numbers decoded and `max_locals` is 0                 |
-| `partial`        | one table present, the other absent                                                                        |
-| `stripped`       | a body exists but carries neither table (e.g. `javac -g:none`)                                             |
-| `malformed`      | a present table failed to decode or violates one of the HotSpot constraints listed below; entries are kept |
-| `not-applicable` | no `Code` attribute (native/abstract, or no body)                                                          |
+| `state`          | Meaning                                                                                                                                                                                                                            |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `present`        | both line and local-variable tables decoded; or line numbers decoded and `max_locals` is 0                                                                                                                                         |
+| `partial`        | one table present, the other absent                                                                                                                                                                                                |
+| `stripped`       | a body exists but carries neither table (e.g. `javac -g:none`)                                                                                                                                                                     |
+| `malformed`      | a present table failed to decode or violates one of the HotSpot constraints listed below; entries are kept. A `local_variable_type_table` in a class below version 49 does not count, because HotSpot ignores it there (see below) |
+| `not-applicable` | no `Code` attribute (native/abstract, or no body)                                                                                                                                                                                  |
 
 A method with `max_locals` 0 has no local at all (not even `this` or a
 parameter), so `javac -g` emits no `LocalVariableTable` for it; that absent table

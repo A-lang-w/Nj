@@ -22,7 +22,11 @@ import {
   RETAINED_ATTRIBUTES,
   resolveConstantUtf8,
 } from "./javaClassFile.js";
-import { isLegalFieldDescriptor, isLegalFieldName } from "./javaDescriptor.js";
+import {
+  JAVA_5_MAJOR_VERSION,
+  isLegalFieldDescriptor,
+  isLegalFieldName,
+} from "./javaDescriptor.js";
 
 /**
  * Whether a named attribute was found and whether it decoded cleanly.
@@ -383,7 +387,7 @@ const classifyMethod = (
     // Before version 49 the JVM ignores LocalVariableTypeTable as an
     // unknown attribute, so its table cannot make the method malformed.
     (localVariableTypes.presence === "malformed" &&
-      majorVersion >= LOCAL_VARIABLE_TYPE_TABLE_MIN_MAJOR)
+      majorVersion >= JAVA_5_MAJOR_VERSION)
   ) {
     return "malformed";
   }
@@ -397,9 +401,6 @@ const classifyMethod = (
   if (!hasLine && !hasLocals) return "stripped";
   return "partial";
 };
-
-/** HotSpot parses LocalVariableTypeTable only from class version 49 (Java 5). */
-const LOCAL_VARIABLE_TYPE_TABLE_MIN_MAJOR = 49;
 
 /** JVMS §4.7.3: `code_length` must be greater than zero and less than 65536. */
 const MAX_CODE_LENGTH = 65_535;
