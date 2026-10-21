@@ -410,3 +410,62 @@ it("preserves path-selected inventory roles for XML content", () => {
     format: "file",
   });
 });
+
+describe("extended artifact signature classification", () => {
+  it("classifies single-stream compression formats", () => {
+    const gzipBytes = Buffer.from([0x1f, 0x8b, 0x08, 0x00]);
+    expect(classifyArtifactBytesAtPath("payload.gz", gzipBytes)).toEqual({
+      kind: "container",
+      format: "gzip",
+    });
+
+    const bzipBytes = Buffer.from([0x42, 0x5a, 0x68, 0x39]);
+    expect(classifyArtifactBytesAtPath("payload.bz2", bzipBytes)).toEqual({
+      kind: "container",
+      format: "bzip2",
+    });
+
+    const xzBytes = Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
+    expect(classifyArtifactBytesAtPath("payload.xz", xzBytes)).toEqual({
+      kind: "container",
+      format: "xz",
+    });
+  });
+
+  it("classifies advanced multi-file archives", () => {
+    const sevenZipBytes = Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]);
+    expect(classifyArtifactBytesAtPath("archive.7z", sevenZipBytes)).toEqual({
+      kind: "container",
+      format: "7z",
+    });
+  });
+
+  it("classifies bytecode and web formats", () => {
+    const wasmBytes = Buffer.from([
+      0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+    ]);
+    expect(classifyArtifactBytesAtPath("module.wasm", wasmBytes)).toEqual({
+      kind: "executable",
+      format: "wasm",
+    });
+
+    const dexBytes = Buffer.from([
+      0x64, 0x65, 0x78, 0x0a, 0x30, 0x33, 0x35, 0x00,
+    ]);
+    expect(classifyArtifactBytesAtPath("classes.dex", dexBytes)).toEqual({
+      kind: "executable",
+      format: "dex",
+    });
+  });
+
+  it("classifies database formats", () => {
+    const sqliteBytes = Buffer.concat([
+      Buffer.from("SQLite format 3\0"),
+      Buffer.alloc(84),
+    ]);
+    expect(classifyArtifactBytesAtPath("app.db", sqliteBytes)).toEqual({
+      kind: "resource",
+      format: "sqlite",
+    });
+  });
+});

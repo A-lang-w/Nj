@@ -167,6 +167,7 @@ export interface ArtifactReader {
     | ZipPackageFormat
     | "asar"
     | "godot-pck"
+    | "gzip"
     | "file";
   entries(
     signal?: AbortSignal,

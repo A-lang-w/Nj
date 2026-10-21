@@ -70,6 +70,16 @@ const subjectFormatSchema = z.enum([
   "mach-o-universal",
   "javascript-bundle",
   "entitlements",
+  "gzip",
+  "7z",
+  "tar",
+  "bzip2",
+  "xz",
+  "wasm",
+  "sqlite",
+  "dex",
+  "jvm-class",
+  "python-bytecode",
 ]);
 const subjectBaseSchema = z.strictObject({
   name: z.string().min(1),

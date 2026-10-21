@@ -114,7 +114,8 @@ export const classifyAndHashRootForInventory = async (
     const retainSource =
       isZipPackageFormat(format) ||
       format === "mach-o-universal" ||
-      format === "godot-pck";
+      format === "godot-pck" ||
+      format === "gzip";
     outcome = {
       kind: "completed",
       value: {

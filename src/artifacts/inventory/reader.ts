@@ -8,6 +8,7 @@ import { GodotPckArtifactReader } from "../GodotPckArtifactReader.js";
 import { MachOSliceArtifactReader } from "../MachOSliceArtifactReader.js";
 import { NativeDmgArtifactReader } from "../NativeDmgArtifactReader.js";
 import { ZipArtifactReader } from "../ZipArtifactReader.js";
+import { GzipArtifactReader } from "../GzipArtifactReader.js";
 import type {
   ArtifactInventoryCoverage,
   ArtifactOccurrence,
@@ -33,6 +34,8 @@ export const createReader = (
       return new AsarArtifactReader(path);
     case "godot-pck":
       return new GodotPckArtifactReader(path, rootSource);
+    case "gzip":
+      return new GzipArtifactReader(path, rootSource);
     case "mach-o-universal":
       return process.platform === "darwin"
         ? new MachOSliceArtifactReader(path, environment, undefined, rootSource)

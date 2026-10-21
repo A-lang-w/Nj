@@ -35,6 +35,7 @@ import {
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
 } from "../../domain/apple/machoContainer.js";
+import { isJvmClassFile } from "../../domain/apple/jvmClassFile.js";
 
 /** Mutable internal occurrence used until root-bound IDs are known. */
 export interface MutableOccurrence {
@@ -530,6 +531,11 @@ export const classifyArtifactContent = (
   return artifactRoleForFormat(path, format);
 };
 
+const hasPythonBytecodeMagic = (magic: number): boolean =>
+  (magic >= 3000 && magic <= 4000) ||
+  (magic >= 62000 && magic <= 63000) ||
+  (magic >= 20000 && magic <= 25000);
+
 const artifactRoleForFormat = (
   path: string,
   format: ArtifactOccurrence["artifact_format"],
@@ -544,6 +550,11 @@ const artifactRoleForFormat = (
     };
   if (format === "plist") return { kind: "plist", format };
   if (format === "godot-pck") return { kind: "container", format };
+  if (["gzip", "7z", "tar", "bzip2", "xz"].includes(format))
+    return { kind: "container", format };
+  if (format === "sqlite") return { kind: "resource", format };
+  if (["wasm", "dex", "jvm-class", "python-bytecode"].includes(format))
+    return { kind: "executable", format };
   return {
     kind: ["native-addon", "dynamic-library"].includes(byPath.kind)
       ? byPath.kind
@@ -562,10 +573,67 @@ export const classifyArtifactBytes = (
   if (hasGodotPckHeader(prefix)) return "godot-pck";
   if (hasBinaryPlistSignature(prefix)) return "plist";
   if (hasXmlPlistSignature(prefix)) return "plist";
+  if (prefix.length >= 2 && prefix[0] === 0x1f && prefix[1] === 0x8b)
+    return "gzip";
+  if (
+    prefix.length >= 6 &&
+    prefix[0] === 0x37 &&
+    prefix[1] === 0x7a &&
+    prefix[2] === 0xbc &&
+    prefix[3] === 0xaf &&
+    prefix[4] === 0x27 &&
+    prefix[5] === 0x1c
+  )
+    return "7z";
+  if (
+    prefix.length >= 3 &&
+    prefix[0] === 0x42 &&
+    prefix[1] === 0x5a &&
+    prefix[2] === 0x68
+  )
+    return "bzip2";
+  if (
+    prefix.length >= 6 &&
+    prefix[0] === 0xfd &&
+    prefix[1] === 0x37 &&
+    prefix[2] === 0x7a &&
+    prefix[3] === 0x58 &&
+    prefix[4] === 0x5a &&
+    prefix[5] === 0x00
+  )
+    return "xz";
+  if (prefix.length >= 4 && prefix.readUInt32BE(0) === 0x0061736d)
+    return "wasm";
+  if (
+    prefix.length >= 16 &&
+    prefix.subarray(0, 16).toString("ascii").startsWith("SQLite format 3")
+  )
+    return "sqlite";
+  if (
+    prefix.length >= 8 &&
+    prefix[0] === 0x64 &&
+    prefix[1] === 0x65 &&
+    prefix[2] === 0x78 &&
+    prefix[3] === 0x0a
+  )
+    return "dex";
+  if (
+    prefix.length >= 262 &&
+    prefix.subarray(257, 262).toString("ascii") === "ustar"
+  )
+    return "tar";
+  if (
+    prefix.length >= 4 &&
+    prefix[2] === 0x0d &&
+    prefix[3] === 0x0a &&
+    hasPythonBytecodeMagic(prefix.readUInt16LE(0))
+  )
+    return "python-bytecode";
   const fatFormat = classifyFatArtifact(prefix, fileSize, fatSliceHeaders);
   if (fatFormat !== null) return fatFormat;
   if (prefix.length >= 4) {
     const magic = prefix.readUInt32BE(0);
+    if (magic === 0xcafebabe && isJvmClassFile(prefix)) return "jvm-class";
     if ([0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe].includes(magic))
       return "mach-o";
     if (prefix.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
