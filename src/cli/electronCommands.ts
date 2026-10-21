@@ -217,10 +217,16 @@ const registerElectronTargetList = (
       withCommandCancellation((signal) =>
         logCliCommand(logger, "list-electron-targets", async () => {
           const context = await electronObservationContext();
-          const parsed = listElectronTargetsInputSchema.safeParse({
+          const input = {
             cdp_endpoint: args.endpoint,
-          });
-          if (!parsed.success) return inputError("list_electron_targets");
+          };
+          const parsed = listElectronTargetsInputSchema.safeParse(input);
+          if (!parsed.success)
+            return inputError(
+              "list_electron_targets",
+              parsed.error.issues,
+              input,
+            );
           const { listElectronTargets } =
             await import("../application/javascript/ElectronObservationService.js");
           return await finishAnalysisCommand(
@@ -255,13 +261,19 @@ const registerElectronPageInspection = (
       withCommandCancellation((signal) =>
         logCliCommand(logger, "inspect-electron-page", async () => {
           const context = await electronObservationContext();
-          const parsed = inspectElectronPageInputSchema.safeParse({
+          const input = {
             cdp_endpoint: args.endpoint,
             target_id: args.targetId,
             observation_ms: options.observationMs,
             include_script_sources: options.includeScriptSources,
-          });
-          if (!parsed.success) return inputError("inspect_electron_page");
+          };
+          const parsed = inspectElectronPageInputSchema.safeParse(input);
+          if (!parsed.success)
+            return inputError(
+              "inspect_electron_page",
+              parsed.error.issues,
+              input,
+            );
           const { inspectElectronPage } =
             await import("../application/javascript/ElectronObservationService.js");
           return await finishAnalysisCommand(
@@ -297,7 +309,9 @@ const registerJavaScriptApplicationCommand = (
         logCliCommand(logger, CLI_COMMANDS.analyzeJavaScriptApplication, () =>
           runCliJavaScriptApplicationAnalysis(
             {
-              input_path: absoluteCallerPath(args.path),
+              // An empty path names no file; leave it for input validation.
+              input_path:
+                args.path === "" ? args.path : absoluteCallerPath(args.path),
               format: options.artifactFormat,
               integrity_policy: options.integrityPolicy,
               ...(options.maxSemanticNodes === undefined
