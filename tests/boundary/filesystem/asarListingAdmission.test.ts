@@ -22,6 +22,7 @@ const archiveWith = async (bytes: Buffer) => {
 
 it("interrupts expanded listing admission between traversal batches", async () => {
   const controller = new AbortController();
+  const reason = Object.freeze({ requested: "listing-stop" });
   const header = {
     files: Object.fromEntries(
       Array.from({ length: 4000 }, (_, index) => [
@@ -32,8 +33,11 @@ it("interrupts expanded listing admission between traversal batches", async () =
   };
   const listing = readAsarListing(header, controller.signal);
   await setImmediate();
-  controller.abort();
-  await expect(listing).rejects.toMatchObject({ reason: "cancelled" });
+  controller.abort(reason);
+  await expect(listing).rejects.toMatchObject({
+    reason: "cancelled",
+    cause: reason,
+  });
 });
 
 it("rejects path expansion before publishing any inventory, preserving the input", async () => {
