@@ -170,6 +170,72 @@ it("keeps omitted optional dossier records unknown in the analyze_function summa
   );
 });
 
+it("keeps value-flow counts unknown when value flow is unrecorded or unavailable", () => {
+  const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+  const flowCounts = {
+    value_flow_operations: null,
+    value_flow_def_use: null,
+    value_flow_effects: null,
+    value_flow_parameters: null,
+    value_flow_parameter_uses: null,
+  };
+  // IDA and Kuna dossiers record no value flow at all.
+  const unrecorded = projectAnalysisView(
+    nativeParent({ ...dossier, native_value_flow: null }),
+    { kind: "summary" },
+  );
+  if (!unrecorded.ok) throw unrecorded.error;
+  expect(analysisViewResultSchema.parse(unrecorded.value)).toMatchObject({
+    summary: {
+      value_flow: { available: false, truncated: false },
+      counts: flowCounts,
+    },
+    unknowns: expect.arrayContaining(["native_value_flow was not recorded"]),
+  });
+  // A Ghidra dossier can declare value flow unavailable with a reason.
+  const unavailable = projectAnalysisView(
+    nativeParent({
+      ...dossier,
+      native_value_flow: {
+        available: false,
+        reason: "High p-code was not produced.",
+        limitations: [],
+      },
+    }),
+    { kind: "summary" },
+  );
+  if (!unavailable.ok) throw unavailable.error;
+  expect(analysisViewResultSchema.parse(unavailable.value)).toMatchObject({
+    summary: { value_flow: { available: false }, counts: flowCounts },
+    unknowns: expect.arrayContaining([
+      "native_value_flow unavailable: High p-code was not produced.",
+    ]),
+  });
+  // Available value flow keeps its observed counts, including empty ones.
+  const available = projectAnalysisView(nativeParent(dossier), {
+    kind: "summary",
+  });
+  if (!available.ok) throw available.error;
+  const flow = dossier.native_value_flow;
+  if (flow === null || !flow.available) throw new Error("fixture value flow");
+  expect(available.value).toMatchObject({
+    summary: {
+      value_flow: { available: true },
+      counts: {
+        value_flow_operations: flow.operations.length,
+        value_flow_def_use: flow.def_use.length,
+        value_flow_effects: flow.effects.length,
+        value_flow_parameters: flow.parameters.length,
+        value_flow_parameter_uses: flow.parameter_uses.length,
+      },
+    },
+  });
+  expect(flow.operations.length).toBeGreaterThan(0);
+  expect(available.value.unknowns).not.toContain(
+    "native_value_flow was not recorded",
+  );
+});
+
 it("keeps provider-unavailable facets unknown in the analyze_function summary", () => {
   // A Kuna-style dossier: empty rows with explicit unavailability for several facets.
   const dossier = functionDossierSchema.parse(ghidraFunctionDossier());

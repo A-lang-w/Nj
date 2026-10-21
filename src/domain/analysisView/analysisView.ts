@@ -697,6 +697,16 @@ const recordedFacetCountSchema = z
     "Observed rows; null when the dossier did not record the facet (the native facet view reports it not recorded), so no rows is not evidence of none.",
   );
 
+/** Rows of one value-flow facet, or null when value flow is unavailable. */
+const valueFlowFacetCountSchema = z
+  .number()
+  .int()
+  .nonnegative()
+  .nullable()
+  .describe(
+    "Observed rows; null when value_flow.available is false because native_value_flow was not recorded or the provider declared it unavailable (unknowns names which), so no rows is not evidence of none.",
+  );
+
 /** Compact analyze_function dossier; the complete dossier stays retained for facet paging. */
 export const nativeFunctionSummarySchema = z.strictObject({
   procedure: z.strictObject({
@@ -743,11 +753,11 @@ export const nativeFunctionSummarySchema = z.strictObject({
     referenced_names: declaredFacetCountSchema,
     swift_string_literals: recordedFacetCountSchema,
     swift_string_literal_omissions: recordedFacetCountSchema,
-    value_flow_operations: z.number().int().nonnegative(),
-    value_flow_def_use: z.number().int().nonnegative(),
-    value_flow_effects: z.number().int().nonnegative(),
-    value_flow_parameters: z.number().int().nonnegative(),
-    value_flow_parameter_uses: z.number().int().nonnegative(),
+    value_flow_operations: valueFlowFacetCountSchema,
+    value_flow_def_use: valueFlowFacetCountSchema,
+    value_flow_effects: valueFlowFacetCountSchema,
+    value_flow_parameters: valueFlowFacetCountSchema,
+    value_flow_parameter_uses: valueFlowFacetCountSchema,
   }),
   limitation_count: z.number().int().nonnegative(),
 });

@@ -23,7 +23,7 @@ const partialCallees = {
 
 // A fixed provider that returns the fixture dossier for any analyze_function
 // call, after validating the request exactly as the production Ghidra client does.
-const connect = async (retain = true) => {
+const connect = async (retain = true, result = dossier) => {
   const ledger = new Map<string, Evidence>();
   const record = (evidence: Evidence) => {
     ledger.set(evidence.evidence_id, evidence);
@@ -37,7 +37,7 @@ const connect = async (retain = true) => {
       const input = parseGhidraFunctionInput(operation, parameters);
       if (!input.ok) return input;
       return ok({
-        result: dossier,
+        result,
         rawResult: null,
         provider: { id: "ghidra", name: "Ghidra", version: "12.1.4" },
         limitations: [],
@@ -115,6 +115,33 @@ it("defaults to a retained summary and strips delivery detail before the provide
     summary: {
       counts: { unresolved_calls: null, swift_string_literals: null },
     },
+  });
+});
+
+it("keeps value-flow counts unknown in the default summary when the provider records none", async () => {
+  // IDA and Kuna dossiers carry native_value_flow: null.
+  const { client } = await connect(true, {
+    ...dossier,
+    native_value_flow: null,
+  });
+  const reply = await client.callTool({
+    name: "analyze_function",
+    arguments: { procedure: "main" },
+  });
+  const evidence = parseEvidence(reply.structuredContent);
+  expect(evidence.normalized_result).toMatchObject({
+    kind: "summary",
+    summary: {
+      value_flow: { available: false, truncated: false },
+      counts: {
+        value_flow_operations: null,
+        value_flow_def_use: null,
+        value_flow_effects: null,
+        value_flow_parameters: null,
+        value_flow_parameter_uses: null,
+      },
+    },
+    unknowns: expect.arrayContaining(["native_value_flow was not recorded"]),
   });
 });
 

@@ -183,11 +183,13 @@ const summarizeDossier = (dossier: FunctionDossier) => {
       swift_string_literal_omissions: recorded(
         dossier.swift_string_literal_omissions,
       ),
-      value_flow_operations: flow?.operations.length ?? 0,
-      value_flow_def_use: flow?.def_use.length ?? 0,
-      value_flow_effects: flow?.effects.length ?? 0,
-      value_flow_parameters: flow?.parameters.length ?? 0,
-      value_flow_parameter_uses: flow?.parameter_uses.length ?? 0,
+      // Value-flow rows are unknown, not zero, when value flow was not recorded
+      // or the provider declared it unavailable; parentFields names which.
+      value_flow_operations: flow?.operations.length ?? null,
+      value_flow_def_use: flow?.def_use.length ?? null,
+      value_flow_effects: flow?.effects.length ?? null,
+      value_flow_parameters: flow?.parameters.length ?? null,
+      value_flow_parameter_uses: flow?.parameter_uses.length ?? null,
     },
     limitation_count: dossier.limitations.length,
   };
