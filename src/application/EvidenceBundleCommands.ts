@@ -129,17 +129,11 @@ export const inspectAnalysisViewFromBundle = async (
     bundlePath,
     signal,
     resources,
+    "inspect_analysis_view",
   );
   // Authentication and projection are synchronous; dispatch queued interrupts before accepting either result.
   await setImmediate();
-  if (!loaded.ok)
-    return loaded.error instanceof AnalysisCancelledError
-      ? err(
-          new AnalysisCancelledError("inspect_analysis_view", {
-            cause: loaded.error.cause,
-          }),
-        )
-      : loaded;
+  if (!loaded.ok) return loaded;
   if (signal?.aborted)
     return err(
       new AnalysisCancelledError("inspect_analysis_view", {

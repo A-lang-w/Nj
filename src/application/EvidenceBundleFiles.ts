@@ -40,47 +40,42 @@ export const readEvidenceBundle = (
   path: string,
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
+  operation = "import_evidence_bundle",
 ): Promise<Result<EvidenceBundle, EvidenceReadFailure>> =>
-  readBundle(path, parseEvidenceBundle, signal, resources);
+  readBundle(path, parseEvidenceBundle, signal, resources, operation);
 
 /** Read an authenticated immutable snapshot for a subsequent session import. */
 export const readImmutableEvidenceBundle = (
   path: string,
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
+  operation = "import_evidence_bundle",
 ): Promise<Result<EvidenceBundle, EvidenceReadFailure>> =>
-  readBundle(path, parseImmutableEvidenceBundle, signal, resources);
+  readBundle(path, parseImmutableEvidenceBundle, signal, resources, operation);
 
 const readBundle = async (
   path: string,
   parseBundle: (input: unknown) => EvidenceBundle,
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
+  operation = "import_evidence_bundle",
 ): Promise<Result<EvidenceBundle, EvidenceReadFailure>> => {
   if (signal?.aborted)
     return err(
-      new AnalysisCancelledError("import_evidence_bundle", {
+      new AnalysisCancelledError(operation, {
         cause: signal.reason,
       }),
     );
-  const loaded = await readJsonFile(path, signal, resources);
-  if (!loaded.ok) {
-    if (loaded.error instanceof AnalysisCancelledError)
-      return err(
-        new AnalysisCancelledError("import_evidence_bundle", {
-          cause: loaded.error.cause,
-        }),
-      );
-    return loaded;
-  }
+  const loaded = await readJsonFile(path, signal, resources, operation);
+  if (!loaded.ok) return loaded;
   if (signal?.aborted)
     return err(
-      new AnalysisCancelledError("import_evidence_bundle", {
+      new AnalysisCancelledError(operation, {
         cause: signal.reason,
       }),
     );
   const headroom = requireAuthenticationHeadroom(loaded.value, {
-    operation: "import_evidence_bundle",
+    operation,
     path: absoluteCallerPath(path),
     description:
       "Insufficient heap headroom to authenticate the Evidence bundle",

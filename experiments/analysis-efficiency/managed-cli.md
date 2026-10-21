@@ -49,12 +49,12 @@ All trials complete with verified process cleanup and no OOM/resource-stop event
 | Whole task, median                              | Complete | Summary + two pages |
 | ----------------------------------------------- | -------: | ------------------: |
 | Estimated context tokens, both cache conditions |  451,373 |              13,078 |
-| Cold wall seconds                               |    4.953 |              11.096 |
-| Cold family CPU seconds                         |    4.732 |              10.925 |
-| Cold kernel family peak MiB                     |    388.4 |               388.0 |
-| Warm wall seconds                               |    4.552 |              10.491 |
-| Warm family CPU seconds                         |    4.344 |              10.227 |
-| Warm kernel family peak MiB                     |    393.9 |               394.4 |
+| Cold wall seconds                               |    5.562 |              12.516 |
+| Cold family CPU seconds                         |    5.317 |              12.240 |
+| Cold kernel family peak MiB                     |    387.9 |               387.6 |
+| Warm wall seconds                               |    5.158 |              12.175 |
+| Warm family CPU seconds                         |    4.928 |              11.881 |
+| Warm kernel family peak MiB                     |    397.4 |               395.7 |
 
 Context estimates include the question, supplied command recipe, all logical
 argv, actual help and stdout. Tokenizer `tiktoken==0.12.0`, `cl100k_base`.
@@ -75,7 +75,7 @@ was introduced.
 The unchanged baseline can already redirect full stdout to a file and select
 rows in code. [The measured control](managed-cli-local-control.py) returns the
 identical answer and retains the complete original Evidence. One cold run:
-4.753 s wall, 4.600 s family CPU, 374.7 MiB kernel peak. Projection source,
+5.479 s wall, 5.253 s family CPU, 376.1 MiB kernel peak. Projection source,
 original help and returned answer together estimate 10,345 tokens; the shared
 question and launcher argv are excluded. This single-run control does not
 establish stable performance or actual native-agent usage. It does demonstrate
@@ -103,10 +103,46 @@ its exact cancellation cause, cleanup primary and lease through successful or
 unresolved retries. Four projection/operation regression cases fail with these
 producer fixes removed and pass when restored. No actual heap exhaustion is
 needed for fault injection; all real tasks remain within the resource guard.
-All 243 focused tests across eleven files, `npm run check` and `npm run docs:check`
+Bundle canonical-order validation now compares the existing ordinary JSON encoder's
+bounded parts instead of allocating two whole-document strings. Native JSON key
+order, omitted members, negative zero and Unicode/escaping comparison semantics
+remain covered. Heap admission also reserves actual escaping expansion for keys
+and values, including control characters and unpaired surrogates, before the
+remaining scalar/manifest encoding. Its UTF-16 storage estimate is reported
+explicitly; it is not a UTF-8 wire-byte count.
+
+The owning operation is carried through regular-file JSON assembly and bundle
+authentication, covering resource refusal as well as cancellation. Related
+Evidence-file and historical-reference readers use the same boundary; superseded
+error-relabeling wrappers are removed. Seven relevant negative-control cases fail
+when these producer/encoding fixes are disabled and pass restored. The escaped
+payload filesystem regression forbids whole-bundle stringification while checking
+original raw text and authenticated identity.
+
+All 356 focused tests across twenty-one files, `npm run check` and `npm run docs:check`
 pass for this correction. These are fault-injection tests, not foreign-provider
 measurements. Authentication/projection remains synchronous with cooperative
 cancellation checkpoints between stages, not preemptible work.
+
+## Shared-reader real-artifact regression
+
+The existing Redux Toolkit 2.2.7 source/bundle task also completes through the
+updated reader with default full output schemas and compact input schemas.
+An independent Python SHA-256/path oracle verifies 180 historical files,
+99 embedded source nodes and 210 candidate relations (33 strong-location rows,
+147 unknown). Original signals and partial source coverage remain visible.
+This uses the existing explicit semantic-node cap of one for static correspondence;
+it does not establish equivalent semantic-graph coverage or behavioral equivalence.
+
+One completed task: 17.543 s wall,
+17.200 s family CPU,
+938.1 MiB kernel family peak,
+56,148 estimated context tokens (one input catalog,
+all arguments and MCP text replies; excludes output schemas, framing and model
+reasoning). Corpus/reference preparation was performed earlier and excluded.
+This is a regression verification with resource observation, not a new paired
+performance comparison. Actual model usage remains unmeasured. Details:
+[managed-cli-shared-read.json](managed-cli-shared-read.json).
 
 ## Reproduction
 

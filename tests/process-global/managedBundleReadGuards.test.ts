@@ -1,3 +1,5 @@
+import { getHeapStatistics } from "node:v8";
+import { createEvidence } from "../../src/domain/evidence.js";
 import { runProviderAnalysis } from "../../src/application/DirectAnalysis.js";
 import type { DirectAnalysisDependencies } from "../../src/application/DirectAnalysisDependencies.js";
 import { parseConfig } from "../../src/config/parseConfig.js";
@@ -31,6 +33,7 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { holdFirstFileRead } from "../support/holdFirstFileRead.js";
 
 vi.mock("../../src/application/JsonAuthenticationHeadroom.js", { spy: true });
+vi.mock("node:v8", { spy: true });
 vi.mock("../../src/domain/evidenceBundle.js", { spy: true });
 afterEach(() => vi.restoreAllMocks());
 
@@ -207,4 +210,105 @@ it("projects a rejected managed parent by reference without cloning under low he
   expect(Object.isFrozen(source.rows[0])).toBe(false);
   expect(closes).toBe(1);
   expect(await readdir(root)).toEqual([]);
+});
+
+it.each(["JSON assembly", "bundle authentication"])(
+  "attributes low-headroom %s to the invoking view",
+  async (stage) => {
+    const { path, parent } = await savedParent();
+    const actualV8 = await vi.importActual<typeof import("node:v8")>("node:v8");
+    if (stage === "JSON assembly") {
+      vi.mocked(getHeapStatistics).mockReturnValue({
+        ...getHeapStatistics(),
+        total_available_size: 0,
+      });
+    } else {
+      const actual = await vi.importActual<
+        typeof import("../../src/application/JsonAuthenticationHeadroom.js")
+      >("../../src/application/JsonAuthenticationHeadroom.js");
+      vi.mocked(requireAuthenticationHeadroom).mockImplementationOnce(
+        (value, options) =>
+          actual.requireAuthenticationHeadroom(value, {
+            ...options,
+            availableBytes: 0,
+          }),
+      );
+    }
+    const resources = new ArtifactResourceScope();
+    try {
+      expect(
+        await inspectAnalysisViewFromBundle(
+          {
+            source: {
+              kind: "retained-evidence",
+              evidence_id: parent.evidence_id,
+            },
+            view: { kind: "summary" },
+          },
+          path,
+          resources,
+        ),
+      ).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisResourceConstraintError",
+          operation: "inspect_analysis_view",
+        },
+      });
+    } finally {
+      vi.mocked(getHeapStatistics).mockImplementation(
+        actualV8.getHeapStatistics,
+      );
+      await resources.close();
+    }
+    expect(resources.hasPending).toBe(false);
+  },
+);
+
+it("authenticates escaped payloads without serializing either complete bundle", async () => {
+  const root = await createTestTempDirectory("rea-escaped-bundle-");
+  const path = join(root, "parent.json");
+  const escaped = '\u0000\u0001\\"😀\ud800'.repeat(20000);
+  const example = SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.application;
+  const parent = createEvidence(undefined, example.provider, {
+    predicateType: example.predicate_type,
+    operation: example.operation,
+    parameters: example.parameters,
+    result: example.normalized_result,
+    rawResult: { escaped },
+  });
+  await writeFile(
+    path,
+    JSON.stringify(createImmutableEvidenceBundle([parent])),
+  );
+  const stringify = JSON.stringify;
+  const fullDocuments: unknown[] = [];
+  vi.spyOn(JSON, "stringify").mockImplementation((value: unknown) => {
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      Object.hasOwn(value, "records")
+    ) {
+      fullDocuments.push(value);
+      throw new Error(
+        "Document-sized JSON allocation forbidden during authentication",
+      );
+    }
+    return stringify(value);
+  });
+  const resources = new ArtifactResourceScope();
+  try {
+    const loaded = await readImmutableEvidenceBundle(
+      path,
+      undefined,
+      resources,
+    );
+    if (!loaded.ok) throw loaded.error;
+    expect(loaded.value.records[0]?.evidence_id).toBe(parent.evidence_id);
+    expect(loaded.value.records[0]?.raw_result).toEqual({ escaped });
+    expect(fullDocuments).toEqual([]);
+  } finally {
+    await resources.close();
+  }
+  expect(resources.hasPending).toBe(false);
 });

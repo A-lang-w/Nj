@@ -42,3 +42,28 @@ describe("JSON authentication headroom", () => {
     ).toEqual({ ok: true, value: undefined });
   });
 });
+
+it.each([
+  ["control characters", { text: "\u0000\u0001\b\t\n\f\r".repeat(2000) }],
+  [
+    "escaped keys",
+    { ['\u0000\\"'.repeat(2000)]: [true, false, null, -0, 1e30] },
+  ],
+  ["surrogate boundaries", { text: "😀\ud800x\udfff".repeat(2000) }],
+])("reserves actual escaped JSON storage for %s", (_label, value) => {
+  const result = requireAuthenticationHeadroom(value, {
+    operation: "inspect_analysis_view",
+    path: "/tmp/bundle.json",
+    description: "Cannot authenticate bundle",
+    availableBytes: estimateJsonValueBytes(value) * 2 + 1,
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisResourceConstraintError",
+      reportedLimits: {
+        serialized_json_utf16_bytes: JSON.stringify(value).length * 2,
+      },
+    },
+  });
+});
