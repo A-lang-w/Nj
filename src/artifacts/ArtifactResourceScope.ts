@@ -235,17 +235,63 @@ export class ArtifactResourceScope {
 
   async #finishClose(): Promise<void> {
     // A parked analyzer is not a pending owner. Stop it even when another
-    // retained cleanup is still failing, and keep that cleanup as the error.
+    // retained cleanup is still failing. A later close retries both.
     const cleanup = await this.retryCleanup().then(
       () => undefined,
       (cause: unknown) => cause,
     );
-    try {
-      await this.#closeHook?.();
-    } catch (hook: unknown) {
-      if (cleanup === undefined) throw hook;
-    }
+    const hookFailure = await Promise.resolve()
+      .then(() => this.#closeHook?.())
+      .then(
+        () => undefined,
+        (cause: unknown) => cause,
+      );
+    if (cleanup !== undefined && hookFailure !== undefined)
+      throw this.#composeCloseFailures(cleanup, hookFailure);
+    if (hookFailure !== undefined) throw hookFailure;
     if (cleanup !== undefined) throw cleanup;
+  }
+
+  /**
+   * Report both outstanding owners. The pending set and the close hook stay
+   * registered, so the next close retries each failed path.
+   */
+  #composeCloseFailures(
+    cleanup: unknown,
+    hookFailure: unknown,
+  ): ArtifactReaderFailure {
+    const retained = ArtifactReaderFailure.cleanupObservation(
+      cleanup,
+      "retained artifact cleanup",
+    );
+    const hook = ArtifactReaderFailure.cleanupObservation(
+      hookFailure,
+      "close hook",
+    );
+    const resources = [
+      ...new Set([...retained.resources, ...hook.resources]),
+    ];
+    const options = {
+      cause: new AggregateError(
+        [cleanup, hookFailure],
+        "Retained cleanup and a close hook both failed",
+      ),
+      cleanup: {
+        reason: `${retained.reason}; ${hook.reason}`,
+        resources,
+      },
+    };
+    const message = `Artifact cleanup remains incomplete: ${resources.join(", ")}`;
+    if (cleanup instanceof ArtifactResourceRetryFailure)
+      return new ArtifactResourceRetryFailure(
+        cleanup.failedOwners.map((owner) => ({
+          owner,
+          lease: this.#lease(owner),
+        })),
+        message,
+        options,
+      );
+    return new ArtifactReaderFailure("unavailable", message, options);
   }
 
   async #drainAndRetry(): Promise<void> {

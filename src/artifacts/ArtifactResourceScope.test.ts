@@ -75,9 +75,31 @@ it("stops a close hook even when retained cleanup is still failing", async () =>
     if (hookRuns === 1) throw new Error("hook still stopping");
   });
 
-  await expect(scope.close()).rejects.toThrow(
-    "Artifact cleanup remains incomplete: stuck lease",
+  const closeFailure = await scope.close().then(
+    () => {
+      throw new Error("close succeeded while cleanup and the hook failed");
+    },
+    (cause: unknown) => cause,
   );
+  expect(closeFailure).toMatchObject({
+    message: "Artifact cleanup remains incomplete: stuck lease, close hook",
+    failedOwners: [owner],
+    cleanup: {
+      reason: "still owned; hook still stopping",
+      resources: ["stuck lease", "close hook"],
+    },
+  });
+  expect(closeFailure).toBeInstanceOf(ArtifactResourceRetryFailure);
+  const causes = (closeFailure as ArtifactResourceRetryFailure).cause;
+  expect(causes).toBeInstanceOf(AggregateError);
+  expect(
+    (causes as AggregateError).errors.map((error) =>
+      error instanceof Error ? error.message : String(error),
+    ),
+  ).toEqual([
+    "Artifact cleanup remains incomplete: stuck lease",
+    "hook still stopping",
+  ]);
   expect(releases).toBe(2);
   expect(hookRuns).toBe(1);
   await scope.close();
