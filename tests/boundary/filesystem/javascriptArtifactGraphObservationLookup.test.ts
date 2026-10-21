@@ -124,3 +124,41 @@ it("uses the first structured observation when paths repeat", async () => {
     await reader.close();
   }
 });
+
+it("preserves unknown omitted-key count for unavailable JSON", async () => {
+  const root = await createTestTempDirectory("rea-unavailable-json-");
+  await Promise.all([
+    writeFile(join(root, "package.json"), JSON.stringify({ name: "fixture" })),
+    writeFile(join(root, "config.json"), Buffer.from([0xff])),
+  ]);
+
+  const snapshot = await scanCanonicalArtifactInventory(root, {});
+  const reader = createJavaScriptArtifactReader(root, "directory");
+
+  try {
+    const files = await readJavaScriptArtifactFiles(reader, snapshot);
+    const analysis = analyzeJavaScriptArtifactFiles(files);
+    const graph = buildJavaScriptArtifactGraph(snapshot, files, analysis);
+
+    const configFile = graph.nodes.find(({ observations }) =>
+      observations.some(
+        ({ properties }) =>
+          properties.path === "config.json" && properties.file_kind === "json",
+      ),
+    );
+
+    const configObservation = configFile?.observations.find(
+      ({ properties }) =>
+        properties.path === "config.json" && properties.file_kind === "json",
+    );
+
+    expect(configObservation?.properties).toMatchObject({
+      path: "config.json",
+      text_status: "invalid-utf8",
+      json_parse_status: "unavailable",
+      omitted_json_top_level_keys: null,
+    });
+  } finally {
+    await reader.close();
+  }
+});
