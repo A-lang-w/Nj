@@ -38,6 +38,7 @@ import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
+import { maskUnrepresentableBinaryPlistDates } from "./BinaryPlistDate.js";
 import {
   decodeBinaryPlistNumbers,
   scanBinaryPlistNumberLiterals,
@@ -118,6 +119,7 @@ export const analyzeInterfaceBuilderBundle = async (input: {
         let nib: ReturnType<typeof projectNibArchive> | null = null;
         let xmlText: string | undefined;
         let binaryPrototypeKeyObserved = false;
+        let binaryDatePayloadOffsets: readonly number[] = [];
         if (isNibArchive) {
           const documentBudget = new InterfaceBuilderDecodeBudget(
             decodeBudget.remainingBytes,
@@ -147,6 +149,8 @@ export const analyzeInterfaceBuilderBundle = async (input: {
           plistReservation = decodedReservation.estimatedBytes;
           binaryPrototypeKeyObserved =
             decodedReservation.binaryPrototypeKeyObserved;
+          binaryDatePayloadOffsets =
+            decodedReservation.binaryDatePayloadOffsets;
         }
         const {
           value: raw,
@@ -155,7 +159,12 @@ export const analyzeInterfaceBuilderBundle = async (input: {
           unknownScalarCount,
           numberLiterals,
         } = nib === null
-          ? decodePlist(bytes, xmlText, binaryPrototypeKeyObserved)
+          ? decodePlist(
+              bytes,
+              xmlText,
+              binaryPrototypeKeyObserved,
+              binaryDatePayloadOffsets,
+            )
           : {
               value: nib.raw,
               omittedPrototypeKeys: 0,
@@ -759,6 +768,7 @@ const decodePlist = (
   bytes: Buffer,
   xmlText: string | undefined,
   binaryPrototypeKeyObserved: boolean,
+  binaryDatePayloadOffsets: readonly number[],
 ): {
   readonly value: JsonValue;
   readonly omittedPrototypeKeys: number | null;
@@ -773,7 +783,10 @@ const decodePlist = (
   const { value, omittedPrototypeKeys, numberLiterals } = binary
     ? {
         value: parseBinary(
-          decodeBinaryPlistNumbers(bytes, binaryNumberMetadata!),
+          maskUnrepresentableBinaryPlistDates(
+            decodeBinaryPlistNumbers(bytes, binaryNumberMetadata!),
+            binaryDatePayloadOffsets,
+          ),
         ),
         omittedPrototypeKeys: binaryPrototypeKeyObserved ? null : 0,
         numberLiterals: binaryNumberMetadata!.literals,

@@ -13,6 +13,7 @@ import {
   unknownScalarLimitation,
 } from "../../domain/apple/plistValue.js";
 import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js";
+import { maskUnrepresentableBinaryPlistDates } from "./BinaryPlistDate.js";
 import {
   decodeBinaryPlistNumbers,
   scanBinaryPlistNumberLiterals,
@@ -79,7 +80,10 @@ export const decodeKeyedArchiveBytes = (
     binaryExpansion !== undefined
       ? {
           value: parseBinary(
-            decodeBinaryPlistNumbers(bytes, binaryNumberMetadata!),
+            maskUnrepresentableBinaryPlistDates(
+              decodeBinaryPlistNumbers(bytes, binaryNumberMetadata!),
+              binaryExpansion.binaryDatePayloadOffsets,
+            ),
           ),
           numberLiterals: binaryNumberMetadata!.literals,
           omittedPrototypeKeys: binaryExpansion.binaryPrototypeKeyObserved
