@@ -257,3 +257,46 @@ describe.skipIf(process.platform === "win32")(
     });
   },
 );
+
+describe.skipIf(process.platform === "win32")(
+  "nested directory-only ignore rules",
+  () => {
+    it.each(["**/", "/**/", "**/**/"])(
+      "does not let %s exclude the directory containing the policy",
+      async (pattern) => {
+        const root = await createTestTempDirectory(
+          "rea-reference-ignore-directory-only-",
+        );
+        await writeTree(root, {
+          "packages/pkg/.gitignore": `${pattern}\n`,
+          "packages/pkg/direct.ts": "export const retained = true;\n",
+          "packages/pkg/generated/output.ts": "export const ignored = true;\n",
+          "packages/sibling/direct.ts": "export const sibling = true;\n",
+        });
+        const result = await importReferenceSource({
+          root,
+          caller: "nested-ignore-test",
+          policy: { secretPatterns: [] },
+        });
+        if (!result.ok) throw result.error;
+        expect(result.value.exclusions).toEqual([
+          {
+            path: "packages/pkg/generated",
+            entry_kind: "directory",
+            reason: "project-ignored",
+            pattern,
+          },
+        ]);
+        expect(
+          result.value.entries
+            .filter(({ kind }) => kind === "file")
+            .map(({ path }) => path),
+        ).toEqual([
+          "packages/pkg/.gitignore",
+          "packages/pkg/direct.ts",
+          "packages/sibling/direct.ts",
+        ]);
+      },
+    );
+  },
+);

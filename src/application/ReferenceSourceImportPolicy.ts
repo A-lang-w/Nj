@@ -66,9 +66,9 @@ type IgnoreReason = "project-ignored" | "default-ignored" | "caller-excluded";
 /** Scope Git patterns once while retaining their original text for evidence. */
 const scopedPattern = (
   pattern: string,
-  directory: string,
+  prefix: string | undefined,
 ): string | undefined => {
-  if (directory === ".") return pattern;
+  if (prefix === undefined) return pattern;
   if (pattern.trim() === "" || pattern.startsWith("#")) return undefined;
   const negative = pattern.startsWith("!");
   // Match ignore's treatment of an initial BOM and escaped trailing whitespace
@@ -82,13 +82,6 @@ const scopedPattern = (
   if (normalized === "" || normalized === "/") return undefined;
   const anchored =
     normalized.startsWith("/") || normalized.slice(0, -1).includes("/");
-  // The reader lends this matcher only to this directory's descendants.
-  // Consume that known prefix by depth: literal filenames can contain glob
-  // metacharacters that ignore cannot safely escape (notably ? and \\).
-  const prefix = directory
-    .split("/")
-    .map(() => "*")
-    .join("/");
   return `${negative ? "!" : ""}/${prefix}/${anchored ? "" : "**/"}${body.replace(/^\//u, "")}`;
 };
 
@@ -98,12 +91,26 @@ const addMarkedPatterns = (
   reason: IgnoreReason,
   directory = ".",
 ): void => {
+  // The reader lends this matcher only to this directory's descendants.
+  // Consume that known prefix by depth: literal filenames can contain glob
+  // metacharacters that ignore cannot safely escape (notably ? and \\).
+  const prefix =
+    directory === "."
+      ? undefined
+      : directory
+          .split("/")
+          .map(() => "*")
+          .join("/");
   for (const pattern of patterns)
     for (const line of pattern.split(/\r?\n/u)) {
-      const scoped = scopedPattern(line, directory);
+      const scoped = scopedPattern(line, prefix);
       if (scoped !== undefined)
         matcher.add({ pattern: scoped, mark: `${reason}\u0000${line}` });
     }
+  // This directory has already been admitted by the inherited policy.
+  // A zero-depth **/ match must not exclude the policy's own directory and,
+  // through ignore's parent checks, all of its otherwise included children.
+  if (prefix !== undefined) matcher.add(`!/${prefix}/`);
 };
 
 const resolveRoot = async (
