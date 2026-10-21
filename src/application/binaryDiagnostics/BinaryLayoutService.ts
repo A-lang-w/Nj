@@ -59,7 +59,11 @@ export class BinaryLayoutService {
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
+      return err(
+        new AnalysisCancelledError(OPERATION, {
+          cause: options.signal.reason,
+        }),
+      );
     const validated = this.validate(rawInput);
     if (!validated.ok) return validated;
     return this.inspectValidated(validated.value, options);
@@ -71,7 +75,11 @@ export class BinaryLayoutService {
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
+      return err(
+        new AnalysisCancelledError(OPERATION, {
+          cause: options.signal.reason,
+        }),
+      );
     const validated = this.validate(rawInput);
     if (!validated.ok) return validated;
     return this.#inspect(validated.value, options, (input) =>
@@ -97,7 +105,11 @@ export class BinaryLayoutService {
     ) => ReturnType<BinaryLayoutPort["inspect"]>,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
+      return err(
+        new AnalysisCancelledError(OPERATION, {
+          cause: options.signal.reason,
+        }),
+      );
     const inspected = await inspect(input);
     if (!inspected.ok) return inspected;
     const diagnostics = binaryLayoutSchema.shape.diagnostics.safeParse(
