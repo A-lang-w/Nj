@@ -294,7 +294,7 @@ export const prepareReferenceSourceImport = async (
         symlinks: "follow",
       });
       if (!policy.ok) return policy;
-      const project = ignore();
+      const project = ignore({ ignoreCase: false });
       addMarkedPatterns(project, [policy.value], "project-ignored");
       const overrides = ignore();
       addMarkedPatterns(
@@ -371,7 +371,7 @@ const createExclusionPolicy = (
           code: text.error.code === "cancelled" ? "cancelled" : "io",
         });
       if (text.value === "") return ok(policy);
-      const inherited = ignore().add(project);
+      const inherited = ignore({ ignoreCase: false }).add(project);
       addMarkedPatterns(inherited, [text.value], "project-ignored", directory);
       return ok(createExclusionPolicy(inherited, context));
     },

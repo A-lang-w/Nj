@@ -1,4 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -16,6 +17,57 @@ const writeTree = async (root: string, files: Record<string, string>) => {
 describe.skipIf(process.platform === "win32")(
   "nested reference ignore rules",
   () => {
+    it("matches Git's case-sensitive nested rules", async () => {
+      const root = await createTestTempDirectory("rea-reference-ignore-case-");
+      await writeTree(root, {
+        "pkg/.gitignore": "generated/\n",
+        "pkg/Generated/keep.ts": "retained\n",
+      });
+
+      const initialized = spawnSync("git", ["init", "--quiet", root], {
+        encoding: "utf8",
+      });
+      expect(initialized.status, initialized.stderr).toBe(0);
+      const caseSensitiveConfig = spawnSync(
+        "git",
+        ["-C", root, "config", "core.ignoreCase", "false"],
+        { encoding: "utf8" },
+      );
+      expect(caseSensitiveConfig.status, caseSensitiveConfig.stderr).toBe(0);
+
+      const ignored = spawnSync(
+        "git",
+        ["-C", root, "check-ignore", "--no-index", "pkg/generated/drop.ts"],
+        { encoding: "utf8" },
+      );
+      const caseVariant = spawnSync(
+        "git",
+        ["-C", root, "check-ignore", "--no-index", "pkg/Generated/keep.ts"],
+        { encoding: "utf8" },
+      );
+      expect(ignored.status, ignored.stderr).toBe(0);
+      expect(caseVariant.status).toBe(1);
+
+      const result = await importReferenceSource({
+        root,
+        caller: "nested-ignore-case-test",
+        policy: { secretPatterns: [] },
+      });
+      if (!result.ok) throw result.error;
+      expect(result.value.exclusions).not.toContainEqual(
+        expect.objectContaining({
+          reason: "project-ignored",
+          pattern: "generated/",
+          policy_path: "pkg/.gitignore",
+        }),
+      );
+      expect(
+        result.value.entries.some(
+          ({ path }) => path === "pkg/Generated/keep.ts",
+        ),
+      ).toBe(true);
+    });
+
     it("scopes anchored rules and negations to their directory and descendants", async () => {
       const root = await createTestTempDirectory(
         "rea-reference-nested-ignore-",

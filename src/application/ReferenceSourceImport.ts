@@ -33,8 +33,20 @@ const failure = (
   message,
 });
 
+type ReferenceSourceImportPartial = NonNullable<
+  ReferenceSourceImportError["partial"]
+>;
+
+const withImportExclusions = (
+  partial: ReferenceSourceRead | undefined,
+  exclusions: HistoricalSourceGraphInput["exclusions"],
+): ReferenceSourceImportPartial | undefined =>
+  partial === undefined
+    ? undefined
+    : { ...partial, exclusions: sortExclusions(exclusions) };
+
 const cancelled = (
-  partial?: ReferenceSourceRead,
+  partial?: ReferenceSourceImportPartial,
 ): ReferenceSourceImportError => ({
   ...failure("cancelled", "Reference source import cancelled"),
   ...(partial === undefined ? {} : { partial }),
@@ -166,17 +178,22 @@ export const importReferenceSource = async (
       combineReadFailures(
         readResult.error,
         vcsResult.ok ? undefined : vcsResult.error,
-        readResult.error.partial,
+        withImportExclusions(readResult.error.partial, exclusions),
       ),
     );
   if (!vcsResult.ok)
     return err(
-      combineReadFailures(vcsResult.error, undefined, readResult.value),
+      combineReadFailures(
+        vcsResult.error,
+        undefined,
+        withImportExclusions(readResult.value, exclusions),
+      ),
     );
 
   const vcs = vcsResult.value;
 
-  if (isAborted(options.signal)) return err(cancelled(readResult.value));
+  if (isAborted(options.signal))
+    return err(cancelled(withImportExclusions(readResult.value, exclusions)));
 
   const read = readResult.value;
   const filePaths = new Set(
@@ -188,7 +205,8 @@ export const importReferenceSource = async (
   const { entries, relationships, parseFailures, limitations } =
     parseReferenceSourceEntries(read, filePaths, options.signal);
 
-  if (isAborted(options.signal)) return err(cancelled(read));
+  if (isAborted(options.signal))
+    return err(cancelled(withImportExclusions(read, exclusions)));
 
   const uniqueRelationships = deduplicateRelationships(relationships);
   const uniqueFailures = normalizeHistoricalSourceParseFailures(parseFailures);
@@ -238,7 +256,7 @@ export const importReferenceSource = async (
 const combineReadFailures = (
   primary: ReferenceSourceReaderError,
   other: ReferenceSourceReaderError | undefined,
-  partial: ReferenceSourceRead | undefined,
+  partial: ReferenceSourceImportError["partial"],
 ): ReferenceSourceImportError => {
   const cleanup = mergeCleanup(primary.cleanup, other?.cleanup);
   const message =

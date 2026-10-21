@@ -202,6 +202,8 @@ cliTest.skipIf(process.platform === "win32")(
     const source = "export const observed = true;\n";
     await Promise.all([
       writeFile(join(root, "source.ts"), source),
+      writeFile(join(root, ".gitignore"), "ignored-before-failure.ts\n"),
+      writeFile(join(root, "ignored-before-failure.ts"), "excluded\n"),
       writeFile(join(root, "nested/.gitignore"), new Uint8Array([0xff, 0xfe])),
       writeFile(
         join(root, "nested/unentered.ts"),
@@ -225,6 +227,11 @@ cliTest.skipIf(process.platform === "win32")(
       message: expect.stringContaining("UTF-8"),
     });
     expect(result.json).toHaveProperty("partial.entries", [
+      expect.objectContaining({
+        path: ".gitignore",
+        status: "read",
+        kind: "file",
+      }),
       {
         path: "nested",
         status: "failed",

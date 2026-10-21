@@ -1,4 +1,5 @@
 import type { ReferenceSourcePolicy } from "../domain/referenceSourcePolicy.js";
+import type { HistoricalSourceGraphInput } from "../domain/referenceSourceGraph.js";
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import type { ReferenceSourceRead } from "../reference/ReferenceSourceReaderTypes.js";
 
@@ -8,7 +9,10 @@ export interface ReferenceSourceImportError {
   readonly code: "cancelled" | "invalid-root" | "unsupported" | "io" | "parse";
   readonly message: string;
   readonly cleanup?: AnalysisCleanupObservation;
-  readonly partial?: ReferenceSourceRead;
+  readonly partial?: ReferenceSourceRead & {
+    /** Exclusions observed before a later traversal failure. */
+    readonly exclusions?: HistoricalSourceGraphInput["exclusions"];
+  };
   readonly cause?: unknown;
 }
 

@@ -31,11 +31,15 @@ const fixture = async () => {
   const nested = join(root, "nested");
   await mkdir(nested);
   const source = join(root, "source.ts");
+  const rootPolicy = join(root, ".gitignore");
+  const rootExcluded = join(root, "excluded-before-failure.ts");
   const policy = join(nested, ".gitignore");
   const excluded = join(nested, "excluded.ts");
   const sourceBytes = "export const visible = true;\n";
   await Promise.all([
     writeFile(source, sourceBytes),
+    writeFile(rootPolicy, "excluded-before-failure.ts\n"),
+    writeFile(rootExcluded, "excluded before traversal failure\n"),
     writeFile(policy, "*\n"),
     writeFile(excluded, "export const mustNotBeRead = true;\n"),
   ]);
@@ -84,6 +88,15 @@ const expectUnenteredSubtree = (
   expect(
     error.partial?.entries.some(({ path }) => path.startsWith("nested/")),
   ).toBe(false);
+  expect(error.partial?.exclusions).toEqual([
+    {
+      path: "excluded-before-failure.ts",
+      entry_kind: "file",
+      reason: "project-ignored",
+      pattern: "excluded-before-failure.ts",
+      policy_path: ".gitignore",
+    },
+  ]);
   expect(
     openMock.mock.calls.some(
       ([path]) => resolve(String(path)) === resolve(excluded),
