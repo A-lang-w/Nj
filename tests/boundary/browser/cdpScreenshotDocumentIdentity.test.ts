@@ -36,6 +36,203 @@ const withCssViewport = (metrics: Readonly<Record<string, unknown>>) => ({
   cssVisualViewport: metrics.visualViewport,
 });
 
+describe("screenshot authorization during metrics reads", () => {
+  it.each([
+    { stage: 1, expectedCaptures: 0 },
+    { stage: 2, expectedCaptures: 1 },
+  ])(
+    "stops capture after scope loss during metrics read $stage",
+    async ({ stage, expectedCaptures }) => {
+      let reads = 0;
+      const { browser, result } = await captureWithFake({
+        eventsBeforeReply: ["Page.getLayoutMetrics"],
+        commandResult: ({ method }) =>
+          method === "Page.getLayoutMetrics"
+            ? withCssViewport({
+                visualViewport: {
+                  pageX: 0,
+                  pageY: 0,
+                  clientWidth: 2,
+                  clientHeight: 2,
+                  scale: 1,
+                },
+              })
+            : undefined,
+        commandEvents: (command) =>
+          command.method === "Page.getLayoutMetrics" && ++reads === stage
+            ? [
+                frameNavigated(command, {
+                  id: "frame-main",
+                  loaderId: "outside-loader",
+                  url: "https://outside.test/",
+                }),
+              ]
+            : undefined,
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        error: { reason: "target_not_allowed" },
+      });
+      expect(
+        browser.commands.filter(
+          ({ method }) => method === "Page.captureScreenshot",
+        ),
+      ).toHaveLength(expectedCaptures);
+      await expect.poll(() => browser.activeConnectionCount()).toBe(0);
+    },
+  );
+
+  it.each(["navigation", "uncertain identity"])(
+    "stops before the first screenshot after %s during metrics",
+    async (change) => {
+      const { browser, result } = await captureWithFake({
+        eventsBeforeReply: ["Page.getLayoutMetrics"],
+        commandEvents: (command, origin) =>
+          command.method === "Page.getLayoutMetrics"
+            ? [
+                frameNavigated(
+                  command,
+                  change === "navigation"
+                    ? {
+                        id: "frame-main",
+                        loaderId: "new-loader",
+                        url: `${origin}/app`,
+                      }
+                    : {
+                        id: "candidate-root",
+                        parentId: "candidate-root",
+                        url: `${origin}/app`,
+                      },
+                ),
+              ]
+            : undefined,
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          reason: change === "navigation" ? "target_changed" : "protocol_error",
+        },
+      });
+      expect(
+        browser.commands.some(
+          ({ method }) => method === "Page.captureScreenshot",
+        ),
+      ).toBe(false);
+    },
+  );
+});
+
+describe("screenshot viewport freshness", () => {
+  it.each([
+    { phase: "normal capture", stage: 2, imageSize: 4, captures: 1 },
+    { phase: "before recovery", stage: 2, imageSize: 1, captures: 1 },
+    { phase: "during recovery", stage: 3, imageSize: 1, captures: 2 },
+  ])(
+    "rejects viewport changes $phase",
+    async ({ stage, imageSize, captures }) => {
+      let reads = 0;
+      const { browser, result } = await captureWithFake({
+        commandResult: ({ method }) =>
+          method === "Page.getLayoutMetrics"
+            ? withCssViewport({
+                visualViewport: {
+                  pageX: 0,
+                  pageY: ++reads >= stage ? 50 : 0,
+                  clientWidth: 4,
+                  clientHeight: 4,
+                  scale: 1,
+                },
+              })
+            : method === "Page.captureScreenshot"
+              ? screenshotData(imageSize, imageSize)
+              : undefined,
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        error: { reason: "target_changed" },
+      });
+      expect(
+        browser.commands.filter(
+          ({ method }) => method === "Page.captureScreenshot",
+        ),
+      ).toHaveLength(captures);
+    },
+  );
+
+  it.each([
+    { label: "resize", css: { clientWidth: 8 }, pixel: { clientWidth: 8 } },
+    { label: "zoom", css: { scale: 2 }, pixel: { scale: 2 } },
+    {
+      label: "device pixel density",
+      css: {},
+      pixel: { clientWidth: 8, clientHeight: 8 },
+    },
+  ])(
+    "rejects $label during recovery even when the image is large enough",
+    async ({ css, pixel }) => {
+      let reads = 0;
+      let captures = 0;
+      const base = {
+        pageX: 0,
+        pageY: 0,
+        clientWidth: 4,
+        clientHeight: 4,
+        scale: 1,
+      };
+      const { result } = await captureWithFake({
+        commandResult: ({ method }) => {
+          if (method === "Page.getLayoutMetrics") {
+            const changed = ++reads === 3;
+            return {
+              cssVisualViewport: { ...base, ...(changed ? css : {}) },
+              visualViewport: { ...base, ...(changed ? pixel : {}) },
+            };
+          }
+          return method === "Page.captureScreenshot"
+            ? ++captures === 1
+              ? screenshotData(1, 1)
+              : screenshotData(16, 16)
+            : undefined;
+        },
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        error: { reason: "target_changed" },
+      });
+      expect(captures).toBe(2);
+    },
+  );
+
+  it.each([2, 3])("validates refreshed metrics read %s", async (stage) => {
+    let reads = 0;
+    const { browser, result } = await captureWithFake({
+      commandResult: ({ method }) =>
+        method === "Page.getLayoutMetrics"
+          ? ++reads === stage
+            ? {}
+            : withCssViewport({
+                visualViewport: {
+                  pageX: 0,
+                  pageY: 0,
+                  clientWidth: 2,
+                  clientHeight: 2,
+                  scale: 1,
+                },
+              })
+          : undefined,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { reason: "protocol_error" },
+    });
+    expect(
+      browser.commands.filter(
+        ({ method }) => method === "Page.captureScreenshot",
+      ),
+    ).toHaveLength(stage - 1);
+  });
+});
+
 describe("screenshot visual viewport capture", () => {
   it("recovers a cropped surface using the reported viewport clip and page scale", async () => {
     let captures = 0;

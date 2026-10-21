@@ -33,6 +33,12 @@ export async function verifyViewportScreenshotE2e(endpoint, origin) {
     const emulation = await context.newCDPSession(page);
     const cases = [];
     for (const scale of [1, 2]) {
+      await connection.send("Emulation.setDeviceMetricsOverride", {
+        width: 800,
+        height: 400,
+        deviceScaleFactor: 0,
+        mobile: false,
+      });
       // A capture on another CDP session can restore its own device metrics.
       // Establish the fixture independently for each page-scale case.
       await emulation.send("Emulation.clearDeviceMetricsOverride");
@@ -59,20 +65,56 @@ export async function verifyViewportScreenshotE2e(endpoint, origin) {
         720,
         JSON.stringify({ scale, visualViewport }),
       );
-      const screenshot = await captureCdpScreenshot({
-        connection,
-        discovery,
-        target,
-        input: {
-          cdp_endpoint: endpoint,
-          target_id: target.id,
-          allowed_origins: [origin],
-        },
-      });
-      assert.deepEqual(screenshot.viewport, {
+      const captures = [];
+      const send = connection.send.bind(connection);
+      connection.send = (...args) => {
+        const result = send(...args);
+        if (args[0] !== "Page.captureScreenshot") return result;
+        return result.then((reply) => {
+          captures.push({ params: args[1], data: reply.data });
+          return reply;
+        });
+      };
+      try {
+        await assert.rejects(
+          captureCdpScreenshot({
+            connection,
+            discovery,
+            target,
+            input: {
+              cdp_endpoint: endpoint,
+              target_id: target.id,
+              allowed_origins: [origin],
+            },
+          }),
+          (error) => error.reason === "target_changed",
+          "Recovery must reject a viewport changed by another session",
+        );
+      } finally {
+        connection.send = send;
+      }
+      assert.equal(
+        captures.length,
+        2,
+        "Fixture must exercise cropped recovery",
+      );
+      assert.equal(captures[0].params.captureBeyondViewport, false);
+      assert.equal(captures[0].params.clip, undefined);
+      assert.equal(captures[1].params.captureBeyondViewport, true);
+      assert.ok(captures[1].params.clip, "Recovery must use an explicit clip");
+      const expectedViewport = {
         width: Math.round(visualViewport.clientWidth * visualViewport.scale),
         height: Math.round(visualViewport.clientHeight * visualViewport.scale),
-      });
+      };
+      const initialBytes = Buffer.from(captures[0].data, "base64");
+      assert.ok(
+        initialBytes.readUInt32BE(16) < expectedViewport.width ||
+          initialBytes.readUInt32BE(20) < expectedViewport.height,
+        "First production capture must actually be undersized",
+      );
+      const recovered = createWebScreenshotArtifact(
+        Buffer.from(captures[1].data, "base64"),
+      );
       const control = await connection.send("Page.captureScreenshot", {
         format: "png",
         fromSurface: true,
@@ -86,7 +128,7 @@ export async function verifyViewportScreenshotE2e(endpoint, origin) {
         },
       });
       const compared = comparePngScreenshots({
-        before: screenshot.artifact,
+        before: recovered,
         after: createWebScreenshotArtifact(Buffer.from(control.data, "base64")),
         channel_threshold: 0,
       });
@@ -95,10 +137,42 @@ export async function verifyViewportScreenshotE2e(endpoint, origin) {
         "identical",
         `Viewport capture must retain every control pixel: ${JSON.stringify({ scale, compared })}`,
       );
+      // A stable, same-session viewport must still return a normal screenshot.
+      await connection.send("Emulation.setDeviceMetricsOverride", {
+        width: 1280,
+        height: 720,
+        deviceScaleFactor: 0,
+        mobile: false,
+      });
+      await connection.send("Emulation.setPageScaleFactor", {
+        pageScaleFactor: scale,
+      });
+      const screenshot = await captureCdpScreenshot({
+        connection,
+        discovery,
+        target,
+        input: {
+          cdp_endpoint: endpoint,
+          target_id: target.id,
+          allowed_origins: [origin],
+        },
+      });
+      assert.deepEqual(screenshot.viewport, expectedViewport);
+      assert.equal(
+        comparePngScreenshots({
+          before: screenshot.artifact,
+          after: recovered,
+          channel_threshold: 0,
+        }).status,
+        "identical",
+      );
       cases.push({
         page_scale: scale,
         viewport: screenshot.viewport,
         pixel_control: "identical",
+        clipped_recovery: true,
+        changed_viewport_rejected: true,
+        stable_viewport_accepted: true,
       });
     }
     return {
