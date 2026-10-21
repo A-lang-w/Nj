@@ -346,7 +346,20 @@ const runSetupWorkflow = async (
       ? {}
       : { onProgress: options.onProgress }),
   });
-  if (clientFailure !== undefined) return fail(clientFailure);
+  // A later failure must not hide a failed Hopper install: keep its repair
+  // steps, and its code when the later failure carries none.
+  const withHopperFailure = (result: SetupResult): SetupResult =>
+    hopperFailure === undefined
+      ? result
+      : {
+          ...result,
+          code: result.code ?? hopperFailure.code,
+          remediation:
+            combineRemediation(hopperFailure.remediation, result.remediation) ??
+            hopperFailure.remediation,
+        };
+  if (clientFailure !== undefined)
+    return withHopperFailure(await fail(clientFailure));
   if (planSelection.installSkill) {
     const skillFailure = await installSkillAction(
       host,
@@ -355,7 +368,7 @@ const runSetupWorkflow = async (
       selectedSkillClientIds,
     );
     if (skillFailure !== undefined) {
-      return failSkill(skillFailure);
+      return withHopperFailure(await failSkill(skillFailure));
     }
   }
   const doctor = summarizeDoctor(await host.doctor(readinessScope));
