@@ -133,3 +133,14 @@ uv run --no-project --with tiktoken==0.12.0 python \
 The original issue reporter's executable, foreign operating systems and actual
 model sessions remain unverified. Two setup pilots, including one failed run
 while compiled artifacts were absent after a typecheck failure, are excluded.
+
+## Latest-main integration verification
+
+After merging `main@d2015e94f32a51b898918b5b39b374c134119fd5`, verified runtime
+`f0b797d2f312f673effd82f177c49745eaf67c2b`: all measured feature production-file
+hashes remain unchanged. A fresh selected real-artifact task retains the identical
+full parent and answer, with clean process exit. Its resource observation is
+recorded separately in the JSON; the paired medians above remain bound to the
+original baseline and are not relabeled as new latest-main measurements.
+All 153 focused tests across nine files, `npm run check`, and `npm run docs:check`
+(including five README consistency tests) pass after this integration.

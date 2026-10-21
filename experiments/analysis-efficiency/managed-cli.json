@@ -1074,5 +1074,18 @@
     "peak_process_family_bytes_including_page_cache": 394600448,
     "answer_matches": true,
     "cleanup_verified": true
+  },
+  "latest_main_verification": {
+    "revision": "f0b797d2f312f673effd82f177c49745eaf67c2b",
+    "upstream_main": "d2015e94f32a51b898918b5b39b374c134119fd5",
+    "status": "passed",
+    "parent_and_answer_unchanged": true,
+    "all_measured_feature_production_hashes_unchanged": true,
+    "repetitions": 1,
+    "wall_seconds": 11.606,
+    "cpu_seconds": 11.411843,
+    "peak_process_family_bytes_including_page_cache": 412237824,
+    "cleanup_verified": true,
+    "scope": "Post-integration correctness smoke with resource observation, not a new paired cohort."
   }
 }
