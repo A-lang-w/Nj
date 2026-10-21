@@ -403,6 +403,31 @@ it("cancels a pending storage-key reply and still releases its CDP owner", async
   expect(cdp.detachCalls).toBe(1);
 });
 
+it("bounds a stalled child CDP reply by command_timeout_ms", async () => {
+  const cdp = new FakeCdp();
+  const { page, contextApi } = fixture(cdp);
+  const input = browserScenarioSchema.parse({
+    ...scenario(),
+    command_timeout_ms: 40,
+  });
+  const started = performance.now();
+  const owner = await createInitializedStorage(contextApi, page, input);
+  expect(owner).toBeDefined();
+  cdp.emit("Target.attachedToTarget", {
+    sessionId: "iframe-session",
+    targetInfo: { type: "iframe", targetId: "iframe-target" },
+  });
+  await expect(owner?.settle()).rejects.toMatchObject({
+    reason: "protocol_error",
+    cause: {
+      reason: "timeout",
+      userMessage: expect.stringContaining("Page.enable"),
+    },
+  });
+  expect(performance.now() - started).toBeLessThan(4_000);
+  await owner?.close();
+});
+
 it("releases the CDP owner when an attached target reply remains pending", async () => {
   const cdp = new FakeCdp();
   const { page, contextApi } = fixture(cdp);

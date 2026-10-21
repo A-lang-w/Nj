@@ -26,7 +26,9 @@ capture only when needed. Action, secret, and storage counts are not capped.
 Duration, action, and navigation timeouts remain separate from CDP command
 deadlines. `command_timeout_ms` (default 20000; omit it to keep that default
 and leave it out of Evidence) bounds launch startup, the connect-over-CDP
-handshake, target lookup, environment commands, and storage CDP commands.
+handshake, target lookup, environment commands, and storage CDP commands,
+including replies from attached child targets. Set it in the scenario JSON.
+`capture-browser-scenario` has no `--command-timeout-ms` option.
 It does not change action `timeout_ms`, `wait_for_timeout.duration_ms`, or
 navigation. Service-worker restoration keeps a fixed 5000 ms grace and does
 not inherit a raised `command_timeout_ms`. CDP discovery stays on its own

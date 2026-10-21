@@ -26,7 +26,10 @@ import {
   PLAYWRIGHT_CLEANUP_CONFIRMATION_TIMEOUT_MS,
 } from "./PlaywrightExecutionBoundary.js";
 import {
+  releaseLateScenarioCommand,
+  scenarioCommandPending,
   scenarioCommandTimeoutMs,
+  settleScenarioCommand,
   withScenarioCommandDeadline,
 } from "./ScenarioCommandDeadline.js";
 
@@ -373,20 +376,40 @@ const allowedBrowserEnvironment = (
     TERMUX_EXEC__PROC_SELF_EXE: process.execPath,
   };
 };
+const ownLateScenarioCommand = (
+  cause: unknown,
+  retainCleanup: ((lease: AnalysisCleanupLease) => void) | undefined,
+  resource: string,
+  release: () => Promise<void> = () => releaseLateScenarioCommand(cause),
+): boolean => {
+  if (scenarioCommandPending(cause) === undefined) return false;
+  const late = new AnalysisCleanupLease(release, [resource]);
+  retainCleanup?.(late);
+  void late.release().catch(() => undefined);
+  return true;
+};
+
 const findConnectedPage = async (
   browser: Pick<Browser, "contexts">,
   targetId: string,
   signal: AbortSignal | undefined,
   commandTimeoutMs: number,
+  retainCleanup: ((lease: AnalysisCleanupLease) => void) | undefined,
 ): Promise<{ readonly context: BrowserContext; readonly page: Page }> => {
   for (const context of browser.contexts())
     for (const page of context.pages()) {
-      const session = await withScenarioCommandDeadline(
-        () => context.newCDPSession(page),
-        commandTimeoutMs,
-        "command",
-        "Target.attachToTarget",
-      );
+      let session: CDPSession;
+      try {
+        session = await withScenarioCommandDeadline(
+          () => context.newCDPSession(page),
+          commandTimeoutMs,
+          "command",
+          "Target.attachToTarget",
+        );
+      } catch (cause: unknown) {
+        ownLateScenarioCommand(cause, retainCleanup, "browser_transport");
+        throw cause;
+      }
       try {
         throwIfScenarioCancelled(signal);
         const { targetInfo } = await withScenarioCommandDeadline(
@@ -429,15 +452,23 @@ class AttachedScenarioEnvironmentOwner {
     context: BrowserContext,
     page: Page,
     commandTimeoutMs: number,
+    retainCleanup: ((lease: AnalysisCleanupLease) => void) | undefined,
   ): Promise<AttachedScenarioEnvironmentOwner> {
-    return new AttachedScenarioEnvironmentOwner(
-      page,
-      await withScenarioCommandDeadline(
+    let session: CDPSession;
+    try {
+      session = await withScenarioCommandDeadline(
         () => context.newCDPSession(page),
         commandTimeoutMs,
         "command",
         "Target.attachToTarget",
-      ),
+      );
+    } catch (cause: unknown) {
+      ownLateScenarioCommand(cause, retainCleanup, "browser_transport");
+      throw cause;
+    }
+    return new AttachedScenarioEnvironmentOwner(
+      page,
+      session,
       commandTimeoutMs,
     );
   }
@@ -465,76 +496,85 @@ class AttachedScenarioEnvironmentOwner {
     return application;
   }
 
+  async #command(work: Promise<unknown>, method: string): Promise<void> {
+    await withScenarioCommandDeadline(
+      () => work,
+      this.commandTimeoutMs,
+      "command",
+      method,
+    );
+  }
+
   async #applyEnvironment(
     environment: BrowserScenario["environment"],
     signal: AbortSignal | undefined,
   ): Promise<void> {
-    await withScenarioCommandDeadline(
-      () =>
-        this.page.emulateMedia({
+    await this.#command(
+      this.page
+        .emulateMedia({
           colorScheme: environment.color_scheme,
           reducedMotion: environment.reduced_motion,
+        })
+        .then(() => {
+          this.#mediaOverride = true;
         }),
-      this.commandTimeoutMs,
-      "command",
       "Emulation.setEmulatedMedia",
     );
-    this.#mediaOverride = true;
     throwIfScenarioCancelled(signal);
 
     // setViewportSize also resizes the external browser window. CDP metrics
     // provide the scenario viewport without changing that caller-owned window.
-    await withScenarioCommandDeadline(
-      () =>
-        this.session.send("Emulation.setDeviceMetricsOverride", {
+    await this.#command(
+      this.session
+        .send("Emulation.setDeviceMetricsOverride", {
           width: environment.viewport.width,
           height: environment.viewport.height,
           deviceScaleFactor: environment.viewport.device_scale_factor,
           mobile: false,
           dontSetVisibleSize: true,
+        })
+        .then(() => {
+          this.#deviceMetricsOverride = true;
         }),
-      this.commandTimeoutMs,
-      "command",
       "Emulation.setDeviceMetricsOverride",
     );
-    this.#deviceMetricsOverride = true;
     throwIfScenarioCancelled(signal);
 
-    await withScenarioCommandDeadline(
-      () =>
-        this.session.send("Emulation.setLocaleOverride", {
+    await this.#command(
+      this.session
+        .send("Emulation.setLocaleOverride", {
           locale: environment.locale,
+        })
+        .then(() => {
+          this.#localeOverride = true;
         }),
-      this.commandTimeoutMs,
-      "command",
       "Emulation.setLocaleOverride",
     );
-    this.#localeOverride = true;
     throwIfScenarioCancelled(signal);
 
-    await withScenarioCommandDeadline(
-      () =>
-        this.session.send("Emulation.setTimezoneOverride", {
+    await this.#command(
+      this.session
+        .send("Emulation.setTimezoneOverride", {
           timezoneId: environment.timezone,
+        })
+        .then(() => {
+          this.#timezoneOverride = true;
         }),
-      this.commandTimeoutMs,
-      "command",
       "Emulation.setTimezoneOverride",
     );
-    this.#timezoneOverride = true;
     throwIfScenarioCancelled(signal);
   }
 
   async close(): Promise<void> {
     if (this.#detached) return;
-    // The execution boundary can report cancellation before a pending CDP
-    // command settles. Wait for that producer so every successful mutation is
-    // recorded before deciding which state this owner must restore.
+    // The execution boundary can report cancellation or a command deadline
+    // before a pending CDP command settles. Wait for that producer, including
+    // a command that finishes after its deadline, so every successful mutation
+    // is recorded before deciding which state this owner must restore.
     try {
       await this.#application;
-    } catch {
-      // The operation path reports application failures. Cleanup still owns
-      // and restores every mutation that completed before the failure.
+    } catch (cause: unknown) {
+      await settleScenarioCommand(cause);
     }
     const failures: unknown[] = [];
     if (this.#timezoneOverride) {
@@ -718,6 +758,7 @@ const openAttachedScenarioBrowser = async (
           browserRequest.target_id,
           signal,
           commandTimeoutMs,
+          retainCleanup,
         ),
       undefined,
       signal,
@@ -729,6 +770,7 @@ const openAttachedScenarioBrowser = async (
           target.context,
           target.page,
           commandTimeoutMs,
+          retainCleanup,
         ),
       undefined,
       signal,
@@ -747,7 +789,16 @@ const openAttachedScenarioBrowser = async (
     };
   } catch (cause: unknown) {
     if (cleanupOwner === undefined) {
-      lease.release();
+      const owned = ownLateScenarioCommand(
+        cause,
+        retainCleanup,
+        "browser_transport",
+        async () => {
+          await releaseLateScenarioCommand(cause);
+          lease.release();
+        },
+      );
+      if (!owned) lease.release();
       throw cause;
     }
     const cleanup = cleanupOwner;
@@ -824,10 +875,10 @@ export const openPlaywrightScenarioBrowser = async (
       "handshake",
     );
   } catch (cause: unknown) {
-    const cleanup = new AnalysisCleanupLease(
-      () => rm(profilePath, { recursive: true, force: true, maxRetries: 3 }),
-      ["browser_profile"],
-    );
+    const cleanup = new AnalysisCleanupLease(async () => {
+      await releaseLateScenarioCommand(cause);
+      await rm(profilePath, { recursive: true, force: true, maxRetries: 3 });
+    }, ["browser_profile"]);
     try {
       return await failBrowserScenarioOperation(cleanup, cause);
     } catch (failure: unknown) {

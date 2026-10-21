@@ -9,6 +9,8 @@ import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
 import { withPlaywrightExecutionBoundary } from "./PlaywrightExecutionBoundary.js";
 import {
+  releaseLateScenarioCommand,
+  scenarioCommandPending,
   scenarioCommandTimeoutMs,
   withScenarioCommandDeadline,
 } from "./ScenarioCommandDeadline.js";
@@ -193,6 +195,16 @@ export class PlaywrightScenarioStorage {
         const cleanup = new AnalysisCleanupLease(lateCleanup, [
           "browser_storage_transport",
         ]);
+        retainCleanup?.(cleanup);
+        void withPlaywrightExecutionBoundary(
+          () => cleanup.release(),
+          STORAGE_CLEANUP_TIMEOUT_MS,
+        ).catch(() => undefined);
+      } else if (scenarioCommandPending(cause) !== undefined) {
+        const cleanup = new AnalysisCleanupLease(
+          () => releaseLateScenarioCommand(cause),
+          ["browser_storage_transport"],
+        );
         retainCleanup?.(cleanup);
         void withPlaywrightExecutionBoundary(
           () => cleanup.release(),
@@ -503,7 +515,8 @@ export class PlaywrightScenarioStorage {
     let resumeFailure: unknown;
     try {
       await withPlaywrightExecutionBoundary(
-        () => target.send("Debugger.resume"),
+        () =>
+          target.send("Debugger.resume", undefined, STORAGE_CLEANUP_TIMEOUT_MS),
         STORAGE_CLEANUP_TIMEOUT_MS,
       );
     } catch (cause: unknown) {
@@ -532,18 +545,41 @@ export class PlaywrightScenarioStorage {
       event.targetInfo.type === "iframe"
         ? parent.topLevelTargetId
         : event.targetInfo.targetId,
-      async (method, params = {}) => {
+      async (method, params = {}, timeoutMs = this.commandTimeoutMs) => {
         const id = ++this.#sequence;
-        const reply = new Promise<unknown>((resolve, reject) =>
-          this.#replies.set(id, { sessionId, resolve, reject }),
-        );
+        let rejectReply: ((error: Error) => void) | undefined;
+        const reply = new Promise<unknown>((resolve, reject) => {
+          rejectReply = reject;
+          this.#replies.set(id, { sessionId, resolve, reject });
+        });
         try {
-          const sent = parent.send("Target.sendMessageToTarget", {
-            sessionId,
-            message: JSON.stringify({ id, method, params }),
-          });
-          const [, result] = await Promise.all([sent, reply]);
+          const sent = parent.send(
+            "Target.sendMessageToTarget",
+            {
+              sessionId,
+              message: JSON.stringify({ id, method, params }),
+            },
+            timeoutMs,
+          );
+          // Delivery through the root session and the nested reply share one deadline.
+          const [, result] = await withScenarioCommandDeadline(
+            () => Promise.all([sent, reply]),
+            timeoutMs,
+            "command",
+            method,
+          );
           return result;
+        } catch (cause: unknown) {
+          rejectReply?.(
+            cause instanceof Error
+              ? cause
+              : new BrowserObservationError(
+                  "capture_browser_scenario",
+                  "protocol_error",
+                  { cause },
+                ),
+          );
+          throw cause;
         } finally {
           this.#replies.delete(id);
         }
@@ -569,7 +605,12 @@ export class PlaywrightScenarioStorage {
       if (this.#targets.get(sessionId) !== target) return;
       try {
         await withPlaywrightExecutionBoundary(
-          () => target.send("Runtime.runIfWaitingForDebugger"),
+          () =>
+            target.send(
+              "Runtime.runIfWaitingForDebugger",
+              undefined,
+              STORAGE_CLEANUP_TIMEOUT_MS,
+            ),
           STORAGE_CLEANUP_TIMEOUT_MS,
         );
         target.waitingForDebugger = false;
