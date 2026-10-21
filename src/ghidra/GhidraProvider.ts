@@ -14,7 +14,7 @@ import type {
   AnalysisClient,
   AnalysisClientContext,
   AnalysisProviderInspectionOptions,
-  FileCloseResourceOwner,
+  RetainedResourceScope,
   AnalysisProfileResolutionOptions,
   AnalysisProfileResolution,
   AnalysisProviderCandidate,
@@ -109,7 +109,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
   #inspectionAttempt:
     | SharedStartupAttempt<Result<GhidraInstallationInspection, AnalysisError>>
     | undefined;
-  readonly #inspectionOwner: FileCloseResourceOwner = {
+  readonly #inspectionOwner: RetainedResourceScope = {
     retain: (owner, resource) =>
       this.#inspectionResources.retain({
         kind: "lease",
@@ -610,7 +610,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
 
   #observeInstallation(
     signal: AbortSignal,
-    resourceOwner: FileCloseResourceOwner = this.#inspectionOwner,
+    resourceOwner: RetainedResourceScope = this.#inspectionOwner,
   ): Promise<GhidraInstallationInspection> {
     const options = {
       resourceOwner,
