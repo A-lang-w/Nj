@@ -172,13 +172,14 @@ const processView = (
   appDataRoaming: string,
   privateConfig: boolean,
 ): MsixPackageView["processView"] => {
+  const entryBudget = { inspected: 0 };
   const ownProbes = privateConfig
     ? [join("Claude", CONFIG_FILE)]
-    : claudeFolderProbes(fileSystem, privateRoaming);
+    : claudeFolderProbes(fileSystem, privateRoaming, entryBudget);
   const probes =
     ownProbes.length > 0
       ? ownProbes
-      : roamingProbes(fileSystem, privateRoaming);
+      : roamingProbes(fileSystem, privateRoaming, entryBudget);
   let view: MsixPackageView["processView"] = "unknown";
   for (const probe of probes) {
     let privateTarget: string;
@@ -222,15 +223,22 @@ const resolveAppData = (
 const claudeFolderProbes = (
   fileSystem: ClaudeDesktopLocationFileSystem,
   privateRoaming: string,
+  entryBudget: { inspected: number },
 ): readonly string[] => {
   try {
-    return fileSystem
-      .readdir(join(privateRoaming, "Claude"))
-      .filter((name) =>
-        isPrivateFile(fileSystem, privateRoaming, join("Claude", name)),
-      )
-      .slice(0, PROCESS_VIEW_PROBES)
-      .map((name) => join("Claude", name));
+    const remaining = ROAMING_ENTRY_LIMIT - entryBudget.inspected;
+    if (remaining <= 0) return [];
+    const names = fileSystem.readdir(join(privateRoaming, "Claude"), remaining);
+    const probes: string[] = [];
+    for (const name of names) {
+      if (entryBudget.inspected >= ROAMING_ENTRY_LIMIT) break;
+      entryBudget.inspected += 1;
+      if (isPrivateFile(fileSystem, privateRoaming, join("Claude", name))) {
+        probes.push(join("Claude", name));
+        if (probes.length === PROCESS_VIEW_PROBES) break;
+      }
+    }
+    return probes;
   } catch (cause: unknown) {
     // The folder may not exist; the rest of the roaming root can still decide.
     void cause;
@@ -250,17 +258,17 @@ const claudeFolderProbes = (
 const roamingProbes = (
   fileSystem: ClaudeDesktopLocationFileSystem,
   privateRoaming: string,
+  entryBudget: { inspected: number },
 ): readonly string[] => {
   const probes: string[] = [];
   const queue: { readonly path: string; readonly depth: number }[] = [
     { path: "", depth: 0 },
   ];
-  let inspected = 0;
   for (
     let listed = 0;
     listed < ROAMING_DIRECTORY_LIMIT &&
     probes.length < PROCESS_VIEW_PROBES &&
-    inspected < ROAMING_ENTRY_LIMIT;
+    entryBudget.inspected < ROAMING_ENTRY_LIMIT;
     listed++
   ) {
     const directory = queue.shift();
@@ -270,7 +278,7 @@ const roamingProbes = (
       names = [
         ...fileSystem.readdir(
           join(privateRoaming, directory.path),
-          ROAMING_ENTRY_LIMIT - inspected,
+          ROAMING_ENTRY_LIMIT - entryBudget.inspected,
         ),
       ].sort();
     } catch (cause: unknown) {
@@ -284,9 +292,12 @@ const roamingProbes = (
       const wantsFolder =
         directory.depth < ROAMING_DEPTH_LIMIT &&
         listed + queue.length < ROAMING_DIRECTORY_LIMIT - 1;
-      if ((!wantsFile && !wantsFolder) || inspected === ROAMING_ENTRY_LIMIT)
+      if (
+        (!wantsFile && !wantsFolder) ||
+        entryBudget.inspected === ROAMING_ENTRY_LIMIT
+      )
         break;
-      inspected += 1;
+      entryBudget.inspected += 1;
       const path = join(directory.path, name);
       const entry = entryKind(fileSystem, join(privateRoaming, path));
       if (entry === "file" && wantsFile) {

@@ -298,7 +298,9 @@ describe("Claude Desktop MSIX process view from other roaming folders", () => {
   it("keeps the view unknown when the roaming root has no private file", () => {
     expect(viewOf(roamingFileSystem([], (path) => path))).toBe("unknown");
   });
+});
 
+describe("Claude Desktop roaming enumeration budget", () => {
   it("stops inspecting entries once its budget is spent", () => {
     const folders = Array.from({ length: 1500 }, (_, index) =>
       join(`folder-${String(index).padStart(4, "0")}`, "file"),
@@ -322,6 +324,69 @@ describe("Claude Desktop MSIX process view from other roaming folders", () => {
     expect(inspected).toBe(1024);
     // The listing itself stops at the budget instead of reading all 1500 names.
     expect(requested).toEqual([1024]);
+  });
+
+  it("bounds the preferred Claude folder before selecting its probes", () => {
+    const files = Array.from({ length: 1500 }, (_, index) =>
+      join("Claude", `file-${String(index).padStart(4, "0")}.log`),
+    );
+    const base = roamingFileSystem(files, (path) => path);
+    const listed: number[] = [];
+    let inspected = 0;
+    const view = viewOf({
+      ...base,
+      readdir: (path, limit) => {
+        if (path === join(privateRoaming, "Claude") && limit !== undefined)
+          listed.push(limit);
+        return base.readdir(path, limit);
+      },
+      lstat: (path) => {
+        if (
+          path.startsWith(`${join(privateRoaming, "Claude")}${sep}`) &&
+          !path.endsWith(join("Claude", "claude_desktop_config.json"))
+        )
+          inspected += 1;
+        return base.lstat(path);
+      },
+    });
+
+    expect(view).toBe("direct");
+    expect(listed).toEqual([1024]);
+    // Each selected candidate is inspected once while listing and again during
+    // the race-safe comparison; selection itself remains capped at eight.
+    expect(inspected).toBe(16);
+  });
+
+  it("shares the entry budget between the preferred folder and fallback walk", () => {
+    const folders = Array.from({ length: 1500 }, (_, index) =>
+      join("Claude", `folder-${String(index).padStart(4, "0")}`, "file"),
+    );
+    const files = [...folders, join("turborepo", "telemetry.json")];
+    const base = roamingFileSystem(files, (path) => path);
+    const listed: Array<{ path: string; limit: number | undefined }> = [];
+    let inspected = 0;
+    const view = viewOf({
+      ...base,
+      readdir: (path, limit) => {
+        listed.push({ path, limit });
+        return base.readdir(path, limit);
+      },
+      lstat: (path) => {
+        if (
+          path.startsWith(`${join(privateRoaming, "Claude")}${sep}`) &&
+          !path.endsWith(join("Claude", "claude_desktop_config.json"))
+        )
+          inspected += 1;
+        return base.lstat(path);
+      },
+    });
+
+    expect(view).toBe("unknown");
+    expect(inspected).toBe(1024);
+    expect(
+      listed.filter(({ path }) => path === join(privateRoaming, "Claude")),
+    ).toEqual([{ path: join(privateRoaming, "Claude"), limit: 1024 }]);
+    expect(listed.some(({ path }) => path === privateRoaming)).toBe(false);
   });
 });
 
