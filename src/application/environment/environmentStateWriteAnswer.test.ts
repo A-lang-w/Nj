@@ -388,7 +388,7 @@ describe("list queries", () => {
       const answer = books.answer("get_books", args);
       return {
         ids: (answer.body as Book[]).map((entry) => entry["id"]),
-        state: answer.state,
+        state: (answer as { readonly state?: unknown }).state,
       };
     };
     expect(listed({ shelf: "b" })).toMatchObject({

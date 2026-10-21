@@ -60,7 +60,9 @@ const queryParameterSchema = z.discriminatedUnion("role", [
     role: z.literal("inert"),
     values: z
       .array(z.string())
-      .describe("Recorded values that change nothing the view lists; other values are not computed."),
+      .describe(
+        "Recorded values that change nothing the view lists; other values are not computed.",
+      ),
   }),
 ]);
 const listQuerySchema = z.strictObject({
