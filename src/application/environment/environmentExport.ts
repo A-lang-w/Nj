@@ -22,7 +22,10 @@ import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { writeEnvironmentBundle } from "./environmentBundleWrite.js";
+import {
+  BundleFileWriteFailure,
+  writeEnvironmentBundle,
+} from "./environmentBundleWrite.js";
 import { sealOwnedJsonInput } from "../OwnedJsonInput.js";
 import { nativeJsonParseRequiredBytes } from "../JsonInputFile.js";
 import { readRegularFile } from "../RegularFileRead.js";
@@ -148,6 +151,7 @@ const hostFailurePath = (cause: unknown): string | undefined => {
   let current = cause;
   while (current instanceof Error && !seen.has(current)) {
     seen.add(current);
+    if (current instanceof BundleFileWriteFailure) return current.path;
     const path = Reflect.get(current, "path");
     if (systemCode(current) !== undefined && typeof path === "string")
       return isAbsolute(path) ? path : undefined;
@@ -353,15 +357,22 @@ export const exportEnvironmentBundle = async (
           : `${cause.message}: ${host.message}`,
         {
           cause,
-          ...(cause.cleanup === undefined
-            ? hostWriteFailure(input.directory)
-            : { cleanup: cause.cleanup }),
+          // Only a host failure gets host recovery; an integrity or other
+          // refusal keeps its own message without disk-space advice.
+          ...(cause.cleanup !== undefined
+            ? { cleanup: cause.cleanup }
+            : host === undefined
+              ? { diagnostics: { output_directory: input.directory } }
+              : hostWriteFailure(input.directory)),
         },
       );
       bindArtifactFileCleanup(cause, error);
       return err(error);
     }
-    if (cause instanceof Error && systemCode(cause) !== undefined)
+    if (
+      cause instanceof BundleFileWriteFailure ||
+      (cause instanceof Error && systemCode(cause) !== undefined)
+    )
       return err(
         new AnalysisOutputError(ENVIRONMENT_EXPORT_OPERATION, cause.message, {
           cause,
