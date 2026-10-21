@@ -69,14 +69,18 @@ it("reports an exceeded staging byte budget as the caller's byte allowance", asy
   const failure = await inventory(root, 4, 1000);
   expect(failure).toMatchObject({
     operation: "extract_firmware",
-    resource: "memory",
+    resource: "capacity",
     reportedLimits: { max_output_bytes: 4 },
     retryable: false,
   });
   expect(projectAnalysisError(failure)).toMatchObject({
     code: "resource_constraint",
     retryable: false,
-    details: { reported_limits: { max_output_bytes: 4 } },
+    details: {
+      resource: "capacity",
+      reason: "Staging byte budget exceeded (4)",
+      reported_limits: { max_output_bytes: 4 },
+    },
     remediation: { action: expect.stringContaining("max_output_bytes") },
   });
 });

@@ -347,7 +347,7 @@ export const inventoryFirmwareOutput = async (
       if (bytes > maxBytes)
         throw new AnalysisResourceConstraintError(
           operation,
-          "memory",
+          "capacity",
           `Staging byte budget exceeded (${maxBytes})`,
           { max_output_bytes: maxBytes },
           {
