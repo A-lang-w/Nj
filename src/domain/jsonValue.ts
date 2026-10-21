@@ -71,7 +71,7 @@ export function* jsonValueValidationSteps(
       }
       if (depth > MAX_JSON_DEPTH)
         return finish(
-          `JSON value exceeds maximum nesting depth of ${MAX_JSON_DEPTH}`,
+          `JSON value exceeds maximum nesting depth of ${MAX_JSON_DEPTH}. This release has no runtime override.`,
         );
       if (typeof value === "object" && value !== null && types.isProxy(value))
         return finish("JSON values cannot contain proxies");
