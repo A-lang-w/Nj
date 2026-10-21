@@ -1,3 +1,6 @@
+import { nativeFunctionMatchingSchema } from "../domain/native/functionMatching.js";
+import { nativeFunctionMatchingSummaryViewResultSchema } from "../domain/analysisView/analysisView.js";
+import { nativeByteReadSchema } from "../domain/native/nativeByteRead.js";
 import { analysisDetailOutputSchemaOf } from "./analysisDetail.js";
 import { nativeInventorySummaryViewResultSchema } from "../domain/analysisView/analysisView.js";
 import { nativeInventoryRowsSchemas } from "../domain/native/nativeInventory.js";
@@ -23,6 +26,7 @@ import { nativeFunctionAnnotationsSchema } from "../domain/native/nativeFunction
 import { nativeLoadImageSchema } from "../domain/native/nativeLoadImage.js";
 import { nativeUiResultSchema } from "../domain/native/nativeUiObservation.js";
 import { nativeValueTraceSchema } from "../domain/native/nativeValueTrace.js";
+import { bundleResourceRootSchema } from "../domain/apple/bundleResourceRoot.js";
 import { nativeDataTypeSchema } from "../domain/native/nativeDataType.js";
 import { nativeCallObservationResultSchema } from "../domain/native/nativeCallObservation.js";
 import {
@@ -84,6 +88,7 @@ import {
   lifecycleResultOf,
   nullableText,
   procedureInfoOutput,
+  objcClassDiscoveryOutput,
   evidenceResultOf,
   segmentOutput,
   sessionProvider,
@@ -158,15 +163,7 @@ export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   procedure_callers: evidenceResultOf(addressList),
   procedure_info: procedureInfoOutput,
   read_function_instructions: evidenceResultOf(functionInstructionWindowSchema),
-  read_bytes: evidenceResultOf(
-    z.object({
-      address: z.string(),
-      requested_bytes: z.number().int().min(1),
-      returned_bytes: z.number().int().min(0),
-      bytes_hex: z.string().regex(/^(?:[a-f0-9]{2})*$/u),
-      complete: z.boolean(),
-    }),
-  ),
+  read_bytes: evidenceResultOf(nativeByteReadSchema),
   address_to_file_offset: evidenceResultOf(
     z.object({
       address: z.string(),
@@ -313,7 +310,7 @@ export const enhancedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   ),
   trace_native_values: evidenceResultOf(nativeValueTraceSchema),
   trace_native_ui_action: evidenceResultOf(nativeInvestigationTraceSchema),
-  get_objc_classes: symbolDiscoveryOutput("classes"),
+  get_objc_classes: objcClassDiscoveryOutput,
   get_objc_protocols: symbolDiscoveryOutput("protocols"),
   batch_decompile: evidenceResultOf(
     z.object({
@@ -516,6 +513,7 @@ export const sessionOutputSchemas = {
       rawLifecycleTargetSchema,
     ]),
   ),
+  open_bundle_resources: lifecycleResultOf(bundleResourceRootSchema),
   close_binary: lifecycleResultOf(
     z.union([
       z.null(),
@@ -545,6 +543,11 @@ export const sessionOutputSchemas = {
   binary_session: lifecycleResultOf(
     z.union([
       sessionProvider.extend({ open: z.literal(false) }),
+      sessionProvider.extend({
+        open: z.literal(true),
+        session_kind: z.literal("bundle_resources"),
+        resource_root: bundleResourceRootSchema,
+      }),
       sessionProvider.extend({
         open: z.literal(true),
         ...detectedLifecycleTargetSchema.shape,
@@ -595,6 +598,12 @@ export const sessionOutputSchemas = {
   compare_process_captures: evidenceResultOf(processCaptureComparisonSchema),
   compare_artifacts: evidenceResultOf(artifactComparisonResultSchema),
   compare_functions: evidenceResultOf(functionComparisonResultSchema),
+  match_native_functions: evidenceResultOf(
+    z.union([
+      nativeFunctionMatchingSchema,
+      nativeFunctionMatchingSummaryViewResultSchema,
+    ]),
+  ),
   compare_bundles: evidenceResultOf(bundleComparisonResultSchema),
   find_changed_behavior: evidenceResultOf(changedBehaviorResultSchema),
   build_call_path: evidenceResultOf(callPathResultSchema),
