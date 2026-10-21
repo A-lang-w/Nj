@@ -256,6 +256,8 @@ export const parseAndroidManifestComponents = (
   const packageName = plainAttribute(root, "package")?.trim() || null;
   const packageHasUnresolvedToken =
     packageName !== null && containsUnresolvedToken(packageName);
+  const packageNameBytes =
+    packageName === null ? 0 : Buffer.byteLength(packageName);
   const limitations: string[] = [];
   const items: AndroidManifestComponent[] = [];
   let truncated = false;
@@ -266,6 +268,7 @@ export const parseAndroidManifestComponents = (
   let unresolvedNames = 0;
   let unresolvedPackages = 0;
   let unresolvedTokens = 0;
+  let invalidNames = 0;
   let invalidExported = 0;
   let unknownFilteredExportDefaults = 0;
   let capacityTruncated = false;
@@ -281,6 +284,9 @@ export const parseAndroidManifestComponents = (
     if (element.nodeName !== "application") continue;
     applicationSeen = true;
     const applicationPermission = trimmed(element, "permission");
+    const applicationPermissionHasUnresolvedToken =
+      applicationPermission !== null &&
+      containsUnresolvedToken(applicationPermission);
     const applicationPermissionBytes =
       applicationPermission === null
         ? null
@@ -296,11 +302,12 @@ export const parseAndroidManifestComponents = (
         capacityTruncated = true;
         break;
       }
-      const declared = trimmed(component, "name");
-      if (declared === null) {
+      const rawDeclaredName = androidAttribute(component, "name");
+      if (rawDeclaredName === null) {
         unnamed += 1;
         continue;
       }
+      const declared = rawDeclaredName.trim();
       const filters = childNodes(component).filter(
         (entry): entry is Element =>
           entry.nodeType === 1 && entry.nodeName === "intent-filter",
@@ -312,24 +319,34 @@ export const parseAndroidManifestComponents = (
       }
       // A huge manifest package would be copied into every resolved name;
       // once the byte budget is spent, later names keep their declared form.
+      const invalidDeclaredName =
+        declared.length === 0 || declared !== rawDeclaredName;
       const unresolvedName = containsUnresolvedToken(declared);
       const needsPackage = declared.startsWith(".") || !declared.includes(".");
       const packageKnown =
+        !invalidDeclaredName &&
         !unresolvedName &&
         (!needsPackage || (packageName !== null && !packageHasUnresolvedToken));
-      const resolvedBytes = needsPackage
-        ? Buffer.byteLength(packageName ?? "") +
-          (declared.startsWith(".") ? 0 : 1) +
-          Buffer.byteLength(declared)
-        : Buffer.byteLength(declared);
+      const declaredBytes = Buffer.byteLength(declared);
+      const resolvedBytes =
+        needsPackage && packageKnown
+          ? packageNameBytes +
+            (declared.startsWith(".") ? 0 : 1) +
+            declaredBytes
+          : declaredBytes;
       const nameFits = packageKnown && resolvedBytes <= nameBudget;
       const name = nameFits
         ? resolveAndroidComponentName(packageName, declared)
-        : declared;
-      if (unresolvedName) unresolvedTokens += 1;
-      else if (!packageKnown) unresolvedPackages += 1;
-      else if (!nameFits) unresolvedNames += 1;
-      else nameBudget -= resolvedBytes;
+        : invalidDeclaredName
+          ? rawDeclaredName
+          : declared;
+      if (invalidDeclaredName) invalidNames += 1;
+      if (!invalidDeclaredName) {
+        if (unresolvedName) unresolvedTokens += 1;
+        else if (!packageKnown) unresolvedPackages += 1;
+        else if (!nameFits) unresolvedNames += 1;
+        else nameBudget -= resolvedBytes;
+      }
       let authorities: readonly string[] | null = null;
       if (component.nodeName === "provider") {
         const declaredAuthorities = trimmed(component, "authorities");
@@ -350,7 +367,9 @@ export const parseAndroidManifestComponents = (
       const declaredPermission = androidAttribute(component, "permission");
       const permissionValue =
         declaredPermission === null
-          ? applicationPermission
+          ? component.nodeName === "activity-alias"
+            ? null
+            : applicationPermission
           : declaredPermission.trim() || null;
       const permissionSource =
         permissionValue === null
@@ -365,7 +384,11 @@ export const parseAndroidManifestComponents = (
         | "none"
         | "unknown" = permissionSource;
       if (permissionValue !== null) {
-        if (containsUnresolvedToken(permissionValue)) {
+        const permissionHasUnresolvedToken =
+          declaredPermission === null
+            ? applicationPermissionHasUnresolvedToken
+            : containsUnresolvedToken(permissionValue);
+        if (permissionHasUnresolvedToken) {
           permission = null;
           effectivePermissionSource = "unknown";
           unresolvedPermissionTokens += 1;
@@ -428,7 +451,7 @@ export const parseAndroidManifestComponents = (
       if (filteredExportUnknown) unknownFilteredExportDefaults += 1;
       items.push({
         kind: component.nodeName,
-        declared_name: declared,
+        declared_name: rawDeclaredName,
         name,
         exported: exportedLiteral,
         exported_default:
@@ -462,6 +485,12 @@ export const parseAndroidManifestComponents = (
   if (unnamed > 0) {
     limitations.push(
       `${String(unnamed)} component declaration(s) without android:name are omitted from the inventory.`,
+    );
+    truncated = true;
+  }
+  if (invalidNames > 0) {
+    limitations.push(
+      `${String(invalidNames)} component name value(s) are empty or have surrounding whitespace; the raw declaration is retained without resolving it as an identity.`,
     );
     truncated = true;
   }

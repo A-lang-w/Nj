@@ -115,6 +115,20 @@ it("does not inherit application permission through an explicit empty override",
   });
 });
 
+it("does not apply application or target permissions through an activity alias", () => {
+  const manifest =
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application android:permission="com.example.APP"><activity android:name=".Target" android:permission="com.example.TARGET"/><activity-alias android:name=".Alias" android:targetActivity=".Target"/></application></manifest>';
+  const inventory = parseAndroidManifestComponents(manifest, "complete", "33");
+  expect(inventory.items[0]).toMatchObject({
+    permission: "com.example.TARGET",
+    permission_source: "component",
+  });
+  expect(inventory.items[1]).toMatchObject({
+    permission: null,
+    permission_source: "none",
+  });
+});
+
 it("keeps symbolic effective permissions unknown without resource resolution", () => {
   const manifest =
     '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application android:permission="com.example.APP"><activity android:name=".Resource" android:permission="@string/resource_permission"/><service android:name=".Theme" android:permission="?attr/theme_permission"/><receiver android:name=".Placeholder" android:permission="${manifestPermission}"/><provider android:name=".Inherited"/></application></manifest>';
@@ -169,6 +183,7 @@ it("measures an oversized inherited permission once for the whole inventory", ()
     (_, index) => `<receiver android:name=".R${String(index)}"/>`,
   ).join("");
   const byteLength = vi.spyOn(Buffer, "byteLength");
+  const includes = vi.spyOn(String.prototype, "includes");
   try {
     const inventory = parseAndroidManifestComponents(
       `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application android:permission="${permission}">${declarations}</application></manifest>`,
@@ -178,14 +193,40 @@ it("measures an oversized inherited permission once for the whole inventory", ()
     expect(
       byteLength.mock.calls.filter(([value]) => value === permission),
     ).toHaveLength(1);
+    expect(
+      byteLength.mock.calls.filter(([value]) => value === "com.example"),
+    ).toHaveLength(1);
+    // Unresolved-token classification checks three markers once at the
+    // application owner, not once for every inherited component copy.
+    expect(
+      includes.mock.contexts.filter((value) => value === permission),
+    ).toHaveLength(3);
     expect(inventory.items).toHaveLength(ANDROID_MANIFEST_LIMITS.components);
     expect(
       inventory.items.every((item) => item.permission_source === "unknown"),
     ).toBe(true);
     expect(inventory.status).toBe("partial");
   } finally {
+    includes.mockRestore();
     byteLength.mockRestore();
   }
+});
+
+it("does not resolve malformed raw component names after trimming", () => {
+  const inventory = parseAndroidManifestComponents(
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name=" .Main "/><service android:name=""/><receiver android:name=".Valid"/></application></manifest>',
+    "complete",
+    "33",
+  );
+  expect(
+    inventory.items.map(({ declared_name, name }) => [declared_name, name]),
+  ).toEqual([
+    [" .Main ", " .Main "],
+    ["", ""],
+    [".Valid", "com.example.Valid"],
+  ]);
+  expect(inventory.status).toBe("partial");
+  expect(inventory.limitations.join(" ")).toContain("surrounding whitespace");
 });
 
 it("applies the provider export default from the target SDK", () => {

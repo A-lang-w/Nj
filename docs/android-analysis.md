@@ -41,13 +41,17 @@ activities, aliases, services, receivers and providers from the decoded
 manifest. `declared_name` preserves the source attribute; `name` resolves a
 relative name only when the manifest package is known and the resolved copy
 fits the UTF-8 byte budget. An unresolved package or exhausted name budget
-retains the declared name and marks the inventory partial. Component
-permissions inherit the application permission when no component permission
-is declared; `permission_source` distinguishes a local declaration, inherited
-value, no requirement (including an explicit empty override), and a value
-omitted because its resource/manifest-placeholder token is unresolved or the
-total permission-byte budget was reached. Repeated inherited values share one
-inventory-wide byte budget.
+retains the declared name and marks the inventory partial. Empty component
+names and names with surrounding whitespace retain their raw spelling and
+are not treated as identities. Component permissions inherit the application
+permission when no component permission is declared, except an activity alias
+with no permission: Android documents that case as requiring no permission
+through the alias. `permission_source` distinguishes a local declaration,
+inherited value, no requirement (including an explicit empty override), and a
+value omitted because its resource/manifest-placeholder token is unresolved
+or the total permission-byte budget was reached. Resource and placeholder
+references are not expanded at this parser boundary. Repeated inherited
+values share one inventory-wide byte budget.
 
 `exported` is the declared literal `true` or `false`, otherwise null.
 `exported_default` is the documented default only where it can be established;
