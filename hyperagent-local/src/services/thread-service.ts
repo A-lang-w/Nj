@@ -28,7 +28,7 @@ import type { Result } from "../lib/result.js";
 import {
   bindingsToOpenAiTools,
   buildMcpToolBindings,
-  callStdioMcpTool,
+  callMcpTool,
   formatAgentTools,
   probeEnabledMcpServers,
   type McpToolBinding,
@@ -555,11 +555,7 @@ async function runMcpToolRounds(
         } catch {
           parsedArgs = {};
         }
-        const invoked = await callStdioMcpTool(
-          binding.config,
-          binding.toolName,
-          parsedArgs,
-        );
+        const invoked = await callMcpTool(binding, parsedArgs);
         toolText = invoked.ok
           ? invoked.text
           : `Tool error (${binding.serverName}/${binding.toolName}): ${invoked.error}`;

@@ -12,7 +12,11 @@ import {
 } from "../auth/workspace.js";
 import { validateBoundedObject } from "../lib/bounded-object.js";
 import { emitEvent } from "./events.js";
-import { probeStdioMcpServer } from "../services/mcp-runtime.js";
+import {
+  probeSseMcpServer,
+  probeStdioMcpServer,
+  probeStreamableHttpMcpServer,
+} from "../services/mcp-runtime.js";
 
 const createMcpServerSchema = z
   .object({
@@ -151,20 +155,25 @@ mcpServersRouter.post("/:id/probe", async (c) => {
     !Array.isArray(server.configJson)
       ? (server.configJson as Record<string, unknown>)
       : {};
-  if (server.transportType !== "stdio") {
-    return c.json(
-      {
-        ok: false,
-        serverName: server.name,
-        transportType: server.transportType,
-        tools: [],
-        error: `${server.transportType} probing is not implemented in local mode; use stdio for live Test`,
-      },
-      200,
-    );
+  if (server.transportType === "stdio") {
+    return c.json(await probeStdioMcpServer(server.name, config));
   }
-  const result = await probeStdioMcpServer(server.name, config);
-  return c.json(result);
+  if (server.transportType === "sse") {
+    return c.json(await probeSseMcpServer(server.name, config));
+  }
+  if (server.transportType === "streamable-http") {
+    return c.json(await probeStreamableHttpMcpServer(server.name, config));
+  }
+  return c.json(
+    {
+      ok: false,
+      serverName: server.name,
+      transportType: server.transportType,
+      tools: [],
+      error: `unsupported transport ${server.transportType}`,
+    },
+    200,
+  );
 });
 
 mcpServersRouter.delete("/:id", async (c) => {

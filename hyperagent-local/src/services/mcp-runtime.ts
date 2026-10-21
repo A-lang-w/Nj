@@ -1,5 +1,13 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { logger } from "../lib/logger.js";
+import {
+  callSseMcpTool,
+  callStreamableHttpMcpTool,
+  probeSseMcpServer,
+  probeStreamableHttpMcpServer,
+} from "./mcp-http.js";
+
+export { probeSseMcpServer, probeStreamableHttpMcpServer } from "./mcp-http.js";
 
 export interface McpToolSummary {
   name: string;
@@ -12,6 +20,7 @@ export interface McpToolBinding {
   openaiName: string;
   serverName: string;
   toolName: string;
+  transportType: string;
   config: Record<string, unknown>;
   description?: string;
   inputSchema?: Record<string, unknown>;
@@ -233,8 +242,8 @@ export async function probeStdioMcpServer(
 }
 
 /**
- * Probe enabled MCP servers for tool catalogs. Non-stdio transports are
- * reported as configured-but-unprobed so the chat prompt still names them.
+ * Probe enabled MCP servers for tool catalogs across stdio, SSE, and
+ * streamable-http transports.
  */
 export async function probeEnabledMcpServers(
   servers: Array<{
@@ -251,31 +260,36 @@ export async function probeEnabledMcpServers(
       !Array.isArray(server.configJson)
         ? (server.configJson as Record<string, unknown>)
         : {};
-    if (server.transportType === "stdio") {
-      try {
+    try {
+      if (server.transportType === "stdio") {
         results.push(await probeStdioMcpServer(server.name, config));
-      } catch (err) {
-        logger.warn("MCP stdio probe failed", {
-          server: server.name,
-          error: err instanceof Error ? err.message : String(err),
-        });
+      } else if (server.transportType === "sse") {
+        results.push(await probeSseMcpServer(server.name, config));
+      } else if (server.transportType === "streamable-http") {
+        results.push(await probeStreamableHttpMcpServer(server.name, config));
+      } else {
         results.push({
           serverName: server.name,
-          transportType: "stdio",
+          transportType: server.transportType,
           ok: false,
           tools: [],
-          error: err instanceof Error ? err.message : String(err),
+          error: `unsupported transport ${server.transportType}`,
         });
       }
-      continue;
+    } catch (err) {
+      logger.warn("MCP probe failed", {
+        server: server.name,
+        transportType: server.transportType,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      results.push({
+        serverName: server.name,
+        transportType: server.transportType,
+        ok: false,
+        tools: [],
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
-    results.push({
-      serverName: server.name,
-      transportType: server.transportType,
-      ok: false,
-      tools: [],
-      error: `${server.transportType} tool probing is not implemented in local mode; use stdio for live tools/list`,
-    });
   }
   return results;
 }
@@ -292,7 +306,7 @@ export function mcpOpenAiToolName(
 }
 
 /**
- * Build OpenAI tool bindings from successful stdio probes.
+ * Build OpenAI tool bindings from successful probes (any transport).
  */
 export function buildMcpToolBindings(
   probes: McpServerProbeResult[],
@@ -305,22 +319,30 @@ export function buildMcpToolBindings(
   const byName = new Map(
     servers.map((s) => [
       s.name,
-      s.configJson != null &&
-      typeof s.configJson === "object" &&
-      !Array.isArray(s.configJson)
-        ? (s.configJson as Record<string, unknown>)
-        : {},
+      {
+        transportType: s.transportType,
+        config:
+          s.configJson != null &&
+          typeof s.configJson === "object" &&
+          !Array.isArray(s.configJson)
+            ? (s.configJson as Record<string, unknown>)
+            : {},
+      },
     ]),
   );
   const bindings: McpToolBinding[] = [];
   for (const probe of probes) {
-    if (!probe.ok || probe.transportType !== "stdio") continue;
-    const config = byName.get(probe.serverName) ?? {};
+    if (!probe.ok) continue;
+    const server = byName.get(probe.serverName);
+    const config = server?.config ?? {};
+    const transportType =
+      probe.transportType || server?.transportType || "stdio";
     for (const tool of probe.tools) {
       bindings.push({
         openaiName: mcpOpenAiToolName(probe.serverName, tool.name),
         serverName: probe.serverName,
         toolName: tool.name,
+        transportType,
         config,
         description: tool.description,
         inputSchema: tool.inputSchema,
@@ -328,6 +350,31 @@ export function buildMcpToolBindings(
     }
   }
   return bindings.slice(0, MAX_TOOLS);
+}
+
+/**
+ * Invoke tools/call on the binding's transport.
+ */
+export async function callMcpTool(
+  binding: McpToolBinding,
+  args: Record<string, unknown>,
+): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+  const transport = binding.transportType;
+  switch (transport) {
+    case "stdio":
+      return callStdioMcpTool(binding.config, binding.toolName, args);
+    case "sse":
+      return callSseMcpTool(binding.config, binding.toolName, args);
+    case "streamable-http":
+      return callStreamableHttpMcpTool(binding.config, binding.toolName, args);
+    default: {
+      const _exhaustive: never = transport as never;
+      return {
+        ok: false,
+        error: `unsupported transport ${String(_exhaustive)}`,
+      };
+    }
+  }
 }
 
 export function bindingsToOpenAiTools(bindings: McpToolBinding[]): Array<{

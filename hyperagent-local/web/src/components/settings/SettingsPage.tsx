@@ -32,15 +32,16 @@ const DEFAULT_STDIO_CONFIG = `{
   "args": ["-e", "console.error('replace with an MCP stdio server')"]
 }`;
 
+const DEFAULT_HTTP_CONFIG = `{
+  "url": "http://127.0.0.1:3001/mcp"
+}`;
+
 function probeButtonLabel(
   state:
     | { status: "idle" | "running" | "ok" | "error"; detail?: string }
     | undefined,
-  transportType: TransportType,
 ): string {
-  if (!state || state.status === "idle") {
-    return transportType === "stdio" ? "Test" : "Test (stdio only)";
-  }
+  if (!state || state.status === "idle") return "Test";
   if (state.status === "running") return "Testing…";
   if (state.status === "ok") return `OK · ${state.detail ?? "Connected"}`;
   const detail = state.detail?.trim();
@@ -723,17 +724,22 @@ function McpServersSection() {
                 value={formData.transportType}
                 onChange={(e) => {
                   const transportType = e.target.value as TransportType;
-                  setFormData((prev) => ({
-                    ...prev,
-                    transportType,
-                    // Seed a stdio command shape when switching into stdio with
-                    // an empty or placeholder object so Test has something to run.
-                    config:
-                      transportType === "stdio" &&
-                      (prev.config.trim() === "" || prev.config.trim() === "{}")
-                        ? DEFAULT_STDIO_CONFIG
-                        : prev.config,
-                  }));
+                  setFormData((prev) => {
+                    const blank =
+                      prev.config.trim() === "" || prev.config.trim() === "{}";
+                    let config = prev.config;
+                    if (
+                      blank ||
+                      prev.config === DEFAULT_STDIO_CONFIG ||
+                      prev.config === DEFAULT_HTTP_CONFIG
+                    ) {
+                      config =
+                        transportType === "stdio"
+                          ? DEFAULT_STDIO_CONFIG
+                          : DEFAULT_HTTP_CONFIG;
+                    }
+                    return { ...prev, transportType, config };
+                  });
                 }}
                 className="mt-1 block w-full rounded-lg border px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
                 style={{
@@ -742,19 +748,18 @@ function McpServersSection() {
                   color: COLORS.textPrimary,
                 }}
               >
-                <option value="stdio">stdio (live Test)</option>
-                <option value="sse">SSE (saved only)</option>
-                <option value="streamable-http">
-                  Streamable HTTP (saved only)
-                </option>
+                <option value="stdio">stdio</option>
+                <option value="sse">SSE</option>
+                <option value="streamable-http">Streamable HTTP</option>
               </select>
               {formData.transportType !== "stdio" && (
                 <p
                   className="mt-1 text-xs"
                   style={{ color: COLORS.textSecondary }}
                 >
-                  Live Test and chat tool discovery only work for stdio in local
-                  mode. SSE and Streamable HTTP configs are stored for later.
+                  Set <code className="font-mono">url</code> to the MCP endpoint
+                  (SSE GET URL or streamable-http POST URL). Optional{" "}
+                  <code className="font-mono">headers</code> are forwarded.
                 </p>
               )}
             </div>
@@ -873,8 +878,8 @@ function McpServersSection() {
         </button>
       </div>
       <p className="text-sm" style={{ color: COLORS.textSecondary }}>
-        Stdio servers support live Test (tools/list) and chat tool rounds. SSE
-        and Streamable HTTP entries can be saved but are not probed yet.
+        Test runs tools/list for stdio, SSE, and streamable-http. Successful
+        probes feed chat tool rounds.
       </p>
       {deleteError && (
         <p
@@ -905,7 +910,7 @@ function McpServersSection() {
         <EmptyState
           icon={Server}
           title="No MCP servers configured"
-          description="Add a stdio server with a command, then use Test to list tools."
+          description="Add a server (stdio command or HTTP url), then use Test to list tools."
         />
       ) : (
         <div className="space-y-3">
@@ -993,15 +998,10 @@ function McpServersSection() {
                       }}
                       title={
                         probeState[server.id]?.detail ??
-                        (server.transportType === "stdio"
-                          ? "Run tools/list over stdio"
-                          : "Live Test requires stdio transport")
+                        `Run tools/list over ${server.transportType}`
                       }
                     >
-                      {probeButtonLabel(
-                        probeState[server.id],
-                        server.transportType,
-                      )}
+                      {probeButtonLabel(probeState[server.id])}
                     </button>
                     <button
                       onClick={() => handleEdit(server)}

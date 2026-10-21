@@ -169,7 +169,7 @@ describe("mcp-servers route CRUD", () => {
     expect(res.status).toBe(401);
   });
 
-  it("probes stdio servers and reports non-stdio as unsupported", async () => {
+  it("probes stdio and HTTP transports with structured results", async () => {
     const stdio = await authed("/mcp-servers", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -206,7 +206,26 @@ describe("mcp-servers route CRUD", () => {
     expect(sseProbe.status).toBe(200);
     const sseBody = await sseProbe.json();
     expect(sseBody.ok).toBe(false);
-    expect(sseBody.error).toMatch(/not implemented.*stdio/i);
+    expect(typeof sseBody.error).toBe("string");
+    expect(sseBody.transportType).toBe("sse");
+
+    const http = await authed("/mcp-servers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "probe-http",
+        transportType: "streamable-http",
+        config: {},
+      }),
+    });
+    const httpServer = await http.json();
+    const httpProbe = await authed(`/mcp-servers/${httpServer.id}/probe`, {
+      method: "POST",
+    });
+    expect(httpProbe.status).toBe(200);
+    const httpBody = await httpProbe.json();
+    expect(httpBody.ok).toBe(false);
+    expect(httpBody.error).toMatch(/url/i);
 
     const missing = await authed("/mcp-servers/999999/probe", {
       method: "POST",
