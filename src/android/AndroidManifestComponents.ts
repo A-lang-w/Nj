@@ -279,6 +279,10 @@ export const parseAndroidManifestComponents = (
     if (element.nodeName !== "application") continue;
     applicationSeen = true;
     const applicationPermission = trimmed(element, "permission");
+    const applicationPermissionBytes =
+      applicationPermission === null
+        ? null
+        : Buffer.byteLength(applicationPermission);
     for (const child of childNodes(element)) {
       if (child.nodeType !== 1) continue;
       const component = child as Element;
@@ -364,7 +368,13 @@ export const parseAndroidManifestComponents = (
         | "none"
         | "unknown" = permissionSource;
       if (permissionValue !== null) {
-        const permissionBytes = Buffer.byteLength(permissionValue);
+        // Inherited application permission is the same string for every
+        // component. Measure it once at its owning boundary rather than
+        // rescanning a potentially large decoded value per inherited copy.
+        const permissionBytes =
+          declaredPermission === null
+            ? (applicationPermissionBytes ?? 0)
+            : Buffer.byteLength(permissionValue);
         if (permissionBytes > permissionBudget) {
           permission = null;
           effectivePermissionSource = "unknown";

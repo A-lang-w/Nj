@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import {
   ANDROID_MANIFEST_LIMITS,
@@ -139,6 +139,32 @@ it("bounds inherited permission copies across the inventory", () => {
       0,
     ),
   ).toBeLessThanOrEqual(ANDROID_MANIFEST_LIMITS.permissionBytes);
+});
+
+it("measures an oversized inherited permission once for the whole inventory", () => {
+  const permission = "p".repeat(ANDROID_MANIFEST_LIMITS.permissionBytes + 1);
+  const declarations = Array.from(
+    { length: ANDROID_MANIFEST_LIMITS.components },
+    (_, index) => `<receiver android:name=".R${String(index)}"/>`,
+  ).join("");
+  const byteLength = vi.spyOn(Buffer, "byteLength");
+  try {
+    const inventory = parseAndroidManifestComponents(
+      `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application android:permission="${permission}">${declarations}</application></manifest>`,
+      "complete",
+      "33",
+    );
+    expect(
+      byteLength.mock.calls.filter(([value]) => value === permission),
+    ).toHaveLength(1);
+    expect(inventory.items).toHaveLength(ANDROID_MANIFEST_LIMITS.components);
+    expect(
+      inventory.items.every((item) => item.permission_source === "unknown"),
+    ).toBe(true);
+    expect(inventory.status).toBe("partial");
+  } finally {
+    byteLength.mockRestore();
+  }
 });
 
 it("applies the provider export default from the target SDK", () => {
