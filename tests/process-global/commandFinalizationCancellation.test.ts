@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Cli } from "incur";
 import { afterEach, expect, it, vi } from "vitest";
 
+import * as analysisViewService from "../../src/application/analysisView/AnalysisViewService.js";
 import { WasmArtifactService } from "../../src/application/wasm/WasmArtifactService.js";
 import { registerAnalysisViewCommands } from "../../src/cli/analysisViewCommands.js";
 import { registerWasmCommands } from "../../src/cli/wasmCommands.js";
@@ -145,18 +146,24 @@ it.each([
 );
 
 it.each([
-  ["bundle", "control"],
-  ["bundle", "SIGINT"],
-  ["bundle", "SIGTERM"],
-  ["evidence-file", "control"],
-  ["evidence-file", "SIGINT"],
-  ["evidence-file", "SIGTERM"],
-  ["request-file", "control"],
-  ["request-file", "SIGINT"],
-  ["request-file", "SIGTERM"],
+  ["bundle", "control", "close"],
+  ["bundle", "SIGINT", "close"],
+  ["bundle", "SIGTERM", "close"],
+  ["evidence-file", "control", "close"],
+  ["evidence-file", "SIGINT", "close"],
+  ["evidence-file", "SIGTERM", "close"],
+  ["request-file", "control", "close"],
+  ["request-file", "SIGINT", "close"],
+  ["request-file", "SIGTERM", "close"],
+  ["bundle", "SIGINT", "authentication"],
+  ["bundle", "SIGTERM", "authentication"],
+  ["bundle", "SIGINT", "projection"],
+  ["bundle", "SIGTERM", "projection"],
+  ["bundle", "SIGINT", "authentication-failure"],
+  ["bundle", "SIGTERM", "projection-failure"],
 ] as const)(
-  "preserves the analysis-view exit status after %s close and logging: %s",
-  async (source, signal) => {
+  "preserves the analysis-view result and exit status for %s: %s during %s",
+  async (source, signal, phase) => {
     const root = await createTestTempDirectory("rea-analysis-view-signal-");
     const parent = analysisViewLayoutEvidence();
     const filename = `${source}.json`;
@@ -164,7 +171,13 @@ it.each([
     const request = {
       source:
         source === "bundle"
-          ? { kind: "retained-evidence", evidence_id: parent.evidence_id }
+          ? {
+              kind: "retained-evidence",
+              evidence_id:
+                phase === "projection-failure"
+                  ? `ev_${"f".repeat(64)}`
+                  : parent.evidence_id,
+            }
           : source === "evidence-file"
             ? { kind: "evidence-file", path }
             : { kind: "inline", evidence: parent },
@@ -174,22 +187,49 @@ it.each([
       path,
       JSON.stringify(
         source === "bundle"
-          ? createEvidenceBundle([parent])
+          ? {
+              ...createEvidenceBundle([parent]),
+              ...(phase === "authentication-failure"
+                ? { records: [{ ...parent, normalized_result: "altered" }] }
+                : {}),
+            }
           : source === "evidence-file"
             ? parent
             : request,
       ),
     );
+    let interruptHandled = false;
+    let pendingInterrupt: Promise<void> | undefined;
+    const interrupt = () => {
+      const listener = host.listeners.get(signal);
+      interruptHandled = listener !== undefined;
+      listener?.();
+    };
+    const queueInterrupt = () => {
+      pendingInterrupt = new Promise((resolve) => {
+        setImmediate(() => {
+          interrupt();
+          resolve();
+        });
+      });
+    };
+    const originalProject = analysisViewService.inspectAnalysisViewValidated;
+    let projected: ReturnType<typeof originalProject> | undefined;
+    const project = vi
+      .spyOn(analysisViewService, "inspectAnalysisViewValidated")
+      .mockImplementation((...args) => {
+        projected = originalProject(...args);
+        if (phase.startsWith("projection")) queueInterrupt();
+        return projected;
+      });
     const originalClose = OwnedFileHandle.prototype.close;
     const close = vi
       .spyOn(OwnedFileHandle.prototype, "close")
       .mockImplementation(async function (this: OwnedFileHandle) {
         await originalClose.call(this);
         expect(this.handle.fd).toBe(-1);
-        if (signal !== "control") {
-          expect(host.listeners.has(signal)).toBe(true);
-          host.listeners.get(signal)!();
-        }
+        if (signal !== "control" && phase === "close") interrupt();
+        if (phase.startsWith("authentication")) queueInterrupt();
       });
     const cli = Cli.create("analysis-view-finalization-test", { sync: false });
     registerAnalysisViewCommands(cli, silentLogger);
@@ -214,15 +254,28 @@ it.each([
       expect(close).toHaveBeenCalledOnce();
       expect(host.listeners.size).toBe(0);
       expect(await readdir(root)).toEqual([filename]);
-      expect(JSON.parse(output)).toMatchObject(
+      const result = JSON.parse(output);
+      expect(result).toMatchObject(
         signal === "control"
           ? { operation: "inspect_analysis_view" }
-          : { code: "cancelled" },
+          : {
+              code: phase.endsWith("failure")
+                ? "evidence_integrity_mismatch"
+                : "cancelled",
+            },
       );
       expect(process.exitCode ?? 0).toBe(
         signal === "SIGINT" ? 130 : signal === "SIGTERM" ? 143 : 0,
       );
+      if (signal !== "control") expect(interruptHandled).toBe(true);
+      if (phase.startsWith("authentication"))
+        expect(project).not.toHaveBeenCalled();
+      if (phase === "projection") {
+        if (!projected?.ok) throw new Error("Expected a completed page");
+        expect(result.details.partial_observation).toEqual(projected.value);
+      }
     } finally {
+      await pendingInterrupt;
       process.exitCode = previousExitCode;
     }
   },

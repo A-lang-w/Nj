@@ -1,3 +1,5 @@
+import { setImmediate } from "node:timers/promises";
+
 import {
   EvidenceFileError,
   EvidenceIntegrityError,
@@ -117,10 +119,27 @@ export const inspectAnalysisViewFromBundle = async (
     signal,
     resources,
   );
+  // Authentication and projection are synchronous; dispatch queued interrupts before accepting either result.
+  await setImmediate();
   if (!loaded.ok) return loaded;
-  return inspectAnalysisViewValidated(input, (id) =>
+  if (signal?.aborted)
+    return err(
+      new AnalysisCancelledError("inspect_analysis_view", {
+        cause: signal.reason,
+      }),
+    );
+  const projected = inspectAnalysisViewValidated(input, (id) =>
     loaded.value.records.find((record) => record.evidence_id === id),
   );
+  await setImmediate();
+  if (projected.ok && signal?.aborted)
+    return err(
+      new AnalysisCancelledError("inspect_analysis_view", {
+        cause: signal.reason,
+        partialObservation: projected.value,
+      }),
+    );
+  return projected;
 };
 
 /** Publish a completed bundle and retry its exact staged-output cleanup owner. */
