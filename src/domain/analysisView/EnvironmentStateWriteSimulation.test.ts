@@ -18,6 +18,11 @@ import {
 } from "../../../tests/fixtures/environmentStateWrites.js";
 import type { JsonValue } from "../jsonValue.js";
 import { ok } from "../result.js";
+import { itemTarget, SimulatedState } from "./environmentStateWriteChecks.js";
+import {
+  laterObservation,
+  type ObservationSearch,
+} from "./environmentStateWriteObserve.js";
 import { updatedFields } from "./environmentStateWriteApply.js";
 import {
   retainFixed,
@@ -807,6 +812,85 @@ describe("reads named as serving names them", () => {
     expect(gated(rows, "patch_books_by_id")).toMatchObject({
       served: false,
       contradicted_by: 4,
+    });
+  });
+});
+
+describe("resolved encoded item observations", () => {
+  it("matches the resolved raw ID when the collection alias and response ID are encoded", () => {
+    const collection = "/api/orgs/%61cme1/books";
+    const state = new SimulatedState(
+      [
+        {
+          type: "/api/orgs/{org_id}/books",
+          collection,
+          id: "%61",
+          fields: { id: "%61", name: "Before" },
+          view_fields: [],
+          record_ordinals: [],
+        },
+      ],
+      [],
+    );
+    const write = {
+      ordinal: 0,
+      method: "PATCH",
+      path: "/api/orgs/acme1/books/%61",
+      query: undefined,
+      status: 204,
+      start: 0,
+      end: 0,
+    };
+    const target = itemTarget(state, "/api/orgs/{org_id}/books", write);
+    const itemView = {
+      tool: "get_books_by_id",
+      type: "/api/orgs/{org_id}/books",
+      shape: "item" as const,
+      pointer: "",
+      fields: ["id", "name"],
+      required_fields: ["id"],
+      checked_record_ordinals: [1],
+      envelope_ordinal: 1,
+    };
+    const search: ObservationSearch = {
+      records: [
+        write,
+        {
+          ordinal: 1,
+          method: "GET",
+          path: "/api/orgs/acme1/books/%61",
+          query: undefined,
+          status: 200,
+          start: 1,
+          end: 1,
+        },
+      ],
+      from: 0,
+      viewOf: () => itemView,
+      withBody: (_ordinal, use) => use({ id: "%61", name: "After" }),
+    };
+
+    expect(target).toEqual({ collection, id: "%61" });
+    expect(
+      laterObservation(search, {
+        type: itemView.type,
+        ...target,
+        idField: "id",
+        held: () => true,
+        isWrite: (record) => record.method !== "GET",
+        sameItem: (record) => {
+          const resolved = itemTarget(state, itemView.type, record);
+          return (
+            resolved.collection === target.collection &&
+            resolved.id === target.id
+          );
+        },
+      }),
+    ).toEqual({
+      ordinal: 1,
+      pointer: "",
+      object: { id: "%61", name: "After" },
+      id: "%61",
     });
   });
 });
