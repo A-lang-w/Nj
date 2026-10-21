@@ -12,11 +12,18 @@ export const resultFor = (
       return attachToTargetResult(options);
     case "Page.getLayoutMetrics":
       return {
+        cssVisualViewport: {
+          pageX: 0,
+          pageY: 0,
+          clientWidth: 1,
+          clientHeight: 1,
+          scale: 1,
+        },
         visualViewport: {
           pageX: 0,
           pageY: 0,
-          clientWidth: 1280,
-          clientHeight: 720,
+          clientWidth: 1,
+          clientHeight: 1,
           scale: 1,
         },
       };

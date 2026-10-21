@@ -71,7 +71,7 @@ export const captureCdpScreenshot = async (
     if (event.sessionId !== context.sessionId) return;
     observeScreenshotNavigation(event, mainFrame.frame_id, origins, navigation);
   });
-  let result: ReturnType<typeof recordValue>;
+  let screenshot: Awaited<ReturnType<typeof captureScreenshotImage>>;
   let after: unknown;
   try {
     const metrics = recordValue(
@@ -83,38 +83,75 @@ export const captureCdpScreenshot = async (
       ),
     );
     const visualViewport = recordValue(metrics?.visualViewport);
-    const pageX = numberValue(visualViewport?.pageX);
-    const pageY = numberValue(visualViewport?.pageY);
-    const width = numberValue(visualViewport?.clientWidth);
-    const height = numberValue(visualViewport?.clientHeight);
-    const scale = numberValue(visualViewport?.scale);
+    const cssViewport = recordValue(metrics?.cssVisualViewport);
+    const pageX = numberValue(cssViewport?.pageX);
+    const pageY = numberValue(cssViewport?.pageY);
+    const width = numberValue(cssViewport?.clientWidth);
+    const height = numberValue(cssViewport?.clientHeight);
+    const scale = numberValue(cssViewport?.scale);
+    const pixelWidth = numberValue(visualViewport?.clientWidth);
+    const pixelHeight = numberValue(visualViewport?.clientHeight);
+    const pixelScale = numberValue(visualViewport?.scale);
     if (
       pageX === undefined ||
       pageY === undefined ||
       width === undefined ||
       height === undefined ||
       scale === undefined ||
+      pixelWidth === undefined ||
+      pixelHeight === undefined ||
+      pixelScale !== scale ||
       width <= 0 ||
       height <= 0 ||
-      scale <= 0
+      scale <= 0 ||
+      pixelWidth <= 0 ||
+      pixelHeight <= 0
     )
       throw new BrowserObservationError("inspect_web_page", "protocol_error");
-    // Use the CDP visual viewport units and scale as a pair. Its client size
-    // already reflects page scale, so dividing the dimensions by scale again
-    // would clip visible content.
-    result = recordValue(
-      await context.connection.send(
-        "Page.captureScreenshot",
-        {
-          format: "png",
-          fromSurface: true,
-          captureBeyondViewport: true,
-          clip: { x: pageX, y: pageY, width, height, scale },
-        },
-        context.sessionId,
-        context.signal,
-      ),
-    );
+    // Keep ordinary surface captures, including their scrollbars and pixel
+    // density. The visual viewport excludes scrollbars and supplies only a
+    // lower bound on the expected image size, allowing subpixel rounding.
+    const minimumWidth = Math.max(1, Math.floor(pixelWidth * scale));
+    const minimumHeight = Math.max(1, Math.floor(pixelHeight * scale));
+    if (
+      !Number.isSafeInteger(minimumWidth) ||
+      !Number.isSafeInteger(minimumHeight)
+    )
+      throw new BrowserObservationError("inspect_web_page", "protocol_error");
+    const coversViewport = (
+      image: Awaited<ReturnType<typeof captureScreenshotImage>>,
+    ) =>
+      image.dimensions.width >= minimumWidth &&
+      image.dimensions.height >= minimumHeight;
+    screenshot = await captureScreenshotImage(context);
+    if (!coversViewport(screenshot)) {
+      if (navigation.leftScope)
+        throw new BrowserObservationError(
+          "inspect_web_page",
+          "target_not_allowed",
+        );
+      if (navigation.changed)
+        throw new BrowserObservationError("inspect_web_page", "target_changed");
+      // A smaller compositor surface must not truncate the visible content.
+      // Clip coordinates use CSS units, not the device pixels of visualViewport.
+      // Client dimensions already reflect page scale; do not divide again.
+      screenshot = await captureScreenshotImage(context, {
+        x: pageX,
+        y: pageY,
+        width,
+        height,
+        scale,
+      });
+      if (!coversViewport(screenshot))
+        throw new BrowserObservationError(
+          "inspect_web_page",
+          "protocol_error",
+          {
+            detail:
+              "The screenshot does not cover the reported visual viewport.",
+          },
+        );
+    }
     after = await context.connection.send(
       "Page.getFrameTree",
       {},
@@ -124,14 +161,7 @@ export const captureCdpScreenshot = async (
   } finally {
     removeListener();
   }
-  const encoded = cdpStringValue(result?.data);
-  const bytes =
-    encoded === undefined ? undefined : decodeCanonicalBase64(encoded);
-  if (bytes === undefined)
-    throw new BrowserObservationError("inspect_web_page", "protocol_error");
-  const dimensions = readPngHeaderDimensions(bytes);
-  if (dimensions === undefined)
-    throw new BrowserObservationError("inspect_web_page", "protocol_error");
+  const { bytes, dimensions } = screenshot;
   if (navigation.leftScope)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   const afterUrl = mainFrameUrl(after);
@@ -164,6 +194,43 @@ export const captureCdpScreenshot = async (
       "REA does not scroll, evaluate JavaScript, or capture beyond the current viewport.",
     ],
   };
+};
+
+interface ScreenshotClip {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly scale: number;
+}
+
+/** Decode every capture at the same boundary, including a clipped recovery. */
+const captureScreenshotImage = async (
+  context: ScreenshotContext,
+  clip?: ScreenshotClip,
+) => {
+  const result = recordValue(
+    await context.connection.send(
+      "Page.captureScreenshot",
+      {
+        format: "png",
+        fromSurface: true,
+        captureBeyondViewport: clip !== undefined,
+        ...(clip === undefined ? {} : { clip }),
+      },
+      context.sessionId,
+      context.signal,
+    ),
+  );
+  const encoded = cdpStringValue(result?.data);
+  const bytes =
+    encoded === undefined ? undefined : decodeCanonicalBase64(encoded);
+  if (bytes === undefined)
+    throw new BrowserObservationError("inspect_web_page", "protocol_error");
+  const dimensions = readPngHeaderDimensions(bytes);
+  if (dimensions === undefined)
+    throw new BrowserObservationError("inspect_web_page", "protocol_error");
+  return { bytes, dimensions };
 };
 
 const observeScreenshotNavigation = (
