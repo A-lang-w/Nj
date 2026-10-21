@@ -512,6 +512,10 @@ interface WebSocketExecutionFacts {
   readonly effects: JavaScriptSemanticAnalysisState["literalMemberEffects"];
   readonly phase: JavaScriptSemanticAnalysisState["memberMutationFactsPhase"];
   readonly callCount: number;
+  readonly executorSettlementUses: WeakMap<
+    t.Function,
+    readonly t.Identifier[] | null
+  >;
   storedCalls?: WeakMap<t.Function | t.Class, readonly WebSocketStoredCall[]>;
   readonly immediateCallers: WeakMap<t.Node, t.Function | null>;
   readonly suspensions: WebSocketSuspensionFacts;
@@ -558,6 +562,7 @@ const webSocketExecutionFacts = (
       effects: state.literalMemberEffects,
       phase: state.memberMutationFactsPhase,
       callCount: state.callSites.length,
+      executorSettlementUses: new WeakMap(),
       immediateCallers: new WeakMap(),
       suspensions: {
         completed: new WeakMap(),
@@ -570,6 +575,83 @@ const webSocketExecutionFacts = (
     executionFacts.set(state, facts);
   }
   return facts;
+};
+
+/** An ignored async return is separate from the resolve/reject capabilities. */
+const webSocketExecutorSettlesAfterRead = (
+  executor: t.Function,
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const cache = webSocketExecutionFacts(state).executorSettlementUses;
+  let uses = cache.get(executor);
+  if (uses === undefined) {
+    const runtimeParameters = runtimeFunctionParameters(executor);
+    const parameters = runtimeParameters.slice(0, 2);
+    const bindings = new Set<string>();
+    for (const parameter of parameters) {
+      if (!t.isIdentifier(parameter)) {
+        cache.set(executor, null);
+        return false;
+      }
+      const binding = resolveSemanticBindingState(
+        state,
+        parameter,
+        parameter.name,
+      );
+      if (binding === undefined) {
+        cache.set(executor, null);
+        return false;
+      }
+      bindings.add(binding.bindingId);
+    }
+    const selected: t.Identifier[] = [];
+    const pending: t.Node[] = [executor.body, ...runtimeParameters.slice(2)];
+    for (let cursor = 0; cursor < pending.length; cursor++) {
+      const node = pending[cursor];
+      if (node === undefined) continue;
+      if (t.isIdentifier(node)) {
+        // Dynamic scope and an ordinary executor's arguments object can expose
+        // settlement capabilities without a named parameter reference.
+        if (
+          node.name === "eval" ||
+          (!t.isArrowFunctionExpression(executor) && node.name === "arguments")
+        ) {
+          cache.set(executor, null);
+          return false;
+        }
+        const binding = resolveSemanticBindingState(state, node, node.name);
+        if (binding !== undefined && bindings.has(binding.bindingId))
+          selected.push(node);
+      }
+      // Include nested closures: exposing either capability before the read
+      // makes settlement uncertain even when the closure's body appears later.
+      pending.push(...childNodes(node));
+    }
+    uses = selected;
+    cache.set(executor, uses);
+  }
+  const repeats = (node: t.Node): boolean => {
+    let current: t.Node | undefined = node;
+    while (current !== undefined && current !== executor) {
+      if (t.isLoop(current)) return true;
+      current = state.parentsByNode.get(current);
+    }
+    return false;
+  };
+  if (uses === null || repeats(read)) return false;
+  const readContexts = webSocketExecutionContexts(read, state, true);
+  return uses.every(
+    (use) =>
+      !repeats(use) &&
+      semanticInitializerPrecedesRead({
+        initializer: read,
+        read: use,
+        parents: state.parentsByNode,
+        initializerContexts: readContexts,
+        readContexts: webSocketExecutionContexts(use, state, true),
+      }) === true,
+  );
 };
 
 /** The function that owns a runtime parameter binding. */
@@ -2395,6 +2477,14 @@ const webSocketExecutionContextsForCalls = (
           if (!structuredPattern) suspendedAfter(invocation);
           else invocation = site;
         }
+      } else if (
+        t.isObjectMethod(parent) &&
+        parent.kind === "get" &&
+        t.isObjectProperty(invocation)
+      ) {
+        // A pattern key finishes before Get, while defaults and nested binding
+        // work in the value occur only after the getter has returned.
+        if (invocation.computed) suspendedAfter(invocation.key);
       } else if (!t.isArrayPattern(invocation)) {
         suspendedAfter(
           t.isForOfStatement(invocation)
@@ -2440,10 +2530,11 @@ const webSocketExecutionContextsForCalls = (
       // Direct frames are an earlier invocation bound for alias initialization.
       // They do not consult the waiting index that is currently being built.
       if (suspendedOwner === parent && !directOnly)
-        // A native Promise constructor enters its executor synchronously but
-        // does not adopt an async executor's returned promise. Its own waits
-        // therefore cannot resume the executor after an await.
-        return nativePromiseExecutor === invocation
+        // The executor's returned promise is ignored. An outer wait constrains
+        // this read only while both settlement capabilities remain unavailable
+        // until after the read; an earlier call or escape preserves uncertainty.
+        return nativePromiseExecutor === invocation &&
+          !webSocketExecutorSettlesAfterRead(parent, node, state)
           ? contexts
           : [...contexts, ...webSocketWaitingContexts(invocation, state)];
       point = invocation;

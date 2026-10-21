@@ -73,6 +73,48 @@ const sources = [
     source:
       'class Base{field=new Socket("wss://example.test/changed-base")}class Other{}class Derived extends Base{}Object.setPrototypeOf(Derived,Other);new Derived();const Socket=globalThis.WebSocket;',
   },
+  {
+    file: "nested-getter.js",
+    source:
+      '(async()=>{const{run:{[await 0]:x}}={get run(){new Socket("wss://example.test/nested-getter");return {}}}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "default-getter.js",
+    source:
+      '(async()=>{const{run:x=await 0}={get run(){new Socket("wss://example.test/default-getter")}}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "key-before-getter.js",
+    endpoint: "wss://example.test/key-before-getter",
+    source:
+      '(async()=>{const{[void await 0]:{x}}={get undefined(){new Socket("wss://example.test/key-before-getter");return {}}}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "late-resolve.mjs",
+    source:
+      'const pending=new Promise(async resolve=>{await 0;new Socket("wss://example.test/late-resolve");resolve()});await pending;const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "late-reject.mjs",
+    source:
+      'const pending=new Promise(async(resolve,reject)=>{await 0;new Socket("wss://example.test/late-reject");reject()});await pending;const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "no-settlement.mjs",
+    source:
+      'const pending=new Promise(async()=>{await 0;new Socket("wss://example.test/no-settlement")});await pending;const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "escaped-resolve.mjs",
+    endpoint: "wss://example.test/escaped-resolve",
+    source:
+      'let release;const pending=new Promise(async resolve=>{release=resolve;await 0;new Socket("wss://example.test/escaped-resolve")});release();await pending;const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "shadowed-resolve.mjs",
+    source:
+      'const pending=new Promise(async resolve=>{(()=>{const resolve=()=>{};resolve()})();await 0;new Socket("wss://example.test/shadowed-resolve");resolve()});await pending;const Socket=globalThis.WebSocket;',
+  },
 ] as const;
 
 it("retains reviewed callback and descriptor endpoints with source provenance", async () => {

@@ -147,3 +147,63 @@ it.each([
 ] as const)("%s", (_name, source) => {
   expect(endpoints(source)).toEqual([]);
 });
+
+it.each([
+  [
+    "does not credit a nested binding key wait before getter entry",
+    '(async()=>{const{run:{[await 0]:x}}={get run(){new Socket("wss://example.test/nested-getter");return {}}}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "does not credit a destructuring default wait before getter entry",
+    '(async()=>{const{run:x=await 0}={get run(){new Socket("wss://example.test/default-getter")}}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "retains a getter after its own key wait even with a nested binding",
+    '(async()=>{const{[void await 0]:{x}}={get undefined(){new Socket("wss://example.test/key-before-getter");return {}}}})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/key-before-getter"],
+  ],
+  [
+    "retains outer waits when resolve is only used after the socket read",
+    'const pending=new Promise(async resolve=>{await 0;new Socket("wss://example.test/late-resolve");resolve()});await pending;const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "retains outer waits when reject is only used after the socket read",
+    'const pending=new Promise(async(resolve,reject)=>{await 0;new Socket("wss://example.test/late-reject");reject()});await pending;const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "retains outer waits when the executor cannot settle its promise",
+    'const pending=new Promise(async()=>{await 0;new Socket("wss://example.test/no-settlement")});await pending;const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "keeps an escaped early resolver conservative",
+    'let release;const pending=new Promise(async resolve=>{release=resolve;await 0;new Socket("wss://example.test/escaped-resolve")});release();await pending;const Socket=globalThis.WebSocket;',
+    ["wss://example.test/escaped-resolve"],
+  ],
+  [
+    "does not confuse a shadowed resolver with the executor parameter",
+    'const pending=new Promise(async resolve=>{(()=>{const resolve=()=>{};resolve()})();await 0;new Socket("wss://example.test/shadowed-resolve");resolve()});await pending;const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "keeps settlement through an ordinary executor arguments object unknown",
+    'const pending=new Promise(async function(){arguments[0]();await 0;new Socket("wss://example.test/arguments-resolve")});await pending;const Socket=globalThis.WebSocket;',
+    ["wss://example.test/arguments-resolve"],
+  ],
+  [
+    "includes resolver exposure in a later parameter default",
+    'const pending=new Promise(async(resolve,reject,unused=resolve())=>{await 0;new Socket("wss://example.test/parameter-resolve")});await pending;const Socket=globalThis.WebSocket;',
+    ["wss://example.test/parameter-resolve"],
+  ],
+  [
+    "keeps an earlier iteration settlement conservative",
+    'const pending=new Promise(async resolve=>{for(let i=0;i<2;i++){await 0;new Socket("wss://example.test/repeated-resolve");resolve()}});await pending;const Socket=globalThis.WebSocket;',
+    ["wss://example.test/repeated-resolve"],
+  ],
+] as const)("%s", (_name, source, expected) => {
+  expect(endpoints(source)).toEqual(expected);
+});

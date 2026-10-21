@@ -8514,6 +8514,53 @@ describe("web bundle invocation and descriptor review follow-ups", () => {
 
   it.each([
     [
+      "nested binding waits after getter entry",
+      '(async()=>{const{run:{[await 0]:x}}={get run(){new Socket("wss://example.test/nested-getter");return {}}}})();const Socket=globalThis.WebSocket;',
+      [],
+    ],
+    [
+      "destructuring default waits after getter entry",
+      '(async()=>{const{run:x=await 0}={get run(){new Socket("wss://example.test/default-getter")}}})();const Socket=globalThis.WebSocket;',
+      [],
+    ],
+    [
+      "a getter key wait before nested binding work",
+      '(async()=>{const{[void await 0]:{x}}={get undefined(){new Socket("wss://example.test/key-before-getter");return {}}}})();const Socket=globalThis.WebSocket;',
+      ["wss://example.test/key-before-getter"],
+    ],
+    [
+      "an outer promise settled by resolve after the socket read",
+      'const pending=new Promise(async resolve=>{await 0;new Socket("wss://example.test/late-resolve");resolve()});await pending;const Socket=globalThis.WebSocket;',
+      [],
+    ],
+    [
+      "an outer promise settled by reject after the socket read",
+      'const pending=new Promise(async(resolve,reject)=>{await 0;new Socket("wss://example.test/late-reject");reject()});await pending;const Socket=globalThis.WebSocket;',
+      [],
+    ],
+    [
+      "an outer promise without any settlement",
+      'const pending=new Promise(async()=>{await 0;new Socket("wss://example.test/no-settlement")});await pending;const Socket=globalThis.WebSocket;',
+      [],
+    ],
+    [
+      "an escaped early resolver",
+      'let release;const pending=new Promise(async resolve=>{release=resolve;await 0;new Socket("wss://example.test/escaped-resolve")});release();await pending;const Socket=globalThis.WebSocket;',
+      ["wss://example.test/escaped-resolve"],
+    ],
+    [
+      "a resolver name shadowed by a nested function",
+      'const pending=new Promise(async resolve=>{(()=>{const resolve=()=>{};resolve()})();await 0;new Socket("wss://example.test/shadowed-resolve");resolve()});await pending;const Socket=globalThis.WebSocket;',
+      [],
+    ],
+  ] as const)("orders %s in both consumers", (_name, source, expected) => {
+    expect(
+      socketEndpoints(source).map((items) => items.map((item) => item.value)),
+    ).toEqual([expected, expected]);
+  });
+
+  it.each([
+    [
       "base fields reached through implicit subclass construction",
       'class Base{field=new Socket("wss://example.test/base-field")}class Derived extends Base{}new Derived();const Socket=globalThis.WebSocket;',
     ],
