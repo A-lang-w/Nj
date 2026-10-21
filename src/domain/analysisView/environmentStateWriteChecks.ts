@@ -243,7 +243,7 @@ export interface CheckOutcome {
 }
 
 /** What a check compares: the read's recorded body and the served base recording it would answer on. */
-interface ReadBodies {
+export interface ReadBodies {
   readonly body: JsonValue | undefined;
   /** The recording whose envelope the served answer keeps: an item view's envelope, a list line's latest init recording. */
   readonly base: JsonValue | undefined;

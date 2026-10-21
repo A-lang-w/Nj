@@ -17,7 +17,6 @@ import {
 } from "../../domain/analysisView/environmentStateWriteRules.js";
 import {
   formatClock,
-  integerOf,
   isUuid,
   seededToken,
   seededUuid,

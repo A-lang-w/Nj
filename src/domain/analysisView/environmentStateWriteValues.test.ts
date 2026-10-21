@@ -10,6 +10,7 @@ import {
   replaceDelimited,
   seededToken,
   seededUuid,
+  sequenceNumber,
   slugOf,
   spelledLike,
   type ClockFormat,
@@ -253,4 +254,21 @@ it("draws tokens from the whole alphabet the recorded token uses", () => {
   expect(seededToken("seed-a", "k9x2m7q4z1w8")).not.toBe(
     seededToken("seed-b", "k9x2m7q4z1w8"),
   );
+});
+
+it("reads a sequence written as digit groups, but not a date", () => {
+  expect(sequenceNumber("000-005")).toBe(5);
+  expect(sequenceNumber("12.04")).toBe(1204);
+  expect(sequenceNumber(7)).toBe(7);
+  expect(sequenceNumber("2026-10-21")).toBeUndefined();
+  expect(sequenceNumber("A-005")).toBeUndefined();
+  expect(sequenceNumber("000-")).toBeUndefined();
+});
+
+it("spells a sequence value in the recorded value's digit groups, the overflow leading", () => {
+  expect(spelledLike("000-005", 6)).toBe("000-006");
+  expect(spelledLike("000-999", 1000)).toBe("001-000");
+  expect(spelledLike("999-999", 1_000_000)).toBe("1000-000");
+  expect(spelledLike("12", 13)).toBe("13");
+  expect(spelledLike(12, 13)).toBe(13);
 });

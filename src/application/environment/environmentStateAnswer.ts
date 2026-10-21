@@ -138,16 +138,16 @@ const fromRecording = (
     : replayed;
 };
 
-/** Whether a call supplies a query argument that asks for some fields only. */
+/** Whether a call asks an item view with projected reads for some fields only, which the state's whole entities cannot answer. */
 const asksProjection = (
+  view: StateItemView,
   tool: EnvironmentManifestTool,
   args: ReplayArguments,
 ): boolean =>
+  view.projected_record_ordinals !== undefined &&
   [...environmentToolArguments(tool).query].some(
     ([name, argument]) =>
-      isProjectionParameter(name) &&
-      args[argument] !== undefined &&
-      args[argument] !== "",
+      isProjectionParameter(name) && (args[argument] ?? "") !== "",
   );
 
 /** A recorded body the state renders into, usable exactly when extraction could use it. */
@@ -334,11 +334,7 @@ const answerItem = (
   args: ReplayArguments,
 ): Result<StateAnswer, AnalysisError> => {
   const { source, store } = serving;
-  // The state holds whole entities, so a call for some fields only replays as the capture's projected reads did.
-  if (
-    view.projected_record_ordinals !== undefined &&
-    asksProjection(tool, args)
-  )
+  if (asksProjection(view, tool, args))
     return fromRecording(source, tool, args, "projection");
   const call = itemCall(tool, args);
   if (call === undefined)

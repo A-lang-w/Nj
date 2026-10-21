@@ -6,11 +6,14 @@ import {
   type TimedCaptureRow,
 } from "../../../tests/fixtures/analysisView.js";
 import {
+  ASSET_ROWS,
   BOOK_INIT_ROWS,
   BOOK_NOT_FOUND,
   BOOK_ROWS,
   BOOK_WRITE_CLOCK,
   FIRST_BOOK,
+  OMITTED_FIELD_ROWS,
+  PROJECTED_ROWS,
   SECOND_BOOK,
   THIRD_BOOK,
   book,
@@ -150,6 +153,45 @@ describe("served write plans", () => {
       "name",
       "slug",
     ]);
+  });
+});
+
+describe("wider write coverage", () => {
+  it("drops a field from an item view's required ones once a read shows the application leaves it out", () => {
+    const state = stateOf(OMITTED_FIELD_ROWS);
+    expect(planOf(state, "post_books")).toMatchObject({ served: true });
+    expect(
+      state.views.find((view) => view.tool === "get_books_by_id"),
+    ).toMatchObject({
+      shape: "item",
+      fields: expect.arrayContaining(["detail"]),
+    });
+    expect(
+      state.views.find((view) => view.tool === "get_books_by_id"),
+    ).not.toMatchObject({
+      required_fields: expect.arrayContaining(["detail"]),
+    });
+  });
+
+  it("proves an item's identity past a read that asked for some fields only, leaving that read to replay", () => {
+    expect(
+      stateOf(PROJECTED_ROWS).views.find(
+        (view) => view.tool === "get_books_by_id",
+      ),
+    ).toMatchObject({
+      shape: "item",
+      checked_record_ordinals: [1, 2],
+      projected_record_ordinals: [3],
+    });
+  });
+
+  it("serves creates whose number follows the largest held one in its digit groups", () => {
+    expect(planOf(stateOf(ASSET_ROWS), "post_books")).toMatchObject({
+      served: true,
+      rules: expect.arrayContaining([
+        { field: "asset", rule: "sequence", scope: "collection" },
+      ]),
+    });
   });
 });
 

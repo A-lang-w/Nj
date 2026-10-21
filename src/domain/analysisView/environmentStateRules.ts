@@ -115,6 +115,15 @@ export const projectsFields = (query: string | undefined): boolean =>
   query !== undefined &&
   [...new URLSearchParams(query).keys()].some(isProjectionParameter);
 
+/** Whether an item view answers a read by replaying the capture's projected reads, so the read checks nothing. */
+export const replaysProjection = (
+  view: StateView,
+  query: string | undefined,
+): boolean =>
+  view.shape === "item" &&
+  view.projected_record_ordinals !== undefined &&
+  projectsFields(query);
+
 export type StateListView = EntityViewPlan & {
   readonly shape: "list";
   readonly membership: "all" | "recorded";

@@ -93,19 +93,30 @@ interface GroupState extends ToolGroup {
 
 const responseTextSchema = z.object({
   response: z.object({
-    content: z.object({ text: z.unknown().optional() }).nullable().optional(),
+    status: z.unknown().optional(),
+    content: z
+      .object({ text: z.unknown().optional(), size: z.unknown().optional() })
+      .nullable()
+      .optional(),
   }),
 });
+/** Whether a record's response had no body: a 204 or 205, an empty text, or a recorded size of zero; a missing text alone may be a body not kept. */
+const emptyResponse = (reported: unknown): boolean => {
+  const parsed = responseTextSchema.safeParse(reported);
+  if (!parsed.success) return false;
+  const { status, content } = parsed.data.response;
+  return (
+    status === 204 ||
+    status === 205 ||
+    content?.text === "" ||
+    ((content?.text === undefined || content.text === null) &&
+      content?.size === 0)
+  );
+};
 /** A write group every response of which had no body, at least one of them a success. */
 const answeredEmpty = (group: GroupState): boolean =>
   group.bodiless &&
   [...group.statuses].some((status) => status >= 200 && status < 300);
-/** Whether a record's response carries no body text. */
-const emptyResponse = (reported: unknown): boolean => {
-  const parsed = responseTextSchema.safeParse(reported);
-  const text = parsed.success ? parsed.data.response.content?.text : undefined;
-  return text === undefined || text === null || text === "";
-};
 const postDataSchema = z.object({
   request: z.object({
     postData: z

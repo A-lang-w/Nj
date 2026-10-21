@@ -29,6 +29,14 @@ later increments.
 - Prove an item type's identity field from the requested path value its
   responses repeat; otherwise infer it from a fixed list of identity names that
   every listed item carries distinctly, which needs at least one listed item.
+  An item read that asked for some fields only (`fields`, `fields[...]`,
+  `select`, `$select`) and does not return the item is left out of the proof
+  and of the view's checks; the view lists it in `projected_record_ordinals`,
+  and serving replays any call to that tool that names a projection parameter.
+- A field every recording of a view carried is required: serving refuses an
+  entity lacking it. Once a successful read the write gate checks shows the
+  application leaves the field out of an entity it holds (APIs that omit empty
+  or false members), the state's view no longer requires it.
   Never treat an envelope that is itself an entity as a list.
 - Merge observations into one entity per collection and identity: item views'
   latest values win over list views', differing views keep their own values,

@@ -4,7 +4,7 @@ import {
   isObject,
   isStateWrite,
   normalizedPath,
-  projectsFields,
+  replaysProjection,
   type JsonObject,
   type StateEntity,
   type StateRecordFacts,
@@ -16,8 +16,6 @@ import { updatedEntity } from "./environmentStateWriteApply.js";
 import { OmittedFields } from "./environmentStateWriteOmitted.js";
 import {
   checkDocumentRead,
-  checkItemRead,
-  checkListRead,
   checkedLines,
   collectionTarget,
   entityTarget,
@@ -296,13 +294,7 @@ export class EnvironmentStateWriteSimulation {
   }
 
   #check(view: StateView, record: StateRecordFacts): CheckOutcome | undefined {
-    if (view.shape === "recorded") return undefined;
-    // A read that asks for some fields only is answered by replay, so it checks nothing.
-    if (
-      view.shape === "item" &&
-      view.projected_record_ordinals !== undefined &&
-      projectsFields(record.query)
-    )
+    if (view.shape === "recorded" || replaysProjection(view, record.query))
       return undefined;
     const line = this.#line(view, record);
     if (view.shape !== "item" && line === undefined) return undefined;
@@ -337,10 +329,7 @@ export class EnvironmentStateWriteSimulation {
         volatile: this.#input.volatileOf(view.type),
         collection,
       };
-      const relaxed = this.omitted.relax(view, record, check);
-      return relaxed.shape === "item"
-        ? checkItemRead(this.#state, relaxed, record, check)
-        : checkListRead(this.#state, relaxed, record, check);
+      return this.omitted.check(this.#state, view, record, check);
     });
   }
 

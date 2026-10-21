@@ -11,7 +11,14 @@ import {
   type StateRecordFacts,
   type StateView,
 } from "./environmentStateRules.js";
-import { succeeded } from "./environmentStateWriteChecks.js";
+import {
+  checkItemRead,
+  checkListRead,
+  succeeded,
+  type CheckOutcome,
+  type ReadBodies,
+  type SimulatedState,
+} from "./environmentStateWriteChecks.js";
 
 /**
  * Fields a view's recordings always carried that a later successful read shows the application
@@ -22,8 +29,24 @@ export class OmittedFields {
 
   constructor(private readonly retain: (bytes: number) => void) {}
 
+  /** Check an item or list read with the fields reads showed omitted, this one's included, no longer required. */
+  check(
+    state: SimulatedState,
+    view: StateItemView | StateListView,
+    record: StateRecordFacts,
+    read: ReadBodies & {
+      readonly idField: string;
+      readonly collection: string;
+    },
+  ): CheckOutcome | undefined {
+    const relaxed = this.#relax(view, record, read);
+    return relaxed.shape === "item"
+      ? checkItemRead(state, relaxed, record, read)
+      : checkListRead(state, relaxed, record, read);
+  }
+
   /** Note the required fields the read's entities lack, and the view without every field noted so far. */
-  relax<View extends StateItemView | StateListView>(
+  #relax<View extends StateItemView | StateListView>(
     view: View,
     record: StateRecordFacts,
     read: { readonly body: JsonValue | undefined; readonly idField: string },

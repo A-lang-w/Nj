@@ -5,15 +5,20 @@ import {
   type Served,
 } from "../../../tests/fixtures/environmentStateServing.js";
 import {
+  ASSET_ROWS,
   BOOK_INIT_ROWS,
   BOOK_NOT_FOUND,
   BOOK_ROWS,
   DELETE_NOT_FOUND,
   FIRST_BOOK,
+  OMITTED_FIELD_ROWS,
+  PROJECTED_ROWS,
   SECOND_BOOK,
   THIRD_BOOK,
+  assetBook,
   book,
   bookClock,
+  detailedBook,
   renamedBook,
   type Book,
 } from "../../../tests/fixtures/environmentStateWrites.js";
@@ -246,6 +251,43 @@ describe("served updates and deletes", () => {
           "holds no /api/books entity 99 in /api/books",
         ),
       });
+  });
+});
+
+describe("wider write coverage", () => {
+  it("serves a created book without the field the application leaves out of it, and keeps it on the seeded ones", () => {
+    const books = servedFrom(OMITTED_FIELD_ROWS);
+    const created = books.answer("post_books", CREATE_NEW_BOOK).body as Book;
+    expect(created).not.toHaveProperty("detail");
+    expect(books.answer("get_books_by_id", { id: "3" }).body).toEqual(created);
+    expect(books.answer("get_books_by_id", { id: "1" }).body).toEqual(
+      detailedBook(FIRST_BOOK),
+    );
+  });
+
+  it("replays a call that asks for some fields only, and answers the rest from the state", () => {
+    const books = servedFrom(PROJECTED_ROWS);
+    expect(
+      books.answer("get_books_by_id", { id: "2", fields: "name" }),
+    ).toMatchObject({
+      body: { name: "Second Book" },
+      state: { source: "recording", reason: "projection" },
+    });
+    expect(books.answer("get_books_by_id", { id: "2" })).toMatchObject({
+      body: SECOND_BOOK,
+      state: { source: "state", view: "item" },
+    });
+  });
+
+  it("numbers created books after the largest held asset number, in its digit groups", () => {
+    const books = servedFrom(ASSET_ROWS);
+    const create = (name: string) =>
+      books.answer("post_books", { body: { name } }).body as Book;
+    expect(create("Fifth Book")).toMatchObject({ asset: "000-003" });
+    expect(create("Sixth Book")).toMatchObject({ asset: "000-004" });
+    expect(books.answer("get_books_by_id", { id: "1" }).body).toEqual(
+      assetBook(FIRST_BOOK, "000-001"),
+    );
   });
 });
 
