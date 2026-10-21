@@ -36,9 +36,36 @@ export const javaScriptWorkerHeapRemediation = (heapMb: number): string => {
   return `${adjustment} The effective worker heap for this analysis is ${String(heapMb)} MiB. A changed max_heap_mb applies on the next analysis, which starts a new worker. It does not change a worker that is already running, and it does not require restarting the REA server. ${HEAP_DOES_NOT_RAISE} On Bun, V8 heap flags are ignored: Windows limits the analyzer's committed memory to max_heap_mb plus a 512 MiB reserve, and other Bun hosts enforce no analyzer heap limit.`;
 };
 
+const PARENT_HEAP_NODE_OPTIONS =
+  "On Node, set NODE_OPTIONS (for example --max-old-space-size) in the environment that starts the CLI or MCP server, then restart that process,";
+
 /** Parent admission follows the CLI/MCP heap, not the isolated worker heap argument. */
-export const JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION =
-  "This limit belongs to the parent result budget. That budget follows the parent V8 heap limit. Increasing max_heap_mb does not raise it. On Node, set NODE_OPTIONS (for example --max-old-space-size) in the environment that starts the CLI or MCP server, then restart that process, to raise the parent heap and this budget. Use the retained static facts or analyze fewer source files.";
+export const JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION = `This limit belongs to the parent result budget. That budget follows the parent V8 heap limit. Increasing max_heap_mb does not raise it. ${PARENT_HEAP_NODE_OPTIONS} to raise the parent heap and this budget. Use the retained static facts or analyze fewer source files.`;
+
+/** Checkpoint decode uses the parent heap, not the isolated worker heap argument. */
+export const JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION = `This limit belongs to the parent process heap. Increasing max_heap_mb does not raise it. max_heap_mb changes only the isolated analyzer, on the next analysis, by starting a new worker. ${PARENT_HEAP_NODE_OPTIONS} to raise the parent heap and admit this checkpoint.`;
+
+/**
+ * Heap-exhaustion exit text. Node exhausted the configured V8 old-space.
+ * Bun ignores that flag, so the same diagnostic must not name it as the cause.
+ */
+export const javaScriptWorkerHeapExhaustionRecovery = (input: {
+  readonly heapFlagsEnforced: boolean;
+  readonly heapMb: number;
+  readonly path: string;
+  readonly phase: string;
+}): { readonly reason: string; readonly remediationAction: string } => {
+  if (input.heapFlagsEnforced)
+    return {
+      reason: `Owned JavaScript worker exhausted its ${String(input.heapMb)} MiB V8 old-space heap (max_heap_mb) while analyzing ${input.path} during ${input.phase}`,
+      remediationAction: javaScriptWorkerHeapRemediation(input.heapMb),
+    };
+  return {
+    reason: `Owned JavaScript worker ran out of memory while analyzing ${input.path} during ${input.phase}. Bun ignores the V8 old-space flag, so this exit is not the configured max_heap_mb limit of ${String(input.heapMb)} MiB.`,
+    remediationAction:
+      "Bun ignores V8 heap flags, so raising max_heap_mb does not change this exit. Windows limits the analyzer's committed memory to max_heap_mb plus a 512 MiB reserve and reports that separately as a process memory limit. Other Bun hosts enforce no analyzer heap limit. Reduce the analysis instead of increasing max_heap_mb.",
+  };
+};
 
 const semanticControl = {
   nodes: {

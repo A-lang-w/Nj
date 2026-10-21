@@ -635,16 +635,22 @@ still independently checks actual bytes, record overhead, digests and source
 identities before adopting results.
 
 A source that exhausts the analyzer heap does not terminate the CLI/MCP
-process. The failure names `max_heap_mb` (CLI `--max-heap-mb`), the effective
-mebibytes, the inclusive range 128 to 16384, and the 1024 MiB default. A
-changed value applies on the next analysis, which starts a new worker. It does
-not change a worker that is already running and does not require restarting
-the REA server. Raising `max_heap_mb` does not raise the parent result budget,
+process. On Node, the failure names `max_heap_mb` (CLI `--max-heap-mb`), the
+effective mebibytes, the inclusive range 128 to 16384, and the 1024 MiB
+default. A changed value applies on the next analysis, which starts a new
+worker. It does not change a worker that is already running and does not
+require restarting the REA server. On Bun, the same heap-exhaustion diagnostic
+is not attributed to that V8 old-space limit, because Bun ignores the flag.
+Raising `max_heap_mb` does not raise the parent result budget,
 the transfer record ceiling, the 2 GiB transfer file maximum, the CLI/MCP
 process heap, or fixed parser limits. The parent result budget follows that
 process heap. On Node, set `NODE_OPTIONS` (for example `--max-old-space-size`)
 in the environment that starts the CLI or MCP server, then restart that
-process, to raise the parent heap and the result budget. Completed static facts are retained, other files can still be analyzed,
+process, to raise the parent heap and the result budget. A completed static
+checkpoint that does not fit the parent's remaining heap names that parent
+process heap. Increasing `max_heap_mb` does not raise it. On Node, the same
+`NODE_OPTIONS` restart can raise the parent heap and admit the checkpoint.
+Completed static facts are retained, other files can still be analyzed,
 and unexamined semantic relationships remain explicit unknowns. The parent
 also checks transfer expansion and accumulated results against its remaining
 heap before accepting semantic facts. A resource-limited result has partial

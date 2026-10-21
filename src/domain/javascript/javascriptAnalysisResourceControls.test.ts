@@ -3,11 +3,13 @@ import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import { projectAnalysisError } from "../analysisErrorProjection.js";
 import {
   JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS,
+  JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION,
   JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION,
   JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
   JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM,
   JAVASCRIPT_WORKER_HEAP_MIB_MINIMUM,
   javaScriptAnalysisResourceControlsSchema,
+  javaScriptWorkerHeapExhaustionRecovery,
   javaScriptSemanticCeilingCoverage,
   javaScriptWorkerHeapRemediation,
 } from "./javascriptAnalysisResourceControls.js";
@@ -94,6 +96,50 @@ it("names the parent heap control for the parent result budget", () => {
   expect(JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION).not.toContain(
     "no runtime override",
   );
+});
+
+it("names the parent heap control for checkpoint decode", () => {
+  expect(JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION).toContain(
+    "parent process heap",
+  );
+  expect(JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION).toContain(
+    "NODE_OPTIONS",
+  );
+  expect(JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION).toContain(
+    "--max-old-space-size",
+  );
+  expect(JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION).toContain(
+    "admit this checkpoint",
+  );
+  expect(JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION).toContain(
+    "Increasing max_heap_mb does not raise it",
+  );
+});
+
+it("attributes V8 heap exhaustion to max_heap_mb only when that flag is enforced", () => {
+  const node = javaScriptWorkerHeapExhaustionRecovery({
+    heapFlagsEnforced: true,
+    heapMb: 1024,
+    path: "app.js",
+    phase: "static",
+  });
+  expect(node.reason).toContain(
+    "exhausted its 1024 MiB V8 old-space heap (max_heap_mb)",
+  );
+  expect(node.remediationAction).toContain("max_heap_mb");
+  expect(node.remediationAction).toContain("--max-heap-mb");
+  const bun = javaScriptWorkerHeapExhaustionRecovery({
+    heapFlagsEnforced: false,
+    heapMb: 1024,
+    path: "app.js",
+    phase: "static",
+  });
+  expect(bun.reason).toContain("Bun ignores the V8 old-space flag");
+  expect(bun.reason).not.toContain(
+    "exhausted its 1024 MiB V8 old-space heap (max_heap_mb)",
+  );
+  expect(bun.remediationAction).toContain("Bun ignores V8 heap flags");
+  expect(bun.remediationAction).not.toContain("Increase max_heap_mb");
 });
 
 it("names the four semantic arguments on ceiling coverage", () => {

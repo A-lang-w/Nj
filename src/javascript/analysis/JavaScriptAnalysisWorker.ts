@@ -51,9 +51,11 @@ import {
   javaScriptTransferRetentionBytes,
 } from "./JavaScriptAnalysisTransfer.js";
 import {
+  JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION,
   JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION,
   JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM,
   JAVASCRIPT_WORKER_HEAP_MIB_MINIMUM,
+  javaScriptWorkerHeapExhaustionRecovery,
   javaScriptWorkerHeapRemediation,
 } from "../../domain/javascript/javascriptAnalysisResourceControls.js";
 import { javaScriptWorkerStaticAnalysisSchema } from "./JavaScriptAnalysisWorkerSchemas.js";
@@ -695,8 +697,7 @@ export class JavaScriptAnalysisWorker {
         "The parent's remaining heap cannot safely decode the completed JavaScript static checkpoint",
         { ...this.#limits(), checkpoint_bytes: bytes },
         {
-          remediationAction:
-            "This limit belongs to the parent process heap. Increasing max_heap_mb does not raise it. max_heap_mb changes only the isolated analyzer, on the next analysis, by starting a new worker.",
+          remediationAction: JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION,
         },
       );
     const text = await readFile(path, "utf8");
@@ -1006,19 +1007,24 @@ export class JavaScriptAnalysisWorker {
     path: string,
     failure: Extract<WorkerPrimaryFailure, { kind: "exit" }>,
   ): AnalysisError {
-    if (failure.heapExhaustion)
+    if (failure.heapExhaustion) {
+      const recovery = javaScriptWorkerHeapExhaustionRecovery({
+        heapFlagsEnforced: WORKER_HEAP_FLAGS_ENFORCED,
+        heapMb: this.limits.heapMb,
+        path,
+        phase: this.#phase,
+      });
       return new AnalysisResourceConstraintError(
         OPERATION,
         "memory",
-        `Owned JavaScript worker exhausted its ${String(this.limits.heapMb)} MiB V8 old-space heap (max_heap_mb) while analyzing ${path} during ${this.#phase}`,
+        recovery.reason,
         this.#limits(),
         {
           capturedOutput: this.#captured(),
-          remediationAction: javaScriptWorkerHeapRemediation(
-            this.limits.heapMb,
-          ),
+          remediationAction: recovery.remediationAction,
         },
       );
+    }
     return new ProviderAdapterError(PROVIDER, OPERATION, {
       capturedOutput: this.#captured(),
       diagnostics: {
