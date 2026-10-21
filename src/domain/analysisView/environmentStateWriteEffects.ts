@@ -28,6 +28,7 @@ import {
   type SimulatedState,
 } from "./environmentStateWriteChecks.js";
 import {
+  conflictsWithPlan,
   documentPointerOf,
   explainUpdate,
   responseShapeOf,
@@ -226,29 +227,42 @@ const updatedObservation = (
 
 /** Add what a later call of an update showed to its plan: members, fixed values and rules not seen before. */
 const refineUpdate = (
+  context: EffectContext,
   plan: WriteDraft["plan"],
   explained: ReturnType<typeof explainUpdate>,
 ): void => {
   const body = plan.body!;
   const fixed = new Set(body.fixed.map((entry) => entry.member));
+  const added = explained.body.fixed.filter(
+    (entry) => !fixed.has(entry.member),
+  );
+  retainFixed(context, added);
   plan.body = {
     ...body,
+    // A later call may be the first to show the body repeating the path's id.
+    identity: body.identity ?? explained.body.identity,
     accepted: [
       ...body.accepted,
       ...explained.body.accepted.filter(
         (member) => !body.accepted.includes(member),
       ),
     ],
-    fixed: [
-      ...body.fixed,
-      ...explained.body.fixed.filter((entry) => !fixed.has(entry.member)),
-    ],
+    fixed: [...body.fixed, ...added],
   };
   const ruled = new Set(plan.rules.map((rule) => rule.field));
   plan.rules = [
     ...plan.rules,
     ...explained.rules.filter((rule) => !ruled.has(rule.field)),
   ];
+};
+
+/** Count the sent values of fixed members a plan keeps, which outlive the request body they were read from. */
+export const retainFixed = (
+  context: EffectContext,
+  fixed: readonly { readonly sent: JsonValue }[],
+): void => {
+  if (fixed.length > 0)
+    context.io.retain(64 + JSON.stringify(fixed).length * 2);
 };
 
 /** Whether a rule changes its field on calls that do not send it: serving applies it to every call that could. */
@@ -296,9 +310,10 @@ const buildUpdate = (
   },
 ): void => {
   if (built(draft)) {
-    refineUpdate(draft.plan, evidence.explained);
+    refineUpdate(context, draft.plan, evidence.explained);
     return;
   }
+  retainFixed(context, evidence.explained.body.fixed);
   const { ordinal } = step.record;
   Object.assign(draft.plan, {
     exemplar_ordinal: ordinal,
@@ -376,7 +391,8 @@ export const applyUpdate = (
   if (
     built(draft) &&
     !unknown &&
-    contradictsEarlierCalls(draft, explained.rules)
+    (contradictsEarlierCalls(draft, explained.rules) ||
+      conflictsWithPlan(draft.plan, explained))
   ) {
     refuse(draft, step, "unexplained-change");
     return recorded();
@@ -540,5 +556,10 @@ export const applyDocument = (
   }));
   context.io.retain(64 + JSON.stringify(written.value).length * 2);
   context.state.setDocument(tool, written.value);
-  return { kind: "applied", targets: [documentTarget(tool)] };
+  // A merge writes the members it sent; a replacement writes the whole document.
+  return {
+    kind: "applied",
+    targets: [documentTarget(tool)],
+    ...(draft.plan.merge === "merge" ? { fields: Object.keys(body) } : {}),
+  };
 };

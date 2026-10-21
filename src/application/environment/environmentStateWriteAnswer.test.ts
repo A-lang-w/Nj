@@ -404,6 +404,28 @@ describe("list queries", () => {
       reason: "unrecorded-request",
     });
   });
+
+  it("keeps a whole line's total following the state beside a partial page, which its query now answers", () => {
+    const partial = {
+      content: [FIRST_BOOK],
+      totalElements: 2,
+      numberOfElements: 1,
+    };
+    const books = servedFrom([
+      ["GET", "/api/books", bookPage([FIRST_BOOK, SECOND_BOOK])],
+      ["GET", "/api/books?page=1&size=1", partial],
+      ...LIST_LINE_ROWS.slice(2),
+    ]);
+    const created = books.answer("post_books", CREATE_NEW_BOOK).body as Book;
+    expect(books.answer("get_books")).toMatchObject({
+      body: bookPage([FIRST_BOOK, SECOND_BOOK, created]),
+    });
+    // The partial page is a query line here: its page and total come from the state, which now holds three books.
+    expect(books.answer("get_books", { page: "1", size: "1" })).toMatchObject({
+      body: { ...partial, totalElements: 3 },
+      state: { membership: "query" },
+    });
+  });
 });
 
 describe("path values", () => {
@@ -613,6 +635,61 @@ describe("values the state started with", () => {
     expect(create("my%20org1", "Epsilon")).toBe("/api/orgs/my%20org1/books");
   });
 
+  it("creates in the loaded state's collection when the Evidence spells the same one differently", () => {
+    const { books, create } = twoOrgs("%61cme1", "acme1");
+    const { rea_state: held } = books.store.snapshot();
+    expect(
+      books.store.replace({
+        rea_state: {
+          version: held.version,
+          entities: held.entities.map((entity) =>
+            entity.collection.includes("%61cme1")
+              ? {
+                  ...entity,
+                  collection: entity.collection.replace("%61cme1", "a%63me1"),
+                  record_ordinals: [],
+                }
+              : entity,
+          ),
+          documents: held.documents,
+        },
+      }).ok,
+    ).toBe(true);
+    // Both spellings decode to the argument; the one holding books wins over the Evidence's emptied one.
+    expect(create("acme1", "Epsilon")).toBe("/api/orgs/a%63me1/books");
+  });
+
+  it("creates in the spelling of a collection the capture listed empty", () => {
+    const beta = orgBook(2, "acme2", "Beta");
+    const gamma = orgBook(3, "my org1", "Gamma");
+    const delta = orgBook(4, "acme2", "Delta");
+    // The state starts before the first create, when the encoded organisation's list was empty.
+    const books = servedFrom([
+      ["GET", "/api/orgs/my%20org1/books", []],
+      ["GET", "/api/orgs/acme2/books", [beta]],
+      ["GET", "/api/orgs/acme2/books/2", beta],
+      ["POST", "/api/orgs/my%20org1/books", gamma, 201, { name: "Gamma" }],
+      ["GET", "/api/orgs/my%20org1/books", [gamma]],
+      ["POST", "/api/orgs/acme2/books", delta, 201, { name: "Delta" }],
+      ["GET", "/api/orgs/acme2/books", [beta, delta]],
+    ]);
+    const tool = books.source.manifest.tools.find(
+      (candidate) => candidate.method === "POST",
+    )!;
+    const [parent] = environmentToolArguments(tool).path.values();
+    books.answer(tool.name, {
+      [parent!]: "my%20org1",
+      body: { name: "Epsilon" },
+    });
+    expect(
+      books.store
+        .snapshot()
+        .rea_state.entities.find(
+          (entity) => entity.fields["name"] === "Epsilon",
+        )?.collection,
+    ).toBe("/api/orgs/my%20org1/books");
+  });
+
   it("forgets the spellings of a loaded state once reset", () => {
     const { books, create } = twoOrgs("%61cme1", "acme1");
     const { rea_state: held } = books.store.snapshot();
@@ -637,5 +714,28 @@ describe("values the state started with", () => {
     ).toBe(true);
     books.store.reset();
     expect(create("acme1", "Epsilon")).toBe("/api/orgs/%61cme1/books");
+  });
+});
+
+describe("paged lines", () => {
+  it("answers a requested page the collection has outgrown from its recording, and a call with no query from the state", () => {
+    const books = servedFrom([
+      ["GET", "/api/books?limit=2", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
+      // The application answers the same page with two books; serving would not answer it from the state.
+      ["GET", "/api/books?limit=2", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK, THIRD_BOOK]],
+    ]);
+    const created = books.answer("post_books", CREATE_NEW_BOOK).body as Book;
+    expect(books.answer("get_books", { limit: "2" })).toMatchObject({
+      body: [FIRST_BOOK, SECOND_BOOK],
+      state: { source: "recording", reason: "page-exceeded" },
+    });
+    expect(books.answer("get_books")).toMatchObject({
+      body: [FIRST_BOOK, SECOND_BOOK, created],
+      state: { source: "state", membership: "all", listed: 3 },
+    });
   });
 });

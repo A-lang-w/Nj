@@ -168,7 +168,7 @@ export const checkItemPlan = (
   };
 };
 
-/** The latest recordings that list their whole collection in state order, and which counters equal the item count. */
+/** The latest recordings that list their whole collection in state order, and the counters that equal the item count on each of them, or on every line when none does. */
 const listFacts = (
   context: StateGateContext,
   plan: StatePlan,
@@ -176,7 +176,7 @@ const listFacts = (
 ): { readonly whole: ReadonlySet<number>; readonly counters: string[] } => {
   const field = context.idField(plan.type);
   const whole = new Set<number>();
-  let counters: string[] | undefined;
+  const counting = new Map<number, string[]>();
   for (const record of plan.latest)
     context.withBody(record.ordinal, (body) => {
       const items =
@@ -187,8 +187,10 @@ const listFacts = (
       const counted = Object.keys(parent).filter(
         (name) => isItemTotal(name) && countOf(parent[name]) !== undefined,
       );
-      const names = counted.filter((name) => parent[name] === items.length);
-      counters = (counters ?? names).filter((name) => names.includes(name));
+      counting.set(
+        record.ordinal,
+        counted.filter((name) => parent[name] === items.length),
+      );
       // Only a line that pages at most can hold its whole collection; a total that differs from
       // the number listed, or a next page, shows it is partial.
       if (
@@ -203,6 +205,15 @@ const listFacts = (
         .map((entity) => entity.id);
       if (same(ids, expected)) whole.add(record.ordinal);
     });
+  // A whole line's counters count the collection, which a partial page's total does not, so the whole lines decide.
+  const lines = [...counting].filter(
+    ([ordinal]) => whole.size === 0 || whole.has(ordinal),
+  );
+  const counters = lines.reduce<string[] | undefined>(
+    (kept, [, names]) =>
+      kept === undefined ? names : kept.filter((name) => names.includes(name)),
+    undefined,
+  );
   return { whole, counters: (counters ?? []).sort(compare) };
 };
 

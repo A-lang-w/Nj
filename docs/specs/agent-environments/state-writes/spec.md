@@ -56,7 +56,9 @@ the exemplar.
   one-element array, as item views locate it. When the response does not carry
   it, the entity is observed in the first later read that shows it: an item
   read of that entity, or for a create, the one entity a collection read newly
-  lists. With neither, the reason is `no-observation`.
+  lists. A create whose response names its id alone (a scalar, the identity
+  field, or one member) is observed only through a read of that id. With
+  neither, the reason is `no-observation`.
 
 **Field rules for creates.** Each field of the observed entity gets the first
 rule that explains its value. Rules that read the call come first, so an
@@ -112,7 +114,9 @@ explained as one of:
 Any other change is `unexplained-change`. An increment or a slug applies to
 every call that could take it, so the plan is also `unexplained-change` when
 such a rule would give a call of the tool another value than the one it
-recorded.
+recorded, or when a later call treats a member otherwise than the plan: one
+call echoes it and another stores something else, or the two rule it
+differently.
 
 **Deletes.** A delete removes the entity. Its response is the exemplar's
 response, with the entity re-rendered when the response carries it.
@@ -172,12 +176,26 @@ members they sent.
 **Reads.** A read is checked when the served environment would answer it
 from the state:
 
-- an item read of a state-backed item view;
+- an item read of a state-backed item view, of the entity serving would name:
+  the read's collection and id as written, else a held collection whose path
+  matches once percent-decoded;
 - a list or document read on one of its view's checked request lines,
   chosen as replay chooses the line for the read's call: each path parameter
   the read's value verbatim or once percent-decoded, preferring verbatim
   spellings, then recorded order, and the query values decoded, in any order.
-  A list is compared as served from the collection of that line.
+  A read with no query on a whole list falls back, as serving does, on a
+  checked line that only pages it. A line whose query repeats a name with
+  different values is never chosen, since no call's arguments can name it; one
+  repeating a name with one value is, as a call naming it matches both. A list
+  is compared as served from the collection of that line. A read on a page
+  (`limit`, `size`, `per_page` and the like) of a whole list checks nothing
+  once the collection holds more entities than the page, which serving then
+  answers from its recording.
+- A read made while a modelled write to its entity or collection was still
+  running, starting before that write ended, checks nothing: it may show the
+  state before or after the write.
+- A read a write's effect was learned from checks nothing of that write, but
+  still contradicts the other writes it exercises.
 
 **Comparison.** The read's answer is the full response serving would give from
 the copy: an item read's entity rendered into its item view's base recording,
@@ -197,9 +215,13 @@ refuses to answer with.
   An update's effect is the fields it sent or changed, derived ones included.
   A later update overwrites the fields it sets (an increment adds to its field
   instead), a recorded outcome every field, and a create or delete the whole
-  entity. A write with nothing left on an entity no longer counts there, nor in
-  a collection where no entity it changed keeps any of its effect. A pass confirms them and a mismatch
-  contradicts them.
+  entity. A document write's effect is the members it merged, or the whole
+  document when it replaces it. A write with nothing left on an entity no
+  longer counts there, nor in a collection where no entity it changed keeps any
+  of its effect. A mismatch contradicts them. A pass confirms those it shows
+  something of: a create's or delete's membership, or a changed field the
+  read's view shows and does not treat as volatile; a read that shows none of
+  an update's changes confirms nothing of it.
 - A mismatch after an unmodelled write that followed those writes is checked
   only on the members they sent: such a write may explain the rest.
 - A mismatch on an entity or collection that no write changed contradicts,
@@ -213,7 +235,7 @@ refuses to answer with.
   becomes the plan's rule, unless an earlier list check relied on the rule
   (an item read's confirmation does not fix it).
 - The read that supplied a create's or update's observation does not check
-  it.
+  it, but checks the other writes it exercises.
 
 **Verdicts.** A plan is served when at least one check confirms it and none
 contradicts it. Otherwise the reason, in this precedence, is:
@@ -269,8 +291,10 @@ recording instead.
 A create in a collection held under more than one spelling (`acme1` and
 `%61cme1`) goes to the one the call spells verbatim, as item calls choose their
 entity; a collection keeps its spelling after its last entity is deleted. A
-reset or load knows the spellings of the Evidence's state and of the state it
-installs, never those of a state it replaced. `data/add` refuses a document that `data/get` would write back past the
+reset or load knows the spellings of the Evidence's state, of the state it
+installs and of the type's checked list lines (so a collection the capture
+listed empty keeps its spelling), never those of a state it replaced. When two
+spellings fit a call equally, the one holding entities wins. `data/add` refuses a document that `data/get` would write back past the
 32 MiB intake limit once it adds the members a document may omit, such as
 `types` and the state Evidence id.
 

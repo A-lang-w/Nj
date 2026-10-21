@@ -50,6 +50,7 @@ import {
   type StateProvenance,
   type StateServing,
 } from "./environmentStateAnswer.js";
+import { createdCollection } from "./environmentStateCollections.js";
 import {
   isLoadableValue,
   unloadableMember,
@@ -238,31 +239,6 @@ const writeAnswer = (
   return stateAnswer(serving, { exchange, exact }, body.value ?? null, state);
 };
 
-/** The collection a create writes to: a held collection the call's path matches, else the path as supplied. */
-const createdCollection = (
-  serving: StateServing,
-  request: WriteRequest,
-): string | undefined => {
-  const segments = callSegments(request.tool, request.args);
-  if (segments === undefined) return undefined;
-  // The spelling the call supplies verbatim wins, as item calls choose their entity; an emptied collection keeps its spelling.
-  let held: string | undefined;
-  let verbatim = -1;
-  for (const collection of serving.store.knownCollectionsOf(
-    request.plan.target ?? "",
-  )) {
-    const matched = collectionMatch(collection, segments);
-    if (matched !== undefined && matched > verbatim) {
-      held = collection;
-      verbatim = matched;
-    }
-  }
-  return (
-    held ??
-    `/${segments.map(({ text, supplied }) => (supplied ? encodeURIComponent(text) : text)).join("/")}`
-  );
-};
-
 const answerCreate = (
   serving: StateServing,
   request: WriteRequest,
@@ -271,7 +247,12 @@ const answerCreate = (
   const { tool, plan } = request;
   const type = plan.target ?? "";
   const idField = serving.store.type(type)?.id_field ?? "";
-  const collection = createdCollection(serving, request);
+  const collection = createdCollection(
+    serving,
+    request.tool,
+    request.args,
+    plan.target ?? "",
+  );
   const observed = observedEntity(serving, plan);
   if (collection === undefined || observed === undefined)
     return err(refused(tool, `Tool ${tool.name} needs every path argument.`));

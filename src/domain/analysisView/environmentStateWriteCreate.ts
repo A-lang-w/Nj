@@ -1,4 +1,6 @@
+import type { JsonValue } from "../jsonValue.js";
 import {
+  isObject,
   isStateWrite,
   normalizedPath,
   scalarText,
@@ -16,6 +18,7 @@ import {
   fail,
   refuse,
   requestObject,
+  retainFixed,
   searchFrom,
   startOf,
   UNKNOWN,
@@ -37,6 +40,18 @@ import {
 } from "./environmentStateWriteObserve.js";
 import type { WriteCall } from "./environmentStateWriteRules.js";
 
+/** The id a response names alone: a scalar body, or an object's id field or single scalar member. */
+const respondedId = (
+  body: JsonValue | undefined,
+  idField: string,
+): string | undefined => {
+  if (body === undefined) return undefined;
+  if (!isObject(body)) return scalarText(body);
+  if (Object.hasOwn(body, idField)) return scalarText(body[idField]);
+  const members = Object.values(body);
+  return members.length === 1 ? scalarText(members[0]) : undefined;
+};
+
 /** The written entity a create's response or a later read shows. */
 const createdObservation = (
   context: EffectContext,
@@ -53,8 +68,13 @@ const createdObservation = (
     newEntityIn(step.record.ordinal, body, target.idField, held),
   );
   if (own !== undefined) return own;
+  // A response that names the created id alone ties the later read to that id.
+  const id = context.io.withBody(step.record.ordinal, (body) =>
+    respondedId(body, target.idField),
+  );
   const later = laterObservation(searchFrom(context, step), {
     ...target,
+    ...(id === undefined ? {} : { id }),
     held,
     isWrite: isStateWrite,
   });
@@ -99,6 +119,7 @@ const buildCreate = (
   draft.candidates = insertCandidates(members, [
     ...new Set([idField, ...clocks, ...scalars]),
   ]);
+  retainFixed(context, explained.body.fixed);
   Object.assign(draft.plan, {
     exemplar_ordinal: step.record.ordinal,
     observation: {

@@ -4,6 +4,7 @@ import {
   allLines,
   listItems,
   listsAll,
+  pageSize,
   missingRequiredFields,
   renderStateEntity,
   renderStateList,
@@ -58,7 +59,11 @@ import type { EnvironmentStateStore } from "./environmentStateStore.js";
 export type StateProvenance =
   | {
       readonly source: "recording";
-      readonly reason: RecordedViewReason | "no-view" | "unrecorded-request";
+      readonly reason:
+        | RecordedViewReason
+        | "no-view"
+        | "unrecorded-request"
+        | "page-exceeded";
     }
   | {
       readonly source: "state";
@@ -391,6 +396,14 @@ const answerList = (
     envelope === undefined ? undefined : listItems(envelope, view.pointer);
   if (envelope === undefined || recorded === undefined)
     return fromRecording(source, tool, args, "body-unusable");
+  // A requested page the collection has outgrown is answered as recorded, never with more items than it asked for.
+  const size = exact ? pageSize(base.query ?? undefined) : undefined;
+  if (
+    listsAll(view, base.ordinal) &&
+    size !== undefined &&
+    store.inCollection(view.type, collectionPathOf(base, false)).length > size
+  )
+    return fromRecording(source, tool, args, "page-exceeded");
   const selection = listSelection(store, call, view, { base, recorded });
   if (selection === undefined)
     return fromRecording(source, tool, args, "unrecorded-request");

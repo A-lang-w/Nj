@@ -253,3 +253,47 @@ collection spellings, so a create in a collection the loaded state does not
 hold keeps its recorded spelling. Each new test fails on the previous head. The
 verdicts over the 50 captures are unchanged plan by plan, the smoke applies all
 31 served write tools, and the gates passed again.
+
+A ninth round made a create prefer a collection the state holds over an equally
+fitting spelling known only from the Evidence, so a create after a load lands in
+the loaded collection and reads back. Its test fails on the previous head; the
+verdicts and the smoke are unchanged and the gates passed again.
+
+A tenth round settled six findings Greptile raised on the list-lines branch
+against this branch's code:
+
+- a read with no query on a whole list is checked on the paging line serving
+  answers it from, and a line whose query repeats a name is never checked;
+- a read made while a write to its targets was still running checks nothing;
+- a later call that stores a member otherwise than the plan refuses the plan;
+- a create keeps the spelling of a collection the capture listed empty;
+- a wide array no longer overflows the stack while checking path-dependent
+  values;
+- the guide counts served write tools among the catalog's.
+
+Each new test fails on the previous head. The verdicts over the 50 captures
+are unchanged plan by plan, the smoke applies all 31 served write tools, and
+the gates passed again.
+
+An eleventh round settled six more findings, five raised on this branch and one on the fidelity branch:
+
+- a passing read confirms only the writes it shows something of;
+- an item read names its entity as serving does, percent-decoded spellings included;
+- a read a write's effect was learned from still contradicts the other writes;
+- a line repeating a query name with one value stays checkable;
+- document writes join the effect tracking, so a replacement overwrites an earlier merge;
+- a call naming a page that the collection has outgrown answers from its recording (`page-exceeded`), and the gate does not check such reads.
+
+Each new test fails on the previous head. The verdicts over the 50 captures are unchanged plan by plan, the smoke
+applies all 31 served write tools, and the gates passed again.
+
+A twelfth round settled four findings Greptile raised on the list-lines branch against this branch's code:
+
+- a create that answers with its id alone is observed only through a read of that id;
+- a later call that is the first to send the path's id in its body adds the identity member to the plan;
+- the copy search walks a request body with an index, so a wide body no longer takes quadratic time (500,000 zeros: 63 s
+  before, 74 ms after);
+- the sent values of fixed members a plan keeps are counted against the view's allowance.
+
+Each new test fails on the previous head. The verdicts over the 50 captures are unchanged plan by plan, the smoke
+applies all 31 served write tools, and the gates passed again.

@@ -159,9 +159,10 @@ export const containsDelimited = (value: JsonValue, token: string): boolean => {
   for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
     if (typeof next === "string") {
       if (delimitedOffsets(next, token).length > 0) return true;
-    } else if (Array.isArray(next)) pending.push(...next);
-    else if (typeof next === "object" && next !== null)
-      pending.push(...Object.values(next));
+    } else if (typeof next === "object" && next !== null)
+      // One at a time: spreading a wide array into push overflows the call stack.
+      for (const child of Array.isArray(next) ? next : Object.values(next))
+        pending.push(child);
   }
   return false;
 };

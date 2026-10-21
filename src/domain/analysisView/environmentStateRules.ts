@@ -1,6 +1,9 @@
 import type { ListQuery } from "./environmentStateListQuery.js";
 import { canonicalJson } from "../comparisonSemantics.js";
-import { parseUrlQueryParameterNames } from "../recordedTransportUrl.js";
+import {
+  iterateUrlQueryParameters,
+  parseUrlQueryParameterNames,
+} from "../recordedTransportUrl.js";
 import type { JsonValue } from "../jsonValue.js";
 import type { StateWritePlan } from "./environmentStateWriteRules.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
@@ -181,6 +184,25 @@ export const pagesOnly = (query: string | undefined): boolean =>
   [...parseUrlQueryParameterNames(query)].every((name) =>
     PAGING_PARAMETERS.has(name.toLowerCase()),
   );
+
+/** Paging parameters that bound how many items a page holds. */
+const PAGE_SIZE_PARAMETERS = new Set([
+  "limit",
+  "per_page",
+  "perpage",
+  "page_size",
+  "pagesize",
+  "size",
+]);
+
+/** The most items a query's page holds: its smallest whole-number page-size value, or undefined without one. */
+export const pageSize = (query: string | undefined): number | undefined => {
+  let size: number | undefined;
+  for (const [name, value] of iterateUrlQueryParameters(query ?? ""))
+    if (PAGE_SIZE_PARAMETERS.has(name.toLowerCase()) && /^\d+$/u.test(value))
+      size = Math.min(size ?? Infinity, Number(value));
+  return size;
+};
 
 /** Identity field names tried, in order, when no path parameter proves one. */
 export const IDENTITY_NAMES = [
@@ -561,13 +583,21 @@ export const missingRequiredFields = (
   return view.required_fields.filter((name) => !Object.hasOwn(shown, name));
 };
 
-/** A list response rendered from `base`: its array replaced by `items` and its counters set to their number. */
+/**
+ * A list response rendered from `base`: its array replaced by `items`, and set to their number each counter that
+ * counted the items `base` listed; one that did not, such as a partial page's total, keeps its recorded value.
+ */
 export const renderStateList = (
   view: Pick<StateListView, "pointer" | "counters">,
   base: JsonValue,
   items: readonly JsonObject[],
-): JsonValue =>
-  view.counters.reduce(
-    (body, name) => replaceAt(body, pointerTo(name), items.length),
+): JsonValue => {
+  const listed = listItems(base, view.pointer)?.length;
+  return view.counters.reduce(
+    (body, name) =>
+      at(base, pointerTo(name)) === listed
+        ? replaceAt(body, pointerTo(name), items.length)
+        : body,
     replaceAt(base, view.pointer, [...items]),
   );
+};

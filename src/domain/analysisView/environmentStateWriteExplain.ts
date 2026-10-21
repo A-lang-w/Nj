@@ -11,6 +11,7 @@ import {
 import type {
   FieldRule,
   InsertRule,
+  StateWritePlan,
   WriteBody,
   WriteCall,
   WriteResponse,
@@ -45,7 +46,9 @@ const bodyPointerOf = (body: JsonValue, value: string): string | undefined => {
   const pending: { readonly value: JsonValue; readonly pointer: string }[] = [
     { value: body, pointer: "" },
   ];
-  for (let next = pending.shift(); next !== undefined; next = pending.shift()) {
+  // An index walks the queue: shifting a wide body's values one by one would take quadratic time.
+  for (let at = 0; at < pending.length; at += 1) {
+    const next = pending[at]!;
     if (next.value === value) return next.pointer;
     const children: [string, JsonValue][] = Array.isArray(next.value)
       ? next.value.map((item, index) => [String(index), item])
@@ -434,4 +437,24 @@ export const documentPointerOf = (
       best = { pointer, shared };
   }
   return best?.pointer;
+};
+
+/** Whether a later call explains a member or field otherwise than the plan: echoed by one and stored as something else by the other, or ruled differently. */
+export const conflictsWithPlan = (
+  plan: Pick<StateWritePlan, "body" | "rules">,
+  explained: ReturnType<typeof explainUpdate>,
+): boolean => {
+  const body = plan.body!;
+  const fixed = new Set(body.fixed.map((entry) => entry.member));
+  const rules = new Map(plan.rules.map((rule) => [rule.field, rule]));
+  return (
+    explained.body.accepted.some((member) => fixed.has(member)) ||
+    explained.body.fixed.some((entry) =>
+      body.accepted.includes(entry.member),
+    ) ||
+    explained.rules.some((rule) => {
+      const held = rules.get(rule.field);
+      return held !== undefined && !same(held, rule);
+    })
+  );
 };
