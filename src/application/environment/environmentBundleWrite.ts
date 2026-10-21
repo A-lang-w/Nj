@@ -10,7 +10,7 @@ import {
 import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { ArtifactFileCleanupFailure } from "../../artifacts/ArtifactFileOperation.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
-import { readFileHandleChunks } from "../../filesystem/readFileHandleChunks.js";
+import * as fileHandleChunks from "../../filesystem/readFileHandleChunks.js";
 import { streamChunkToBuffer } from "../../artifacts/StreamBytes.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
@@ -70,7 +70,7 @@ const writingBundleFile = async <Result>(
 /** Read the admitted tarball, attributing host failures to the source. */
 async function* tarballChunks(source: BundleTarball): AsyncIterable<unknown> {
   try {
-    yield* readFileHandleChunks(source.handle);
+    yield* fileHandleChunks.readFileHandleChunks(source.handle);
   } catch (cause: unknown) {
     if (isHostSystemFailure(cause))
       throw new BundleFileHostFailure(source.path, "reading", cause);

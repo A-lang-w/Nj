@@ -1,6 +1,5 @@
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
-import * as v8 from "node:v8";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -16,12 +15,10 @@ import { RegularFileChangedError } from "../../filesystem/RegularFile.js";
 import { nativeJsonParseRequiredBytes } from "../JsonInputFile.js";
 import * as regularFileRead from "../RegularFileRead.js";
 import {
+  environmentExportHeap,
   exportEnvironmentBundle,
   readEnvironmentExportInputs,
 } from "./environmentExport.js";
-
-vi.mock("node:v8", { spy: true });
-vi.mock("../RegularFileRead.js", { spy: true });
 
 const listFiles = async (root: string): Promise<string[]> =>
   (await readdir(root, { recursive: true, withFileTypes: true }))
@@ -61,14 +58,13 @@ describe("readEnvironmentExportInputs", () => {
       const files = await writeEnvironmentServeFiles(root);
       const changedPath =
         role === "manifest" ? files.manifestPath : files.capturePath;
-      const actual = await vi.importActual<typeof regularFileRead>(
-        "../RegularFileRead.js",
-      );
-      const reader = vi.mocked(regularFileRead.readRegularFile);
-      reader.mockImplementation(async (path, options) => {
-        if (path === changedPath) throw new RegularFileChangedError(path);
-        return actual.readRegularFile(path, options);
-      });
+      const original = regularFileRead.readRegularFile;
+      const reader = vi
+        .spyOn(regularFileRead, "readRegularFile")
+        .mockImplementation(async (path, options) => {
+          if (path === changedPath) throw new RegularFileChangedError(path);
+          return original(path, options);
+        });
       try {
         const result = await readEnvironmentExportInputs(
           files.manifestPath,
@@ -83,7 +79,7 @@ describe("readEnvironmentExportInputs", () => {
           },
         });
       } finally {
-        reader.mockImplementation(actual.readRegularFile);
+        reader.mockRestore();
       }
     },
   );
@@ -113,14 +109,19 @@ describe("readEnvironmentExportInputs", () => {
       root,
       environmentServeFixture(),
     );
-    vi.mocked(v8.getHeapStatistics).mockReturnValueOnce({
-      ...v8.getHeapStatistics(),
-      total_available_size: 1024,
-    });
-    const refused = await readEnvironmentExportInputs(
-      files.manifestPath,
-      files.capturePath,
-    );
+    const current = environmentExportHeap.statistics();
+    const statistics = vi
+      .spyOn(environmentExportHeap, "statistics")
+      .mockReturnValueOnce({ ...current, total_available_size: 1024 });
+    let refused: Awaited<ReturnType<typeof readEnvironmentExportInputs>>;
+    try {
+      refused = await readEnvironmentExportInputs(
+        files.manifestPath,
+        files.capturePath,
+      );
+    } finally {
+      statistics.mockRestore();
+    }
     expect(refused.ok).toBe(false);
     if (refused.ok) return;
     expect(refused.error).toMatchObject({
@@ -328,14 +329,22 @@ describe("readEnvironmentExportInputs heap admission", () => {
     );
     const { size } = await stat(files.manifestPath);
     // Room for parsing, but not for the owned snapshot traversal that follows it.
-    vi.mocked(v8.getHeapStatistics).mockReturnValueOnce({
-      ...v8.getHeapStatistics(),
-      total_available_size: nativeJsonParseRequiredBytes(size) * 1.5,
-    });
-    const refused = await readEnvironmentExportInputs(
-      files.manifestPath,
-      files.capturePath,
-    );
+    const current = environmentExportHeap.statistics();
+    const statistics = vi
+      .spyOn(environmentExportHeap, "statistics")
+      .mockReturnValueOnce({
+        ...current,
+        total_available_size: nativeJsonParseRequiredBytes(size) * 1.5,
+      });
+    let refused: Awaited<ReturnType<typeof readEnvironmentExportInputs>>;
+    try {
+      refused = await readEnvironmentExportInputs(
+        files.manifestPath,
+        files.capturePath,
+      );
+    } finally {
+      statistics.mockRestore();
+    }
     expect(refused.ok).toBe(false);
     if (refused.ok) return;
     expect(refused.error).toMatchObject({

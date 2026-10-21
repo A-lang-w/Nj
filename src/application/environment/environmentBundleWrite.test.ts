@@ -30,8 +30,6 @@ import {
   readEnvironmentExportInputs,
 } from "./environmentExport.js";
 
-vi.mock("../../filesystem/readFileHandleChunks.js", { spy: true });
-
 it("attributes a pathless tarball read failure during the copy to the tarball", async () => {
   const root = await createTestTempDirectory("rea-tarball-read-failure-");
   const files = await writeEnvironmentServeFiles(root);
@@ -43,17 +41,16 @@ it("attributes a pathless tarball read failure during the copy to the tarball", 
   const tarball = join(root, "package.tgz");
   await writeFile(tarball, "admitted package");
   const directory = join(root, "bundle");
-  const actual = await vi.importActual<typeof fileChunks>(
-    "../../filesystem/readFileHandleChunks.js",
-  );
   // Only the tarball descriptor is read twice: once to hash, once to copy.
+  // Spy the shared reader for this test and restore it; the services project keeps one module graph.
+  const original = fileChunks.readFileHandleChunks;
   const reads = new Map<unknown, number>();
   const reader = vi
-    .mocked(fileChunks.readFileHandleChunks)
+    .spyOn(fileChunks, "readFileHandleChunks")
     .mockImplementation((handle, options) => {
       const count = (reads.get(handle) ?? 0) + 1;
       reads.set(handle, count);
-      if (count < 2) return actual.readFileHandleChunks(handle, options);
+      if (count < 2) return original(handle, options);
       const failure = Object.assign(new Error("EIO: i/o error, read"), {
         code: "EIO",
         syscall: "read",
