@@ -102,7 +102,10 @@ naming the exemplar's collection.
 **Updates.** Body members follow the same accepted and not-accepted rules,
 except that a member the application stored differently is accepted only with
 the value a recorded call sent it with, and then stores the value that call
-recorded (its `constant` rule carries it).
+recorded (its `constant` rule carries it). The type's identity field never
+takes a rule: sent as the path's id it is the identity member, sent as another
+value the application ignored it is accepted with that value and stores
+nothing, and a stored id that changed is `unexplained-change`.
 `PUT` requires every member the exemplar sent; `PATCH` and `POST` require at
 least one. A field the exemplar's update changed without sending it is
 explained as one of:
@@ -191,7 +194,7 @@ from the state:
   different values is never chosen, since no call's arguments can name it; one
   repeating a name with one value is, as a call naming it matches both. A list
   is compared as served from the collection of that line. A read on a page
-  (`limit`, `size`, `per_page` and the like, or a `_start`–`_end` range) of a
+  (`limit`, `size`, `per_page` and the like, a size of zero bounding nothing, or a `_start`–`_end` range) of a
   whole list checks nothing once the collection holds more entities than the
   page, which serving then answers from its recording.
 - A read made while a modelled write to its entity or collection was still

@@ -83,6 +83,29 @@ describe("served creates", () => {
 });
 
 describe("served updates and deletes", () => {
+  it("keeps an entity's identity when the application ignored the id an update sent", () => {
+    const renamed = renamedBook(FIRST_BOOK, "Renamed Book", 3);
+    const books = servedFrom([
+      ...BOOK_INIT_ROWS,
+      [
+        "PATCH",
+        "/api/books/1",
+        renamed,
+        200,
+        { id: 999, name: "Renamed Book" },
+      ],
+      ["GET", "/api/books/1", renamed],
+    ]);
+    const answer = books.answer("patch_books_by_id", {
+      id: "2",
+      body: { id: 999, name: "Second Edition" },
+    });
+    expect(answer.body).toMatchObject({ id: 2, name: "Second Edition" });
+    expect(books.answer("get_books_by_id", { id: "2" }).body).toMatchObject({
+      id: 2,
+    });
+  });
+
   const SECOND_EDITION = renamedBook(SECOND_BOOK, "Second Edition", 13);
   const RENAME_SECOND = { id: "2", body: { name: "Second Edition" } };
 
@@ -666,6 +689,21 @@ describe("paged lines", () => {
       state: { source: "recording", reason: "page-exceeded" },
     });
     expect(books.answer("get_books")).toMatchObject({
+      body: [FIRST_BOOK, SECOND_BOOK, created],
+      state: { source: "state", membership: "all", listed: 3 },
+    });
+  });
+
+  it("answers a whole list a zero limit names from the state, as zero lists every match", () => {
+    const books = servedFrom([
+      ["GET", "/api/books?limit=0", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
+      ["GET", "/api/books/3", THIRD_BOOK],
+    ]);
+    const created = books.answer("post_books", CREATE_NEW_BOOK).body as Book;
+    expect(books.answer("get_books", { limit: "0" })).toMatchObject({
       body: [FIRST_BOOK, SECOND_BOOK, created],
       state: { source: "state", membership: "all", listed: 3 },
     });
