@@ -1012,6 +1012,29 @@ describe("what a write's effect keeps", () => {
     });
   });
 
+  it("weighs an unmodelled write against a tool's call on the entity a read checks, not its latest call elsewhere", () => {
+    const tagged = (id: number, name: string, tag: string) => ({
+      id,
+      name,
+      tag,
+    });
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [tagged(1, "A", "x"), tagged(2, "B", "x")]],
+      ["GET", "/api/books/1", tagged(1, "A", "x")],
+      ["GET", "/api/books/2", tagged(2, "B", "x")],
+      ["PATCH", "/api/books/1", tagged(1, "A2", "x"), 200, { name: "A2" }],
+      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
+      ["PATCH", "/api/books/2", tagged(2, "B2", "x"), 200, { name: "B2" }],
+      // The export came after book 1's rename, so it may explain the changed tag; the rename itself shows.
+      ["GET", "/api/books/1", tagged(1, "A2", "y")],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      contradicted_by: null,
+      checked_record_ordinals: [6],
+    });
+  });
+
   it("contradicts a write made after an unmodelled one, though an earlier pending write came before it", () => {
     const summary = (name: string) => [
       { id: 1, name },
@@ -1046,31 +1069,40 @@ describe("what a write's effect keeps", () => {
     });
   });
 
-  it("refuses an update whose recorded response dropped a field serving would keep", () => {
+  const subtitled = (id: number, name: string, subtitle?: string) =>
+    subtitle === undefined ? { id, name } : { id, name, subtitle };
+  const summaries = (first: string): TimedCaptureRow => [
+    "GET",
+    "/api/books",
+    [subtitled(1, first), subtitled(2, "B")],
+  ];
+
+  it("refuses an update a later read shows dropped a field serving would keep", () => {
     const rows: TimedCaptureRow[] = [
-      [
-        "GET",
-        "/api/books",
-        [
-          { id: 1, name: "A" },
-          { id: 2, name: "B" },
-        ],
-      ],
-      ["GET", "/api/books/1", { id: 1, name: "A", subtitle: "s" }],
-      ["GET", "/api/books/2", { id: 2, name: "B", subtitle: "t" }],
-      ["PATCH", "/api/books/1", { id: 1, name: "Z" }, 200, { name: "Z" }],
-      [
-        "GET",
-        "/api/books",
-        [
-          { id: 1, name: "Z" },
-          { id: 2, name: "B" },
-        ],
-      ],
+      summaries("A"),
+      ["GET", "/api/books/1", subtitled(1, "A", "s")],
+      ["GET", "/api/books/2", subtitled(2, "B", "t")],
+      ["PATCH", "/api/books/1", "", 204, { name: "Z" }],
+      ["GET", "/api/books/1", subtitled(1, "Z")],
+      summaries("Z"),
     ];
     expect(gated(rows, "patch_books_by_id")).toMatchObject({
       served: false,
       reason: "unexplained-change",
+    });
+  });
+
+  it("keeps an update whose partial response leaves out a field a later read still shows", () => {
+    const rows: TimedCaptureRow[] = [
+      summaries("A"),
+      ["GET", "/api/books/1", subtitled(1, "A", "s")],
+      ["GET", "/api/books/2", subtitled(2, "B", "t")],
+      ["PATCH", "/api/books/1", subtitled(1, "Z"), 200, { name: "Z" }],
+      ["GET", "/api/books/1", subtitled(1, "Z", "s")],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4],
     });
   });
 });

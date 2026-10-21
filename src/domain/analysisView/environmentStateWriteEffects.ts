@@ -395,6 +395,7 @@ export const applyUpdate = (
     idField,
     id,
     startMs: startOf(context, step),
+    read: after.ordinal !== step.record.ordinal,
   });
   if (explained.unexplained.length > 0 && !unknown) {
     refuse(draft, step, "unexplained-change");

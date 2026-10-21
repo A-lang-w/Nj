@@ -17,8 +17,11 @@ export const shownFields = (
 /** Modelled writes per target since its last check, with the fields each wrote (null: all). */
 export type TouchedTargets = Map<string, Map<string, readonly string[] | null>>;
 
-/** Per target, when the latest modelled write since its last check ended. */
-export type PendingTargets = Map<string, { until: number }>;
+/** Per target, when the latest modelled write since its last check ended, and each tool's latest call there. */
+export type PendingTargets = Map<
+  string,
+  { until: number; readonly at: Map<string, number> }
+>;
 
 /** Whether a modelled write to the target was still running when a read began at `start`, so the read may show either state. */
 export const runningAt = (
@@ -40,19 +43,22 @@ export const exercisedBy = (
   return exercised;
 };
 
-/** Record a modelled write on a target: the fields it wrote (undefined: all) and when it ended. */
+/** Record a modelled write on a target: the fields it wrote (undefined: all), when it was made and when it ended. */
 export const touchTarget = (
   touched: TouchedTargets,
   pending: PendingTargets,
   target: string,
   write: {
+    readonly index: number;
     readonly tool: string;
     readonly end: number;
     readonly fields: readonly string[] | undefined;
   },
 ): void => {
+  const held = pending.get(target);
   pending.set(target, {
-    until: Math.max(pending.get(target)?.until ?? -Infinity, write.end),
+    until: Math.max(held?.until ?? -Infinity, write.end),
+    at: (held?.at ?? new Map()).set(write.tool, write.index),
   });
   const tools = touched.get(target) ?? new Map();
   const before = tools.get(write.tool);
@@ -303,6 +309,11 @@ export const forgetChecked = (
     pending.since.delete(key);
     return;
   }
-  for (const name of writes.keys()) if (!unseen.has(name)) writes.delete(name);
+  const at = pending.since.get(key)?.at;
+  for (const name of writes.keys())
+    if (!unseen.has(name)) {
+      writes.delete(name);
+      at?.delete(name);
+    }
   pending.effects.checked(key, unseen);
 };
