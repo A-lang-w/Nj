@@ -121,7 +121,7 @@ export interface ClassDebugMetadata {
 }
 
 type NamedAttribute = {
-  readonly name: string | null;
+  readonly name: string;
   readonly info: Uint8Array;
 };
 

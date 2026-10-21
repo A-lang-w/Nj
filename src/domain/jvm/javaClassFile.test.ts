@@ -57,6 +57,10 @@ class Blob {
     this.parts.push(...bytes);
     return this;
   }
+  raw(bytes: Uint8Array): this {
+    this.parts.push(...bytes);
+    return this;
+  }
   bytes(): Uint8Array {
     return Uint8Array.from(this.parts);
   }
@@ -258,6 +262,104 @@ describe("parseJavaClassFile framing", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("budget-exceeded");
+  });
+});
+
+describe("parseJavaClassFile constant-pool and attribute-name validity", () => {
+  /** Header up to the constant pool, then the given pool bytes and an empty class body. */
+  const classWithPool = (count: number, pool: Blob): Uint8Array =>
+    new Blob()
+      .u4(0xcafebabe)
+      .u2(0)
+      .u2(52)
+      .u2(count)
+      .raw(pool.bytes())
+      .u2(0x0021)
+      .u2(0)
+      .u2(0)
+      .u2(0)
+      .u2(0)
+      .u2(0)
+      .u2(0)
+      .bytes();
+
+  // HotSpot: "Illegal constant pool size 0".
+  it("refuses a constant_pool_count of 0", () => {
+    const result = parseJavaClassFile(classWithPool(0, new Blob()));
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: "invalid-constant-pool", offset: 8, reason: "zero-count" },
+    });
+  });
+
+  // HotSpot: "Invalid constant pool entry" when a long's second slot is past the pool.
+  it.each([
+    ["long", CONSTANT_TAG.long],
+    ["double", CONSTANT_TAG.double],
+  ])("refuses a %s constant in the pool's final slot", (_label, tag) => {
+    const result = parseJavaClassFile(
+      classWithPool(2, new Blob().u1(tag).u4(0).u4(1)),
+    );
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        kind: "invalid-constant-pool",
+        offset: 10,
+        reason: "wide-constant-in-final-slot",
+      },
+    });
+  });
+
+  it("accepts a long whose second slot is the pool's last", () => {
+    expect(
+      parseJavaClassFile(
+        classWithPool(3, new Blob().u1(CONSTANT_TAG.long).u4(0).u4(1)),
+      ).ok,
+    ).toBe(true);
+  });
+
+  /** One method `<init>()V` whose single attribute is named by `attributeName`. */
+  const classWithMethodAttribute = (attributeName: number): Uint8Array =>
+    new Blob()
+      .u4(0xcafebabe)
+      .u2(0)
+      .u2(52)
+      .u2(5)
+      .u1(CONSTANT_TAG.utf8)
+      .utf8("<init>")
+      .u1(CONSTANT_TAG.utf8)
+      .utf8("()V")
+      .u1(CONSTANT_TAG.utf8)
+      .utf8("Example")
+      .u1(CONSTANT_TAG.class)
+      .u2(3)
+      .u2(0x0021)
+      .u2(4)
+      .u2(0)
+      .u2(0)
+      .u2(0)
+      .u2(1)
+      .u2(0x0001)
+      .u2(1)
+      .u2(2)
+      .u2(1)
+      .u2(attributeName)
+      .u4(0)
+      .u2(0)
+      .bytes();
+
+  // HotSpot: "Invalid method attribute name index" (the same check applies to
+  // field, class, and Code sub-attributes, which share this framing).
+  it.each([
+    ["index 0", 0],
+    ["an index past the pool", 5],
+    ["a CONSTANT_Class", 4],
+  ])("refuses an attribute named by %s", (_label, index) => {
+    const result = parseJavaClassFile(classWithMethodAttribute(index));
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: "invalid-attribute-name", offset: 58, index },
+    });
   });
 });
 

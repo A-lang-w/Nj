@@ -75,6 +75,25 @@ export const mapParseError = (
           message: `Malformed modified-UTF8 constant at byte ${String(error.offset)}.`,
         },
       ]);
+    case "invalid-constant-pool":
+      return new AnalysisInputError(OPERATION, undefined, [
+        {
+          path: ["path"],
+          reason: "invalid_format",
+          message:
+            error.reason === "zero-count"
+              ? `Class file declares a constant_pool_count of 0 at byte ${String(error.offset)}; the JVM rejects such a class.`
+              : `Class file places a long or double constant in the constant pool's final slot at byte ${String(error.offset)}, so its second slot lies outside the pool; the JVM rejects such a class.`,
+        },
+      ]);
+    case "invalid-attribute-name":
+      return new AnalysisInputError(OPERATION, undefined, [
+        {
+          path: ["path"],
+          reason: "invalid_format",
+          message: `Attribute name index ${String(error.index)} at byte ${String(error.offset)} does not name a CONSTANT_Utf8 entry; the JVM rejects such a class.`,
+        },
+      ]);
     case "budget-exceeded":
       return new AnalysisInputError(OPERATION, undefined, [
         {

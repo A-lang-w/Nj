@@ -63,8 +63,8 @@ export type ConstantPoolEntry =
 /** A raw attribute: its resolved name and the exact `info` byte range, left undecoded. */
 export interface JavaAttribute {
   readonly nameIndex: number;
-  /** Resolved Utf8 name, or `null` when `nameIndex` is not a Utf8 constant. */
-  readonly name: string | null;
+  /** Resolved Utf8 name; framing refuses an index that names no Utf8 constant. */
+  readonly name: string;
   /** View over the class-file buffer; not copied. */
   readonly info: Uint8Array;
 }
@@ -108,6 +108,28 @@ export type JavaClassFileParseError =
       readonly tag: number;
     }
   | { readonly kind: "invalid-utf8"; readonly offset: number }
+  | {
+      /**
+       * The constant pool's shape is illegal: `constant_pool_count` is 0 (it
+       * must be at least 1), or a Long/Double sits in the final slot so its
+       * required second slot lies past the pool (JVMS §4.1, §4.4.5). HotSpot
+       * rejects both ("Illegal constant pool size", "Invalid constant pool
+       * entry").
+       */
+      readonly kind: "invalid-constant-pool";
+      readonly offset: number;
+      readonly reason: "zero-count" | "wide-constant-in-final-slot";
+    }
+  | {
+      /**
+       * An attribute's `attribute_name_index` does not name a CONSTANT_Utf8
+       * entry (JVMS §4.7). HotSpot rejects the class, and the attribute's
+       * meaning is unknown, so it cannot be skipped as an unrelated one.
+       */
+      readonly kind: "invalid-attribute-name";
+      readonly offset: number;
+      readonly index: number;
+    }
   | {
       /**
        * Bytes remain after the class-file structure ends. JVMS §4.8 requires
@@ -380,6 +402,12 @@ const parseConstantPool = (
   const countResult = cursor.u2();
   if (!countResult.ok) return countResult;
   const count = countResult.value;
+  if (count === 0)
+    return err({
+      kind: "invalid-constant-pool",
+      offset: cursor.offset - 2,
+      reason: "zero-count",
+    });
   // Constant pool is indexed 1..count-1; slot 0 is a reserved placeholder.
   const pool: ConstantPoolEntry[] = [{ kind: "opaque", tag: 0 }];
   for (let index = 1; index < count; index += 1) {
@@ -425,8 +453,15 @@ const parseConstantPool = (
     const skip = cursor.slice(fixed);
     if (!skip.ok) return skip;
     pool.push({ kind: "opaque", tag });
-    // Long and Double occupy two pool slots; the next is unusable (JVMS §4.4.5).
+    // Long and Double occupy two pool slots; the next is unusable (JVMS §4.4.5)
+    // and must itself lie inside the declared pool.
     if (tag === CONSTANT_TAG.long || tag === CONSTANT_TAG.double) {
+      if (index + 1 >= count)
+        return err({
+          kind: "invalid-constant-pool",
+          offset: tagOffset,
+          reason: "wide-constant-in-final-slot",
+        });
       pool.push({ kind: "unusable" });
       index += 1;
     }
@@ -462,6 +497,7 @@ export const frameAttributes = (
   const countResult = cursor.u2();
   if (!countResult.ok) return stop(countResult.error);
   for (let i = 0; i < countResult.value; i += 1) {
+    const nameOffset = cursor.offset;
     const nameIndex = cursor.u2();
     if (!nameIndex.ok) return stop(nameIndex.error);
     const lengthResult = cursor.u4();
@@ -475,7 +511,13 @@ export const frameAttributes = (
         remaining: cursor.remaining,
       });
     const name = resolveConstantUtf8(pool, nameIndex.value);
-    if (name === null || !keep.has(name)) {
+    if (name === null)
+      return stop({
+        kind: "invalid-attribute-name",
+        offset: nameOffset,
+        index: nameIndex.value,
+      });
+    if (!keep.has(name)) {
       const skipped = cursor.skip(lengthResult.value);
       if (!skipped.ok) return stop(skipped.error);
       continue;

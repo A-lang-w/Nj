@@ -165,7 +165,11 @@ size is checked again afterwards. A local-variable scope whose `[start_pc, start
 lies outside the method's code length, or a line entry whose `start_pc` is at
 or past it, is surfaced as declared and flagged `out_of_range: true`, never
 silently corrected. A class file with bytes after its last attribute is
-refused as invalid input, as HotSpot refuses it. A JAR whose central directory
+refused as invalid input, as HotSpot refuses it, as is a class whose
+`constant_pool_count` is 0, whose last constant-pool slot holds a `long` or
+`double` (its second slot would lie outside the pool), or whose field, method
+or class attribute has a name index that does not name a `CONSTANT_Utf8`
+entry. A JAR whose central directory
 exceeds the metadata read budget, or whose members declare more uncompressed
 bytes than its decompression budget allows, is refused with that bound named in
 `reported_limits` (`max_metadata_read_bytes` or `max_decompressed_bytes`).
