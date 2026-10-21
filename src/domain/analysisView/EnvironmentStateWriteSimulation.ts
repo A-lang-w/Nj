@@ -24,6 +24,7 @@ import {
   succeeded,
   withBodies,
   writtenFieldChecks,
+  showsPlacement,
   SimulatedState,
   type CheckOutcome,
 } from "./environmentStateWriteChecks.js";
@@ -413,11 +414,10 @@ export class EnvironmentStateWriteSimulation {
       exercised,
       fields: shownFields(view, this.#input.volatileOf),
     });
-    // A sort that orders every listed entity shows nothing of where a create placed one.
-    const places = view.shape === "list" && outcome.positional !== false;
     for (const name of shown.confirmed) {
       this.#drafts.get(name)!.confirmed.push(record.ordinal);
-      if (places) this.#placed.add(name);
+      if (showsPlacement(view, outcome, this.#inserted, name))
+        this.#placed.add(name);
     }
     return shown.unseen;
   }

@@ -18,6 +18,7 @@ import {
   type StateItemView,
   type StateListView,
   type StateRecordFacts,
+  type StateView,
   segmentsOf,
 } from "./environmentStateRules.js";
 import { pageBound } from "./environmentStatePaging.js";
@@ -142,12 +143,25 @@ export const withBodies = <T>(
 /** A check's outcome and the targets it covered. */
 export interface CheckOutcome {
   readonly pass: boolean;
-  /** Set to false when a sort orders every listed entity, so the read shows nothing of where a create placed one. */
-  readonly positional?: boolean;
+  /** The entities, by target, whose place a list read shows state order decides; absent, every listed entity's. */
+  readonly positional?: ReadonlySet<string>;
   readonly targets: readonly string[];
   /** Entities the recording, or the served base of a recorded-membership list, lists that the state does not hold, by target. */
   readonly unheld: readonly string[];
 }
+
+/** Whether a passing check shows where a create placed its entity: a list's does unless a sort orders that entity, leaving it tied with none. */
+export const showsPlacement = (
+  view: StateView,
+  outcome: Pick<CheckOutcome, "positional">,
+  inserted: ReadonlyMap<string, string>,
+  tool: string,
+): boolean =>
+  view.shape === "list" &&
+  (outcome.positional === undefined ||
+    [...inserted].some(
+      ([target, create]) => create === tool && outcome.positional!.has(target),
+    ));
 
 /** What a check compares: the read's recorded body and the served base recording it would answer on. */
 interface ReadBodies {
@@ -316,7 +330,15 @@ const checkQueryList = (
   if (result === undefined) return undefined;
   return {
     pass: listCheck(view, check, result.page, result.total),
-    positional: result.positional,
+    ...(result.positional === "all"
+      ? {}
+      : {
+          positional: new Set(
+            result.positional.map((entity) =>
+              entityTarget(view.type, collection, entity.id),
+            ),
+          ),
+        }),
     targets: [
       ...(result.whole ? [collectionTarget(view.type, collection)] : []),
       ...result.page.map((entity) =>

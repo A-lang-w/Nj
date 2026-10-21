@@ -121,4 +121,6 @@ A third review round merged the list-lines branch at 8eea9f6d, which carries the
 and fixed Greptile's finding on the second round's sort rule: a sorted read whose values tie shows the state's order
 among them, so it still fixes a create's insert position, and a later whole list can no longer move the create where
 that read showed otherwise. Its test fails on the previous head. Over the 50 captures every view and write verdict is
-as before, and the six environments compare exactly as before.
+as before, and the six environments compare exactly as before. A follow-up narrowed it per entity: a sorted read fixes a create's position only when the
+sort leaves the created entity itself tied, so a tie between other books no longer locks it. It also merged
+the list-lines branch at 27dd6062, carrying the write-plan branch through 45a5c8b9.

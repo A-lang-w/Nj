@@ -221,17 +221,20 @@ const readCall = (
   return call;
 };
 
-/** Entities in the order a sort value names, ties in state order, and whether state order shows in it: no sort, or ties; undefined when it names no field. */
+/** Entities in the order a sort value names, ties in state order, and those whose place state order decides: all without a sort, else those tied with a neighbour; undefined when it names no field. */
 const sorted = (
   matched: readonly StateEntity[],
   entities: readonly StateEntity[],
   call: QueryCall,
 ):
-  | { readonly entities: StateEntity[]; readonly positional: boolean }
+  | {
+      readonly entities: StateEntity[];
+      readonly positional: readonly StateEntity[] | "all";
+    }
   | undefined => {
   // Nothing to order: an emptied collection answers no entities rather than a recording.
   if (call.sort === undefined || matched.length === 0)
-    return { entities: [...matched], positional: true };
+    return { entities: [...matched], positional: "all" };
   const names = [
     ...new Set(entities.flatMap((entity) => Object.keys(entity.fields))),
   ];
@@ -253,15 +256,18 @@ const sorted = (
           ) || left.index - right.index,
     )
     .map(({ entity }) => entity);
+  const tied = (
+    left: StateEntity | undefined,
+    right: StateEntity | undefined,
+  ) =>
+    left !== undefined &&
+    right !== undefined &&
+    ascending(left.fields[key.field], right.fields[key.field]) === 0;
   return {
     entities: ordered,
-    positional: ordered.some(
+    positional: ordered.filter(
       (entity, index) =>
-        index > 0 &&
-        ascending(
-          ordered[index - 1]!.fields[key.field],
-          entity.fields[key.field],
-        ) === 0,
+        tied(ordered[index - 1], entity) || tied(entity, ordered[index + 1]),
     ),
   };
 };
@@ -275,8 +281,8 @@ export const evaluateQuery = (
   | {
       readonly page: StateEntity[];
       readonly total: number;
-      /** Whether where an entity sits in the state shows in the answer: no sort orders it, or the sort leaves ties. */
-      readonly positional: boolean;
+      /** The matches whose place in the answer state order decides: all without a sort, else those the sort leaves tied. */
+      readonly positional: readonly StateEntity[] | "all";
     }
   | undefined => {
   const call = readCall(parameters, values);
@@ -315,7 +321,7 @@ export const answerQuery = (
   | {
       readonly page: StateEntity[];
       readonly total: number;
-      readonly positional: boolean;
+      readonly positional: readonly StateEntity[] | "all";
       readonly whole: boolean;
     }
   | undefined => {

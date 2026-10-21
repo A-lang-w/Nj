@@ -720,6 +720,41 @@ describe("list reads on a line they did not name", () => {
     });
   });
 
+  it("leaves a create's position open after a sorted read that ties other books but not the created one", () => {
+    const shelved = (id: number, name: string, shelf: string, at: number) => ({
+      ...book(id, name, bookClock(at)),
+      category: "x",
+      shelf,
+    });
+    const beta = shelved(1, "Beta", "a", 0);
+    const mike = { ...shelved(2, "Mike", "b", 1), category: "y" };
+    const zulu = shelved(3, "Zulu", "a", 2);
+    const alpha = shelved(4, "Alpha", "c", 6);
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [beta, mike, zulu]],
+      ["GET", "/api/books?category=x", [beta, zulu]],
+      ["GET", "/api/books?sort=-id", [zulu, mike, beta]],
+      ["GET", "/api/books/1", beta],
+      ["GET", "/api/books/2", mike],
+      ["GET", "/api/books/3", zulu],
+      [
+        "POST",
+        "/api/books",
+        alpha,
+        201,
+        { name: "Alpha", category: "x", shelf: "c" },
+      ],
+      // Beta and Zulu tie on shelf a, but the created book's shelf c sorts it last wherever it was put.
+      ["GET", "/api/books?category=x&sort=shelf", [beta, zulu, alpha]],
+      ["GET", "/api/books", [alpha, beta, mike, zulu]],
+    ];
+    expect(planOf(stateOf(rows), "post_books")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [7, 8],
+      insert: { rule: "sorted", field: "name", direction: "ascending" },
+    });
+  });
+
   it("leaves a create's position open after a sorted read, for a later whole list to settle", () => {
     const shelved = (id: number, name: string, shelf: string, at: number) => ({
       ...book(id, name, bookClock(at)),
