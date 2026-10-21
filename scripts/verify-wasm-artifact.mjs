@@ -485,7 +485,7 @@ try {
   assert.equal(largeReport.tool_profile.timeout_ms, 30_000);
   assert.ok(
     largeReport.limitations.some((text) =>
-      text.includes("30-second deadline and 128 MiB combined output budget"),
+      text.includes("fixed 128 MiB combined output budget"),
     ),
   );
   const largeError = requireMcpToolError(
