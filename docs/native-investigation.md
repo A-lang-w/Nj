@@ -298,6 +298,13 @@ values, and the decompiler outcome: `jump_table_recovery_failed` when it reporte
 reported nothing for it. Neither outcome distinguishes an in-function dispatch
 from an indirect tail call: on Ghidra 12.1.4 an unbounded computed jump and a
 tail call through a loaded function pointer both report the recovery failure.
+The warning is read only from the decompiler's own comment output, so a string
+literal or a comment stored in the listing cannot supply one, and its address
+is parsed in the program's address syntax, including segmented and
+space-qualified spellings. The inventory lists at most 256 sites and 64 listing
+targets per site; `unresolved_indirect_branches_omitted` and
+`listing_targets_omitted` count the rest, and omitted sites add one residual
+unknown.
 Any entry adds
 `indirect-branch-target-recovery` to `inspect_native_api.unsupported_branches`
 and a residual unknown per site. The field is absent when the provider did not

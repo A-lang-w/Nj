@@ -58,10 +58,13 @@ import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.decompiler.DecompiledFunction;
 import ghidra.app.decompiler.ClangCaseToken;
 import ghidra.app.decompiler.ClangNode;
+import ghidra.app.decompiler.ClangBreak;
+import ghidra.app.decompiler.ClangCommentToken;
 import ghidra.framework.Application;
 import ghidra.app.util.bin.format.pdb.PdbParserConstants;
 import ghidra.framework.options.Options;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressFactory;
 import ghidra.program.model.address.AddressIterator;
 import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSpace;
@@ -2370,20 +2373,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
         for (int index = 0; index < recoveredJumpTables.length; index += 1) {
             jumpTables.add(inferredJumpTable(recoveredJumpTables[index], caseTokens));
         }
-        result.add(
-            "unresolved_indirect_branches",
-            unresolvedIndirectBranches(
-                function,
-                recoveredJumpTables,
-                decompiledText(decompilation)
-            )
-        );
+        unresolvedIndirectBranches(function, recoveredJumpTables, caseTokens, result);
         return result;
     }
 
+    // Ghidra's decompiler emits this warning as a comment ("WARNING: Could not
+    // recover jumptable at <address>. ..."); only comment tokens are searched.
     private static final Pattern DECOMPILER_JUMP_TABLE_FAILURE = Pattern.compile(
-        "Could not recover jumptable at (?:([A-Za-z_][A-Za-z0-9_]*):+)?(?:0x)?([0-9A-Fa-f]+)[^\\r\\n*]*"
+        "WARNING:\\s+(Could not recover jumptable at (\\S+?)\\.?(?=\\s|$)[^\\n]*?)\\s*(?:\\*/|\\n|$)"
     );
+    private static final int MAX_UNRESOLVED_INDIRECT_BRANCHES = 256;
+    private static final int MAX_INDIRECT_BRANCH_LISTING_TARGETS = 64;
 
     /**
      * Report computed jumps that Ghidra's listing keeps inside this function
@@ -2394,32 +2394,27 @@ public final class ReaGhidraBridge extends HeadlessScript {
      * "Could not recover jumptable" warning, or no warning (for example Ghidra's
      * thunk heuristic). Neither outcome separates a dispatch from an indirect
      * tail call, so targets stay unknown either way.
+     *
+     * Warnings are read only from the decompiler's comment tokens, so string
+     * literals cannot supply one, and a comment that a caller stored in the
+     * listing is not mistaken for a decompiler warning. Each warning address is
+     * parsed by the program's AddressFactory, so segmented and space-qualified
+     * spellings resolve to the address Ghidra means. The inventory keeps at
+     * most MAX_UNRESOLVED_INDIRECT_BRANCHES sites and
+     * MAX_INDIRECT_BRANCH_LISTING_TARGETS listing targets per site, and
+     * reports how many it omitted.
      */
-    private JsonArray unresolvedIndirectBranches(
+    private void unresolvedIndirectBranches(
         Function function,
         JumpTable[] recoveredJumpTables,
-        String pseudocode
+        List<ClangNode> tokens,
+        JsonObject boundary
     ) throws Exception {
         Set<Address> switches = new HashSet<>();
         for (JumpTable table : recoveredJumpTables) switches.add(table.getSwitchAddress());
-        // Keyed by address space and offset: an unprefixed warning address is
-        // in the default space, and a prefixed one must name the branch's space.
-        Map<String, String> failedRecoveries = new TreeMap<>();
-        if (pseudocode != null) {
-            java.util.regex.Matcher matcher = DECOMPILER_JUMP_TABLE_FAILURE.matcher(pseudocode);
-            while (matcher.find()) {
-                try {
-                    failedRecoveries.putIfAbsent(
-                        warningSpaceKey(matcher.group(1), Long.parseUnsignedLong(matcher.group(2), 16)),
-                        matcher.group(0).trim()
-                    );
-                }
-                catch (NumberFormatException ignored) {
-                    // A warning without a parseable address cannot be attributed.
-                }
-            }
-        }
+        Map<Address, String> failedRecoveries = decompilerJumpTableWarnings(function, tokens);
         JsonArray branches = new JsonArray();
+        int omitted = 0;
         InstructionIterator instructions = currentProgram.getListing().getInstructions(
             function.getBody(), true
         );
@@ -2430,11 +2425,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (!flow.isJump() || !flow.isComputed() || flow.isCall() || flow.isTerminal()) continue;
             Address address = instruction.getAddress();
             if (switches.contains(address)) continue;
-            String warning = address.isMemoryAddress()
-                ? failedRecoveries.get(
-                    warningSpaceKey(address.getAddressSpace().getName(), address.getOffset())
-                )
-                : null;
+            if (branches.size() >= MAX_UNRESOLVED_INDIRECT_BRANCHES) {
+                omitted += 1;
+                continue;
+            }
+            String warning = failedRecoveries.get(address);
             JsonObject branch = new JsonObject();
             String branchAddress = canonicalAddress(address);
             branch.addProperty("branch_address", branchAddress);
@@ -2442,9 +2437,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 "decompiler_outcome",
                 warning == null ? "no_jump_table_warning" : "jump_table_recovery_failed"
             );
+            Address[] flows = instruction.getFlows();
             JsonArray listingTargets = new JsonArray();
-            for (Address target : instruction.getFlows()) listingTargets.add(canonicalAddress(target));
+            for (int index = 0; index < flows.length && index < MAX_INDIRECT_BRANCH_LISTING_TARGETS; index += 1) {
+                listingTargets.add(canonicalAddress(flows[index]));
+            }
             branch.add("listing_targets", listingTargets);
+            if (flows.length > listingTargets.size()) {
+                branch.addProperty("listing_targets_omitted", flows.length - listingTargets.size());
+            }
             JsonArray evidence = new JsonArray();
             evidence.add(
                 inferenceEvidence(
@@ -2453,9 +2454,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     "Ghidra's listing marks " + instruction.getMnemonicString() +
                     " at " + branchAddress + " as a computed jump (" + flow +
                     ") inside this function, and the decompiler recovered no jump table at that address." +
-                    (listingTargets.isEmpty()
+                    (flows.length == 0
                         ? " The listing records no flow targets for it."
-                        : " The listing records " + listingTargets.size() +
+                        : " The listing records " + flows.length +
                           " flow target(s) without case values; they are reference observations, not proof of runtime reachability.")
                 )
             );
@@ -2472,14 +2473,71 @@ public final class ReaGhidraBridge extends HeadlessScript {
             branch.add("evidence", evidence);
             branches.add(branch);
         }
-        return branches;
+        boundary.add("unresolved_indirect_branches", branches);
+        if (omitted > 0) {
+            boundary.addProperty("unresolved_indirect_branches_omitted", omitted);
+        }
     }
 
-    /** An absent or default-space name both denote the default address space. */
-    private String warningSpaceKey(String space, long offset) {
-        String defaultSpace = currentProgram.getAddressFactory().getDefaultAddressSpace().getName();
-        String normalized = space == null || space.equals(defaultSpace) ? "" : space;
-        return normalized + ":" + Long.toUnsignedString(offset, 16);
+    /**
+     * Decompiler-authored "Could not recover jumptable" warnings by address.
+     * Comment tokens are joined per comment so a warning split into words is
+     * read whole; any other token ends the current comment.
+     */
+    private Map<Address, String> decompilerJumpTableWarnings(
+        Function function,
+        List<ClangNode> tokens
+    ) throws Exception {
+        StringBuilder comments = new StringBuilder();
+        boolean inComment = false;
+        for (ClangNode node : tokens) {
+            if (node instanceof ClangCommentToken comment) {
+                comments.append(comment.getText()).append(' ');
+                inComment = true;
+            } else if (inComment && !(node instanceof ClangBreak)) {
+                comments.append('\n');
+                inComment = false;
+            }
+        }
+        Map<Address, String> warnings = new HashMap<>();
+        if (comments.length() == 0) return warnings;
+        Set<String> listingComments = listingCommentTexts(function);
+        java.util.regex.Matcher matcher = DECOMPILER_JUMP_TABLE_FAILURE.matcher(comments);
+        while (matcher.find()) {
+            String warning = matcher.group(1).trim();
+            if (listingComments.stream().anyMatch(text -> text.contains(warning))) continue;
+            Address address = warningAddress(matcher.group(2));
+            if (address != null) warnings.putIfAbsent(address, warning);
+        }
+        return warnings;
+    }
+
+    /** Parse a decompiler-printed address in the program's own address syntax. */
+    private Address warningAddress(String text) {
+        AddressFactory factory = currentProgram.getAddressFactory();
+        Address address = factory.getAddress(text);
+        if (address == null && (text.startsWith("0x") || text.startsWith("0X"))) {
+            address = factory.getAddress(text.substring(2));
+        }
+        return address != null && address.isMemoryAddress() ? address : null;
+    }
+
+    /** Comment text stored in the listing for this function, whitespace-normalized. */
+    private Set<String> listingCommentTexts(Function function) throws Exception {
+        Listing listing = currentProgram.getListing();
+        Set<String> texts = new HashSet<>();
+        AddressIterator addresses = listing.getCommentAddressIterator(
+            functionObservationScope(function), true
+        );
+        while (addresses.hasNext()) {
+            monitor.checkCancelled();
+            Address address = addresses.next();
+            for (CommentType type : CommentType.values()) {
+                String text = listing.getComment(type, address);
+                if (text != null && !text.isEmpty()) texts.add(text.replaceAll("\\s+", " "));
+            }
+        }
+        return texts;
     }
 
     private static JsonObject unavailableNativeValueFlow(String reason) {

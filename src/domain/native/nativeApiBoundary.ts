@@ -99,6 +99,14 @@ const unresolvedIndirectBranchSchema = z.strictObject({
     "no_jump_table_warning",
   ]),
   listing_targets: z.array(z.string().min(1)),
+  listing_targets_omitted: z
+    .number()
+    .int()
+    .positive()
+    .exactOptional()
+    .describe(
+      "Listing flow targets beyond the provider's per-branch bound that were not reported.",
+    ),
   evidence: z.array(inferenceEvidenceSchema).min(1),
 });
 
@@ -116,6 +124,14 @@ const availableNativeApiBoundarySchema = z
       .exactOptional()
       .describe(
         "Computed jumps inside the function with no recovered jump table. Absent when the provider did not inspect indirect branches, which is not evidence that none exist.",
+      ),
+    unresolved_indirect_branches_omitted: z
+      .number()
+      .int()
+      .positive()
+      .exactOptional()
+      .describe(
+        "Further computed jumps beyond the provider's inventory bound that were not reported.",
       ),
     pseudocode: z
       .object({
