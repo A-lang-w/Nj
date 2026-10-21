@@ -10,10 +10,13 @@ import {
   BOOK_ROWS,
   DELETE_NOT_FOUND,
   FIRST_BOOK,
+  HANDLE_ROWS,
   SECOND_BOOK,
   THIRD_BOOK,
+  VERSIONED_ROWS,
   book,
   bookClock,
+  numberedUuid,
   renamedBook,
   type Book,
 } from "../../../tests/fixtures/environmentStateWrites.js";
@@ -163,6 +166,41 @@ describe("served updates and deletes", () => {
           "holds no /api/books entity 99 in /api/books",
         ),
       });
+  });
+});
+
+describe("values the application assigns", () => {
+  it("gives each update a fresh version and new chapter ids, keeping the chapters' other values", () => {
+    const books = servedFrom(VERSIONED_ROWS);
+    const rename = (name: string) =>
+      books.answer("patch_books_by_id", {
+        id: "2",
+        body: { name, version_id: "any version" },
+      }).body as Book;
+    const first = rename("Second Edition");
+    const second = rename("Third Edition");
+    const held = [1, 2, 3, 4, 5, 6, 7, 8].map(numberedUuid);
+    for (const answer of [first, second]) {
+      expect(held).not.toContain(answer.version_id);
+      expect(answer.chapters).toEqual([
+        { id: expect.not.stringMatching(numberedUuid(4)), title: "Opening" },
+      ]);
+    }
+    expect(second.version_id).not.toBe(first.version_id);
+    expect(books.answer("get_books_by_id", { id: "2" }).body).toEqual(second);
+  });
+
+  it("stores a sent handle as the code and rebuilds the link around it", () => {
+    const books = servedFrom(HANDLE_ROWS);
+    expect(
+      books.answer("post_books", {
+        body: { name: "Fifth Book", handle: "fifth-handle" },
+      }).body,
+    ).toMatchObject({
+      id: 3,
+      code: "fifth-handle",
+      link: "https://books.example.test/b/fifth-handle",
+    });
   });
 });
 

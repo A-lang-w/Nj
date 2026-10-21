@@ -92,6 +92,101 @@ export const BOOK_ROWS: readonly TimedCaptureRow[] = [
   ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
 ];
 
+/** A UUID-shaped value numbered `n`. */
+export const numberedUuid = (n: number): string =>
+  `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+
+/** A book with a version the application renews on every update and chapter rows it rewrites with new ids. */
+export const versionedBook = (
+  entity: Book,
+  version: number,
+  chapter: number,
+): Book => ({
+  ...entity,
+  version_id: numberedUuid(version),
+  chapters: [{ id: numberedUuid(chapter), title: "Opening" }],
+});
+
+const RENAMED_ONCE = versionedBook(
+  renamedBook(FIRST_BOOK, "Renamed Book", 3),
+  5,
+  6,
+);
+const RENAMED_TWICE = versionedBook(
+  renamedBook(FIRST_BOOK, "Renamed Again", 5),
+  7,
+  8,
+);
+
+/** Two renames of the first book, each sending the version it was read with; each gets a new version and chapter ids. */
+export const VERSIONED_ROWS: readonly TimedCaptureRow[] = [
+  [
+    "GET",
+    "/api/books",
+    [versionedBook(FIRST_BOOK, 1, 2), versionedBook(SECOND_BOOK, 3, 4)],
+  ],
+  ["GET", "/api/books/1", versionedBook(FIRST_BOOK, 1, 2)],
+  ["GET", "/api/books/2", versionedBook(SECOND_BOOK, 3, 4)],
+  [
+    "PATCH",
+    "/api/books/1",
+    RENAMED_ONCE,
+    200,
+    { name: "Renamed Book", version_id: numberedUuid(1) },
+  ],
+  ["GET", "/api/books/1", RENAMED_ONCE],
+  [
+    "PATCH",
+    "/api/books/1",
+    RENAMED_TWICE,
+    200,
+    { name: "Renamed Again", version_id: numberedUuid(1) },
+  ],
+  ["GET", "/api/books/1", RENAMED_TWICE],
+];
+
+/** A book whose sent handle the application stores as its code and embeds in its link. */
+export const handledBook = (entity: Book, handle: string): Book => ({
+  ...entity,
+  code: handle,
+  link: `https://books.example.test/b/${handle}`,
+});
+
+const FOURTH_BOOK = handledBook(
+  book(4, "Fourth Book", bookClock(5)),
+  "fourth-handle",
+);
+
+/** Two creates, each sending a handle the application stores under another name. */
+export const HANDLE_ROWS: readonly TimedCaptureRow[] = [
+  [
+    "GET",
+    "/api/books",
+    [
+      handledBook(FIRST_BOOK, "first-handle"),
+      handledBook(SECOND_BOOK, "second-handle"),
+    ],
+  ],
+  ["GET", "/api/books/1", handledBook(FIRST_BOOK, "first-handle")],
+  ["GET", "/api/books/2", handledBook(SECOND_BOOK, "second-handle")],
+  [
+    "POST",
+    "/api/books",
+    handledBook(THIRD_BOOK, "third-handle"),
+    201,
+    { name: "Third Book", handle: "third-handle" },
+  ],
+  ["GET", "/api/books/3", handledBook(THIRD_BOOK, "third-handle")],
+  [
+    "POST",
+    "/api/books",
+    FOURTH_BOOK,
+    201,
+    { name: "Fourth Book", handle: "fourth-handle" },
+  ],
+  ["GET", "/api/books/4", FOURTH_BOOK],
+];
+
 /** The end of the last exchange of BOOK_ROWS, to the next whole second: where the served clock starts. */
 export const BOOK_WRITE_CLOCK = "2026-10-17T18:00:12.000Z";
 

@@ -11,8 +11,10 @@ import {
   BOOK_ROWS,
   BOOK_WRITE_CLOCK,
   FIRST_BOOK,
+  HANDLE_ROWS,
   SECOND_BOOK,
   THIRD_BOOK,
+  VERSIONED_ROWS,
   book,
   bookClock,
   environmentStateViewOf,
@@ -150,6 +152,30 @@ describe("served write plans", () => {
       "name",
       "slug",
     ]);
+  });
+});
+
+describe("values the application assigns", () => {
+  it("serves updates that renew a sent version and the ids of rewritten child rows", () => {
+    expect(planOf(stateOf(VERSIONED_ROWS), "patch_books_by_id")).toMatchObject({
+      served: true,
+      body: { accepted: ["name", "version_id"], fixed: [] },
+      rules: expect.arrayContaining([
+        { field: "version_id", rule: "unique" },
+        { field: "chapters", rule: "renewed" },
+      ]),
+    });
+  });
+
+  it("serves creates that store a sent member under another name and embed it in a link", () => {
+    expect(planOf(stateOf(HANDLE_ROWS), "post_books")).toMatchObject({
+      served: true,
+      body: { accepted: ["name", "handle"], fixed: [] },
+      rules: expect.arrayContaining([
+        { field: "code", rule: "copy", from: "/handle" },
+        { field: "link", rule: "template", from: "code" },
+      ]),
+    });
   });
 });
 

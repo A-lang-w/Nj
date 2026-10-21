@@ -111,6 +111,7 @@ const ruledValue = (
     case "identity":
     case "sequence":
     case "unique":
+    case "renewed":
     case "clock":
       return ok(generate(rule));
     case "echo":
@@ -223,7 +224,12 @@ export const updatedFields = (
       const was = integerOf(before[rule.field]);
       if (was !== undefined)
         written[rule.field] = spelledLike(before[rule.field]!, was + 1);
-    } else if (rule.rule === "clock") written[rule.field] = generate(rule);
+    } else if (
+      rule.rule === "clock" ||
+      rule.rule === "unique" ||
+      rule.rule === "renewed"
+    )
+      written[rule.field] = generate(rule);
   }
   derive(
     plan.rules.filter(

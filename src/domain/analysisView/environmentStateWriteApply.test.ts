@@ -41,7 +41,13 @@ const callWith = (
 /** Generated values the store would supply, recording which rules asked. */
 const generator = () => {
   const asked: GeneratedRule[] = [];
-  const values = { identity: "id-9", sequence: 9, unique: "ref-9", clock: NOW };
+  const values = {
+    identity: "id-9",
+    sequence: 9,
+    unique: "ref-9",
+    renewed: ["renewed-9"],
+    clock: NOW,
+  };
   const generate = (rule: GeneratedRule): JsonValue => {
     asked.push(rule);
     return values[rule.rule];
@@ -303,6 +309,36 @@ it("applies a constant from the recorded update only when the call sends it", ()
   expect(update({ notes: "m" }).result).toEqual(
     ok({ ...BEFORE, ...ADVANCED, notes: "m" }),
   );
+});
+
+it("takes an update's unique and renewed values from the generator, whether or not the call sends them", () => {
+  const plan: Plan = {
+    rules: [
+      ...UPDATE_PLAN.rules,
+      { field: "versionId", rule: "unique" },
+      { field: "steps", rule: "renewed" },
+    ],
+    body: { ...UPDATE_PLAN.body!, accepted: ["title", "notes", "versionId"] },
+  };
+  const { asked, result } = update(
+    { title: "New Title", versionId: "stale" },
+    plan,
+  );
+  expect(result).toEqual(
+    ok({
+      ...BEFORE,
+      ...ADVANCED,
+      title: "New Title",
+      slug: "new-title",
+      versionId: "ref-9",
+      steps: ["renewed-9"],
+    }),
+  );
+  expect(asked.map((rule) => rule.rule)).toEqual([
+    "clock",
+    "unique",
+    "renewed",
+  ]);
 });
 
 it.each<[string, JsonObject | undefined, string]>([

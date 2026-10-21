@@ -82,9 +82,10 @@ identity the client sends is an echo:
 7. **Sequence.** An integer one greater than the largest value of the field in
    the collection, else in the type.
 8. **Unique.** A UUID-shaped string that no other entity of the type shares.
-9. **Template.** A string containing a generated value as a delimited token
-   (for example a URL that ends in the new id). It is rebuilt around the new
-   value.
+9. **Template.** A string containing a generated value, or else a copied
+   value, as a delimited token (for example a URL that ends in the new id or in
+   a slug the call sent under another name). It is rebuilt around the new
+   value. An echoed value is not a token: it may recur in unrelated text.
 10. **Constant.** Otherwise the exemplar's value.
 
 When a constant, or the text a template keeps, contains a path value of the
@@ -93,8 +94,9 @@ naming the exemplar's collection.
 
 **Body members of a create.** A member is either accepted or not:
 
-- **Accepted.** An echoed member, or the identity field's value. Every member
-  the exemplar sent is required.
+- **Accepted.** An echoed member, a member copied whole into a field of another
+  name, or the identity field's value. Every member the exemplar sent is
+  required.
 - **Not accepted.** A member the application stored with a different value
   (transformed), or one it did not show. A call that sends such a member is a
   tool error naming the accepted members.
@@ -102,14 +104,19 @@ naming the exemplar's collection.
 **Updates.** Body members follow the same accepted and not-accepted rules,
 except that a member the application stored differently is accepted only with
 the value a recorded call sent it with, and then stores the value that call
-recorded (its `constant` rule carries it).
+recorded (its `constant` rule carries it). A member the application replaced
+with a fresh UUID (`unique`, below) is accepted with any value.
 `PUT` requires every member the exemplar sent; `PATCH` and `POST` require at
 least one. A field the exemplar's update changed without sending it is
 explained as one of:
 
 - clock;
 - an increment by one;
-- a slug of an echoed member.
+- a slug of an echoed member;
+- `unique`: a UUID in place of another UUID, that no other entity of the type
+  holds (a version the application assigns on every update);
+- `renewed`: an array or object whose only changes are UUIDs replaced by ones
+  it did not hold, as child rows an update rewrites are.
 
 Any other change is `unexplained-change`. An increment or a slug applies to
 every call that could take it, so the plan is also `unexplained-change` when
@@ -308,6 +315,8 @@ their recorded format.
   sequences do not reuse values.
 - **UUIDs and tokens:** derived from a SHA-256 of the state Evidence id, the
   tool, the field and a write counter, skipping values the type already holds.
+- **Renewed fields:** the entity's current value with each distinct UUID inside
+  it replaced by one derived the same way.
 
 `data/reset` and `data/add` restart the clock, the counter and the
 sequences.

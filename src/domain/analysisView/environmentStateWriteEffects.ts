@@ -31,6 +31,7 @@ import {
   conflictsWithPlan,
   documentPointerOf,
   explainUpdate,
+  otherFields,
   responseShapeOf,
 } from "./environmentStateWriteExplain.js";
 import {
@@ -382,6 +383,7 @@ export const applyUpdate = (
     idField,
     id,
     startMs: startOf(context, step),
+    others: otherFields(context.state.ofType(type), { collection, id }),
   });
   if (explained.unexplained.length > 0 && !unknown) {
     refuse(draft, step, "unexplained-change");

@@ -26,6 +26,10 @@ const START = Date.UTC(2026, 2, 4, 5, 6, 0);
 const MINUTE = 60_000;
 const UUID = "123e4567-e89b-42d3-a456-426614174000";
 const OTHER_UUID = "00000000-0000-4000-8000-000000000000";
+const FRESH = [
+  "11111111-1111-4111-8111-111111111111",
+  "22222222-2222-4222-8222-222222222222",
+] as const;
 
 const created = (
   entity: JsonObject,
@@ -59,6 +63,7 @@ const updated = (
   idField: "id",
   id: "42",
   startMs: START,
+  others: [],
   ...context,
 });
 
@@ -253,6 +258,111 @@ it.each<[string, JsonObject, boolean]>([
     created({ id: 1, ...fields }, {}, { path: { org: "acme", empty: "" } }),
   );
   expect(result.tied).toBe(tied);
+});
+
+it("accepts a create member stored under another name, and rebuilds text that embeds the value it wrote", () => {
+  const result = explainCreate(
+    created(
+      {
+        id: 7,
+        code: "spring-tide",
+        link: "https://links.example.test/spring-tide",
+        name: "Spring tide",
+        label: "Lighthouse rota",
+      },
+      {
+        handle: "spring-tide",
+        name: "Spring tide",
+        meta: { label: "Lighthouse rota" },
+      },
+    ),
+  );
+  expect(ruleFor(result.rules, "code")).toEqual({
+    field: "code",
+    rule: "copy",
+    from: "/handle",
+  });
+  expect(ruleFor(result.rules, "link")).toEqual({
+    field: "link",
+    rule: "template",
+    from: "code",
+  });
+  // A member copied only in part (one value nested inside it) is still stored differently.
+  expect(result.body).toMatchObject({
+    accepted: ["handle", "name"],
+    fixed: [{ member: "meta", sent: { label: "Lighthouse rota" } }],
+  });
+});
+
+it("explains an update that puts a fresh UUID in a sent or kept field as unique, accepting the member with any value", () => {
+  const before = {
+    id: "42",
+    name: "Old",
+    versionId: UUID,
+    revisionId: OTHER_UUID,
+  };
+  const after = {
+    id: "42",
+    name: "New",
+    versionId: FRESH[0],
+    revisionId: FRESH[1],
+  };
+  const body = { name: "New", versionId: UUID };
+  const result = explainUpdate(updated(before, after, body));
+  expect(ruleFor(result.rules, "versionId")).toEqual({
+    field: "versionId",
+    rule: "unique",
+  });
+  expect(ruleFor(result.rules, "revisionId")).toEqual({
+    field: "revisionId",
+    rule: "unique",
+  });
+  expect(result.body).toMatchObject({
+    accepted: ["name", "versionId"],
+    fixed: [],
+  });
+  expect(result.unexplained).toEqual([]);
+  // A UUID another entity holds is a reference the update moved, not one it generated.
+  const held = explainUpdate(
+    updated(before, after, body, {
+      others: [{ id: "7", versionId: FRESH[0], revisionId: FRESH[1] }],
+    }),
+  );
+  expect(ruleFor(held.rules, "versionId")).toEqual({
+    field: "versionId",
+    rule: "constant",
+    value: FRESH[0],
+  });
+  expect(held.unexplained).toEqual(["revisionId"]);
+});
+
+it("explains child rows an update rewrote with new UUIDs as renewed, and other changes to them as unexplained", () => {
+  const rows = (...ids: string[]) =>
+    ids.map((id, index) => ({ id, text: `Step ${String(index)}` }));
+  const before = { id: "42", notes: "Old", steps: rows(UUID, OTHER_UUID) };
+  const renewed = explainUpdate(
+    updated(
+      before,
+      { ...before, notes: "New", steps: rows(...FRESH) },
+      { notes: "New" },
+    ),
+  );
+  expect(ruleFor(renewed.rules, "steps")).toEqual({
+    field: "steps",
+    rule: "renewed",
+  });
+  const edited = explainUpdate(
+    updated(
+      before,
+      {
+        ...before,
+        notes: "New",
+        steps: [{ id: FRESH[0], text: "Step one" }, ...rows(FRESH[1]!)],
+      },
+      { notes: "New" },
+    ),
+  );
+  expect(edited.unexplained).toEqual(["steps"]);
 });
 
 it("explains an update's sent members as echoes, constants or the identity", () => {

@@ -19,6 +19,7 @@ import {
   formatClock,
   integerOf,
   isUuid,
+  renewUuids,
   seededToken,
   seededUuid,
   spelledLike,
@@ -146,6 +147,8 @@ const generator = (
     readonly name: string;
     readonly collection: readonly StateEntity[];
     readonly observed: JsonObject;
+    /** The entity an update writes, whose values a renewed field keeps. */
+    readonly current?: JsonObject;
   },
 ): {
   readonly generate: GenerateValue;
@@ -196,6 +199,11 @@ const generator = (
       case "unique":
         return unused(rule.field, (attempt) =>
           seededUuid(seed(attempt), String(exemplar)),
+        );
+      case "renewed":
+        return renewUuids(
+          target.current?.[rule.field] ?? exemplar,
+          (uuid, index) => seededUuid(`${seed(0)}:${String(index)}`, uuid),
         );
       case "identity":
         if (rule.generator === "sequence")
@@ -361,6 +369,7 @@ const answerUpdate = (
     name: entity.collection,
     collection: serving.store.inCollection(entity.type, entity.collection),
     observed,
+    current: entity.fields,
   });
   const written = updatedFields(
     plan,

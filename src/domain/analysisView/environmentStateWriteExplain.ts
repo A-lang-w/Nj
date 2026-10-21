@@ -4,9 +4,11 @@ import {
   isObject,
   locateItem,
   pointerTo,
+  pointerTokens,
   same,
   scalarText,
   type JsonObject,
+  type StateEntity,
 } from "./environmentStateRules.js";
 import type {
   FieldRule,
@@ -22,6 +24,7 @@ import {
   integerOf,
   isUuid,
   readClock,
+  renewedUuids,
   slugOf,
 } from "./environmentStateWriteValues.js";
 
@@ -151,26 +154,45 @@ const generatedRule = (
   return undefined;
 };
 
-/** A string that embeds a generated value delimited is rebuilt around the new value. */
+/** A string that embeds a generated value, or a long value copied from the call, delimited is rebuilt around the new value. */
 const templateRule = (
   entity: JsonObject,
   field: string,
-  generated: readonly FieldRule[],
+  sources: readonly FieldRule[],
 ): FieldRule | undefined => {
   const value = entity[field];
   if (typeof value !== "string") return undefined;
-  for (const rule of generated) {
+  for (const rule of sources) {
     const token = scalarText(entity[rule.field]);
+    const generated = GENERATED.has(rule.rule);
     if (
       rule.field !== field &&
       token !== undefined &&
-      token.length > 0 &&
+      token.length >= (generated ? 1 : COPY_MIN_LENGTH) &&
       delimitedOffsets(value, token).length > 0
     )
       return { field, rule: "template", from: rule.field };
   }
   return undefined;
 };
+
+const GENERATED: ReadonlySet<FieldRule["rule"]> = new Set([
+  "identity",
+  "sequence",
+  "unique",
+]);
+
+/** Body members the entity stores as sent, under their own name (echo) or another (a copy of the whole member). */
+const storedMembers = (rules: readonly FieldRule[]): Set<string> =>
+  new Set(
+    rules.flatMap((rule) =>
+      rule.rule === "echo"
+        ? [rule.field]
+        : rule.rule === "copy" && pointerTokens(rule.from).length === 1
+          ? pointerTokens(rule.from)
+          : [],
+    ),
+  );
 
 /** Body members the application stored as sent, and the others with what they were sent. */
 const bodyOf = (
@@ -203,27 +225,27 @@ export const explainCreate = (
     if (rule === undefined) unexplained.push(field);
     else rules.push(rule);
   }
-  const generated = rules.filter(
-    (rule) =>
-      rule.rule === "identity" ||
-      rule.rule === "sequence" ||
-      rule.rule === "unique",
-  );
+  // Generated values first, then copies: an echoed value may recur in unrelated text, a copied one is the call's own.
+  const sources = [
+    ...rules.filter((rule) => GENERATED.has(rule.rule)),
+    ...rules.filter((rule) => rule.rule === "copy"),
+  ];
   const constants: string[] = [];
   for (const field of unexplained) {
-    const template = templateRule(evidence.entity, field, generated);
+    const template = templateRule(evidence.entity, field, sources);
     if (template === undefined) constants.push(field);
     else rules.push(template);
   }
-  const echoed = new Set(
-    rules.filter((rule) => rule.rule === "echo").map((rule) => rule.field),
-  );
   const tokens = [...evidence.call.pathValues.values()].filter(
     (value) => value.length > 0,
   );
   return {
     rules,
-    body: bodyOf(evidence.call.body, echoed, Object.keys(evidence.call.body)),
+    body: bodyOf(
+      evidence.call.body,
+      storedMembers(rules),
+      Object.keys(evidence.call.body),
+    ),
     // A template rebuilds only its generated value, so other text it keeps ties it like a constant.
     tied: [
       ...constants,
@@ -245,7 +267,38 @@ export interface UpdateEvidence {
   readonly idField: string;
   readonly id: string;
   readonly startMs: number | undefined;
+  /** The type's other entities, none of which may hold a value the update generated. */
+  readonly others: readonly JsonObject[];
 }
+
+/** The fields of every entity but the one named. */
+export const otherFields = (
+  entities: readonly StateEntity[],
+  named: { readonly collection: string; readonly id: string },
+): JsonObject[] =>
+  entities
+    .filter(
+      (entity) =>
+        entity.id !== named.id || entity.collection !== named.collection,
+    )
+    .map((entity) => entity.fields);
+
+/** A UUID the update put where another UUID was, that the call did not send and no other entity holds. */
+const freshUuid = (
+  evidence: UpdateEvidence,
+  field: string,
+  sent: JsonValue | undefined,
+): boolean => {
+  const before = evidence.before[field];
+  const after = evidence.after[field];
+  return (
+    isUuid(before) &&
+    isUuid(after) &&
+    before !== after &&
+    after !== sent &&
+    evidence.others.every((other) => other[field] !== after)
+  );
+};
 
 /** The rule a field the update changed without sending follows, if any. */
 const changeRule = (
@@ -257,6 +310,13 @@ const changeRule = (
   const after = evidence.after[field]!;
   if (readClock(after) !== undefined && isClockNear(after, evidence.startMs))
     return { field, rule: "clock", format: readClock(after)!.format };
+  if (freshUuid(evidence, field, undefined)) return { field, rule: "unique" };
+  // Child rows only: a single UUID that changed is a reference or a generated value, judged above.
+  if (
+    (Array.isArray(before) || isObject(before)) &&
+    renewedUuids(before, after) !== undefined
+  )
+    return { field, rule: "renewed" };
   const was = integerOf(before);
   if (was !== undefined && integerOf(after) === was + 1)
     return { field, rule: "increment" };
@@ -280,6 +340,8 @@ export const explainUpdate = (
   const { body } = evidence.call;
   const rules: FieldRule[] = [];
   const echoed = new Set<string>();
+  // A member the application replaces with a value it generates is accepted with any value.
+  const generated = new Set<string>();
   let identity: string | null = null;
   for (const [member, sent] of Object.entries(body)) {
     if (member === evidence.idField && scalarText(sent) === evidence.id) {
@@ -290,6 +352,9 @@ export const explainUpdate = (
     if (same(evidence.after[member], sent)) {
       echoed.add(member);
       rules.push({ field: member, rule: "echo" });
+    } else if (freshUuid(evidence, member, sent)) {
+      generated.add(member);
+      rules.push({ field: member, rule: "unique" });
     } else
       rules.push({
         field: member,
@@ -313,7 +378,7 @@ export const explainUpdate = (
     Object.fromEntries(
       Object.entries(body).filter(([member]) => member !== identity),
     ),
-    echoed,
+    new Set([...echoed, ...generated]),
     evidence.method === "PUT"
       ? Object.keys(body).filter((member) => member !== identity)
       : [],

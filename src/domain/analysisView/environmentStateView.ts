@@ -109,6 +109,7 @@ const fieldRuleSchema = z.discriminatedUnion("rule", [
     scope: z.enum(["collection", "type"]),
   }),
   z.strictObject({ ...ruled, rule: z.literal("unique") }),
+  z.strictObject({ ...ruled, rule: z.literal("renewed") }),
   z.strictObject({
     ...ruled,
     rule: z.literal("clock"),
