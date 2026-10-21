@@ -1,4 +1,4 @@
-import { access, readFile, rm } from "node:fs/promises";
+import { access, mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -288,6 +288,87 @@ describe.skipIf(process.platform === "win32")(
         killed: true,
         signal: "SIGKILL",
       });
+    });
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "execFileOutput inherited pipes",
+  () => {
+    it("keeps scratch files until an inherited-pipe descendant closes them", async () => {
+      const directory = await createTestTempDirectory("rea-exec-inherited-");
+      const scratch = join(directory, "scratch");
+      const finished = join(directory, "finished.json");
+      const pidPath = join(directory, "child.pid");
+      await mkdir(scratch);
+      const childSource = [
+        'const fs = require("node:fs");',
+        "setTimeout(() => {",
+        `  fs.writeFileSync(${JSON.stringify(finished)}, JSON.stringify({ scratchExists: fs.existsSync(${JSON.stringify(scratch)}) }));`,
+        "  process.exit(0);",
+        "}, 7000);",
+      ].join("\n");
+      const script = [
+        'const { spawn } = require("node:child_process");',
+        'const fs = require("node:fs");',
+        `const child = spawn(process.execPath, ["-e", ${JSON.stringify(childSource)}], { stdio: "inherit" });`,
+        `fs.writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));`,
+        "process.exit(0);",
+      ].join("\n");
+      const settled = execFileOutput(process.execPath, ["-e", script], {
+        timeout: 200,
+        stopSignal: "SIGTERM",
+      })
+        .finally(async () => {
+          await rm(scratch, { recursive: true, force: true });
+        })
+        .then(
+          () => ({ ok: true as const }),
+          (cause: unknown) => ({ ok: false as const, cause }),
+        );
+      let killFailure: unknown;
+      try {
+        const deadline = Date.now() + 15_000;
+        let text: string | undefined;
+        while (Date.now() < deadline) {
+          text = await readFile(finished, "utf8").then(
+            (value) => value,
+            (cause: unknown) => {
+              if (
+                cause instanceof Error &&
+                "code" in cause &&
+                cause.code === "ENOENT"
+              )
+                return undefined;
+              throw cause;
+            },
+          );
+          if (text !== undefined) break;
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        expect(text).toBeDefined();
+        expect(JSON.parse(text ?? "")).toEqual({ scratchExists: true });
+        await expect(settled).resolves.toMatchObject({
+          ok: false,
+          cause: { code: "ETIMEDOUT", killed: true },
+        });
+      } finally {
+        const pid = Number(await readFile(pidPath, "utf8").catch(() => ""));
+        if (Number.isInteger(pid) && pid > 0 && pid !== process.pid) {
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch (cause: unknown) {
+            if (
+              !(cause instanceof Error) ||
+              !("code" in cause) ||
+              cause.code !== "ESRCH"
+            )
+              killFailure = cause;
+          }
+        }
+        await settled;
+      }
+      if (killFailure !== undefined) throw killFailure;
     });
   },
 );
