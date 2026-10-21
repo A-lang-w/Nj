@@ -116,12 +116,29 @@ export const runDeferred = async (
   let handle: McpServerHandle | undefined;
   let attempt: Promise<void> | undefined;
   let unregister: () => void = () => undefined;
+  let closing = false;
+  let finishServing!: () => void;
+  const serving = new Promise<void>((resolve) => {
+    finishServing = resolve;
+  });
   const close = (): Promise<void> => {
+    closing = true;
     attempt ??= Promise.resolve()
       .then(async () => {
+        // A transport published after shutdown begins is still ours to close.
+        await serving;
+        const ownedHandle = handle;
         const results = await Promise.allSettled([
-          ...(handle === undefined ? [] : [handle.close()]),
-          ...[...servers.values()].map((stop) => stop()),
+          ...(ownedHandle === undefined
+            ? []
+            : [
+                Promise.resolve()
+                  .then(() => ownedHandle.close())
+                  .then(() => {
+                    handle = undefined;
+                  }),
+              ]),
+          ...[...servers.values()].map((stop) => Promise.resolve().then(stop)),
         ]);
         const failures = results.flatMap((result) =>
           result.status === "rejected" ? [result.reason] : [],
@@ -145,53 +162,66 @@ export const runDeferred = async (
     // Keep cleanup reachable even if serve creates a server and then throws.
     unregister = dependencies.registerShutdown(requestClose);
     dependencies.captureShutdown?.(close);
-    handle = await dependencies.serve(
-      (context) => {
-        const catalog = firstCatalog ?? readCatalog();
-        firstCatalog = undefined;
-        const startedAt = new Date().toISOString();
-        const server = new DeferredEvidenceMcpServer(
-          catalog,
-          new ToolResultDelivery(
-            config.mcpMaxResponseBytes ?? STDIO_DEFAULT_MAX_BUFFER_SIZE,
-          ),
-          (target) =>
-            initializeRuntime(
-              target,
-              dependencies,
-              context,
-              config,
-              startedAt,
-            ).catch((cause) => {
-              dependencies.setExitCode(1);
-              throw cause;
-            }),
-        );
-        const stop = server.close.bind(server);
-        const ownedClose = async () => {
-          await stop();
-          servers.delete(server);
-        };
-        servers.set(server, ownedClose);
-        server.close = ownedClose;
-        const previous = server.server.onclose;
-        server.server.onclose = () => {
-          previous?.();
-          requestClose();
-        };
-        return server;
-      },
-      {
-        onerror: () => {
-          serverLogger.error(MCP_CONNECTION_LOST);
-          dependencies.writeStderr(`${MCP_CONNECTION_LOST}\n`);
+    try {
+      handle = await dependencies.serve(
+        (context) => {
+          const catalog = firstCatalog ?? readCatalog();
+          firstCatalog = undefined;
+          const startedAt = new Date().toISOString();
+          const server = new DeferredEvidenceMcpServer(
+            catalog,
+            new ToolResultDelivery(
+              config.mcpMaxResponseBytes ?? STDIO_DEFAULT_MAX_BUFFER_SIZE,
+            ),
+            (target) =>
+              initializeRuntime(
+                target,
+                dependencies,
+                context,
+                config,
+                startedAt,
+              ).catch((cause) => {
+                dependencies.setExitCode(1);
+                throw cause;
+              }),
+          );
+          const stop = server.close.bind(server);
+          const ownedClose = async () => {
+            await stop();
+            servers.delete(server);
+          };
+          servers.set(server, ownedClose);
+          server.close = ownedClose;
+          const previous = server.server.onclose;
+          server.server.onclose = () => {
+            previous?.();
+            requestClose();
+          };
+          return server;
         },
-      },
-    );
-    return 0;
-  } catch {
-    await close();
+        {
+          onerror: () => {
+            serverLogger.error(MCP_CONNECTION_LOST);
+            dependencies.writeStderr(`${MCP_CONNECTION_LOST}\n`);
+          },
+        },
+      );
+    } finally {
+      finishServing();
+    }
+  } catch (cause) {
+    finishServing();
+    try {
+      await close();
+    } catch (cleanupCause) {
+      throw new AggregateError(
+        [cause, cleanupCause],
+        "MCP startup and cleanup failed",
+      );
+    }
     dependencies.writeStderr(`${SERVER_START_FAILED}\n`);
     return 1;
   }
+  if (closing) await close();
+  return 0;
 };

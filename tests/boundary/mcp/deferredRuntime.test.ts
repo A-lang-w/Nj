@@ -267,8 +267,11 @@ const result = await runDeferred({
     }
     throw new Error("serve failed after creating servers");
   },
-}, config.value).then(() => "unexpected success", (cause) => cause.name);
-assert.equal(result, "AggregateError");
+}, config.value).then(() => "unexpected success", (cause) => cause);
+assert.ok(result instanceof AggregateError);
+assert.equal(result.errors[0].message, "serve failed after creating servers");
+assert.ok(result.errors[1] instanceof AggregateError);
+assert.match(String(result.errors[1].errors[0].errors[0]), /close denied/);
 assert.equal(registeredBeforeServe, 1);
 assert.deepEqual(calls, [1, 1]);
 assert.equal(unregistrations, 0);
@@ -290,6 +293,121 @@ console.log("STARTUP_CLEANUP_RETRIED");
   expect(child.error).toBeUndefined();
   expect(child.status, child.stderr).toBe(0);
   expect(child.stdout).toBe("STARTUP_CLEANUP_RETRIED\n");
+  expect(child.stderr).toBe("");
+});
+
+it.each(["handle", "server"])(
+  "retries only the failed %s cleanup owner",
+  (failedOwner) => {
+    const child = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `
+import assert from "node:assert/strict";
+import { runDeferred } from "./dist/main/deferredRuntime.js";
+import { parseConfig } from "./dist/config/parseConfig.js";
+const config = parseConfig({ HOME: process.env.HOME });
+assert.equal(config.ok, true);
+const failedOwner = ${JSON.stringify(failedOwner)};
+const calls = { handle: 0, server: 0 };
+let captured;
+let unregistrations = 0;
+const result = await runDeferred({
+  env: {}, writeStderr: () => {}, setExitCode: () => {},
+  registerShutdown: () => () => { unregistrations++; },
+  captureShutdown: (close) => { captured = close; },
+  serve: (factory) => {
+    const server = factory({});
+    const close = server.server.close.bind(server.server);
+    server.server.close = async () => {
+      calls.server++;
+      if (failedOwner === "server" && calls.server === 1) throw new Error("server denied");
+      await close();
+    };
+    return { close: () => {
+      calls.handle++;
+      if (failedOwner === "handle" && calls.handle === 1) throw new Error("handle denied");
+      // Deliberately not idempotent: a successful handle must never be retried.
+      assert.ok(calls.handle <= (failedOwner === "handle" ? 2 : 1));
+      return Promise.resolve();
+    } };
+  },
+}, config.value);
+assert.equal(result, 0);
+await assert.rejects(captured(), AggregateError);
+assert.deepEqual(calls, { handle: 1, server: 1 });
+assert.equal(unregistrations, 0);
+await captured();
+assert.deepEqual(calls, { handle: failedOwner === "handle" ? 2 : 1, server: failedOwner === "server" ? 2 : 1 });
+assert.equal(unregistrations, 1);
+await captured();
+assert.equal(unregistrations, 1);
+console.log("MIXED_CLEANUP_RETRIED");
+`,
+      ],
+      { cwd: process.cwd(), encoding: "utf8", timeout: 10000 },
+    );
+    expect(child.error).toBeUndefined();
+    expect(child.status, child.stderr).toBe(0);
+    expect(child.stdout).toBe("MIXED_CLEANUP_RETRIED\n");
+    expect(child.stderr).toBe("");
+  },
+);
+
+it("joins shutdown with a transport and server published after shutdown starts", () => {
+  const child = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `
+import assert from "node:assert/strict";
+import { runDeferred } from "./dist/main/deferredRuntime.js";
+import { parseConfig } from "./dist/config/parseConfig.js";
+const config = parseConfig({ HOME: process.env.HOME });
+assert.equal(config.ok, true);
+const transport = Promise.withResolvers();
+let factory;
+let captured;
+let signal;
+let unregistrations = 0;
+let handleCalls = 0;
+let serverCalls = 0;
+const running = runDeferred({
+  env: {}, writeStderr: () => {}, setExitCode: () => {},
+  registerShutdown: (handler) => {
+    signal = handler;
+    return () => { unregistrations++; };
+  },
+  captureShutdown: (close) => { captured = close; },
+  serve: (create) => { factory = create; return transport.promise; },
+}, config.value);
+signal();
+const closing = captured();
+let closed = false;
+void closing.then(() => { closed = true; });
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(closed, false);
+assert.equal(unregistrations, 0);
+const server = factory({});
+const close = server.server.close.bind(server.server);
+server.server.close = async () => { serverCalls++; await close(); };
+transport.resolve({ close: async () => { handleCalls++; } });
+assert.equal(await running, 0);
+await closing;
+assert.deepEqual([handleCalls, serverCalls, unregistrations], [1, 1, 1]);
+await captured();
+assert.deepEqual([handleCalls, serverCalls, unregistrations], [1, 1, 1]);
+console.log("LATE_TRANSPORT_CLOSED");
+`,
+    ],
+    { cwd: process.cwd(), encoding: "utf8", timeout: 10000 },
+  );
+  expect(child.error).toBeUndefined();
+  expect(child.status, child.stderr).toBe(0);
+  expect(child.stdout).toBe("LATE_TRANSPORT_CLOSED\n");
   expect(child.stderr).toBe("");
 });
 
