@@ -34,6 +34,8 @@ export const nextAppRoutePath = (raw: string): string | undefined => {
   if (!match) return;
   const segments: string[] = [];
   for (const encoded of (match[1] ?? "").split("/")) {
+    // Private folders are excluded before decoding: %5F names are public URLs.
+    if (encoded.startsWith("_")) return;
     let segment: string;
     try {
       segment = decodeURIComponent(encoded);

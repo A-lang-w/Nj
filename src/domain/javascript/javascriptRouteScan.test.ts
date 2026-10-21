@@ -197,6 +197,11 @@ it.each([
     undefined,
   ],
   ["app/app/page.tsx", "/app"],
+  ["app/_components/page.tsx", undefined],
+  ["app/blog/_draft/page.js", undefined],
+  ["app/(group)/_private/nested/page.tsx", undefined],
+  ["app/%5Fcomponents/page.tsx", "/_components"],
+  ["app/blog/%5fdraft/page.js", "/blog/_draft"],
   ["static/chunks/app/(account)/reports/[id]/page-deadbeef.js", "/reports/:id"],
   ["app/docs/[...slug]/page.js", "/docs/:slug+"],
   ["app/(account)/reports/[id]/page.tsx", "/reports/:id"],
@@ -319,5 +324,20 @@ it("does not let push registrations own independent module bodies or structured 
   expect([...new Set(facts.candidates.map(({ path }) => path))].sort()).toEqual(
     ["/docs", "/docs/a", "/docs/b", "/docs/c"],
   );
-  expect(facts.unresolved).toEqual([]);
+  expect(facts.unresolved).toEqual([
+    expect.objectContaining({ mechanism: "navigation-target" }),
+  ]);
+});
+
+it("retains dynamic destinations of recognized navigation calls without treating collection writes as navigation", () => {
+  const facts = analyze(
+    `router.navigate(target);router.push(path);history.replace(destination.href);const link={href:target};items.push(value);values.replace(value);`,
+  );
+  expect(facts.candidates).toEqual([]);
+  expect(facts.unresolved).toHaveLength(4);
+  expect(
+    facts.unresolved.every(
+      ({ mechanism }) => mechanism === "navigation-target",
+    ),
+  ).toBe(true);
 });

@@ -119,44 +119,57 @@ cliTest(
     }
   },
 );
-it("serves retained route batches and provenance through the production SDK schemas", async () => {
-  const path = await fixture(),
-    { call } = await connectLocalToolsMcp();
-  const response = await call("analyze_javascript_application", {
-    input_path: path,
-    detail: "summary",
-    view: {
-      kind: "javascript-routes",
-      collection: "routes",
-      where: { path_prefix: "/account" },
-    },
-  });
-  expect(response.isError).not.toBe(true);
-  const selected = javaScriptRoutesViewResultSchema.parse(
-    parseEvidence(response.structuredContent).normalized_result,
-  );
-  expect(selected.items).toHaveLength(2);
-  await rm(path, { recursive: true });
-  const occurrences = await call("inspect_analysis_view", {
-    source: {
-      kind: "retained-evidence",
-      evidence_id: selected.parent_evidence_id,
-    },
-    view: {
-      kind: "javascript-routes",
-      collection: "occurrences",
-      where: { route_ids: selected.items.map((row) => row.id) },
-      fields: ["segments"],
-    },
-  });
-  expect(occurrences.isError).not.toBe(true);
-  const result = javaScriptRoutesViewResultSchema.parse(
-    parseEvidence(occurrences.structuredContent).normalized_result,
-  );
-  expect(result.items).toHaveLength(2);
-  expect(result.sources).toHaveLength(1);
-  expect(result.source_coverage.application_routes).toBe("unknown");
-});
+it.each(["full", "compact"] as const)(
+  "serves retained route batches through the %s production SDK schemas",
+  async (profile) => {
+    const path = await fixture(),
+      { call } = await connectLocalToolsMcp({
+        REA_MCP_INPUT_SCHEMA_PROFILE: profile,
+      });
+    for (const source_paths of [[], [""], [1]]) {
+      const invalid = await call("analyze_javascript_application", {
+        input_path: path,
+        source_paths,
+      });
+      expect(invalid.isError).toBe(true);
+      expect(JSON.stringify(invalid.content)).toContain("source_paths");
+    }
+    const response = await call("analyze_javascript_application", {
+      input_path: path,
+      detail: "summary",
+      view: {
+        kind: "javascript-routes",
+        collection: "routes",
+        where: { path_prefix: "/account" },
+      },
+    });
+    expect(response.isError).not.toBe(true);
+    const selected = javaScriptRoutesViewResultSchema.parse(
+      parseEvidence(response.structuredContent).normalized_result,
+    );
+    expect(selected.items).toHaveLength(2);
+    await rm(path, { recursive: true });
+    const occurrences = await call("inspect_analysis_view", {
+      source: {
+        kind: "retained-evidence",
+        evidence_id: selected.parent_evidence_id,
+      },
+      view: {
+        kind: "javascript-routes",
+        collection: "occurrences",
+        where: { route_ids: selected.items.map((row) => row.id) },
+        fields: ["segments"],
+      },
+    });
+    expect(occurrences.isError).not.toBe(true);
+    const result = javaScriptRoutesViewResultSchema.parse(
+      parseEvidence(occurrences.structuredContent).normalized_result,
+    );
+    expect(result.items).toHaveLength(2);
+    expect(result.sources).toHaveLength(1);
+    expect(result.source_coverage.application_routes).toBe("unknown");
+  },
+);
 
 cliTest(
   "projects captured route facts through both browser adapters",

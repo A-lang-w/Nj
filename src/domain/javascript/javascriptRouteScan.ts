@@ -76,6 +76,12 @@ const navigationCalls = new Set([
   "navigate",
   "href",
 ]);
+const navigationReceivers = new Set([
+  "router",
+  "$router",
+  "history",
+  "location",
+]);
 const nextNames = new Set(["TURBOPACK", "webpackChunk_N_E", "__NEXT_DATA__"]);
 const isRouteChildKey = (key: string, typed: boolean): boolean =>
   typed ? !key.startsWith("_") && !key.startsWith("$") : key === "children";
@@ -221,7 +227,8 @@ export class JavaScriptRouteScan {
     node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
   ): void {
     const fullName = calleeName(node.callee),
-      name = fullName.split(".").at(-1)!;
+      parts = fullName.split("."),
+      name = parts.at(-1)!;
     const first = node.arguments[0];
     const legacy = STATIC_ROUTE_CALL_NAMES.some(
       (candidate) => candidate === name,
@@ -246,7 +253,14 @@ export class JavaScriptRouteScan {
       t.isArgumentPlaceholder(first)
     )
       return;
-    if (navigationCalls.has(name)) this.#navigation(first);
+    if (navigationCalls.has(name)) {
+      // Dynamic push/replace calls need a navigation receiver convention;
+      // otherwise only a rooted literal fragment supplies navigation evidence.
+      const recognized =
+        (name !== "push" && name !== "replace") ||
+        navigationReceivers.has(parts.at(-2) ?? "");
+      this.#navigation(first, recognized);
+    }
     if (name === "route" || name === "addRoute") {
       if (stringValue(first) === undefined) this.#ownDynamicValue(first, false);
       const value = stringValue(first),
@@ -394,15 +408,26 @@ export class JavaScriptRouteScan {
     return this.#result;
   }
 
-  #ownDynamicValue(node: t.Node, navigation: boolean): void {
-    if (!isRouteValueBoundary(node) && this.#queue(node))
-      this.#dynamicValues.set(node, { node, navigation, reported: false });
+  #ownDynamicValue(node: t.Node, navigation: boolean, reported = false): void {
+    // Leaf references have no descendants to suppress.
+    if (
+      !t.isIdentifier(node) &&
+      !isRouteValueBoundary(node) &&
+      this.#queue(node)
+    )
+      this.#dynamicValues.set(node, { node, navigation, reported });
   }
 
-  #navigation(node: t.Node): void {
+  #navigation(node: t.Node, recognized = true): void {
     const value = stringValue(node);
     if (value === undefined) {
-      this.#ownDynamicValue(node, true);
+      if (recognized)
+        this.#unknown(
+          "navigation-target",
+          node,
+          "The recognized navigation destination is not a supported literal.",
+        );
+      this.#ownDynamicValue(node, true, recognized);
       return;
     }
     const path = routePath(value, { navigation: true });

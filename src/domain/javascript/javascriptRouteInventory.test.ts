@@ -239,3 +239,15 @@ it("coalesces inferred deployment roots without rewriting explicit trailing slas
     true,
   );
 });
+
+it("keeps enumeration partial when a recognized navigation target is unresolved", () => {
+  const result = build([source("navigation.js", "router.navigate(target);")]);
+  expect(result.routes).toEqual([]);
+  expect(result.coverage.candidate_enumeration).toBe("partial");
+  expect(result.unknowns).toEqual([
+    expect.objectContaining({
+      kind: "interpretation",
+      source_id: result.sources[0]!.id,
+    }),
+  ]);
+});
