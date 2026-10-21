@@ -76,3 +76,9 @@ Both new tests fail on the previous head. Over the 50 published captures, the me
 and these two fixes add one counter each to BookStack's pages (`total`) and Linkding's tags (`count`), both views with
 a whole line beside partial ones. Served write tools stay at 31. The six environments compare exactly as in the table
 above, step for step. The gates passed again.
+
+A second round merged the write-plan branch at 43d98ea9, which carries main d8a9673f and that branch's fixes for the
+four findings Greptile raised here against its code. Its page cap applies on every line that lists its whole
+collection: a call naming such a page that the collection has outgrown answers from its recording, and the gate skips
+such reads. Over the 50 captures no view or write plan changed and served write tools stay at 31; the six environments
+compare exactly as before.
