@@ -343,6 +343,7 @@ export const reconstructJavaScriptArtifact = async (
         },
         limitations: analysis.limitations,
       };
+      await checkpointCompletedAnalysis();
       if (interruption !== null && interruption !== undefined) {
         const { electron_summary: summary, ...application } = completed;
         const partial = await completeJavaScriptAnalysisSteps(

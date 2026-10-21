@@ -111,8 +111,9 @@ export class JavaScriptRouteScan {
   readonly #fieldsCache = new WeakMap<t.ObjectExpression, Fields>();
   readonly #routeParents = new WeakMap<
     t.ObjectExpression,
-    t.ObjectExpression
+    t.ObjectExpression | null
   >();
+  readonly #routeChildren: { parent: t.ObjectExpression; value: t.Node }[] = [];
   #nextRuntime = false;
   #factBytes: number;
   #workBytes = 0;
@@ -331,14 +332,8 @@ export class JavaScriptRouteScan {
             "children"
         )
           continue;
-        const children = t.isArrayExpression(property.value)
-          ? property.value.elements
-          : [property.value];
-        for (const child of children) {
-          if (this.#result.capacity !== null) break;
-          if (t.isObjectExpression(child) && this.#queue(child))
-            this.#routeParents.set(child, node);
-        }
+        if (this.#queue(property.value))
+          this.#routeChildren.push({ parent: node, value: property.value });
       }
     }
     if (
@@ -352,8 +347,13 @@ export class JavaScriptRouteScan {
     index: JavaScriptBindingIndex,
   ): Generator<void, JavaScriptRouteSourceFacts> {
     if (this.#result.capacity !== null) return this.#result;
-    if (this.#calls.length > 0 || this.#automaticRoots.size > 0)
+    if (
+      this.#calls.length > 0 ||
+      this.#automaticRoots.size > 0 ||
+      this.#routeChildren.length > 0
+    )
       yield* index.indexMemberMutationFactsSteps();
+    yield* this.#indexRouteParents(index);
     for (const call of this.#calls) {
       if (this.#result.capacity !== null) break;
       yield;
@@ -377,11 +377,22 @@ export class JavaScriptRouteScan {
       if (this.#result.capacity !== null) break;
       yield;
       const claimed = this.#claimed[typed ? "typed" : "ordinary"];
+      const ancestry = new Set<t.ObjectExpression>([node]);
       let root = node,
         owned = claimed.has(root) || this.#rejected.has(root);
       while (!owned && !typed) {
         const parent = this.#routeParents.get(root);
         if (parent === undefined) break;
+        if (parent === null || ancestry.has(parent)) {
+          this.#unknown(
+            "nested-route-object",
+            root,
+            "Multiple or cyclic parents leave the inferred route ancestry unknown.",
+          );
+          owned = true;
+          break;
+        }
+        ancestry.add(parent);
         root = parent;
         owned = claimed.has(root) || this.#rejected.has(root);
       }
@@ -426,6 +437,42 @@ export class JavaScriptRouteScan {
         );
     }
     return this.#result;
+  }
+
+  *#indexRouteParents(index: JavaScriptBindingIndex): Generator<void> {
+    for (const { parent, value } of this.#routeChildren) {
+      const pending = [value],
+        seen = new Set<t.Node>();
+      while (pending.length > 0 && this.#result.capacity === null) {
+        yield;
+        const raw = pending.pop()!,
+          node = this.#resolve(raw, parent, index);
+        if (
+          node === undefined ||
+          (!t.isArrayExpression(node) && !t.isObjectExpression(node))
+        ) {
+          if (this.#claimConfiguration(raw, index, false, true))
+            this.#unknown(
+              "nested-route-object",
+              raw,
+              "The child configuration cannot establish stable route ancestry.",
+            );
+          continue;
+        }
+        if (seen.has(node)) continue;
+        seen.add(node);
+        if (t.isArrayExpression(node)) {
+          for (const child of node.elements)
+            if (child !== null && this.#queue(child)) pending.push(child);
+        } else {
+          const previous = this.#routeParents.get(node);
+          this.#routeParents.set(
+            node,
+            previous === undefined || previous === parent ? parent : null,
+          );
+        }
+      }
+    }
   }
 
   #ownDynamicValue(
@@ -536,13 +583,14 @@ export class JavaScriptRouteScan {
     }
   }
 
-  /** Ownership is per interpretation, independent of selected-value validity. */
+  /** Ownership is per interpretation; return whether inferred roots were found. */
   #claimConfiguration(
     root: t.Node,
     index: JavaScriptBindingIndex,
     typed: boolean,
     rejected = false,
-  ): void {
+  ): boolean {
+    let inferredRoots = false;
     const pending: { node: t.Node; typed: boolean }[] = [],
       visited = rejected
         ? { ordinary: new WeakSet<t.Node>(), typed: new WeakSet<t.Node>() }
@@ -581,6 +629,8 @@ export class JavaScriptRouteScan {
       const claimed = visited[interpretation ? "typed" : "ordinary"];
       if (!claimed.has(node) && this.#queue(node)) {
         claimed.add(node);
+        if (t.isObjectExpression(node) && this.#automaticRoots.has(node))
+          inferredRoots = true;
         if (rejected) this.#rejected.add(node);
         pending.push({ node, typed: interpretation });
       }
@@ -633,6 +683,7 @@ export class JavaScriptRouteScan {
       else if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
         for (const child of node.arguments) admit(child, typed);
     }
+    return inferredRoots;
   }
 
   *#walk(

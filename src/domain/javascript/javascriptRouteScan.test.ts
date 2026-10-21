@@ -348,6 +348,23 @@ it("retains pathless grouping nodes in ordinary inferred route ancestry", () => 
   );
   expect(facts.candidates.map(({ path }) => path)).toEqual(["/a", "/a/b"]);
 });
+it("preserves inferred ancestry through stable child arrays and object aliases", () => {
+  const facts = analyze(
+    `const child={path:'b',element:B};const children=[child];const alias=children;const routes=[{path:'/a',children:alias}];unknown(routes);`,
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual(["/a", "/a/b"]);
+});
+it("keeps ambiguous or cyclic inferred ancestry unknown instead of shortening paths", () => {
+  for (const code of [
+    `const child={path:'b',element:B};const routes=[{path:'/a',children:[child]},{path:'/c',children:[child]}];unknown(routes);`,
+    `const route={path:'b',element:B,children:[route]};unknown(route);`,
+    `const child={path:'b',element:B};const children=[child];children[0].path='changed';const routes=[{path:'/a',children}];unknown(routes);`,
+  ]) {
+    const facts = analyze(code);
+    expect(facts.candidates).toEqual([]);
+    expect(facts.unresolved.length).toBeGreaterThan(0);
+  }
+});
 it("does not attach an independent typed tree to ordinary children ancestry", () => {
   const facts = analyze(
     `const wrapper={children:[{_$:'typed',detail:{_$:'detail'}}]};unknown(wrapper);`,

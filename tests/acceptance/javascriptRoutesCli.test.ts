@@ -180,7 +180,7 @@ cliTest(
       commandResult: ({ method }) =>
         method === "Debugger.getScriptSource"
           ? {
-              scriptSource: `const secondary=[{path:'/reports',children:[{children:[{path:'panel',element:Panel}]}]}];createBrowserRouter([{path:'/reports',children:[{path:'settings'}],element:jsx(Panel,{routes:secondary})}]);`,
+              scriptSource: `const panels=[{path:'panel',element:Panel}];const secondary=[{path:'/reports',children:[{children:panels}]}];createBrowserRouter([{path:'/reports',children:[{path:'settings'}],element:jsx(Panel,{routes:secondary})}]);`,
             }
           : undefined,
     });
