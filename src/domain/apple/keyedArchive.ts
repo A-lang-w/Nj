@@ -258,6 +258,7 @@ export const projectKeyedArchive = (
     nonFiniteRealCount: projected.nonFiniteRealCount,
     negativeZeroRealCount: projected.negativeZeroRealCount,
     unknownDateCount: projected.unknownDateCount,
+    preciseDateCount: projected.preciseDateCount,
     unknownScalarCount: projected.unknownScalarCount,
     roots,
     objects: page,

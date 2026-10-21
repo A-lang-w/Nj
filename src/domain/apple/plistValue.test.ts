@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { parseBinary } from "plist";
 
 import { projectPlistValue } from "./plistValue.js";
+import { PrecisePlistDate } from "./plistDate.js";
 import { UnknownPlistScalar } from "./unknownPlistScalar.js";
 
 // Binary decoders build dates from seconds; beyond the Date range they are invalid.
@@ -16,6 +17,30 @@ it("projects an unrepresentable date as unknown and counts it", () => {
     nonFiniteRealCount: 0,
     negativeZeroRealCount: 0,
     unknownDateCount: 1,
+    preciseDateCount: 0,
+    unknownScalarCount: 0,
+  });
+});
+
+// Binary property lists store Float64 seconds, so a source instant can be
+// finer than the millisecond resolution of a JavaScript Date.
+it("projects a date with microsecond precision and counts it", () => {
+  expect(
+    projectPlistValue({
+      precise: new PrecisePlistDate(978307200100, 500),
+      whole: new PrecisePlistDate(978307200100, 0),
+      far: new PrecisePlistDate(1e17, 0),
+    }),
+  ).toEqual({
+    value: {
+      precise: { $plist_type: "date", iso8601: "2001-01-01T00:00:00.100500Z" },
+      whole: { $plist_type: "date", iso8601: "2001-01-01T00:00:00.100Z" },
+      far: { $plist_type: "date", iso8601: null },
+    },
+    nonFiniteRealCount: 0,
+    negativeZeroRealCount: 0,
+    unknownDateCount: 1,
+    preciseDateCount: 1,
     unknownScalarCount: 0,
   });
 });

@@ -2,6 +2,7 @@ import { types } from "node:util";
 import { z } from "zod";
 
 import type { JsonValue } from "../jsonValue.js";
+import { PrecisePlistDate, formatPlistDateIso } from "./plistDate.js";
 import { UnknownPlistScalar } from "./unknownPlistScalar.js";
 
 /**
@@ -20,6 +21,8 @@ export interface ProjectedPlistValue {
   readonly negativeZeroRealCount: number;
   /** Dates the decoder could not represent, reported without a timestamp. */
   readonly unknownDateCount: number;
+  /** Dates reported with the microsecond precision of their source. */
+  readonly preciseDateCount: number;
   /** XML scalar literals retained explicitly because their values are unknown. */
   readonly unknownScalarCount: number;
 }
@@ -60,6 +63,7 @@ export const projectPlistValue = (
   let nonFiniteRealCount = 0;
   let negativeZeroRealCount = 0;
   let unknownDateCount = 0;
+  let preciseDateCount = 0;
   let unknownScalarCount = 0;
   const scalar = (value: Record<string, JsonValue>): JsonValue => {
     onWrappedScalar?.(value);
@@ -94,6 +98,18 @@ export const projectPlistValue = (
         });
       unknownDateCount += 1;
       return scalar({ $plist_type: "date", iso8601: null });
+    }
+    if (item instanceof PrecisePlistDate) {
+      const iso8601 = formatPlistDateIso(
+        item.epochMilliseconds,
+        item.microsecondRemainder,
+      );
+      if (iso8601 === undefined) {
+        unknownDateCount += 1;
+        return scalar({ $plist_type: "date", iso8601: null });
+      }
+      if (item.microsecondRemainder !== 0) preciseDateCount += 1;
+      return scalar({ $plist_type: "date", iso8601 });
     }
     if (typeof item === "number" && !Number.isFinite(item)) {
       nonFiniteRealCount += 1;
@@ -144,6 +160,7 @@ export const projectPlistValue = (
     nonFiniteRealCount,
     negativeZeroRealCount,
     unknownDateCount,
+    preciseDateCount,
     unknownScalarCount,
   };
 };

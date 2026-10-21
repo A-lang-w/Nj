@@ -367,6 +367,8 @@ complete observation.
   Object `kind` describes the decoded archive value: data, dates and numbers
   remain `scalar` when their JSON value uses a `$plist_type` wrapper. An actual
   dictionary with the same fields remains `dictionary`.
+  A binary date keeps its source instant at microsecond resolution; see
+  [Keyed archive date precision](#keyed-archive-date-precision).
   XML must be well-formed. Data literals use
   [CoreFoundation's raw ASCII quartet rules](https://github.com/swiftlang/swift-corelibs-foundation/blob/384ff680be7c7445fee6ce0c55e9ae11a46e07c5/Sources/CoreFoundation/CFPropertyList.c#L1588):
   non-alphabet ASCII characters are ignored and an incomplete final quartet
@@ -705,6 +707,25 @@ explicit precision limitations. Before plist decoding, the existing aggregate
 decode budget reserves estimated room for number metadata and attribute
 projection; these estimates are not a hard process-memory bound. Native
 NIBArchive decoding is unchanged by this plist-specific representation.
+
+## Keyed archive date precision
+
+A binary property list stores a date as Float64 seconds after the 2001
+reference date, so its source instant can be finer than the millisecond
+resolution of a JavaScript date. The archive reader observes every date object
+in the binary object table and reports the source instant at microsecond
+resolution, so a source instant is never reported as a different known
+instant. A source instant that is a whole millisecond keeps its millisecond
+timestamp, and a finer instant adds the microsecond digits, such as
+`2001-01-01T00:00:00.100500Z`. A counted limitation names the values that
+carry finer source precision, and the original archive bytes retain the exact
+source seconds. Date identity follows the source object rather than the
+decoded value, so two dates that share a rounded millisecond keep their own
+instants. A non-finite source date remains an explicit unknown, and a date
+whose source object cannot be established is reported as an unknown instant
+rather than a truncated one. An archive whose date objects cannot all be
+identified reports its dates with millisecond resolution and an explicit
+limitation. Interface Builder decoding uses the same projection.
 
 Dates are reported as `{ "$plist_type": "date", "iso8601": "<timestamp>" }`.
 XML dates require a complete UTC spelling with fixed two-digit month, day and

@@ -42,6 +42,15 @@ import {
   decodeBinaryPlistNumbers,
   scanBinaryPlistNumberLiterals,
 } from "./PlistNumberLiterals.js";
+import {
+  decodeBinaryPlistDates,
+  resolveBinaryPlistDates,
+  scanBinaryPlistDates,
+} from "./PlistDateLiterals.js";
+import {
+  incompleteDateLimitation,
+  preciseDateLimitation,
+} from "../../domain/apple/plistDate.js";
 import type { PlistNumberLiterals } from "../../domain/apple/plistNumbers.js";
 import {
   hasBinaryPlistSignature,
@@ -70,6 +79,8 @@ export const analyzeInterfaceBuilderBundle = async (input: {
   const unresolvedConnections = new Map<string, number>();
   const prototypeKeyOmissions = new Map<string, number | null>();
   const unknownDates = new Map<string, number>();
+  const preciseDates = new Map<string, number>();
+  const incompleteDateIdentities = new Set<string>();
   const unknownScalars = new Map<string, number>();
   let omitted = 0;
   let attempted = 0;
@@ -152,6 +163,8 @@ export const analyzeInterfaceBuilderBundle = async (input: {
           value: raw,
           omittedPrototypeKeys,
           unknownDateCount,
+          preciseDateCount,
+          incompleteDateIdentity,
           unknownScalarCount,
           numberLiterals,
         } = nib === null
@@ -160,6 +173,8 @@ export const analyzeInterfaceBuilderBundle = async (input: {
               value: nib.raw,
               omittedPrototypeKeys: 0,
               unknownDateCount: 0,
+              preciseDateCount: 0,
+              incompleteDateIdentity: false,
               unknownScalarCount: 0,
               numberLiterals: undefined,
             };
@@ -171,6 +186,9 @@ export const analyzeInterfaceBuilderBundle = async (input: {
           prototypeKeyOmissions.set(entry.path, omittedPrototypeKeys);
         if (unknownDateCount !== 0)
           unknownDates.set(entry.path, unknownDateCount);
+        if (preciseDateCount !== 0)
+          preciseDates.set(entry.path, preciseDateCount);
+        if (incompleteDateIdentity) incompleteDateIdentities.add(entry.path);
         if (unknownScalarCount !== 0)
           unknownScalars.set(entry.path, unknownScalarCount);
         const documentHash = createHash("sha256").update(bytes).digest("hex");
@@ -218,6 +236,8 @@ export const analyzeInterfaceBuilderBundle = async (input: {
     unresolvedConnections,
     prototypeKeyOmissions,
     unknownDates,
+    preciseDates,
+    incompleteDateIdentities,
     unknownScalars,
     invalid,
     omittedArchives,
@@ -288,6 +308,8 @@ const finalizeHierarchyCoverage = (
     unresolvedConnections: ReadonlyMap<string, number>;
     prototypeKeyOmissions: ReadonlyMap<string, number | null>;
     unknownDates: ReadonlyMap<string, number>;
+    preciseDates: ReadonlyMap<string, number>;
+    incompleteDateIdentities: ReadonlySet<string>;
     unknownScalars: ReadonlyMap<string, number>;
     invalid: readonly string[];
     omittedArchives: readonly { path: string; reason: string }[];
@@ -301,6 +323,8 @@ const finalizeHierarchyCoverage = (
     unresolvedConnections,
     prototypeKeyOmissions,
     unknownDates,
+    preciseDates,
+    incompleteDateIdentities,
     unknownScalars,
     invalid,
     omittedArchives,
@@ -389,6 +413,12 @@ const finalizeHierarchyCoverage = (
       ),
       ...[...unknownDates].map(
         ([path, count]) => `${path}: ${unknownDateLimitation(count)}`,
+      ),
+      ...[...preciseDates].map(
+        ([path, count]) => `${path}: ${preciseDateLimitation(count)}`,
+      ),
+      ...[...incompleteDateIdentities].map(
+        (path) => `${path}: ${incompleteDateLimitation}`,
       ),
       ...[...unknownScalars].map(
         ([path, count]) => `${path}: ${unknownScalarLimitation(count)}`,
@@ -763,6 +793,8 @@ const decodePlist = (
   readonly value: JsonValue;
   readonly omittedPrototypeKeys: number | null;
   readonly unknownDateCount: number;
+  readonly preciseDateCount: number;
+  readonly incompleteDateIdentity: boolean;
   readonly unknownScalarCount: number;
   readonly numberLiterals: PlistNumberLiterals;
 } => {
@@ -770,20 +802,30 @@ const decodePlist = (
   const binaryNumberMetadata = binary
     ? scanBinaryPlistNumberLiterals(bytes)
     : undefined;
+  const binaryDateMetadata = binary ? scanBinaryPlistDates(bytes) : undefined;
   const { value, omittedPrototypeKeys, numberLiterals } = binary
     ? {
         value: parseBinary(
-          decodeBinaryPlistNumbers(bytes, binaryNumberMetadata!),
+          decodeBinaryPlistDates(
+            decodeBinaryPlistNumbers(bytes, binaryNumberMetadata!),
+            binaryDateMetadata!,
+          ),
         ),
         omittedPrototypeKeys: binaryPrototypeKeyObserved ? null : 0,
         numberLiterals: binaryNumberMetadata!.literals,
       }
     : parseXmlWithinDecodeBudget(xmlText ?? decodeXmlPlistText(bytes));
-  const projected = projectPlistValue(value);
+  const projected = projectPlistValue(
+    binaryDateMetadata === undefined
+      ? value
+      : resolveBinaryPlistDates(value, binaryDateMetadata),
+  );
   return {
     value: projected.value,
     omittedPrototypeKeys,
     unknownDateCount: projected.unknownDateCount,
+    preciseDateCount: projected.preciseDateCount,
+    incompleteDateIdentity: binaryDateMetadata?.incomplete === true,
     unknownScalarCount: projected.unknownScalarCount,
     numberLiterals,
   };

@@ -14,9 +14,18 @@ import {
 } from "../../domain/apple/plistValue.js";
 import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js";
 import {
+  preciseDateLimitation,
+  incompleteDateLimitation,
+} from "../../domain/apple/plistDate.js";
+import {
   decodeBinaryPlistNumbers,
   scanBinaryPlistNumberLiterals,
 } from "./PlistNumberLiterals.js";
+import {
+  decodeBinaryPlistDates,
+  resolveBinaryPlistDates,
+  scanBinaryPlistDates,
+} from "./PlistDateLiterals.js";
 import {
   omittedPrototypeKeysLimitation,
   parseXmlPropertyList,
@@ -75,11 +84,15 @@ export const decodeKeyedArchiveBytes = (
   const binaryNumberMetadata = binary
     ? scanBinaryPlistNumberLiterals(bytes)
     : undefined;
+  const binaryDateMetadata = binary ? scanBinaryPlistDates(bytes) : undefined;
   const parsed =
     binaryExpansion !== undefined
       ? {
           value: parseBinary(
-            decodeBinaryPlistNumbers(bytes, binaryNumberMetadata!),
+            decodeBinaryPlistDates(
+              decodeBinaryPlistNumbers(bytes, binaryNumberMetadata!),
+              binaryDateMetadata!,
+            ),
           ),
           numberLiterals: binaryNumberMetadata!.literals,
           omittedPrototypeKeys: binaryExpansion.binaryPrototypeKeyObserved
@@ -91,9 +104,15 @@ export const decodeKeyedArchiveBytes = (
     nonFiniteRealCount,
     negativeZeroRealCount,
     unknownDateCount,
+    preciseDateCount,
     unknownScalarCount,
     ...graph
-  } = projectKeyedArchive(parsed.value, selection);
+  } = projectKeyedArchive(
+    binaryDateMetadata === undefined
+      ? parsed.value
+      : resolveBinaryPlistDates(parsed.value, binaryDateMetadata),
+    selection,
+  );
   const numbers = createPlistNumberProjection(parsed.numberLiterals);
   // Classify the serialized graph before projecting values to typed decimals.
   // Numeric IDs, node kinds, references and pagination retain their original meaning.
@@ -127,6 +146,12 @@ export const decodeKeyedArchiveBytes = (
       ...(unknownDateCount === 0
         ? []
         : [unknownDateLimitation(unknownDateCount)]),
+      ...(preciseDateCount === 0
+        ? []
+        : [preciseDateLimitation(preciseDateCount)]),
+      ...(binaryDateMetadata?.incomplete === true
+        ? [incompleteDateLimitation]
+        : []),
       ...(unknownScalarCount === 0
         ? []
         : [unknownScalarLimitation(unknownScalarCount)]),
