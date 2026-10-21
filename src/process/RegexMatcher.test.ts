@@ -195,6 +195,60 @@ it.each([
     nodeOptions: "",
     heap: effective(128, false),
   },
+  {
+    name: "leaves a positive --max-heap-size unestablished instead of the 128 MiB request",
+    execArgv: ["--max-heap-size=64"],
+    nodeOptions: undefined,
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "recognizes an underscore --max-heap-size",
+    execArgv: ["--max_heap_size=+064"],
+    nodeOptions: undefined,
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "leaves a NODE_OPTIONS --max-heap-size unestablished",
+    execArgv: [],
+    nodeOptions: "--max-heap-size=64",
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "does not let an old-space flag hide a positive --max-heap-size",
+    execArgv: ["--max-heap-size=64", "--max-old-space-size=256"],
+    nodeOptions: undefined,
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "does not let a later --max-heap-size hide an old-space flag",
+    execArgv: ["--max-old-space-size=64"],
+    nodeOptions: "--max_heap_size=256",
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "lets a final zero --max-heap-size clear the total-heap cap",
+    execArgv: ["--max-heap-size=64", "--max-heap-size=0"],
+    nodeOptions: undefined,
+    heap: effective(128, false),
+  },
+  {
+    name: "keeps an old-space flag when a final --max-heap-size is zero",
+    execArgv: ["--max-old-space-size=256", "--max-heap-size="],
+    nodeOptions: undefined,
+    heap: effective(256, true),
+  },
+  {
+    name: "leaves an unparsed --max-heap-size unestablished",
+    execArgv: ["--max-heap-size=64.5", "--max-old-space-size=80"],
+    nodeOptions: undefined,
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "does not let a later zero clear an unparsed --max-heap-size",
+    execArgv: ["--max-heap-size=64.5", "--max-heap-size=0"],
+    nodeOptions: undefined,
+    heap: { kind: "unknown" } as const,
+  },
 ] as const)(
   "resolveRegexWorkerHeap $name",
   ({ execArgv, nodeOptions, heap }) => {
@@ -218,6 +272,12 @@ it("does not treat a rewritten NODE_OPTIONS value as the launch heap", () => {
     expect(
       resolveLaunchRegexWorkerHeap(["--max-old-space-size=256"], {
         kind: "unrecoverable",
+      }),
+    ).toEqual({ kind: "unknown" });
+    expect(
+      resolveLaunchRegexWorkerHeap([], {
+        kind: "recovered",
+        value: "--max_heap_size=64",
       }),
     ).toEqual({ kind: "unknown" });
     if (launch.kind === "recovered") {
@@ -257,6 +317,8 @@ it("describes the effective heap and keeps the deadline fixed", () => {
     if (heap.kind === "unknown") {
       expect(limitation).toContain("was not established");
       expect(limitation).toContain("--max-old-space-size-percentage");
+      expect(limitation).toContain("--max-heap-size");
+      expect(projected.remediation.action).toContain("--max-heap-size");
       expect(projected.message).toContain("was not established");
       expect(projected.details).toMatchObject({
         reported_limits: { requested_worker_heap_mib: 128 },

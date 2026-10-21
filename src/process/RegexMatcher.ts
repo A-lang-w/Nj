@@ -34,10 +34,17 @@ const WORKER_HEAP_MIB = 128;
  * are not copied into `process.execArgv`. The launch string is the
  * `NODE_OPTIONS` entry in the process initial environment when that block can
  * be read. Otherwise the effective heap stays unestablished.
+ *
+ * `--max-heap-size` is the total heap, not the old generation. A positive
+ * value can be lower than the 128 MiB request and still changes the result
+ * when an old-space flag is also present. The old generation stays
+ * unestablished while that value is in effect. Zero or empty clears it.
+ * Node 24 and later also accept the flag in `NODE_OPTIONS`.
  */
 const OLD_SPACE_FLAG = /^--max[-_]old[-_]space[-_]size(?:=(.*))?$/u;
 const OLD_SPACE_PERCENT_FLAG =
   /^--max[-_]old[-_]space[-_]size[-_]percentage(?:=.*)?$/u;
+const MAX_HEAP_FLAG = /^--max[-_]heap[-_]size(?:=(.*))?$/u;
 /**
  * Node applies `NODE_OPTIONS` from `--env-file` / `--env-file-if-exists` only
  * when the variable was absent. The file is not in `/proc/self/environ`, and a
@@ -92,10 +99,11 @@ const nodeOptionsArgv = (
   return inString ? undefined : argv;
 };
 
-const parsedOldSpaceMiB = (
+const parsedFlagMiB = (
   token: string,
+  flag: RegExp,
 ): number | "absent" | "unrecognized" => {
-  const match = OLD_SPACE_FLAG.exec(token);
+  const match = flag.exec(token);
   if (match === null) return "absent";
   const raw = match[1];
   if (raw === undefined) return "unrecognized";
@@ -127,6 +135,7 @@ export const resolveRegexWorkerHeap = (
   let limit: RegexWorkerHeapLimit =
     fromEnvironment === undefined ? { kind: "unknown" } : requestedHeap;
   let percentage = false;
+  let maxHeap: "clear" | "positive" | "unrecognized" = "clear";
   for (const token of tokens) {
     if (OLD_SPACE_PERCENT_FLAG.test(token)) {
       percentage = true;
@@ -135,7 +144,17 @@ export const resolveRegexWorkerHeap = (
     }
     // A percentage flag wins over every absolute flag, including a later one.
     if (percentage) continue;
-    const parsed = parsedOldSpaceMiB(token);
+    const totalHeap = parsedFlagMiB(token, MAX_HEAP_FLAG);
+    if (totalHeap === "unrecognized") {
+      maxHeap = "unrecognized";
+      continue;
+    }
+    if (totalHeap !== "absent") {
+      if (maxHeap !== "unrecognized")
+        maxHeap = totalHeap > 0 ? "positive" : "clear";
+      continue;
+    }
+    const parsed = parsedFlagMiB(token, OLD_SPACE_FLAG);
     if (parsed === "absent") continue;
     if (parsed === "unrecognized") {
       limit = { kind: "unknown" };
@@ -146,7 +165,9 @@ export const resolveRegexWorkerHeap = (
         ? { kind: "effective", mib: parsed, overridden: true }
         : requestedHeap;
   }
-  return limit;
+  // A positive total-heap cap is not an old-generation size. Zero clears it
+  // and leaves the old-space result. An unparsed value does not.
+  return maxHeap === "clear" ? limit : { kind: "unknown" };
 };
 
 /** Provenance of the `NODE_OPTIONS` value Node applied before user code ran. */
@@ -218,7 +239,7 @@ const launchRegexWorkerHeap = resolveLaunchRegexWorkerHeap(
 
 const heapBound = (heap: RegexWorkerHeapLimit): string => {
   if (heap.kind === "unknown")
-    return "The worker requests 128 MiB. The effective old-generation heap was not established from the launch flags. --max-old-space-size, --max-old-space-size-percentage, --env-file, and --env-file-if-exists can change that request.";
+    return "The worker requests 128 MiB. The effective old-generation heap was not established from the launch flags. --max-old-space-size, --max-old-space-size-percentage, --max-heap-size, --env-file, and --env-file-if-exists can change that request.";
   const override =
     "A positive Node --max-old-space-size, including NODE_OPTIONS, overrides the 128 MiB worker request";
   return heap.overridden

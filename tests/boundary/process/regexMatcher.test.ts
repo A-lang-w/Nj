@@ -184,6 +184,29 @@ it("does not report the 128 MiB request for NODE_OPTIONS supplied by an env file
   }
 });
 
+it("does not report the 128 MiB request when --max-heap-size lowers the worker heap", () => {
+  const baseline = probeWorkerHeap([], undefined);
+  const heap64 = probeWorkerHeap(["--max-heap-size=64"], undefined);
+  const underscore = probeWorkerHeap(["--max_heap_size=64"], undefined);
+  expect(baseline.resourceOld).toBe(128);
+  expect(heap64.resourceOld).toBe(128);
+  expect(underscore.resourceOld).toBe(128);
+  expect(heap64.heap).toBeLessThan(baseline.heap);
+  expect(underscore.heap).toBe(heap64.heap);
+  expect(resolveRegexWorkerHeap(["--max-heap-size=64"], undefined)).toEqual({
+    kind: "unknown",
+  });
+  expect(resolveRegexWorkerHeap([], "--max-heap-size=64")).toEqual({
+    kind: "unknown",
+  });
+  expect(
+    resolveRegexWorkerHeap(
+      ["--max-heap-size=64", "--max-old-space-size=256"],
+      undefined,
+    ),
+  ).toEqual({ kind: "unknown" });
+});
+
 it("lets a launch --max-old-space-size override the 128 MiB worker request", () => {
   const baseline = probeWorkerHeap([], undefined);
   const smaller = probeWorkerHeap(["--max-old-space-size=64"], undefined);

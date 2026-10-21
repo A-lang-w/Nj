@@ -217,7 +217,11 @@ unestablished. `--env-file` or `--env-file-if-exists` can supply `NODE_OPTIONS`
 when the initial environment has none. That file is not part of the initial
 environment block, so the effective heap stays unestablished instead of the
 128 MiB request. An initial `NODE_OPTIONS` is still used, because Node does
-not let the file replace it.
+not let the file replace it. A positive `--max-heap-size`, including the
+underscore form and launch `NODE_OPTIONS` on Node versions that allow it,
+sets the total heap rather than the old generation and can be lower than the
+128 MiB request. The effective old generation stays unestablished while that
+value is in effect. A zero or empty value clears it.
 Literal mode retains Unicode casefold matching.
 
 ## Bounded static traces
