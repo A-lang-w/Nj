@@ -14,8 +14,6 @@ import {
   listsAll,
   listItems,
   missingRequiredFields,
-  pagesOnly,
-  pageSize,
   renderStateEntity,
   renderStateList,
   replaceAt,
@@ -31,6 +29,7 @@ import {
   type StateToolFacts,
   type StateView,
 } from "./environmentStateRules.js";
+import { pagesOnly, pageSize } from "./environmentStatePaging.js";
 import { insertIndex } from "./environmentStateWriteExplain.js";
 import type { InsertRule } from "./environmentStateWriteRules.js";
 
