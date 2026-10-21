@@ -31,9 +31,9 @@ void testDecisionMatrix() {
          "a successful close clears the value and does not retry");
 
   const auto still = rea::decideOwnedHandleClose(false, 6, live(rea::HandleLiveness::Open));
-  expect(still.disposition == rea::HandleCloseDisposition::StillOwned && !still.clearValue &&
-             still.retryClose && still.closeError == 6,
-         "an open handle stays owned and may be closed again");
+  expect(still.disposition == rea::HandleCloseDisposition::Unconfirmed && !still.clearValue &&
+             !still.retryClose && still.closeError == 6,
+         "an open probe after a failed close does not authorize another close");
 
   const auto gone = rea::decideOwnedHandleClose(false, 6, live(rea::HandleLiveness::NotInTable, 6));
   expect(gone.disposition == rea::HandleCloseDisposition::TerminalInvalid && gone.clearValue &&
@@ -61,9 +61,9 @@ void testReleaseRetainsAndRetriesOnlyLiveValues() {
         ++probes;
         return live(rea::HandleLiveness::Open);
       });
-  expect(decision.disposition == rea::HandleCloseDisposition::StillOwned && handle.get() == 4 &&
-             closes == 1 && probes == 1 && !handle.closeBlocked(),
-         "a still-open close failure keeps the same value");
+  expect(decision.disposition == rea::HandleCloseDisposition::Unconfirmed && handle.get() == 4 &&
+             closes == 1 && probes == 1 && handle.closeBlocked(),
+         "a failed close of a value that still looks open keeps that value blocked");
 
   const auto retried = handle.release(
       [&](int) {
@@ -72,11 +72,11 @@ void testReleaseRetainsAndRetriesOnlyLiveValues() {
       },
       [&](int) {
         ++probes;
-        return live(rea::HandleLiveness::Unavailable, 1);
+        return live(rea::HandleLiveness::Open);
       });
-  expect(retried.disposition == rea::HandleCloseDisposition::Released && handle.fullyReleased() &&
-             closes == 2 && probes == 1,
-         "a later close of a still-open value succeeds without another probe");
+  expect(retried.disposition == rea::HandleCloseDisposition::Unconfirmed && handle.get() == 4 &&
+             handle.closeBlocked() && closes == 1 && probes == 2,
+         "a later open probe does not close a value whose previous close failed");
 }
 
 void testUnconfirmedCloseDoesNotCallCloseAgain() {
@@ -117,8 +117,8 @@ void testUnconfirmedCloseDoesNotCallCloseAgain() {
         ++probes;
         return live(rea::HandleLiveness::Open);
       });
-  expect(handle.fullyReleased() && closes == 2 && probes == 3,
-         "a later open probe allows one more close");
+  expect(handle.get() == 8 && handle.closeBlocked() && closes == 1 && probes == 3,
+         "a later open probe still does not close the unconfirmed value");
 }
 
 void testTerminalInvalidityDropsTheValue() {
@@ -179,9 +179,9 @@ void testResetParksTheReplacementAndOverflowsTheThirdValue() {
       },
       [&](int) { return live(rea::HandleLiveness::Open); },
       [&](int value, bool block) { sunk.emplace_back(value, block); });
-  expect(handle.get() == 1 && sunk.size() == 1 && sunk[0].first == 3 && !sunk[0].second &&
-             closes >= 1,
-         "a third value is retained by the sink instead of being discarded");
+  expect(handle.get() == 1 && handle.closeBlocked() && sunk.size() == 1 && sunk[0].first == 3 &&
+             !sunk[0].second && closes == 0,
+         "a blocked value is not closed again and a third value is retained by the sink");
 }
 
 void testReleaseClosesTheParkedReplacementAfterTheCurrentValue() {

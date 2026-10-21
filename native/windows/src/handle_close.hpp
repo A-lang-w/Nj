@@ -5,17 +5,17 @@
 
 namespace rea {
 
-// CloseHandle's error alone cannot tell a still-open handle from a value that
-// is no longer in this process's handle table. Callers supply a separate
-// liveness probe (GetHandleInformation on Windows) and must not retry a close
-// for a value that probe says is gone: the numeric value can be reused.
+// A failed CloseHandle and a later liveness probe are not one atomic fact.
+// Another thread can reuse the numeric value before GetHandleInformation
+// runs, so an Open result does not prove the probed object is still ours.
+// After a failed close, drop the value only when the probe says it is gone.
+// Otherwise keep it and do not call CloseHandle again.
 
 enum class HandleLiveness { Open, NotInTable, Unavailable };
 
 enum class HandleCloseDisposition {
   Released,
   TerminalInvalid,
-  StillOwned,
   Unconfirmed,
 };
 
@@ -44,12 +44,11 @@ inline HandleCloseDecision decideOwnedHandleClose(bool closeSucceeded,
     return {HandleCloseDisposition::Released, true, false, 0, 0};
   switch (evidence.liveness) {
     case HandleLiveness::Open:
-      return {HandleCloseDisposition::StillOwned, false, true, closeError, 0};
-    case HandleLiveness::NotInTable:
-      return {HandleCloseDisposition::TerminalInvalid, true, false, closeError,
-              evidence.error};
     case HandleLiveness::Unavailable:
       return {HandleCloseDisposition::Unconfirmed, false, false, closeError,
+              evidence.error};
+    case HandleLiveness::NotInTable:
+      return {HandleCloseDisposition::TerminalInvalid, true, false, closeError,
               evidence.error};
   }
   return {HandleCloseDisposition::Unconfirmed, false, false, closeError,
@@ -180,10 +179,10 @@ class OwnedHandle {
         return {HandleCloseDisposition::TerminalInvalid, true, false, 0,
                 evidence.error};
       }
-      if (evidence.liveness != HandleLiveness::Open)
-        return {HandleCloseDisposition::Unconfirmed, false, false, 0,
-                evidence.error};
-      block = false;
+      // Open or unreadable: the number stays close-blocked. Closing it could
+      // release an object that reused the value.
+      return {HandleCloseDisposition::Unconfirmed, false, false, 0,
+              evidence.error};
     }
     const CloseAttempt attempt = close(slot);
     if (attempt.succeeded) {

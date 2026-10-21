@@ -113,8 +113,9 @@ automatically. Alternatively, build it using the Linux/MinGW lane above.
   root and ancestor leases for retry; a partially removed runtime accepts only
   cleanup, and its registry entry remains until removal succeeds. `CloseHandle`
   is checked. A value that is still open, or whose liveness cannot be read,
-  stays with its runtime, process, or file owner so a later close can retry
-  that same value. A value that is no longer in the process handle table is
+  stays with its runtime, process, or file owner and is not passed to
+  `CloseHandle` again. An open liveness probe does not prove that the object
+  still belongs to that owner. A value that is no longer in the process handle table is
   dropped and is not closed again. An incomplete snapshot whose writer cannot
   be closed stays on the runtime instead of being forgotten; source handles
   that remain open after a published snapshot are closed with that runtime. An
