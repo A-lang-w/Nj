@@ -401,6 +401,25 @@ it("resolves a site-determined constant channel in place of its dynamic observat
   expect(result.electron.call_paths).toContainEqual(
     expect.objectContaining({ entry: "desktop.ping", channel: "ping" }),
   );
+  // The syntax pass's unknown channel is resolved, not left as partial.
+  expect(result.parse_status).toBe("complete");
+});
+it("resolves a site-determined registration whose handler is a named local", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const {contextBridge,ipcRenderer}=require("electron");
+    const CH = "ch";
+    const handler = () => {};
+    contextBridge.exposeInMainWorld("desktop",{on:()=>ipcRenderer.on(CH, handler)});
+  `);
+  expect(result.electron.ipc).toEqual([
+    expect.objectContaining({
+      side: "renderer",
+      mode: "listen",
+      channel: "ch",
+      handler_kind: "inline-function",
+    }),
+  ]);
+  expect(result.parse_status).toBe("complete");
 });
 it("keeps an argument-supplied channel unresolved beside its resolved candidates", () => {
   const result = analyzeJavaScriptStaticSource(`

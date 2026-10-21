@@ -273,6 +273,28 @@ export const collectElectronWrappedCallPaths = (
       ? only.value
       : undefined;
   };
+  /**
+   * Whether a registration's handler at an IPC site is this substituted
+   * handler independent of any invocation: the same function value in the
+   * site's lexical environment, or no handler argument at all.
+   */
+  const siteDeterminesHandler = (
+    node: t.CallExpression | t.OptionalCallExpression,
+    fn: SymbolicFunction | undefined,
+  ): boolean => {
+    const argument = node.arguments[1];
+    if (argument === undefined) return fn === undefined;
+    if (fn === undefined || t.isSpreadElement(argument)) return false;
+    const variants = symbolicVariants(
+      resolver.evaluate(argument, resolver.environmentAt(node)),
+    );
+    const only = variants.length === 1 ? variants[0] : undefined;
+    return (
+      only?.kind === "function" &&
+      only.node === fn.node &&
+      !only.conditions?.length
+    );
+  };
   const hasConditions = (value: SymbolicValue): boolean =>
     symbolicVariants(value).some((variant) => variant.conditions?.length);
   function* bridgeMemberFunctions(
@@ -522,14 +544,12 @@ export const collectElectronWrappedCallPaths = (
       // values this pass never sees.
       const site = ipcSiteKey(value);
       const observed = unresolvedIpcSites?.get(site);
-      const direct =
-        observed === undefined ? undefined : accumulator.ipc[observed]?.value;
       const unresolved =
-        direct !== undefined &&
+        observed !== undefined &&
         siteDeterminedChannel(node) === channel &&
-        direct.handler_kind === value.handler_kind &&
-        JSON.stringify(direct.handler_location) ===
-          JSON.stringify(value.handler_location)
+        (descriptor.mode === "send" ||
+          descriptor.mode === "invoke" ||
+          siteDeterminesHandler(node, fn))
           ? observed
           : undefined;
       if (unresolved === undefined)
@@ -537,6 +557,11 @@ export const collectElectronWrappedCallPaths = (
       else {
         accumulator.ipc[unresolved] = { offset: node.start ?? -1, value };
         unresolvedIpcSites?.delete(site);
+        // The syntax pass counted this channel as unknown; it is now known.
+        accumulator.unknownFindings = Math.max(
+          0,
+          accumulator.unknownFindings - 1,
+        );
       }
       indexIpcFinding(
         ipcAtEndpoint(),
