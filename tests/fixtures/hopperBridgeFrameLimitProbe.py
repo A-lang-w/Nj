@@ -11,6 +11,9 @@ Four cases share one loaded bridge module:
 - ``stalled_line``: a peer exceeds the payload limit without a terminator,
   stops writing, and keeps the connection open. The bridge must refuse it
   without waiting for EOF, then close.
+- ``eof_partial``: an authenticated, otherwise valid short JSON request has no
+  LF and the peer half-closes its write side. The bridge must reject the
+  incomplete frame without dispatching it, then close.
 """
 import json
 import socket
@@ -32,7 +35,7 @@ def _next_response(file):
             return value
 
 
-def serve(bridge, line, read_after):
+def serve(bridge, line, read_after, half_close_write=False):
     """Send one raw line and record the bridge's answer."""
     server, client = socket.socketpair()
     worker = threading.Thread(target=bridge["_serve_connection"], args=(server,))
@@ -41,9 +44,12 @@ def serve(bridge, line, read_after):
     file = client.makefile("rwb")
     client.settimeout(READ_TIMEOUT_SECONDS)
     outcome = {}
+    dispatch_count = len(bridge["_probe_dispatches"])
     try:
         file.write(line)
         file.flush()
+        if half_close_write:
+            client.shutdown(socket.SHUT_WR)
         outcome["reply"] = _next_response(file)
         if read_after:
             outcome["next"] = _next_response(file)
@@ -56,6 +62,9 @@ def serve(bridge, line, read_after):
             client.close()
     worker.join(2)
     outcome["thread_released"] = not worker.is_alive()
+    outcome["dispatch_calls"] = (
+        len(bridge["_probe_dispatches"]) - dispatch_count
+    )
     return outcome
 
 
@@ -72,10 +81,13 @@ def request_line(bridge, params):
 def main():
     bridge = load_bridge(sys.argv[1])
     bridge.update(REA_TOKEN="owned-token", REA_RUN_ID="owned-run")
-    bridge["_dispatch"] = lambda method, params: {
-        "run_id": bridge["REA_RUN_ID"],
-        "ready": True,
-    }
+    bridge["_probe_dispatches"] = []
+
+    def dispatch(method, params):
+        bridge["_probe_dispatches"].append((method, params))
+        return {"run_id": bridge["REA_RUN_ID"], "ready": True}
+
+    bridge["_dispatch"] = dispatch
     limit = bridge.get("MAX_REQUEST_BYTES")
     if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
         json.dump({"limit": limit}, sys.stdout)
@@ -96,6 +108,13 @@ def main():
     # connected so the bounded read must reject it without waiting for EOF.
     stalled_line = serve(bridge, b"x" * (limit + 1), True)
 
+    # This is a valid authenticated request, but omitting LF makes it an
+    # incomplete frame. EOF must terminate the read and produce a rejection;
+    # the application dispatch must never see it.
+    eof_partial = serve(
+        bridge, request_line(bridge, {}), True, half_close_write=True
+    )
+
     json.dump(
         {
             "limit": limit,
@@ -103,6 +122,7 @@ def main():
             "at_limit": at_limit,
             "past_limit": past_limit,
             "stalled_line": stalled_line,
+            "eof_partial": eof_partial,
         },
         sys.stdout,
     )

@@ -23,6 +23,7 @@ const exchangeSchema = z.strictObject({
   reply: z.unknown(),
   next: z.unknown().optional(),
   thread_released: z.boolean(),
+  dispatch_calls: z.number().int().nonnegative(),
 });
 
 const probeResultSchema = z.strictObject({
@@ -31,6 +32,7 @@ const probeResultSchema = z.strictObject({
   at_limit: exchangeSchema,
   past_limit: exchangeSchema,
   stalled_line: exchangeSchema,
+  eof_partial: exchangeSchema,
 });
 
 it("serves requests up to the frame limit and refuses a line that exceeds it", async () => {
@@ -68,4 +70,18 @@ it("serves requests up to the frame limit and refuses a line that exceeds it", a
   });
   expect(result.stalled_line.next).toEqual({ closed: true });
   expect(result.stalled_line.thread_released).toBe(true);
+
+  // A valid authenticated payload without LF is still an incomplete frame.
+  // Half-closing the write side supplies EOF; the bridge rejects without
+  // dispatching the operation, then closes its response connection.
+  expect(result.eof_partial.reply).toMatchObject({
+    error: {
+      code: -32000,
+      type: "invalid_request",
+      message: "Incomplete bridge request frame",
+    },
+  });
+  expect(result.eof_partial.next).toEqual({ closed: true });
+  expect(result.eof_partial.dispatch_calls).toBe(0);
+  expect(result.eof_partial.thread_released).toBe(true);
 });
