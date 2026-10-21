@@ -124,7 +124,8 @@ export const run = async (
     });
     if (!opened.ok) {
       if ("cancelled" in opened) return lifecycle.finish();
-      await lifecycle.release();
+      if (opened.cleanupPending) await lifecycle.finish();
+      else await lifecycle.release();
       return opened.exitCode;
     }
     if (lifecycle.signal.aborted) return lifecycle.finish();

@@ -20,7 +20,12 @@ export const openInitialTarget = async (
   },
 ): Promise<
   | { readonly ok: true }
-  | { readonly ok: false; readonly exitCode: 1 }
+  | {
+      readonly ok: false;
+      readonly exitCode: 1;
+      /** The session retained cleanup ownership after close failed. */
+      readonly cleanupPending: boolean;
+    }
   | { readonly ok: false; readonly cancelled: true }
 > => {
   if (config.hopperTargetPath === undefined) return { ok: true };
@@ -48,5 +53,5 @@ export const openInitialTarget = async (
   writeStderr(`${projectAnalysisError(opened.error).message}\n`);
   if (!closed.ok)
     writeStderr(`${projectAnalysisError(closed.error).message}\n`);
-  return { ok: false, exitCode: 1 };
+  return { ok: false, exitCode: 1, cleanupPending: !closed.ok };
 };

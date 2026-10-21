@@ -446,6 +446,59 @@ it.each([
   },
 );
 
+it("keeps shutdown registered when a failed initial open retains session cleanup", async () => {
+  const [target] = await createBinarySessionTargets();
+  const openFailure = new AnalysisTimeoutError("health", 1_000);
+  let closeFails = true;
+  let clientCloses = 0;
+  const session = createTestBinarySession((): AnalysisClient => ({
+    execute: async () => err(openFailure),
+    close: async () => {
+      clientCloses += 1;
+      return closeFails
+        ? err(new AnalysisOutputError("close", "fixture close failed"))
+        : ok(null);
+    },
+  }));
+  const requests: Array<() => void> = [];
+  const unregistrations: string[] = [];
+  const output: string[] = [];
+  const unregistered = createDeferred<void>();
+  const running = run(
+    runtime({
+      env: { HOPPER_TARGET_PATH: target, HOPPER_TARGET_KIND: "database" },
+      createSession: () => session,
+      registerShutdown: (handler) => {
+        requests.push(handler);
+        return () => {
+          unregistrations.push("shutdown");
+          unregistered.resolve();
+        };
+      },
+      requests,
+      unregistrations,
+      output,
+    }),
+  );
+
+  await expect(running).resolves.toBe(1);
+  expect(clientCloses).toBe(3);
+  expect(await session.status()).toMatchObject({ cleanup_pending: true });
+  expect(unregistrations).toEqual([]);
+  expect(output).toContain(`${projectAnalysisError(openFailure).message}\n`);
+  expect(output).toContain(`${MCP_SHUTDOWN_FAILED}\n`);
+
+  closeFails = false;
+  requests[0]?.();
+  await unregistered.promise;
+  expect(clientCloses).toBe(4);
+  expect(await session.status()).toMatchObject({
+    open: false,
+    cleanup_pending: false,
+  });
+  expect(unregistrations).toEqual(["shutdown"]);
+});
+
 it("closes the session and unregisters when startup throws unexpectedly", async () => {
   const session = createTestBinarySession((): AnalysisClient => ({
     execute: async () => err(new AnalysisCancelledError("health")),
