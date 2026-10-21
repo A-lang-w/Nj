@@ -310,3 +310,12 @@ A thirteenth round settled seven findings Greptile raised on this branch, the fi
 
 Each new test fails on the previous head. The verdicts over the 50 captures are unchanged plan by plan, the smoke
 applies all 31 served write tools, and the gates passed again.
+
+A fourteenth round settled two findings Greptile raised on the list-queries branch against this branch's code:
+
+- the type's identity field never becomes a constant: an update whose id member the application ignored no longer
+  writes the exemplar's id into the entity another call names;
+- a page size of zero bounds nothing, so a whole line recorded with `limit=0` answers from the state.
+
+Both tests fail on the previous head. The verdicts over the 50 captures are unchanged plan by plan, the smoke applies
+all 31 served write tools, and the gates passed again.
