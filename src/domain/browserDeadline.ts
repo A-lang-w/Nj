@@ -68,7 +68,6 @@ export type CdpCommandDeadlinePhase = "handshake" | "command" | "source-join";
  * keep the same numeric deadline and must not advertise a setting they lack.
  */
 const COMMAND_TIMEOUT_OPERATIONS = new Set<BrowserObservationOperation>([
-  "list_browser_targets",
   "inspect_web_page",
   "analyze_web_bundle",
   "observe_web_session",

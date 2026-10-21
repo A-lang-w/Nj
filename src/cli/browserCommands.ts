@@ -49,7 +49,9 @@ const registerTargetList = (
         .string()
         .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
     }),
-    options: z.object({ ...browserScopeOptions }),
+    options: z.object({
+      allowedOrigins: browserScopeOptions.allowedOrigins,
+    }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, "list-browser-targets", async () => {
@@ -57,7 +59,6 @@ const registerTargetList = (
           const input = {
             cdp_endpoint: args.endpoint,
             allowed_origins: options.allowedOrigins,
-            ...selectedCommandTimeout(options.commandTimeoutMs),
           };
           const parsed = listBrowserTargetsInputSchema.safeParse(input);
           if (!parsed.success)

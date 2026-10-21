@@ -135,7 +135,6 @@ export class CdpBrowserProvider implements BrowserObservationPort {
         options.signal,
         undefined,
         this.#owner,
-        selectedCdpCommandTimeoutMs(input.command_timeout_ms),
       );
       if (endpoint.connection !== undefined)
         await this.#owner.finish(endpoint.connection);

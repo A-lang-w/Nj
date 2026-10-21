@@ -56,6 +56,15 @@ const expireTimer = (milliseconds: number): void => {
   }
 };
 
+const expireEveryTimer = (milliseconds: number): void => {
+  const timers = activeTimers(milliseconds);
+  expect(timers.length).toBeGreaterThan(0);
+  for (const timer of timers) {
+    timer.callback();
+    clearTimeout(timer.timer);
+  }
+};
+
 it("bounds a stalled WebSocket handshake and releases its socket", async () => {
   const sockets = new Set<Socket>();
   const server = createServer((socket) => {
@@ -465,6 +474,94 @@ it("reschedules a raised command deadline onto the fixed cleanup grace", async (
     expect(error.remediationAction).toContain("no runtime override");
   } finally {
     await connection.close();
+    await browser.close();
+  }
+});
+
+it("keeps runtime cleanup on the fixed grace when command_timeout_ms is shorter", async () => {
+  const commandTimeoutMs = 250;
+  const browser = await startFakeCdpBrowser({
+    hangOnMethod: "Profiler.disable",
+  });
+  const provider = new CdpWebRuntimeProvider();
+  try {
+    const pending = provider.observeExecution(
+      observeWebExecutionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        target_id: "allowed-page",
+        observation_ms: 1,
+        command_timeout_ms: commandTimeoutMs,
+      }),
+      { signal: AbortSignal.timeout(10_000) },
+    );
+    await vi.waitFor(
+      () =>
+        expect(browser.commands.map(({ method }) => method)).toContain(
+          "Profiler.disable",
+        ),
+      { timeout: 5_000 },
+    );
+    expect(activeTimers(commandTimeoutMs)).toHaveLength(0);
+    expect(
+      activeTimers(WEB_RUNTIME_LIMITS.cleanupTimeoutMs).length,
+    ).toBeGreaterThan(0);
+    const hung = browser.commands.find(
+      ({ method }) => method === "Profiler.disable",
+    );
+    if (hung === undefined) throw new Error("Expected Profiler.disable");
+    browser.emitRawMessage(
+      JSON.stringify({
+        id: hung.id,
+        ...(hung.sessionId === undefined ? {} : { sessionId: hung.sessionId }),
+        result: {},
+      }),
+    );
+    const result = await pending;
+    expect(result.ok).toBe(true);
+  } finally {
+    await provider.close();
+    await browser.close();
+  }
+});
+
+it("names the fixed cleanup grace when runtime restoration stalls", async () => {
+  const commandTimeoutMs = 250;
+  const browser = await startFakeCdpBrowser({
+    hangOnMethod: "Profiler.disable",
+  });
+  const provider = new CdpWebRuntimeProvider();
+  try {
+    const pending = provider.observeExecution(
+      observeWebExecutionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        target_id: "allowed-page",
+        observation_ms: 1,
+        command_timeout_ms: commandTimeoutMs,
+      }),
+      { signal: AbortSignal.timeout(10_000) },
+    );
+    await vi.waitFor(
+      () =>
+        expect(browser.commands.map(({ method }) => method)).toContain(
+          "Profiler.disable",
+        ),
+      { timeout: 5_000 },
+    );
+    expect(activeTimers(commandTimeoutMs)).toHaveLength(0);
+    expireEveryTimer(WEB_RUNTIME_LIMITS.cleanupTimeoutMs);
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected cleanup grace failure");
+    const failures = result.error.diagnostics?.["cleanup_failures"];
+    const text = JSON.stringify(failures);
+    expect(text).toContain("5000 ms");
+    expect(text).toContain("no runtime override");
+    expect(text).not.toContain(
+      `${String(commandTimeoutMs)} ms command_timeout_ms`,
+    );
+    expect(text).not.toContain("Increase command_timeout_ms");
+  } finally {
+    await provider.close();
     await browser.close();
   }
 });

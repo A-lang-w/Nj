@@ -236,6 +236,11 @@ export class CdpRuntimeSession {
       () => controller.abort(),
       WEB_RUNTIME_LIMITS.cleanupTimeoutMs,
     );
+    // Switch before the first restoration send. A short command_timeout_ms
+    // would otherwise expire the connection timer and report cleanup_failed.
+    this.transport.connection.beginCleanupGrace(
+      WEB_RUNTIME_LIMITS.cleanupTimeoutMs,
+    );
     const failures: string[] = [];
     let transportFailure: AnalysisError | undefined;
     const send = async (

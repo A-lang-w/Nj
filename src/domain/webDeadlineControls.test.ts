@@ -48,11 +48,17 @@ describe("web deadline controls", () => {
 
   it("accepts the promoted deadlines inside 1..2147483647", () => {
     expect(
-      listBrowserTargetsInputSchema.safeParse({
-        cdp_endpoint: "http://127.0.0.1:9222",
+      analyzeWebBundleInputSchema.safeParse({
+        ...bundle,
         command_timeout_ms: 2_147_483_647,
       }).success,
     ).toBe(true);
+    expect(
+      listBrowserTargetsInputSchema.safeParse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        command_timeout_ms: 1_500,
+      }).success,
+    ).toBe(false);
     expect(
       inspectWebNetworkCaptureInputSchema.safeParse({
         capture_path: "/tmp/capture.har",

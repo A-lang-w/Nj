@@ -435,12 +435,17 @@ the resource's other facts are retained. Zero and nonnegative fractional sizes
 are preserved.
 
 CDP discovery has a 10-second response deadline and an 8 MiB document budget.
-Neither has a runtime override. Each WebSocket handshake and command response
-uses `command_timeout_ms` (default 20000), separate from the caller-selected
-observation window, discovery, and the 5000 ms cleanup grace. A stalled
-handshake or command reports `provider_timeout` and names `command_timeout_ms`;
-caller cancellation still reports cancellation. WebSocket messages remain subject
-to the [64 MiB limit](#request-boundary), which has no runtime override. REA does
+Neither has a runtime override. `list_browser_targets` accepts no
+`command_timeout_ms`: HTTP discovery and browser-socket discovery
+(`Browser.getVersion`, `Target.getTargets`) stay on that fixed deadline, and
+the socket closes without a later command. Other CDP tools use
+`command_timeout_ms` (default 20000) for each WebSocket handshake and command
+response, separate from the caller-selected observation window, discovery, and
+the 5000 ms cleanup grace. A stalled handshake or command reports
+`provider_timeout` and names `command_timeout_ms` only when that operation
+accepts it; caller cancellation still reports cancellation. WebSocket messages
+remain subject to the [64 MiB limit](#request-boundary), which has no runtime
+override. REA does
 not impose a message-count or pending-command quota. On cancellation, it closes
 only its own WebSocket,
 waiting up to one second before terminating it. Malformed unsolicited events
