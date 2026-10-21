@@ -1,8 +1,9 @@
+import { err, ok, type Result } from "../domain/result.js";
 import {
+  admitRecords,
   isHttpUrl,
   numberValue,
   recordValue,
-  recordsValue,
   cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
@@ -136,20 +137,41 @@ export const cdpFrameIdentity = (
   };
 };
 
-export const firstCallFrame = (
-  value: UnknownRecord | undefined,
-): UnknownRecord | undefined => recordsValue(value?.callFrames)[0];
+export interface MalformedCdpCallFrame {
+  readonly _tag: "MalformedCdpCallFrame";
+}
+
+const malformedCallFrame: MalformedCdpCallFrame = {
+  _tag: "MalformedCdpCallFrame",
+};
+
+/**
+ * The call site is the frame at position zero. A malformed top frame stays
+ * unknown rather than promoting its caller to the call site.
+ */
+export const topCallFrame = (
+  stack: UnknownRecord | undefined,
+): Result<UnknownRecord | undefined, MalformedCdpCallFrame> => {
+  if (stack === undefined) return ok(undefined);
+  const frames = admitRecords(stack.callFrames);
+  if (frames === undefined) return err(malformedCallFrame);
+  if (frames.length === 0) return ok(undefined);
+  const frame = recordValue(frames[0]);
+  return frame === undefined ? err(malformedCallFrame) : ok(frame);
+};
 
 export const initiatorLocation = (
   initiator: UnknownRecord | undefined,
-): UnknownRecord | undefined => {
+): Result<UnknownRecord | undefined, MalformedCdpCallFrame> => {
   let stack = recordValue(initiator?.stack);
   for (let depth = 0; depth < 32 && stack !== undefined; depth += 1) {
-    const frame = firstCallFrame(stack);
-    if (frame !== undefined) return frame;
+    const frame = topCallFrame(stack);
+    if (!frame.ok || frame.value !== undefined) return frame;
     stack = recordValue(stack.parent);
   }
-  return cdpStringValue(initiator?.url) === undefined ? undefined : initiator;
+  return ok(
+    cdpStringValue(initiator?.url) === undefined ? undefined : initiator,
+  );
 };
 
 export const exclusionReasonForUrl = (

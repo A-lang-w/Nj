@@ -20,7 +20,6 @@ import {
   delayWithCancellation,
   numberValue,
   recordValue,
-  recordsValue,
   cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
@@ -30,6 +29,7 @@ import {
   walkFrameTrees,
 } from "./CdpCaptureDocuments.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
+import { topCallFrame } from "./CdpCaptureEventHelpers.js";
 
 interface DiscoveryContext {
   readonly connection: CdpConnection;
@@ -501,7 +501,8 @@ const registrationSource = (
   stack: UnknownRecord | undefined,
   allowedOrigins: ReadonlySet<string>,
 ): WebMcpDiscovery["tools"]["items"][number]["registration_source"] => {
-  const frame = recordsValue(stack?.callFrames)[0];
+  const topFrame = topCallFrame(stack);
+  const frame = topFrame.ok ? topFrame.value : undefined;
   const url = allowedSanitizedUrl(frame?.url, allowedOrigins);
   return frame === undefined || url === undefined
     ? null
