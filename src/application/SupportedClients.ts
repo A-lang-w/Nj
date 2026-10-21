@@ -1,3 +1,4 @@
+import { openClawClientPaths } from "./OpenClawClientPaths.js";
 import { dirname, isAbsolute, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { lstatSync } from "node:fs";
@@ -40,6 +41,7 @@ export interface SetupClient {
   readonly quitBeforeSetup?: boolean;
   readonly format?:
     | "json"
+    | "openclaw"
     | "claude_code"
     | "toml"
     | "vscode"
@@ -169,9 +171,6 @@ const kimiDirectory = ({ home, env }: ClientPathContext): string =>
 
 const qoderDirectory = ({ home, env }: ClientPathContext): string =>
   env.QODER_CONFIG_DIR || join(home, ".qoder");
-
-const openclawDirectory = ({ home, env }: ClientPathContext): string =>
-  env.OPENCLAW_HOME || join(home, ".openclaw");
 
 const factoryDirectory = ({ home }: ClientPathContext): string =>
   join(home, ".factory");
@@ -667,11 +666,25 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     name: "openclaw",
     displayName: "OpenClaw",
     skillPath: (context: ClientPathContext) =>
-      join(openclawDirectory(context), "skills"),
-    configPath: (context: ClientPathContext) =>
-      join(openclawDirectory(context), "openclaw.json"),
-    markerPath: openclawDirectory,
-    format: "json",
+      openClawClientPaths(context.home, context.env, context.platform).skills,
+    configPath: (context: ClientPathContext) => {
+      const path = openClawClientPaths(
+        context.home,
+        context.env,
+        context.platform,
+      ).config;
+      return context.env.OPENCLAW_CONFIG_READONLY === "1" ||
+        context.env.OPENCLAW_NIX_MODE === "1"
+        ? err({
+            path,
+            message:
+              "OpenClaw configuration is read-only under OPENCLAW_CONFIG_READONLY or OPENCLAW_NIX_MODE.",
+          })
+        : path;
+    },
+    markerPath: (context: ClientPathContext) =>
+      openClawClientPaths(context.home, context.env, context.platform).marker,
+    format: "openclaw",
   },
   {
     name: "droid",

@@ -2,7 +2,7 @@ REA npm dependency inventory
 Prepared from the root package-lock.json; refresh this inventory when locked dependencies change.
 License identifiers are upstream lockfile declarations, not a legal assessment.
 Runtime includes transitive and optional platform packages; development includes build, test and website tooling.
-Locked package entries: 758; runtime: 180.
+Locked package entries: 758; runtime: 181.
 Full runtime copyright/license/NOTICE texts: npm-runtime-notices.txt.
 
 @algolia/abtesting@1.25.0 | development | MIT
@@ -2590,7 +2590,7 @@ json-schema-traverse@1.0.0 | runtime | MIT
   Package: https://www.npmjs.com/package/json-schema-traverse/v/1.0.0
   Archive: https://registry.npmjs.org/json-schema-traverse/-/json-schema-traverse-1.0.0.tgz
   Integrity: sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==
-json5@2.2.3 | development | MIT
+json5@2.2.3 | runtime | MIT
   Lockfile path: node_modules/json5
   Package: https://www.npmjs.com/package/json5/v/2.2.3
   Archive: https://registry.npmjs.org/json5/-/json5-2.2.3.tgz

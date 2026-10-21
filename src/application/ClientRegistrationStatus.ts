@@ -361,7 +361,9 @@ const registrationActivation = (
   client: SetupClient,
   parsed: ClientConfigurationDocument,
 ): "enabled" | "disabled" =>
-  (client.format !== "grok" && registration.disabled === true) ||
+  (client.format !== "grok" &&
+    client.format !== "openclaw" &&
+    registration.disabled === true) ||
   (registration.enabled === false &&
     !clientServerForcedEnabled(parsed, PRODUCT_IDENTITY.mcpServerKey)) ||
   ((parsed.dialect === "zcode" || parsed.dialect === "zcode_fallback") &&
@@ -477,6 +479,13 @@ const parseRegistration = (
     });
   }
   const registration = registrationSchema.parse(value);
+  if (
+    client.format === "openclaw" &&
+    ((registration.transport !== undefined &&
+      registration.transport !== "stdio") ||
+      registration.url !== undefined)
+  )
+    throw new TypeError("Expected an OpenClaw stdio registration");
   if (
     client.format === "kimi" &&
     registration.transport !== undefined &&

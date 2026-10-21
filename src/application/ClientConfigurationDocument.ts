@@ -1,3 +1,7 @@
+import {
+  parseOpenClawConfiguration,
+  editOpenClawConfiguration,
+} from "./OpenClawConfiguration.js";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { isDeepStrictEqual } from "node:util";
 
@@ -90,6 +94,7 @@ export const clientConfigurationServersKey = (
     case "grok":
     case "hermes":
       return "mcp_servers";
+    case "openclaw":
     case "opencode":
     case "zcode":
       return "mcp";
@@ -139,6 +144,7 @@ const parseDocument = (
   text: string,
   format: ClientConfigurationFormat,
 ): Record<string, unknown> => {
+  if (format === "openclaw") return parseOpenClawConfiguration(text);
   if (format === "toml" || format === "grok")
     return requireObject(parseClientToml(text), "The configuration root");
   // Pi loads `mcp.json` with a strict `JSON.parse` and no BOM tolerance, so
@@ -230,9 +236,9 @@ export const parseClientConfiguration = (
   const value = document[serversKey];
   const servers =
     value === undefined ? {} : requireObject(value, `"${serversKey}"`);
-  // ZCode reads stdio servers from the nested `mcp.servers` table of
-  // `~/.zcode/cli/config.json`; entries carry `command`, `args`, and `env`.
-  if (format === "zcode") {
+  // ZCode and OpenClaw read stdio entries from their native nested
+  // `mcp.servers` table rather than a Claude-style mcpServers table.
+  if (format === "zcode" || format === "openclaw") {
     const nested = servers.servers;
     return {
       document,
@@ -1397,11 +1403,13 @@ export const shadowedClientServers = (
 ): ShadowedClientServers => {
   // TOML rejects repeated keys, Hermes parses YAML with unique keys, and the
   // Harness owner edits REA's entry by id rather than through a server table.
+  // OpenClaw rejects duplicate ownership-path members at its JSON5 boundary.
   if (
     parsed.dialect === "toml" ||
     parsed.dialect === "grok" ||
     parsed.dialect === "hermes" ||
     parsed.dialect === "dsh" ||
+    parsed.dialect === "openclaw" ||
     !hasRepeatedJsonString(text, name)
   )
     return NO_SHADOWED_SERVERS;
@@ -1587,6 +1595,8 @@ export const serializeClientConfiguration = (
     editedPaths === undefined
   )
     return ok(`${JSON.stringify(document, null, 2)}\n`);
+  if (format === "openclaw")
+    return ok(editOpenClawConfiguration(originalText, document));
   let text = originalText;
   for (const path of editedPaths) {
     const edited = editJsonMember(
@@ -1698,6 +1708,7 @@ export const clientRegistrationEntry = (
         tools: ["*"],
         ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
       };
+    case "openclaw":
     case "commandcode":
       return {
         transport: "stdio",
