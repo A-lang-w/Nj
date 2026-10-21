@@ -66,14 +66,29 @@ const signatureTargetFile = async (
 
 it("distinguishes a codesign execution failure from an observed unsigned artifact", async () => {
   for (const kind of ["missing", "unsigned"] as const) {
+    const fixtureOutput = await fixture(`dyld-inventory/codesign-${kind}.txt`);
     const client = new NativeMacOSProvider(
       {},
-      new FixtureRunner(
-        {
-          codesign: await fixture(`dyld-inventory/codesign-${kind}.txt`),
+      {
+        async run(tool, arguments_) {
+          const output =
+            kind === "unsigned"
+              ? `${arguments_.at(-1)}: code object is not signed at all\n`
+              : fixtureOutput;
+          const capture = await new FixtureRunner({ codesign: output }, 1).run(
+            tool,
+            arguments_,
+          );
+          if (!capture.ok || kind !== "unsigned") return capture;
+          return ok({
+            ...capture.value,
+            stdout: "",
+            stderr: output,
+            stdoutBytes: 0,
+            stderrBytes: Buffer.byteLength(output),
+          });
         },
-        1,
-      ),
+      },
       "darwin",
     ).createClient(await signatureTarget());
     const execution = await client.execute("inspect_signature", {});
@@ -252,7 +267,9 @@ it("names signed slices when codesign's default slice is unsigned", async () => 
   // exact slices: the target only knows the arm64 CPU family, but the
   // signed slice is arm64e.x1, which codesign -a accepts by that name.
   const load = (name: string) => fixture(`codesign-universal-signed/${name}`);
-  const unsignedText = await fixture("dyld-inventory/codesign-unsigned.txt");
+  // codesign frames the unsigned verdict with the exact snapshot path.
+  const unsignedFor = (snapshot: string) =>
+    `${snapshot}: code object is not signed at all\n`;
   const armDisplay = (await load("slice-arm64.txt")).replace(
     "Format=Mach-O thin (arm64)",
     "Format=Mach-O thin (arm64e.x1)",
@@ -265,7 +282,11 @@ it("names signed slices when codesign's default slice is unsigned", async () => 
       const lipo = tool === "lipo";
       const signedSlice = architecture === "arm64e.x1";
       const stdout = lipo ? "x86_64 arm64e.x1\n" : "";
-      const stderr = lipo ? "" : signedSlice ? armDisplay : unsignedText;
+      const stderr = lipo
+        ? ""
+        : signedSlice
+          ? armDisplay
+          : unsignedFor(arguments_.at(-1) ?? "");
       const exitCode = lipo || signedSlice ? 0 : 1;
       const capture: NativeCommandCapture = {
         tool,
@@ -330,7 +351,8 @@ it("names signed slices when codesign's default slice is unsigned", async () => 
 });
 
 it("falls back to the target's CPU families when lipo is unavailable", async () => {
-  const unsignedText = await fixture("dyld-inventory/codesign-unsigned.txt");
+  const unsignedFor = (snapshot: string) =>
+    `${snapshot}: code object is not signed at all\n`;
   const armDisplay = await fixture("codesign-universal-signed/slice-arm64.txt");
   const runner: NativeCommandRunner = {
     run(tool: string, arguments_: readonly string[], options) {
@@ -340,7 +362,9 @@ it("falls back to the target's CPU families when lipo is unavailable", async () 
         );
       const architecture = arguments_[arguments_.indexOf("-a") + 1];
       const signedSlice = arguments_.includes("-a") && architecture === "arm64";
-      const stderr = signedSlice ? armDisplay : unsignedText;
+      const stderr = signedSlice
+        ? armDisplay
+        : unsignedFor(arguments_.at(-1) ?? "");
       const exitCode = signedSlice ? 0 : 1;
       const capture: NativeCommandCapture = {
         tool,
@@ -1023,13 +1047,21 @@ const signatureRunner = (outputs: {
     const architectureIndex = arguments_.indexOf("-a");
     const architecture =
       architectureIndex < 0 ? null : arguments_[architectureIndex + 1];
-    const response = arguments_.includes("-r-")
+    const selectedResponse = arguments_.includes("-r-")
       ? { output: outputs.unsigned, exitCode: 1 }
       : arguments_.includes("--entitlements")
         ? { output: outputs.entitlements, exitCode: 0 }
         : architecture === "x86_64"
           ? { output: outputs.unsigned, exitCode: 1 }
           : { output: outputs.signed, exitCode: 0 };
+    const response =
+      selectedResponse.exitCode !== 0 &&
+      selectedResponse.output.includes("code object is not signed at all")
+        ? {
+            ...selectedResponse,
+            output: `${arguments_.at(-1)}: code object is not signed at all\n`,
+          }
+        : selectedResponse;
     const capture: NativeCommandCapture = {
       tool,
       executable: `/usr/bin/${tool}`,
@@ -1038,7 +1070,7 @@ const signatureRunner = (outputs: {
       versionReason: "fixture",
       arguments: [...arguments_],
       // Entitlements XML is printed to stdout; diagnostics to stderr.
-      ...(arguments_.includes("--entitlements")
+      ...(response.exitCode === 0 && arguments_.includes("--entitlements")
         ? {
             stdout: response.output,
             stderr: "",

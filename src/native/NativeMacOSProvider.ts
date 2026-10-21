@@ -8,6 +8,7 @@ import {
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
+  APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
   NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY,
   nativeMacOSCapabilities,
 } from "./NativeMacOSProviderMetadata.js";
@@ -54,6 +55,7 @@ import {
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
@@ -127,6 +129,8 @@ import {
   type NativeUiHelperRuntime,
 } from "./NativeUiHelperRuntime.js";
 import { NativeUiInterruptionControl } from "./NativeUiInterruptionControl.js";
+import type { ResolvedAppBundleResourceRoot } from "../application/AppBundleExecutable.js";
+import { resolveBundleResourcePlistSelection } from "./NativePlistSource.js";
 
 type SignatureRuntimeRootFactory = () => Promise<
   Pick<PrivateRuntimeRoot, "path" | "close">
@@ -172,6 +176,23 @@ export class NativeMacOSProvider implements AnalysisProvider {
       this.#privateRuntimeRootFactory,
     );
   }
+
+  createBundleResourceClient(
+    root: ResolvedAppBundleResourceRoot,
+  ): AnalysisClient {
+    const plistAvailable = this.#capabilities.some(
+      ({ operation, available }) => operation === "inspect_plist" && available,
+    );
+    return new NativeMacOSClient(
+      undefined,
+      this.runner,
+      this.#tracerFactory(),
+      this.#environment,
+      this.#privateRuntimeRootFactory,
+      root,
+      plistAvailable,
+    );
+  }
 }
 
 class NativeMacOSClient implements AnalysisClient {
@@ -185,14 +206,22 @@ class NativeMacOSClient implements AnalysisClient {
   #closed = false;
 
   constructor(
-    private readonly target: BinaryTarget,
+    private readonly activeTarget: BinaryTarget | undefined,
     private readonly runner: NativeCommandRunner,
     private readonly tracer: NativeCallTracer,
     private readonly environment: Readonly<NodeJS.ProcessEnv>,
     private readonly privateRuntimeRootFactory:
       | SignatureRuntimeRootFactory
       | undefined,
+    private readonly bundleResourceRoot?: ResolvedAppBundleResourceRoot,
+    private readonly bundlePlistAvailable = true,
   ) {}
+
+  private get target(): BinaryTarget {
+    if (this.activeTarget === undefined)
+      throw new Error("This provider client has no executable target");
+    return this.activeTarget;
+  }
 
   async execute(
     operation: AnalysisOperation,
@@ -213,6 +242,22 @@ class NativeMacOSClient implements AnalysisClient {
       );
     if (operation === "health")
       return ok(createAnalysisExecution(null, IDENTITY));
+    if (this.activeTarget === undefined && operation !== "inspect_plist")
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          IDENTITY.id,
+          operation,
+          "This client is bound to app resource access only.",
+        ),
+      );
+    if (this.bundleResourceRoot !== undefined && !this.bundlePlistAvailable)
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          IDENTITY.id,
+          "inspect_plist",
+          "Property list inspection requires a macOS host.",
+        ),
+      );
     if (operation === "inspect_native_dispatch_metadata") {
       const input = toolContract(operation).inputSchema.safeParse(parameters);
       if (!input.success)
@@ -241,10 +286,13 @@ class NativeMacOSClient implements AnalysisClient {
             input.data.max_records,
             this.#dispatchResources,
             options?.signal,
+            input.data.objc_class_import_addresses,
+            input.data.objc_class_import_addresses_complete ?? true,
           ),
         );
         return ok(
           createAnalysisExecution(result, result.provider, {
+            analysisProfile: APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
             locations: [{ kind: "artifact-path", path: this.target.path }],
             limitations: result.result.coverage.flatMap(({ reason }) =>
               reason === null ? [] : [reason],
@@ -633,8 +681,14 @@ class NativeMacOSClient implements AnalysisClient {
       signal,
     );
     if (!display.ok) return display;
-    const unsigned = isNonzeroUnsignedObservation(display.value);
-    const displayFailure = codeSignCaptureFailure(display.value);
+    const unsigned = isNonzeroUnsignedObservation(
+      display.value,
+      binding.snapshotPath,
+    );
+    const displayFailure = codeSignCaptureFailure(
+      display.value,
+      binding.snapshotPath,
+    );
     if (displayFailure !== null) return err(displayFailure);
     const requirements = await this.#captureSignature(
       binding,
@@ -642,7 +696,10 @@ class NativeMacOSClient implements AnalysisClient {
       signal,
     );
     if (!requirements.ok) return requirements;
-    const requirementsFailure = codeSignCaptureFailure(requirements.value);
+    const requirementsFailure = codeSignCaptureFailure(
+      requirements.value,
+      binding.snapshotPath,
+    );
     if (requirementsFailure !== null) return err(requirementsFailure);
     const entitlements = await this.#captureSignature(
       binding,
@@ -650,7 +707,10 @@ class NativeMacOSClient implements AnalysisClient {
       signal,
     );
     if (!entitlements.ok) return entitlements;
-    const entitlementsFailure = codeSignCaptureFailure(entitlements.value);
+    const entitlementsFailure = codeSignCaptureFailure(
+      entitlements.value,
+      binding.snapshotPath,
+    );
     if (entitlementsFailure !== null) return err(entitlementsFailure);
     // codesign echoes the resolved executable path in its diagnostics.
     const parsed = parseCodeSignature(display.value.stderr, unsigned, [
@@ -670,8 +730,8 @@ class NativeMacOSClient implements AnalysisClient {
     ];
     const mixedSigning =
       !unsigned &&
-      (isNonzeroUnsignedObservation(requirements.value) ||
-        isNonzeroUnsignedObservation(entitlements.value));
+      (isNonzeroUnsignedObservation(requirements.value, binding.snapshotPath) ||
+        isNonzeroUnsignedObservation(entitlements.value, binding.snapshotPath));
     // Without -a, codesign describes one slice of a universal file, so every
     // slice of a universal file is queried: an unsigned slice stays hidden
     // behind an identity requirement, a slice signed with another identifier,
@@ -799,10 +859,9 @@ class NativeMacOSClient implements AnalysisClient {
       if (!slice.ok) return slice;
       provenance.push(invocation(slice.value, binding.snapshotPath));
       if (slice.value.exitCode !== 0) {
-        // codesign prefixes its diagnostic with the echoed snapshot path, so
-        // a file name that happens to say "not signed at all" must not pass
-        // for the verdict.
-        if (isNonzeroUnsignedObservation(slice.value, executablePaths))
+        // The exact framed diagnostic is the only accepted verdict, so a
+        // file name that happens to say "not signed at all" cannot pass.
+        if (isNonzeroUnsignedObservation(slice.value, binding.snapshotPath))
           unsigned.push(architecture);
         else unclassified.push(architecture);
         continue;
@@ -1010,10 +1069,13 @@ class NativeMacOSClient implements AnalysisClient {
     try {
       return await this.#plistResources.run(async () => {
         try {
-          const plist = await resolveNativePlistSelection(
-            this.target,
-            requested,
-          );
+          const plist =
+            this.bundleResourceRoot === undefined
+              ? await resolveNativePlistSelection(this.target, requested)
+              : resolveBundleResourcePlistSelection(
+                  this.bundleResourceRoot,
+                  requested,
+                );
           if (!plist.ok) return plist;
           const fileInput = {
             selection: plist.value,
@@ -1102,6 +1164,17 @@ class NativeMacOSClient implements AnalysisClient {
             value: parsed.value.value,
             bundle: parsed.value.bundle,
             source_path: plist.value.path,
+            ...(this.bundleResourceRoot === undefined
+              ? {}
+              : {
+                  resource_root: {
+                    caller_path: this.bundleResourceRoot.callerPath,
+                    canonical_path: this.bundleResourceRoot.canonicalPath,
+                    info_plist_path: this.bundleResourceRoot.infoPlistPath,
+                    layout: this.bundleResourceRoot.layout,
+                    executable_sha256: this.bundleResourceRoot.executableSha256,
+                  },
+                }),
             provenance,
             limitations: parsed.value.limitations,
           });
@@ -1134,9 +1207,10 @@ class NativeMacOSClient implements AnalysisClient {
     return inspectNativeMacho({
       target: this.target,
       ...(signal === undefined ? {} : { signal }),
-      run: (tool, arguments_, commandSignal) =>
+      run: (tool, arguments_, commandSignal, acceptNonZeroIf) =>
         this.#run("inspect_macho", tool, arguments_, {
           signal: commandSignal,
+          ...(acceptNonZeroIf === undefined ? {} : { acceptNonZeroIf }),
         }),
       invocation: (capture) => invocation(capture, this.target.path),
     });
@@ -1149,6 +1223,9 @@ class NativeMacOSClient implements AnalysisClient {
     options: {
       readonly signal?: AbortSignal | undefined;
       readonly acceptNonZero?: boolean;
+      readonly acceptNonZeroIf?:
+        | ((capture: NativeCommandCapture) => boolean)
+        | undefined;
     } = {},
   ): Promise<Result<NativeCommandCapture, AnalysisError>> {
     if (this.#closed)
@@ -1161,7 +1238,8 @@ class NativeMacOSClient implements AnalysisClient {
       );
     const command = this.runner.run(tool, arguments_, {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
-      acceptNonZero: options.acceptNonZero ?? false,
+      acceptNonZero:
+        options.acceptNonZero ?? options.acceptNonZeroIf !== undefined,
     });
     this.#pendingCommands.add(command);
     let captured: Awaited<typeof command>;
@@ -1170,15 +1248,48 @@ class NativeMacOSClient implements AnalysisClient {
     } finally {
       this.#pendingCommands.delete(command);
     }
-    if (captured.ok) return captured;
+    if (captured.ok) {
+      const hasFailedExit =
+        captured.value.exitCode !== 0 || captured.value.signal !== null;
+      if (
+        hasFailedExit &&
+        options.acceptNonZeroIf !== undefined &&
+        !options.acceptNonZeroIf(captured.value)
+      )
+        return err(
+          translateCommandFailure(
+            operation,
+            new NativeCommandFailure(
+              tool,
+              captured.value.signal !== null ||
+                (captured.value.exitCode !== null &&
+                  captured.value.exitCode !== 0)
+                ? "nonzero-exit"
+                : "io",
+              captured.value.exitCode,
+              undefined,
+              {
+                stdout: captured.value.stdout,
+                stderr: captured.value.stderr,
+                stdoutBytes: captured.value.stdoutBytes,
+                stderrBytes: captured.value.stderrBytes,
+                exitCode: captured.value.exitCode,
+                signal: captured.value.signal,
+                truncated: false,
+              },
+            ),
+          ),
+        );
+      return captured;
+    }
     return err(translateCommandFailure(operation, captured.error));
   }
 }
 
 const nativeCommandCleanupFailure = (
   failures: readonly NativeCommandCleanupFailure[],
-): ProviderCleanupError =>
-  new ProviderCleanupError(
+): ProviderCleanupError => {
+  const failure = new ProviderCleanupError(
     IDENTITY.id,
     [...new Set(failures.flatMap(({ resources }) => resources))],
     {
@@ -1189,6 +1300,18 @@ const nativeCommandCleanupFailure = (
       })),
     },
   );
+  if (
+    failures.length === 0 ||
+    failures.some(({ marker }) => marker === undefined)
+  )
+    return failure;
+  const markers = failures.flatMap(({ marker }) =>
+    marker === undefined ? [] : [marker],
+  );
+  return markers.length === 0
+    ? failure
+    : failure.bindCleanupDependencies(markers);
+};
 
 /** Each file workflow retains its own exact resource set through client close. */
 const closeNativeFileScope = async (
@@ -1242,6 +1365,29 @@ const translateCommandFailure = (
   operation: NativeToolName,
   failure: NativeCommandFailure,
 ): AnalysisError => {
+  const cleanupOwners = [
+    ...failure.cleanupFailures,
+    ...(failure.cleanupOwner === undefined
+      ? []
+      : [
+          {
+            owner: failure.cleanupOwner,
+            marker: failure.cleanupMarker,
+            reason:
+              failure.cleanupFailure ??
+              "native command cleanup remains incomplete",
+            resources: failure.cleanupResources,
+          },
+        ]),
+  ];
+  const markers = cleanupOwners.flatMap(({ marker }) =>
+    marker === undefined ? [] : [marker],
+  );
+  const bindCleanup = (error: AnalysisError): AnalysisError =>
+    cleanupOwners.length === 0 ||
+    cleanupOwners.some(({ marker }) => marker === undefined)
+      ? error
+      : error.bindCleanupDependencies([...new Set(markers)]);
   const preparation = failure.preparationFailure;
   if (preparation !== undefined) {
     const marker = preparation.cleanupFailure;
@@ -1290,9 +1436,9 @@ const translateCommandFailure = (
               ...options,
               cause: preparation.cancellation.reason,
             });
-    return marker === undefined
-      ? error
-      : error.bindCleanupDependencies([marker]);
+    return bindCleanup(
+      marker === undefined ? error : error.bindCleanupDependencies([marker]),
+    );
   }
   const capturedOutput =
     failure.capture === null
@@ -1319,42 +1465,61 @@ const translateCommandFailure = (
   };
   if (failure.reason === "unavailable") {
     const reason = `${failure.tool} is unavailable through xcrun.`;
-    return new AnalysisCapabilityUnavailableError(
-      IDENTITY.id,
-      operation,
-      reason,
-      { ...errorOptions, userMessage: reason },
+    return bindCleanup(
+      new AnalysisCapabilityUnavailableError(IDENTITY.id, operation, reason, {
+        ...errorOptions,
+        userMessage: reason,
+      }),
     );
   }
   if (failure.reason === "cancelled")
-    return new AnalysisCancelledError(operation, errorOptions);
+    return bindCleanup(
+      new AnalysisCancelledError(operation, {
+        ...errorOptions,
+        ...(failure.cancellation === undefined
+          ? {}
+          : { cause: failure.cancellation.reason }),
+      }),
+    );
   if (failure.reason === "timeout")
-    return new AnalysisTimeoutError(
-      operation,
-      NATIVE_COMMAND_TIMEOUT_MS,
-      errorOptions,
+    return bindCleanup(
+      new AnalysisTimeoutError(
+        operation,
+        NATIVE_COMMAND_TIMEOUT_MS,
+        errorOptions,
+      ),
     );
   if (failure.reason === "output-limit")
-    return new AnalysisResourceConstraintError(
-      operation,
-      "memory",
-      `Native command output exceeded ${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)} bytes; complete output is required for analysis.`,
-      { max_output_bytes: NATIVE_COMMAND_OUTPUT_BUDGET_BYTES },
-      errorOptions,
+    return bindCleanup(
+      new AnalysisResourceConstraintError(
+        operation,
+        "memory",
+        `Native command output exceeded ${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)} bytes; complete output is required for analysis.`,
+        { max_output_bytes: NATIVE_COMMAND_OUTPUT_BUDGET_BYTES },
+        {
+          ...errorOptions,
+          ...fixedAllowanceOptions(
+            "The native command output capture allowance",
+            "capture",
+          ),
+        },
+      ),
     );
-  return new ProviderAdapterError(IDENTITY.id, operation, {
-    cause: failure,
-    ...errorOptions,
-    diagnostics: {
-      tool: failure.tool,
-      reason: failure.reason,
-      exit_code: failure.capture?.exitCode ?? failure.exitCode,
-      signal: failure.capture?.signal ?? null,
-      stdout_bytes: failure.capture?.stdoutBytes ?? 0,
-      stderr_bytes: failure.capture?.stderrBytes ?? 0,
-      ...(failure.detail === null ? {} : { detail: failure.detail }),
-    },
-  });
+  return bindCleanup(
+    new ProviderAdapterError(IDENTITY.id, operation, {
+      cause: failure,
+      ...errorOptions,
+      diagnostics: {
+        tool: failure.tool,
+        reason: failure.reason,
+        exit_code: failure.capture?.exitCode ?? failure.exitCode,
+        signal: failure.capture?.signal ?? null,
+        stdout_bytes: failure.capture?.stdoutBytes ?? 0,
+        stderr_bytes: failure.capture?.stderrBytes ?? 0,
+        ...(failure.detail === null ? {} : { detail: failure.detail }),
+      },
+    }),
+  );
 };
 
 const translateCodeSignExitFailure = (
@@ -1372,22 +1537,27 @@ const translateCodeSignExitFailure = (
     ),
   );
 
-const commandOutput = (capture: NativeCommandCapture): string =>
-  `${capture.stdout}\n${capture.stderr}`;
-
 /**
- * A signed artifact exits zero; its diagnostics can still contain this text
- * through the echoed path or identifier.
+ * Accept only codesign's exact unsigned diagnostic for the bound snapshot.
+ * The operand is framed byte-for-byte so caller-controlled path text cannot
+ * supply the phrase that determines signature state.
  */
 const isNonzeroUnsignedObservation = (
   capture: NativeCommandCapture,
-  echoedPaths: readonly string[] = [],
+  snapshotPath: string,
 ): boolean => {
-  if (capture.exitCode === null || capture.exitCode === 0) return false;
-  let output = commandOutput(capture);
-  for (const path of echoedPaths)
-    if (path.length > 0) output = output.split(path).join("");
-  return /not signed at all|code object is not signed/iu.test(output);
+  if (
+    capture.exitCode === null ||
+    capture.exitCode === 0 ||
+    capture.signal !== null ||
+    capture.arguments.at(-1) !== snapshotPath ||
+    capture.stdout !== ""
+  )
+    return false;
+  const diagnostic = `${snapshotPath}: code object is not signed at all`;
+  return [diagnostic, `${diagnostic}\n`, `${diagnostic}\r\n`].includes(
+    capture.stderr,
+  );
 };
 
 const canonicalPath = async (path: string): Promise<string[]> => {
@@ -1400,8 +1570,9 @@ const canonicalPath = async (path: string): Promise<string[]> => {
 
 const codeSignCaptureFailure = (
   capture: NativeCommandCapture,
+  snapshotPath: string,
 ): AnalysisError | null =>
-  capture.exitCode === 0 || isNonzeroUnsignedObservation(capture)
+  capture.exitCode === 0 || isNonzeroUnsignedObservation(capture, snapshotPath)
     ? null
     : translateCodeSignExitFailure(capture);
 
