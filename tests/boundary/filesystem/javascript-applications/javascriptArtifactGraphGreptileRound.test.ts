@@ -55,6 +55,24 @@ const sources = [
     source:
       'const{run}={get run(){return new Socket("wss://example.test/destructured-getter")}};const Socket=globalThis.WebSocket;',
   },
+  {
+    file: "getter-key-wait.js",
+    endpoint: "wss://example.test/getter-key-wait",
+    source:
+      '(async()=>{const{[void await 0]:value}={get undefined(){return new Socket("wss://example.test/getter-key-wait")}}})();const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "async-executor.mjs",
+    endpoint: "wss://example.test/async-executor",
+    source:
+      'let release;const ready=new Promise(resolve=>{release=resolve});const pending=new Promise(async resolve=>{resolve();await ready;new Socket("wss://example.test/async-executor")});await pending;const Socket=globalThis.WebSocket;release();',
+  },
+  {
+    file: "changed-base.js",
+    endpoint: "wss://example.test/changed-base",
+    source:
+      'class Base{field=new Socket("wss://example.test/changed-base")}class Other{}class Derived extends Base{}Object.setPrototypeOf(Derived,Other);new Derived();const Socket=globalThis.WebSocket;',
+  },
 ] as const;
 
 it("retains reviewed callback and descriptor endpoints with source provenance", async () => {

@@ -153,6 +153,7 @@ const webSocketFreshMethodSelection = (
   | t.MemberExpression
   | t.OptionalMemberExpression
   | t.ObjectExpression
+  | t.ObjectProperty
   | undefined => {
   const parent = state.parentsByNode.get(value);
   const property =
@@ -219,7 +220,10 @@ const webSocketFreshMethodSelection = (
         t.isObjectProperty(first) &&
         semanticStaticPropertyKey(first.key, first.computed) === key
       )
-        return literal;
+        // Getter entry follows the selected pattern key. Returning the RHS
+        // literal here would incorrectly place the getter before an awaited
+        // computed key has finished evaluating.
+        return first;
     }
   }
   const member = state.parentsByNode.get(object);
@@ -734,6 +738,7 @@ const webSocketImmediateInvocation = (
   | t.MemberExpression
   | t.OptionalMemberExpression
   | t.ObjectExpression
+  | t.ObjectProperty
   | undefined => {
   const value = webSocketOuterExpression(node, state);
   const selection = webSocketFreshMethodSelection(node, value, state);
@@ -1359,6 +1364,7 @@ const webSocketClassConstruction = (
 
   const implicitlyConstructs = (
     derived: t.Class,
+    capture: t.NewExpression,
     seen: Set<t.Class> = new Set(),
   ): boolean => {
     if (derived === declaration) return true;
@@ -1371,11 +1377,44 @@ const webSocketClassConstruction = (
     )
       return false;
     seen.add(derived);
+    state.memberMutationFactsPhase ??= "requested";
+    // Construction proof depends on the alias-aware prototype mutation index.
+    // Preserve the field conservatively while discovery requests that index;
+    // the final pass will decide from the completed effects.
+    if (state.memberMutationFactsPhase !== "indexed") return false;
+    const bindings = new Set<
+      NonNullable<ReturnType<typeof resolveSemanticBindingState>>
+    >();
+    if (derived.id != null) {
+      const binding = resolveSemanticBindingState(
+        state,
+        derived.id,
+        derived.id.name,
+      );
+      if (binding !== undefined) bindings.add(binding);
+    }
+    for (const { read } of semanticExactValueIdentity(derived, state)
+      ?.aliases ?? []) {
+      const binding = resolveSemanticBindingState(state, read, read.name);
+      if (binding !== undefined) bindings.add(binding);
+    }
+    const prototypeEffects = [...bindings].flatMap((binding) => [
+      ...binding.memberWrites,
+      ...binding.escapedPaths,
+    ]);
+    if (
+      prototypeEffects.some(
+        ({ path, node }) =>
+          semanticPrototypeLookupMayChange(path, "__proto__") &&
+          semanticEffectTiming(capture, node, state) !== "after",
+      )
+    )
+      return false;
     const bases = semanticClassCandidates(derived.superClass, state);
     return (
       bases.length === 1 &&
       bases[0] !== undefined &&
-      implicitlyConstructs(bases[0], seen)
+      implicitlyConstructs(bases[0], capture, seen)
     );
   };
   const constructions = new Set<t.NewExpression>();
@@ -1383,14 +1422,14 @@ const webSocketClassConstruction = (
     if (
       t.isClass(activation) &&
       t.isNewExpression(call) &&
-      implicitlyConstructs(activation)
+      implicitlyConstructs(activation, call)
     )
       constructions.add(call);
   for (const call of state.callSites) {
     if (!t.isNewExpression(call)) continue;
     for (const candidate of semanticClassCandidates(call.callee, state))
       if (
-        implicitlyConstructs(candidate) &&
+        implicitlyConstructs(candidate, call) &&
         webSocketImmediateInvocation(candidate, state) === call
       )
         constructions.add(call);
@@ -2285,6 +2324,14 @@ const webSocketExecutionContextsForCalls = (
           ? webSocketClassConstruction(parent, state, selectedCalls)
           : (selectedCalls.get(parent) ??
             webSocketImmediateInvocation(parent, state));
+      const nativePromiseExecutor =
+        t.isFunction(parent) && parent.async
+          ? webSocketNativePromiseExecutor(
+              parent,
+              webSocketOuterExpression(parent, state),
+              state,
+            )
+          : undefined;
       contexts.push({ owner: parent, point });
       const generatorBody =
         current === parent.body &&
@@ -2393,7 +2440,12 @@ const webSocketExecutionContextsForCalls = (
       // Direct frames are an earlier invocation bound for alias initialization.
       // They do not consult the waiting index that is currently being built.
       if (suspendedOwner === parent && !directOnly)
-        return [...contexts, ...webSocketWaitingContexts(invocation, state)];
+        // A native Promise constructor enters its executor synchronously but
+        // does not adopt an async executor's returned promise. Its own waits
+        // therefore cannot resume the executor after an await.
+        return nativePromiseExecutor === invocation
+          ? contexts
+          : [...contexts, ...webSocketWaitingContexts(invocation, state)];
       point = invocation;
       // A returned callable executes outside its producer's completed activation.
       if (

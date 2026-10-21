@@ -8492,6 +8492,28 @@ describe("web bundle invocation and descriptor review follow-ups", () => {
 
   it.each([
     [
+      "a computed destructuring key wait before getter entry",
+      '(async()=>{const{[void await 0]:value}={get undefined(){return new Socket("wss://example.test/getter-key-wait")}}})();const Socket=globalThis.WebSocket;',
+      "wss://example.test/getter-key-wait",
+    ],
+    [
+      "an async Promise executor result independent of the outer promise",
+      'let release;const ready=new Promise(resolve=>{release=resolve});const pending=new Promise(async resolve=>{resolve();await ready;new Socket("wss://example.test/async-executor")});await pending;const Socket=globalThis.WebSocket;release();',
+      "wss://example.test/async-executor",
+    ],
+    [
+      "an implicit subclass whose constructor prototype changed",
+      'class Base{field=new Socket("wss://example.test/changed-base")}class Other{}class Derived extends Base{}Object.setPrototypeOf(Derived,Other);new Derived();const Socket=globalThis.WebSocket;',
+      "wss://example.test/changed-base",
+    ],
+  ] as const)("preserves %s in both consumers", (_name, source, endpoint) => {
+    expect(
+      socketEndpoints(source).map((items) => items.map((item) => item.value)),
+    ).toEqual([[endpoint], [endpoint]]);
+  });
+
+  it.each([
+    [
       "base fields reached through implicit subclass construction",
       'class Base{field=new Socket("wss://example.test/base-field")}class Derived extends Base{}new Derived();const Socket=globalThis.WebSocket;',
     ],

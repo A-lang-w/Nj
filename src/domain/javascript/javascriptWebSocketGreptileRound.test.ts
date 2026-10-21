@@ -71,6 +71,55 @@ it("orders helper selection before argument writes", () => {
 
 it.each([
   [
+    "waits for a computed destructuring key before entering its getter",
+    `
+      (async () => {
+        const { [void await 0]: value } = {
+          get undefined() {
+            return new Socket("wss://example.test/getter-key-wait");
+          }
+        };
+      })();
+      const Socket = globalThis.WebSocket;
+    `,
+    "wss://example.test/getter-key-wait",
+  ],
+  [
+    "does not make an async executor result belong to its Promise",
+    `
+      let release;
+      const ready = new Promise(resolve => { release = resolve; });
+      const pending = new Promise(async resolve => {
+        resolve();
+        await ready;
+        new Socket("wss://example.test/async-executor");
+      });
+      await pending;
+      const Socket = globalThis.WebSocket;
+      release();
+    `,
+    "wss://example.test/async-executor",
+  ],
+  [
+    "does not enter a base field after changing the derived class prototype",
+    `
+      class Base {
+        field = new Socket("wss://example.test/changed-base");
+      }
+      class Other {}
+      class Derived extends Base {}
+      Object.setPrototypeOf(Derived, Other);
+      new Derived();
+      const Socket = globalThis.WebSocket;
+    `,
+    "wss://example.test/changed-base",
+  ],
+] as const)("%s", (_name, source, endpoint) => {
+  expect(endpoints(source)).toEqual([endpoint]);
+});
+
+it.each([
+  [
     "enters base fields when an implicit subclass is constructed",
     `
       class Base { field = new Socket("wss://example.test/base-field"); }
