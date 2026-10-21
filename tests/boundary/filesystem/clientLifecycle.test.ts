@@ -48,9 +48,15 @@ describe("client configuration filesystem lifecycle", () => {
   it("detects every supported client and skips absent clients", async () => {
     const home = await createTestTempDirectory("rea-detect-");
     roots.push(home);
-    for (const client of supportedClients(home))
-      if (client.markerPath !== undefined)
-        await mkdir(client.markerPath, { recursive: true });
+    for (const client of supportedClients(home)) {
+      if (client.markerPath === undefined) continue;
+      if (client.name === "puku_cli") {
+        await mkdir(join(home, ".puku-cli"), { recursive: true });
+        await writeFile(join(home, ".puku-cli", "settings.json"), "{}\n");
+        continue;
+      }
+      await mkdir(client.markerPath, { recursive: true });
+    }
     const detected = await detectClients(home);
     expect(detected.map(({ name }) => name)).toEqual([
       "claude_code",
@@ -189,6 +195,8 @@ describe("Puku CLI filesystem detection", () => {
     );
 
     await rm(join(pukuHome, "settings.json"));
+    expect(await detectClients(home)).toEqual([]);
+
     await writeFile(join(pukuHome, "puku-cli.json"), "{}\n");
     expect(await detectClients(home)).toContainEqual(
       expect.objectContaining({

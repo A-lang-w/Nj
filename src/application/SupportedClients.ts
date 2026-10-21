@@ -365,6 +365,10 @@ const copilotDirectory = ({ home, env }: ClientPathContext): string =>
 const commandCodeDirectory = ({ home }: ClientPathContext): string =>
   join(home, ".commandcode");
 
+/** Puku CLI is detected only from its documented installation marker files. */
+const pukuCliDirectory = ({ home }: ClientPathContext): string =>
+  join(home, ".puku-cli");
+
 /**
  * OpenCode appends `OPENCODE_CONFIG_DIR` only when the value is non-empty.
  * An empty variable is the same as unset and leaves the XDG directory in place.
@@ -685,7 +689,13 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     displayName: "Puku CLI",
     configPath: ({ home }: ClientPathContext) =>
       join(home, ".puku-cli", ".mcp.json"),
-    markerPath: ({ home }: ClientPathContext) => join(home, ".puku-cli"),
+    markerPath: (context: ClientPathContext) => {
+      const directory = pukuCliDirectory(context);
+      return [
+        join(directory, "settings.json"),
+        join(directory, "puku-cli.json"),
+      ];
+    },
     skillPath: ({ home }: ClientPathContext) =>
       join(home, ".puku-cli", "skills"),
     format: "json",
