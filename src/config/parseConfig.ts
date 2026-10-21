@@ -170,6 +170,9 @@ export const parseConfig = (
       : { mcpInputSchemaProfile: env.REA_MCP_INPUT_SCHEMA_PROFILE }),
     maxOpenTargets: env.REA_MAX_OPEN_TARGETS,
     maxConcurrentAnalyses: env.REA_MAX_CONCURRENT_ANALYSES,
+    ...(env.REA_MCP_OUTPUT_SCHEMA_PROFILE === undefined
+      ? {}
+      : { mcpOutputSchemaProfile: env.REA_MCP_OUTPUT_SCHEMA_PROFILE }),
     analysisProvider: env.REA_ANALYSIS_PROVIDER,
     ...(env.REA_IDA_MCP_CONFIG === undefined
       ? {}
