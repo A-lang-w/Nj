@@ -8,6 +8,7 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import type { FirmwareRequest } from "../domain/firmware/firmwareAnalysis.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
@@ -290,9 +291,15 @@ export const inventoryFirmwareOutput = async (
       throwIfFirmwareInventoryCancelled(signal, operation);
       count++;
       if (count > maxEntries)
-        throw new AnalysisOutputError(
+        throw new AnalysisResourceConstraintError(
           operation,
+          "capacity",
           `Staging entry budget exceeded (${maxEntries})`,
+          { max_output_files: maxEntries },
+          {
+            retryable: false,
+            remediationAction: `The staging entry budget counts extracted directories and links (max_output_files=${String(maxEntries)}, supported maximum 100000). Raise max_output_files and rerun with an absent output destination; doctor does not raise it.`,
+          },
         );
       names.push(entry.name);
     }
@@ -314,9 +321,15 @@ export const inventoryFirmwareOutput = async (
       }
       if (stat.isFile()) bytes += stat.size;
       if (bytes > maxBytes)
-        throw new AnalysisOutputError(
+        throw new AnalysisResourceConstraintError(
           operation,
+          "memory",
           `Staging byte budget exceeded (${maxBytes})`,
+          { max_output_bytes: maxBytes },
+          {
+            retryable: false,
+            remediationAction: `The staging file-byte budget is checked during extraction (max_output_bytes=${String(maxBytes)}, supported maximum 536870912). Raise max_output_bytes and rerun with an absent output destination; doctor does not raise it.`,
+          },
         );
       entries.push({
         path,
