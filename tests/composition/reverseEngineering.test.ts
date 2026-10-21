@@ -636,15 +636,20 @@ it("preserves provider facts when cancellation interrupts the post-run digest", 
       });
       expect(result.error.partialObservation).toMatchObject({
         raw_result: {
-          stdout: "�",
-          stderr: "�",
           stdout_bytes: 1,
           stderr_bytes: 1,
+          truncated: false,
         },
         limitations: expect.arrayContaining([
           expect.stringContaining("cancellation interrupted the digest"),
         ]),
       });
+      expect(result.error.partialObservation).not.toHaveProperty(
+        "raw_result.stdout",
+      );
+      expect(result.error.partialObservation).not.toHaveProperty(
+        "raw_result.stderr",
+      );
       expect(result.error.partialObservation).not.toHaveProperty(
         "normalized_result.stdout",
       );

@@ -149,13 +149,22 @@ const expectCancelledResult = (result: CancellationResult): void => {
   expect(result.error.cause).toBeInstanceOf(Error);
   expect(result.error.partialObservation).toMatchObject({
     raw_result: {
-      stdout: "provider output before cancellation",
-      stderr: "",
+      stdout_bytes: 35,
+      stderr_bytes: 0,
+      exit_code: null,
+      signal: "SIGKILL",
+      truncated: false,
     },
     normalized_result: {
       completion_status: "unknown",
     },
   });
+  expect(result.error.partialObservation).not.toHaveProperty(
+    "raw_result.stdout",
+  );
+  expect(result.error.partialObservation).not.toHaveProperty(
+    "raw_result.stderr",
+  );
   expect(result.error.partialObservation).not.toHaveProperty(
     "normalized_result.stdout",
   );
