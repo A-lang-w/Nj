@@ -306,7 +306,9 @@ const registerJavaScriptApplicationCommand = (
             if (!delivery.ok) return projectAnalysisError(delivery.error);
             return runCliJavaScriptApplicationAnalysis(
               {
-                input_path: absoluteCallerPath(args.path),
+                // An empty path names no file; leave it for input validation.
+                input_path:
+                  args.path === "" ? args.path : absoluteCallerPath(args.path),
                 format: options.artifactFormat,
                 integrity_policy: options.integrityPolicy,
                 ...(options.maxSemanticNodes === undefined
