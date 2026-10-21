@@ -23,6 +23,28 @@ import {
   type ArtifactEntry,
 } from "../ArtifactReader.js";
 
+it("keeps compressed source locations unknown when stored and decoded lengths coincide", async () => {
+  const payload = Buffer.alloc(11, 0x61);
+  expect(deflateSync(payload).length).toBe(payload.length);
+  await withPyInstallerReader(
+    cArchiveExecutable({
+      layout: "2.1",
+      pythonVersion: 309,
+      members: [{ name: "data", typeCode: "x", payload, compress: true }],
+    }),
+    async (_reader, _carrier, path) => {
+      const inventory = await scanCanonicalArtifactInventory(path);
+      expect(
+        inventory.occurrences.find((row) => row.logical_path === "data"),
+      ).toMatchObject({
+        hash_status: "verified",
+        source_location: null,
+        format_metadata: { compression_flag: 1 },
+      });
+    },
+  );
+});
+
 it("bounds an admitted drive-prefixed CArchive path before diagnostic serialization", async () => {
   await withPyInstallerReader(
     cArchiveExecutable({

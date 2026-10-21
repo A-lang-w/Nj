@@ -96,11 +96,7 @@ export const projectStoredMember = (
       kind: symlink ? "symlink" : "file",
       declaredSize,
       compressedSize: entry.compressedSize,
-      byteOffset: sourceByteOffset(
-        archiveStart + entry.offset,
-        declaredSize,
-        entry.compressedSize,
-      ),
+      byteOffset: sourceByteOffset(entry, archiveStart),
       limitations,
       adapterKey: `carchive:${String(entry.index)}:${entry.name}`,
       formatMetadata: cArchiveEntryMetadata(entry, header),
@@ -122,11 +118,7 @@ export const projectPyzContainer = (
 ): PyInstallerMember => {
   const { archive } = image;
   const path = canonicalMemberPath(entry.name);
-  const byteOffset = sourceByteOffset(
-    archiveStart + entry.offset,
-    entry.uncompressedSize,
-    entry.compressedSize,
-  );
+  const byteOffset = sourceByteOffset(entry, archiveStart);
   const limitations: string[] = [];
   if (archive.kind === "opaque")
     return {
@@ -299,10 +291,10 @@ const canonicalMemberPath = (storedName: string): string =>
   storedName.replaceAll("\\", "/");
 
 const sourceByteOffset = (
-  absoluteOffset: number,
-  declaredSize: number,
-  physicalLength: number,
-): number | null => (declaredSize === physicalLength ? absoluteOffset : null);
+  entry: CArchiveEntry,
+  archiveStart: number,
+): number | null =>
+  entry.compressionFlag === 0 ? archiveStart + entry.offset : null;
 
 const pyzMemberPath = (container: string, item: PyzEntry): string => {
   if (item.typeCode === 2)

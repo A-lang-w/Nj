@@ -46,6 +46,8 @@ source-map target lookup; their parent identifies the declaring container.
 Complete authenticated inventory page sets preserve producer identities in any
 merge order, including metadata/file aliases. Malformed TOC diagnostics name the
 table index; original names remain available in the supplied artifact.
+Path failures use bounded escaped previews and report the original length;
+accepted paths and retained source names are not shortened.
 
 Request `detail: "summary"` for a compact inspection, then query retained
 Evidence with `inspect_analysis_view`. An inventory view can select
@@ -70,6 +72,10 @@ images use descriptor ranges; outer-compressed images stream to private files,
 which the reader owns through cleanup and any cleanup retry. Extraction binds
 the selected carrier to its inventoried digest and checks source identity and
 state before and after reading. It does not retain expanded module bodies.
+Opaque outer-compressed images reuse that verified private image when opened,
+instead of inflating the carrier again. Direct source spans describe stored
+CArchive bytes; decompressed content has no direct span even when its encoded
+and decoded sizes coincide. Original offsets and compression remain metadata.
 
 Only the PYZ header and marshal directory are loaded for listing. PYZ tables
 have a 16 MiB budget; CArchive tables have a 32 MiB budget. Parsed facts have a
