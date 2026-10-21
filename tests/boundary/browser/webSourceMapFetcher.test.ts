@@ -667,6 +667,59 @@ describe("web source-map fetching and validation: enforcing fetch limits and val
   });
 });
 
+describe("selected source-map fetch deadline", () => {
+  it("applies a non-default source_map_fetch_timeout_ms from the public input", async () => {
+    let calls = 0;
+    let closed = 0;
+    const server = createServer((incoming, response) => {
+      calls += 1;
+      incoming.on("close", () => {
+        closed += 1;
+      });
+      const next =
+        Number(
+          new URL(incoming.url ?? "/", "http://local").searchParams.get("n") ??
+            "0",
+        ) + 1;
+      response.writeHead(302, { location: `/map?n=${String(next)}` }).end();
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const address = server.address();
+      if (address === null || typeof address === "string")
+        throw new TypeError("Expected a TCP listener address");
+      const localOrigin = `http://127.0.0.1:${String(address.port)}`;
+      const url = `${localOrigin}/map?n=0`;
+      const result = await fetchWebSourceMaps(
+        [{ ...request, fetchUrl: url, declaredUrl: url }],
+        input({
+          source_map_fetch_timeout_ms: 150,
+          allowed_origins: [localOrigin],
+        }),
+        undefined,
+        { fetch },
+      );
+      expect(calls).toBeGreaterThan(1);
+      expect(closed).toBeGreaterThan(0);
+      expect(result.items[0]?.limitation).toContain("150");
+      expect(result.items[0]?.limitation).toContain(
+        "source_map_fetch_timeout_ms",
+      );
+    } finally {
+      server.closeAllConnections();
+      if (server.listening)
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) =>
+            error === undefined ? resolve() : reject(error),
+          );
+        });
+    }
+  }, 3_000);
+});
+
 describe("browser map decoded validation", () => {
   it("keeps decoded-index and coordinate failures local to their map", async () => {
     const maps = [

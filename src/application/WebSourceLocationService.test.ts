@@ -17,6 +17,26 @@ import type { WebSourceMapPort } from "./WebSourceLocationPorts.js";
 
 const service = (data = webSourceLocationFixture(), port = decoder) =>
   new WebSourceLocationService({ load: () => Promise.resolve(ok(data)) }, port);
+it("passes an explicit decode deadline and omits the default from Evidence", async () => {
+  const seen: Array<number | undefined> = [];
+  const port: WebSourceMapPort = {
+    trace: (input) => {
+      seen.push(input.decodeTimeoutMs);
+      return decoder.trace(input);
+    },
+  };
+  const explicit = await service(undefined, port).trace({
+    ...args,
+    decode_timeout_ms: 250,
+  });
+  if (!explicit.ok) throw explicit.error;
+  expect(explicit.value.parameters.decode_timeout_ms).toBe(250);
+  const omitted = await service(undefined, port).trace(args);
+  if (!omitted.ok) throw omitted.error;
+  expect(omitted.value.parameters).not.toHaveProperty("decode_timeout_ms");
+  expect(seen).toEqual([250, undefined]);
+});
+
 it.each([
   { ...args, manifest_path: "relative.json" },
   { ...args, script_index: -1 },

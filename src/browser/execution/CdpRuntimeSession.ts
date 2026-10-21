@@ -63,21 +63,23 @@ export class CdpRuntimeSession {
     const commandTimeoutMs = selectedCdpCommandTimeoutMs(
       input.command_timeout_ms,
     );
-    return runtimeDeadline(
+    // HTTP discovery keeps its own fixed deadline. A short command budget
+    // starts at the WebSocket handshake, not at /json/version or /json/list.
+    const discovery = await discoverCdpEndpoint(
+      input.cdp_endpoint,
       operation,
       options.signal,
-      async (signal) => {
-        const discovery = await discoverCdpEndpoint(
-          input.cdp_endpoint,
-          operation,
-          signal,
-        );
-        const { target, allowedOrigins } = authorizeCdpTarget(
-          discovery,
-          input,
-          operation,
-        );
-        const transport = await openCdpTargetSession(
+    );
+    const { target, allowedOrigins } = authorizeCdpTarget(
+      discovery,
+      input,
+      operation,
+    );
+    const transport = await runtimeDeadline(
+      operation,
+      options.signal,
+      (signal) =>
+        openCdpTargetSession(
           discovery,
           target,
           operation,
@@ -87,61 +89,64 @@ export class CdpRuntimeSession {
             commandTimeoutMs,
           },
           owner,
-        );
-        try {
-          const tree = runtimeFrameTreeSchema.parse(
-            await authorizedMainFrame({
+        ),
+      commandTimeoutMs,
+      "handshake",
+    );
+    try {
+      const tree = runtimeFrameTreeSchema.parse(
+        await runtimeDeadline(
+          operation,
+          options.signal,
+          (signal) =>
+            authorizedMainFrame({
               ...transport,
               allowedOrigins,
               signal,
               operation,
             }),
-          );
-          const frame = tree.frameTree.frame;
-          const url = sanitizeBrowserUrl(frame.url);
-          if (url.origin === null)
-            throw new BrowserObservationError(operation, "target_not_allowed");
-          return new CdpRuntimeSession(
-            transport,
-            discovery,
-            {
-              target_id: target.id,
-              initial_url: url.url,
-              origin: url.origin,
-              frame_id: frame.id,
-              loader_id: frame.loaderId ?? null,
-            },
-            allowedOrigins,
-            operation,
-            options,
-            owner,
-            commandTimeoutMs,
-          );
-        } catch (cause: unknown) {
-          try {
-            await owner.finish(transport.connection);
-          } catch (cleanupCause: unknown) {
-            if (
-              cause instanceof AnalysisError &&
-              cleanupCause instanceof AnalysisError
-            )
-              throw analysisErrorWithCleanupFailure(
-                cause,
-                cleanupCause,
-                operation,
-              );
-            throw new AggregateError(
-              [cause, cleanupCause],
-              `CDP runtime setup ${operation} failed and cleanup remains incomplete.`,
-              { cause },
-            );
-          }
-          throw cause;
-        }
-      },
-      commandTimeoutMs,
-      "handshake",
-    );
+          commandTimeoutMs,
+          "command",
+          "Page.getFrameTree",
+        ),
+      );
+      const frame = tree.frameTree.frame;
+      const url = sanitizeBrowserUrl(frame.url);
+      if (url.origin === null)
+        throw new BrowserObservationError(operation, "target_not_allowed");
+      return new CdpRuntimeSession(
+        transport,
+        discovery,
+        {
+          target_id: target.id,
+          initial_url: url.url,
+          origin: url.origin,
+          frame_id: frame.id,
+          loader_id: frame.loaderId ?? null,
+        },
+        allowedOrigins,
+        operation,
+        options,
+        owner,
+        commandTimeoutMs,
+      );
+    } catch (cause: unknown) {
+      try {
+        await owner.finish(transport.connection);
+      } catch (cleanupCause: unknown) {
+        if (
+          cause instanceof AnalysisError &&
+          cleanupCause instanceof AnalysisError
+        )
+          throw analysisErrorWithCleanupFailure(cause, cleanupCause, operation);
+        throw new AggregateError(
+          [cause, cleanupCause],
+          `CDP runtime setup ${operation} failed and cleanup remains incomplete.`,
+          { cause },
+        );
+      }
+      throw cause;
+    }
   }
 
   /** Bound each command separately from the caller-selected observation duration. */

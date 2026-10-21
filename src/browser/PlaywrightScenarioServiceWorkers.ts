@@ -3,7 +3,10 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Frame, Page } from "playwright-core";
 
-import { selectedCdpCommandTimeoutMs } from "../domain/browserDeadline.js";
+import {
+  CDP_CLEANUP_GRACE_MS,
+  selectedCdpCommandTimeoutMs,
+} from "../domain/browserDeadline.js";
 import { browserObservationEndpointSchema } from "../domain/browserObservation.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { CdpConnection } from "./CdpConnection.js";
@@ -19,7 +22,7 @@ const OPERATION = "capture_browser_scenario" as const;
 // Restoration performs several sequential CDP mutations before the transport's
 // own bounded close. A single round-trip deadline is too short for the complete
 // chain on a loaded Windows browser, while retries must still stay bounded.
-const POLICY_CLEANUP_CONFIRMATION_TIMEOUT_MS = 5_000;
+const POLICY_CLEANUP_CONFIRMATION_TIMEOUT_MS = CDP_CLEANUP_GRACE_MS;
 const scriptResponse = z.object({ identifier: z.string() });
 const restorationResponse = z.object({
   result: z.object({ value: z.literal("policy_owned").nullable() }),
@@ -103,6 +106,8 @@ export class PlaywrightScenarioServiceWorkers {
             signal,
             { commandTimeoutMs: this.commandTimeoutMs },
           ));
+        if (this.#closed)
+          connection.beginCleanupGrace(POLICY_CLEANUP_CONFIRMATION_TIMEOUT_MS);
         return await attachCdpTargetSession(
           connection,
           target,
@@ -326,6 +331,10 @@ export class PlaywrightScenarioServiceWorkers {
   close(stopLoading = false): Promise<void> {
     this.#closed = true;
     this.#stopRequested ||= stopLoading;
+    // Restoration commands keep the fixed grace even when command_timeout_ms was raised.
+    this.#session?.connection.beginCleanupGrace(
+      POLICY_CLEANUP_CONFIRMATION_TIMEOUT_MS,
+    );
     // Abort discovery/handshakes and reads, never an already-sent page mutation.
     this.#setup.abort();
     const restoration = (this.#restoration ??= this.restore());
@@ -380,6 +389,9 @@ export class PlaywrightScenarioServiceWorkers {
 
   private async restore(): Promise<void> {
     await this.#initialization?.catch(() => undefined);
+    this.#session?.connection.beginCleanupGrace(
+      POLICY_CLEANUP_CONFIRMATION_TIMEOUT_MS,
+    );
     if (this.#released) return;
     const session = this.#session;
     if (session === undefined) return;

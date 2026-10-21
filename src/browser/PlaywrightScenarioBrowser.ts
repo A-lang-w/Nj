@@ -25,6 +25,10 @@ import {
   withPlaywrightExecutionBoundary,
   PLAYWRIGHT_CLEANUP_CONFIRMATION_TIMEOUT_MS,
 } from "./PlaywrightExecutionBoundary.js";
+import {
+  scenarioCommandTimeoutMs,
+  withScenarioCommandDeadline,
+} from "./ScenarioCommandDeadline.js";
 
 const OPERATION = "capture_browser_scenario" as const;
 
@@ -373,18 +377,34 @@ const findConnectedPage = async (
   browser: Pick<Browser, "contexts">,
   targetId: string,
   signal: AbortSignal | undefined,
+  commandTimeoutMs: number,
 ): Promise<{ readonly context: BrowserContext; readonly page: Page }> => {
   for (const context of browser.contexts())
     for (const page of context.pages()) {
-      const session = await context.newCDPSession(page);
+      const session = await withScenarioCommandDeadline(
+        () => context.newCDPSession(page),
+        commandTimeoutMs,
+        "command",
+        "Target.attachToTarget",
+      );
       try {
         throwIfScenarioCancelled(signal);
-        const { targetInfo } = await session.send("Target.getTargetInfo");
+        const { targetInfo } = await withScenarioCommandDeadline(
+          () => session.send("Target.getTargetInfo"),
+          commandTimeoutMs,
+          "command",
+          "Target.getTargetInfo",
+        );
         throwIfScenarioCancelled(signal);
         if (targetInfo.targetId !== targetId) continue;
         return { context, page };
       } finally {
-        await session.detach();
+        await withScenarioCommandDeadline(
+          () => session.detach(),
+          commandTimeoutMs,
+          "command",
+          "Target.detachFromTarget",
+        );
       }
     }
   throw new BrowserObservationError(OPERATION, "target_not_found");
@@ -402,15 +422,23 @@ class AttachedScenarioEnvironmentOwner {
   private constructor(
     private readonly page: Page,
     private readonly session: CDPSession,
+    private readonly commandTimeoutMs: number,
   ) {}
 
   static async create(
     context: BrowserContext,
     page: Page,
+    commandTimeoutMs: number,
   ): Promise<AttachedScenarioEnvironmentOwner> {
     return new AttachedScenarioEnvironmentOwner(
       page,
-      await context.newCDPSession(page),
+      await withScenarioCommandDeadline(
+        () => context.newCDPSession(page),
+        commandTimeoutMs,
+        "command",
+        "Target.attachToTarget",
+      ),
+      commandTimeoutMs,
     );
   }
 
@@ -441,34 +469,58 @@ class AttachedScenarioEnvironmentOwner {
     environment: BrowserScenario["environment"],
     signal: AbortSignal | undefined,
   ): Promise<void> {
-    await this.page.emulateMedia({
-      colorScheme: environment.color_scheme,
-      reducedMotion: environment.reduced_motion,
-    });
+    await withScenarioCommandDeadline(
+      () =>
+        this.page.emulateMedia({
+          colorScheme: environment.color_scheme,
+          reducedMotion: environment.reduced_motion,
+        }),
+      this.commandTimeoutMs,
+      "command",
+      "Emulation.setEmulatedMedia",
+    );
     this.#mediaOverride = true;
     throwIfScenarioCancelled(signal);
 
     // setViewportSize also resizes the external browser window. CDP metrics
     // provide the scenario viewport without changing that caller-owned window.
-    await this.session.send("Emulation.setDeviceMetricsOverride", {
-      width: environment.viewport.width,
-      height: environment.viewport.height,
-      deviceScaleFactor: environment.viewport.device_scale_factor,
-      mobile: false,
-      dontSetVisibleSize: true,
-    });
+    await withScenarioCommandDeadline(
+      () =>
+        this.session.send("Emulation.setDeviceMetricsOverride", {
+          width: environment.viewport.width,
+          height: environment.viewport.height,
+          deviceScaleFactor: environment.viewport.device_scale_factor,
+          mobile: false,
+          dontSetVisibleSize: true,
+        }),
+      this.commandTimeoutMs,
+      "command",
+      "Emulation.setDeviceMetricsOverride",
+    );
     this.#deviceMetricsOverride = true;
     throwIfScenarioCancelled(signal);
 
-    await this.session.send("Emulation.setLocaleOverride", {
-      locale: environment.locale,
-    });
+    await withScenarioCommandDeadline(
+      () =>
+        this.session.send("Emulation.setLocaleOverride", {
+          locale: environment.locale,
+        }),
+      this.commandTimeoutMs,
+      "command",
+      "Emulation.setLocaleOverride",
+    );
     this.#localeOverride = true;
     throwIfScenarioCancelled(signal);
 
-    await this.session.send("Emulation.setTimezoneOverride", {
-      timezoneId: environment.timezone,
-    });
+    await withScenarioCommandDeadline(
+      () =>
+        this.session.send("Emulation.setTimezoneOverride", {
+          timezoneId: environment.timezone,
+        }),
+      this.commandTimeoutMs,
+      "command",
+      "Emulation.setTimezoneOverride",
+    );
     this.#timezoneOverride = true;
     throwIfScenarioCancelled(signal);
   }
@@ -577,6 +629,7 @@ type ScenarioBrowserLauncher = Pick<
 > & {
   readonly connectOverCDP: (
     endpoint: string,
+    options?: { readonly timeout?: number },
   ) => Promise<Pick<Browser, "contexts" | "close" | "isConnected" | "version">>;
 };
 
@@ -591,6 +644,7 @@ const openAttachedScenarioBrowser = async (
   launcher: ScenarioBrowserLauncher,
   signal: AbortSignal | undefined,
   retainCleanup: ((lease: AnalysisCleanupLease) => void) | undefined,
+  commandTimeoutMs: number,
 ): Promise<OpenedScenarioBrowser> => {
   const lease = await acquireAttachedScenario(browserRequest, signal);
   let cleanupOwner: PlaywrightScenarioBrowserCleanupOwner | undefined;
@@ -600,7 +654,14 @@ const openAttachedScenarioBrowser = async (
     if (priorOwner !== undefined) await priorOwner.close();
     throwIfScenarioCancelled(signal);
 
-    const browser = await launcher.connectOverCDP(browserRequest.cdp_endpoint);
+    const browser = await withScenarioCommandDeadline(
+      () =>
+        launcher.connectOverCDP(browserRequest.cdp_endpoint, {
+          timeout: commandTimeoutMs,
+        }),
+      commandTimeoutMs,
+      "handshake",
+    );
     const cleanup: PlaywrightScenarioBrowserCleanupOwner =
       new PlaywrightScenarioBrowserCleanupOwner({
         closeBrowser: async (disconnectAtBoundary) => {
@@ -651,14 +712,24 @@ const openAttachedScenarioBrowser = async (
     lease.admission.cleanupOwner = cleanup;
     throwIfScenarioCancelled(signal);
     const target = await withPlaywrightExecutionBoundary(
-      () => findConnectedPage(browser, browserRequest.target_id, signal),
+      () =>
+        findConnectedPage(
+          browser,
+          browserRequest.target_id,
+          signal,
+          commandTimeoutMs,
+        ),
       undefined,
       signal,
     );
     throwIfScenarioCancelled(signal);
     const configuredEnvironment = await withPlaywrightExecutionBoundary(
       () =>
-        AttachedScenarioEnvironmentOwner.create(target.context, target.page),
+        AttachedScenarioEnvironmentOwner.create(
+          target.context,
+          target.page,
+          commandTimeoutMs,
+        ),
       undefined,
       signal,
     );
@@ -703,6 +774,7 @@ export const openPlaywrightScenarioBrowser = async (
   // Load Playwright only when a scenario opens; MCP startup stays off its module graph.
   const launcher =
     options.launcher ?? (await import("playwright-core")).chromium;
+  const commandTimeoutMs = scenarioCommandTimeoutMs(scenario);
   if (scenario.browser.mode === "connect")
     return openAttachedScenarioBrowser(
       scenario.browser,
@@ -710,39 +782,47 @@ export const openPlaywrightScenarioBrowser = async (
       launcher,
       options.signal,
       options.retainCleanup,
+      commandTimeoutMs,
     );
 
   const profilePath = await mkdtemp(join(tmpdir(), "rea-browser-scenario-"));
   let context: BrowserContext;
+  const executablePath = scenario.browser.executable_path;
+  const headless = scenario.browser.headless;
   try {
     await chmod(profilePath, 0o700);
-    context = await launcher.launchPersistentContext(profilePath, {
-      executablePath: scenario.browser.executable_path,
-      headless: scenario.browser.headless,
-      acceptDownloads: false,
-      viewport: {
-        width: scenario.environment.viewport.width,
-        height: scenario.environment.viewport.height,
-      },
-      deviceScaleFactor: scenario.environment.viewport.device_scale_factor,
-      locale: scenario.environment.locale,
-      timezoneId: scenario.environment.timezone,
-      colorScheme: scenario.environment.color_scheme,
-      reducedMotion: scenario.environment.reduced_motion,
-      serviceWorkers: scenario.environment.service_workers,
-      env: allowedBrowserEnvironment(environment),
-      handleSIGHUP: false,
-      handleSIGINT: false,
-      handleSIGTERM: false,
-      timeout: 0,
-      // Termux's Chromium cannot create its renderer process through Android's
-      // executable boundary. Single-process mode keeps the browser and page in
-      // the Termux-launched process so scenario navigation remains available.
-      args:
-        process.platform === "android"
-          ? ["--no-sandbox", "--single-process"]
-          : [],
-    });
+    context = await withScenarioCommandDeadline(
+      () =>
+        launcher.launchPersistentContext(profilePath, {
+          executablePath,
+          headless,
+          acceptDownloads: false,
+          viewport: {
+            width: scenario.environment.viewport.width,
+            height: scenario.environment.viewport.height,
+          },
+          deviceScaleFactor: scenario.environment.viewport.device_scale_factor,
+          locale: scenario.environment.locale,
+          timezoneId: scenario.environment.timezone,
+          colorScheme: scenario.environment.color_scheme,
+          reducedMotion: scenario.environment.reduced_motion,
+          serviceWorkers: scenario.environment.service_workers,
+          env: allowedBrowserEnvironment(environment),
+          handleSIGHUP: false,
+          handleSIGINT: false,
+          handleSIGTERM: false,
+          timeout: commandTimeoutMs,
+          // Termux's Chromium cannot create its renderer process through Android's
+          // executable boundary. Single-process mode keeps the browser and page in
+          // the Termux-launched process so scenario navigation remains available.
+          args:
+            process.platform === "android"
+              ? ["--no-sandbox", "--single-process"]
+              : [],
+        }),
+      commandTimeoutMs,
+      "handshake",
+    );
   } catch (cause: unknown) {
     const cleanup = new AnalysisCleanupLease(
       () => rm(profilePath, { recursive: true, force: true, maxRetries: 3 }),

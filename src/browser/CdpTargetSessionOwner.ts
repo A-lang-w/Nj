@@ -70,6 +70,7 @@ export class CdpTargetSessionOwner {
     limits?: {
       readonly maxPayloadBytes?: number;
       readonly commandTimeoutMs?: number;
+      readonly handshakeTimeoutMs?: number;
     },
   ): Promise<CdpConnection> {
     if (this.#closing)

@@ -146,8 +146,15 @@ const respondToHttpRequest = (
   response.setHeader("content-type", "application/json");
   const portNumber = port();
   if (serveSourceMap(request, response, options)) return;
+  const finish = (body: string): void => {
+    if (options.discoveryDelayMs === undefined) {
+      response.end(body);
+      return;
+    }
+    setTimeout(() => response.end(body), options.discoveryDelayMs);
+  };
   if (request.url === "/json/version") {
-    response.end(
+    finish(
       options.oversizedDiscovery === true
         ? " ".repeat(65 * 1_024)
         : options.malformedDiscovery === true
@@ -169,7 +176,7 @@ const respondToHttpRequest = (
     return;
   }
   if (request.url === "/json/list") {
-    response.end(JSON.stringify(targets(portNumber, options)));
+    finish(JSON.stringify(targets(portNumber, options)));
     return;
   }
   response.statusCode = 404;

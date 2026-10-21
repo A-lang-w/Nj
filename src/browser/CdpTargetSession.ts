@@ -1,3 +1,7 @@
+import {
+  CDP_DISCOVERY_RESPONSE_TIMEOUT_MS,
+  DEFAULT_CDP_COMMAND_TIMEOUT_MS,
+} from "../domain/browserDeadline.js";
 import type { BrowserObservationEndpoint } from "../domain/browserObservation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -50,35 +54,46 @@ export const openCdpEndpoint = async (
       discovery: await discoverCdpEndpoint(endpoint.url, operation, signal),
       connection: undefined,
     };
+  const discoveryTimeoutMs = timeoutMs ?? CDP_DISCOVERY_RESPONSE_TIMEOUT_MS;
+  // The browser-socket handshake and discovery commands stay on the discovery
+  // deadline. The selected command deadline starts only after discovery returns.
+  const discoveryLimits = {
+    commandTimeoutMs: discoveryTimeoutMs,
+    // Stay past the discovery abort so a stalled open is labeled as discovery,
+    // not as a command_timeout_ms handshake.
+    handshakeTimeoutMs: discoveryTimeoutMs + 1_000,
+  };
   return await withCdpDiscoveryDeadline(
     operation,
     signal,
     async (deadlineSignal) => {
-      const commandLimits =
-        commandTimeoutMs === undefined ? undefined : { commandTimeoutMs };
       const connection =
         owner === undefined
           ? await CdpConnection.connect(
               endpoint.url,
               operation,
               deadlineSignal,
-              commandLimits,
+              discoveryLimits,
             )
           : await owner.connect(
               endpoint.url,
               operation,
               { signal: deadlineSignal },
               "browser-endpoint",
-              commandLimits,
+              discoveryLimits,
             );
       try {
+        const discovery = await discoverCdpBrowserSocket(
+          connection,
+          endpoint.url,
+          operation,
+          deadlineSignal,
+        );
+        connection.selectCommandTimeout(
+          commandTimeoutMs ?? DEFAULT_CDP_COMMAND_TIMEOUT_MS,
+        );
         return {
-          discovery: await discoverCdpBrowserSocket(
-            connection,
-            endpoint.url,
-            operation,
-            deadlineSignal,
-          ),
+          discovery,
           connection,
         };
       } catch (cause: unknown) {
@@ -94,7 +109,7 @@ export const openCdpEndpoint = async (
         throw cause;
       }
     },
-    timeoutMs,
+    discoveryTimeoutMs,
   );
 };
 

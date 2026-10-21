@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import {
   CDP_DISCOVERY_RESPONSE_TIMEOUT_MS,
+  cdpCommandTimeoutUnrelatedControl,
   noRuntimeOverrideSentence,
 } from "../domain/browserDeadline.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
@@ -51,7 +52,7 @@ const discoveryTimeout = (
       : `CDP browser-socket discovery exceeded its ${String(timeoutMs)} ms deadline.`;
   const fixed = noRuntimeOverrideSentence(
     `The ${String(CDP_DISCOVERY_RESPONSE_LIMITS.bytes)}-byte discovery document budget and the ${String(timeoutMs)} ms discovery deadline stay fixed.`,
-    "command_timeout_ms",
+    cdpCommandTimeoutUnrelatedControl(operation),
   );
   return new BrowserObservationError(operation, "timeout", {
     detail: `${subject} ${fixed}`,
@@ -506,7 +507,7 @@ export const readCdpJson = async (
               new BrowserObservationError(operation, "payload_limit", {
                 detail: noRuntimeOverrideSentence(
                   `CDP discovery response exceeds its ${String(limits.bytes)}-byte limit.`,
-                  "command_timeout_ms",
+                  cdpCommandTimeoutUnrelatedControl(operation),
                 ),
               }),
             );

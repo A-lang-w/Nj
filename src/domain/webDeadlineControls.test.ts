@@ -89,5 +89,14 @@ describe("web deadline controls", () => {
     ).toContain("command_timeout_ms");
     expect(cdpCleanupGraceExpired()).toContain("5000 ms");
     expect(cdpCleanupGraceExpired()).toContain("no runtime override");
+    const inspector = cdpCommandDeadlineRecovery(
+      20_000,
+      "handshake",
+      undefined,
+      false,
+    );
+    expect(inspector.userMessage).not.toContain("command_timeout_ms");
+    expect(inspector.remediationAction).not.toContain("--command-timeout-ms");
+    expect(inspector.remediationAction).toContain("no runtime override");
   });
 });

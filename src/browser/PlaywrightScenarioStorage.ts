@@ -8,6 +8,10 @@ import type { BrowserScenario } from "../domain/browserScenario.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
 import { withPlaywrightExecutionBoundary } from "./PlaywrightExecutionBoundary.js";
+import {
+  scenarioCommandTimeoutMs,
+  withScenarioCommandDeadline,
+} from "./ScenarioCommandDeadline.js";
 
 const breakpointResponse = z.object({ breakpointId: z.string() });
 const scriptIdentifierResponse = z.object({ identifier: z.string() });
@@ -87,6 +91,7 @@ interface StorageTarget {
   readonly send: (
     method: string,
     params?: Record<string, unknown>,
+    timeoutMs?: number,
   ) => Promise<unknown>;
   readonly contexts: Map<
     number,
@@ -138,6 +143,7 @@ export class PlaywrightScenarioStorage {
   private constructor(
     private readonly cdp: CDPSession,
     private readonly signal: AbortSignal | undefined,
+    private readonly commandTimeoutMs: number,
   ) {}
 
   static async create(
@@ -154,11 +160,18 @@ export class PlaywrightScenarioStorage {
     )
       return undefined;
 
+    const commandTimeoutMs = scenarioCommandTimeoutMs(scenario);
     const connection = context.newCDPSession(page);
     let cdp: CDPSession;
     try {
       cdp = await withPlaywrightExecutionBoundary(
-        () => connection,
+        () =>
+          withScenarioCommandDeadline(
+            () => connection,
+            commandTimeoutMs,
+            "command",
+            "Target.attachToTarget",
+          ),
         undefined,
         signal,
       );
@@ -188,7 +201,7 @@ export class PlaywrightScenarioStorage {
       }
       throw cause;
     }
-    const owner = new PlaywrightScenarioStorage(cdp, signal);
+    const owner = new PlaywrightScenarioStorage(cdp, signal, commandTimeoutMs);
     owner.addSeeds(scenario.storage.local_storage, "local", secrets);
     owner.addSeeds(scenario.storage.session_storage, "session", secrets);
     return owner;
@@ -209,14 +222,25 @@ export class PlaywrightScenarioStorage {
     context: BrowserContext,
   ): Promise<void> {
     const rootInfo = targetInfoResponse.parse(
-      await this.cdp.send("Target.getTargetInfo"),
+      await withScenarioCommandDeadline(
+        () => this.cdp.send("Target.getTargetInfo"),
+        this.commandTimeoutMs,
+        "command",
+        "Target.getTargetInfo",
+      ),
     );
     if (this.#closed) return;
     const root = this.createTarget(
       undefined,
       rootInfo.targetInfo.targetId,
-      (method, params) =>
-        this.cdp.send(method as Parameters<CDPSession["send"]>[0], params),
+      (method, params, timeoutMs = this.commandTimeoutMs) =>
+        withScenarioCommandDeadline(
+          () =>
+            this.cdp.send(method as Parameters<CDPSession["send"]>[0], params),
+          timeoutMs,
+          "command",
+          method,
+        ),
     );
     this.#targets.set("", root);
     this.listen(page, context);
@@ -633,7 +657,7 @@ export class PlaywrightScenarioStorage {
         const root = this.#targets.get("");
         if (root !== undefined) {
           await withPlaywrightExecutionBoundary(
-            () => root.send("Page.stopLoading"),
+            () => this.cdp.send("Page.stopLoading"),
             STORAGE_CLEANUP_TIMEOUT_MS,
           );
           this.#loadingStopped = true;

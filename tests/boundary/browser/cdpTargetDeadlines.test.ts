@@ -4,8 +4,15 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { CdpConnection } from "../../../src/browser/CdpConnection.js";
+import { openCdpEndpoint } from "../../../src/browser/CdpTargetSession.js";
+import { CdpWebRuntimeProvider } from "../../../src/browser/execution/CdpWebRuntimeProvider.js";
+import { BrowserObservationError } from "../../../src/domain/browserObservationError.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
+import {
+  browserObservationEndpointSchema,
+  inspectWebPageInputSchema,
+} from "../../../src/domain/browserObservation.js";
+import { observeWebExecutionInputSchema } from "../../../src/domain/webExecution.js";
 import { WEB_RUNTIME_LIMITS } from "../../../src/domain/webRuntime.js";
 import { V8InspectorProvider } from "../../../src/inspector/V8InspectorProvider.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
@@ -244,6 +251,12 @@ it.each(["Runtime.enable", "Debugger.enable"])(
           events_observed: hangOnMethod === "Debugger.enable" ? 1 : 0,
         },
       });
+      expect(result.error.userMessage ?? "").not.toContain(
+        "command_timeout_ms",
+      );
+      expect(result.error.userMessage ?? "").not.toContain(
+        "--command-timeout-ms",
+      );
     } finally {
       await inspector.close();
     }
@@ -272,6 +285,186 @@ it("keeps the chosen observation window independent of command deadlines", async
     const result = await pending;
     expect(result.ok).toBe(true);
   } finally {
+    await browser.close();
+  }
+});
+
+it("keeps a short command deadline off HTTP discovery and names Page.getFrameTree", async () => {
+  const browser = await startFakeCdpBrowser({
+    hangOnMethod: "Page.getFrameTree",
+    discoveryDelayMs: 180,
+  });
+  const provider = new CdpWebRuntimeProvider();
+  const started = performance.now();
+  try {
+    const pending = provider.observeExecution(
+      observeWebExecutionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        target_id: "allowed-page",
+        observation_ms: 1,
+        command_timeout_ms: 40,
+      }),
+      { signal: AbortSignal.timeout(10_000) },
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    expect(activeTimers(40)).toHaveLength(0);
+    const result = await pending;
+    expect(performance.now() - started).toBeGreaterThan(300);
+    if (result.ok) throw new Error("Expected a command deadline");
+    const text = `${result.error.userMessage ?? ""}\n${result.error.message}`;
+    expect(text).toContain("40 ms command_timeout_ms");
+    expect(text).toContain("Page.getFrameTree");
+    expect(text).not.toContain("WebSocket handshake");
+    expect(browser.httpRequests.map(({ url }) => url)).toEqual(
+      expect.arrayContaining(["/json/version", "/json/list"]),
+    );
+    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  } finally {
+    await provider.close();
+    await browser.close();
+  }
+});
+
+it("reports browser-socket discovery on its own deadline", async () => {
+  const sockets = new Set<Socket>();
+  const server = createServer((socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+    socket.resume();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (address === null || typeof address === "string")
+    throw new Error("Expected a TCP address");
+  const started = performance.now();
+  try {
+    const failure = await openCdpEndpoint(
+      browserObservationEndpointSchema.parse(
+        `ws://127.0.0.1:${String(address.port)}/devtools/browser/stalled`,
+      ),
+      "list_browser_targets",
+      undefined,
+      80,
+      undefined,
+      30,
+    ).catch((cause: unknown) => cause);
+    const elapsed = performance.now() - started;
+    expect(elapsed).toBeGreaterThan(60);
+    expect(elapsed).toBeLessThan(1_500);
+    expect(failure).toBeInstanceOf(BrowserObservationError);
+    if (!(failure instanceof BrowserObservationError))
+      throw new Error("Expected a browser-socket discovery failure");
+    const text = `${failure.userMessage ?? ""}\n${failure.message}`;
+    expect(text).toContain("80");
+    expect(text).not.toContain("30 ms");
+    expect(text).toContain("browser-socket discovery");
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+it("applies a non-default handshake deadline and releases its socket", async () => {
+  const sockets = new Set<Socket>();
+  const server = createServer((socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+    socket.resume();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (address === null || typeof address === "string")
+    throw new Error("Expected a TCP address");
+  try {
+    let captured: unknown;
+    const pending = CdpConnection.connect(
+      `ws://127.0.0.1:${String(address.port)}/target`,
+      "inspect_web_page",
+      AbortSignal.timeout(10_000),
+      { commandTimeoutMs: 1_500 },
+    ).then(
+      () => {
+        throw new Error("Expected a handshake deadline");
+      },
+      (cause: unknown) => {
+        captured = cause;
+        throw cause;
+      },
+    );
+    const rejection = expect(pending).rejects.toMatchObject({
+      reason: "timeout",
+    });
+    await vi.waitFor(() => expect(sockets.size).toBe(1), { timeout: 5_000 });
+    expireTimer(1_500);
+    await rejection;
+    expect(captured).toBeInstanceOf(BrowserObservationError);
+    if (!(captured instanceof BrowserObservationError))
+      throw new Error("Expected a handshake deadline");
+    expect(captured.userMessage).toContain("1500 ms command_timeout_ms");
+    await vi.waitFor(() => expect(sockets.size).toBe(0));
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+it("applies a non-default command deadline after HTTP discovery", async () => {
+  const browser = await startFakeCdpBrowser({ hangOnMethod: "Page.enable" });
+  try {
+    const pending = new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        target_id: "allowed-page",
+        observation_ms: 0,
+        command_timeout_ms: 1_500,
+      }),
+      { signal: AbortSignal.timeout(10_000) },
+    );
+    await vi.waitFor(
+      () =>
+        expect(browser.commands.map(({ method }) => method)).toContain(
+          "Page.enable",
+        ),
+      { timeout: 5_000 },
+    );
+    expireTimer(1_500);
+    const result = await pending;
+    if (result.ok) throw new Error("Expected a selected command timeout");
+    expect(result.error.userMessage ?? "").toContain(
+      "1500 ms command_timeout_ms",
+    );
+    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  } finally {
+    await browser.close();
+  }
+});
+
+it("reschedules a raised command deadline onto the fixed cleanup grace", async () => {
+  const browser = await startFakeCdpBrowser({ hangOnMethod: "Runtime.enable" });
+  const connection = await CdpConnection.connect(
+    browser.browserWebSocketUrl,
+    "inspect_web_page",
+    undefined,
+    { commandTimeoutMs: 60_000 },
+  );
+  try {
+    const pending = connection.send("Runtime.enable");
+    await vi.waitFor(() => expect(browser.commands).toHaveLength(1), {
+      timeout: 5_000,
+    });
+    expect(activeTimers(60_000)).toHaveLength(1);
+    connection.beginCleanupGrace(5_000);
+    expect(activeTimers(60_000)).toHaveLength(0);
+    expireTimer(5_000);
+    const error = await pending.catch((cause: unknown) => cause);
+    expect(error).toMatchObject({ reason: "timeout" });
+    if (!(error instanceof BrowserObservationError))
+      throw new Error("Expected cleanup grace timeout");
+    expect(error.userMessage).toContain("5000 ms");
+    expect(error.userMessage).not.toContain("Increase command_timeout_ms");
+    expect(error.remediationAction).toContain("no runtime override");
+  } finally {
+    await connection.close();
     await browser.close();
   }
 });
