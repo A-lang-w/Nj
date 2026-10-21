@@ -14,6 +14,7 @@ import {
   type InspectWasmArtifactInput,
   wasmArtifactSchema,
   wasmArtifactMatchesSubject,
+  DEFAULT_WASM_COMMAND_TIMEOUT_MS,
 } from "../../domain/wasm/wasmArtifact.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -95,6 +96,8 @@ export class WasmArtifactService {
     if (
       !report.success ||
       report.data.artifact.path !== input.path ||
+      report.data.tool_profile.timeout_ms !==
+        (input.command_timeout_ms ?? DEFAULT_WASM_COMMAND_TIMEOUT_MS) ||
       !wasmArtifactMatchesSubject(report.data.artifact, execution.subject) ||
       JSON.stringify(report.data.glue.map((item) => item.artifact.path)) !==
         JSON.stringify(input.glue_paths) ||
