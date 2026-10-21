@@ -11,6 +11,7 @@ import {
   DELETE_NOT_FOUND,
   FIRST_BOOK,
   LIST_LINE_ROWS,
+  QUERY_ROWS,
   SECOND_BOOK,
   THIRD_BOOK,
   book,
@@ -373,6 +374,34 @@ describe("list lines", () => {
     expect(books.answer("get_books", { name: "First Book" })).toMatchObject({
       body: bookPage([FIRST_BOOK]),
       state: { source: "state", membership: "query", listed: 1 },
+    });
+  });
+});
+
+describe("list queries", () => {
+  it("filters, searches and sorts the state for values no line recorded, created books included", () => {
+    const books = servedFrom(QUERY_ROWS);
+    const created = books.answer("post_books", {
+      body: { name: "New Book", shelf: "b" },
+    }).body as Book;
+    const listed = (args: Record<string, string>) => {
+      const answer = books.answer("get_books", args);
+      return {
+        ids: (answer.body as Book[]).map((entry) => entry["id"]),
+        state: answer.state,
+      };
+    };
+    expect(listed({ shelf: "b" })).toMatchObject({
+      ids: [2, created["id"]],
+      state: { source: "state", membership: "query", listed: 2 },
+    });
+    expect(listed({ q: "NEW" }).ids).toEqual([created["id"]]);
+    expect(listed({ sort: "-id" }).ids).toEqual([created["id"], 2, 1]);
+    expect(listed({ sort: "-id", shelf: "a" }).ids).toEqual([1]);
+    // A value the flag never recorded, or a parameter the query has no role for, replays as before.
+    expect(listed({ include: "none" }).state).toMatchObject({
+      source: "recording",
+      reason: "unrecorded-request",
     });
   });
 });

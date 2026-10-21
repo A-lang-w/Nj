@@ -12,6 +12,7 @@ import {
   BOOK_WRITE_CLOCK,
   FIRST_BOOK,
   LIST_LINE_ROWS,
+  QUERY_ROWS,
   SECOND_BOOK,
   THIRD_BOOK,
   book,
@@ -537,5 +538,34 @@ describe("list lines", () => {
     expect(listOf(LIST_LINE_ROWS.slice(1))).not.toHaveProperty(
       "all_record_ordinals",
     );
+  });
+});
+
+describe("list queries", () => {
+  it("learns a filter, a search, a sort and an inert flag from the lines the whole collection does not explain", () => {
+    const state = stateOf(QUERY_ROWS);
+    expect(state.views.find((view) => view.tool === "get_books")).toMatchObject(
+      {
+        shape: "list",
+        membership: "recorded",
+        all_record_ordinals: [0],
+        query: {
+          parameters: {
+            shelf: { role: "filter", field: "shelf" },
+            q: { role: "search", fields: ["name", "slug"] },
+            sort: { role: "sort" },
+            include: { role: "inert", values: ["all"] },
+          },
+          record_ordinals: [1, 2, 3, 4],
+          totals: [],
+        },
+        checked_record_ordinals: [0, 1, 2, 3, 4],
+      },
+    );
+    // The shelf filter after the create lists the created book, which confirms it.
+    expect(planOf(state, "post_books")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [8],
+    });
   });
 });

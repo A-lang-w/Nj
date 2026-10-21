@@ -28,7 +28,7 @@ import {
   type StateToolFacts,
   type StateView,
 } from "./environmentStateRules.js";
-import { evaluateQuery, renderQueryList } from "./environmentStateListQuery.js";
+import { answerQuery, renderQueryList } from "./environmentStateListQuery.js";
 
 /** A query as replay compares a call's: decoded values by name, in any order. A query repeating a name, which no call's arguments can carry, keeps its spelling. */
 const queryKey = (query: string | undefined): string => {
@@ -420,6 +420,25 @@ const listCheck = (
   return same(answer, check.body);
 };
 
+/** The base line's and the read's listed entities by target: those the state holds, and those it no longer does. */
+const listedTargets = (
+  state: SimulatedState,
+  view: StateListView,
+  check: ListBodies,
+): { readonly targets: string[]; readonly unheld: string[] } => {
+  const targets: string[] = [];
+  const unheld: string[] = [];
+  const ids = [...check.baseItems, ...check.items].map(
+    (item) => scalarText(item[check.idField]) ?? "",
+  );
+  for (const id of new Set(ids))
+    (state.entity(view.type, check.collection, id) === undefined
+      ? unheld
+      : targets
+    ).push(entityTarget(view.type, check.collection, id));
+  return { targets, unheld };
+};
+
 /**
  * A list read on a line the query answers: the query's matches in the state, in its order and page. Only a line whose
  * parameters all sort or page, and that shows every match, covers the collection; any other covers the entities it lists.
@@ -431,40 +450,22 @@ const checkQueryList = (
   values: ReadonlyMap<string, string>,
 ): CheckOutcome | undefined => {
   const { collection } = check;
-  const result = evaluateQuery(
-    view.query!.parameters,
+  const result = answerQuery(
+    view.query!,
     values,
     state.members(view.type, collection),
   );
   if (result === undefined) return undefined;
-  const selects = [...values.keys()].some((name) => {
-    const role = view.query!.parameters[name]?.role;
-    return role === "filter" || role === "search" || role === "inert";
-  });
-  const whole = !selects && result.page.length === result.total;
-  const held = new Set(result.page.map((entity) => entity.id));
   return {
     pass: listCheck(view, check, result.page, result.total),
     targets: [
-      ...(whole ? [collectionTarget(view.type, collection)] : []),
+      ...(result.whole ? [collectionTarget(view.type, collection)] : []),
       ...result.page.map((entity) =>
         entityTarget(view.type, collection, entity.id),
       ),
     ],
     // What the base line or the read listed that the state no longer holds: the read shows whether it went.
-    unheld: [
-      ...new Set(
-        [...check.baseItems, ...check.items].map(
-          (item) => scalarText(item[check.idField]) ?? "",
-        ),
-      ),
-    ]
-      .filter(
-        (id) =>
-          !held.has(id) &&
-          state.entity(view.type, collection, id) === undefined,
-      )
-      .map((id) => entityTarget(view.type, collection, id)),
+    unheld: listedTargets(state, view, check).unheld,
   };
 };
 
@@ -504,14 +505,10 @@ const checkRecordedList = (
     const entity = state.entity(view.type, collection, idOf(item));
     return entity === undefined ? [] : [entity];
   });
-  const targets: string[] = [];
-  const unheld: string[] = [];
-  for (const id of new Set([...check.baseItems, ...check.items].map(idOf)))
-    (state.entity(view.type, collection, id) === undefined
-      ? unheld
-      : targets
-    ).push(entityTarget(view.type, collection, id));
-  return { pass: listCheck(view, check, members), targets, unheld };
+  return {
+    pass: listCheck(view, check, members),
+    ...listedTargets(state, view, check),
+  };
 };
 
 /** A list read on a checked line, compared with the answer the served environment renders on that line's base recording from the collection it names: every entity when that line lists them all. */

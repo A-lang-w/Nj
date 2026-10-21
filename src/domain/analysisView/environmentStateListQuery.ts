@@ -139,12 +139,14 @@ const sortKey = (
     );
     return found.length === 1 ? found[0] : undefined;
   };
-  const whole = field(value);
-  if (whole !== undefined) return { field: whole, descending: false };
+  if (names.includes(value)) return { field: value, descending: false };
+  // A leading `-` descends; matching ignores separators, so it is read before the name is matched loosely.
   if (value.startsWith("-")) {
     const named = field(value.slice(1));
     return named === undefined ? undefined : { field: named, descending: true };
   }
+  const whole = field(value);
+  if (whole !== undefined) return { field: whole, descending: false };
   const suffixed = /^(.+?)[\s:_-](asc|desc)$/iu.exec(value);
   const named = suffixed === null ? undefined : field(suffixed[1]!);
   return named === undefined
@@ -171,64 +173,98 @@ const ascending = (
 const integer = (value: string): number | undefined =>
   /^-?\d{1,9}$/u.test(value) ? Number(value) : undefined;
 
+/** What a call's values ask of the collection, or undefined when one has no role or cannot apply. */
+interface QueryCall {
+  readonly selections: ((entity: StateEntity) => boolean)[];
+  sort?: string;
+  direction?: string;
+  limit?: number | undefined;
+  offset: number;
+  page?: { readonly index: number; readonly first: number };
+}
+
+const readCall = (
+  parameters: Readonly<Record<string, QueryParameter>>,
+  values: ReadonlyMap<string, string>,
+): QueryCall | undefined => {
+  const call: QueryCall = { selections: [], offset: 0 };
+  for (const [name, value] of values) {
+    const parameter = parameters[name];
+    const number = integer(value);
+    if (parameter === undefined) return undefined;
+    if (parameter.role === "filter")
+      call.selections.push((entity) =>
+        holds(entity.fields[parameter.field], value),
+      );
+    else if (parameter.role === "search")
+      call.selections.push((entity) =>
+        contains(entity, parameter.fields, value),
+      );
+    else if (parameter.role === "sort") call.sort = value;
+    else if (parameter.role === "direction") {
+      if (!DIRECTIONS.has(value.toLowerCase())) return undefined;
+      call.direction = value.toLowerCase();
+    } else if (parameter.role === "inert") {
+      if (!parameter.values.includes(value)) return undefined;
+    } else if (number === undefined) return undefined;
+    else if (parameter.role === "limit")
+      call.limit = number > 0 ? number : undefined;
+    else if (parameter.role === "offset" && number >= 0) call.offset = number;
+    else if (parameter.role === "page" && number >= parameter.first)
+      call.page = { index: number, first: parameter.first };
+    else return undefined;
+  }
+  return call;
+};
+
+/** Entities in the order a sort value names, ties in state order; undefined when it names no field. */
+const sorted = (
+  matched: readonly StateEntity[],
+  entities: readonly StateEntity[],
+  call: QueryCall,
+): StateEntity[] | undefined => {
+  if (call.sort === undefined) return [...matched];
+  const names = [
+    ...new Set(entities.flatMap((entity) => Object.keys(entity.fields))),
+  ];
+  const key = sortKey(call.sort, names);
+  if (key === undefined) return undefined;
+  const sign = (
+    call.direction === undefined ? key.descending : call.direction === "desc"
+  )
+    ? -1
+    : 1;
+  return matched
+    .map((entity, index) => ({ entity, index }))
+    .sort(
+      (left, right) =>
+        sign *
+          ascending(
+            left.entity.fields[key.field],
+            right.entity.fields[key.field],
+          ) || left.index - right.index,
+    )
+    .map(({ entity }) => entity);
+};
+
 /** The entities a query selects, in its order, and how many matched before paging; undefined when a value cannot be applied. */
 export const evaluateQuery = (
   parameters: Readonly<Record<string, QueryParameter>>,
   values: ReadonlyMap<string, string>,
   entities: readonly StateEntity[],
 ): { readonly page: StateEntity[]; readonly total: number } | undefined => {
-  let matched = [...entities];
-  let sort: string | undefined;
-  let direction: string | undefined;
-  let limit: number | undefined;
-  let offset = 0;
-  let page: { readonly index: number; readonly first: number } | undefined;
-  for (const [name, value] of values) {
-    const parameter = parameters[name];
-    const number = integer(value);
-    if (parameter === undefined) return undefined;
-    if (parameter.role === "filter")
-      matched = matched.filter((entity) =>
-        holds(entity.fields[parameter.field], value),
-      );
-    else if (parameter.role === "search")
-      matched = matched.filter((entity) =>
-        contains(entity, parameter.fields, value),
-      );
-    else if (parameter.role === "sort") sort = value;
-    else if (parameter.role === "direction") {
-      if (!DIRECTIONS.has(value.toLowerCase())) return undefined;
-      direction = value.toLowerCase();
-    } else if (parameter.role === "inert") {
-      if (!parameter.values.includes(value)) return undefined;
-    } else if (number === undefined) return undefined;
-    else if (parameter.role === "limit")
-      limit = number > 0 ? number : undefined;
-    else if (parameter.role === "offset" && number >= 0) offset = number;
-    else if (parameter.role === "page" && number >= parameter.first)
-      page = { index: number, first: parameter.first };
-    else return undefined;
-  }
-  if (sort !== undefined) {
-    const names = [
-      ...new Set(entities.flatMap((entity) => Object.keys(entity.fields))),
-    ];
-    const key = sortKey(sort, names);
-    if (key === undefined) return undefined;
-    const descending =
-      direction === undefined ? key.descending : direction === "desc";
-    matched = matched
-      .map((entity, index) => ({ entity, index }))
-      .sort(
-        (left, right) =>
-          (descending ? -1 : 1) *
-            ascending(
-              left.entity.fields[key.field],
-              right.entity.fields[key.field],
-            ) || left.index - right.index,
-      )
-      .map(({ entity }) => entity);
-  }
+  const call = readCall(parameters, values);
+  if (call === undefined) return undefined;
+  const matched = sorted(
+    entities.filter((entity) =>
+      call.selections.every((selects) => selects(entity)),
+    ),
+    entities,
+    call,
+  );
+  if (matched === undefined) return undefined;
+  let { offset } = call;
+  const { limit, page } = call;
   if (page !== undefined && page.index > page.first) {
     if (limit === undefined) return undefined;
     offset += (page.index - page.first) * limit;
@@ -240,6 +276,32 @@ export const evaluateQuery = (
     ),
     total: matched.length,
   };
+};
+
+/** A query's answer and whether it shows the whole collection: every parameter only sorts or pages, and the page holds every match. */
+export const answerQuery = (
+  query: Pick<ListQuery, "parameters">,
+  values: ReadonlyMap<string, string>,
+  entities: readonly StateEntity[],
+):
+  | {
+      readonly page: StateEntity[];
+      readonly total: number;
+      readonly whole: boolean;
+    }
+  | undefined => {
+  const result = evaluateQuery(query.parameters, values, entities);
+  return result === undefined
+    ? undefined
+    : {
+        ...result,
+        whole:
+          result.page.length === result.total &&
+          [...values.keys()].every((name) => {
+            const role = query.parameters[name]?.role;
+            return role !== "filter" && role !== "search" && role !== "inert";
+          }),
+      };
 };
 
 /** Fields every listed item holds the value in, those named like the parameter first. */
@@ -259,23 +321,27 @@ const filterFields = (
         )
         .slice(0, 4);
 
-/** String fields that contain the term in at least one listed item. */
-const searchFields = (items: readonly JsonObject[], term: string): string[] =>
-  term === ""
-    ? []
-    : [
-        ...new Set(
-          items.flatMap((item) =>
-            Object.keys(item).filter((field) => {
-              const value = item[field];
-              return (
-                typeof value === "string" &&
-                value.toLowerCase().includes(term.toLowerCase())
-              );
-            }),
-          ),
-        ),
-      ].sort(compare);
+const isUrl = (value: string): boolean =>
+  /^[a-z][a-z0-9+.-]*:\/\//iu.test(value);
+
+/**
+ * The string fields the term matched in the listed items: for each item the fields that contain it, ignoring case,
+ * other than URLs, which a name or slug often repeats; an item the term matched only in URLs adds those.
+ */
+const searchFields = (items: readonly JsonObject[], term: string): string[] => {
+  const needle = term.toLowerCase();
+  if (needle === "") return [];
+  const fields = new Set<string>();
+  for (const item of items) {
+    const matching = Object.keys(item).filter((field) => {
+      const value = item[field];
+      return typeof value === "string" && value.toLowerCase().includes(needle);
+    });
+    const plain = matching.filter((field) => !isUrl(item[field] as string));
+    for (const field of plain.length > 0 ? plain : matching) fields.add(field);
+  }
+  return [...fields].sort(compare);
+};
 
 /** The roles a parameter may play on a line that listed `items`, most specific first; inert last. */
 const choicesFor = (
