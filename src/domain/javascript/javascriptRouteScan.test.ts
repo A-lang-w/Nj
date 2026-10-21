@@ -60,6 +60,24 @@ it("uses typed literal segments and marks property-name fallbacks inferred", () 
   });
   expect(facts.candidates[2]!.segments[1]!.origin).toBe("property-name");
 });
+it.each([
+  ["defineRoutes({reports:({_$:'reports'} as const)});", ["/reports"]],
+  [
+    "defineRoutes({reports:{_$:'reports',detail:({_$:'detail'} as const)}});",
+    ["/reports", "/reports/detail"],
+  ],
+  [
+    "const detail={_$:'detail'};defineRoutes({reports:{_$:'reports',detail:(detail as typeof detail)}});",
+    ["/reports", "/reports/detail"],
+  ],
+] as const)(
+  "resolves typed children through erased wrappers: %s",
+  (source, paths) => {
+    const facts = analyze(source);
+    expect(facts.candidates.map(({ path }) => path)).toEqual(paths);
+    expect(facts.unresolved).toEqual([]);
+  },
+);
 it("joins missing typed ancestor segments within a selected route-builder root", () => {
   const facts = analyze(`defineRoutes({reports:{settings:{_$:'settings'}}});`);
   expect(facts.candidates.map(({ path }) => path)).toEqual([

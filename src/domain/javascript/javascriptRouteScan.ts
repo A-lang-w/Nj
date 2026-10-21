@@ -91,6 +91,10 @@ const isRouteChildKey = (key: string, typed: boolean): boolean =>
   typed ? !key.startsWith("_") && !key.startsWith("$") : key === "children";
 const isRouteSegmentKey = (key: string | undefined): boolean =>
   key === "path" || key === "route" || key === "_$";
+const isTypedRouteChild = (node: t.Node): boolean => {
+  const value = unwrapJavaScriptExpression(node).node;
+  return t.isObjectExpression(value) || t.isIdentifier(value);
+};
 
 /** Shared syntax owner; both consumers borrow their existing AST walk and lexical index. */
 export class JavaScriptRouteScan {
@@ -698,9 +702,7 @@ export class JavaScriptRouteScan {
             // Follow the same route relationships consumed by the route walker.
             if (
               (key === null || isRouteChildKey(key, typed)) &&
-              (!typed ||
-                t.isObjectExpression(property.value) ||
-                t.isIdentifier(property.value))
+              (!typed || isTypedRouteChild(property.value))
             )
               admit(property.value, typed);
           } else if (t.isSpreadElement(property))
@@ -894,7 +896,7 @@ export class JavaScriptRouteScan {
         ) {
           const [key, child] = entries[at]!;
           if (!isRouteChildKey(key, true)) continue;
-          if (t.isObjectExpression(child.value) || t.isIdentifier(child.value))
+          if (isTypedRouteChild(child.value))
             this.#frame(frames, {
               node: child.value,
               parent: link,

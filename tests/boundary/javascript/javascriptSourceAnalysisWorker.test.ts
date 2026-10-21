@@ -776,3 +776,26 @@ it("retains legacy routes and a bounded route-fact prefix inside one checkpoint 
     await worker.close();
   }
 }, 60000);
+
+it("keeps typed child ancestry through TypeScript wrappers in the real worker", async () => {
+  const worker = new JavaScriptAnalysisWorker({
+    heapMb: 128,
+    timeoutMs: 30000,
+  });
+  try {
+    const analyzed = await worker.analyze(
+      source(
+        "routes.ts",
+        "const detail={_$:'detail'};defineRoutes({reports:{_$:'reports',detail:(detail as typeof detail)}});",
+      ),
+      { nodes: 1, unknowns: 8 },
+    );
+    if (!analyzed.ok) throw analyzed.error.error;
+    expect(
+      analyzed.value.javascript.routes!.candidates.map(({ path }) => path),
+    ).toEqual(["/reports", "/reports/detail"]);
+    expect(analyzed.value.javascript.routes!.unresolved).toEqual([]);
+  } finally {
+    await worker.close();
+  }
+});
