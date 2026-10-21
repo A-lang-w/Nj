@@ -5,16 +5,19 @@ import { zValidator } from "@hono/zod-validator";
 import { zodEnvelopeHook } from "../lib/zod-envelope.js";
 import { authMiddleware } from "../auth/middleware.js";
 import { db } from "../db/connection.js";
-import { favorites, threads, agents, skills } from "../db/schema.js";
+import { favorites, threads, agents, skills, memories } from "../db/schema.js";
 import {
   authorizeResourceOwnership,
   resolveAuthorizedWorkspaceId,
 } from "../auth/workspace.js";
 import { emitEvent } from "../domain/events.js";
 
+const favoriteTargetTypes = ["thread", "agent", "skill", "memory"] as const;
+type FavoriteTargetType = (typeof favoriteTargetTypes)[number];
+
 const targetSchema = z
   .object({
-    targetType: z.enum(["thread", "agent", "skill"]),
+    targetType: z.enum(favoriteTargetTypes),
     targetId: z.number().int().positive(),
   })
   .strict();
@@ -66,9 +69,13 @@ favoritesRouter.delete("/", async (c) => {
   if (
     targetType !== "thread" &&
     targetType !== "agent" &&
-    targetType !== "skill"
+    targetType !== "skill" &&
+    targetType !== "memory"
   ) {
-    return c.json({ error: "targetType must be thread, agent, or skill" }, 400);
+    return c.json(
+      { error: "targetType must be thread, agent, skill, or memory" },
+      400,
+    );
   }
   const targetId = Number(targetIdRaw);
   if (!Number.isInteger(targetId) || targetId <= 0) {
@@ -98,34 +105,53 @@ favoritesRouter.delete("/", async (c) => {
 
 async function assertTargetOwned(
   c: Context,
-  targetType: "thread" | "agent" | "skill",
+  targetType: FavoriteTargetType,
   targetId: number,
 ): Promise<{ ok: true; workspaceId: number } | { ok: false }> {
-  if (targetType === "thread") {
-    const ws = await authorizeResourceOwnership(
-      threads,
-      threads.id,
-      threads.workspaceId,
-      targetId,
-      c,
-    );
-    return ws == null ? { ok: false } : { ok: true, workspaceId: ws };
+  switch (targetType) {
+    case "thread": {
+      const ws = await authorizeResourceOwnership(
+        threads,
+        threads.id,
+        threads.workspaceId,
+        targetId,
+        c,
+      );
+      return ws == null ? { ok: false } : { ok: true, workspaceId: ws };
+    }
+    case "agent": {
+      const ws = await authorizeResourceOwnership(
+        agents,
+        agents.id,
+        agents.workspaceId,
+        targetId,
+        c,
+      );
+      return ws == null ? { ok: false } : { ok: true, workspaceId: ws };
+    }
+    case "skill": {
+      const [skill] = await db
+        .select({ workspaceId: skills.workspaceId })
+        .from(skills)
+        .where(eq(skills.id, targetId))
+        .limit(1);
+      const ws = await resolveAuthorizedWorkspaceId(c, skill?.workspaceId);
+      return ws == null ? { ok: false } : { ok: true, workspaceId: ws };
+    }
+    case "memory": {
+      const ws = await authorizeResourceOwnership(
+        memories,
+        memories.id,
+        memories.workspaceId,
+        targetId,
+        c,
+      );
+      return ws == null ? { ok: false } : { ok: true, workspaceId: ws };
+    }
+    default: {
+      const _exhaustive: never = targetType;
+      void _exhaustive;
+      return { ok: false };
+    }
   }
-  if (targetType === "agent") {
-    const ws = await authorizeResourceOwnership(
-      agents,
-      agents.id,
-      agents.workspaceId,
-      targetId,
-      c,
-    );
-    return ws == null ? { ok: false } : { ok: true, workspaceId: ws };
-  }
-  const [skill] = await db
-    .select({ workspaceId: skills.workspaceId })
-    .from(skills)
-    .where(eq(skills.id, targetId))
-    .limit(1);
-  const ws = await resolveAuthorizedWorkspaceId(c, skill?.workspaceId);
-  return ws == null ? { ok: false } : { ok: true, workspaceId: ws };
 }

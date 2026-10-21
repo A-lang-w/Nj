@@ -261,7 +261,7 @@ export const favorites = sqliteTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     targetType: text("target_type", {
-      enum: ["thread", "agent", "skill"],
+      enum: ["thread", "agent", "skill", "memory"],
     }).notNull(),
     targetId: integer("target_id").notNull(),
     createdAt: integer("created_at", { mode: "timestamp" })

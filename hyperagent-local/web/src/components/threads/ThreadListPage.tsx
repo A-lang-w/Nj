@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import { useThreadsStore } from "@/stores/threads-store";
@@ -11,7 +11,6 @@ import {
   List,
   LayoutGrid,
   Columns3,
-  Filter,
   MessageSquare,
 } from "lucide-react";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -19,6 +18,8 @@ import { LoadingIndicator } from "@/components/ui/LoadingIndicator";
 import { cn } from "@/lib/utils";
 import { COLORS } from "@/lib/theme-colors";
 import type { Thread } from "@/types/api";
+
+type StatusFilter = "all" | Thread["status"];
 
 const buttonSizeVariants = {
   sm: "px-3 py-1.5 text-sm",
@@ -61,6 +62,7 @@ export function ThreadListPage() {
   const setLayoutMode = useThreadsStore((s) => s.setLayoutMode);
   const setSearchTerm = useThreadsStore((s) => s.setSearchTerm);
   const activeWorkspaceId = useUiStore((s) => s.activeWorkspaceId);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
   useEffect(() => {
     fetchThreads(activeWorkspaceId);
@@ -86,12 +88,14 @@ export function ThreadListPage() {
 
   const filtered = useMemo(
     () =>
-      threads.filter(
-        (t) =>
-          !searchTerm ||
-          (t.title?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false),
-      ),
-    [threads, searchTerm],
+      threads.filter((t) => {
+        if (statusFilter !== "all" && t.status !== statusFilter) return false;
+        if (!searchTerm) return true;
+        return (
+          t.title?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false
+        );
+      }),
+    [threads, searchTerm, statusFilter],
   );
 
   const boardColumns = useMemo(() => {
@@ -203,22 +207,28 @@ export function ThreadListPage() {
             }}
           />
         </div>
-        <button
-          type="button"
-          disabled
-          title="Filter threads — coming soon"
-          aria-label="Filter threads — coming soon"
+        <label htmlFor="thread-status-filter" className="sr-only">
+          Filter by status
+        </label>
+        <select
+          id="thread-status-filter"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
           className={cn(
-            "cursor-not-allowed rounded-lg border text-sm opacity-50",
+            "rounded-lg border text-sm min-h-[44px]",
             buttonSizeVariants.sm,
           )}
           style={{
             borderColor: COLORS.border,
-            color: COLORS.textSecondary,
+            backgroundColor: COLORS.inputBg,
+            color: COLORS.textPrimary,
           }}
         >
-          <Filter className="h-4 w-4" />
-        </button>
+          <option value="all">All statuses</option>
+          <option value="active">Active</option>
+          <option value="archived">Archived</option>
+          <option value="completed">Completed</option>
+        </select>
         <div
           className="flex rounded-lg border"
           style={{ borderColor: COLORS.border }}

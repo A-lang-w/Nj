@@ -3,10 +3,12 @@ import { useAgentsStore } from "@/stores/agents-store";
 import { useUiStore } from "@/stores/ui-store";
 import { AgentCard } from "./AgentCard";
 import { AgentForm } from "./AgentForm";
-import { Plus, Search, Filter, Bot } from "lucide-react";
+import { Plus, Search, Bot } from "lucide-react";
 import { LoadingIndicator } from "@/components/ui/LoadingIndicator";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { COLORS } from "@/lib/theme-colors";
+
+type AgentScope = "all" | "personal" | "community";
 
 export function AgentListPage() {
   const agents = useAgentsStore((s) => s.agents);
@@ -15,6 +17,7 @@ export function AgentListPage() {
   const fetchError = useAgentsStore((s) => s.fetchError);
   const activeWorkspaceId = useUiStore((s) => s.activeWorkspaceId);
   const [searchTerm, setSearchTerm] = useState("");
+  const [scope, setScope] = useState<AgentScope>("all");
   const [showForm, setShowForm] = useState(false);
   // Stable close callback: AgentForm's focus effect depends on onClose, so an
   // inline closure would re-run it on every parent re-render — yanking focus
@@ -27,12 +30,13 @@ export function AgentListPage() {
 
   const filtered = useMemo(
     () =>
-      agents.filter(
-        (a) =>
-          !searchTerm ||
-          a.name.toLowerCase().includes(searchTerm.toLowerCase()),
-      ),
-    [agents, searchTerm],
+      agents.filter((a) => {
+        if (scope === "personal" && a.isCommunity) return false;
+        if (scope === "community" && !a.isCommunity) return false;
+        if (!searchTerm) return true;
+        return a.name.toLowerCase().includes(searchTerm.toLowerCase());
+      }),
+    [agents, searchTerm, scope],
   );
 
   return (
@@ -83,16 +87,24 @@ export function AgentListPage() {
             }}
           />
         </div>
-        <button
-          type="button"
-          disabled
-          title="Filter agents — coming soon"
-          aria-label="Filter agents — coming soon"
-          className="cursor-not-allowed rounded-lg border px-3 py-2 text-sm min-w-[44px] min-h-[44px] opacity-50"
-          style={{ borderColor: COLORS.border, color: COLORS.textSecondary }}
+        <label htmlFor="agent-scope-filter" className="sr-only">
+          Filter agents
+        </label>
+        <select
+          id="agent-scope-filter"
+          value={scope}
+          onChange={(e) => setScope(e.target.value as AgentScope)}
+          className="rounded-lg border px-3 py-2 text-sm min-h-[44px]"
+          style={{
+            borderColor: COLORS.border,
+            backgroundColor: COLORS.inputBg,
+            color: COLORS.textPrimary,
+          }}
         >
-          <Filter className="h-4 w-4" />
-        </button>
+          <option value="all">All agents</option>
+          <option value="personal">Personal</option>
+          <option value="community">Community</option>
+        </select>
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">

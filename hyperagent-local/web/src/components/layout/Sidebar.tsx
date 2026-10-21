@@ -18,7 +18,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Library,
-  MoreHorizontal,
 } from "lucide-react";
 import { useState, useEffect, useRef, memo } from "react";
 import { APP_NAME } from "@/lib/branding";
@@ -155,21 +154,6 @@ export function Sidebar() {
               color: COLORS.textPrimary,
             }}
           />
-        )}
-        {!sidebarCollapsed && (
-          <button
-            disabled
-            title="More options — coming soon"
-            aria-label="More options — coming soon"
-            className="ml-auto inline-flex shrink-0 cursor-not-allowed items-center justify-center gap-2 whitespace-nowrap rounded-md font-medium text-sm opacity-50"
-            style={{ color: COLORS.textSecondary, padding: "4px" }}
-          >
-            <MoreHorizontal
-              className="h-4 w-4"
-              aria-hidden="true"
-              style={{ fill: "none", stroke: "currentColor" }}
-            />
-          </button>
         )}
       </div>
 
@@ -319,19 +303,6 @@ export function Sidebar() {
                   <ChevronRight className="h-3 w-3" aria-hidden="true" />
                 )}
                 Recent threads
-              </button>
-              <button
-                disabled
-                title="Thread options — coming soon"
-                aria-label="Thread options — coming soon"
-                className="flex cursor-not-allowed items-center justify-center rounded-md p-1 opacity-50"
-                style={{ color: COLORS.textSecondary }}
-              >
-                <MoreHorizontal
-                  className="h-3.5 w-3.5"
-                  aria-hidden="true"
-                  style={{ fill: "none", stroke: "currentColor" }}
-                />
               </button>
               <Link
                 to="/threads/new"

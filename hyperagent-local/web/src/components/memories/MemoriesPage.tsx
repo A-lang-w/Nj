@@ -11,16 +11,24 @@ import {
   Pin,
   List,
   LayoutGrid,
-  MoreHorizontal,
   X,
 } from "lucide-react";
 import { LoadingIndicator } from "@/components/ui/LoadingIndicator";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { COLORS } from "@/lib/theme-colors";
+import { cn } from "@/lib/utils";
+
+type MemoryScope = "all" | "personal" | "agent";
+type MemoryLayout = "list" | "grid";
 
 export function MemoriesPage() {
   const [memories, setMemories] = useState<Memory[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
+  const [scope, setScope] = useState<MemoryScope>("all");
+  const [layout, setLayout] = useState<MemoryLayout>("list");
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [pinnedIds, setPinnedIds] = useState<Set<number>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -38,12 +46,21 @@ export function MemoriesPage() {
     setLoadError(null);
     setDeleteError(null);
     try {
-      const params: Record<string, string | number> = {
-        workspaceId: activeWorkspaceId,
-      };
-      const data = await apiGet<Memory[]>("/memories", params);
+      const [data, favorites] = await Promise.all([
+        apiGet<Memory[]>("/memories", { workspaceId: activeWorkspaceId }),
+        apiGet<{ items: Array<{ targetType: string; targetId: number }> }>(
+          "/favorites",
+        ).catch(() => ({ items: [] })),
+      ]);
       if (requestIdRef.current !== requestId) return;
       setMemories(data);
+      setPinnedIds(
+        new Set(
+          favorites.items
+            .filter((f) => f.targetType === "memory")
+            .map((f) => f.targetId),
+        ),
+      );
     } catch (err) {
       if (requestIdRef.current !== requestId) return;
       setMemories([]);
@@ -60,6 +77,11 @@ export function MemoriesPage() {
       await apiDelete(`/memories/${id}`);
       setDeleteError(null);
       setMemories((m) => m.filter((mem) => mem.id !== id));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     } catch (err) {
       // The row stays in the list with its Delete button, so the alert
       // below plus a second press is the full announce-and-retry path.
@@ -69,15 +91,68 @@ export function MemoriesPage() {
     }
   };
 
-  const filtered = useMemo(
-    () =>
-      memories.filter(
-        (m) =>
-          !searchTerm ||
-          m.content.toLowerCase().includes(searchTerm.toLowerCase()),
-      ),
-    [memories, searchTerm],
-  );
+  const handleTogglePin = async (id: number) => {
+    const pinned = pinnedIds.has(id);
+    try {
+      if (pinned) {
+        await apiDelete(`/favorites?targetType=memory&targetId=${id}`);
+        setPinnedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      } else {
+        await apiPost("/favorites", { targetType: "memory", targetId: id });
+        setPinnedIds((prev) => new Set(prev).add(id));
+      }
+    } catch (err) {
+      setDeleteError(
+        err instanceof Error ? err.message : "Failed to update pin",
+      );
+    }
+  };
+
+  const handleDeleteSelected = async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    if (!window.confirm(`Delete ${ids.length} selected memories?`)) return;
+    setDeleteError(null);
+    const failed: number[] = [];
+    for (const id of ids) {
+      try {
+        await apiDelete(`/memories/${id}`);
+      } catch {
+        failed.push(id);
+      }
+    }
+    setMemories((m) =>
+      m.filter((mem) => !ids.includes(mem.id) || failed.includes(mem.id)),
+    );
+    setSelectedIds(new Set(failed));
+    if (failed.length > 0) {
+      setDeleteError(`Couldn't delete ${failed.length} memories`);
+    } else {
+      setSelectMode(false);
+    }
+  };
+
+  const filtered = useMemo(() => {
+    const scoped = memories.filter((m) => {
+      if (scope === "personal") return m.agentId == null;
+      if (scope === "agent") return m.agentId != null;
+      return true;
+    });
+    const searched = scoped.filter(
+      (m) =>
+        !searchTerm ||
+        m.content.toLowerCase().includes(searchTerm.toLowerCase()),
+    );
+    return [...searched].sort((a, b) => {
+      const ap = pinnedIds.has(a.id) ? 1 : 0;
+      const bp = pinnedIds.has(b.id) ? 1 : 0;
+      return bp - ap;
+    });
+  }, [memories, searchTerm, scope, pinnedIds]);
 
   return (
     <div
@@ -134,52 +209,44 @@ export function MemoriesPage() {
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {/* View toggle button group - matches original at y=37-67 */}
             <div
               className="inline-flex w-fit items-center justify-center rounded-md"
               style={{
                 backgroundColor: "rgba(235, 235, 235, 0.04)",
                 padding: "3px",
-                width: "74px",
                 height: "44px",
               }}
+              role="group"
+              aria-label="Memory layout"
             >
-              <button
-                disabled
-                title="List view — coming soon"
-                aria-label="List view — coming soon"
-                className="inline-flex flex-1 cursor-not-allowed items-center justify-center gap-1.5 whitespace-nowrap rounded font-medium text-sm opacity-50"
-                style={{
-                  color: COLORS.textPrimary,
-                  backgroundColor: "rgb(6, 6, 6)",
-                  height: "38px",
-                }}
-              >
-                <span className="flex items-center justify-center">
-                  <List
+              {(
+                [
+                  { id: "list" as const, label: "List view", Icon: List },
+                  { id: "grid" as const, label: "Grid view", Icon: LayoutGrid },
+                ] as const
+              ).map(({ id, label, Icon }) => (
+                <button
+                  key={id}
+                  type="button"
+                  aria-pressed={layout === id}
+                  aria-label={label}
+                  onClick={() => setLayout(id)}
+                  className="inline-flex min-w-[44px] items-center justify-center rounded font-medium text-sm"
+                  style={{
+                    color:
+                      layout === id ? COLORS.textPrimary : COLORS.textSecondary,
+                    backgroundColor:
+                      layout === id ? "rgb(6, 6, 6)" : "transparent",
+                    height: "38px",
+                    padding: "0 10px",
+                  }}
+                >
+                  <Icon
                     className="h-4 w-4"
                     style={{ fill: "none", stroke: "currentColor" }}
                   />
-                </span>
-              </button>
-              <button
-                disabled
-                title="Grid view — coming soon"
-                aria-label="Grid view — coming soon"
-                className="inline-flex flex-1 cursor-not-allowed items-center justify-center gap-1.5 whitespace-nowrap rounded font-medium text-sm opacity-50"
-                style={{
-                  color: COLORS.textSecondary,
-                  backgroundColor: "transparent",
-                  height: "38px",
-                }}
-              >
-                <span className="flex items-center justify-center">
-                  <LayoutGrid
-                    className="h-4 w-4"
-                    style={{ fill: "none", stroke: "currentColor" }}
-                  />
-                </span>
-              </button>
+                </button>
+              ))}
             </div>
             <button
               type="button"
@@ -200,115 +267,85 @@ export function MemoriesPage() {
               />{" "}
               Add memory
             </button>
-            <button
-              disabled
-              title="More actions — coming soon"
-              aria-label="More actions — coming soon"
-              className="inline-flex shrink-0 cursor-not-allowed items-center justify-center gap-2 whitespace-nowrap rounded-md font-medium text-sm opacity-50"
-              style={{
-                color: COLORS.textPrimary,
-                minWidth: "44px",
-                minHeight: "44px",
-              }}
-            >
-              <MoreHorizontal
-                className="h-4 w-4"
-                style={{ fill: "none", stroke: "currentColor" }}
-              />
-            </button>
           </div>
         </div>
       </header>
 
-      {/* Toolbar row - matches original at y=105-157, height=52px */}
       <div
-        className="flex h-[48px] shrink-0 items-center border-b px-4"
+        className="flex h-[48px] shrink-0 items-center gap-2 border-b px-4"
         style={{ borderColor: COLORS.border }}
       >
-        <div className="flex w-full min-w-0 items-center">
+        <label htmlFor="memory-scope" className="sr-only">
+          Memory scope
+        </label>
+        <select
+          id="memory-scope"
+          value={scope}
+          onChange={(e) => setScope(e.target.value as MemoryScope)}
+          className="rounded-md border px-2 text-sm min-h-[44px]"
+          style={{
+            borderColor: COLORS.border,
+            backgroundColor: COLORS.inputBg,
+            color: COLORS.textPrimary,
+          }}
+        >
+          <option value="all">All memories</option>
+          <option value="personal">Personal only</option>
+          <option value="agent">Agent-linked</option>
+        </select>
+        <button
+          type="button"
+          onClick={() => {
+            setSelectMode((v) => !v);
+            setSelectedIds(new Set());
+          }}
+          aria-pressed={selectMode}
+          className="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-md border px-3 text-sm min-h-[44px]"
+          style={{
+            borderColor: COLORS.border,
+            color: selectMode ? COLORS.textPrimary : COLORS.textSecondary,
+            backgroundColor: selectMode ? COLORS.activeBg : "transparent",
+          }}
+        >
+          {selectMode ? "Cancel" : "Select"}
+        </button>
+        {selectMode && selectedIds.size > 0 && (
           <button
-            disabled
-            title="Personal memories — coming soon"
-            aria-label="Personal memories — coming soon"
-            className="inline-flex shrink-0 cursor-not-allowed items-center whitespace-nowrap font-medium text-sm opacity-50"
-            style={{
-              color: COLORS.textPrimary,
-              fontFamily:
-                'Geist, "Geist Fallback", ui-sans-serif, system-ui, sans-serif',
-              minHeight: "44px",
-              padding: "0px 10px",
-              marginRight: "12px",
-              width: "169px",
-              justifyContent: "flex-start",
-            }}
+            type="button"
+            onClick={() => void handleDeleteSelected()}
+            className="inline-flex shrink-0 items-center gap-1 rounded-md bg-red-600 px-3 text-sm font-medium text-white min-h-[44px]"
           >
-            <span className="truncate font-medium">Personal memories</span>
+            <Trash2 className="h-3.5 w-3.5" /> Delete ({selectedIds.size})
           </button>
-          <button
-            disabled
-            title="Select — coming soon"
-            aria-label="Select — coming soon"
-            className="inline-flex shrink-0 cursor-not-allowed items-center justify-center whitespace-nowrap rounded-md font-medium text-sm opacity-50"
+        )}
+        <span
+          className="ml-auto hidden whitespace-nowrap text-sm md:inline"
+          style={{ color: COLORS.textSecondary }}
+        >
+          {filtered.length} of {memories.length}
+        </span>
+        <div className="relative hidden w-64 min-w-[10rem] md:block">
+          <Search
+            className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2"
             style={{
               color: COLORS.textSecondary,
-              padding: "0px 10px",
-              fontFamily:
-                'Geist, "Geist Fallback", ui-sans-serif, system-ui, sans-serif',
-              minHeight: "44px",
-              width: "88px",
-              marginLeft: "auto",
+              fill: "none",
+              stroke: "currentColor",
             }}
-          >
-            Select
-          </button>
-          <span
-            className="ml-3 hidden whitespace-nowrap text-sm md:inline"
-            style={{ color: COLORS.textSecondary }}
-          >
-            {memories.length} memories
-          </span>
-          <div className="ml-auto hidden min-w-0 items-center gap-2 md:flex">
-            <button
-              disabled
-              title="Filters — coming soon"
-              aria-label="Filters — coming soon"
-              className="inline-flex shrink-0 cursor-not-allowed items-center justify-center whitespace-nowrap rounded-md font-medium text-sm opacity-50"
-              style={{
-                color: COLORS.textPrimary,
-                padding: "10px 14px",
-                minHeight: "44px",
-                backgroundColor: "transparent",
-                border: `1px solid ${COLORS.border}`,
-              }}
-            >
-              Filters
-            </button>
-            <div className="relative w-64 min-w-[10rem]">
-              <Search
-                className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2"
-                style={{
-                  color: COLORS.textSecondary,
-                  fill: "none",
-                  stroke: "currentColor",
-                }}
-              />
-              <input
-                type="text"
-                placeholder="Search memories"
-                aria-label="Search memories"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="h-9 min-w-0 w-full rounded-md border px-3 py-1 text-base shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
-                style={{
-                  backgroundColor: COLORS.inputBg,
-                  color: COLORS.textPrimary,
-                  borderColor: COLORS.border,
-                  fontFamily:
-                    'Geist, "Geist Fallback", ui-sans-serif, system-ui, sans-serif',
-                }}
-              />
-            </div>
-          </div>
+          />
+          <input
+            type="text"
+            placeholder="Search memories"
+            aria-label="Search memories"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="h-9 min-w-0 w-full rounded-md border py-1 pl-9 pr-3 text-base shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+            style={{
+              backgroundColor: COLORS.inputBg,
+              color: COLORS.textPrimary,
+              borderColor: COLORS.border,
+            }}
+          />
         </div>
       </div>
 
@@ -381,79 +418,116 @@ export function MemoriesPage() {
         ) : filtered.length === 0 ? (
           <EmptyState icon={Brain} title="No memories found" />
         ) : (
-          <ul role="list" className="m-0 list-none p-0">
-            {filtered.map((memory) => (
-              <li
-                key={memory.id}
-                className="group relative flex w-full select-none items-start gap-3 border-b px-6 py-3 text-left transition-colors"
-                style={{
-                  borderColor: COLORS.cardBorder,
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = COLORS.hoverBg;
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = "transparent";
-                }}
-              >
-                <div className="min-w-0 flex-1">
-                  <p
-                    className="line-clamp-2 break-words text-sm"
-                    style={{ color: COLORS.textPrimary }}
-                    title={memory.content}
-                  >
-                    {memory.content}
-                  </p>
-                  <div className="mt-2 flex min-w-0 items-center gap-1.5">
-                    <span
-                      className="truncate text-xs"
-                      style={{ color: COLORS.textSecondary }}
+          <ul
+            role="list"
+            className={cn(
+              "m-0 list-none p-0",
+              layout === "grid" &&
+                "grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3",
+            )}
+          >
+            {filtered.map((memory) => {
+              const pinned = pinnedIds.has(memory.id);
+              const selected = selectedIds.has(memory.id);
+              return (
+                <li
+                  key={memory.id}
+                  className={cn(
+                    "group relative flex w-full select-none items-start gap-3 text-left transition-colors",
+                    layout === "list"
+                      ? "border-b px-6 py-3"
+                      : "rounded-lg border p-4",
+                  )}
+                  style={{
+                    borderColor: COLORS.cardBorder,
+                    backgroundColor:
+                      selected && selectMode ? COLORS.activeBg : "transparent",
+                  }}
+                >
+                  {selectMode && (
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() => {
+                        setSelectedIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(memory.id)) next.delete(memory.id);
+                          else next.add(memory.id);
+                          return next;
+                        });
+                      }}
+                      aria-label={`Select memory ${memory.id}`}
+                      className="mt-1 h-4 w-4 shrink-0"
+                    />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p
+                      className="line-clamp-2 break-words text-sm"
+                      style={{ color: COLORS.textPrimary }}
+                      title={memory.content}
                     >
-                      {memory.createdAt
-                        ? new Date(memory.createdAt).toLocaleString()
-                        : "Saved memory"}
-                    </span>
+                      {memory.content}
+                    </p>
+                    <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
+                      <span
+                        className="truncate text-xs"
+                        style={{ color: COLORS.textSecondary }}
+                      >
+                        {memory.createdAt
+                          ? new Date(memory.createdAt).toLocaleString()
+                          : "Saved memory"}
+                      </span>
+                      <span
+                        className="rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide"
+                        style={{
+                          backgroundColor: COLORS.avatarBg,
+                          color: COLORS.textSecondary,
+                        }}
+                      >
+                        {memory.agentId == null ? "Personal" : "Agent"}
+                      </span>
+                    </div>
                   </div>
-                </div>
-                <div className="reveal-on-hover flex shrink-0 items-center gap-1 transition-opacity">
-                  <button
-                    disabled
-                    title="Pin memory — coming soon"
-                    aria-label="Pin memory — coming soon"
-                    className="flex cursor-not-allowed items-center justify-center rounded-md min-w-[44px] min-h-[44px] p-2.5 opacity-50 transition-colors"
-                    style={{ color: COLORS.textSecondary }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = COLORS.hoverBg;
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.backgroundColor = "transparent";
-                    }}
-                  >
-                    <Pin
-                      className="h-4 w-4"
-                      style={{ fill: "none", stroke: "currentColor" }}
-                    />
-                  </button>
-                  <button
-                    onClick={() => handleDelete(memory.id)}
-                    aria-label="Delete memory"
-                    className="flex cursor-pointer items-center justify-center rounded-md min-w-[44px] min-h-[44px] p-2.5 transition-colors"
-                    style={{ color: COLORS.textSecondary }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = COLORS.hoverBg;
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.backgroundColor = "transparent";
-                    }}
-                  >
-                    <Trash2
-                      className="h-4 w-4"
-                      style={{ fill: "none", stroke: "currentColor" }}
-                    />
-                  </button>
-                </div>
-              </li>
-            ))}
+                  {!selectMode && (
+                    <div className="flex shrink-0 items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => void handleTogglePin(memory.id)}
+                        title={pinned ? "Unpin memory" : "Pin memory"}
+                        aria-label={pinned ? "Unpin memory" : "Pin memory"}
+                        aria-pressed={pinned}
+                        className="flex items-center justify-center rounded-md min-w-[44px] min-h-[44px] p-2.5 transition-colors"
+                        style={{
+                          color: pinned
+                            ? COLORS.textPrimary
+                            : COLORS.textSecondary,
+                        }}
+                      >
+                        <Pin
+                          className="h-4 w-4"
+                          style={{
+                            fill: pinned ? "currentColor" : "none",
+                            stroke: "currentColor",
+                          }}
+                        />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleDelete(memory.id)}
+                        aria-label="Delete memory"
+                        className="flex cursor-pointer items-center justify-center rounded-md min-w-[44px] min-h-[44px] p-2.5 transition-colors"
+                        style={{ color: COLORS.textSecondary }}
+                      >
+                        <Trash2
+                          className="h-4 w-4"
+                          style={{ fill: "none", stroke: "currentColor" }}
+                        />
+                      </button>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
