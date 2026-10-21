@@ -459,6 +459,24 @@ it("owns structured navigation fragments without leaking partial destinations", 
     ),
   ).toHaveLength(3);
 });
+it("extracts effective local pathname literals while owning nested navigation data", () => {
+  const facts = analyze(
+    `globalThis.TURBOPACK=[];router.push({pathname:'/users',query:{href:'/not-a-route'}});router.replace({pathname:'/old',pathname:'/new'});router.push({pathname:'../edit'});router.push({pathname:'/users/' + id});`,
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual(["/users", "/new"]);
+  expect(facts.unresolved).toHaveLength(2);
+  expect(facts.candidates[0]!.segments[0]).toMatchObject({
+    value: "/users",
+    origin: "literal",
+  });
+});
+it("keeps navigation object authorities and unknown fields unresolved", () => {
+  const facts = analyze(
+    `router.push({pathname:'/users',host:'example.test'});router.push({pathname:'/users',protocol:'https:'});router.push({pathname:'/users',href:'/other'});router.push({...options,pathname:'/users'});router.push({get pathname(){return '/users'}});router.push({pathname:'//example.test/users'});router.push({pathname:'https://example.test/users'});`,
+  );
+  expect(facts.candidates).toEqual([]);
+  expect(facts.unresolved).toHaveLength(7);
+});
 it("does not promote concatenation or template fragments into independent path or module constants", () => {
   const facts = analyze(
     `globalThis.TURBOPACK=[];createBrowserRouter([{path:'/users'}]);const computed='/users/' + id;items.push({pathname:'/users/fragment/' + id});const exact='/users/settings';const file='app/admin/page.js' + suffix;`,

@@ -83,6 +83,7 @@ const navigationReceivers = new Set([
   "history",
   "location",
 ]);
+const localNavigationFields = new Set(["pathname", "query", "search", "hash"]);
 const nextNames = new Set(["TURBOPACK", "webpackChunk_N_E", "__NEXT_DATA__"]);
 const isRouteChildKey = (key: string, typed: boolean): boolean =>
   typed ? !key.startsWith("_") && !key.startsWith("$") : key === "children";
@@ -253,7 +254,11 @@ export class JavaScriptRouteScan {
       stringValue(node.value) === undefined
     )
       this.#ownDynamicValue(node.value, false);
-    if (this.#result.capacity === null && name === "href")
+    if (
+      this.#result.capacity === null &&
+      name === "href" &&
+      !this.#dynamicValues.has(node)
+    )
       this.#navigation(node.value);
   }
 
@@ -497,7 +502,23 @@ export class JavaScriptRouteScan {
   }
 
   #navigation(node: t.Node, recognized = true): void {
-    const value = stringValue(node);
+    const pathnameObject = recognized && t.isObjectExpression(node);
+    let destination = node;
+    if (pathnameObject) {
+      const fields = this.#fields(node);
+      let local = !fields.unknownKeys && fields.dynamicNames.size === 0;
+      for (const key of fields.values.keys())
+        if (!localNavigationFields.has(key)) {
+          local = false;
+          break;
+        }
+      const pathname = fields.values.get("pathname");
+      if (local && pathname !== undefined) destination = pathname.value;
+      // The destination owns its query/search/hash data, including href-like
+      // properties. Callable bodies remain independent syntax contexts.
+      this.#ownDynamicValue(node, true, true, true);
+    }
+    const value = stringValue(destination);
     if (value === undefined) {
       if (recognized)
         this.#unknown(
@@ -505,22 +526,23 @@ export class JavaScriptRouteScan {
           node,
           "The recognized navigation destination is not a supported literal.",
         );
-      this.#ownDynamicValue(node, true, recognized, recognized);
+      if (!pathnameObject)
+        this.#ownDynamicValue(node, true, recognized, recognized);
       return;
     }
-    const path = routePath(value, { navigation: true });
+    const path = routePath(value, { navigation: !pathnameObject });
     if (path !== undefined)
       this.#emit(
         path,
         "navigation-target",
-        [{ value, location: range(node), origin: "literal" }],
-        node,
+        [{ value, location: range(destination), origin: "literal" }],
+        destination,
         true,
       );
     else if (
       recognized &&
-      !value.startsWith("//") &&
-      !/^[a-z][a-z0-9+.-]*:/iu.test(value)
+      (pathnameObject ||
+        (!value.startsWith("//") && !/^[a-z][a-z0-9+.-]*:/iu.test(value)))
     )
       this.#unknown(
         "navigation-target",
