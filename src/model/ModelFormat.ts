@@ -19,6 +19,12 @@ export const MODEL_HEADER_BYTES = 100_000_000;
 export const MODEL_REPORT_BYTES = 32 * 1024 * 1024;
 export const MODEL_ARRAY_PREVIEW = 8;
 
+/** Recovery for a model capacity refusal. Host memory does not raise it. */
+export const modelCapacityRemediation = (message: string): string =>
+  message.includes("100,000,000")
+    ? "Safetensors' format ceiling is 100,000,000 header bytes. This release has no runtime override. Additional host memory does not raise it. Repeating the unchanged request fails the same way."
+    : `The retained model report allowance is ${String(MODEL_REPORT_BYTES)} bytes. This release has no runtime override. Additional host memory does not raise it. Repeating the unchanged request fails the same way.`;
+
 /** Charge representation growth before retaining rows or decoding long strings. */
 export class ModelReportBudget {
   #remaining = MODEL_REPORT_BYTES;
@@ -26,7 +32,7 @@ export class ModelReportBudget {
     if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > this.#remaining)
       throw new ModelFormatFailure(
         "capacity",
-        "Model facts exceed the 32 MiB retained representation budget",
+        "Model facts exceed the 32 MiB retained representation budget. This release has no runtime override.",
       );
     this.#remaining -= bytes;
   }

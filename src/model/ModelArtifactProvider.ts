@@ -44,6 +44,7 @@ import {
   rejectModel,
   MODEL_REPORT_BYTES,
   MODEL_HEADER_BYTES,
+  modelCapacityRemediation,
 } from "./ModelFormat.js";
 import { safetensorsBits } from "./ModelTensorTypes.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
@@ -124,7 +125,11 @@ export class ModelArtifactProvider implements ModelArtifactPort {
                   maximum_header_bytes: MODEL_HEADER_BYTES,
                   maximum_exact_offset: Number.MAX_SAFE_INTEGER,
                 },
-                { cause, retryable: false },
+                {
+                  cause,
+                  retryable: false,
+                  remediationAction: modelCapacityRemediation(primary.message),
+                },
               )
             : primary.kind === "unsupported"
               ? new AnalysisUnsupportedTargetError(

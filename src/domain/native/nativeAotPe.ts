@@ -301,8 +301,7 @@ export const nativeAotSnapshotOverCapacity = (
     {
       format: "dotnet-nativeaot",
       status: "partial",
-      reason:
-        "The captured PE exceeds the read-only NativeAOT snapshot byte budget.",
+      reason: `The captured PE exceeds the read-only NativeAOT snapshot byte budget of ${String(limits.sourceBytes)} bytes. This release has no runtime override.`,
       analysis_artifact_sha256: sha256,
       analysis_mode: "read-only-derived-overlay",
       header_address: null,

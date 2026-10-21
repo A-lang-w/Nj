@@ -13,9 +13,12 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisErrorWithoutCapturedOutput } from "../domain/analysisErrorProjection.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import {
-  firmwareFailure,
   firmwareCancellation,
+  firmwareFailure,
+  firmwareLimitRecovery,
   firmwarePhaseInterruption,
+  firmwareProcessLimitRecovery,
+  firmwareSignalLimitError,
 } from "./FirmwareFailures.js";
 import {
   spawnOwnedProviderProcess,
@@ -201,6 +204,10 @@ export const runFirmwareCommand = async (context: {
             stderr: snapshot.stderr.text,
             truncated: true,
           },
+          userMessage: `Firmware diagnostics exceeded the ${String(FIRMWARE_LIMITS.diagnosticBytes)}-byte capture allowance. This release has no runtime override.`,
+          remediationAction: firmwareLimitRecovery(
+            `The firmware diagnostic capture allowance is ${String(FIRMWARE_LIMITS.diagnosticBytes)} bytes`,
+          ),
         },
       );
     }
@@ -267,7 +274,17 @@ export const runFirmwareCommand = async (context: {
       context.acceptReportedExtractionFailure === true &&
       snapshot.exitCode === 1
     )
-  )
+  ) {
+    const fileSizeBytes =
+      context.outputBudget?.bytes ?? FIRMWARE_LIMITS.reportBytes;
+    const fileSizeAdjustable = context.outputBudget !== undefined;
+    const signalLimit = firmwareSignalLimitError(
+      operation,
+      snapshot.signal,
+      fileSizeBytes,
+      fileSizeAdjustable,
+    );
+    if (signalLimit !== undefined) throw signalLimit;
     throw new ProviderAdapterError(engine, operation, {
       diagnostics: {
         reason:
@@ -279,7 +296,9 @@ export const runFirmwareCommand = async (context: {
         stdout_bytes: snapshot.stdout.bytes,
         stderr_bytes: snapshot.stderr.bytes,
       },
+      remediationAction: `Inspect exit status and stderr for format, dependency, sandbox, or resource-limit failures. ${firmwareProcessLimitRecovery(fileSizeBytes, fileSizeAdjustable)} A format or dependency failure is not repaired by changing analysis_timeout_ms.`,
     });
+  }
   return {
     stdout: snapshot.stdout,
     stderr: snapshot.stderr,
@@ -341,14 +360,19 @@ export const readFirmwareCommandReport = async (context: {
           ...diagnostics,
         },
       });
+    const fixedReport =
+      cause instanceof AnalysisOutputError &&
+      cause.diagnostics?.report_state === "oversized"
+        ? ` ${firmwareLimitRecovery(`The firmware report allowance is ${String(FIRMWARE_LIMITS.reportBytes)} bytes`)}`
+        : "";
     throw new AnalysisOutputError(
       operation,
       `${engine} exited ${String(execution.exit_code)} without a usable report: ${reportFailure}`,
       {
         cause,
         diagnostics,
-        userMessage: `${engine} exited successfully but left no usable report (${reportFailure}), so ${operation} produced no Evidence. A successful exit status is not an empty or complete result.`,
-        remediationAction: `Review diagnostics.report_state, the exit status and captured stdout/stderr. REA did not retry or substitute an empty result. diagnostics.command and diagnostics.args record what ran; their workspace paths are REA-private and removed after the attempt, so they cannot be replayed as-is. Rerun the same REA request to check whether this is intermittent; each attempt uses a fresh workspace. If it recurs, copy the selected input bytes into a new directory and run diagnostics.command with the same flags, replacing every private path with your copy and a new report path, under the documented firmware resource limits; confirm that it writes the requested report. \`rea doctor\` checks configuration only and cannot recover this report.`,
+        userMessage: `${engine} exited successfully but left no usable report (${reportFailure}), so ${operation} produced no Evidence. A successful exit status is not an empty or complete result.${fixedReport}`,
+        remediationAction: `Review diagnostics.report_state, the exit status and captured stdout/stderr. REA did not retry or substitute an empty result. diagnostics.command and diagnostics.args record what ran; their workspace paths are REA-private and removed after the attempt, so they cannot be replayed as-is. Rerun the same REA request to check whether this is intermittent; each attempt uses a fresh workspace. If it recurs, copy the selected input bytes into a new directory and run diagnostics.command with the same flags, replacing every private path with your copy and a new report path, under the documented firmware resource limits; confirm that it writes the requested report. \`rea doctor\` checks configuration only and cannot recover this report.${fixedReport}`,
       },
     );
   }
