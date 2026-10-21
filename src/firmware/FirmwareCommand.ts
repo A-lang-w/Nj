@@ -9,7 +9,10 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type {
+  AnalysisCapturedOutput,
+  AnalysisError,
+} from "../domain/analysisErrorBase.js";
 import { projectAnalysisErrorWithoutCapturedOutput } from "../domain/analysisErrorProjection.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import {
@@ -24,6 +27,7 @@ import {
   spawnOwnedProviderProcess,
   ProviderProcessSupervisor,
   type OwnedProviderProcessSpawnOptions,
+  type ProviderProcessSnapshot,
   type SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
@@ -37,6 +41,19 @@ import {
 export type FirmwareLauncher = (
   options: OwnedProviderProcessSpawnOptions,
 ) => Promise<SpawnedOwnedProviderProcess>;
+
+/** Captured tool output for one finished firmware command. */
+const capturedFirmwareOutput = (
+  snapshot: ProviderProcessSnapshot,
+): AnalysisCapturedOutput => ({
+  stdout: snapshot.stdout.text,
+  stderr: snapshot.stderr.text,
+  stdout_bytes: snapshot.stdout.bytes,
+  stderr_bytes: snapshot.stderr.bytes,
+  exit_code: snapshot.exitCode ?? null,
+  signal: snapshot.signal ?? null,
+  truncated: snapshot.diagnosticTruncated === true,
+});
 
 /** Refuse an unmet host or tool requirement, which another target cannot satisfy. */
 export const firmwareToolUnavailable = (
@@ -255,15 +272,7 @@ export const runFirmwareCommand = async (context: {
       {
         operation,
         cleanupPrimary: failure,
-        capturedOutput: {
-          stdout: snapshot.stdout.text,
-          stderr: snapshot.stderr.text,
-          stdout_bytes: snapshot.stdout.bytes,
-          stderr_bytes: snapshot.stderr.bytes,
-          exit_code: snapshot.exitCode ?? null,
-          signal: snapshot.signal ?? null,
-          truncated: snapshot.diagnosticTruncated === true,
-        },
+        capturedOutput: capturedFirmwareOutput(snapshot),
       },
     );
   }
@@ -283,6 +292,7 @@ export const runFirmwareCommand = async (context: {
       snapshot.signal,
       fileSizeBytes,
       fileSizeAdjustable,
+      capturedFirmwareOutput(snapshot),
     );
     if (signalLimit !== undefined) throw signalLimit;
     throw new ProviderAdapterError(engine, operation, {
@@ -360,19 +370,25 @@ export const readFirmwareCommandReport = async (context: {
           ...diagnostics,
         },
       });
-    const fixedReport =
+    const oversized =
       cause instanceof AnalysisOutputError &&
-      cause.diagnostics?.report_state === "oversized"
-        ? ` ${firmwareLimitRecovery(`The firmware report allowance is ${String(FIRMWARE_LIMITS.reportBytes)} bytes`)}`
-        : "";
+      cause.diagnostics?.report_state === "oversized";
+    const reportFacts =
+      "Review diagnostics.report_state, the exit status and captured stdout/stderr. REA did not retry or substitute an empty result. diagnostics.command and diagnostics.args record what ran; their workspace paths are REA-private and removed after the attempt, so they cannot be replayed as-is.";
+    const reportAllowance = firmwareLimitRecovery(
+      `The firmware report allowance is ${String(FIRMWARE_LIMITS.reportBytes)} bytes`,
+    );
+    const observed = `${engine} exited successfully but left no usable report (${reportFailure}), so ${operation} produced no Evidence. A successful exit status is not an empty or complete result.`;
     throw new AnalysisOutputError(
       operation,
       `${engine} exited ${String(execution.exit_code)} without a usable report: ${reportFailure}`,
       {
         cause,
         diagnostics,
-        userMessage: `${engine} exited successfully but left no usable report (${reportFailure}), so ${operation} produced no Evidence. A successful exit status is not an empty or complete result.${fixedReport}`,
-        remediationAction: `Review diagnostics.report_state, the exit status and captured stdout/stderr. REA did not retry or substitute an empty result. diagnostics.command and diagnostics.args record what ran; their workspace paths are REA-private and removed after the attempt, so they cannot be replayed as-is. Rerun the same REA request to check whether this is intermittent; each attempt uses a fresh workspace. If it recurs, copy the selected input bytes into a new directory and run diagnostics.command with the same flags, replacing every private path with your copy and a new report path, under the documented firmware resource limits; confirm that it writes the requested report. \`rea doctor\` checks configuration only and cannot recover this report.${fixedReport}`,
+        userMessage: oversized ? `${observed} ${reportAllowance}` : observed,
+        remediationAction: oversized
+          ? `${reportFacts} ${reportAllowance} \`rea doctor\` checks configuration only and cannot recover this report.`
+          : `${reportFacts} Rerun the same REA request to check whether this is intermittent; each attempt uses a fresh workspace. If it recurs, copy the selected input bytes into a new directory and run diagnostics.command with the same flags, replacing every private path with your copy and a new report path, under the documented firmware resource limits; confirm that it writes the requested report. \`rea doctor\` checks configuration only and cannot recover this report.`,
       },
     );
   }

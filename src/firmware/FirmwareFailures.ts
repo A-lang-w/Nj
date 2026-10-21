@@ -5,7 +5,11 @@ import {
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
 } from "../artifacts/ArtifactFileOperation.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisCapturedOutput,
+  type AnalysisErrorOptions,
+} from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -17,7 +21,6 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import { firmwareDeadlineElapsed } from "./FirmwareDeadline.js";
-import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
 import { z } from "zod";
 import { MAX_FIRMWARE_TIMEOUT_MS } from "../domain/firmware/firmwareAnalysis.js";
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
@@ -32,34 +35,39 @@ export const firmwareSignalLimitError = (
   signal: NodeJS.Signals | null | undefined,
   fileSizeBytes: number,
   fileSizeAdjustable: boolean,
+  capturedOutput?: AnalysisCapturedOutput,
 ): AnalysisResourceConstraintError | undefined => {
-  if (signal === "SIGXCPU")
-    return new AnalysisResourceConstraintError(
+  const recovery = (
+    remediationAction: string,
+  ): AnalysisResourceConstraintError =>
+    new AnalysisResourceConstraintError(
       operation,
-      "cpu",
-      `Firmware analysis reached its ${String(FIRMWARE_LIMITS.cpuSeconds)}-second CPU allowance (cpuSeconds).`,
-      { cpu_seconds: FIRMWARE_LIMITS.cpuSeconds },
+      signal === "SIGXCPU" ? "cpu" : "file-size",
+      signal === "SIGXCPU"
+        ? `Firmware analysis reached its ${String(FIRMWARE_LIMITS.cpuSeconds)}-second CPU allowance (cpuSeconds).`
+        : `Firmware analysis reached its ${String(fileSizeBytes)}-byte file-size allowance.`,
+      signal === "SIGXCPU"
+        ? { cpu_seconds: FIRMWARE_LIMITS.cpuSeconds }
+        : { file_size_bytes: fileSizeBytes },
       {
         retryable: false,
-        remediationAction: firmwareLimitRecovery(
-          `cpuSeconds is ${String(FIRMWARE_LIMITS.cpuSeconds)}`,
-        ),
+        remediationAction,
+        ...(capturedOutput === undefined ? {} : { capturedOutput }),
       },
     );
+  if (signal === "SIGXCPU")
+    return recovery(
+      firmwareLimitRecovery(
+        `cpuSeconds is ${String(FIRMWARE_LIMITS.cpuSeconds)}`,
+      ),
+    );
   if (signal !== "SIGXFSZ") return undefined;
-  return new AnalysisResourceConstraintError(
-    operation,
-    "file-size",
-    `Firmware analysis reached its ${String(fileSizeBytes)}-byte file-size allowance.`,
-    { file_size_bytes: fileSizeBytes },
-    {
-      retryable: false,
-      remediationAction: fileSizeAdjustable
-        ? `The file-size cap for this extraction is max_output_bytes at ${String(fileSizeBytes)} bytes. analysis_timeout_ms does not raise it. Increase max_output_bytes when it is below its schema maximum and the larger staging budget is still required. Repeating the unchanged request fails the same way.`
-        : firmwareLimitRecovery(
-            `The firmware file-size allowance is ${String(fileSizeBytes)} bytes`,
-          ),
-    },
+  return recovery(
+    fileSizeAdjustable
+      ? `The file-size cap for this extraction is max_output_bytes at ${String(fileSizeBytes)} bytes. analysis_timeout_ms does not raise it. Increase max_output_bytes when it is below its schema maximum and the larger staging budget is still required. Repeating the unchanged request fails the same way.`
+      : firmwareLimitRecovery(
+          `The firmware file-size allowance is ${String(fileSizeBytes)} bytes`,
+        ),
   );
 };
 

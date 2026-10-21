@@ -288,14 +288,10 @@ export class GhidraNativeAotSnapshotOwner {
       return ok(parsed);
     } catch (cause: unknown) {
       const partialObservation = this.#observation();
-      const budgetLimited =
-        cause instanceof Error && cause.message.includes("budget is exhausted");
       return err(
         new GhidraSessionError(
           "protocol",
-          budgetLimited
-            ? `${cause.message} This release has no runtime override for that NativeAOT parser budget. Repeating the unchanged request fails the same way.`
-            : "NativeAOT metadata could not be derived from the captured target snapshot.",
+          "NativeAOT metadata could not be derived from the captured target snapshot.",
           {},
           {
             cause,

@@ -197,6 +197,31 @@ it("says a CPU signal is fixed and analysis_timeout_ms does not raise it", () =>
   );
 });
 
+it("retains captured tool output on a CPU or file-size signal", () => {
+  const captured = {
+    stdout: "partial scan\n",
+    stderr: "stopped by prlimit\n",
+    stdout_bytes: 13,
+    stderr_bytes: 19,
+    exit_code: null,
+    signal: "SIGXCPU",
+    truncated: false,
+  };
+  for (const signal of ["SIGXCPU", "SIGXFSZ"] as const) {
+    const error = firmwareSignalLimitError(
+      "inspect_firmware_regions",
+      signal,
+      FIRMWARE_LIMITS.reportBytes,
+      false,
+      { ...captured, signal },
+    );
+    expect(projectAnalysisError(error!).details?.captured_output).toEqual({
+      ...captured,
+      signal,
+    });
+  }
+});
+
 it("names the fixed address-space allowance on an unclassified tool failure", () => {
   const recovery = firmwareProcessLimitRecovery(
     FIRMWARE_LIMITS.reportBytes,
