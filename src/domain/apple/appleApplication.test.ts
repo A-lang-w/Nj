@@ -566,7 +566,12 @@ describe("macOS application scope", () => {
     expect(result.bundles.find(({ path }) => path === upper)?.role).toBe(
       "framework",
     );
-    expect(result.components.frameworks.map(({ path, sha256 }) => ({ path, sha256 }))).toEqual(
+    expect(
+      result.components.frameworks.map(({ path, sha256 }) => ({
+        path,
+        sha256,
+      })),
+    ).toEqual(
       [upperPlist, upperImage, lowerImage]
         .sort(compareUnicodeCodePoints)
         .map((path) => ({ path, sha256: sha(`file:${path}`) })),
