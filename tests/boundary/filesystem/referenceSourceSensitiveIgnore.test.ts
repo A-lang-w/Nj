@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -118,5 +118,108 @@ describe.skipIf(process.platform === "win32")(
         },
       ]);
     });
+  },
+);
+
+const permissionChecksUnavailable =
+  process.platform === "win32" || process.getuid?.() === 0;
+
+describe.skipIf(permissionChecksUnavailable)(
+  "sensitive nested policies with unavailable metadata",
+  () => {
+    it.each([
+      {
+        name: "a file secret",
+        secretPatterns: ["pkg/.gitignore"],
+        excluded: true,
+      },
+      {
+        name: "a directory-only secret",
+        secretPatterns: ["pkg/.gitignore/"],
+        excluded: true,
+      },
+      { name: "no secret", secretPatterns: [], excluded: false },
+      {
+        name: "a negated secret",
+        secretPatterns: ["**/.gitignore", "!pkg/.gitignore"],
+        excluded: false,
+      },
+    ])(
+      "preserves partial facts when policy metadata is denied with $name",
+      async ({ secretPatterns, excluded }) => {
+        const root = await createSourceTree();
+        const nested = join(root, "pkg");
+        const policy = join(nested, ".gitignore");
+        const kept = "export const kept = 1;\n";
+        await writeFile(join(root, "kept.ts"), kept);
+        await writeFile(policy, "source.ts\n");
+        await chmod(nested, 0o400);
+        try {
+          expect((await readdir(nested)).sort()).toEqual([
+            ".gitignore",
+            "control.ts",
+            "source.ts",
+          ]);
+          await expect(lstat(policy)).rejects.toMatchObject({ code: "EACCES" });
+
+          const result = await importReferenceSource({
+            root,
+            caller: "sensitive-ignore-metadata-test",
+            policy: { secretPatterns },
+          });
+          if (!excluded) {
+            if (result.ok)
+              throw new Error("Expected unreadable policy failure");
+            expect(result.error.code).toBe("io");
+            expect(result.error.cause).toMatchObject({ code: "EACCES" });
+            expect(result.error.partial?.entries).toContainEqual(
+              expect.objectContaining({
+                path: "kept.ts",
+                kind: "file",
+                status: "read",
+                bytes: Buffer.from(kept),
+              }),
+            );
+            expect(
+              result.error.partial?.entries.some(({ path }) =>
+                path.startsWith("pkg/"),
+              ),
+            ).toBe(false);
+            return;
+          }
+          if (!result.ok) throw result.error;
+          expect(result.value.inventory_state).toBe("partial");
+          expect(result.value.exclusions).toEqual([
+            {
+              path: "pkg/.gitignore",
+              entry_kind: "unknown",
+              reason: "configured-secret",
+              pattern: secretPatterns[0],
+            },
+          ]);
+          expect(result.value.entries).toEqual([
+            expect.objectContaining({
+              path: "kept.ts",
+              kind: "file",
+              content_state: "hashed",
+            }),
+            expect.objectContaining({
+              path: "pkg",
+              kind: "directory",
+              tree_state: "enumerated",
+            }),
+            ...["pkg/control.ts", "pkg/source.ts"].map((path) =>
+              expect.objectContaining({
+                path,
+                kind: "unknown",
+                limitations: [expect.stringContaining("EACCES")],
+              }),
+            ),
+          ]);
+        } finally {
+          await chmod(nested, 0o700);
+        }
+      },
+    );
   },
 );

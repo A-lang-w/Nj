@@ -23,7 +23,10 @@ import {
   type ReferenceSourceImportError,
   type ReferenceSourceImportOptions,
 } from "./ReferenceSourceImportTypes.js";
-import { rootFilesystemFailure } from "../reference/ReferenceSourceReaderErrors.js";
+import {
+  filesystemFailureDetail,
+  rootFilesystemFailure,
+} from "../reference/ReferenceSourceReaderErrors.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 
 /** Validated inputs ready for filesystem traversal. */
@@ -165,9 +168,9 @@ const resolveRoot = async (
 
 const ignorePolicyMetadata = async (
   path: string,
-): Promise<Stats | undefined> => {
+): Promise<Result<Stats | undefined, ReferenceSourceImportError>> => {
   try {
-    return await lstat(path);
+    return ok(await lstat(path));
   } catch (cause: unknown) {
     if (
       typeof cause === "object" &&
@@ -175,15 +178,20 @@ const ignorePolicyMetadata = async (
       "code" in cause &&
       cause.code === "ENOENT"
     )
-      return undefined;
-    throw cause;
+      return ok(undefined);
+    const message = filesystemFailureDetail(
+      cause,
+      `Reference source ignore policy could not be read at ${path}`,
+    );
+    if (message === undefined) throw cause;
+    return err({ ...failure("io", message), cause });
   }
 };
 
 interface IgnorePolicyReadOptions {
   readonly signal: AbortSignal | undefined;
   readonly symlinks: "follow" | "reject";
-  readonly isSensitive?: (isDirectory: boolean) => boolean;
+  readonly isSensitive?: (kind: ReferenceSourceExclusionKind) => boolean;
 }
 
 const readIgnorePolicy = async (
@@ -196,9 +204,18 @@ const readIgnorePolicy = async (
     const metadata = await ignorePolicyMetadata(policyPath);
     if (signal?.aborted === true)
       throw new IgnorePolicyReadCancelled(signal.reason);
+    // Metadata failures leave kind unknown, just as in ordinary inventory.
+    // Only explicitly sensitive policies may bypass this failure.
+    if (!metadata.ok) {
+      if (isSensitive?.("unknown")) return ok("");
+      return metadata;
+    }
     // Sensitive policies are omitted before opening or decoding their contents.
     // The reader records the exclusion once, with the observed entry kind.
-    if (metadata === undefined || isSensitive?.(metadata.isDirectory()))
+    if (
+      metadata.value === undefined ||
+      isSensitive?.(metadata.value.isDirectory() ? "directory" : "file")
+    )
       return ok("");
     try {
       return ok(
@@ -339,8 +356,9 @@ const createExclusionPolicy = (
       const text = await readIgnorePolicy(join(root, directory), resources, {
         signal,
         symlinks: "reject",
-        isSensitive: (isDirectory) =>
-          secrets.ignores(`${directory}/.gitignore${isDirectory ? "/" : ""}`),
+        isSensitive: (kind) =>
+          matchIgnorePath(secrets, `${directory}/.gitignore`, kind)?.ignored ===
+          true,
       });
       if (!text.ok)
         return err({
@@ -357,6 +375,24 @@ const createExclusionPolicy = (
   return policy;
 };
 
+/** Use the same kind interpretation for policy admission and inventory. */
+const matchIgnorePath = (
+  matcher: ReturnType<typeof ignore>,
+  path: string,
+  kind: ReferenceSourceExclusionKind,
+) => {
+  // An entry of unknown kind may be a directory, so directory-only rules
+  // must still exclude it; this fails closed for caller-marked secrets.
+  const patternPaths =
+    kind === "directory"
+      ? [`${path}/`]
+      : kind === "unknown"
+        ? [path, `${path}/`]
+        : [path];
+  const results = patternPaths.map((patternPath) => matcher.test(patternPath));
+  return results.find(({ ignored }) => ignored) ?? results[0];
+};
+
 const createShouldExclude =
   (
     exclusions: HistoricalSourceGraphInput["exclusions"],
@@ -364,21 +400,7 @@ const createShouldExclude =
     ignored: ReturnType<typeof ignore>,
   ): ((path: string, kind: ReferenceSourceExclusionKind) => boolean) =>
   (path, kind) => {
-    // An entry of unknown kind may be a directory, so directory-only rules
-    // must still exclude it; this fails closed for caller-marked secrets.
-    const patternPaths =
-      kind === "directory"
-        ? [`${path}/`]
-        : kind === "unknown"
-          ? [path, `${path}/`]
-          : [path];
-    const firstMatch = (matcher: typeof secrets) => {
-      const results = patternPaths.map((patternPath) =>
-        matcher.test(patternPath),
-      );
-      return results.find(({ ignored }) => ignored) ?? results[0];
-    };
-    const secretMatch = firstMatch(secrets);
+    const secretMatch = matchIgnorePath(secrets, path, kind);
     if (secretMatch?.ignored === true) {
       if (!secretMatch.rule)
         throw new Error(`Ignored secret path has no matching rule: ${path}`);
@@ -390,7 +412,7 @@ const createShouldExclude =
       });
       return true;
     }
-    const match = firstMatch(ignored);
+    const match = matchIgnorePath(ignored, path, kind);
     if (match?.ignored !== true) return false;
     if (!match.rule)
       throw new Error(`Ignored path has no matching rule: ${path}`);

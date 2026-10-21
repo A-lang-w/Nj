@@ -326,6 +326,9 @@ and can override inherited project rules; excluded directories are not traversed
 Ignore files above the selected root and Git's global excludes are not loaded.
 Nested ignore files explicitly marked sensitive are skipped before their contents
 are read; their configured-secret exclusions are recorded during inventory.
+If a nested policy's entry kind cannot be determined, sensitive patterns are
+checked against both file and directory forms. A match skips the policy read;
+inventory records unknown entry kind if metadata remains unavailable.
 Other child ignore files must be readable regular UTF-8 files. A policy-read failure
 stops the import and retains the inventory already captured.
 Default exclusions for common generated and dependency paths such as
