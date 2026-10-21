@@ -6,6 +6,9 @@ import {
   inventoryFirmwareOutput,
   FirmwareFileAccess,
 } from "../../../src/firmware/FirmwareFiles.js";
+import { readFirmwareCommandReport } from "../../../src/firmware/FirmwareCommand.js";
+import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it.each([
@@ -32,6 +35,59 @@ it.each([
       _tag: "AnalysisOutputError",
       reason: "Tool report is not valid complete JSON",
     });
+  },
+);
+
+it.each([
+  ["missing", undefined, "Report was not created"],
+  ["empty", "", "Report is empty"],
+  ["invalid_json", '[{"Analysis":', "Tool report is not valid complete JSON"],
+] as const)(
+  "keeps report state %s after a successful exit distinct from an empty scan",
+  async (state, contents, reason) => {
+    const root = await createTestTempDirectory("rea-firmware-report-");
+    const path = join(root, "report.json");
+    if (contents !== undefined) await writeFile(path, contents);
+    const failure: unknown = await readFirmwareCommandReport({
+      path,
+      engine: "binwalk",
+      operation: "inspect_firmware_regions",
+      execution: {
+        stdout: { text: "", bytes: 0, observedBytes: 0 },
+        stderr: { text: "", bytes: 0, observedBytes: 0 },
+        exit_code: 0,
+        signal: null,
+        command: "/opt/binwalk",
+        args: ["--quiet", "--log", path, "/work/firmware.bin"],
+        resource_limiter: "/usr/bin/prlimit",
+      },
+      files: new FirmwareFileAccess(),
+    }).catch((cause: unknown) => cause);
+    if (!(failure instanceof AnalysisError))
+      throw new Error("Expected a typed report failure");
+    const projected = projectAnalysisError(failure);
+    expect(projected).toMatchObject({
+      code: "unreadable_output",
+      retryable: false,
+      message: expect.stringContaining("not an empty or complete result"),
+      details: {
+        reason: `binwalk exited 0 without a usable report: ${reason}`,
+        diagnostics: {
+          report_state: state,
+          report_path: path,
+          command: "/opt/binwalk",
+          args: ["--quiet", "--log", path, "/work/firmware.bin"],
+          resource_limiter: "/usr/bin/prlimit",
+          exit_code: 0,
+          signal: null,
+          stdout_bytes: 0,
+          stderr_bytes: 0,
+        },
+      },
+    });
+    // Generic doctor advice is not presented as a repair for a missing report.
+    expect(projected.message).not.toContain("rea doctor");
+    expect(projected.remediation.action).toContain("diagnostics.report_state");
   },
 );
 
