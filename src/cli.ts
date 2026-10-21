@@ -1,5 +1,6 @@
 import { registerNativeFunctionMatchingCommands } from "./cli/nativeFunctionMatchingCommands.js";
 import { registerCaptureCommands } from "./cli/captureCommands.js";
+import { registerBatchCommands } from "./cli/batchCommands.js";
 import { registerSignalCommands } from "./cli/signalCommands.js";
 import { registerWasmCommands } from "./cli/wasmCommands.js";
 import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
@@ -116,6 +117,10 @@ export const createCli = (
   });
 
   registerSetupCommands(cli, logger, environment);
+  let abandonedBatchOutput = false;
+  registerBatchCommands(cli, logger, environment, () => {
+    abandonedBatchOutput = true;
+  });
   registerReverseEngineeringCommands(cli, logger, environment);
   registerCutterCommands(cli, logger, environment);
   registerCoreAnalysisCommands(cli, logger, analysis.runDirectAnalysis);
@@ -161,7 +166,16 @@ export const createCli = (
   presentOmittableDefaults(cli);
   if (resultOutput !== undefined) streamCliCommandResults(cli, resultOutput);
   const serve = cli.serve.bind(cli);
-  cli.serve = (arguments_ = process.argv.slice(2), options) =>
-    serve(normalizeCliArguments(arguments_), options);
+  cli.serve = async (arguments_ = process.argv.slice(2), options) => {
+    abandonedBatchOutput = false;
+    await serve(normalizeCliArguments(arguments_), options);
+    // An interrupted native stdout write can keep Node alive indefinitely.
+    // Only the executable owner exits, after command/resource finalization.
+    if (abandonedBatchOutput) {
+      const status = Number(process.exitCode) || 1;
+      if (options?.exit !== undefined) options.exit(status);
+      else process.exit(status);
+    }
+  };
   return cli;
 };

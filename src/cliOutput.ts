@@ -168,9 +168,44 @@ const hasUnclosedFilterSlice = (expression: string): boolean => {
 export const validateCliOutputArguments = (
   arguments_: readonly string[],
 ): CliOutputArgumentValidation => {
-  const { filterOutput, format, missingValue, parseError, tokenWindow } =
-    parseCliOutputArguments(arguments_);
+  const {
+    filterOutput,
+    format,
+    missingValue,
+    parseError,
+    tokenWindow,
+    fullOutput,
+    tokenCount,
+  } = parseCliOutputArguments(arguments_);
   if (parseError) return { ok: true };
+  // Skip only known root options and their values. Flag-shaped option values
+  // never select a command, and unknown options retain Incur's own error.
+  let commandIndex = 0;
+  while (commandIndex < arguments_.length) {
+    const token = arguments_[commandIndex]!;
+    if (VALUED_OUTPUT_FLAGS.has(token)) commandIndex += 2;
+    else if (
+      ["--json", "--full-output", "--token-count", "--quiet"].includes(token)
+    )
+      commandIndex += 1;
+    else break;
+  }
+  if (
+    arguments_[commandIndex] === "batch" &&
+    (filterOutput !== undefined ||
+      tokenWindow ||
+      fullOutput ||
+      tokenCount ||
+      arguments_.includes("--quiet") ||
+      (format !== "toon" && format !== "jsonl"))
+  )
+    return {
+      ok: false,
+      format: "jsonl",
+      code: "UNSUPPORTED_OUTPUT_COMBINATION",
+      message:
+        "Batch emits complete per-call JSONL or --out files. Remove human output, filtering, token and full-output controls; project the saved results separately.",
+    };
   if (filterOutput !== undefined && hasUnclosedFilterSlice(filterOutput))
     return {
       ok: false,

@@ -1,4 +1,6 @@
 import type { Writable } from "node:stream";
+import { addAbortListener } from "node:events";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 
 import { bufferedJsonParts, jsonParts } from "../domain/jsonSerialization.js";
 
@@ -15,11 +17,12 @@ export const writeJsonOutput = async (
   value: unknown,
   destination: Writable,
   format: JsonOutputFormat = "json",
+  signal?: AbortSignal,
 ): Promise<void> => {
   for (const part of bufferedJsonParts(
     jsonOutputParts(value, format, isTerminal(destination)),
   ))
-    await writeOutputText(destination, part);
+    await writeOutputText(destination, part, signal);
 };
 
 const isTerminal = (destination: Writable): boolean =>
@@ -28,12 +31,34 @@ const isTerminal = (destination: Writable): boolean =>
 export const writeOutputText = (
   destination: Writable,
   part: string,
+  signal?: AbortSignal,
 ): Promise<void> =>
   new Promise((resolve, reject) => {
-    const onError = (cause: unknown): void => reject(cause);
+    if (signal?.aborted) {
+      reject(
+        new AnalysisCancelledError("write_output", { cause: signal.reason }),
+      );
+      return;
+    }
+    const cancellation =
+      signal === undefined
+        ? undefined
+        : addAbortListener(signal, () => {
+            // The writer abandons its wait, not the caller-owned destination.
+            reject(
+              new AnalysisCancelledError("write_output", {
+                cause: signal.reason,
+              }),
+            );
+          });
+    const onError = (cause: unknown): void => {
+      cancellation?.[Symbol.dispose]();
+      reject(cause);
+    };
     destination.once("error", onError);
     try {
       destination.write(part, (cause) => {
+        cancellation?.[Symbol.dispose]();
         if (cause) {
           // A Writable can emit its error after invoking the write callback.
           setImmediate(() => destination.off("error", onError));
@@ -44,6 +69,7 @@ export const writeOutputText = (
         }
       });
     } catch (cause: unknown) {
+      cancellation?.[Symbol.dispose]();
       destination.off("error", onError);
       reject(cause);
     }
