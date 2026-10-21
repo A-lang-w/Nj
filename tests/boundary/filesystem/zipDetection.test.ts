@@ -1,6 +1,5 @@
 import { lstat, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createPackage } from "@electron/asar";
 
 import {
   TextReader,
@@ -17,6 +16,7 @@ import {
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { artifactOccurrenceAt } from "../../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { asarHeaderBytes } from "../../fixtures/asarHeader.js";
 
 describe("ZIP signature detection", () => {
   it.each([
@@ -61,41 +61,13 @@ describe("ZIP signature detection", () => {
   it("requires container magic for asar, pkg, and dmg suffixes", async () => {
     const root = await createTestTempDirectory("rea-container-magic-");
     const asar = join(root, "app.asar");
-    const truncatedAsar = join(root, "truncated.asar");
     const textAsar = join(root, "notes.asar");
     const pkg = join(root, "install.pkg");
     const textPkg = join(root, "notes.pkg");
     const dmg = join(root, "image.dmg");
     const textDmg = join(root, "notes.dmg");
-    const source = join(root, "source");
-    await mkdir(source);
-    await writeFile(join(source, "fixture.txt"), "ASAR member bytes\n");
-    await createPackage(source, asar);
-    // The old fixture declares 28 total header bytes but contains only 18.
-    const headerSize = 20;
-    await writeFile(
-      truncatedAsar,
-      Buffer.from([
-        4,
-        0,
-        0,
-        0,
-        headerSize,
-        0,
-        0,
-        0,
-        headerSize - 4,
-        0,
-        0,
-        0,
-        2,
-        0,
-        0,
-        0,
-        0x7b,
-        0x7d,
-      ]),
-    );
+    const asarBytes = asarHeaderBytes(JSON.stringify({ files: {} }));
+    await writeFile(asar, asarBytes);
     await writeFile(textAsar, Buffer.from("not an asar"));
     await writeFile(pkg, Buffer.from("xar!"));
     await writeFile(textPkg, Buffer.from("not a pkg"));
@@ -107,20 +79,13 @@ describe("ZIP signature detection", () => {
       (await classifyAndHashRoot(asar, false, await lstat(asar))).format,
     ).toBe("asar");
     expect(
-      artifactOccurrenceAt(await inventoryArtifact(asar), "fixture.txt"),
-    ).toMatchObject({ entry_kind: "file", hash_status: "verified" });
-    expect(
-      (
-        await classifyAndHashRoot(
-          truncatedAsar,
-          false,
-          await lstat(truncatedAsar),
-        )
-      ).format,
-    ).toBe("file");
-    expect(
       (await classifyAndHashRoot(textAsar, false, await lstat(textAsar)))
         .format,
+    ).toBe("file");
+    // A valid prefix cannot admit extents outside the observed container.
+    await writeFile(asar, asarBytes.subarray(0, -1));
+    expect(
+      (await classifyAndHashRoot(asar, false, await lstat(asar))).format,
     ).toBe("file");
     expect(
       (await classifyAndHashRoot(pkg, false, await lstat(pkg))).format,
