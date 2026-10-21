@@ -261,6 +261,51 @@ it("closes a transport whose start raced a shutdown request", async () => {
   expect(output).toEqual([]);
 });
 
+it("treats a cancelled open that reports its own incomplete cleanup as the shutdown's", async () => {
+  const [target] = await createBinarySessionTargets();
+  const healthStarted = createDeferred<void>();
+  const session = createTestBinarySession((): AnalysisClient => ({
+    execute: (_operation, _parameters, options?: ExecutionOptions) => {
+      healthStarted.resolve();
+      return new Promise((resolve) => {
+        options?.signal?.addEventListener("abort", () =>
+          resolve(
+            err(
+              new AnalysisCancelledError("health", {
+                cleanup: {
+                  reason: "fixture preflight handle close unconfirmed",
+                  resources: ["fixture-handle"],
+                },
+              }),
+            ),
+          ),
+        );
+      });
+    },
+    close: async () => ok(null),
+  }));
+  const requests: Array<() => void> = [];
+  const unregistrations: string[] = [];
+  const output: string[] = [];
+  const running = run(
+    runtime({
+      env: { HOPPER_TARGET_PATH: target, HOPPER_TARGET_KIND: "database" },
+      createSession: () => session,
+      requests,
+      unregistrations,
+      output,
+    }),
+  );
+
+  await healthStarted.promise;
+  requests[0]?.();
+
+  // The shutdown owns the outcome; no initial-open failure is reported.
+  await expect(running).resolves.toBe(0);
+  expect(output).toEqual([]);
+  expect(unregistrations).toEqual(["shutdown"]);
+});
+
 it("reports a failed startup shutdown once and retains its handler for a retry", async () => {
   const [target] = await createBinarySessionTargets();
   const healthStarted = createDeferred<void>();

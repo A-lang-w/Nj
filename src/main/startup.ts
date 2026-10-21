@@ -1,15 +1,10 @@
 import type { BinarySession } from "../application/binary/BinarySession.js";
 import type { AppConfig } from "../config/types.js";
 import type { Logger } from "pino";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-
-/** Whether cancellation caused the failure, even if its cleanup also failed. */
-const cancelledOpen = (error: AnalysisError): boolean => {
-  let primary = error;
-  while (primary.cleanupPrimary !== undefined) primary = primary.cleanupPrimary;
-  return projectAnalysisError(primary).code === "cancelled";
-};
+import {
+  isCancelledAnalysisError,
+  projectAnalysisError,
+} from "../domain/analysisErrorProjection.js";
 
 export const openInitialTarget = async (
   session: BinarySession,
@@ -38,7 +33,7 @@ export const openInitialTarget = async (
   if (opened.ok) return { ok: true };
   // The shutdown that aborted the open owns session cleanup and its outcome.
   // A failure that preceded the request remains the startup failure.
-  if (signal.aborted && cancelledOpen(opened.error))
+  if (signal.aborted && isCancelledAnalysisError(opened.error))
     return { ok: false, cancelled: true };
   const closed = await session.close();
   serverLogger.error(
