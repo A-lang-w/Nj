@@ -24,7 +24,7 @@ export const nextAppRoutePath = (raw: string): string | undefined => {
     }
   }
   const match =
-    /(?:^|\/)app\/(?:(.*?)\/)?page(?:-[^/?#]+\.js|\.[cm]?jsx?|)(?:[?#].*)?$/u.exec(
+    /(?:^|\/)app\/(?:(.*?)\/)?page(?:-[^/?#]+\.js|\.(?:[cm]?jsx?|tsx?)|)(?:[?#].*)?$/u.exec(
       value,
     );
   if (!match) return;

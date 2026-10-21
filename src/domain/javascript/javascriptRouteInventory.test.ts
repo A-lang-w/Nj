@@ -191,3 +191,22 @@ it("classifies typed page configuration while generic server route calls remain 
     classification_basis: "unknown",
   });
 });
+
+it("keeps TypeScript page filename provenance separate from syntax ranges", () => {
+  const result = build([
+    source(
+      "app/(account)/reports/[id]/page.tsx",
+      "export default function Page() { return null; }",
+    ),
+  ]);
+  expect(result.routes).toHaveLength(1);
+  expect(result.routes[0]).toMatchObject({
+    path: "/reports/:id",
+    classification: "page",
+    classification_basis: "next-app-page",
+  });
+  expect(result.occurrences[0]).toMatchObject({
+    origin: "source-path",
+    source_range: null,
+  });
+});

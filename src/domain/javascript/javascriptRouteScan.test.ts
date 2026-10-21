@@ -189,6 +189,8 @@ it.each([
   ["/_next/static/chunks/app/page-123.js", "/"],
   ["static/chunks/app/(account)/reports/[id]/page-deadbeef.js", "/reports/:id"],
   ["app/docs/[...slug]/page.js", "/docs/:slug+"],
+  ["app/(account)/reports/[id]/page.tsx", "/reports/:id"],
+  ["app/reports/page.ts", "/reports"],
   ["app/docs/[[...slug]]/page", "/docs/:slug*"],
   ["app/@modal/(.)photo/[id]/page.js", undefined],
   ["/assets/app.js", undefined],
