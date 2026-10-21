@@ -38,6 +38,10 @@ supervision on macOS. REA removes that directory when it exits. REA does not
 install Xcode, Command Line Tools, or other software. Capability checks prepare
 this helper before reporting macOS capture as available.
 
+Stopping process sampling or cancelling an ownership query waits for its issued
+inspection command to exit. Closing a macOS ownership reader rejects new queries
+and waits for admitted helper commands before removing their executable directory.
+
 ## Capture a command
 
 For a small first capture, save this as `scenario.json`:
@@ -428,6 +432,17 @@ Every capture requires `truncation_details`, with separate accounting for:
   imply incomplete path enumeration.
 - `process`: sampling limit and whether sampling ended partially. Coverage
   remains `sampled`, including when that limit was not exhausted.
+  `sampling_failures` counts failed read observations plus at most one
+  unfinished pass interrupted by sampler shutdown. `first_sampling_failure`
+  retains the first attributed read diagnostic, with shutdown context appended
+  when applicable; interruption alone has an explicit shutdown diagnostic.
+  Denied or failed procfs reads mark
+  sampling partial while preserving readable process rows and thread children;
+  a process with unreadable identity is not attributed. Expected process-exit
+  races are separate from failed observations. Shutdown counts only when it
+  interrupts a read or leaves traversal unfinished; a completed pass does not
+  become partial merely because the sampler stops. Completed rows
+  remain available and issued reads settle before final coverage is returned.
 
 The aggregate `truncated` flag summarizes these observations. Comparisons retain
 results for unaffected dimensions and mark affected dimensions unknown; an
@@ -443,6 +458,40 @@ independent of `limits.output_bytes`, which bounds retained terminal content.
 Each filesystem checkpoint starts with a fresh `file_bytes` budget across all
 selected roots; it is not a per-file allowance. File contents are read in
 64 KiB chunks for hashing and are not embedded in capture Evidence.
+
+Ownership inspections bind run-token reads to native start identities and retain
+related generations through reparenting, group changes, omitted rows, and cleanup
+retries. A host without native identity reads still token-checks process-table
+rows that appear only in a launcher-exit refresh before reporting that group
+clean or publishing an empty lineage. A matching token authorizes a signal only
+for a group whose leader carries the same token. A matching token whose leader
+is absent, or an unreadable token for a still-live new row, stays unresolved. A
+readable foreign token is not signaled. An unreadable row that has exited by
+the confirmation read does not hide a new row in that confirmation table, and a
+group proven while revalidating another owned group is signaled in the same
+cleanup. A matched row that changes parent or group on the confirmation read
+is token-checked again. A PID whose token was already read is read again
+on the next confirmation even when its parent and group return to the
+pre-exit values. A PID whose first token was foreign is read again
+on that table, because the PID alone does not identify the process. A PID
+from the pre-exit table is read again when its parent or group changes, and
+an unchanged pre-existing row that was never token-read stays unread. Lineage
+publishes one row for each PID. Confirmation reads are bounded; a table that keeps producing unreadable
+replacements stays unresolved. That refresh does not retain a ledger
+for a later attempt that never observes the launcher. Lineage reads a row again
+when its parent, group, or launcher-tree membership changes, and it reads a
+token again on the next refresh even when those fields are unchanged. The
+launcher is read on every lineage refresh; a missing, unowned, or
+relation-changed launcher PID is not published as a verified lineage. A
+descendant absent from the latest refresh is omitted. An
+ancestor move cannot leave a foreign descendant inside a verified result. A
+group that reappears after cleanup already processed it is revalidated once;
+another appearance stays unresolved. The captured run keeps
+one evidence owner through settlement and cleanup.
+An absent or changed token leaves a previously related generation unresolved;
+current token proof is still required before signaling. Swept cleanup verifies the
+remaining family after its group signals. Coverage is bounded by the native
+snapshots and generations inspected; sampled group IDs select candidates.
 
 When the host withholds an unrelated process’s ownership token, REA leaves that
 process untouched and records its PID and reason in `cleanup.unverified_processes`
