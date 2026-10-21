@@ -516,6 +516,13 @@ it.each([
      }`,
   ],
   [
+    "an arrow function reading its wrapper's arguments",
+    `function register(seed) {
+       const handler = () => arguments[0];
+       ipcRenderer.on(CH, handler);
+     }`,
+  ],
+  [
     "a closure returned from a factory of a wrapper parameter",
     `const make = value => () => value;
      function register(seed) {
@@ -551,6 +558,23 @@ it.each([
       .map(({ entry }) => entry)
       .sort(),
   ).toEqual(["first.on", "second.on"]);
+});
+it("resolves a bundle module's handler in place as one shared listener", () => {
+  const result = analyzeJavaScriptStaticSource(
+    bundle(`const CH = "ch";
+      const handler = () => electron.ipcRenderer.send("reply");
+      electron.contextBridge.exposeInMainWorld("api", {
+        on: () => electron.ipcRenderer.on(CH, handler),
+      });`),
+  );
+  expect(
+    result.electron.ipc
+      .filter(({ mode, module_key }) => mode === "listen" && module_key === "9")
+      .map(({ channel, resolution_basis }) => [
+        channel,
+        resolution_basis ?? "direct",
+      ]),
+  ).toEqual([["ch", "wrapper-substitution"]]);
 });
 it("keeps a parameterless factory's closure as a per-invocation handler", () => {
   const result = analyzeJavaScriptStaticSource(`

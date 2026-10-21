@@ -299,7 +299,11 @@ export const collectElectronWrappedCallPaths = (
       env;
       env = env.parent
     )
-      if (env.activation !== undefined && env.scopeNode !== undefined)
+      if (
+        env.activation !== undefined &&
+        env.scopeNode !== undefined &&
+        env.moduleFactory !== true
+      )
         activated.add(env.scopeNode);
     // Scopes from the handler out to the outermost activated function.
     const enclosing: string[] = [];
@@ -317,16 +321,39 @@ export const collectElectronWrappedCallPaths = (
     const scopes = new Set(enclosing.slice(0, activatedScopes));
     let captures = false;
     t.traverseFast(fn.node, (node) => {
-      if (captures || !t.isIdentifier(node)) return;
+      if (captures) return;
+      if (t.isThisExpression(node)) {
+        captures = inheritsFunctionContext(node, fn.node);
+        return;
+      }
+      if (!t.isIdentifier(node)) return;
       const parent = state.parentsByNode.get(node);
       if (parent !== undefined && !t.isReferenced(node, parent)) return;
       const binding = resolveSemanticBindingState(state, node, node.name);
       captures =
         binding === undefined
-          ? semanticResolutionBlocked(state, node, node.name)
+          ? (node.name === "arguments" &&
+              inheritsFunctionContext(node, fn.node)) ||
+            semanticResolutionBlocked(state, node, node.name)
           : scopes.has(binding.scopeId);
     });
     return captures;
+  };
+  /**
+   * Whether `this` or `arguments` at a node belongs to a function enclosing
+   * the handler, as it does through arrow functions.
+   */
+  const inheritsFunctionContext = (node: t.Node, handler: t.Function) => {
+    for (
+      let current = state.parentsByNode.get(node);
+      current;
+      current = state.parentsByNode.get(current)
+    ) {
+      if (t.isFunction(current) && !t.isArrowFunctionExpression(current))
+        return false;
+      if (current === handler) return t.isArrowFunctionExpression(handler);
+    }
+    return false;
   };
   /**
    * Whether a registration's handler at an IPC site is this substituted

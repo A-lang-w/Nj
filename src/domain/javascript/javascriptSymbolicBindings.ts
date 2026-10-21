@@ -1320,6 +1320,7 @@ export class JavaScriptSymbolicBindings {
         activation: {},
         point: factory.body,
         scopeNode: factory,
+        moduleFactory: true,
         ...(this.state.scopeByNode.get(factory)?.scopeId === undefined
           ? {}
           : { scopeId: this.state.scopeByNode.get(factory)!.scopeId }),

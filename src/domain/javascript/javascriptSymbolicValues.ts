@@ -14,6 +14,8 @@ export interface SymbolicEnvironment {
   readonly scopeId?: string;
   /** Function activation captured by this environment, when one exists. */
   readonly scopeNode?: t.Function;
+  /** A bundle module factory activation, which runs once per module load. */
+  readonly moduleFactory?: true;
   /** Completion boundary proven for this captured activation. */
   readonly completedAt?: t.Node;
   /** Shared completion facts must remain unchanged through this later exit. */
