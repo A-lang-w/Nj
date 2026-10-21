@@ -507,6 +507,51 @@ it("keeps the source registration when only its channel is site-determined", () 
     ["ch", "inline-function", "wrapper-substitution"],
   ]);
 });
+it.each([
+  [
+    "a closure over a wrapper parameter",
+    `function register(seed) {
+       const handler = () => ipcRenderer.send(seed);
+       ipcRenderer.on(CH, handler);
+     }`,
+  ],
+  [
+    "a closure returned from a factory of a wrapper parameter",
+    `const make = value => () => value;
+     function register(seed) {
+       const handler = make(seed);
+       ipcRenderer.on(CH, handler);
+     }`,
+  ],
+])("keeps distinct listeners when one handler node is %s", (_, wrapper) => {
+  const result = analyzeJavaScriptStaticSource(`
+      const { contextBridge, ipcRenderer } = require("electron");
+      const CH = "ch", A = "a", B = "b";
+      ${wrapper}
+      contextBridge.exposeInMainWorld("first", { on: () => register(A) });
+      contextBridge.exposeInMainWorld("second", { on: () => register(B) });
+    `);
+  // Each invocation installs its own closure; the direct source observation
+  // stays for callers this pass does not trace.
+  expect(
+    result.electron.ipc
+      .filter(({ mode }) => mode === "listen")
+      .map(({ channel, resolution_basis }) => [
+        channel,
+        resolution_basis ?? "direct",
+      ]),
+  ).toEqual([
+    [null, "direct"],
+    ["ch", "wrapper-substitution"],
+    ["ch", "wrapper-substitution"],
+  ]);
+  expect(
+    result.electron.call_paths
+      .filter(({ channel }) => channel === "ch")
+      .map(({ entry }) => entry)
+      .sort(),
+  ).toEqual(["first.on", "second.on"]);
+});
 it("counts one exposed renderer listener callsite once and retains its bridge path", () => {
   const result = analyzeJavaScriptStaticSource(`
     const {contextBridge,ipcRenderer}=require("electron");

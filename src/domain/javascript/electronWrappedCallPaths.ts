@@ -276,7 +276,10 @@ export const collectElectronWrappedCallPaths = (
   /**
    * Whether a registration's handler at an IPC site is this substituted
    * handler independent of any invocation: the same function value in the
-   * site's lexical environment, or no handler argument at all.
+   * site's lexical environment, capturing no value an invocation bound, or no
+   * handler argument at all. One function node created in different
+   * activations, such as a closure over a wrapper parameter, may capture
+   * different values, so it is a distinct handler.
    */
   const siteDeterminesHandler = (
     node: t.CallExpression | t.OptionalCallExpression,
@@ -292,8 +295,29 @@ export const collectElectronWrappedCallPaths = (
     return (
       only?.kind === "function" &&
       only.node === fn.node &&
+      !capturesBoundValues(fn.environment, only.environment) &&
       !only.conditions?.length
     );
+  };
+  /** Whether an environment binds values its lexical counterpart does not. */
+  const capturesBoundValues = (
+    captured: SymbolicEnvironment,
+    lexical: SymbolicEnvironment,
+  ): boolean => {
+    const shared = new Set<SymbolicEnvironment>();
+    for (
+      let env: SymbolicEnvironment | undefined = lexical;
+      env;
+      env = env.parent
+    )
+      shared.add(env);
+    for (
+      let env: SymbolicEnvironment | undefined = captured;
+      env && !shared.has(env);
+      env = env.parent
+    )
+      if (env.values.size > 0) return true;
+    return false;
   };
   const hasConditions = (value: SymbolicValue): boolean =>
     symbolicVariants(value).some((variant) => variant.conditions?.length);
