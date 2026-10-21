@@ -3,7 +3,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, test } from "vitest";
+import { expect, onTestFinished, test } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { startCompiledCliSession } from "../../support/cli/compiledCliSession.js";
@@ -145,6 +145,7 @@ test("closes a compiled CLI session that exits after stdin closes", async () => 
 
 test("keeps a compiled CLI failure status and serves the next command", async () => {
   const session = startCompiledCliSession();
+  onTestFinished(() => session.close());
   const root = await createTestTempDirectory("rea-warm-cli-status-");
   await writeFile(
     join(root, "app.mjs"),
