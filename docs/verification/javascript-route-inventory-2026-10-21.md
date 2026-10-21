@@ -1,11 +1,10 @@
 # Static JavaScript route inventory verification
 
 Issue: [#4772](https://github.com/morluto/rea/issues/4772). Qualified runtime:
-`55f82eaf35fd007b7acbce2e9383fe13aa31498d`, tree `3b699d0dfcbca2abc3dace7e553ed0cd029270b8`,
+`7bf15cbd23d085ff584c4ca160a2eeb985fc3080`, tree `139de4f625371d231d54f6c6b4052cac6c001946`,
 on main `3dbe314ada9f6dcc994ca4655dc0faf082503847`. Current public interface, worker fixtures,
-SDK and Chromium measurements use this runtime. Full-worker corpus measurements
-remain pinned to `c86fc9d318f56c28e3678c2dfbdca08a20a258cb`, with current filename-owner
-revalidation and exact inventory replay described below. Verification-only
+SDK, Chromium and the complete fresh 67-worker corpus measurements use this
+runtime. Verification-only
 commits change this report, not the runtime. Exact inputs, commands, profiles, historical
 controls and meaningful failed attempts are retained in the
 [verification record](javascript-route-inventory-2026-10-21.json).
@@ -14,20 +13,20 @@ controls and meaningful failed attempts are retained in the
 
 The saved homepage references contain 29 nextjs.org scripts (1,533,098 bytes)
 and 38 ui.shadcn.com scripts (2,465,078 bytes). Original URLs, byte counts and
-SHA-256 are preserved. At full-worker runtime c86fc9d31, every source was freshly
+SHA-256 are preserved. At the current qualified runtime, every source was freshly
 rehashed and analyzed through production isolated workers with one semantic
 projection node, a selected 512 MiB worker old-space limit and the existing
 15-second per-source deadline. Sources were read as data; their application code
-was not executed. That version's retained facts are reused only after the
-current format-owner and inventory checks below.
+was not executed. Every worker analysis is fresh; no retained source facts or
+conditional classifier replay are used for this qualification.
 
 | Supplied capture | Scripts |     Bytes | Completed jobs | Route checkpoints | Rooted patterns |
 | ---------------- | ------: | --------: | -------------: | ----------------: | --------------: |
 | nextjs-org       |      29 | 1,533,098 |             28 |                28 |               0 |
-| shadcn-ui        |      38 | 2,465,078 |             34 |                35 |              18 |
+| shadcn-ui        |      38 | 2,465,078 |             36 |                37 |              18 |
 
-At c86fc9d31, the complete 67-worker task took **283.792 s elapsed**,
-**421.694 CPU s** and **495,742,976 bytes** sampled
+At the current runtime, the complete 67-worker task took **294.386 s elapsed**,
+**432.469 CPU s** and **579,248,128 bytes** sampled
 peak process-family RSS. Unavailable jobs, configured deadlines and partial
 facts remain explicit in the record. Zero supported rooted Next patterns does
 not establish zero application routes. Lazy/server-only code, reachability and
@@ -48,27 +47,16 @@ page, without running it. Public CLI and official SDK `analyze_web_bundle` calls
 passively captured that inert source via CDP and returned all 18 patterns, its
 original URL and exact SHA-256. Source parsing was complete, enumeration partial
 and application coverage unknown. Owned browser-group and temporary-profile
-cleanup succeeded. This task took **11.997 s elapsed**,
-**14.942 CPU s** and **2,175,156,224 bytes** sampled
+cleanup succeeded. This task took **12.485 s elapsed**,
+**15.489 CPU s** and **2,189,942,784 bytes** sampled
 peak family RSS. This does not qualify the published application's live UI.
 
-At the current runtime, all 67 original sources were rehashed and parsed. The
-new/old filename owners were compared on every literal/template value (a superset
-of scanner inputs) and four URL/path metadata variants per file. Positive controls
-verify the new unknown branch and private exclusion. No captured input enters
-the new interception branch, and every known classification is identical. The
-current inventory owner then exactly reproduces both complete retained inventories.
-This check took **2.120 s elapsed**,
-**2.677 CPU s** and
-**296,652,800 bytes** sampled
-peak family RSS. It requalifies retained route facts for this narrow format change;
-no new full 67-worker run or current underlying-analysis speedup is claimed.
-Public fixtures, SDK and Chromium below are freshly executed on the current runtime.
-
-The earlier 658 narrow old-owner/current-owner deadline comparison remains pinned
-to that historical runtime in JSON; it does not qualify this newer scanner.
-Captures and narrow controls establish no general performance equivalence or
-code-specific cause for timing/deadline variation.
+The earlier c86 worker corpus, 55 filename-classifier replay and 658 narrow
+old-owner/current-owner deadline comparison remain pinned to their historical
+runtimes in JSON. They do not qualify this newer scanner. Captures and narrow
+controls establish no general performance equivalence or code-specific cause
+for timing/deadline variation. Current public fixtures, SDK, Chromium and all
+67 source workers below are freshly executed.
 
 ## Equivalent delivery workflows
 
@@ -76,16 +64,16 @@ Both fresh SDK sessions used the same selected production chunk, analysis
 budgets and `/docs` query, returning paths, confidence, mechanisms and provenance.
 Explicit source selection retains the 38-file inventory while analyzing only the
 selected file; other sources remain unknown. Both sessions retained the same
-complete parent Evidence `ev_aaa74242aeb9bfd9cd1f984250a00bca9c86f135a4075b610f56183214dd8e06`,
+complete parent Evidence `ev_8ed574a3a7a6fa16333857e921c69789dde59f7c61c5691225d1b3eaa114218d`,
 performed three historical view reads and exported complete Evidence.
 
 | Completed workflow                                              | Complete analysis, then route view | Route view in analysis call |
 | --------------------------------------------------------------- | ---------------------------------: | --------------------------: |
-| Estimated tokens: used input declarations and all calls/replies |                          1,938,095 |                      58,845 |
-| Estimated tokens: entire catalog and all calls/replies          |                          3,029,568 |                   1,150,318 |
-| Elapsed seconds, including startup and cleanup                  |                             18.023 |                      16.686 |
-| CPU seconds, process family                                     |                             23.560 |                      21.530 |
-| Peak sampled process-family RSS bytes                           |                      1,757,306,880 |               1,333,936,128 |
+| Estimated tokens: used input declarations and all calls/replies |                          1,938,134 |                      58,842 |
+| Estimated tokens: entire catalog and all calls/replies          |                          3,029,607 |                   1,150,315 |
+| Elapsed seconds, including startup and cleanup                  |                             17.495 |                      14.213 |
+| CPU seconds, process family                                     |                             22.410 |                      18.806 |
+| Peak sampled process-family RSS bytes                           |                      1,472,823,296 |               1,350,627,328 |
 
 Token counts are tokenx estimates of actual SDK advertisements, arguments and
 complete replies, including follow-up reads and export. JSON-RPC envelopes,
@@ -121,7 +109,14 @@ Dynamic/ambiguous/mutated/cyclic parents and incomplete capture remain gaps.
 Recognized local navigation objects expose literal pathnames while owning their
 query/search/hash data. Ownership is checked before discovering automatic roots
 or ancestry edges, preventing query objects from becoming pages. Independent
-callable/component bodies keep their own context. One Next filename classifier
+callable/component bodies keep their own context. A mandatory preparation factory
+now resolves recognized stable destination aliases against the shared mutation
+index before any fact admission. Its bounded value-ownership closure excludes
+query/module data without following callee or projected namespaces wholesale.
+Repeated alias uses keep distinct use-site occurrence identities and initializer
+segment ranges. Mutation, cycle and unresolved projection uncertainty remain
+gaps; opaque escape does not make a value stable. Both application and browser
+consumers use the same factory. One Next filename classifier
 returns known paths, unknown interception context or non-pages. Both AST scanning
 and metadata inventory retain interception gaps with precise or null ranges,
 respectively. Private folders exclude the entire page before interception and
@@ -149,7 +144,7 @@ inventory finalization, and owned worker cleanup/retry remains covered.
 
 ## Executed checks and limits
 
-**491/491 source/owner regressions** and **70/70 compiled
+**508/508 source/owner regressions** and **70/70 compiled
 worker/public CLI/SDK/schema tests** passed on the qualified runtime, including
 current-main CDP observation-window boundaries. Typecheck/lint passed through
 `npm run check:fast`; final documentation validation is recorded separately.
@@ -157,16 +152,22 @@ The public suite exercises exported-Evidence reads after source deletion,
 large bounded facts, source selection, retention, cancellation, SDK recovery,
 source-to-bundle integration and every advertised tool schema.
 
-Four intercepted-page regressions failed before the current correction; two
-private-folder precedence controls and existing ordinary/parallel/group path cases
-pass. Earlier six ancestry/typed-child failures and two navigation-data failures,
-plus the callable-body compatibility control, remain recorded. Earlier delivery,
-wrapped-navigation, corrected-oracle and failed-control records remain pinned
-to their actual runtimes. Earlier capacity, cleanup, malformed
-input, cancellation and matched main/runtime deadline controls remain pinned
-to their actual revisions. Historical conditional corpus replays are not used
-as the current full-worker qualification. Earlier technical CI results do not
-qualify this head; latest CI/review must be checked separately.
+Seven aliased-navigation regressions failed before the current correction
+(7/89); the review's binary-pathname example and cyclic-alias controls already
+passed. Array/query/module aliases caused actual false candidates, and stable
+scalar/pathname aliases were missed. Current source tests cover distinct use-site
+identity, initializer provenance, callable independence, mutation/shadowing,
+callee/projected namespaces and a 256-alias chain exhausting the source-work
+budget. Full/compact SDK historical views and both browser adapters verify the
+shared preparation phase.
+
+One intermediate suite assertion incorrectly expected a route from a configuration
+already escaped to an opaque navigation call. The positive control now registers
+before escape; a separate negative preserves the escaped order and unknown result.
+The existing freshness guard was retained. Earlier intercepted-page, ancestry,
+typed-child, delivery, capacity, cleanup, cancellation, corrected-oracle and
+failed-control records remain pinned to their actual revisions. Earlier technical
+CI results do not qualify this head; latest CI/review must be checked separately.
 
 No claim is made for complete application routes, live route execution, private
 issue samples, external cloud clients or Windows/macOS provider execution.
