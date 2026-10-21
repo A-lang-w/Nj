@@ -208,3 +208,12 @@ explicit catalog from each caller. Two suites passed 25 tests, including real
 production stdio, `capabilities` and `providers` comparisons for default, full,
 compact and both output-off combinations. This target-free verification is
 separate from real artifact measurements and does not qualify native engines.
+
+Rebased again onto `8e3bf56e1` after upstream browser Evidence schema changes.
+A separate completed real Zellij SDK task preserved its complete parent and
+every catalog field except output schemas; whole-task estimate remains 51,721
+tokens. Fourteen production CLI/MCP profile/lifecycle tests passed. Two
+absolute-path tests also passed: full advertisement conformance explicitly
+selects full, while actual relative-path refusals keep the default compact
+presentation. This fixes the remaining nested-path assertion found by CI.
+These integration checks do not replace the original performance cohorts.

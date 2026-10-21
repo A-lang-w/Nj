@@ -2397,5 +2397,153 @@
       }
     ],
     "included_in_performance_cohorts": false
+  },
+  "latest_main_8e_integration": {
+    "base_revision": "8e3bf56e1",
+    "tested_code_revision": "2a6a0812886e1a4e022042947a59575bed1bc954",
+    "scope": "Separate integration after upstream browser Evidence schema changes; not a repeated performance cohort.",
+    "real_sdk_costs": {
+      "case": "latest-main-8e-sdk",
+      "kind": "SDK",
+      "profile": "default",
+      "artifact_sha256": "9a86e9ca47902a869fdf1886f4cf17714f4fa5655427128beadff498cfb392db",
+      "tool_count": 213,
+      "calls": [
+        {
+          "name": "inspect_rust_binary",
+          "elapsed_ms": 370.39350399999967,
+          "is_error": false
+        },
+        {
+          "name": "inspect_analysis_view",
+          "elapsed_ms": 2317.916096,
+          "is_error": false
+        },
+        {
+          "name": "inspect_analysis_view",
+          "elapsed_ms": 9.645430000000488,
+          "is_error": false
+        },
+        {
+          "name": "inspect_rust_binary",
+          "elapsed_ms": 5.3366600000008475,
+          "is_error": true
+        },
+        {
+          "name": "export_evidence_bundle",
+          "elapsed_ms": 30.598637999999482,
+          "is_error": false
+        }
+      ],
+      "parent_evidence_id": "ev_8c9124795a5cf45c2bf816bbfa0ced9c3025550e72d4e3facf5fb2e266d3dadb",
+      "parent_semantic_sha256": "df1930ee07a13eb4b47c91f2834c4b0f8d99089e051a02083c7c3cf03bb30467",
+      "token_estimates": {
+        "input_catalog_once": 47868,
+        "arguments": 290,
+        "text_replies": 3563,
+        "whole_task": 51721,
+        "raw_catalog_including_output_schemas": 750781
+      },
+      "actual_model_usage": null,
+      "wall_seconds": 7.785,
+      "cpu_seconds": 7.533643,
+      "kernel_family_peak_bytes_including_page_cache": 873308160,
+      "resource_stop": null,
+      "cleanup_verified": true,
+      "final_whole_scope_counters": null,
+      "guard_sources_sha256": {
+        "resource-run.py": "7a9642ab86ba34290564f636eb080cacf38b4185a254028680b238bff172993b",
+        "resource_payload.py": "6f089e645459eba80c5d73e39c21606c78173a44daf49fabc3b88c4631ce51c6"
+      },
+      "log_sha256": "528bc7a1373c01facb84706db0848ed66905e8dfecba17275c3bb2b866a5205c",
+      "receipt_sha256": {
+        "report.json": "69e9fb06030e7b00a0f3323a1ccf8e2ed53172e36ebfa98d6e2e6abbd33d9faa",
+        "catalog.json": "3be1d142d47c9a103cbbab0dcc48e556fe7acb52f812f930ba92b59540beb2d4",
+        "transcript.json": "dc2bbf5bb7e5391dd2b510ad8126402c6a796a19d02f2d04beec321fbb7c64e1"
+      }
+    },
+    "full_parent_equal_to_previous_review_check": true,
+    "all_catalog_metadata_except_output_schemas_equal": true,
+    "public_workflow_checks": "Fourteen production CLI/MCP profile and lifecycle tests passed. Full absolute-path advertisement conformance and default canonical path refusals passed (two tests).",
+    "path_followup": "CI e255 exposed a remaining full nested-path advertisement assumption. Only that conformance case selects full; the actual relative-path refusal workflow still exercises the omitted/default profile.",
+    "validation_runs": [
+      {
+        "log": "latest-main-8e-doctor.log",
+        "log_sha256": "c7bbb538b8fd409ce2f3381af8166c3f1c66ff2f34b03abe095f99fa5016a367",
+        "elapsed_seconds": 103.153,
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-47112168490343be9cf3738adf32b051.scope",
+          "payload_exit_code": 0,
+          "observer_pid": 852216,
+          "remaining_processes": [852216],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 120761531,
+            "user_usec": 104690859,
+            "system_usec": 16070672,
+            "nr_periods": 1026,
+            "nr_throttled": 7,
+            "throttled_usec": 15275,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 1406656512,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-47112168490343be9cf3738adf32b051.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        }
+      },
+      {
+        "log": "absolute-path-profiles.log",
+        "log_sha256": "f28b63b8969152fdeec3595ae66ed6ccb4733c9cd21542d0b32d6bb269ceb8a0",
+        "elapsed_seconds": 18.742,
+        "payload_resource_observation": {
+          "phase": "payload-exited-observer-alive",
+          "ownership_token": "rea-efficiency-e46c4b026e1b4023917aceaaf79eb563.scope",
+          "payload_exit_code": 0,
+          "observer_pid": 856870,
+          "remaining_processes": [856870],
+          "payload_cleanup_verified": true,
+          "cpu_stat": {
+            "usage_usec": 18867565,
+            "user_usec": 16387068,
+            "system_usec": 2480497,
+            "nr_periods": 185,
+            "nr_throttled": 0,
+            "throttled_usec": 0,
+            "nr_bursts": 0,
+            "burst_usec": 0
+          },
+          "memory_peak_bytes": 969953280,
+          "control_group": "user.slice/user-1004.slice/user@1004.service/app.slice/rea-efficiency-e46c4b026e1b4023917aceaaf79eb563.scope",
+          "resource_events": {
+            "memory.events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            },
+            "pids.events": {
+              "max": 0
+            }
+          }
+        }
+      }
+    ],
+    "included_in_performance_cohorts": false
   }
 }
