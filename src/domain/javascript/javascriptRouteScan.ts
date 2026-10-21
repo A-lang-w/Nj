@@ -46,6 +46,11 @@ interface Frame {
   readonly ancestry?: Ancestry;
   readonly fallback?: { key: string; node: t.Node };
 }
+interface DynamicRouteValueOwner {
+  readonly node: t.Node;
+  readonly navigation: boolean;
+  reported: boolean;
+}
 interface Fields {
   readonly values: ReadonlyMap<string, t.ObjectProperty>;
   readonly unknownKeys: boolean;
@@ -66,6 +71,8 @@ const navigationCalls = new Set([
   "href",
 ]);
 const nextNames = new Set(["TURBOPACK", "webpackChunk_N_E", "__NEXT_DATA__"]);
+const isRouteChildKey = (key: string, typed: boolean): boolean =>
+  typed ? !key.startsWith("_") && !key.startsWith("$") : key === "children";
 
 /** Shared syntax owner; both consumers borrow their existing AST walk and lexical index. */
 export class JavaScriptRouteScan {
@@ -83,6 +90,7 @@ export class JavaScriptRouteScan {
   readonly #seen = new Set<string>();
   readonly #literalPaths: { value: string; node: t.Node }[] = [];
   readonly #propertyValues = new WeakSet<t.Node>();
+  readonly #dynamicValues = new WeakMap<t.Node, DynamicRouteValueOwner>();
   readonly #fieldsCache = new WeakMap<t.ObjectExpression, Fields>();
   readonly #routeParents = new WeakMap<
     t.ObjectExpression,
@@ -115,7 +123,14 @@ export class JavaScriptRouteScan {
       );
   }
 
-  inspect(node: t.Node): void {
+  inspect(node: t.Node, parent: t.Node | null): void {
+    const owner = parent === null ? undefined : this.#dynamicValues.get(parent);
+    if (
+      owner !== undefined &&
+      !this.#dynamicValues.has(node) &&
+      this.#queue(node)
+    )
+      this.#dynamicValues.set(node, owner);
     // Legacy projections receive the same owned literal observations even when the new facet is full.
     if (t.isObjectProperty(node)) {
       this.#property(node);
@@ -133,6 +148,30 @@ export class JavaScriptRouteScan {
     if (!this.#nextRuntime && t.isIdentifier(node) && nextNames.has(node.name))
       this.#nextRuntime = true;
     if (t.isStringLiteral(node) || t.isTemplateLiteral(node)) {
+      const dynamic = this.#dynamicValues.get(node);
+      if (dynamic !== undefined) {
+        const fragment =
+          stringValue(node) ??
+          (t.isTemplateLiteral(node)
+            ? (node.quasis[0]?.value.cooked ?? node.quasis[0]?.value.raw)
+            : undefined);
+        // A rooted fragment establishes a dynamic navigation observation, not
+        // a whole route. Unrelated array.push(value) calls add no route noise.
+        if (
+          dynamic.navigation &&
+          !dynamic.reported &&
+          fragment !== undefined &&
+          routePath(fragment, { navigation: true }) !== undefined
+        ) {
+          dynamic.reported = true;
+          this.#unknown(
+            "navigation-target",
+            dynamic.node,
+            "The navigation target is dynamic; literal fragments do not establish a complete path.",
+          );
+        }
+        return;
+      }
       const value = stringValue(node);
       if (value === undefined) return;
       const next = nextAppRoutePath(value);
@@ -161,6 +200,12 @@ export class JavaScriptRouteScan {
         this.onLegacyRoute?.({ node, value, mechanism: `property:${name}` });
       if (this.#result.capacity === null) this.#propertyValues.add(node.value);
     }
+    if (
+      this.#result.capacity === null &&
+      (name === "path" || name === "route" || name === "_$") &&
+      stringValue(node.value) === undefined
+    )
+      this.#ownDynamicValue(node.value, false);
     if (this.#result.capacity === null && name === "href")
       this.#navigation(node.value);
   }
@@ -196,6 +241,7 @@ export class JavaScriptRouteScan {
       return;
     if (navigationCalls.has(name)) this.#navigation(first);
     if (name === "route" || name === "addRoute") {
+      if (stringValue(first) === undefined) this.#ownDynamicValue(first, false);
       const value = stringValue(first),
         path =
           value === undefined
@@ -284,7 +330,7 @@ export class JavaScriptRouteScan {
         );
         continue;
       }
-      this.#claimConfiguration(first, index);
+      this.#claimConfiguration(first, index, call.typed);
       yield* this.#walk(first, call.node, call.typed, index);
     }
     for (const candidate of this.#automaticRoots) {
@@ -304,7 +350,7 @@ export class JavaScriptRouteScan {
           root,
           "The routing root is inferred from configuration syntax without a bound route-builder call.",
         );
-        this.#claimConfiguration(root, index);
+        this.#claimConfiguration(root, index, candidate.typed);
         yield* this.#walk(root, root, candidate.typed, index, true);
       }
     }
@@ -341,17 +387,23 @@ export class JavaScriptRouteScan {
     return this.#result;
   }
 
+  #ownDynamicValue(node: t.Node, navigation: boolean): void {
+    if (this.#queue(node))
+      this.#dynamicValues.set(node, { node, navigation, reported: false });
+  }
+
   #navigation(node: t.Node): void {
-    const value = stringValue(node),
-      path =
-        value === undefined
-          ? undefined
-          : routePath(value, { navigation: true });
+    const value = stringValue(node);
+    if (value === undefined) {
+      this.#ownDynamicValue(node, true);
+      return;
+    }
+    const path = routePath(value, { navigation: true });
     if (path !== undefined)
       this.#emit(
         path,
         "navigation-target",
-        [{ value: value!, location: range(node), origin: "literal" }],
+        [{ value, location: range(node), origin: "literal" }],
         node,
         true,
       );
@@ -418,7 +470,11 @@ export class JavaScriptRouteScan {
   }
 
   /** Ownership is independent of whether the selected value is unchanged. */
-  #claimConfiguration(root: t.Node, index: JavaScriptBindingIndex): void {
+  #claimConfiguration(
+    root: t.Node,
+    index: JavaScriptBindingIndex,
+    typed: boolean,
+  ): void {
     const pending: t.Node[] = [];
     const admit = (raw: t.Node | null | undefined): void => {
       if (raw == null) return;
@@ -457,8 +513,22 @@ export class JavaScriptRouteScan {
           admit(value.node);
       } else if (t.isObjectExpression(node)) {
         for (const property of node.properties) {
-          if (t.isObjectProperty(property)) admit(property.value);
-          else if (t.isSpreadElement(property)) admit(property.argument);
+          if (t.isObjectProperty(property)) {
+            const key = semanticStaticPropertyName(
+              property.key,
+              property.computed,
+            );
+            // Owning a route does not own the component/loader inputs it uses.
+            // Follow the same route relationships consumed by the route walker.
+            if (
+              key !== undefined &&
+              isRouteChildKey(key, typed) &&
+              (!typed ||
+                t.isObjectExpression(property.value) ||
+                t.isIdentifier(property.value))
+            )
+              admit(property.value);
+          } else if (t.isSpreadElement(property)) admit(property.argument);
         }
       } else if (t.isArrayExpression(node))
         for (const child of node.elements) admit(child);
@@ -645,7 +715,7 @@ export class JavaScriptRouteScan {
           at--
         ) {
           const [key, child] = entries[at]!;
-          if (key.startsWith("_") || key.startsWith("$")) continue;
+          if (!isRouteChildKey(key, true)) continue;
           if (t.isObjectExpression(child.value) || t.isIdentifier(child.value))
             this.#frame(frames, {
               node: child.value,

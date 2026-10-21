@@ -21,8 +21,8 @@ const analyze = (source: string, budget?: number) => {
   complete(index.indexAmbientWritesSteps());
   const scan = new JavaScriptRouteScan(undefined, budget);
   traverseJavaScriptAst(file, {
-    enter: (node) => {
-      scan.inspect(node);
+    enter: (node, parent) => {
+      scan.inspect(node, parent);
     },
   });
   return complete(scan.finishSteps(index));
@@ -256,3 +256,54 @@ it("leaves missing unbound typed ancestors unknown instead of inventing containe
   expect(facts.candidates[0]!.derivation).toBe("inferred");
   expect(facts.unresolved).toHaveLength(1);
 });
+
+it("keeps dynamic route and navigation fragments out of independent literal candidates", () => {
+  const facts = analyze(`
+    createBrowserRouter([{path:'/users'}, {path:'/users/' + id}]);
+    router.push('/users/' + id);
+    router.replace(ready ? '/users/ready' : '/users/pending');
+    router.navigate(\`/users/\${id}\`);
+    route('/users/registered/' + id);
+    const link = {href: '/users/link/' + id};
+    const typed = defineRoutes({entry: {_$: '/users/typed/' + id}});
+    const independent = '/users/settings';
+    values.push(value);
+  `);
+  expect([...new Set(facts.candidates.map(({ path }) => path))].sort()).toEqual(
+    ["/users", "/users/settings"],
+  );
+  expect(
+    facts.unresolved.filter(
+      ({ mechanism }) => mechanism === "navigation-target",
+    ),
+  ).toHaveLength(4);
+  expect(
+    facts.unresolved.some(({ mechanism }) => mechanism === "router-call"),
+  ).toBe(true);
+  expect(
+    facts.unresolved.some(
+      ({ mechanism }) => mechanism === "nested-route-object",
+    ),
+  ).toBe(true);
+  expect(
+    facts.unresolved.some(({ mechanism }) => mechanism === "typed-route-tree"),
+  ).toBe(true);
+});
+
+it.each([
+  `const secondary=[{path:'/reports',element:Reports}];createBrowserRouter([{path:'/shell',element:jsx(Panel,{routes:secondary})}]);`,
+  `createBrowserRouter([{path:'/shell',element:jsx(Panel,{routes:[{path:'/reports',element:Reports}]})}]);`,
+])(
+  "keeps independent component route tables outside configuration ownership: %s",
+  (code) => {
+    const facts = analyze(code);
+    expect(
+      [...new Set(facts.candidates.map(({ path }) => path))].sort(),
+    ).toEqual(["/reports", "/shell"]);
+    expect(
+      facts.unresolved.some(({ reason }) =>
+        reason.includes("without a bound route-builder"),
+      ),
+    ).toBe(true);
+  },
+);

@@ -107,9 +107,9 @@ export const analyzeScript = (
     index,
   );
   traverseJavaScriptAst(file, {
-    enter: (node) => {
+    enter: (node, parent) => {
       accumulator.visitedNodes += 1;
-      routeScan.inspect(node);
+      routeScan.inspect(node, parent);
       inspectNode(script, node, accumulator, openReceiverFacts, isMapLookup);
       const endpoint = rpc.inspect(node);
       if (endpoint !== undefined)

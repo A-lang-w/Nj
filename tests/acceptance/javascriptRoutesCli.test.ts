@@ -12,7 +12,7 @@ const fixture = async () => {
   const path = await createTestTempDirectory("rea-javascript-routes-");
   await writeFile(
     join(path, "routes.js"),
-    `const routes=defineRoutes({reports:{_$:'reports',settings:{_$:'settings'},history:{}}});createBrowserRouter([{path:'/account',children:[{path:':id'}]}]);`,
+    `const routes=defineRoutes({reports:{_$:'reports',settings:{_$:'settings'},history:{}}});createBrowserRouter([{path:'/account',children:[{path:':id'}]}]);router.push('/reports/' + selectedId);`,
   );
   return path;
 };
@@ -167,7 +167,7 @@ cliTest(
       commandResult: ({ method }) =>
         method === "Debugger.getScriptSource"
           ? {
-              scriptSource: `createBrowserRouter([{path:'/reports',children:[{path:'settings'}]}]);`,
+              scriptSource: `const secondary=[{path:'/reports/panel',element:Panel}];createBrowserRouter([{path:'/reports',children:[{path:'settings'}],element:jsx(Panel,{routes:secondary})}]);`,
             }
           : undefined,
     });
@@ -175,7 +175,7 @@ cliTest(
       const view = {
         kind: "javascript-routes",
         collection: "routes",
-        where: { paths: ["/reports/settings"] },
+        where: { paths: ["/reports/settings", "/reports/panel"] },
       };
       const output = join(
         await createTestTempDirectory("rea-browser-route-evidence-"),
@@ -204,7 +204,7 @@ cliTest(
       const selected = javaScriptRoutesViewResultSchema.parse(
         parseEvidence(envelope.summary).normalized_result,
       );
-      expect(selected.items).toHaveLength(1);
+      expect(selected.items).toHaveLength(2);
       expect(selected.artifact).toBeNull();
       const { call } = await connectLocalToolsMcp();
       const observed = await call("analyze_web_bundle", {
@@ -219,7 +219,7 @@ cliTest(
       const result = javaScriptRoutesViewResultSchema.parse(
         parseEvidence(observed.structuredContent).normalized_result,
       );
-      expect(result.items).toHaveLength(1);
+      expect(result.items).toHaveLength(2);
       const retained = await call("inspect_analysis_view", {
         source: {
           kind: "retained-evidence",

@@ -148,9 +148,9 @@ function* traverseStaticSourceSteps(
   routeScan: JavaScriptRouteScan,
 ): Generator<void, void> {
   yield* traverseJavaScriptAstSteps(file, {
-    enter: (node) => {
+    enter: (node, parent) => {
       findings.accumulator.visitedNodes += 1;
-      routeScan.inspect(node);
+      routeScan.inspect(node, parent);
       inspectNode(node, findings, bindings);
       return undefined;
     },
