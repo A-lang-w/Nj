@@ -449,7 +449,9 @@ napi_value processCall(napi_env env, const std::wstring& operation, const std::v
   if (operation == L"process_close") {
     // Closing the job is the crash-safe authority; no PID enumeration is used.
     // A failed close leaves that handle on this process so a later close can
-    // retry it. The process stays open until every owned handle is released.
+    // retry it. Handles that already closed stay released, so the retry
+    // resumes at the first handle still owned. Callers that have observed
+    // settlement must retry this close alone; kill and poll still need the job.
     retryRetainedNativeHandles();
     requireReleased(process.job, "Close owned Job Object failed");
     requireReleased(process.process, "Close owned process failed");

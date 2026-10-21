@@ -537,6 +537,9 @@ void closeRuntime(Runtime& root) {
   for (auto& handle : root.immutableFiles)
     requireReleased(handle, "Close retained runtime file failed", root.path);
   root.immutableFiles.clear();
+  // Once the root directory handle is released, another walk would duplicate
+  // an invalid handle and never reach surviving parents.
+  if (!root.treeReleased) {
   // Enumerate and open children through the retained directory handles. Paths
   // below are diagnostic labels only: renames and ancestor junction replacement
   // cannot redirect cleanup into an unrelated tree.
@@ -612,6 +615,8 @@ void closeRuntime(Runtime& root) {
   }
   // Failed walks retain the root's identity leases for a later cleanup retry.
   requireReleased(root.directory, "Close runtime root handle failed", root.path);
+  root.treeReleased = true;
+  }
   for (auto& parent : root.parents)
     requireReleased(parent, "Close runtime parent handle failed", root.path);
   root.parents.clear();

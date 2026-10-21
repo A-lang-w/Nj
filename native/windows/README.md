@@ -119,8 +119,11 @@ automatically. Alternatively, build it using the Linux/MinGW lane above.
   be closed stays on the runtime instead of being forgotten; source handles
   that remain open after a published snapshot are closed with that runtime. An
   admitted file whose close fails stays on the private runtime and is closed
-  again before that runtime's tree walk. The runtime owner retries only native
-  close failures with Win32 sharing/lock codes 32/33,
+  again before that runtime's tree walk. After the root directory handle is
+  released, a later close resumes with the remaining parent handles and does
+  not walk from that released root. A process whose job close succeeded and
+  whose later handle close failed is retried with process close alone. The
+  runtime owner retries only native close failures with Win32 sharing/lock codes 32/33,
   for at most ten attempts with a 100 ms delay between attempts. Other native
   errors are returned immediately; exhausting the retry budget preserves the
   runtime owner for a later explicit close. These cleanup retries do not use an

@@ -207,6 +207,9 @@ struct Runtime : Resource {
   // runtime close retries these before deleting the private tree.
   std::vector<Handle> unreleased;
   bool closing = false;
+  // The private tree and root directory handle have been released. Later
+  // closes resume with the parent handles and do not duplicate that root.
+  bool treeReleased = false;
   // Main-thread admission is single-flight; only the accepted copy owns the
   // atomic cancellation flag consumed by its async worker. ERROR_BUSY rejects
   // another copy before it can reset that flag or replace pending ownership.
