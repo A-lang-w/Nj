@@ -46,7 +46,9 @@ const bodyPointerOf = (body: JsonValue, value: string): string | undefined => {
   const pending: { readonly value: JsonValue; readonly pointer: string }[] = [
     { value: body, pointer: "" },
   ];
-  for (let next = pending.shift(); next !== undefined; next = pending.shift()) {
+  // An index walks the queue: shifting a wide body's values one by one would take quadratic time.
+  for (let at = 0; at < pending.length; at += 1) {
+    const next = pending[at]!;
     if (next.value === value) return next.pointer;
     const children: [string, JsonValue][] = Array.isArray(next.value)
       ? next.value.map((item, index) => [String(index), item])

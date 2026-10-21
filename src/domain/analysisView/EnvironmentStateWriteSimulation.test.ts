@@ -19,6 +19,10 @@ import {
 import type { JsonValue } from "../jsonValue.js";
 import { ok } from "../result.js";
 import { updatedFields } from "./environmentStateWriteApply.js";
+import {
+  retainFixed,
+  type EffectContext,
+} from "./environmentStateWriteEffects.js";
 
 /** The plan the gate gives `tool` over a capture of `rows`. */
 const gated = (rows: readonly TimedCaptureRow[], tool: string) => {
@@ -751,4 +755,60 @@ describe("reads named as serving names them", () => {
       contradicted_by: 4,
     });
   });
+});
+
+describe("what a write's own answer pins down", () => {
+  it("observes a create that answers with its id alone only through a read of that id", () => {
+    const fourth = book(4, "Fourth Book", "2026-10-01T11:00:00Z");
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["POST", "/api/books", { id: 3 }, 201, { name: "Third Book" }],
+      // A book the capture never listed is not the one the create made.
+      ["GET", "/api/books/4", fourth],
+      ["GET", "/api/books/4", fourth],
+      ["GET", "/api/books/3", THIRD_BOOK],
+      ["GET", "/api/books/3", THIRD_BOOK],
+    ];
+    expect(gated(rows, "post_books")).toMatchObject({
+      observation: { ordinal: 6, pointer: "" },
+      checked_record_ordinals: [7],
+    });
+  });
+
+  it("keeps an update served when a later call is the first to send the path's id in its body", () => {
+    const renamedSecond = renamedBook(SECOND_BOOK, "Renamed Second", 5);
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["PATCH", "/api/books/1", RENAMED, 200, { name: "Renamed Book" }],
+      ["GET", "/api/books/1", RENAMED],
+      [
+        "PATCH",
+        "/api/books/2",
+        renamedSecond,
+        200,
+        { id: 2, name: "Renamed Second" },
+      ],
+      ["GET", "/api/books/2", renamedSecond],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      body: { identity: "id" },
+    });
+  });
+});
+
+it("counts the sent values a plan keeps for fixed members against the view's allowance", () => {
+  let retained = 0;
+  const context = {
+    io: { retain: (bytes: number) => (retained += bytes) },
+  } as unknown as EffectContext;
+  retainFixed(context, [{ sent: "x".repeat(10_000) }]);
+  expect(retained).toBeGreaterThan(20_000);
+  retained = 0;
+  retainFixed(context, []);
+  expect(retained).toBe(0);
 });

@@ -56,7 +56,9 @@ the exemplar.
   one-element array, as item views locate it. When the response does not carry
   it, the entity is observed in the first later read that shows it: an item
   read of that entity, or for a create, the one entity a collection read newly
-  lists. With neither, the reason is `no-observation`.
+  lists. A create whose response names its id alone (a scalar, the identity
+  field, or one member) is observed only through a read of that id. With
+  neither, the reason is `no-observation`.
 
 **Field rules for creates.** Each field of the observed entity gets the first
 rule that explains its value. Rules that read the call come first, so an
@@ -233,7 +235,7 @@ refuses to answer with.
   becomes the plan's rule, unless an earlier list check relied on the rule
   (an item read's confirmation does not fix it).
 - The read that supplied a create's or update's observation does not check
-  it.
+  it, but checks the other writes it exercises.
 
 **Verdicts.** A plan is served when at least one check confirms it and none
 contradicts it. Otherwise the reason, in this precedence, is:

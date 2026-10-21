@@ -136,11 +136,7 @@ const listObservation = (
   pointer: string,
   target: Parameters<typeof laterObservation>[1],
 ): Observed | undefined => {
-  if (
-    target.id !== undefined ||
-    collectionPathOf(record, false) !== target.collection
-  )
-    return undefined;
+  if (collectionPathOf(record, false) !== target.collection) return undefined;
   return search.withBody(record.ordinal, (body) => {
     const items = body === undefined ? undefined : listItems(body, pointer);
     const unheld = (items ?? [])
@@ -151,7 +147,9 @@ const listObservation = (
       }))
       .filter(
         (entry): entry is { object: JsonObject; index: number; id: string } =>
-          entry.id !== undefined && !target.held(entry.id),
+          entry.id !== undefined &&
+          !target.held(entry.id) &&
+          (target.id === undefined || entry.id === target.id),
       );
     return unheld.length === 1
       ? {
