@@ -1,6 +1,7 @@
 import type * as t from "@babel/types";
 import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticAnalysis.js";
 import type { JavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
+import type { JavaScriptStaticPathIntrinsicQuery } from "./javascriptStaticAnalysisHelpers.js";
 
 import type {
   JavaScriptBundlerRegistration,
@@ -11,6 +12,7 @@ import type {
   JavaScriptStaticStorage,
 } from "./javascriptStaticAnalysisTypes.js";
 import type {
+  ElectronAppPathChangeFinding,
   ElectronCallPath,
   ElectronBrowserWindowFinding,
   ElectronContextBridgeFinding,
@@ -38,12 +40,25 @@ export interface LocatedJavaScriptFinding<Value> {
 
 /** Mutable collections used during one inert AST traversal. */
 export interface JavaScriptAnalysisAccumulator {
+  readonly pendingModuleRequireCalls: (
+    | t.CallExpression
+    | t.OptionalCallExpression
+    | t.NewExpression
+  )[];
+  readonly appPathChanges: LocatedJavaScriptFinding<ElectronAppPathChangeFinding>[];
   electronCallPaths?: readonly ElectronCallPath[];
   electronCallPathLimitReached?: boolean;
   readonly references: LocatedJavaScriptFinding<JavaScriptStaticReference>[];
   readonly endpoints: LocatedJavaScriptFinding<JavaScriptStaticEndpoint>[];
-  /** Dynamic targets held until the shared mutation index is requested on demand. */
+  /** Target and receiver identities awaiting the shared mutation index. */
   readonly pendingNetworkCalls: {
+    readonly node:
+      | t.CallExpression
+      | t.OptionalCallExpression
+      | t.NewExpression;
+    readonly name: string;
+  }[];
+  readonly pendingSqliteCalls: {
     readonly node:
       | t.CallExpression
       | t.OptionalCallExpression
@@ -73,6 +88,8 @@ export interface JavaScriptAnalysisAccumulator {
 
 /** Shared source and accumulator for helper inspections. */
 export interface JavaScriptFindingContext {
+  /** Node path.resolve identity established by shared callee and mutation owners. */
+  readonly nodePathResolve?: JavaScriptStaticPathIntrinsicQuery;
   readonly rpcScan: JavaScriptRpcScan;
   readonly source: string;
   readonly accumulator: JavaScriptAnalysisAccumulator;
@@ -80,6 +97,12 @@ export interface JavaScriptFindingContext {
   readonly openReceiverFacts?: ReadonlyMap<number, JavaScriptOpenReceiverFact>;
   /** Proven Electron export path segments by root offset. */
   readonly electronBindings?: ReadonlyMap<number, readonly string[]>;
+  /** Normalized invocation target from the shared Electron and intrinsic owners. */
+  readonly electronInvocationPath?: (
+    node: t.CallExpression | t.OptionalCallExpression,
+  ) => readonly string[] | undefined;
+  /** A possible shared-app mutation does not establish concrete API identity. */
+  readonly electronAppPathChangePossible?: (node: t.Node) => boolean;
 }
 
 /** Candidate import, require, worker, or service-worker reference. */
@@ -113,10 +136,13 @@ export interface LocatedJavaScriptFindingInput<
 export const createJavaScriptAnalysisAccumulator = (
   sourceLength: number,
 ): JavaScriptAnalysisAccumulator => ({
+  pendingModuleRequireCalls: [],
+  appPathChanges: [],
   references: [],
   endpoints: [],
   pendingNetworkCalls: [],
   storage: [],
+  pendingSqliteCalls: [],
   roles: [],
   sourceMaps: [],
   registrations: [],
