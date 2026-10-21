@@ -49,6 +49,7 @@ import {
   webBundleHeapExhaustedReason,
   webBundleHeapExhaustedRemediation,
   webBundleMemoryExhaustion,
+  webBundleResultAdmissionFailure,
   webBundleScriptTimeoutRecovery,
 } from "../domain/webBundleAnalysis.js";
 import {
@@ -294,30 +295,12 @@ export class WebBundleAnalysisWorker {
     try {
       if (signal?.aborted)
         throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
-      const resultBudget = Math.min(
-        WEB_BUNDLE_WORKER_LIMITS.resultBytes - this.#retainedResultBytes,
-        Math.max(
-          0,
-          Math.floor(
-            (getHeapStatistics().heap_size_limit -
-              process.memoryUsage().heapUsed -
-              64 * MIB) /
-              RESULT_EXPANSION,
-          ),
-        ),
-      );
-      if (resultBudget <= 0) {
+      const admitted = this.#admittedResultBudget();
+      if (!admitted.ok) {
         continuation = "result_capacity_exhausted";
-        throw new AnalysisResourceConstraintError(
-          OPERATION,
-          "memory",
-          webBundleFixedByteBudget(
-            WEB_BUNDLE_WORKER_LIMITS.resultBytes,
-            "result budget",
-          ),
-          { result_bytes: WEB_BUNDLE_WORKER_LIMITS.resultBytes },
-        );
+        throw admitted.error;
       }
+      const resultBudget = admitted.bytes;
       await prepareProcessOwnershipInspection(signal);
       deadline = new ProviderStartupDeadline(timeoutMs, signal);
       this.#activeDeadline = deadline;
@@ -502,6 +485,41 @@ export class WebBundleAnalysisWorker {
         new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
       );
     return result.ok ? result : failed(result.error);
+  }
+
+  #admittedResultBudget():
+    | { readonly ok: true; readonly bytes: number }
+    | { readonly ok: false; readonly error: AnalysisResourceConstraintError } {
+    const fixedRemaining =
+      WEB_BUNDLE_WORKER_LIMITS.resultBytes - this.#retainedResultBytes;
+    const hostCapacity = Math.max(
+      0,
+      Math.floor(
+        (getHeapStatistics().heap_size_limit -
+          process.memoryUsage().heapUsed -
+          64 * MIB) /
+          RESULT_EXPANSION,
+      ),
+    );
+    const bytes = Math.min(fixedRemaining, hostCapacity);
+    if (bytes > 0) return { ok: true, bytes };
+    const failure = webBundleResultAdmissionFailure({
+      fixedBudgetBytes: WEB_BUNDLE_WORKER_LIMITS.resultBytes,
+      fixedRemainingBytes: fixedRemaining,
+      hostCapacityBytes: hostCapacity,
+    });
+    return {
+      ok: false,
+      error: new AnalysisResourceConstraintError(
+        OPERATION,
+        "memory",
+        failure.reason,
+        failure.reportedLimits,
+        failure.kind === "host-capacity"
+          ? { remediationAction: failure.remediationAction }
+          : undefined,
+      ),
+    };
   }
 
   async #writeSource(

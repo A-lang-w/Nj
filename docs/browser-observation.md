@@ -409,7 +409,10 @@ and result byte budgets have no runtime override.
 One web-bundle capture/analysis is admitted per REA process at a time. Completed
 script results share an 8 MiB serialized transfer budget, with host heap
 reservation checked before decoding and validating another result.
-Exhausted result capacity stops further script launches and returns a typed
+When the host reservation is what reaches zero, the failure names that heap
+headroom and the remaining fixed budget. When the 8 MiB allowance itself is
+exhausted, the failure names that fixed budget and says it has no runtime
+override. Either stop ends further script launches and returns a typed
 resource failure with completed facts and explicit unstarted-script unknowns.
 Worker control frames are limited to 64 KiB. Cleanup must confirm child termination
 before releasing its private files; failed cleanup retains its exact owner and
@@ -419,8 +422,10 @@ facts, including cancellation during final cleanup.
 The worker heap setting is not a process-family RSS limit. Node enforces V8
 old-space flags; Bun ignores them. Windows Bun instead uses an owned process
 commit limit with a 512 MiB runtime reserve; other Bun hosts have no enforced
-memory limit. These bounds do not establish an aggregate host-memory limit
-across other REA operations or external processes.
+memory limit. An allocation failure before that Windows limit is reported as
+reached still names the configured limit and says it was not reached. These
+bounds do not establish an aggregate host-memory limit across other REA
+operations or external processes.
 
 Resource-tree inventories distinguish a valid empty `resources` array from a
 missing or malformed collection. Invalid resource entries are omitted with

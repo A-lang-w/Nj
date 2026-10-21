@@ -94,7 +94,11 @@ export type WebBundleMemoryExhaustion =
       readonly heapMb: number;
       readonly limitBytes: number;
     }
-  | { readonly kind: "bun-allocation"; readonly heapMb: number };
+  | {
+      readonly kind: "bun-allocation";
+      readonly heapMb: number;
+      readonly processMemoryLimitBytes: number | null;
+    };
 
 /** Map host facts onto the exhausted resource. The worker supplies those facts. */
 export const webBundleMemoryExhaustion = (input: {
@@ -111,7 +115,11 @@ export const webBundleMemoryExhaustion = (input: {
       heapMb: input.heapMb,
       limitBytes: input.processMemoryLimitBytes,
     };
-  return { kind: "bun-allocation", heapMb: input.heapMb };
+  return {
+    kind: "bun-allocation",
+    heapMb: input.heapMb,
+    processMemoryLimitBytes: input.processMemoryLimitBytes,
+  };
 };
 
 const webBundleHeapRange = (): string =>
@@ -136,7 +144,9 @@ export const webBundleHeapExhaustedReason = (
     case "process-commit":
       return `Owned web analyzer reached its ${String(exhaustion.limitBytes)}-byte process commit limit. That limit is max_heap_mb ${String(exhaustion.heapMb)} MiB plus a 512 MiB Bun runtime reserve (${range}). Bun ignores the V8 old-space flag, so this is not V8 old-space exhaustion.`;
     case "bun-allocation":
-      return `Owned web analyzer ran out of memory. Bun ignores the V8 old-space flag, so this exit is not the configured max_heap_mb of ${String(exhaustion.heapMb)} MiB (${range}). This host enforces no analyzer process commit limit.`;
+      return exhaustion.processMemoryLimitBytes === null
+        ? `Owned web analyzer ran out of memory. Bun ignores the V8 old-space flag, so this exit is not the configured max_heap_mb of ${String(exhaustion.heapMb)} MiB (${range}). This host enforces no analyzer process commit limit.`
+        : `Owned web analyzer ran out of memory before its ${String(exhaustion.processMemoryLimitBytes)}-byte process commit limit was reported as reached. That configured limit is max_heap_mb ${String(exhaustion.heapMb)} MiB plus a 512 MiB Bun runtime reserve (${range}). Bun ignores the V8 old-space flag, so this exit is not V8 old-space exhaustion.`;
   }
 };
 
@@ -149,7 +159,9 @@ export const webBundleHeapExhaustedRemediation = (
     case "process-commit":
       return `${webBundleHeapIncrease(exhaustion.heapMb)} That raises the Windows process commit limit (max_heap_mb plus the fixed 512 MiB Bun runtime reserve), not a V8 old-space heap. ${webBundleHeapDoesNotRaise}`;
     case "bun-allocation":
-      return `Bun ignores V8 heap flags, so raising max_heap_mb does not change this exit. A reached Windows process commit limit is reported separately. Other Bun hosts enforce no analyzer heap limit. Reduce the analysis instead of increasing max_heap_mb. ${webBundleHeapDoesNotRaise}`;
+      return exhaustion.processMemoryLimitBytes === null
+        ? `Bun ignores V8 heap flags, so raising max_heap_mb does not change this exit. A reached Windows process commit limit is reported separately. Other Bun hosts enforce no analyzer heap limit. Reduce the analysis instead of increasing max_heap_mb. ${webBundleHeapDoesNotRaise}`
+        : `The configured ${String(exhaustion.processMemoryLimitBytes)}-byte process commit limit was not reported as reached, so raising max_heap_mb does not change this exit. A reached Windows process commit limit is reported separately. Reduce the analysis instead of increasing max_heap_mb. ${webBundleHeapDoesNotRaise}`;
   }
 };
 
@@ -161,6 +173,50 @@ export const webBundleFixedByteBudget = (
     `The ${String(budgetBytes)}-byte web-bundle ${label} has no further room.`,
     "max_heap_mb",
   );
+
+/**
+ * Result admission failed because `min(fixedRemaining, hostCapacity)` is not
+ * positive. The fixed allowance wins when it has no room left. Host pressure
+ * is named only while that allowance still has room.
+ */
+export const webBundleResultAdmissionFailure = (input: {
+  readonly fixedBudgetBytes: number;
+  readonly fixedRemainingBytes: number;
+  readonly hostCapacityBytes: number;
+}):
+  | {
+      readonly kind: "fixed-budget";
+      readonly reason: string;
+      readonly reportedLimits: { readonly result_bytes: number };
+    }
+  | {
+      readonly kind: "host-capacity";
+      readonly reason: string;
+      readonly remediationAction: string;
+      readonly reportedLimits: {
+        readonly result_bytes: number;
+        readonly result_budget_remaining_bytes: number;
+        readonly host_result_capacity_bytes: number;
+      };
+    } => {
+  if (input.fixedRemainingBytes <= 0)
+    return {
+      kind: "fixed-budget",
+      reason: webBundleFixedByteBudget(input.fixedBudgetBytes, "result budget"),
+      reportedLimits: { result_bytes: input.fixedBudgetBytes },
+    };
+  return {
+    kind: "host-capacity",
+    reason: `The CLI/MCP host heap has no remaining reserved capacity for another web-bundle result (host result capacity ${String(input.hostCapacityBytes)} bytes). The fixed ${String(input.fixedBudgetBytes)}-byte result budget still has ${String(input.fixedRemainingBytes)} bytes available. This is host memory pressure, not exhaustion of that fixed allowance.`,
+    remediationAction:
+      "Retry when the CLI/MCP process has more heap headroom. On Node, set NODE_OPTIONS (for example --max-old-space-size=<MiB>) in the environment that starts the CLI or MCP server, then restart that process, to raise this host heap. Raising max_heap_mb changes the isolated analyzer, not this host admission. The fixed result budget is separate and was not exhausted.",
+    reportedLimits: {
+      result_bytes: input.fixedBudgetBytes,
+      result_budget_remaining_bytes: input.fixedRemainingBytes,
+      host_result_capacity_bytes: input.hostCapacityBytes,
+    },
+  };
+};
 
 const sourceLocationSchema = z.object({
   script_key: z.string(),
