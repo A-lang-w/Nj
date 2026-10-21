@@ -358,3 +358,19 @@ unmodelled write followed, checking only the others on their members. Both tests
 verdicts over the 50 captures are unchanged plan by plan, the smoke applies all 31 served write tools, and the gates
 passed again. A follow-up weighs interference only on targets where the tool's effect survives, so a call
 whose effect a later write overwrote no longer excuses a later mismatch; its test fails on the previous head.
+
+## Collection-history accounting check
+
+On 2026-10-22, Node 24.18.0, I compared the source before the write-history
+change (`cfb42ddde`) with the bounded-history implementation. Each operation
+inserted an entity at a new collection path with a 128-character repeated
+suffix and immediately deleted it. Across five fresh Vitest worker processes,
+the median for 1,000 completed cycles was 14.57 ms wall / 23,867 us CPU before
+and 9.98 ms / 16,914 us after. The process RSS samples were 381.1–387.9 MiB
+before and 380.9–387.6 MiB after. This fixture benchmark measures one matched
+completed trace, not a representative user task or process-family peak memory.
+The values include Vitest and V8 and are noisy; they do not establish a memory
+bound. The 1 MiB policy is a deterministic accounting allowance for
+additional identifier history, set to 1/32 of the separate 32 MiB state-intake
+ceiling; it is not derived from RSS samples and does not bound total store or
+process memory.

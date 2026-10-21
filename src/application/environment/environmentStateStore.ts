@@ -19,7 +19,7 @@ import {
   type StateContent,
 } from "./environmentStateDocument.js";
 
-/** Bound estimated collection and sequence-key metadata retained after served creates are deleted. */
+/** Maximum logical budget for collection spellings added by served creates since reset/load. */
 export const ENVIRONMENT_COLLECTION_HISTORY_LIMIT_BYTES = 1024 * 1024;
 
 const collectionHistoryCost = (
@@ -27,24 +27,30 @@ const collectionHistoryCost = (
   type: string,
   collection: string,
 ): number => {
-  const sequenceKeys = new Set<string>();
+  // Account key bytes without building temporary key strings or a Set.
+  let sequenceBytes = 0;
   for (const plan of state.writes.values()) {
     if (!plan.served || plan.target !== type) continue;
     for (const rule of plan.rules) {
       if (rule.rule === "sequence" && rule.scope === "collection")
-        sequenceKeys.add(`${plan.tool} ${rule.field} ${collection}`);
+        sequenceBytes +=
+          64 +
+          Buffer.byteLength(plan.tool, "utf8") +
+          1 +
+          Buffer.byteLength(rule.field, "utf8") +
+          1 +
+          Buffer.byteLength(collection, "utf8");
       else if (rule.rule === "identity" && rule.generator === "sequence")
-        sequenceKeys.add(`${type} ${rule.field} ${collection}`);
+        sequenceBytes +=
+          64 +
+          Buffer.byteLength(type, "utf8") +
+          1 +
+          Buffer.byteLength(rule.field, "utf8") +
+          1 +
+          Buffer.byteLength(collection, "utf8");
     }
   }
-  return (
-    64 +
-    Buffer.byteLength(collection, "utf8") +
-    [...sequenceKeys].reduce(
-      (bytes, key) => bytes + 64 + Buffer.byteLength(key, "utf8"),
-      0,
-    )
-  );
+  return 64 + Buffer.byteLength(collection, "utf8") + sequenceBytes;
 };
 
 /** What `data/get` reports: the current state as a `rea-state/v1` document. */
@@ -117,9 +123,9 @@ export class EnvironmentStateStore {
   readonly #sequences = new Map<string, number>();
   /** The entities the state held when it was last reset or loaded, whose values no sequence reuses either. */
   #started: readonly StateEntity[] = [];
-  /** Every collection spelling a type's entities have been held under since the last reset or load, kept when a collection empties. */
-  readonly #knownCollections = new Map<string, string[]>();
-  /** Estimated retained collection and sequence-key metadata, reset with the serving history. */
+  /** Baseline and post-start spellings kept known after their entities are deleted. */
+  readonly #knownCollections = new Map<string, Set<string>>();
+  /** Logical UTF-8 key bytes plus a 64-byte allowance per collection and potential sequence-key record. */
   #collectionHistoryBytes = 0;
   /** The collections of the Evidence's own state, which stay known after any load. */
   #evidenceCollections: ReadonlyMap<string, readonly string[]> = new Map();
@@ -204,27 +210,20 @@ export class EnvironmentStateStore {
     this.#writes = 0;
     this.#sequences.clear();
     this.#started = this.#content.entities;
-    // A reset or load knows the Evidence's spellings and its own, never those of a state it replaced.
     this.#knownCollections.clear();
     this.#collectionHistoryBytes = 0;
-    this.#remember(this.#evidenceCollections);
-    this.#remember(this.#typeCollections);
+    for (const [type, collections] of this.#typeCollections)
+      for (const collection of collections)
+        this.#rememberCollection(type, collection);
+    for (const [type, collections] of this.#evidenceCollections)
+      for (const collection of collections)
+        this.#rememberCollection(type, collection);
   }
 
-  #remember(named: ReadonlyMap<string, readonly string[]>): void {
-    for (const [type, collections] of named) {
-      const known = this.#knownCollections.get(type) ?? [];
-      for (const collection of collections)
-        if (!known.includes(collection)) {
-          known.push(collection);
-          this.#collectionHistoryBytes += collectionHistoryCost(
-            this.state,
-            type,
-            collection,
-          );
-        }
-      this.#knownCollections.set(type, known);
-    }
+  #rememberCollection(type: string, collection: string): void {
+    const known = this.#knownCollections.get(type) ?? new Set<string>();
+    known.add(collection);
+    this.#knownCollections.set(type, known);
   }
 
   /** The entities of a type the state held when it was last reset or loaded. */
@@ -247,17 +246,19 @@ export class EnvironmentStateStore {
       jsonBytes(entity) + (entities.length > 0 ? 1 : 0),
     );
     if (!bytes.ok) return bytes;
-    const known = this.#knownCollections.get(entity.type) ?? [];
-    if (!known.includes(entity.collection)) {
-      const historyBytes =
-        this.#collectionHistoryBytes +
-        collectionHistoryCost(this.state, entity.type, entity.collection);
+    const known = this.#knownCollections.get(entity.type);
+    const newCollectionBytes =
+      known?.has(entity.collection) === true
+        ? 0
+        : collectionHistoryCost(this.state, entity.type, entity.collection);
+    if (newCollectionBytes > 0) {
+      const historyBytes = this.#collectionHistoryBytes + newCollectionBytes;
       if (historyBytes > ENVIRONMENT_COLLECTION_HISTORY_LIMIT_BYTES)
         return err(
           new AnalysisResourceConstraintError(
             ENVIRONMENT_SERVE_OPERATION,
             "capacity",
-            "Served collection and sequence history would exceed its retained metadata budget",
+            "Served collection history would exceed its deterministic accounting budget",
             {
               max_collection_history_bytes:
                 ENVIRONMENT_COLLECTION_HISTORY_LIMIT_BYTES,
@@ -266,7 +267,7 @@ export class EnvironmentStateStore {
             {
               retryable: false,
               remediationAction:
-                "Reset the served state to clear collection history, then use fewer distinct collection paths.",
+                "Reset the served state or load a smaller state to clear generated collection history, then use fewer distinct collection paths.",
             },
           ),
         );
@@ -289,6 +290,10 @@ export class EnvironmentStateStore {
       },
       bytes.value,
     );
+    if (newCollectionBytes > 0) {
+      this.#rememberCollection(entity.type, entity.collection);
+      this.#collectionHistoryBytes += newCollectionBytes;
+    }
     return ok(undefined);
   }
 
@@ -388,14 +393,13 @@ export class EnvironmentStateStore {
     return this.#typeCollections.get(type) ?? [];
   }
 
-  /** Every collection spelling a type's entities have been held under since the last reset or load, or the Evidence's state holds: those holding entities first. */
+  /** Every collection spelling in the active, baseline, Evidence, or generated history, with active entities first. */
   knownCollectionsOf(type: string): readonly string[] {
-    return [
-      ...new Set([
-        ...this.collectionsOf(type),
-        ...(this.#knownCollections.get(type) ?? []),
-      ]),
-    ];
+    const known = new Set([
+      ...this.collectionsOf(type),
+      ...(this.#knownCollections.get(type) ?? []),
+    ]);
+    return [...known];
   }
 
   document(tool: string): HeldDocument | undefined {
@@ -424,7 +428,7 @@ export class EnvironmentStateStore {
     );
   }
 
-  /** Build every index before assigning any, so a reader never sees half a state. */
+  /** Build current-state indexes without copying baseline collections into generated history. */
   #install(content: StateContent, bytes: number): void {
     const entities = new Map<string, StateEntity>();
     const collections = new Map<string, StateEntity[]>();
@@ -449,7 +453,6 @@ export class EnvironmentStateStore {
     this.#entities = entities;
     this.#collections = collections;
     this.#typeCollections = typeCollections;
-    this.#remember(typeCollections);
     this.#documents = new Map(
       content.documents.map((document) => [document.tool, document]),
     );

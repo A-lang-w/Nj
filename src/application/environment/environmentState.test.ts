@@ -155,49 +155,85 @@ describe("loadEnvironmentState", () => {
 });
 
 describe("served collection history", () => {
-  it("refuses a new collection before retained collection and sequence history exceeds its budget", () => {
-    const store = new EnvironmentStateStore(state);
+  it("bounds distinct paths added after reset while retaining baseline paths", () => {
     const original = state.entities[0];
     if (original === undefined) throw new Error("Expected a seeded entity");
-    let refused: ReturnType<typeof store.insert> | undefined;
+    const run = () => {
+      const store = new EnvironmentStateStore(state);
+      for (let index = 0; index < 2000; index += 1) {
+        const collection = `/api/history/${String(index)}-${"x".repeat(900)}`;
+        const id = `history-${String(index)}`;
+        const before = JSON.stringify(store.snapshot());
+        const result = store.insert({ ...original, collection, id }, 0);
+        if (!result.ok) {
+          expect(JSON.stringify(store.snapshot())).toBe(before);
+          expect(result.error).toMatchObject({
+            resource: "capacity",
+            retryable: false,
+            remediationAction: expect.stringContaining("fewer distinct"),
+          });
+          expect(result.error.reason).toContain("accounting budget");
+          return result.error.reportedLimits;
+        }
+        const inserted = store.entity(original.type, collection, id);
+        if (inserted === undefined) throw new Error("Expected inserted entity");
+        store.remove(inserted);
+      }
+      throw new Error("Expected a history budget refusal");
+    };
+    const refused = run();
+    if (refused === null)
+      throw new Error("Expected reported history budget details");
+    expect(refused).toEqual(run());
+    expect(refused).toMatchObject({
+      max_collection_history_bytes: ENVIRONMENT_COLLECTION_HISTORY_LIMIT_BYTES,
+    });
+    expect(refused.collection_history_bytes).toBeGreaterThan(
+      ENVIRONMENT_COLLECTION_HISTORY_LIMIT_BYTES,
+    );
+  });
+
+  it("does not charge a deleted loaded collection again at the history limit", () => {
+    const original = state.entities[0];
+    if (original === undefined) throw new Error("Expected a seeded entity");
+    const loadedState = {
+      ...state,
+      entities: Array.from({ length: 1200 }, (_, index) => ({
+        ...original,
+        collection: `/api/loaded/${String(index)}-${"y".repeat(80)}`,
+        id: `loaded-${String(index)}`,
+      })),
+    };
+    const store = new EnvironmentStateStore(loadedState);
+    for (const entity of store.ofType(original.type)) store.remove(entity);
+    expect(store.knownCollectionsOf(original.type)).toHaveLength(1200);
+
+    const baseline = loadedState.entities[0];
+    if (baseline === undefined) throw new Error("Expected a loaded entity");
+    let refused = false;
     for (let index = 0; index < 2000; index += 1) {
-      const before = JSON.stringify(store.snapshot());
-      const result = store.insert(
-        {
-          ...original,
-          collection: `/api/history/${String(index)}-${"x".repeat(900)}`,
-          id: `history-${String(index)}`,
-        },
-        0,
-      );
-      if (!result.ok) {
-        refused = result;
-        expect(JSON.stringify(store.snapshot())).toBe(before);
+      const collection = `/api/generated/${String(index)}-${"z".repeat(900)}`;
+      const entity = {
+        ...original,
+        collection,
+        id: `generated-${String(index)}`,
+      };
+      const inserted = store.insert(entity, 0);
+      if (!inserted.ok) {
+        refused = true;
         break;
       }
-      const inserted = store.entity(
-        original.type,
-        `/api/history/${String(index)}-${"x".repeat(900)}`,
-        `history-${String(index)}`,
-      );
-      if (inserted === undefined) throw new Error("Expected inserted entity");
-      store.remove(inserted);
+      const held = store.entity(entity.type, collection, entity.id);
+      if (held === undefined) throw new Error("Expected generated entity");
+      store.remove(held);
     }
-    expect(refused?.ok).toBe(false);
-    if (refused?.ok !== false)
-      throw new Error("Expected a history budget refusal");
-    expect(refused.error).toMatchObject({
-      resource: "capacity",
-      retryable: false,
-      reportedLimits: {
-        collection_history_bytes: expect.any(Number),
-        max_collection_history_bytes:
-          ENVIRONMENT_COLLECTION_HISTORY_LIMIT_BYTES,
-      },
-      remediationAction: expect.stringContaining("Reset the served state"),
-    });
-    expect(refused.error.reason).toContain("retained metadata budget");
-    expect(store.knownCollectionsOf(original.type).length).toBeLessThan(2000);
+    expect(refused).toBe(true);
+
+    const restored = store.insert(baseline, 0);
+    expect(restored.ok).toBe(true);
+    expect(
+      store.entity(baseline.type, baseline.collection, baseline.id),
+    ).toEqual(baseline);
   });
 });
 
