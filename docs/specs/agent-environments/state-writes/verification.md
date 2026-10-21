@@ -274,3 +274,15 @@ against this branch's code:
 Each new test fails on the previous head. The verdicts over the 50 captures
 are unchanged plan by plan, the smoke applies all 31 served write tools, and
 the gates passed again.
+
+An eleventh round settled six more findings, five raised on this branch and one on the fidelity branch:
+
+- a passing read confirms only the writes it shows something of;
+- an item read names its entity as serving does, percent-decoded spellings included;
+- a read a write's effect was learned from still contradicts the other writes;
+- a line repeating a query name with one value stays checkable;
+- document writes join the effect tracking, so a replacement overwrites an earlier merge;
+- a call naming a page that the collection has outgrown answers from its recording (`page-exceeded`), and the gate does not check such reads.
+
+Each new test fails on the previous head. The verdicts over the 50 captures are unchanged plan by plan, the smoke
+applies all 31 served write tools, and the gates passed again.

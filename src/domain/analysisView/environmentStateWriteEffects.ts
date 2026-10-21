@@ -28,6 +28,7 @@ import {
   type SimulatedState,
 } from "./environmentStateWriteChecks.js";
 import {
+  conflictsWithPlan,
   documentPointerOf,
   explainUpdate,
   responseShapeOf,
@@ -249,26 +250,6 @@ const refineUpdate = (
     ...plan.rules,
     ...explained.rules.filter((rule) => !ruled.has(rule.field)),
   ];
-};
-
-/** Whether a later call treats a member or field otherwise than the plan: echoed in one and stored as something else in the other, or ruled differently. */
-const conflictsWithPlan = (
-  plan: WriteDraft["plan"],
-  explained: ReturnType<typeof explainUpdate>,
-): boolean => {
-  const body = plan.body!;
-  const fixed = new Set(body.fixed.map((entry) => entry.member));
-  const rules = new Map(plan.rules.map((rule) => [rule.field, rule]));
-  return (
-    explained.body.accepted.some((member) => fixed.has(member)) ||
-    explained.body.fixed.some((entry) =>
-      body.accepted.includes(entry.member),
-    ) ||
-    explained.rules.some((rule) => {
-      const held = rules.get(rule.field);
-      return held !== undefined && !same(held, rule);
-    })
-  );
 };
 
 /** Whether a rule changes its field on calls that do not send it: serving applies it to every call that could. */
@@ -561,5 +542,10 @@ export const applyDocument = (
   }));
   context.io.retain(64 + JSON.stringify(written.value).length * 2);
   context.state.setDocument(tool, written.value);
-  return { kind: "applied", targets: [documentTarget(tool)] };
+  // A merge writes the members it sent; a replacement writes the whole document.
+  return {
+    kind: "applied",
+    targets: [documentTarget(tool)],
+    ...(draft.plan.merge === "merge" ? { fields: Object.keys(body) } : {}),
+  };
 };

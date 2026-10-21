@@ -432,7 +432,7 @@ A list or document call that names no checked line, including a line recorded
 after a write or with other query values, answers from the recording. Every
 answer has the replay shape plus `state`: `{"source": "state", "view": …}`
 naming the entity, collection or document path, or `{"source": "recording",
-"reason": …}` with the view's reason, `no-view` or `unrecorded-request`. A
+"reason": …}` with the view's reason, `no-view`, `unrecorded-request` or `page-exceeded` (a call naming a page of a whole list that the collection has outgrown). A
 state answer carries the base record's status, content type and `replay`
 provenance with `truncated: false`; one whose JSON would exceed 256 KiB is
 refused as a `resource_constraint` tool error rather than cut. Query `POST`s

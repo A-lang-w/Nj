@@ -648,3 +648,26 @@ describe("values the state started with", () => {
     expect(create("acme1", "Epsilon")).toBe("/api/orgs/%61cme1/books");
   });
 });
+
+describe("paged lines", () => {
+  it("answers a requested page the collection has outgrown from its recording, and a call with no query from the state", () => {
+    const books = servedFrom([
+      ["GET", "/api/books?limit=2", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
+      // The application answers the same page with two books; serving would not answer it from the state.
+      ["GET", "/api/books?limit=2", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK, THIRD_BOOK]],
+    ]);
+    const created = books.answer("post_books", CREATE_NEW_BOOK).body as Book;
+    expect(books.answer("get_books", { limit: "2" })).toMatchObject({
+      body: [FIRST_BOOK, SECOND_BOOK],
+      state: { source: "recording", reason: "page-exceeded" },
+    });
+    expect(books.answer("get_books")).toMatchObject({
+      body: [FIRST_BOOK, SECOND_BOOK, created],
+      state: { source: "state", membership: "all", listed: 3 },
+    });
+  });
+});

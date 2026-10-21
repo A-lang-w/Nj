@@ -613,3 +613,142 @@ describe("reads as serving answers them", () => {
     });
   });
 });
+
+describe("what a read shows of a write", () => {
+  it("confirms no update by a read that shows none of the fields it changed", () => {
+    const rows: TimedCaptureRow[] = [
+      [
+        "GET",
+        "/api/books",
+        [
+          { id: 1, name: "A" },
+          { id: 2, name: "B" },
+        ],
+      ],
+      ["GET", "/api/books/1", { id: 1, name: "A", description: "x" }],
+      ["GET", "/api/books/2", { id: 2, name: "B", description: "y" }],
+      [
+        "PATCH",
+        "/api/books/1",
+        { id: 1, name: "A", description: "new" },
+        200,
+        { description: "new" },
+      ],
+      // The list passes, but it shows no description.
+      [
+        "GET",
+        "/api/books",
+        [
+          { id: 1, name: "A" },
+          { id: 2, name: "B" },
+        ],
+      ],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: false,
+      reason: "unconfirmed",
+      checked_record_ordinals: [],
+    });
+  });
+
+  it("lets a read a create was observed through still contradict another write", () => {
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["PATCH", "/api/books/1", RENAMED, 200, { name: "Renamed Book" }],
+      ["GET", "/api/books/1", RENAMED],
+      // The create answers with its id alone, so the next list shows its entity; that list shows book 1 unrenamed.
+      ["POST", "/api/books", { id: 3 }, 201, { name: "Third Book" }],
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK, THIRD_BOOK]],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: false,
+      contradicted_by: 6,
+    });
+  });
+
+  it("confirms no document write a later replacement overwrote", () => {
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/settings", { theme: "light", lang: "en" }],
+      [
+        "PATCH",
+        "/api/settings",
+        { theme: "dark", lang: "en" },
+        200,
+        { theme: "dark" },
+      ],
+      [
+        "PUT",
+        "/api/settings",
+        { theme: "blue", lang: "fr" },
+        200,
+        { theme: "blue", lang: "fr" },
+      ],
+      ["GET", "/api/settings", { theme: "blue", lang: "fr" }],
+    ];
+    expect(gated(rows, "patch_settings")).toMatchObject({
+      served: false,
+      checked_record_ordinals: [],
+    });
+    expect(gated(rows, "put_settings")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [3],
+    });
+  });
+});
+
+describe("reads named as serving names them", () => {
+  const orgBook = (id: number, org: string, name: string): Book => ({
+    id,
+    org,
+    name,
+  });
+  it("contradicts an update by a read spelled plainly of the encoded collection serving answers it from", () => {
+    const alpha = orgBook(1, "acme1", "Alpha");
+    const renamed = orgBook(1, "acme1", "Renamed");
+    const beta = orgBook(2, "beta2", "Beta");
+    const renamedBeta = orgBook(2, "beta2", "Renamed Beta");
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/orgs/%61cme1/books", [alpha]],
+      ["GET", "/api/orgs/beta2/books", [beta]],
+      ["GET", "/api/orgs/%61cme1/books/1", alpha],
+      ["GET", "/api/orgs/beta2/books/2", beta],
+      ["PATCH", "/api/orgs/%61cme1/books/1", renamed, 200, { name: "Renamed" }],
+      [
+        "PATCH",
+        "/api/orgs/beta2/books/2",
+        renamedBeta,
+        200,
+        { name: "Renamed Beta" },
+      ],
+      // Serving answers this plain spelling with the renamed book, which the recording shows absent.
+      ["GET", "/api/orgs/acme1/books/1", null],
+      ["GET", "/api/orgs/%61cme1/books/1", renamed],
+      ["GET", "/api/orgs/beta2/books/2", renamedBeta],
+    ];
+    const { writes } = environmentStateViewOf(timedCaptureEvidence(rows), [
+      "sibling-variance",
+    ]);
+    expect(writes.find((plan) => plan.effect === "update")).toMatchObject({
+      served: false,
+      contradicted_by: 6,
+    });
+  });
+
+  it("checks a line whose query repeats a name with one value, which a call still names", () => {
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books?tag=a&tag=a", [FIRST_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["PATCH", "/api/books/1", RENAMED, 200, { name: "Renamed Book" }],
+      // The list still shows the old name, though the item read after it shows the rename.
+      ["GET", "/api/books?tag=a&tag=a", [FIRST_BOOK]],
+      ["GET", "/api/books/1", RENAMED],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: false,
+      contradicted_by: 4,
+    });
+  });
+});

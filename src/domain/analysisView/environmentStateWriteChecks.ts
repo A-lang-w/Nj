@@ -14,6 +14,7 @@ import {
   listItems,
   missingRequiredFields,
   pagesOnly,
+  pageSize,
   renderStateEntity,
   renderStateList,
   replaceAt,
@@ -30,12 +31,16 @@ import {
   type StateView,
 } from "./environmentStateRules.js";
 
-/** A query as replay compares a call's: decoded values by name, in any order; undefined when it repeats a name, which no call's arguments can carry. */
+/** A query as replay compares a call's: decoded values by name, in any order; undefined when it repeats a name with another value, which no call's arguments can carry. */
 const queryKey = (query: string | undefined): string | undefined => {
-  const pairs = [...iterateUrlQueryParameters(query ?? "")];
-  return new Set(pairs.map(([name]) => name)).size === pairs.length
-    ? compositeKey(pairs.sort(([left], [right]) => compare(left, right)))
-    : undefined;
+  const values = new Map<string, string>();
+  for (const [name, value] of iterateUrlQueryParameters(query ?? "")) {
+    if (values.has(name) && values.get(name) !== value) return undefined;
+    values.set(name, value);
+  }
+  return compositeKey(
+    [...values].sort(([left], [right]) => compare(left, right)),
+  );
 };
 
 interface CheckedLine {
@@ -249,14 +254,44 @@ interface ReadBodies {
 }
 
 /** An item read: the answer the held entity renders into the served envelope must equal the recording; a recorded 404 or 410 agrees with none held. */
+/**
+ * The entity an item read names, resolved as serving resolves an item call: its collection and id as written, else a
+ * held collection whose path matches once percent-decoded and an id tried decoded, then as written.
+ */
+export const itemTarget = (
+  state: SimulatedState,
+  type: string,
+  record: Pick<StateRecordFacts, "path">,
+): { readonly collection: string; readonly id: string } => {
+  const collection = collectionPathOf(record, true);
+  const id = lastSegmentValue(record.path);
+  if (state.entity(type, collection, id) !== undefined)
+    return { collection, id };
+  const read = segmentsOf(collection);
+  const ids = [decodedSegment(id), id];
+  for (const candidate of ids)
+    for (const entity of state.ofType(type)) {
+      const held = segmentsOf(entity.collection);
+      if (
+        entity.id === candidate &&
+        held.length === read.length &&
+        held.every(
+          (segment, index) =>
+            segment === read[index] || decodedSegment(segment) === read[index],
+        )
+      )
+        return { collection: entity.collection, id: entity.id };
+    }
+  return { collection, id };
+};
+
 export const checkItemRead = (
   state: SimulatedState,
   view: StateItemView,
   record: StateRecordFacts,
   check: ReadBodies,
 ): CheckOutcome | undefined => {
-  const collection = collectionPathOf(record, true);
-  const id = lastSegmentValue(record.path);
+  const { collection, id } = itemTarget(state, view.type, record);
   const entity = state.entity(view.type, collection, id);
   const targets = [entityTarget(view.type, collection, id)];
   if (isAbsence(record.status) || (succeeded(record) && check.body === null))
@@ -369,6 +404,14 @@ export const checkListRead = (
   check: ReadBodies & { readonly idField: string; readonly collection: string },
 ): CheckOutcome | undefined => {
   if (!succeeded(record)) return undefined;
+  // Serving answers a page too small for the collection from its recording, so such a read checks nothing.
+  const size = pageSize(record.query);
+  if (
+    view.membership === "all" &&
+    size !== undefined &&
+    state.members(view.type, check.collection).length > size
+  )
+    return undefined;
   const { body, base } = check;
   const baseItems =
     base === undefined ? undefined : listItems(base, view.pointer);

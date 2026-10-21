@@ -1,10 +1,8 @@
 import {
   at,
   changesState,
-  collectionPathOf,
   isObject,
   isStateWrite,
-  lastSegmentValue,
   normalizedPath,
   type StateDocument,
   type StateEntity,
@@ -22,6 +20,7 @@ import {
   collectionTarget,
   entityTarget,
   isAbsence,
+  itemTarget,
   servedLine,
   succeeded,
   withBodies,
@@ -32,6 +31,9 @@ import {
   type ServedLine,
 } from "./environmentStateWriteChecks.js";
 import {
+  exercisedBy,
+  runningAt,
+  shownFields,
   touchTarget,
   WriteEffects,
   type PendingTargets,
@@ -56,6 +58,7 @@ import {
   type StateWritePlan,
 } from "./environmentStateWriteRules.js";
 import { WriteTaint } from "./environmentStateWriteTaint.js";
+import { writeVerdict } from "./environmentStateWriteVerdict.js";
 
 /** What the write gate reads: the manifest tools, the timeline, the read views and the initial state. */
 export interface WriteSimulationInput {
@@ -90,7 +93,8 @@ export class EnvironmentStateWriteSimulation {
   readonly #types = new Map<string, StateType>();
   /** Each list or document view's checked request lines, with the recording a call of the line is answered on. */
   readonly #checkedLines: ReadonlyMap<string, CheckedLines>;
-  readonly #observations = new Set<number>();
+  /** Reads a write's effect was learned from, with the tools that borrowed each. */
+  readonly #observations = new Map<number, Set<string>>();
   readonly #taint: WriteTaint;
   readonly #touched: TouchedTargets = new Map();
   readonly #effects = new WriteEffects();
@@ -154,7 +158,9 @@ export class EnvironmentStateWriteSimulation {
       });
     }
     this.#input.records.forEach((record, index) => this.#step(record, index));
-    return [...this.#drafts.values()].map((draft) => this.#verdict(draft));
+    return [...this.#drafts.values()].map((draft) =>
+      writeVerdict(draft, this.#input),
+    );
   }
 
   #step(record: StateRecordFacts, index: number): void {
@@ -163,11 +169,10 @@ export class EnvironmentStateWriteSimulation {
     if (isStateWrite(record) && !succeeded(record))
       this.#unmodelled(record.path, index);
     else if (isStateWrite(record)) this.#write(record, index, tool);
-    else if (tool?.method === "GET" && !this.#observations.has(record.ordinal))
-      this.#read(record, index, tool);
+    else if (tool?.method === "GET") this.#read(record, index, tool);
   }
 
-  #context(): EffectContext {
+  #context(writer: string): EffectContext {
     return {
       state: this.#state,
       io: this.#input.io,
@@ -180,7 +185,11 @@ export class EnvironmentStateWriteSimulation {
           : this.#input.views.get(tool.name);
       },
       idField: (type) => this.#types.get(type)!.id_field,
-      observed: (ordinal) => this.#observations.add(ordinal),
+      observed: (ordinal) =>
+        this.#observations.set(
+          ordinal,
+          (this.#observations.get(ordinal) ?? new Set()).add(writer),
+        ),
       unknown: (type, collection, id) =>
         this.#taint.unknown(type, collection, id),
       initialDocument: (tool) =>
@@ -207,7 +216,7 @@ export class EnvironmentStateWriteSimulation {
     const observeOnly = draft.plan.reason !== null;
     if (!observeOnly) draft.calls += 1;
     const step: WriteStep = { record, index, tool, observeOnly };
-    this.#settle(APPLY[effect](this.#context(), draft, step), {
+    this.#settle(APPLY[effect](this.#context(tool.name), draft, step), {
       index,
       tool: tool.name,
       path: record.path,
@@ -235,7 +244,7 @@ export class EnvironmentStateWriteSimulation {
         result.entity.collection,
         result.entity.id,
       );
-    if (result.kind === "applied" && result.entity !== undefined)
+    if (result.kind === "applied")
       this.#effects.supersede(this.#touched, write.tool, result);
     if (result.kind === "observed")
       this.#effects.observed(this.#touched, result.targets);
@@ -292,8 +301,7 @@ export class EnvironmentStateWriteSimulation {
   /** Whether an item read is of an entity left unknown that it shows again rather than checks. */
   #resynced(view: StateView, record: StateRecordFacts): boolean {
     if (view.shape !== "item") return false;
-    const collection = collectionPathOf(record, true);
-    const id = lastSegmentValue(record.path);
+    const { collection, id } = itemTarget(this.#state, view.type, record);
     if (!this.#taint.unknown(view.type, collection, id)) return false;
     const entity = this.#state.entity(view.type, collection, id);
     // A recorded absence of an entity the state no longer holds is still a check of its delete.
@@ -315,7 +323,9 @@ export class EnvironmentStateWriteSimulation {
         checkDocumentRead(this.#state, view.tool, record, body),
       );
     const item = view.shape === "item";
-    const collection = item ? collectionPathOf(record, true) : line!.collection;
+    const collection = item
+      ? itemTarget(this.#state, view.type, record).collection
+      : line!.collection;
     if (this.#taint.under(collection)) return undefined;
     if (!item) {
       const ids = this.#state
@@ -352,26 +362,29 @@ export class EnvironmentStateWriteSimulation {
 
   #read(record: StateRecordFacts, index: number, tool: StateToolFacts): void {
     const view = this.#input.views.get(tool.name);
-    if (view === undefined || this.#resynced(view, record)) return;
+    const borrowers = this.#observations.get(record.ordinal);
+    if (view === undefined || (!borrowers && this.#resynced(view, record)))
+      return;
     const outcome = this.#check(view, record);
     if (outcome === undefined) return;
     const keys = [...outcome.targets, ...outcome.unheld];
-    // A read made while a write to its targets was still running may show either state, so it checks nothing.
-    const running = (key: string) =>
-      (this.#touchedSince.get(key)?.until ?? -Infinity) > record.start;
-    if (keys.some((key) => this.#taint.tainted(key) || running(key))) return;
-    const exercised = new Set<string>();
-    for (const key of keys)
-      for (const name of this.#touched.get(key)?.keys() ?? [])
-        exercised.add(name);
+    if (
+      keys.some(
+        (key) =>
+          this.#taint.tainted(key) ||
+          runningAt(this.#touchedSince, key, record.start),
+      )
+    )
+      return;
+    const exercised = exercisedBy(this.#touched, keys, borrowers);
+    if (borrowers !== undefined) {
+      this.#contradictOthers(outcome.pass, keys, exercised, record);
+      return;
+    }
     const pass =
       outcome.pass ||
       (view.shape === "list" && this.#retryInsert(view, record, exercised));
-    if (pass)
-      for (const name of exercised) {
-        this.#drafts.get(name)!.confirmed.push(record.ordinal);
-        if (view.shape === "list") this.#placed.add(name);
-      }
+    if (pass) this.#confirm(view, record, keys, exercised);
     else if (this.#interfered(keys)) {
       // An unmodelled write since these writes may explain the difference: check their own members only.
       if (view.shape === "item") this.#checkMembers(view, record);
@@ -383,6 +396,36 @@ export class EnvironmentStateWriteSimulation {
       this.#effects.checked(key);
       this.#touchedSince.delete(key);
       this.#lastCheck.set(key, index);
+    }
+  }
+
+  /** A read a write's effect was learned from checks nothing of that write, yet still contradicts the others. */
+  #contradictOthers(
+    pass: boolean,
+    keys: readonly string[],
+    exercised: ReadonlySet<string>,
+    record: StateRecordFacts,
+  ): void {
+    if (pass || this.#interfered(keys)) return;
+    for (const name of exercised)
+      this.#drafts.get(name)!.contradictedBy ??= record.ordinal;
+  }
+
+  /** A passing read confirms the writes it exercised that it shows something of. */
+  #confirm(
+    view: StateView,
+    record: StateRecordFacts,
+    keys: readonly string[],
+    exercised: ReadonlySet<string>,
+  ): void {
+    const shown = shownFields(view, this.#input.volatileOf);
+    for (const name of exercised) {
+      const shows = (key: string) =>
+        this.#touched.get(key)?.has(name) === true &&
+        this.#effects.shows(name, key, shown);
+      if (!keys.some(shows)) continue;
+      this.#drafts.get(name)!.confirmed.push(record.ordinal);
+      if (view.shape === "list") this.#placed.add(name);
     }
   }
 
@@ -404,11 +447,8 @@ export class EnvironmentStateWriteSimulation {
     view: Extract<StateView, { shape: "item" }>,
     record: StateRecordFacts,
   ): void {
-    const entity = this.#state.entity(
-      view.type,
-      collectionPathOf(record, true),
-      lastSegmentValue(record.path),
-    );
+    const { collection, id } = itemTarget(this.#state, view.type, record);
+    const entity = this.#state.entity(view.type, collection, id);
     if (entity === undefined) return;
     const writes =
       this.#touched.get(
@@ -433,8 +473,7 @@ export class EnvironmentStateWriteSimulation {
     view: Extract<StateView, { shape: "item" }>,
     record: StateRecordFacts,
   ): void {
-    const collection = collectionPathOf(record, true);
-    const id = lastSegmentValue(record.path);
+    const { collection, id } = itemTarget(this.#state, view.type, record);
     const entity = this.#state.entity(view.type, collection, id);
     if (entity === undefined) {
       this.#taint.fail(entityTarget(view.type, collection, id));
@@ -512,44 +551,5 @@ export class EnvironmentStateWriteSimulation {
       }
     }
     return false;
-  }
-
-  /** Whether an update or delete that answers with the entity can answer for an initial entity: one holds every field its recorded response shows. */
-  #renders(plan: StateWritePlan): boolean {
-    const { response } = plan;
-    if (
-      (plan.effect !== "update" && plan.effect !== "delete") ||
-      response?.shape !== "entity"
-    )
-      return true;
-    const shown = this.#input.io.withBody(response.ordinal, (body) => {
-      const object =
-        body === undefined ? undefined : at(body, response.pointer ?? "");
-      return isObject(object) ? Object.keys(object) : undefined;
-    });
-    return (
-      shown === undefined ||
-      this.#input.entities.some(
-        (entity) =>
-          entity.type === plan.target &&
-          shown.every((field) => Object.hasOwn(entity.fields, field)),
-      )
-    );
-  }
-
-  #verdict(draft: WriteDraft): StateWritePlan {
-    const plan = draft.plan;
-    if (plan.reason === null) {
-      if (draft.calls === 0) plan.reason = "no-call";
-      else if (draft.contradictedBy !== undefined) {
-        plan.reason = "contradicted";
-        plan.contradicted_by = draft.contradictedBy;
-      } else if (draft.sideEffect) plan.reason = "side-effect";
-      else if (draft.confirmed.length === 0) plan.reason = "unconfirmed";
-      else if (!this.#renders(plan)) plan.reason = "incomplete-entities";
-    }
-    plan.served = plan.reason === null;
-    plan.checked_record_ordinals = [...new Set(draft.confirmed)];
-    return { ...plan };
   }
 }
