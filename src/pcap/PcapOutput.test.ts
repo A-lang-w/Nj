@@ -16,6 +16,54 @@ const capture = (layers: ReadonlyArray<Record<string, string[]>>) =>
     })),
   );
 
+it.each([
+  [[], []],
+  [["", ""], []],
+  [["user_dlt:data", ""], [{ protocol: "user_dlt:data", packet_count: 1 }]],
+  [["", "user_dlt:data"], [{ protocol: "user_dlt:data", packet_count: 1 }]],
+  [
+    ["user_dlt:data", "", "user_dlt:data"],
+    [{ protocol: "user_dlt:data", packet_count: 2 }],
+  ],
+] as const)(
+  "counts every frame while aggregating only reported protocol stacks: %j",
+  async (stacks, expected) => {
+    const result = await parseTsharkJsonOutput(
+      capture(stacks.map((stack) => ({ "frame.protocols": [stack] }))),
+    );
+    expect(result.packetCount).toBe(stacks.length);
+    expect(result.protocolDistribution).toEqual(expected);
+    expect(result.protocolCount).toBe(expected.length);
+    expect(result.partial).toBe(false);
+  },
+);
+
+it.each([
+  { "frame.number": ["1"] },
+  { "frame.number": ["1"], "frame.protocols": [] },
+  { "frame.number": ["1"], "frame.protocols": ["", "ip"] },
+  { "frame.number": ["1"], "frame.protocols": ["ip", "ip"] },
+  { "frame.number": ["1"], "frame.protocols": [null] },
+  { "frame.number": ["1"], "frame.protocols": "" },
+  { "frame.protocols": [""] },
+  { "frame.number": ["2"], "frame.protocols": [""] },
+])("rejects malformed or ambiguous frame inventories: %j", async (layers) => {
+  await expect(
+    parseTsharkJsonOutput(JSON.stringify([{ _source: { layers } }])),
+  ).rejects.toMatchObject({ _tag: "AnalysisProtocolError" });
+});
+
+it("rejects duplicate frame identities even when protocol stacks are empty", async () => {
+  await expect(
+    parseTsharkJsonOutput(
+      capture([
+        { "frame.protocols": [""] },
+        { "frame.number": ["1"], "frame.protocols": [""] },
+      ]),
+    ),
+  ).rejects.toMatchObject({ _tag: "AnalysisProtocolError" });
+});
+
 it("binds interleaved DNS answers to the question in their response packet", async () => {
   const result = await parseTsharkJsonOutput(
     capture([
