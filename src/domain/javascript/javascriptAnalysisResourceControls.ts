@@ -93,16 +93,19 @@ const semanticControl = {
   },
 } as const;
 
-const semanticAdjustment = (
+const semanticCeilingPhrase = (
   name: string,
   value: number,
   fallback: number,
 ): string =>
   value >= JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM
-    ? `${name} is already ${String(value)}, the maximum ${String(JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM)}. Do not increase it further.`
-    : `${name} is ${String(value)} (default ${String(fallback)}; an integer from 1 to ${String(JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM)})`;
+    ? `${name} at ${String(value)} (the maximum ${String(JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM)}; do not increase it further)`
+    : `${name} at ${String(value)} (default ${String(fallback)}; an integer from 1 to ${String(JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM)})`;
 
-/** Name the caller arguments that produced one semantic retention ceiling. */
+/**
+ * Name both effective semantic retention ceilings. Callers know retention was
+ * truncated, not whether the total or per-file ceiling caused it.
+ */
 export const javaScriptSemanticCeilingCoverage = (
   kind: "nodes" | "unknowns",
   total: number,
@@ -118,7 +121,8 @@ export const javaScriptSemanticCeilingCoverage = (
     { name: control.total, value: total, unit: "items" },
     { name: control.perFile, value: perFile, unit: "items" },
   ];
-  const limitation = `Semantic ${kind === "nodes" ? "node" : "unknown"} retention reached ${semanticAdjustment(control.total, total, control.totalDefault)} and ${semanticAdjustment(control.perFile, perFile, control.perFileDefault)}. Set ${control.total} and ${control.perFile} on the next analyze_javascript_application call (CLI: ${control.cli}). The change applies to that next analysis and does not restart the worker or the REA server. ${control.unaffected} Coverage reports the same effective values as ${control.ceiling} and ${control.fileCeiling}.`;
+  const subject = kind === "nodes" ? "node" : "unknown";
+  const limitation = `Semantic ${subject} retention is bounded by the effective ceilings ${semanticCeilingPhrase(control.total, total, control.totalDefault)} and ${semanticCeilingPhrase(control.perFile, perFile, control.perFileDefault)}. These active limits apply together; either one can truncate retention. Set ${control.total} and ${control.perFile} on the next analyze_javascript_application call (CLI: ${control.cli}). The change applies to that next analysis and does not restart the worker or the REA server. ${control.unaffected} Coverage reports the same effective values as ${control.ceiling} and ${control.fileCeiling}.`;
   return { limits, limitation };
 };
 

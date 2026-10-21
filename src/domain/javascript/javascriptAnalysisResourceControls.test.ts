@@ -142,7 +142,7 @@ it("attributes V8 heap exhaustion to max_heap_mb only when that flag is enforced
   expect(bun.remediationAction).not.toContain("Increase max_heap_mb");
 });
 
-it("names the four semantic arguments on ceiling coverage", () => {
+it("names both semantic ceilings as active limits without claiming both were reached", () => {
   const nodes = javaScriptSemanticCeilingCoverage("nodes", 50, 30);
   const unknowns = javaScriptSemanticCeilingCoverage("unknowns", 3, 2);
   expect(nodes.limits).toEqual(
@@ -161,16 +161,36 @@ it("names the four semantic arguments on ceiling coverage", () => {
       { name: "max_semantic_unknowns_per_file", value: 2, unit: "items" },
     ]),
   );
+  expect(nodes.limitation).toContain("effective ceilings");
+  expect(nodes.limitation).toContain("active limits");
+  expect(nodes.limitation).toContain("either one can truncate retention");
+  expect(nodes.limitation).not.toMatch(/\breached\b/u);
+  expect(nodes.limitation).toContain("max_semantic_nodes");
+  expect(nodes.limitation).toContain("max_semantic_nodes_per_file");
+  expect(nodes.limitation).toContain(
+    `default ${String(JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticNodes)}`,
+  );
+  expect(nodes.limitation).toContain(
+    `default ${String(JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticNodesPerFile)}`,
+  );
   expect(nodes.limitation).toContain("1 to");
   expect(nodes.limitation).toContain(String(JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM));
   expect(nodes.limitation).toContain("--max-semantic-nodes");
+  expect(nodes.limitation).toContain("--max-semantic-nodes-per-file");
   expect(nodes.limitation).toContain("next analysis");
+  expect(nodes.limitation).toContain("Raising them does not raise");
+  expect(unknowns.limitation).toContain("effective ceilings");
+  expect(unknowns.limitation).not.toMatch(/\breached\b/u);
   expect(unknowns.limitation).toContain("--max-semantic-unknowns");
+  expect(unknowns.limitation).toContain("--max-semantic-unknowns-per-file");
+  expect(unknowns.limitation).toContain("max_semantic_unknowns");
+  expect(unknowns.limitation).toContain("max_semantic_unknowns_per_file");
   expect(unknowns.limitation).toContain("max_semantic_nodes");
   const capped = javaScriptSemanticCeilingCoverage(
     "nodes",
     JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
     JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
   );
-  expect(capped.limitation).toContain("Do not increase it further");
+  expect(capped.limitation).toContain("do not increase it further");
+  expect(capped.limitation).not.toMatch(/\breached\b/u);
 });
