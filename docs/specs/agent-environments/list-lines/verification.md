@@ -89,3 +89,7 @@ whole line naming a range the collection has outgrown answers from its recording
 The merge also brings that branch's other fixes: unseen writes stay pending, later creates follow their sequences, and
 later document writes stay at their object. Over the 50 captures no view or write plan changed and served write tools
 stay at 31; the six environments compare exactly as before.
+
+It then merged that branch at 0ae64400 and 6257de93: an update's identity member never takes a rule, a page size of
+zero bounds nothing, and the paging rules move to `environmentStatePaging.ts`. Over the 50 captures again no view or
+write plan changed, and the six environments compare exactly as before.
