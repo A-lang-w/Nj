@@ -18,9 +18,19 @@ const WORKER_HEAP_MIB = 128;
  * `--max-old-space-size` on the process that starts REA, including
  * `NODE_OPTIONS`, overrides it. A zero or empty value leaves this request
  * in effect. `NODE_OPTIONS` is applied before `process.execArgv`, and the
- * last flag wins. That environment value is not copied into `execArgv`.
+ * last absolute flag wins. That environment value is not copied into `execArgv`.
+ *
+ * `--max-old-space-size-percentage` is applied after both sources and takes
+ * precedence over the absolute flag in either order. Node turns it into a MiB
+ * from constrained or total memory while parsing options. That base can change
+ * before user code reads it, and some Node versions also cap total memory at
+ * 4 GiB when pointer compression is on. A later read is not the value Node
+ * applied, so a percentage flag leaves the effective heap unestablished
+ * instead of the 128 MiB request or an absolute flag.
  */
 const OLD_SPACE_FLAG = /^--max[-_]old[-_]space[-_]size(?:=(.*))?$/u;
+const OLD_SPACE_PERCENT_FLAG =
+  /^--max[-_]old[-_]space[-_]size[-_]percentage(?:=.*)?$/u;
 
 /** Old-generation heap the regex worker will actually hit. */
 export type RegexWorkerHeapLimit =
@@ -94,7 +104,15 @@ export const resolveRegexWorkerHeap = (
     nodeOptions === undefined ? [] : nodeOptionsArgv(nodeOptions);
   let limit: RegexWorkerHeapLimit =
     fromEnvironment === undefined ? { kind: "unknown" } : requestedHeap;
+  let percentage = false;
   for (const token of [...(fromEnvironment ?? []), ...execArgv]) {
+    if (OLD_SPACE_PERCENT_FLAG.test(token)) {
+      percentage = true;
+      limit = { kind: "unknown" };
+      continue;
+    }
+    // A percentage flag wins over every absolute flag, including a later one.
+    if (percentage) continue;
     const parsed = parsedOldSpaceMiB(token);
     if (parsed === "absent") continue;
     if (parsed === "unrecognized") {
@@ -117,7 +135,7 @@ const launchRegexWorkerHeap = resolveRegexWorkerHeap(
 
 const heapBound = (heap: RegexWorkerHeapLimit): string => {
   if (heap.kind === "unknown")
-    return "The worker requests 128 MiB. A launch --max-old-space-size is set and the effective old-generation heap was not established.";
+    return "The worker requests 128 MiB. A launch --max-old-space-size or --max-old-space-size-percentage is set and the effective old-generation heap was not established.";
   const override =
     "A positive Node --max-old-space-size, including NODE_OPTIONS, overrides the 128 MiB worker request";
   return heap.overridden
@@ -173,7 +191,7 @@ export const regexWorkerHeapError = (
       : { requested_worker_heap_mib: WORKER_HEAP_MIB },
     {
       cause,
-      remediationAction: `${heapBound(heap)} Restart REA after changing --max-old-space-size. Simplify the pattern or use literal mode.`,
+      remediationAction: `${heapBound(heap)} Restart REA after changing --max-old-space-size. A launch --max-old-space-size-percentage takes precedence over that flag in either order. Simplify the pattern or use literal mode.`,
     },
   );
 const replySchema = z.discriminatedUnion("status", [

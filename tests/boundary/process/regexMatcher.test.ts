@@ -108,6 +108,46 @@ it("names the fixed regex deadline and the effective worker heap", () => {
   }
 });
 
+const relativeHeapGap = (left: number, right: number): number =>
+  Math.abs(left - right) / Math.max(left, right);
+
+it("lets --max-old-space-size-percentage override an absolute heap in either order", () => {
+  const percentage = "--max-old-space-size-percentage=50";
+  const absolute = "--max-old-space-size=64";
+  const alone = probeWorkerHeap([percentage], undefined);
+  const percentageThenAbsolute = probeWorkerHeap(
+    [percentage, absolute],
+    undefined,
+  );
+  const absoluteThenPercentage = probeWorkerHeap(
+    [absolute, percentage],
+    undefined,
+  );
+  const onlyAbsolute = probeWorkerHeap([absolute], undefined);
+  for (const observed of [
+    alone,
+    percentageThenAbsolute,
+    absoluteThenPercentage,
+    onlyAbsolute,
+  ])
+    expect(observed.resourceOld).toBe(128);
+  expect(
+    relativeHeapGap(alone.heap, percentageThenAbsolute.heap),
+  ).toBeLessThan(0.05);
+  expect(
+    relativeHeapGap(alone.heap, absoluteThenPercentage.heap),
+  ).toBeLessThan(0.05);
+  expect(relativeHeapGap(alone.heap, onlyAbsolute.heap)).toBeGreaterThan(0.25);
+  for (const execArgv of [
+    [percentage],
+    [percentage, absolute],
+    [absolute, percentage],
+  ])
+    expect(resolveRegexWorkerHeap(execArgv, undefined)).toEqual({
+      kind: "unknown",
+    });
+});
+
 it("lets a launch --max-old-space-size override the 128 MiB worker request", () => {
   const baseline = probeWorkerHeap([], undefined);
   const smaller = probeWorkerHeap(["--max-old-space-size=64"], undefined);

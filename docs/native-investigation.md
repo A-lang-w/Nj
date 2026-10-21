@@ -207,7 +207,10 @@ cancellation stops matching while leaving the Hopper API available. This
 release has no runtime override for that deadline. The worker requests 128
 MiB. A positive Node.js `--max-old-space-size` on the process that starts
 REA, including `NODE_OPTIONS`, overrides that request and sets the effective
-heap. Literal mode retains Unicode casefold matching.
+heap. `--max-old-space-size-percentage` takes precedence over that flag in
+either order. REA does not turn the percentage into a MiB, so the effective
+heap stays unestablished instead of the 128 MiB request or the absolute flag.
+Literal mode retains Unicode casefold matching.
 
 ## Bounded static traces
 

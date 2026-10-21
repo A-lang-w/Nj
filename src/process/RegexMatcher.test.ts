@@ -87,6 +87,70 @@ it.each([
     nodeOptions: '"--max-old-space-size=256',
     heap: effective(80, true),
   },
+  {
+    name: "leaves a percentage flag unestablished instead of the 128 MiB request",
+    execArgv: ["--max-old-space-size-percentage=50"],
+    nodeOptions: undefined,
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "lets a percentage flag win over a later absolute flag",
+    execArgv: ["--max-old-space-size-percentage=50", "--max-old-space-size=64"],
+    nodeOptions: undefined,
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "lets a percentage flag win over an earlier absolute flag",
+    execArgv: ["--max-old-space-size=64", "--max-old-space-size-percentage=50"],
+    nodeOptions: undefined,
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "lets a NODE_OPTIONS percentage win over an execArgv absolute flag",
+    execArgv: ["--max-old-space-size=64"],
+    nodeOptions: "--max-old-space-size-percentage=50",
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "lets an execArgv percentage win over a NODE_OPTIONS absolute flag",
+    execArgv: ["--max-old-space-size-percentage=50"],
+    nodeOptions: "--max-old-space-size=64",
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "recognizes an underscore percentage flag",
+    execArgv: ["--max_old_space_size_percentage=50"],
+    nodeOptions: undefined,
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "recognizes a percentage flag split from its value",
+    execArgv: [
+      "--max-old-space-size=64",
+      "--max-old-space-size-percentage",
+      "50",
+    ],
+    nodeOptions: undefined,
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "does not let a later absolute flag replace an invalid percentage",
+    execArgv: ["--max-old-space-size-percentage=0", "--max-old-space-size=64"],
+    nodeOptions: undefined,
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "leaves a fractional percentage unestablished",
+    execArgv: ["--max-old-space-size-percentage=50.5"],
+    nodeOptions: undefined,
+    heap: { kind: "unknown" } as const,
+  },
+  {
+    name: "does not treat a final zero absolute flag as 128 MiB after a percentage",
+    execArgv: ["--max-old-space-size-percentage=50", "--max-old-space-size=0"],
+    nodeOptions: undefined,
+    heap: { kind: "unknown" } as const,
+  },
 ] as const)(
   "resolveRegexWorkerHeap $name",
   ({ execArgv, nodeOptions, heap }) => {
@@ -111,8 +175,12 @@ it("describes the effective heap and keeps the deadline fixed", () => {
     );
     expect(projected.remediation.action).not.toContain("no runtime override");
     expect(projected.remediation.action).toContain("--max-old-space-size");
+    expect(projected.remediation.action).toContain(
+      "--max-old-space-size-percentage",
+    );
     if (heap.kind === "unknown") {
       expect(limitation).toContain("was not established");
+      expect(limitation).toContain("--max-old-space-size-percentage");
       expect(projected.message).toContain("was not established");
       expect(projected.details).toMatchObject({
         reported_limits: { requested_worker_heap_mib: 128 },
