@@ -356,4 +356,5 @@ interference rule: an unmodelled write counts against a tool when it followed th
 covers, so a later call on another entity does not hide it; and a failed item read contradicts the writes no
 unmodelled write followed, checking only the others on their members. Both tests fail on the previous head. The
 verdicts over the 50 captures are unchanged plan by plan, the smoke applies all 31 served write tools, and the gates
-passed again.
+passed again. A follow-up weighs interference only on targets where the tool's effect survives, so a call
+whose effect a later write overwrote no longer excuses a later mismatch; its test fails on the previous head.
