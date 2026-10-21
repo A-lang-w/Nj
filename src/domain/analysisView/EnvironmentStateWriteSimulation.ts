@@ -19,21 +19,23 @@ import {
   checkDocumentRead,
   checkItemRead,
   checkListRead,
-  checkedLines,
   collectionTarget,
   entityTarget,
   isAbsence,
-  servedLine,
   succeeded,
   withBodies,
   writtenFieldChecks,
   SimulatedState,
   WriteEffects,
   type CheckOutcome,
-  type CheckedLines,
   type TouchedTargets,
-  type ServedLine,
 } from "./environmentStateWriteChecks.js";
+import {
+  checkedLines,
+  servedLine,
+  type CheckedLines,
+  type ServedLine,
+} from "./environmentStateCheckedLines.js";
 import { applyCreate } from "./environmentStateWriteCreate.js";
 import {
   applyDelete,
