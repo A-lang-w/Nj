@@ -147,6 +147,8 @@ it.each([
   ["run 0<&-", false],
   ["run <&- --mode fast", false],
   ["run 0<&- arg", false],
+  ["run < first.txt < second.txt", false],
+  ["run <&- < input.txt", false],
   ["run 0<input.txt", false],
   ["run arg<input.txt", false],
   ["run arg2<input.txt", false],
@@ -1303,6 +1305,8 @@ it.each([
   "run 0<&-",
   "run <&- --mode fast",
   "run 0<&- arg",
+  "run < first.txt < second.txt",
+  "run 0<&- < input.txt",
 ])(
   "retains detach proof for the input-only redirection %s",
   async (runCommand) => {

@@ -2477,13 +2477,15 @@ const classifyRunRedirection = (tail: string): { mayChangeOutput: boolean } => {
   }
   finishToken(tail.length);
   malformed ||= quote !== undefined || escaped;
-  const soleInput = inputs.length === 1 ? inputs[0] : undefined;
   const inputOnly =
     !malformed &&
     !outputOrControl &&
-    soleInput !== undefined &&
-    (soleInput.descriptor === undefined || soleInput.descriptor === "0") &&
-    (soleInput.target === "close" || soleInput.target === "path");
+    inputs.length > 0 &&
+    inputs.every(
+      ({ descriptor, target }) =>
+        (descriptor === undefined || descriptor === "0") &&
+        (target === "close" || target === "path"),
+    );
   return {
     mayChangeOutput:
       malformed || outputOrControl || (inputs.length > 0 && !inputOnly),
