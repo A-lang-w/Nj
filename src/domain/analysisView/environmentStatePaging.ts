@@ -35,26 +35,28 @@ const PAGE_SIZE_PARAMETERS = new Set([
   "size",
 ]);
 
-/** The most items a query's page holds: its smallest whole-number page-size value or `_start`–`_end` range width, or undefined without one. */
-export const pageSize = (query: string | undefined): number | undefined => {
+/** The most items a query's page holds: its smallest whole-number page-size value or `_start`–`_end` range width, or undefined without one; with `unboundedZero`, a size of zero is no bound. */
+const pageLimit = (
+  query: string | undefined,
+  unboundedZero: boolean,
+): number | undefined => {
   let size = Infinity;
   const range = { start: 0, end: Infinity };
   for (const [name, value] of iterateUrlQueryParameters(query ?? "")) {
     const key = name.toLowerCase();
     if (!/^\d+$/u.test(value)) continue;
-    if (PAGE_SIZE_PARAMETERS.has(key)) size = Math.min(size, Number(value));
-    else if (key === "_start") range.start = Number(value);
-    else if (key === "_end") range.end = Number(value);
+    const number = Number(value);
+    if (PAGE_SIZE_PARAMETERS.has(key)) {
+      if (number > 0 || !unboundedZero) size = Math.min(size, number);
+    } else if (key === "_start") range.start = number;
+    else if (key === "_end") range.end = number;
   }
   const width = Math.min(size, Math.max(range.end - range.start, 0));
   return Number.isFinite(width) ? width : undefined;
 };
 
-/** The most items a line's call lists: its page size, but none for a size of zero the line's own recording listed items under, as an application reading zero as no limit does. */
+/** The most items a line's call lists. A size of zero is no bound on a line whose own recording listed items under it, as an application reading zero as no limit does; every other size and range still bounds the page. */
 export const pageBound = (
   query: string | undefined,
   recorded: number,
-): number | undefined => {
-  const size = pageSize(query);
-  return size === 0 && recorded > 0 ? undefined : size;
-};
+): number | undefined => pageLimit(query, recorded > 0);

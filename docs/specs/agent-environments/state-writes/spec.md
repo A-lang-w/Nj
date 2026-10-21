@@ -108,8 +108,9 @@ value the application ignored it is accepted with that value and stores
 nothing, and a stored id that changed is `unexplained-change`. A plan whose
 calls use a member both as the identity and as a fixed member, or fix it at
 different values, is `unexplained-change`, as serving could not take every
-recorded call. So is an update whose observation drops a field the entity
-held, since serving keeps every field an update does not write.
+recorded call. So is an update a later read shows dropped a field the
+entity held, since serving keeps every field an update does not write; a write's
+own response may leave fields out.
 `PUT` requires every member the exemplar sent; `PATCH` and `POST` require at
 least one. A field the exemplar's update changed without sending it is
 explained as one of:
@@ -201,7 +202,8 @@ from the state:
   repeating a name with one value is, as a call naming it matches both. A list
   is compared as served from the collection of that line. A read on a page
   (`limit`, `size`, `per_page` and the like, or a `_start`–`_end` range; a size
-  of zero bounds nothing on a line whose recording listed items under it) of a
+  of zero is no bound on a line whose recording listed items under it, while its
+  other sizes and range still bound the page) of a
   whole list checks nothing once the collection holds more entities than the
   page, which serving then answers from its recording.
 - A read made while a modelled write to its entity or collection was still
@@ -239,7 +241,8 @@ refuses to answer with.
   an update's changes confirms nothing of it, and leaves it for a later check
   of that entity or collection.
 - A mismatch contradicts each exercised write that no unmodelled write came
-  after, whatever earlier write is still pending. When an unmodelled write
+  after its latest call on the read's entity or collection, whatever earlier
+  write is still pending. When an unmodelled write
   followed some of them, an item read checks those only on the members they
   sent and a list is not checked again: such a write may explain the rest.
 - A mismatch on an entity or collection that no write changed contradicts,

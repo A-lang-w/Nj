@@ -358,7 +358,7 @@ export class EnvironmentStateWriteSimulation {
       return;
     const exercised = exercisedBy(this.#touched, keys, borrowers);
     if (borrowers !== undefined) {
-      this.#contradictOthers(outcome.pass, exercised, record);
+      if (!outcome.pass) this.#contradictOthers(keys, exercised, record);
       return;
     }
     const pass =
@@ -369,14 +369,14 @@ export class EnvironmentStateWriteSimulation {
       : undefined;
     if (!pass) {
       const interfered = [...exercised].filter((name) =>
-        this.#interferedWith(name),
+        this.#interferedWith(name, keys),
       );
       if (interfered.length === 0)
         this.#mismatch({ record, index, keys, exercised, view });
       // An unmodelled write after some of these writes may explain the difference: those are checked on their own members only.
       else if (view.shape === "item") this.#checkMembers(view, record);
       else {
-        this.#contradictOthers(false, exercised, record);
+        this.#contradictOthers(keys, exercised, record);
         for (const key of keys) this.#taint.fail(key);
       }
       if (view.shape === "item") this.#adopt(view, record);
@@ -394,13 +394,12 @@ export class EnvironmentStateWriteSimulation {
 
   /** A failed read contradicts the writes it exercised that no unmodelled write came after, as a read a write's effect was learned from still does the others. */
   #contradictOthers(
-    pass: boolean,
+    keys: readonly string[],
     exercised: ReadonlySet<string>,
     record: StateRecordFacts,
   ): void {
-    if (pass) return;
     for (const name of exercised)
-      if (!this.#interferedWith(name))
+      if (!this.#interferedWith(name, keys))
         this.#drafts.get(name)!.contradictedBy ??= record.ordinal;
   }
 
@@ -428,10 +427,11 @@ export class EnvironmentStateWriteSimulation {
     this.#unmodelledAt.push(index);
   }
 
-  /** Whether a write the gate does not model came after a tool's latest modelled call, so it may explain what a read shows of that call. */
-  #interferedWith(tool: string): boolean {
-    const last =
-      this.#log.findLast((write) => write.tool === tool)?.index ?? -1;
+  /** Whether a write the gate does not model came after a tool's latest modelled call on these targets, so it may explain what a read shows of it. */
+  #interferedWith(tool: string, keys: readonly string[]): boolean {
+    const last = Math.max(
+      ...keys.map((key) => this.#touchedSince.get(key)?.at.get(tool) ?? -1),
+    );
     return this.#unmodelledAt.some((index) => index > last);
   }
 
