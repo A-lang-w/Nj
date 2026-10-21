@@ -4,7 +4,14 @@ import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { inventoryFirmwareOutput } from "./FirmwareFiles.js";
+import {
+  firmwareStagingBudgetRemediation,
+  inventoryFirmwareOutput,
+} from "./FirmwareFiles.js";
+import {
+  MAX_FIRMWARE_STAGING_BYTES,
+  MAX_FIRMWARE_STAGING_ENTRIES,
+} from "../domain/firmware/firmwareAnalysis.js";
 
 const roots: string[] = [];
 
@@ -73,3 +80,17 @@ it("reports an exceeded staging byte budget as the caller's byte allowance", asy
     remediation: { action: expect.stringContaining("max_output_bytes") },
   });
 });
+
+it.each([
+  ["max_output_files", MAX_FIRMWARE_STAGING_ENTRIES],
+  ["max_output_bytes", MAX_FIRMWARE_STAGING_BYTES],
+] as const)(
+  "does not recommend raising %s at its supported maximum",
+  (budget, maximum) => {
+    const remediation = firmwareStagingBudgetRemediation(budget, maximum);
+    expect(remediation).toContain(`maximum ${String(maximum)}`);
+    expect(remediation).toContain("smaller firmware byte range");
+    expect(remediation).not.toContain(`Increase ${budget}`);
+    expect(remediation).toContain(`Raising ${budget} further is not supported`);
+  },
+);

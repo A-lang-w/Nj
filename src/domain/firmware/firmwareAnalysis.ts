@@ -5,6 +5,9 @@ import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 const bytes = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const range = z.strictObject({ offset: bytes, length: bytes.positive() });
+
+export const MAX_FIRMWARE_STAGING_BYTES = 512 * 1024 * 1024;
+export const MAX_FIRMWARE_STAGING_ENTRIES = 100_000;
 const target = {
   path: absoluteLocalPathStringSchema.describe(
     "Absolute local firmware file; never executed. Relative paths are rejected.",
@@ -33,7 +36,7 @@ export const firmwareInputSchemas = {
       .number()
       .int()
       .min(1)
-      .max(512 * 1024 * 1024)
+      .max(MAX_FIRMWARE_STAGING_BYTES)
       .default(256 * 1024 * 1024)
       .describe(
         "Staging file-byte budget, checked during extraction; transient overshoot is possible",
@@ -42,7 +45,7 @@ export const firmwareInputSchemas = {
       .number()
       .int()
       .min(1)
-      .max(100_000)
+      .max(MAX_FIRMWARE_STAGING_ENTRIES)
       .default(10_000)
       .describe("Staging entry budget, including directories and links"),
     publication_timeout_ms: z
