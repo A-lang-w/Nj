@@ -386,7 +386,8 @@ section explicitly truncated.
 Disallowed-origin entries are filtered before retention.
 
 Selected script-source collection shares a 32 MiB aggregate UTF-8 retention
-budget and a 20-second deadline across the capture. An oversized source is
+budget and the `command_timeout_ms` deadline (default 20000 ms) across the
+capture. The byte budget has no runtime override. An oversized source is
 omitted while later smaller sources may still fit. When the deadline expires,
 remaining source reads are skipped. Script metadata, per-item omission reasons,
 and `script_sources` completeness remain available. A single CDP response can
@@ -394,14 +395,17 @@ still be materialized up to the separate 64 MiB transport limit before source
 admission; the retention budget does not bound that transient allocation.
 
 Bundle parsing and semantic inspection run sequentially in an owned child,
-without executing captured code. `max_heap_mb` defaults to 1024 MiB V8
-old-space; `analysis_timeout_ms` defaults to 30000 per script, including startup
-and transfer. A failed or timed-out script becomes an explicit unknown while
-completed findings and later scripts remain available. `total_analysis_timeout_ms`
-defaults to 300000 across script analysis; expiry returns a typed timeout with
-partial Evidence and identifies unstarted scripts. These controls are also
-available as CLI flags with hyphenated names. Capture and optional source-map
-fetching have separate budgets.
+without executing captured code. These are separate phases. `max_heap_mb`
+defaults to 1024 MiB V8 old-space (range 128..16384). `analysis_timeout_ms`
+defaults to 30000 per script, including startup and transfer.
+`total_analysis_timeout_ms` defaults to 300000 across script analysis. A
+per-script deadline above the effective total is rejected. A failed or
+timed-out script becomes an explicit unknown while completed findings and later
+scripts remain available. Total-deadline expiry returns a typed timeout with
+partial Evidence and identifies unstarted scripts. `source_map_fetch_timeout_ms`
+defaults to 30000 and is an item limitation, not that analysis timeout. These
+controls are also available as CLI flags with hyphenated names. Worker protocol
+and result byte budgets have no runtime override.
 
 One web-bundle capture/analysis is admitted per REA process at a time. Completed
 script results share an 8 MiB serialized transfer budget, with host heap
@@ -431,12 +435,15 @@ an invalid supplied size remains unknown with incomplete resource coverage while
 the resource's other facts are retained. Zero and nonnegative fractional sizes
 are preserved.
 
-CDP discovery has a 10-second deadline. Each WebSocket handshake and command
-response has its own 20-second deadline, separate from the caller-selected
-observation window. A stalled handshake or command reports `provider_timeout`;
+CDP discovery has a 10-second response deadline and an 8 MiB document budget.
+Neither has a runtime override. Each WebSocket handshake and command response
+uses `command_timeout_ms` (default 20000), separate from the caller-selected
+observation window, discovery, and the 5000 ms cleanup grace. A stalled
+handshake or command reports `provider_timeout` and names `command_timeout_ms`;
 caller cancellation still reports cancellation. WebSocket messages remain subject
-to the [64 MiB limit](#request-boundary). REA does not impose a message-count or
-pending-command quota. On cancellation, it closes only its own WebSocket,
+to the [64 MiB limit](#request-boundary), which has no runtime override. REA does
+not impose a message-count or pending-command quota. On cancellation, it closes
+only its own WebSocket,
 waiting up to one second before terminating it. Malformed unsolicited events
 and malformed replies to pending commands poison the connection so later
 commands fail closed. A correlated reply's session ID must match the command's
@@ -445,7 +452,7 @@ rejects it as unknown; other command rejections retain their reported failure.
 
 Network and console coverage starts only after REA attaches and enables the relevant CDP domains. `prior_activity_available` is always `false`; absence from these arrays is not evidence that an event never occurred. Scripts are different: scripts the page parsed before REA attached are still reported under `scripts`. A page that loaded before attach can therefore list its scripts while `network.requests` lacks the requests that fetched them. If CDP reuses a request ID without supplying redirect metadata, REA retains the predecessor observation and marks network coverage incomplete.
 
-Source maps are not fetched by inspection. Bundle analysis fetches them only when `fetch_source_maps` is selected, with exact-origin redirect checks and no credentials, cookies, or referrer. Each fetch operation has a 30-second deadline and a 64 MiB aggregate streamed-response budget across redirects. A deadline or byte-limit failure remains explicitly unavailable and makes bundle completeness partial. Source-map decoding also bounds raw resolved identities to 64 MiB and aggregate inline evidence to 32 MiB. Failed maps preserve their failure context when it fits; if another context cannot fit, collection stops with the full requested count, the returned processed count, and an explicit unknown-results limitation. Retained mappings and original sources are returned inline. See [source-location limits](web-source-location.md) for the structural decoder bounds. Original source artifacts with `.ts`, `.tsx`, `.mts`, or `.cts` suffixes carry `text/typescript`; other source names retain `text/javascript`.
+Source maps are not fetched by inspection. Bundle analysis fetches them only when `fetch_source_maps` is selected, with exact-origin redirect checks and no credentials, cookies, or referrer. Each fetch operation uses `source_map_fetch_timeout_ms` (default 30000) and a 64 MiB aggregate streamed-response budget across redirects. The byte budget has no runtime override. A fetch overrun is an item limitation, not a thrown analysis timeout. A deadline or byte-limit failure remains explicitly unavailable and makes bundle completeness partial. Source-map decoding also bounds raw resolved identities to 64 MiB and aggregate inline evidence to 32 MiB. Failed maps preserve their failure context when it fits; if another context cannot fit, collection stops with the full requested count, the returned processed count, and an explicit unknown-results limitation. Retained mappings and original sources are returned inline. See [source-location limits](web-source-location.md) for the structural decoder bounds. Original source artifacts with `.ts`, `.tsx`, `.mts`, or `.cts` suffixes carry `text/typescript`; other source names retain `text/javascript`.
 
 source-map items retain the script's `declared_url` separately from the observed
 `effective_url`. successful maps use the latter as their source-resolution base.

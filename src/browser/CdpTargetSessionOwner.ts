@@ -67,7 +67,10 @@ export class CdpTargetSessionOwner {
     operation: BrowserObservationOperation,
     options: ExecutionOptions,
     resource: string,
-    limits?: { readonly maxPayloadBytes: number },
+    limits?: {
+      readonly maxPayloadBytes?: number;
+      readonly commandTimeoutMs?: number;
+    },
   ): Promise<CdpConnection> {
     if (this.#closing)
       throw new ProviderCleanupError(

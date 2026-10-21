@@ -68,6 +68,7 @@ import {
   type CdpTargetSession,
 } from "./CdpTargetSession.js";
 import { capturePage, type CapturedPage } from "./CdpPageCapture.js";
+import { selectedCdpCommandTimeoutMs } from "../domain/browserDeadline.js";
 import { fetchWebSourceMaps } from "./WebSourceMapFetcher.js";
 import { authorizeCdpTarget } from "./CdpAuthorizedTarget.js";
 import { observeCdpSession } from "./CdpObservationSession.js";
@@ -134,6 +135,7 @@ export class CdpBrowserProvider implements BrowserObservationPort {
         options.signal,
         undefined,
         this.#owner,
+        selectedCdpCommandTimeoutMs(input.command_timeout_ms),
       );
       if (endpoint.connection !== undefined)
         await this.#owner.finish(endpoint.connection);
@@ -359,7 +361,7 @@ interface CdpTargetOperationSession<Input> {
 const withTargetSession = async <
   Input extends Pick<
     InspectWebPageInput,
-    "cdp_endpoint" | "target_id" | "allowed_origins"
+    "cdp_endpoint" | "target_id" | "allowed_origins" | "command_timeout_ms"
   >,
   Output,
 >(
@@ -370,12 +372,16 @@ const withTargetSession = async <
   owner: CdpTargetSessionOwner,
   partialObservation?: (output: Output) => AnalysisPartialObservation,
 ): Promise<Output> => {
+  const commandTimeoutMs = selectedCdpCommandTimeoutMs(
+    input.command_timeout_ms,
+  );
   const endpoint = await openCdpEndpoint(
     input.cdp_endpoint,
     operation,
     options.signal,
     undefined,
     owner,
+    commandTimeoutMs,
   );
   let targetSession: CdpTargetSession | undefined;
   let outcome: Result<Output, unknown>;
@@ -390,7 +396,7 @@ const withTargetSession = async <
             target,
             operation,
             options.signal,
-            undefined,
+            { commandTimeoutMs },
             owner,
           )
         : await attachCdpTargetSession(

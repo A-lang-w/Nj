@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { webRuntimeCommandTimeoutSchema } from "./browserDeadline.js";
 import { urlDeclaresQueryOrFragment } from "./urlComponents.js";
 import {
   parseRecordedTransportUrl,
@@ -167,6 +168,7 @@ export const browserAllowedOriginsSchema = z
 const browserInput = {
   cdp_endpoint: browserObservationEndpointSchema,
   allowed_origins: browserAllowedOriginsSchema,
+  command_timeout_ms: webRuntimeCommandTimeoutSchema,
 };
 
 /** Public input for complete discovery, optionally filtered by exact origin. */

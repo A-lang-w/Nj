@@ -548,7 +548,7 @@ describe("web source-map fetching and validation: enforcing fetch limits and val
           {
             status: "fetch_failed",
             artifact: null,
-            limitation: "Source-map fetching exceeded its operation deadline.",
+            limitation: expect.stringContaining("source_map_fetch_timeout_ms"),
           },
         ],
       });
@@ -611,8 +611,7 @@ describe("web source-map fetching and validation: enforcing fetch limits and val
           {
             status: "fetch_failed",
             artifact: null,
-            limitation:
-              "Source-map response exceeded the retained-byte budget.",
+            limitation: expect.stringContaining("retained budget"),
           },
         ],
       });

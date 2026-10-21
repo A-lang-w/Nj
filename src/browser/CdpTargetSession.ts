@@ -43,6 +43,7 @@ export const openCdpEndpoint = async (
   signal?: AbortSignal,
   timeoutMs?: number,
   owner?: CdpTargetSessionOwner,
+  commandTimeoutMs?: number,
 ): Promise<CdpOpenedEndpoint> => {
   if (endpoint.transport === "http_discovery")
     return {
@@ -53,14 +54,22 @@ export const openCdpEndpoint = async (
     operation,
     signal,
     async (deadlineSignal) => {
+      const commandLimits =
+        commandTimeoutMs === undefined ? undefined : { commandTimeoutMs };
       const connection =
         owner === undefined
-          ? await CdpConnection.connect(endpoint.url, operation, deadlineSignal)
+          ? await CdpConnection.connect(
+              endpoint.url,
+              operation,
+              deadlineSignal,
+              commandLimits,
+            )
           : await owner.connect(
               endpoint.url,
               operation,
               { signal: deadlineSignal },
               "browser-endpoint",
+              commandLimits,
             );
       try {
         return {
@@ -95,7 +104,10 @@ export const openCdpTargetSession = async (
   target: CdpEndpointTarget,
   operation: BrowserObservationOperation,
   signal?: AbortSignal,
-  limits?: { readonly maxPayloadBytes: number },
+  limits?: {
+    readonly maxPayloadBytes?: number;
+    readonly commandTimeoutMs?: number;
+  },
   owner?: CdpTargetSessionOwner,
 ): Promise<CdpTargetSession> => {
   const webSocket = cdpTargetWebSocket(discovery, target, operation);

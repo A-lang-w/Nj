@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Frame, Page } from "playwright-core";
 
+import { selectedCdpCommandTimeoutMs } from "../domain/browserDeadline.js";
 import { browserObservationEndpointSchema } from "../domain/browserObservation.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { CdpConnection } from "./CdpConnection.js";
@@ -60,6 +61,9 @@ export class PlaywrightScenarioServiceWorkers {
     private readonly page: Page,
     private readonly endpoint: string,
     private readonly targetId: string,
+    private readonly commandTimeoutMs: number = selectedCdpCommandTimeoutMs(
+      undefined,
+    ),
   ) {}
 
   initialize(): Promise<void> {
@@ -80,6 +84,9 @@ export class PlaywrightScenarioServiceWorkers {
           browserObservationEndpointSchema.parse(this.endpoint),
           OPERATION,
           signal,
+          undefined,
+          undefined,
+          this.commandTimeoutMs,
         );
         const target = opened.discovery.targets.find(
           ({ id }) => id === this.targetId,
@@ -94,6 +101,7 @@ export class PlaywrightScenarioServiceWorkers {
             opened.discovery.webSocket.url,
             OPERATION,
             signal,
+            { commandTimeoutMs: this.commandTimeoutMs },
           ));
         return await attachCdpTargetSession(
           connection,

@@ -2,6 +2,10 @@ import { request, type ClientRequest, type IncomingMessage } from "node:http";
 
 import { z } from "zod";
 
+import {
+  CDP_DISCOVERY_RESPONSE_TIMEOUT_MS,
+  noRuntimeOverrideSentence,
+} from "../domain/browserDeadline.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
@@ -30,11 +34,30 @@ const endpointTargetSchema = z.object({
 });
 const endpointTargetsSchema = z.array(endpointTargetSchema);
 
-/** Per-response bounds for loopback CDP discovery documents. */
+/** Per-response bounds for loopback CDP discovery documents. There is no runtime override. */
 const CDP_DISCOVERY_RESPONSE_LIMITS = {
   bytes: 8 * 1024 * 1024,
-  timeoutMs: 10_000,
+  timeoutMs: CDP_DISCOVERY_RESPONSE_TIMEOUT_MS,
 } as const;
+
+const discoveryTimeout = (
+  operation: BrowserObservationOperation,
+  timeoutMs: number,
+  phase: "response" | "browser-socket",
+): BrowserObservationError => {
+  const subject =
+    phase === "response"
+      ? `CDP discovery response exceeded its ${String(timeoutMs)} ms deadline.`
+      : `CDP browser-socket discovery exceeded its ${String(timeoutMs)} ms deadline.`;
+  const fixed = noRuntimeOverrideSentence(
+    `The ${String(CDP_DISCOVERY_RESPONSE_LIMITS.bytes)}-byte discovery document budget and the ${String(timeoutMs)} ms discovery deadline stay fixed.`,
+    "command_timeout_ms",
+  );
+  return new BrowserObservationError(operation, "timeout", {
+    detail: `${subject} ${fixed}`,
+    remediationAction: fixed,
+  });
+};
 
 interface CdpDiscoveryResponseLimits {
   readonly bytes: number;
@@ -181,9 +204,7 @@ export const withCdpDiscoveryDeadline = async <T>(
       if (abortSource === "caller")
         throw new AnalysisCancelledError(operation, { cause: abortReason });
       if (abortSource === "deadline")
-        throw new BrowserObservationError(operation, "timeout", {
-          detail: `CDP browser-socket discovery exceeded its ${String(timeoutMs)} ms deadline.`,
-        });
+        throw discoveryTimeout(operation, timeoutMs, "browser-socket");
     }
     // A concrete failure produced before cancellation remains authoritative.
     if (cause instanceof AnalysisError) {
@@ -192,9 +213,7 @@ export const withCdpDiscoveryDeadline = async <T>(
         cause instanceof AnalysisCancelledError &&
         cause.cause === abortReason
       )
-        throw new BrowserObservationError(operation, "timeout", {
-          detail: `CDP browser-socket discovery exceeded its ${String(timeoutMs)} ms deadline.`,
-        });
+        throw discoveryTimeout(operation, timeoutMs, "browser-socket");
       throw cause;
     }
     throw cause;
@@ -485,7 +504,10 @@ export const readCdpJson = async (
           if (bytes > limits.bytes) {
             finish(
               new BrowserObservationError(operation, "payload_limit", {
-                detail: `CDP discovery response exceeds its ${String(limits.bytes)} byte limit.`,
+                detail: noRuntimeOverrideSentence(
+                  `CDP discovery response exceeds its ${String(limits.bytes)}-byte limit.`,
+                  "command_timeout_ms",
+                ),
               }),
             );
             return;
@@ -535,12 +557,7 @@ export const readCdpJson = async (
     onAbort();
     if (settled) return;
     timer = setTimeout(
-      () =>
-        finish(
-          new BrowserObservationError(operation, "timeout", {
-            detail: `CDP discovery response exceeded its ${String(limits.timeoutMs)} ms deadline.`,
-          }),
-        ),
+      () => finish(discoveryTimeout(operation, limits.timeoutMs, "response")),
       limits.timeoutMs,
     );
     request_.end();

@@ -125,6 +125,9 @@ export class WebSourceLocationService {
         path: map.file.path,
         url: map.url,
         position: input.generated_position,
+        ...(input.decode_timeout_ms === undefined
+          ? {}
+          : { decodeTimeoutMs: input.decode_timeout_ms }),
       },
       options,
     );

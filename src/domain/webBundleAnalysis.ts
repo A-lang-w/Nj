@@ -1,42 +1,106 @@
 import { z } from "zod";
 
+import {
+  MAX_BROWSER_DEADLINE_MS,
+  browserDeadlineIncrease,
+  browserDeadlineRetry,
+  noRuntimeOverrideSentence,
+  optionalBrowserDeadlineMs,
+} from "./browserDeadline.js";
 import { emptyArraySchema } from "./emptyArraySchema.js";
 import { inspectWebPageWithSourceInputSchema } from "./browserObservation.js";
 import { webTextArtifactSchema } from "./webContentArtifact.js";
 
+/** Isolated analyzer heap used when max_heap_mb is omitted. */
+export const DEFAULT_WEB_BUNDLE_HEAP_MB = 1024;
+export const MIN_WEB_BUNDLE_HEAP_MB = 128;
+export const MAX_WEB_BUNDLE_HEAP_MB = 16_384;
+/** Per-script deadline used when analysis_timeout_ms is omitted. */
+export const DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS = 30_000;
+/** Total analysis deadline used when total_analysis_timeout_ms is omitted. */
+export const DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS = 300_000;
+/** Source-map fetch deadline used when source_map_fetch_timeout_ms is omitted. */
+export const DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS = 30_000;
+
+const webBundleHeapDescription = `Heap phase: maximum V8 old-space for the isolated inert-script analyzer, in MiB (default ${String(DEFAULT_WEB_BUNDLE_HEAP_MB)}, range ${String(MIN_WEB_BUNDLE_HEAP_MB)}..${String(MAX_WEB_BUNDLE_HEAP_MB)}). Omitted means ${String(DEFAULT_WEB_BUNDLE_HEAP_MB)} and applies on the next call. This is not a total process RSS limit, not analysis_timeout_ms, and not total_analysis_timeout_ms. Bun ignores V8 flags; Windows Bun uses an owned process commit limit plus a 512 MiB runtime reserve, while other Bun hosts have no enforced memory limit. Raising max_heap_mb does not raise the fixed worker protocol or result byte budgets.`;
+
+const webBundleScriptTimeoutDescription = `Per-script deadline phase: maximum startup, analysis and result transfer time for one captured script, in milliseconds (default ${String(DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS)}, range 1..${String(MAX_BROWSER_DEADLINE_MS)}). Omitted means ${String(DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS)}. deadlineExpired for one script is not total_analysis_timeout_ms. A per-script value above the effective total is rejected. Timed-out scripts are explicit unknowns and other scripts may still be analyzed. Applies on the next call.`;
+
+const webBundleTotalTimeoutDescription = `Total analysis deadline phase: maximum time for all captured-script analysis, in milliseconds (default ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}, range 1..${String(MAX_BROWSER_DEADLINE_MS)}). Omitted means ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}. This is not the per-script analysis_timeout_ms, not capture, and not source-map fetch. A per-script timeout above this total is rejected. Unstarted scripts remain explicit unknowns. Applies on the next call.`;
+
 /** Capture-and-analyze input with optional source-map fetching. */
-export const analyzeWebBundleInputSchema =
-  inspectWebPageWithSourceInputSchema.safeExtend({
+export const analyzeWebBundleInputSchema = inspectWebPageWithSourceInputSchema
+  .safeExtend({
     fetch_source_maps: z.boolean().default(false),
     max_heap_mb: z
       .number()
       .int()
-      .min(128)
-      .max(16_384)
+      .min(MIN_WEB_BUNDLE_HEAP_MB)
+      .max(MAX_WEB_BUNDLE_HEAP_MB)
       .optional()
-      .describe(
-        "Maximum V8 old-space heap in MiB for the isolated inert-script analyzer; defaults to 1024. This is not a total process RSS limit. Bun ignores V8 flags; Windows Bun uses an owned process commit limit plus a 512 MiB runtime reserve, while other Bun hosts have no enforced memory limit.",
-      ),
-    analysis_timeout_ms: z
-      .number()
-      .int()
-      .min(1)
-      .max(2_147_483_647)
-      .optional()
-      .describe(
-        "Maximum startup, analysis and result transfer time per captured script, in milliseconds; defaults to 30000. Timed-out scripts are explicit unknowns and other scripts may still be analyzed.",
-      ),
-    total_analysis_timeout_ms: z
-      .number()
-      .int()
-      .min(1)
-      .max(2_147_483_647)
-      .optional()
-      .describe(
-        "Maximum time for all captured-script analysis, in milliseconds; defaults to 300000. Capture and optional source-map fetching have separate budgets. Unstarted scripts remain explicit unknowns.",
-      ),
+      .describe(webBundleHeapDescription),
+    analysis_timeout_ms: optionalBrowserDeadlineMs(
+      webBundleScriptTimeoutDescription,
+    ),
+    total_analysis_timeout_ms: optionalBrowserDeadlineMs(
+      webBundleTotalTimeoutDescription,
+    ),
+    source_map_fetch_timeout_ms: optionalBrowserDeadlineMs(
+      `Source-map fetch deadline in milliseconds (default ${String(DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS)}). Omitted means ${String(DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS)} and applies on the next fetch. A fetch overrun is an item limitation (fetch_failed), not a thrown analysis timeout. Does not raise the fixed 64 MiB response budget or the source-map decode deadline. The response budget has no runtime override.`,
+    ),
+  })
+  .superRefine((input, context) => {
+    const perScript =
+      input.analysis_timeout_ms ?? DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS;
+    const total =
+      input.total_analysis_timeout_ms ?? DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS;
+    if (perScript <= total) return;
+    context.addIssue({
+      code: "custom",
+      path:
+        input.analysis_timeout_ms === undefined
+          ? ["total_analysis_timeout_ms"]
+          : ["analysis_timeout_ms"],
+      message: `analysis_timeout_ms ${String(perScript)} ms is the per-script deadline and must be less than or equal to total_analysis_timeout_ms ${String(total)} ms. A per-script timeout above the total is rejected. Omitted analysis_timeout_ms means ${String(DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS)}; omitted total_analysis_timeout_ms means ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}.`,
+    });
   });
 export type AnalyzeWebBundleInput = z.infer<typeof analyzeWebBundleInputSchema>;
+
+/** Per-script deadlineExpired text. It is not the total analysis deadline. */
+export const webBundleScriptTimeoutRecovery = (
+  timeoutMs: number,
+): { readonly userMessage: string; readonly remediationAction: string } => ({
+  userMessage: `analyze_web_bundle reached its ${String(timeoutMs)} ms per-script deadline (deadlineExpired) for analysis_timeout_ms. This is not total_analysis_timeout_ms and not the MCP client deadline.`,
+  remediationAction: `${browserDeadlineIncrease("analysis_timeout_ms", timeoutMs, DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS, "--analysis-timeout-ms")} Keep it less than or equal to total_analysis_timeout_ms (omitted means ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}); a per-script timeout above the total is rejected. ${browserDeadlineRetry} analysis_timeout_ms does not raise max_heap_mb, total_analysis_timeout_ms, or the fixed worker protocol and result byte budgets.`,
+});
+
+/** Total captured-script deadlineExpired text. */
+export const webBundleTotalTimeoutRecovery = (
+  timeoutMs: number,
+): { readonly userMessage: string; readonly remediationAction: string } => ({
+  userMessage: `analyze_web_bundle reached its ${String(timeoutMs)} ms total captured-script analysis deadline (deadlineExpired) for total_analysis_timeout_ms. This is not the per-script analysis_timeout_ms, not capture, and not source-map fetch.`,
+  remediationAction: `${browserDeadlineIncrease("total_analysis_timeout_ms", timeoutMs, DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS, "--total-analysis-timeout-ms")} A per-script analysis_timeout_ms above the total is rejected. ${browserDeadlineRetry} total_analysis_timeout_ms does not raise analysis_timeout_ms, max_heap_mb, source_map_fetch_timeout_ms, or the fixed worker byte budgets.`,
+});
+
+/** Heap exhaustion names max_heap_mb, the effective MiB, and the accepted range. */
+export const webBundleHeapExhaustedReason = (heapMb: number): string =>
+  `Owned web analyzer exhausted its max_heap_mb V8 old-space heap of ${String(heapMb)} MiB (range ${String(MIN_WEB_BUNDLE_HEAP_MB)}..${String(MAX_WEB_BUNDLE_HEAP_MB)}; omitted means ${String(DEFAULT_WEB_BUNDLE_HEAP_MB)}). This is the isolated analyzer heap, not a process RSS limit.`;
+
+export const webBundleHeapExhaustedRemediation = (heapMb: number): string =>
+  `${
+    heapMb < MAX_WEB_BUNDLE_HEAP_MB
+      ? `Increase max_heap_mb above ${String(heapMb)} (integer MiB from ${String(MIN_WEB_BUNDLE_HEAP_MB)} to ${String(MAX_WEB_BUNDLE_HEAP_MB)}; omitted means ${String(DEFAULT_WEB_BUNDLE_HEAP_MB)}), or use --max-heap-mb on the CLI.`
+      : `max_heap_mb is already at the maximum ${String(MAX_WEB_BUNDLE_HEAP_MB)} MiB; do not increase it further.`
+  } Applies on the next call. Raising max_heap_mb does not raise analysis_timeout_ms, total_analysis_timeout_ms, or the fixed worker protocol and result byte budgets. Those byte budgets have no runtime override.`;
+
+export const webBundleFixedByteBudget = (
+  budgetBytes: number,
+  label: string,
+): string =>
+  noRuntimeOverrideSentence(
+    `The ${String(budgetBytes)}-byte web-bundle ${label} has no further room.`,
+    "max_heap_mb",
+  );
 
 const sourceLocationSchema = z.object({
   script_key: z.string(),

@@ -42,6 +42,15 @@ import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 import { prepareProcessOwnershipInspection } from "../process/ProcessOwnershipObservation.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../process/JavaScriptWorkerMemoryLimit.js";
 import {
+  DEFAULT_WEB_BUNDLE_HEAP_MB,
+  MAX_WEB_BUNDLE_HEAP_MB,
+  MIN_WEB_BUNDLE_HEAP_MB,
+  webBundleFixedByteBudget,
+  webBundleHeapExhaustedReason,
+  webBundleHeapExhaustedRemediation,
+  webBundleScriptTimeoutRecovery,
+} from "../domain/webBundleAnalysis.js";
+import {
   WEB_BUNDLE_WORKER_LIMITS,
   webBundleWorkerMessageSchema,
   webBundleWorkerRequestSchema,
@@ -50,6 +59,15 @@ import {
 
 const OPERATION = "analyze_web_bundle";
 const PROVIDER = "web-bundle-static-analysis";
+
+const scriptTimeout = (
+  timeoutMs: number,
+  cause?: unknown,
+): AnalysisTimeoutError =>
+  new AnalysisTimeoutError(OPERATION, timeoutMs, {
+    ...(cause === undefined ? {} : { cause }),
+    ...webBundleScriptTimeoutRecovery(timeoutMs),
+  });
 const MIB = 1024 * 1024;
 /** Source/result buffers, decoded strings, parsed objects and validation copies. */
 const RESULT_EXPANSION = 16;
@@ -130,7 +148,12 @@ export class WebBundleAnalysisWorker {
         Buffer.byteLength(chunk) + Buffer.byteLength(this.#pending) >
         WEB_BUNDLE_WORKER_LIMITS.protocolBytes
       )
-        throw new RangeError("Web analyzer exceeded its control-frame budget");
+        throw new RangeError(
+          webBundleFixedByteBudget(
+            WEB_BUNDLE_WORKER_LIMITS.protocolBytes,
+            "control-frame budget",
+          ),
+        );
       this.#pending +=
         typeof chunk === "string" ? chunk : this.#decoder.write(chunk);
       for (;;) {
@@ -156,12 +179,16 @@ export class WebBundleAnalysisWorker {
   };
 
   constructor(
-    readonly heapMb = 1024,
+    readonly heapMb = DEFAULT_WEB_BUNDLE_HEAP_MB,
     launcher: typeof spawnOwnedProviderProcess = spawnOwnedProviderProcess,
   ) {
-    if (!Number.isSafeInteger(heapMb) || heapMb < 128 || heapMb > 16_384)
+    if (
+      !Number.isSafeInteger(heapMb) ||
+      heapMb < MIN_WEB_BUNDLE_HEAP_MB ||
+      heapMb > MAX_WEB_BUNDLE_HEAP_MB
+    )
       throw new RangeError(
-        "Web analyzer heap must be an integer from 128 through 16384 MiB",
+        `Web analyzer heap must be an integer from ${String(MIN_WEB_BUNDLE_HEAP_MB)} through ${String(MAX_WEB_BUNDLE_HEAP_MB)} MiB (max_heap_mb)`,
       );
     this.#runtime = new OwnedWorkerRuntime({
       rootPrefix: "rea-web-bundle-analysis-",
@@ -274,7 +301,10 @@ export class WebBundleAnalysisWorker {
         throw new AnalysisResourceConstraintError(
           OPERATION,
           "memory",
-          "The host has no remaining reserved web-analysis result capacity",
+          webBundleFixedByteBudget(
+            WEB_BUNDLE_WORKER_LIMITS.resultBytes,
+            "result budget",
+          ),
           { result_bytes: WEB_BUNDLE_WORKER_LIMITS.resultBytes },
         );
       }
@@ -383,7 +413,7 @@ export class WebBundleAnalysisWorker {
       const cancellationCause = this.#completedReadCancellation(cause);
       const interrupted =
         deadline?.interruption === "timeout"
-          ? new AnalysisTimeoutError(OPERATION, timeoutMs, { cause })
+          ? scriptTimeout(timeoutMs, cause)
           : cancellationCause !== undefined
             ? new AnalysisCancelledError(OPERATION, {
                 cause: cancellationCause.reason,
@@ -485,7 +515,10 @@ export class WebBundleAnalysisWorker {
             throw new AnalysisResourceConstraintError(
               OPERATION,
               "transport",
-              "Captured script metadata and source exceed the worker transfer budget",
+              webBundleFixedByteBudget(
+                WEB_BUNDLE_WORKER_LIMITS.sourceBytes,
+                "worker transfer budget",
+              ),
               { source_bytes: WEB_BUNDLE_WORKER_LIMITS.sourceBytes },
             );
           await handle.writeFile(chunk);
@@ -544,7 +577,7 @@ export class WebBundleAnalysisWorker {
   ): Promise<WebBundleWorkerMessage> {
     for (;;) {
       if (deadline.interruption === "timeout")
-        throw new AnalysisTimeoutError(OPERATION, deadline.timeoutMs);
+        throw scriptTimeout(deadline.timeoutMs);
       if (deadline.interruption === "cancelled")
         throw new AnalysisCancelledError(OPERATION, {
           cause: deadline.signal.reason,
@@ -579,7 +612,7 @@ export class WebBundleAnalysisWorker {
           const completedFrame = this.#frames.shift();
           if (completedFrame !== undefined) return completedFrame;
           throw deadline.interruption === "timeout"
-            ? new AnalysisTimeoutError(OPERATION, deadline.timeoutMs)
+            ? scriptTimeout(deadline.timeoutMs)
             : new AnalysisCancelledError(OPERATION, {
                 cause: deadline.signal.reason,
               });
@@ -675,13 +708,17 @@ export class WebBundleAnalysisWorker {
           return new AnalysisResourceConstraintError(
             OPERATION,
             "memory",
-            "Owned web analyzer exhausted its configured memory limit",
+            webBundleHeapExhaustedReason(this.heapMb),
             {
               worker_heap_limit_mb: this.heapMb,
+              max_heap_mb: this.heapMb,
               worker_process_memory_limit_bytes:
                 javaScriptWorkerMemoryLimitBytes(this.heapMb),
             },
-            { capturedOutput },
+            {
+              capturedOutput,
+              remediationAction: webBundleHeapExhaustedRemediation(this.heapMb),
+            },
           );
         return new AnalysisOutputError(
           OPERATION,
