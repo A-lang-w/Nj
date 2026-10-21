@@ -787,3 +787,38 @@ it.each([
     ]);
   },
 );
+
+it.each([
+  "route ? {ok:1} : {ok:2}",
+  "!!route",
+  "route !== null",
+  "(route as unknown) ? {ok:1} : {ok:2}",
+  "route && {ok:1}",
+  "(route, {ok:1})",
+  "({[route]:1})",
+])(
+  "keeps independent route references outside navigation data: %s",
+  (query) => {
+    const facts = analyze(
+      `const route={path:'/independent',component:View};router.push({pathname:'/users',query:${query}});`,
+    );
+    expect(facts.candidates.map(({ path }) => path)).toEqual([
+      "/users",
+      "/independent",
+    ]);
+  },
+);
+
+it.each([
+  "flag ? route : {}",
+  "flag && route",
+  "route || {}",
+  "route ?? {}",
+  "(flag, route)",
+  "route ? route : {}",
+])("owns actual navigation data branches: %s", (query) => {
+  const facts = analyze(
+    `const route={path:'/query-data',component:View};router.push({pathname:'/users',query:${query}});`,
+  );
+  expect(facts.candidates.map(({ path }) => path)).toEqual(["/users"]);
+});

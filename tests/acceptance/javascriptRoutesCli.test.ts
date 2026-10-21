@@ -14,7 +14,7 @@ const fixture = async () => {
   const path = await createTestTempDirectory("rea-javascript-routes-");
   await writeFile(
     join(path, "routes.js"),
-    `globalThis.TURBOPACK=[];globalThis.TURBOPACK.push([1,function module(){const routes=defineRoutes({reports:{_$:'reports',settings:{_$:'settings'},history:{}}});createBrowserRouter([{path:'/account',children:[{path:':id'}]}]);router.push('/reports/' + selectedId);router.push({pathname:'/reports/' + selectedId});router.navigate(['/reports/',selectedId]);const mixed={children:[{path:'/reports/stale-ordinary',element:View},{_$:'/reports/stale-typed'}]};mixed.children[1]._$='/reports/changed';createBrowserRouter(mixed);router.push({pathname:'/reports/static-object',query:{href:'/query-data',path:'/download/file',component:'preview'}});router.addRoute('admin',{path:'settings',component:View});const aliasQuery={path:'/download/alias',component:'preview',href:'/alias-query-data',module:'app/fake/page.tsx'};const target={pathname:'/reports/aliased',query:aliasQuery};router.push(target);createBrowserRouter([{path:'/reports/stale-computed',[computedKey]:'/unrelated',children:[{path:'settings'}]}]);const helper='app/reports/helper/page-helpers.js';const extra='/reports/help';}]);`,
+    `globalThis.TURBOPACK=[];globalThis.TURBOPACK.push([1,function module(){const routes=defineRoutes({reports:{_$:'reports',settings:{_$:'settings'},history:{}}});createBrowserRouter([{path:'/account',children:[{path:':id'}]}]);router.push('/reports/' + selectedId);router.push({pathname:'/reports/' + selectedId});router.navigate(['/reports/',selectedId]);const mixed={children:[{path:'/reports/stale-ordinary',element:View},{_$:'/reports/stale-typed'}]};mixed.children[1]._$='/reports/changed';createBrowserRouter(mixed);router.push({pathname:'/reports/static-object',query:{href:'/query-data',path:'/download/file',component:'preview'}});router.addRoute('admin',{path:'settings',component:View});const aliasQuery={path:'/download/alias',component:'preview',href:'/alias-query-data',module:'app/fake/page.tsx'};const target={pathname:'/reports/aliased',query:aliasQuery};router.push(target);const independent={path:'/checks/independent',component:View};router.push({pathname:'/reports/aliased',query:independent ? {ok:1}:{ok:2}});createBrowserRouter([{path:'/reports/stale-computed',[computedKey]:'/unrelated',children:[{path:'settings'}]}]);const helper='app/reports/helper/page-helpers.js';const extra='/reports/help';}]);`,
   );
   const intercepted = join(path, "app/feed/(.)photo");
   await mkdir(intercepted, { recursive: true });
@@ -216,6 +216,24 @@ it.each(["full", "compact"] as const)(
         parseEvidence(dataPaths.structuredContent).normalized_result,
       ).items,
     ).toEqual([]);
+    const independent = await call("inspect_analysis_view", {
+      source: {
+        kind: "retained-evidence",
+        evidence_id: selected.parent_evidence_id,
+      },
+      view: {
+        kind: "javascript-routes",
+        collection: "routes",
+        where: { paths: ["/checks/independent"] },
+        fields: ["path"],
+      },
+    });
+    expect(independent.isError).not.toBe(true);
+    expect(
+      javaScriptRoutesViewResultSchema.parse(
+        parseEvidence(independent.structuredContent).normalized_result,
+      ).items,
+    ).toEqual([expect.objectContaining({ path: "/checks/independent" })]);
     const unknowns = await call("inspect_analysis_view", {
       source: {
         kind: "retained-evidence",
@@ -258,7 +276,7 @@ cliTest(
       commandResult: ({ method }) =>
         method === "Debugger.getScriptSource"
           ? {
-              scriptSource: `const panels=[{path:'panel',element:Panel}];const discarded={path:'/discarded',children:panels,children:[]};const secondary=[{path:'/reports',children:[{children:panels}]}];createBrowserRouter([{path:'/reports',children:[{path:'settings'}],element:jsx(Panel,{routes:secondary})}]);const query={path:'/download/web-data',component:'preview',href:'/web-query-data',module:'app/web-fake/page.tsx'};const target={pathname:'/reports/aliased-web',query};router.push(target);`,
+              scriptSource: `const panels=[{path:'panel',element:Panel}];const discarded={path:'/discarded',children:panels,children:[]};const secondary=[{path:'/reports',children:[{children:panels}]}];createBrowserRouter([{path:'/reports',children:[{path:'settings'}],element:jsx(Panel,{routes:secondary})}]);const query={path:'/download/web-data',component:'preview',href:'/web-query-data',module:'app/web-fake/page.tsx'};const target={pathname:'/reports/aliased-web',query};router.push(target);const independent={path:'/checks/independent-web',component:View};router.push({pathname:'/reports/aliased-web',query:!!independent});`,
             }
           : undefined,
     });
@@ -271,6 +289,7 @@ cliTest(
             "/reports/settings",
             "/reports/panel",
             "/reports/aliased-web",
+            "/checks/independent-web",
             "/download/web-data",
             "/web-query-data",
             "/web-fake",
@@ -304,10 +323,11 @@ cliTest(
       const selected = javaScriptRoutesViewResultSchema.parse(
         parseEvidence(envelope.summary).normalized_result,
       );
-      expect(selected.items).toHaveLength(3);
+      expect(selected.items).toHaveLength(4);
       expect(selected.items).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ path: "/reports/aliased-web" }),
+          expect.objectContaining({ path: "/checks/independent-web" }),
         ]),
       );
       expect(selected.artifact).toBeNull();
@@ -324,10 +344,11 @@ cliTest(
       const result = javaScriptRoutesViewResultSchema.parse(
         parseEvidence(observed.structuredContent).normalized_result,
       );
-      expect(result.items).toHaveLength(3);
+      expect(result.items).toHaveLength(4);
       expect(result.items).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ path: "/reports/aliased-web" }),
+          expect.objectContaining({ path: "/checks/independent-web" }),
         ]),
       );
       const retained = await call("inspect_analysis_view", {

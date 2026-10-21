@@ -100,6 +100,29 @@ const isRouteChildKey = (key: string, typed: boolean): boolean =>
   typed ? !key.startsWith("_") && !key.startsWith("$") : key === "children";
 const isRouteSegmentKey = (key: string | undefined): boolean =>
   key === "path" || key === "route" || key === "_$";
+/** Follow data-bearing edges, not references used only to select or describe it. */
+const isNavigationDataEdge = (node: t.Node, parent: t.Node | null): boolean => {
+  if (parent === null) return true;
+  if (
+    t.isCallExpression(parent) ||
+    t.isOptionalCallExpression(parent) ||
+    t.isNewExpression(parent)
+  )
+    return node !== parent.callee;
+  if (t.isTaggedTemplateExpression(parent)) return node !== parent.tag;
+  if (t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent))
+    return false;
+  if (t.isConditionalExpression(parent)) return node !== parent.test;
+  if (t.isUnaryExpression(parent)) return false;
+  if (t.isBinaryExpression(parent)) return parent.operator === "+";
+  // A falsy left operand can be returned by &&, but cannot be a rooted path or
+  // structured route/query object. The right operand supplies those values.
+  if (t.isLogicalExpression(parent, { operator: "&&" }))
+    return node !== parent.left;
+  if (t.isSequenceExpression(parent)) return node === parent.expressions.at(-1);
+  if (t.isObjectProperty(parent)) return node === parent.value;
+  return true;
+};
 /** Shared syntax owner; both consumers borrow their existing AST walk and lexical index. */
 export class JavaScriptRouteScan {
   readonly #result: JavaScriptRouteSourceFacts = {
@@ -271,26 +294,9 @@ export class JavaScriptRouteScan {
           this.#dynamicValues.set(node, owner);
           const nonValue =
             t.isTSType(node) ||
-            nonValueReferences.has(node) ||
+            !isNavigationDataEdge(node, parent) ||
             (parent !== null && nonValueReferences.has(parent));
           if (nonValue) nonValueReferences.add(node);
-          // A callee or unresolved projection selects/produces data; owning its
-          // entire lexical namespace would hide independent configurations.
-          if (
-            t.isCallExpression(node) ||
-            t.isOptionalCallExpression(node) ||
-            t.isNewExpression(node)
-          )
-            nonValueReferences.add(node.callee);
-          else if (t.isTaggedTemplateExpression(node))
-            nonValueReferences.add(node.tag);
-          else if (
-            t.isMemberExpression(node) ||
-            t.isOptionalMemberExpression(node)
-          ) {
-            nonValueReferences.add(node.object);
-            nonValueReferences.add(node.property);
-          }
           if (
             nonValue ||
             !t.isIdentifier(node) ||
