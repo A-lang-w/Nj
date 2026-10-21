@@ -418,11 +418,15 @@ it("bounds a stalled child CDP reply by command_timeout_ms", async () => {
     targetInfo: { type: "iframe", targetId: "iframe-target" },
   });
   await expect(owner?.settle()).rejects.toMatchObject({
-    reason: "protocol_error",
-    cause: {
-      reason: "timeout",
-      userMessage: expect.stringContaining("Page.enable"),
-    },
+    _tag: "BrowserObservationError",
+    operation: "capture_browser_scenario",
+    reason: "timeout",
+    userMessage: expect.stringContaining(
+      "CDP command Page.enable exceeded its 40 ms command_timeout_ms",
+    ),
+    remediationAction: expect.stringContaining(
+      "Set command_timeout_ms in the capture-browser-scenario JSON above 40",
+    ),
   });
   expect(performance.now() - started).toBeLessThan(4_000);
   await owner?.close();

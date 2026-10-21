@@ -437,11 +437,16 @@ export class PlaywrightScenarioStorage {
 
   private fail(cause: unknown): void {
     this.#generation += 1;
-    this.#failure ??= new BrowserObservationError(
-      "capture_browser_scenario",
-      "protocol_error",
-      { cause },
-    );
+    // A child command deadline is already the caller-facing failure. Storing
+    // it keeps the command name, selected deadline, and recovery advice.
+    this.#failure ??=
+      cause instanceof BrowserObservationError && cause.reason === "timeout"
+        ? cause
+        : new BrowserObservationError(
+            "capture_browser_scenario",
+            "protocol_error",
+            { cause },
+          );
   }
 
   private async seedPausedFrame(
