@@ -6,6 +6,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
+import { ArtifactResourceCleanupFailure } from "./ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { SafeOutputSourceFailure } from "./SafeOutputSourceFailure.js";
 import { AnalysisCleanupLeaseGroup } from "./AnalysisCleanupLease.js";
@@ -20,6 +21,8 @@ export const translateArtifactFailure = (
   operation: ArtifactOperationError["operation"],
   cause: unknown,
 ): AnalysisError => {
+  if (cause instanceof ArtifactResourceCleanupFailure)
+    return translateResourceCleanupFailure(operation, cause);
   if (cause instanceof SafeOutputSourceFailure) {
     // Keep semantic classification with the primary, and cleanup with each
     // producing owner. Normalized wrapper metadata is only a snapshot.
@@ -134,3 +137,80 @@ const translateOwnedArtifactFailure = (
   cause instanceof AnalysisError
     ? cause
     : translateArtifactFailure(operation, ArtifactReaderFailure.from(cause));
+
+/** Scope composition retains semantic fields separately from live owner state. */
+const translateResourceCleanupFailure = (
+  operation: ArtifactOperationError["operation"],
+  cause: ArtifactResourceCleanupFailure,
+): AnalysisError => {
+  // These exact leases own only the failed scope cleanups. The independent
+  // operation failure retains its original semantics and live dependencies.
+  const owners = cause.failures.map(({ cause: failure, owner, lease }) => {
+    const observation = ArtifactReaderFailure.cleanupObservation(
+      failure,
+      owner.resource,
+    );
+    const error = new ArtifactOperationError(
+      operation,
+      "io",
+      undefined,
+      observation.reason,
+      {
+        cause: failure,
+        cleanup: observation,
+      },
+    );
+    new AnalysisCleanupLeaseGroup(error, [lease]);
+    return error;
+  });
+  const cleanup = new ArtifactOperationError(
+    operation,
+    "io",
+    undefined,
+    "Artifact resource cleanup remains incomplete",
+    {
+      cause: new AggregateError(owners, "Artifact resource cleanup failures"),
+      cleanup: {
+        reason: owners
+          .map((owner) => owner.cleanup?.reason ?? owner.message)
+          .join("; "),
+        resources: owners.flatMap((owner) => owner.cleanupResources),
+      },
+      ...(cause.partialObservation === undefined
+        ? {}
+        : { partialObservation: cause.partialObservation }),
+    },
+  ).bindCleanupDependencies(owners);
+  if (cause.outcome.kind === "completed") return cleanup;
+  const primary = translateOwnedArtifactFailure(operation, cause.outcome.cause);
+  // Existing artifact callers inspect reason/detail/cause even while cleanup
+  // is pending. Keep those fields, with the original failure as the live primary.
+  let semanticPrimary = primary;
+  while (semanticPrimary.cleanupPrimary !== undefined)
+    semanticPrimary = semanticPrimary.cleanupPrimary;
+  const error =
+    semanticPrimary instanceof ArtifactOperationError
+      ? new ArtifactOperationError(
+          operation,
+          semanticPrimary.reason,
+          semanticPrimary.artifactDetails,
+          semanticPrimary.detail,
+          {
+            cause: semanticPrimary.cause,
+            cleanupPrimary: primary,
+            cleanup: {
+              reason: cause.cleanup?.reason ?? cleanup.message,
+              resources: cause.cleanup?.resources ?? cleanup.cleanupResources,
+            },
+            ...(primary.partialObservation === undefined
+              ? {}
+              : { partialObservation: primary.partialObservation }),
+          },
+        )
+      : analysisErrorWithCleanupFailure(primary, cleanup, operation);
+  error.bindCleanupDependencies([primary, cleanup]);
+  error.retainSecondaryFailure(cleanup);
+  if (cause.partialObservation !== undefined)
+    error.partialObservation = cause.partialObservation;
+  return error;
+};
