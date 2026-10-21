@@ -12,7 +12,9 @@ def main():
     parser.add_argument('--bundle', type=Path, required=True)
     parser.add_argument('--document', required=True)
     parser.add_argument('--baseline', type=Path, required=True,
-                        help='Complete pre-change CLI Evidence; equality control, not the oracle')
+                        help='Complete pre-change 64-document Evidence; equality control, not the oracle')
+    parser.add_argument('--small-baseline', type=Path, required=True,
+                        help='Complete pre-change 1-document Evidence')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     data = (args.bundle / args.document).read_bytes()
@@ -37,7 +39,10 @@ def main():
         'document': args.document,
         'archive_sha256': hashlib.sha256(data).hexdigest(),
         'connections': connections,
-        'complete_result_path': str(args.baseline.resolve()),
+        'complete_result_paths': {
+            '1': str(args.small_baseline.resolve()),
+            '64': str(args.baseline.resolve()),
+        },
     }, indent=2) + '\n')
 
 

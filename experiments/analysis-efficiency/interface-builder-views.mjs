@@ -25,6 +25,13 @@ for (const key of ["runtime", "input", "oracle", "output"])
 const maxDocuments = Number(values.documents);
 assert.ok([1, 64].includes(maxDocuments));
 const oracle = JSON.parse(await readFile(values.oracle, "utf8"));
+const baselinePath = oracle.complete_result_paths?.[String(maxDocuments)];
+assert.equal(
+  typeof baselinePath,
+  "string",
+  "Provide a pre-change baseline for the selected document limit.",
+);
+assert.equal(baselinePath, resolve(baselinePath));
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 assert.equal(
   sha256(await readFile(join(values.input, oracle.document))),
@@ -197,12 +204,13 @@ try {
         r.evidence.some((e) => e.artifact_path === oracle.document),
       ),
     );
-  if (maxDocuments === 64) {
-    const baseline = JSON.parse(
-      await readFile(oracle.complete_result_path, "utf8"),
-    );
-    assert.deepEqual(full, baseline.normalized_result);
-  }
+  const baselineBytes = await readFile(baselinePath, "utf8");
+  const expectedParent = JSON.parse(baselineBytes);
+  report.baseline_sha256 = sha256(baselineBytes);
+  report.baseline_evidence_id = expectedParent.evidence_id;
+  const mismatch = `Complete retained Evidence differs from the pre-change ${maxDocuments}-document baseline.`;
+  assert.equal(parent.evidence_id, expectedParent.evidence_id, mismatch);
+  assert.deepEqual(parent, expectedParent, mismatch);
   report.available_counts = {
     nodes: full.graph.nodes.length,
     edges: full.graph.edges.length,

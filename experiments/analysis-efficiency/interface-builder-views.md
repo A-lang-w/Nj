@@ -34,7 +34,9 @@ archive path/digest and page coverage against these independent facts. It also
 compares all returned document rows with the exported complete parent; all
 64-document normalized results match the pre-change complete CLI Evidence.
 The complete exported parent Evidence is equal across versions for both
-admission sizes. Equality is a preservation control, not an independent proof
+admission sizes. The reproduction oracle requires a separate pre-change
+complete Evidence file for each size, and the harness compares the entire
+parent, including its identity and parameters, for the selected limit. Equality is a preservation control, not an independent proof
 of every decoded fact.
 
 The default 64-document report contains 6,528 nodes and 1,378 edges. The small
@@ -72,7 +74,9 @@ not interpreted as zero.
 
 ## Observations
 
-Medians across all accepted baseline runs and the final source cohort. Five
+Medians across all accepted baseline runs and the measured optimized
+production-source cohort. The later harness-only review fix does not change
+those production files; its revalidation is recorded separately. Five
 earlier candidate runs remain labeled pre-review diagnostics and are excluded
 from the final-source medians. One failed initial harness run is also retained.
 All individual runs, phase timings, token estimates and raw receipt hashes are
@@ -151,14 +155,16 @@ representation that actually adds an undefined field.
 ## Reproduction and limits
 
 Extract the official app without running it. On the baseline, save complete
-CLI JSON with `rea decode-interface-builder <XLD.app> --format json` (without
-profiler logging mixed into that JSON). Then:
+CLI JSON with `rea decode-interface-builder <XLD.app> --format json` and a
+separate control with `rea decode-interface-builder <XLD.app> --max-documents 1
+--format json` (without profiler logging mixed into either JSON). Then:
 
 ```sh
 python3 experiments/analysis-efficiency/interface-builder-oracle.py \
   --bundle '<XLD.app>' \
   --document 'Contents/PlugIns/XLDAacOutput.bundle/Contents/Resources/English.lproj/XLDAacOutput.nib' \
-  --baseline '<complete-evidence.json>' --output '<oracle.json>'
+  --baseline '<complete-64-document-evidence.json>' \
+  --small-baseline '<complete-1-document-evidence.json>' --output '<oracle.json>'
 python3 experiments/analysis-efficiency/resource-run.py --observe-payload-exit -- \
   node experiments/analysis-efficiency/interface-builder-views.mjs \
     --runtime '<absolute baseline or candidate checkout>' --input '<XLD.app>' \
@@ -192,8 +198,8 @@ decoder issues are unverified or unchanged here.
 ## Integration verification
 
 The measured comparison above was pinned to `f801b2fbf`. The branch was then
-rebased onto `f5410bdc4` (the separate #5806 scalar-record fix). All six final
-source fingerprints remain identical. On the rebased runtime both real SDK
+rebased onto `f5410bdc4` (the separate #5806 scalar-record fix). All six recorded owned-source
+fingerprints remained identical across that rebase. On the rebased runtime both real SDK
 tasks passed again, with the complete retained parent equal to the original
 baseline for both admission sizes. The complete real CLI Evidence and portable
 CLI page also equal the baseline/MCP results. These integration runs are recorded
@@ -206,3 +212,14 @@ paging and compiled CLI numeric/hierarchy boundaries. Both cohorts verified
 owned cleanup with no observed memory/PID limit events; tests used the bounded
 two-CPU, 4 GiB guard. Native ibtool/macOS runtime behavior is not established by
 these tests.
+
+Greptile identified that the original script only enforced the pre-change
+comparison for 64 documents; the one-document equality above had been checked
+manually. The oracle now requires both baseline files and the harness compares
+the selected complete parent, including its Evidence ID and parameters, for
+either limit. Both real workflows passed again. An intentional wrong baseline
+(the 64-document parent supplied for the 1-document task) is rejected after all
+other real-task checks succeed, with cleanup verified. These review checks and
+updated harness fingerprints are recorded separately. Production source and
+original comparison medians are unchanged; original measured fingerprints are
+preserved rather than relabeled as the new harness.

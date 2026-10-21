@@ -1307,14 +1307,6 @@
     "experiments/analysis-efficiency/interface-builder-views.mjs": "caa21f946d9a5499a924db7c3b00efb42cee1cda2a75254f62e764273db41ac4",
     "experiments/analysis-efficiency/interface-builder-oracle.py": "421728911c7d46c08a8488c171f1b447a1a43dd35b12a8cde0c739b73f7647e3"
   },
-  "final_sources_sha256": {
-    "src/domain/analysisView/interfaceBuilderView.ts": "54dae141833b6032af49b9be14e32200c789d8e3c77f597fb56fd23a50143623",
-    "src/domain/immutableJson.ts": "0138c1e41866272ffe8a933b303e77468ee255f3ae9230d13d354b8af4290b3a",
-    "src/domain/analysisView/interfaceBuilderView.test.ts": "9e8eaec694e386d6af109eb270a7d382c6a60d509d6abcbe39d52af879c439f7",
-    "src/domain/immutableJson.test.ts": "11377201326f068a38bc455b13ca0b38ccbe767db6d768c7d8519186e85fd47d",
-    "experiments/analysis-efficiency/interface-builder-views.mjs": "caa21f946d9a5499a924db7c3b00efb42cee1cda2a75254f62e764273db41ac4",
-    "experiments/analysis-efficiency/interface-builder-oracle.py": "421728911c7d46c08a8488c171f1b447a1a43dd35b12a8cde0c739b73f7647e3"
-  },
   "resource_accounting": "Authenticated payload-exit cgroup counters including observer; final scope counters unavailable",
   "scope": "Fresh SDK/server task on prepared artifact including warm query diagnostic and cleanup; acquisition/build/oracle preparation excluded",
   "isolated_projection_diagnostic": {
@@ -1942,6 +1934,105 @@
           "server.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
           "rebased1.log": "06c2cb16cba89a596028cb15c2fdf88d6ad7de3793e83954c65957d2a3e318a2"
         }
+      }
+    ]
+  },
+  "measured_sources_sha256": {
+    "src/domain/analysisView/interfaceBuilderView.ts": "54dae141833b6032af49b9be14e32200c789d8e3c77f597fb56fd23a50143623",
+    "src/domain/immutableJson.ts": "0138c1e41866272ffe8a933b303e77468ee255f3ae9230d13d354b8af4290b3a",
+    "src/domain/analysisView/interfaceBuilderView.test.ts": "9e8eaec694e386d6af109eb270a7d382c6a60d509d6abcbe39d52af879c439f7",
+    "src/domain/immutableJson.test.ts": "11377201326f068a38bc455b13ca0b38ccbe767db6d768c7d8519186e85fd47d",
+    "experiments/analysis-efficiency/interface-builder-views.mjs": "caa21f946d9a5499a924db7c3b00efb42cee1cda2a75254f62e764273db41ac4",
+    "experiments/analysis-efficiency/interface-builder-oracle.py": "421728911c7d46c08a8488c171f1b447a1a43dd35b12a8cde0c739b73f7647e3"
+  },
+  "current_sources_sha256": {
+    "src/domain/analysisView/interfaceBuilderView.ts": "54dae141833b6032af49b9be14e32200c789d8e3c77f597fb56fd23a50143623",
+    "src/domain/immutableJson.ts": "0138c1e41866272ffe8a933b303e77468ee255f3ae9230d13d354b8af4290b3a",
+    "src/domain/analysisView/interfaceBuilderView.test.ts": "9e8eaec694e386d6af109eb270a7d382c6a60d509d6abcbe39d52af879c439f7",
+    "src/domain/immutableJson.test.ts": "11377201326f068a38bc455b13ca0b38ccbe767db6d768c7d8519186e85fd47d",
+    "experiments/analysis-efficiency/interface-builder-views.mjs": "e4c13065259ca96d50e3f94eb9faf10f4d196c4131357d00d52ba8521f62c4d0",
+    "experiments/analysis-efficiency/interface-builder-oracle.py": "553915cad163514508f47f5f12da6eaaa8c0e8576211330aaa184b3999441597"
+  },
+  "review_verification": {
+    "purpose": "Require a separate pre-change complete parent for both limits; reject an intentionally wrong 1-document baseline after a successful real task. Production source is unchanged. Excluded from original comparison medians.",
+    "records": [
+      {
+        "case": "reviewed64",
+        "status": "passed",
+        "failure": null,
+        "documents_limit": 64,
+        "wall_seconds": 28.383,
+        "cpu_seconds": 28.015985,
+        "family_peak_bytes": 1668419584,
+        "tokens": {
+          "input_catalog_once": 198492,
+          "arguments": 974,
+          "text_replies": 83421,
+          "transport_catalog": 891652,
+          "catalog_args_text_total": 282887
+        },
+        "parent_evidence_id": "ev_138e56163e8754e99a47c017105dcb9e9db4d7a0326cbbf5c219c9e2cb725c89",
+        "file_sha256": {
+          "report.json": "4b5965e5c68145f95f63351d29afca8036b1c4372cb1af5dffb8e283b15b2d03",
+          "catalog.json": "e927d03a1e0d33805583b9e62ff1f297b6d6cfeb5f21e58ed92aa47423772e1c",
+          "transcript.json": "a402f0ed756ee4914e5e5f9ec4f78009a881658f6bbf5c712ae670604056afd4",
+          "server.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "reviewed64.log": "b4a0a1ce492cbdebdcecc33ea97cab210e60fb01a3cc0a27c623d3c65f9bac82"
+        },
+        "baseline_evidence_id": "ev_138e56163e8754e99a47c017105dcb9e9db4d7a0326cbbf5c219c9e2cb725c89",
+        "baseline_file_sha256": "15f7e82e66e51403f2446ad6cbd2fbee66ebd1d847e68569d764b60f6e0755a7"
+      },
+      {
+        "case": "reviewed1",
+        "status": "passed",
+        "failure": null,
+        "documents_limit": 1,
+        "wall_seconds": 16.156,
+        "cpu_seconds": 15.932201,
+        "family_peak_bytes": 972292096,
+        "tokens": {
+          "input_catalog_once": 198492,
+          "arguments": 926,
+          "text_replies": 89329,
+          "transport_catalog": 891652,
+          "catalog_args_text_total": 288747
+        },
+        "parent_evidence_id": "ev_7a255584cf54617bded9de05000605773a10fdb364c4a5e15e082ecb7c48f639",
+        "file_sha256": {
+          "report.json": "0c8aa9af5ed2d0a4c7e1a76aaea3b0889965f8c9e52afb5f43fcb2a9245b31ce",
+          "catalog.json": "e927d03a1e0d33805583b9e62ff1f297b6d6cfeb5f21e58ed92aa47423772e1c",
+          "transcript.json": "575ea1a79043f1af406cc835db2b8c2c7d9b40130ec4efe8ebcc1fba3f7d0fd2",
+          "server.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "reviewed1.log": "43d9d0d81bd4794d1ba10c69c7dd9e668645152abfee67b54ce58db46b9bbe6e"
+        },
+        "baseline_evidence_id": "ev_7a255584cf54617bded9de05000605773a10fdb364c4a5e15e082ecb7c48f639",
+        "baseline_file_sha256": "aeebab95f4b0e7c1dc0887cd5494c4a30005d5f4c6e8196449db93499db171b0"
+      },
+      {
+        "case": "review-negative-small",
+        "status": "failed",
+        "failure": "AssertionError [ERR_ASSERTION]: Complete retained Evidence differs from the pre-change 1-document baseline.\n+ actual - expected\n\n+ 'ev_7a255584cf54617bded9de05000605773a10fdb364c4a5e15e082ecb7c48f639'\n- 'ev_138e56163e8754e99a47c017105dcb9e9db4d7a0326cbbf5c219c9e2cb725c89'\n\n    at file:///home/yann/yann/rea-perf-apple-ui-20261021/experiments/analysis-efficiency/interface-builder-views.mjs:212:10",
+        "documents_limit": 1,
+        "wall_seconds": 25.22,
+        "cpu_seconds": 24.994988,
+        "family_peak_bytes": 1021820928,
+        "tokens": {
+          "input_catalog_once": 198492,
+          "arguments": 926,
+          "text_replies": 89329,
+          "transport_catalog": 891652,
+          "catalog_args_text_total": 288747
+        },
+        "parent_evidence_id": "ev_7a255584cf54617bded9de05000605773a10fdb364c4a5e15e082ecb7c48f639",
+        "file_sha256": {
+          "report.json": "dc0ea04dc0db7ac19214894e4897256edb181548129dcf7b0713ba1e0fc97b72",
+          "catalog.json": "e927d03a1e0d33805583b9e62ff1f297b6d6cfeb5f21e58ed92aa47423772e1c",
+          "transcript.json": "865c2bf9becf8d5710ccc0ce4366ff0b1ce1a341092b30d6c74babfa99d0dc64",
+          "server.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "review-negative-small.log": "cc786e8948aee51c7851f65a6603b52b630563520635042c1845b573683452ba"
+        },
+        "baseline_evidence_id": "ev_138e56163e8754e99a47c017105dcb9e9db4d7a0326cbbf5c219c9e2cb725c89",
+        "baseline_file_sha256": "15f7e82e66e51403f2446ad6cbd2fbee66ebd1d847e68569d764b60f6e0755a7"
       }
     ]
   }
