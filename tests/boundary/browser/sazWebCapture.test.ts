@@ -15,6 +15,8 @@ import {
   webNetworkCaptureSchema,
 } from "../../../src/domain/webNetworkCapture.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { protobufFrame } from "../../fixtures/protobufCapture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import {
@@ -111,6 +113,181 @@ const cli = async (path: string, extra: string[] = []) => {
   expect(result.ok, result.stdout).toBe(true);
   return parseEvidence(JSON.parse(result.stdout));
 };
+
+it("uses HTTP optional whitespace for SAZ identity codings without changing raw headers", async () => {
+  const body = Buffer.from([0, 0, 0, 0, 2, 8, 1]);
+  const codings = [
+    " \tidentity\t ",
+    "\tIdEnTiTy ",
+    " gzip ",
+    " \u00a0identity",
+  ];
+  const entries: [string, Buffer][] = codings.map((coding, index) => [
+    `raw/${index + 1}_s.txt`,
+    Buffer.concat([
+      Buffer.from(
+        `HTTP/1.1 200 OK\r\nContent-Type: application/grpc\r\nContent-Encoding:${coding}\r\nContent-Length: ${body.length}\r\n\r\n`,
+        "latin1",
+      ),
+      body,
+    ]),
+  ]);
+  const path = await fixture(await archive(entries));
+  const evidence = await cli(path, [
+    "--record",
+    "0",
+    "--record",
+    "1",
+    "--record",
+    "2",
+    "--record",
+    "3",
+    "--protobuf-framing",
+    "grpc",
+  ]);
+  const capture = webNetworkCaptureSchema.parse(evidence.normalized_result);
+  for (const [index, coding] of codings.entries()) {
+    expect(capture.records[index]?.reported).toMatchObject({
+      response: {
+        headers: expect.arrayContaining([
+          { name: "Content-Encoding", value: coding },
+        ]),
+      },
+    });
+    if (index < 2)
+      expect(capture.records[index]?.protobuf).toMatchObject([
+        {
+          pointer: "/response/body",
+          status: "complete",
+          fields: [{ number: 1, value: "1" }],
+        },
+      ]);
+    else expect(capture.records[index]?.protobuf).toBeUndefined();
+  }
+  const { call } = await connectLocalToolsMcp();
+  const response = await call("inspect_web_network_capture", {
+    capture_path: path,
+    format: "saz",
+    record_ordinals: [0, 1, 2, 3],
+    protobuf: { framing: "grpc" },
+  });
+  expect(response.isError, JSON.stringify(response)).not.toBe(true);
+  expect(parseEvidence(response.structuredContent).evidence_id).toBe(
+    evidence.evidence_id,
+  );
+  for (const sensitive of ["gzip", "Content-Encoding"]) {
+    const excluded = await call("inspect_web_network_capture", {
+      capture_path: path,
+      format: "saz",
+      record_ordinals: [0, 1, 2, 3],
+      protobuf: { framing: "grpc" },
+      sensitive_values: [sensitive],
+    });
+    expect(excluded.isError, JSON.stringify(excluded)).not.toBe(true);
+    const report = webNetworkCaptureSchema.parse(
+      parseEvidence(excluded.structuredContent).normalized_result,
+    );
+    expect(report.protobuf_coverage).toMatchObject({
+      status: "partial",
+      inspected_records: 4,
+    });
+    if (sensitive === "gzip")
+      expect(report.records[2]?.protobuf).toBeUndefined();
+    else
+      expect(
+        report.records.every((record) => record.protobuf === undefined),
+      ).toBe(true);
+    for (const record of report.records)
+      expect(record.binary_fields).toContainEqual(
+        expect.objectContaining({
+          pointer: "/response/body",
+          state: "retained",
+        }),
+      );
+  }
+});
+
+it("checks trailer credentials before hidden metadata blocks analysis and withholds unchecked source", async () => {
+  const credential = Buffer.concat([
+    protobufFrame(Buffer.from([8, 1])),
+    protobufFrame(Buffer.from("authorization: Bearer fixture-only\r\n"), 128),
+  ]);
+  const responseBytes = (body: Buffer, contentType: string, extra = "") =>
+    Buffer.concat([
+      Buffer.from(
+        `HTTP/1.1 200 OK\r\nContent-Type: ${contentType}\r\nX-Debug: harmless\r\n${extra}\r\n`,
+      ),
+      body,
+    ]);
+  const bytes = await archive([
+    ["raw/1_s.txt", responseBytes(credential, "application/grpc-web+proto")],
+    [
+      "raw/2_s.txt",
+      responseBytes(Buffer.from([0, 0, 0]), "application/grpc-web+proto"),
+    ],
+    [
+      "raw/3_s.txt",
+      responseBytes(
+        gzipSync(credential),
+        "application/grpc-web+proto",
+        "Content-Encoding: gzip\r\n",
+      ),
+    ],
+    [
+      "raw/4_s.txt",
+      responseBytes(Buffer.from("invalid*base64"), "application/grpc-web-text"),
+    ],
+  ]);
+  const path = await fixture(bytes);
+  const { call } = await connectLocalToolsMcp();
+  const base = {
+    capture_path: path,
+    format: "saz",
+    sensitive_values: ["X-Debug"],
+  };
+  const protectedReply = await call("inspect_web_network_capture", {
+    ...base,
+    record_ordinals: [0],
+  });
+  expect(protectedReply.isError, JSON.stringify(protectedReply)).not.toBe(true);
+  const protectedCapture = webNetworkCaptureSchema.parse(
+    parseEvidence(protectedReply.structuredContent).normalized_result,
+  );
+  expect(protectedCapture.records[0]?.binary_fields).toContainEqual(
+    expect.objectContaining({
+      pointer: "/response/body",
+      state: "redacted",
+      content_base64: null,
+      sha256: null,
+    }),
+  );
+  expect(protectedCapture.records[0]?.protobuf).toBeUndefined();
+  for (const ordinals of [[0, 1], [2], [3]]) {
+    const response = await call("inspect_web_network_capture", {
+      ...base,
+      record_ordinals: ordinals,
+    });
+    const error = parseMcpToolError(response).error;
+    expect(error.code).toBe("capability_unavailable");
+    expect(JSON.stringify(response)).not.toContain("content_base64");
+    expect(error.details).not.toHaveProperty("partial_observation");
+  }
+  const opaqueReply = await call("inspect_web_network_capture", {
+    capture_path: path,
+    format: "saz",
+    record_ordinals: [2],
+  });
+  expect(opaqueReply.isError, JSON.stringify(opaqueReply)).not.toBe(true);
+  const opaque = webNetworkCaptureSchema.parse(
+    parseEvidence(opaqueReply.structuredContent).normalized_result,
+  );
+  expect(opaque.records[0]?.binary_fields).toContainEqual(
+    expect.objectContaining({ pointer: "/response/body", state: "retained" }),
+  );
+  expect(opaque.records[0]?.protobuf).toBeUndefined();
+  expect(opaque.protobuf_coverage?.status).toBe("partial");
+  expect(await readFile(path)).toEqual(bytes);
+});
 
 it("inspects native SAZ through the public CLI and MCP with equal evidence, bytes and archive coordinates", async () => {
   const bytes = await archive();
@@ -342,6 +519,51 @@ it("keeps CRLF separators inside a body after LF-only HTTP headers", async () =>
   expect(await readFile(path)).toEqual(bytes);
 });
 
+it("validates SAZ XML declarations against archive member bytes at the CLI boundary", async () => {
+  const withMetadata = (metadata: Buffer): [string, Buffer][] =>
+    members().map(([name, bytes]) =>
+      name === "raw/0042_m.xml" ? [name, metadata] : [name, bytes],
+    );
+  const utf8 = Buffer.from(
+    '<?xml version="1.0" encoding="UTF-8"?><Session SID="0042"/>',
+  );
+  const utf16le = Buffer.concat([
+    Buffer.from([0xff, 0xfe]),
+    Buffer.from(
+      '<?xml version="1.0" encoding="UTF-16"?><Session SID="0042"/>',
+      "utf16le",
+    ),
+  ]);
+  for (const metadata of [utf8, utf16le]) {
+    const result = await cli(
+      await fixture(await archive(withMetadata(metadata))),
+    );
+    expect(
+      webNetworkCaptureSchema.parse(result.normalized_result).records,
+    ).toHaveLength(2);
+  }
+  const mismatch = Buffer.from(
+    '<?xml version="1.0" encoding="UTF-16"?><Session SID="0042"/>',
+  );
+  const rejected = await cliResponse(
+    await fixture(await archive(withMetadata(mismatch))),
+    ["--record", "1"],
+  );
+  expect(rejected.ok).toBe(false);
+  expect(JSON.parse(rejected.stdout)).toMatchObject({
+    category: "invalid_input",
+    details: {
+      issues: [
+        expect.objectContaining({
+          message: expect.stringContaining(
+            "SAZ metadata encoding declaration disagrees with its bytes",
+          ),
+        }),
+      ],
+    },
+  });
+});
+
 it("excludes explicit literals from XML, HTTP byte views, member coordinates and binary sidecars", async () => {
   const path = await fixture(await archive());
   const result = await cli(path, [
@@ -484,8 +706,10 @@ it.each([
       : "invalid_input",
   );
   // Expanded size is a caller-correctable input bound, not a decoder failure.
-  if (variant === "expanded-limit")
-    expect(JSON.parse(result.stdout).details.issues).toEqual([
+  if (variant === "expanded-limit") {
+    const error = JSON.parse(result.stdout);
+    expect(error.code).toBe("invalid_request");
+    expect(error.details.issues).toEqual([
       expect.objectContaining({
         path: ["capture_path", ""],
         reason: "out_of_range",
@@ -494,6 +718,27 @@ it.each([
         },
       }),
     ]);
+    const { call } = await connectLocalToolsMcp();
+    const response = await call("inspect_web_network_capture", {
+      capture_path: path,
+      format: "saz",
+      record_ordinals: [0],
+    });
+    expect(response.isError).toBe(true);
+    const mcpFailure = parseMcpToolError(response);
+    expect(mcpFailure).toMatchObject({
+      error: {
+        code: error.code,
+        category: error.category,
+        details: error.details,
+      },
+    });
+    expect(error).not.toHaveProperty("normalized_result");
+    expect(error.details).not.toHaveProperty("partial_observation");
+    expect(mcpFailure).not.toHaveProperty("normalized_result");
+    expect(mcpFailure.error.details).not.toHaveProperty("partial_observation");
+    expect(await readFile(path)).toEqual(bytes);
+  }
   expect(JSON.stringify(result)).not.toContain("malformed-private-input");
 });
 

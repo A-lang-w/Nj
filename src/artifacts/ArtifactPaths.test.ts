@@ -1,15 +1,47 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ArtifactPathRegistry,
   annotateEnglishUnicodeCaseCollisions,
   ENGLISH_UNICODE_CASE_INVENTORY_LIMITATION,
+  normalizeArtifactPath,
 } from "./ArtifactPaths.js";
 
 const NOTE =
   "a case-insensitive destination cannot store both. This comparison is not a filesystem observation.";
 
+it.each(["drive", "escaped", "normalization", "prefix", "collision"])(
+  "bounds path failure diagnostics at the owning boundary: %s",
+  (kind) => {
+    const name = "x".repeat(1024 * 1024);
+    const registry = new ArtifactPathRegistry();
+    const fail = () => {
+      if (kind === "drive") normalizeArtifactPath("C:" + name);
+      else if (kind === "escaped")
+        normalizeArtifactPath("\0".repeat(name.length));
+      else if (kind === "normalization")
+        normalizeArtifactPath(name + "/../child");
+      else {
+        registry.add(name, "file");
+        registry.add(kind === "prefix" ? name + "/child" : name, "directory");
+      }
+    };
+    const failure = (() => {
+      try {
+        fail();
+      } catch (cause: unknown) {
+        return cause;
+      }
+      return undefined;
+    })();
+    expect(failure).toMatchObject({ reason: "path" });
+    expect((failure as Error).message.length).toBeLessThan(1024);
+  },
+);
+
 const annotate = (paths: readonly string[]) => {
   const occurrences = paths.map((logical_path) => ({
+    entry_kind: "file" as const,
     logical_path,
     limitations: [] as string[],
   }));
@@ -26,6 +58,15 @@ const annotate = (paths: readonly string[]) => {
 };
 
 describe("English Unicode case collisions", () => {
+  it("retains repeated same-kind entries while rejecting file-directory aliasing", () => {
+    const registry = new ArtifactPathRegistry();
+    registry.add("duplicate", "file");
+    expect(() => registry.add("duplicate", "file")).not.toThrow();
+    expect(() => registry.add("duplicate", "directory")).toThrow(
+      "Artifact path collision",
+    );
+  });
+
   it("names the other spelling of a colliding file", () => {
     const { limitation, byPath } = annotate([".", "Main.js", "main.js", "x"]);
     expect(limitation).toBe(ENGLISH_UNICODE_CASE_INVENTORY_LIMITATION);
