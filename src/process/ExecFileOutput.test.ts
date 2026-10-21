@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { access, mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -292,6 +293,39 @@ describe.skipIf(process.platform === "win32")(
   },
 );
 
+const descendantCommand = async (pid: number): Promise<string> => {
+  if (process.platform === "linux")
+    return readFile(`/proc/${pid}/cmdline`, "utf8").catch(() => "");
+  return new Promise((resolve) => {
+    execFile(
+      "ps",
+      ["-p", String(pid), "-o", "command="],
+      { encoding: "utf8" },
+      (error, stdout) => {
+        resolve(error ? "" : stdout);
+      },
+    );
+  });
+};
+
+/** Signal only a still-running descendant whose command line contains `marker`. */
+const stopOwnedDescendant = async (
+  pid: number,
+  marker: string,
+): Promise<unknown> => {
+  if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid)
+    return undefined;
+  if (!(await descendantCommand(pid)).includes(marker)) return undefined;
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch (cause: unknown) {
+    if (cause instanceof Error && "code" in cause && cause.code === "ESRCH")
+      return undefined;
+    return cause;
+  }
+  return undefined;
+};
+
 describe.skipIf(process.platform === "win32")(
   "execFileOutput inherited pipes",
   () => {
@@ -327,6 +361,7 @@ describe.skipIf(process.platform === "win32")(
           (cause: unknown) => ({ ok: false as const, cause }),
         );
       let killFailure: unknown;
+      let descendantSettled = false;
       try {
         const deadline = Date.now() + 15_000;
         let text: string | undefined;
@@ -348,23 +383,16 @@ describe.skipIf(process.platform === "win32")(
         }
         expect(text).toBeDefined();
         expect(JSON.parse(text ?? "")).toEqual({ scratchExists: true });
-        await expect(settled).resolves.toMatchObject({
+        const outcome = await settled;
+        descendantSettled = true;
+        expect(outcome).toMatchObject({
           ok: false,
           cause: { code: "ETIMEDOUT", killed: true },
         });
       } finally {
-        const pid = Number(await readFile(pidPath, "utf8").catch(() => ""));
-        if (Number.isInteger(pid) && pid > 0 && pid !== process.pid) {
-          try {
-            process.kill(pid, "SIGKILL");
-          } catch (cause: unknown) {
-            if (
-              !(cause instanceof Error) ||
-              !("code" in cause) ||
-              cause.code !== "ESRCH"
-            )
-              killFailure = cause;
-          }
+        if (!descendantSettled) {
+          const pid = Number(await readFile(pidPath, "utf8").catch(() => ""));
+          killFailure = await stopOwnedDescendant(pid, finished);
         }
         await settled;
       }
