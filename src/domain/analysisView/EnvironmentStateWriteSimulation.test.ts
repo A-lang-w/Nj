@@ -1623,6 +1623,103 @@ describe("timed write observations and generated clocks", () => {
   });
 });
 
+describe("partial update observations", () => {
+  it("keeps write-response fields when the item view omits them", () => {
+    const first: Book = { ...FIRST_BOOK, description: "First description" };
+    const second: Book = { ...SECOND_BOOK, description: "Second description" };
+    const itemSummary = (entry: Book): Book => ({
+      id: entry.id!,
+      name: entry.name!,
+    });
+    const renamed = {
+      ...first,
+      name: "Renamed first",
+      slug: "renamed-first",
+      updated_at: bookClock(3),
+    };
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [first, second]],
+      ["GET", "/api/books/1", itemSummary(first)],
+      ["GET", "/api/books/2", itemSummary(second)],
+      ["PATCH", "/api/books/1", renamed, 200, { name: "Renamed first" }],
+      ["GET", "/api/books/1", itemSummary(renamed)],
+      [
+        "PATCH",
+        "/api/books/2",
+        { id: 2, name: second.name!, description: "Revised description" },
+        200,
+        { description: "Revised description" },
+      ],
+      // This item view covers only id/name, not description or the learned clock.
+      ["GET", "/api/books/2", itemSummary(second)],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      reason: null,
+      checked_record_ordinals: [4],
+      rules: [
+        { field: "name", rule: "echo" },
+        { field: "slug", rule: "slug", from: "name" },
+        { field: "updated_at", rule: "clock" },
+        { field: "description", rule: "echo" },
+      ],
+    });
+  });
+
+  it("uses read coverage without dropping fields shown by the write response", () => {
+    const first: Book = { ...FIRST_BOOK, description: "First description" };
+    const second: Book = { ...SECOND_BOOK, description: "Second description" };
+    const itemSummary = (entry: Book): Book => ({
+      id: entry.id!,
+      name: entry.name!,
+      updated_at: entry.updated_at!,
+    });
+    const renamed = {
+      ...first,
+      name: "Renamed first",
+      slug: "renamed-first",
+      updated_at: bookClock(3),
+    };
+    const revised = {
+      id: 2,
+      name: second.name!,
+      description: "Revised description",
+    };
+    const revisedSummary = {
+      id: 2,
+      name: second.name!,
+      updated_at: bookClock(6),
+    };
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [first, second]],
+      ["GET", "/api/books/1", itemSummary(first)],
+      ["GET", "/api/books/2", itemSummary(second)],
+      ["PATCH", "/api/books/1", renamed, 200, { name: "Renamed first" }],
+      ["GET", "/api/books/1", itemSummary(renamed)],
+      [
+        "PATCH",
+        "/api/books/2",
+        revised,
+        200,
+        { description: "Revised description" },
+      ],
+      // The item view covers the clock, but not the description returned by PATCH.
+      ["GET", "/api/books/2", revisedSummary],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      reason: null,
+      checked_record_ordinals: [4],
+      rules: [
+        { field: "name", rule: "echo" },
+        { field: "slug", rule: "slug", from: "name" },
+        { field: "updated_at", rule: "clock" },
+        { field: "description", rule: "echo" },
+      ],
+    });
+  });
+});
+
 describe("what later calls must keep consistent", () => {
   it("refuses an update one call sends an ignored id with and another the path's id", () => {
     const renamed = (at: Book, name: string) => ({ ...at, name });

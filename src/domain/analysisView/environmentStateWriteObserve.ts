@@ -91,6 +91,10 @@ export const laterObservation = (
     readonly isWrite: (record: StateRecordFacts) => boolean;
     /** An item read matches by this instead of equal collection strings. */
     readonly sameItem?: (record: StateRecordFacts) => boolean;
+    /** Skip read views that do not cover the facts needed by this observation. */
+    readonly covers?: (
+      view: Extract<StateView, { readonly shape: "item" | "list" }>,
+    ) => boolean;
   },
 ): Observed | undefined => {
   for (const record of search.records.slice(search.from + 1)) {
@@ -105,6 +109,7 @@ export const laterObservation = (
       view.type !== target.type
     )
       continue;
+    if (target.covers !== undefined && !target.covers(view)) continue;
     const found =
       view.shape === "item"
         ? itemObservation(search, record, view.pointer, target)

@@ -29,7 +29,9 @@ import {
 type Applied<T> = Result<T, string>;
 
 /** A generated value or a typed refusal when the store cannot safely provide one. */
-export type GenerateValue = (rule: GeneratedRule) => Applied<JsonValue>;
+export type GenerateValue = (
+  rule: GeneratedRule,
+) => Applied<JsonValue | undefined>;
 
 const kindOf = (value: JsonValue | undefined): string =>
   value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
@@ -226,7 +228,7 @@ export const updatedFields = (
     } else if (rule.rule === "clock") {
       const value = generate(rule);
       if (!value.ok) return value;
-      written[rule.field] = value.value;
+      if (value.value !== undefined) written[rule.field] = value.value;
     }
   }
   derive(

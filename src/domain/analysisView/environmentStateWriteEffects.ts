@@ -61,6 +61,11 @@ export interface WriteDraft {
   readonly sequences: Map<string, number>;
 }
 
+/** A write observation plus the fields its selected read view actually covers, if any. */
+type UpdateObservation = Observed & {
+  readonly readFields?: readonly string[];
+};
+
 /** Response bodies, request bodies and budget the effects read. */
 export interface WriteIo {
   readonly withBody: <T>(
@@ -211,7 +216,7 @@ const updatedObservation = (
     readonly id: string;
   },
   required: readonly string[],
-): Observed | undefined => {
+): UpdateObservation | undefined => {
   const own = context.io.withBody(
     step.record.ordinal,
     (body): Observed | undefined => {
@@ -245,10 +250,38 @@ const updatedObservation = (
       const found = itemTarget(context.state, entity.type, record);
       return found.collection === entity.collection && found.id === entity.id;
     },
+    ...(own === undefined
+      ? {}
+      : {
+          covers: (
+            view: Extract<StateView, { readonly shape: "item" | "list" }>,
+          ) => required.every((field) => view.fields.includes(field)),
+        }),
   });
   if (later !== undefined) {
-    context.observed(later.ordinal);
-    return later;
+    const view = context.viewOf(later.ordinal);
+    const readFields =
+      view?.shape === "item" || view?.shape === "list"
+        ? view.fields
+        : undefined;
+    const coversRequired = required.every((field) =>
+      readFields?.includes(field),
+    );
+    // A partial summary cannot replace members the write response did show. Only use it
+    // to fill an omitted generated field when that read view actually covers the field.
+    if (own === undefined || coversRequired) {
+      context.observed(later.ordinal);
+      const object = { ...own?.object, ...later.object };
+      // For covered fields, the later read's omission is evidence too; do not fill it back
+      // from an earlier write response. Fields outside that view retain response evidence.
+      for (const field of readFields ?? [])
+        if (!Object.hasOwn(later.object, field)) delete object[field];
+      return {
+        ...later,
+        object,
+        ...(readFields === undefined ? {} : { readFields }),
+      };
+    }
   }
   return own;
 };
@@ -419,7 +452,7 @@ export const applyUpdate = (
     idField,
     id,
     startMs: startOf(context, step),
-    read: after.ordinal !== step.record.ordinal,
+    ...(after.readFields === undefined ? {} : { readFields: after.readFields }),
   });
   if (explained.unexplained.length > 0 && !unknown) {
     refuse(draft, step, "unexplained-change");
@@ -447,7 +480,7 @@ export const applyUpdate = (
     draft.plan,
     { before: entity.fields, observed: draft.observed! },
     { ...call, id },
-    (rule) => ok(after.object[rule.field] ?? null),
+    (rule) => ok(after.object[rule.field]),
   );
   const disagrees =
     written.ok &&
