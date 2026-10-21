@@ -23,6 +23,70 @@ import {
   type ArtifactEntry,
 } from "../ArtifactReader.js";
 
+it("bounds an admitted drive-prefixed CArchive path before diagnostic serialization", async () => {
+  await withPyInstallerReader(
+    cArchiveExecutable({
+      layout: "2.1",
+      pythonVersion: 309,
+      members: [
+        {
+          name: "C:" + "x".repeat(10 * 1024 * 1024),
+          typeCode: "x",
+          payload: Buffer.from("x"),
+          compress: false,
+        },
+      ],
+    }),
+    async (reader) => {
+      const failure = await reader
+        .entries()
+        [Symbol.asyncIterator]()
+        .next()
+        .then(
+          () => undefined,
+          (cause: unknown) => cause,
+        );
+      expect(failure).toMatchObject({ reason: "path" });
+      expect((failure as Error).message.length).toBeLessThan(1024);
+    },
+  );
+});
+
+it.each(["magic", "marshal"])(
+  "reuses the private bytes of an opaque outer-compressed PYZ (%s)",
+  async (kind) => {
+    const payload = pyzArchive({
+      magic: kind === "magic" ? Buffer.alloc(4) : PYTHON_39_MAGIC,
+      modules: [],
+      ...(kind === "marshal" ? { toc: Buffer.from([0x4e]) } : {}),
+    });
+    await withPyInstallerReader(
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 309,
+        members: [{ name: "PYZ.pyz", typeCode: "z", payload, compress: true }],
+      }),
+      async (reader, carrier) => {
+        const entries: ArtifactEntry[] = [];
+        for await (const entry of reader.entries()) entries.push(entry);
+        const entry = entries[0]!;
+        expect(entry.kind).toBe("file");
+        const read = vi
+          .spyOn(carrier, "read")
+          .mockRejectedValue(
+            new Error("opaque image must not be reinflated from carrier"),
+          );
+        try {
+          for (let run = 0; run < 2; run++)
+            expect(await buffer(await reader.open(entry))).toEqual(payload);
+        } finally {
+          read.mockRestore();
+        }
+      },
+    );
+  },
+);
+
 it.each([true, false])(
   "authenticates mixed-kind duplicate pages in any merge order (option first: %s)",
   async (optionFirst) => {

@@ -22,6 +22,7 @@ const cli = fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url));
 const onefile = async (
   magic = PYTHON_39_MAGIC,
   marker = false,
+  compressPyz = false,
 ): Promise<string> => {
   const directory = await createTestTempDirectory("rea-pyinstaller-cli-");
   const path = join(directory, "hello");
@@ -70,7 +71,7 @@ const onefile = async (
               { name: "app", typeCode: 0, body: Buffer.from("app-body") },
             ],
           }),
-          compress: false,
+          compress: compressPyz,
         },
       ],
     }),
@@ -171,7 +172,7 @@ it("extracts CArchive members through extract-artifact", async () => {
 });
 
 it("reports unknown traversal through the CLI for an opaque PYZ", async () => {
-  const path = await onefile(Buffer.alloc(4), true);
+  const path = await onefile(Buffer.alloc(4), true, true);
   const result = await execute(process.execPath, [
     cli,
     "inspect-artifact",
@@ -191,11 +192,12 @@ it("reports unknown traversal through the CLI for an opaque PYZ", async () => {
     encrypted: false,
     hash_status: "verified",
     artifact_id: expect.any(String),
-    source_location: { offset: expect.any(Number), length: expect.any(Number) },
+    source_location: null,
   });
   expect(opaque?.format_metadata).toMatchObject({
     pyz_python_magic: "00000000",
     pyz_status: "opaque",
     encryption_source: "carchive-marker",
+    compression_flag: 1,
   });
 });

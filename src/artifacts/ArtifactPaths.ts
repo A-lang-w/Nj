@@ -6,6 +6,14 @@ import { ArtifactReaderFailure, type ArtifactEntry } from "./ArtifactReader.js";
 
 const DRIVE_PREFIX = /^[A-Za-z]:/u;
 
+// Bound diagnostic JSON expansion to 768 characters before formatting. This is
+// a presentation budget, never a limit on accepted paths or retained facts.
+const PATH_DIAGNOSTIC_CODE_UNITS = 128;
+const pathDiagnostic = (path: string): string =>
+  path.length <= PATH_DIAGNOSTIC_CODE_UNITS
+    ? JSON.stringify(path)
+    : `${JSON.stringify(path.slice(0, PATH_DIAGNOSTIC_CODE_UNITS))}… (${String(path.length)} UTF-16 code units)`;
+
 type DestinationEntryKind = Exclude<ArtifactEntry["kind"], "metadata">;
 
 /** Declarations have query identities, but never claim a destination path. */
@@ -32,7 +40,7 @@ export const normalizeArtifactPath = (input: string): string => {
   if (input.includes("\0") || input.startsWith("/") || DRIVE_PREFIX.test(input))
     throw new ArtifactReaderFailure(
       "path",
-      `Artifact path is absolute or unsafe: ${JSON.stringify(input)}`,
+      `Artifact path is absolute or unsafe: ${pathDiagnostic(input)}`,
     );
   const normalized = logicalPathNfc(input).replace(/\/+$/u, "");
   const parts = normalized.split("/");
@@ -43,7 +51,7 @@ export const normalizeArtifactPath = (input: string): string => {
   )
     throw new ArtifactReaderFailure(
       "path",
-      `Artifact path is not normalized: ${JSON.stringify(input)}`,
+      `Artifact path is not normalized: ${pathDiagnostic(input)}`,
     );
   return normalized;
 };
@@ -60,7 +68,7 @@ export class ArtifactPathRegistry {
       if (node.kind !== undefined && node.kind !== "directory")
         throw new ArtifactReaderFailure(
           "path",
-          `Artifact prefix conflict: ${path}`,
+          `Artifact prefix conflict: ${pathDiagnostic(path)}`,
         );
       let child = node.children.get(part);
       if (child === undefined) {
@@ -72,12 +80,12 @@ export class ArtifactPathRegistry {
         if (node.kind !== undefined && node.kind !== kind)
           throw new ArtifactReaderFailure(
             "path",
-            `Artifact path collision: ${path}`,
+            `Artifact path collision: ${pathDiagnostic(path)}`,
           );
         if (kind !== "directory" && node.children.size > 0)
           throw new ArtifactReaderFailure(
             "path",
-            `Artifact prefix conflict: ${path}`,
+            `Artifact prefix conflict: ${pathDiagnostic(path)}`,
           );
       }
     }

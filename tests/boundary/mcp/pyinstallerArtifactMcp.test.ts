@@ -141,7 +141,7 @@ const writeExecutable = async (opaque: boolean): Promise<string> => {
             magic: opaque ? Buffer.alloc(4) : PYTHON_39_MAGIC,
             modules: [{ name: "app", typeCode: 0, body: Buffer.from("app") }],
           }),
-          compress: false,
+          compress: opaque,
         },
         ...(opaque
           ? [

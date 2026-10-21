@@ -46,8 +46,9 @@ import {
   projectStoredMember,
   sealMember,
   type PyInstallerMember,
+  type PyzImage,
 } from "./pyinstaller/CArchiveMembers.js";
-import { readPyzArchive, type PyzArchive } from "./pyinstaller/PyzArchive.js";
+import { readPyzArchive } from "./pyinstaller/PyzArchive.js";
 import type { PyInstallerFailure } from "./pyinstaller/PyInstallerFailure.js";
 import { pyInstallerFileAdmissionFailure } from "./pyinstaller/PyInstallerFileAdmission.js";
 
@@ -57,12 +58,6 @@ const RECORD_OWNERSHIP_RESERVATION = 256;
 // Conservative allowance for registry/case trie nodes, maps and traversal state.
 // Repeated prefixes are charged again rather than underestimating retained work.
 const PATH_COMPONENT_RESERVATION = 1024;
-
-interface PyzImage {
-  readonly archive: PyzArchive;
-  readonly handle: FileHandle;
-  readonly start: number;
-}
 
 interface LoadedArchive {
   readonly members: readonly PyInstallerMember[];
@@ -188,11 +183,12 @@ export class PyInstallerArtifactReader implements ArtifactReader {
           `PyInstaller entry has no readable bytes: ${entry.path}`,
         );
       await this.#verifySource();
-      const previousSize =
+      const knownSize =
         read.kind === "pyz"
-          ? this.#openedPyzSizes.get(entry.adapterKey)
+          ? (read.uncompressedSize ??
+            this.#openedPyzSizes.get(entry.adapterKey))
           : undefined;
-      if (read.kind === "pyz" && previousSize === undefined)
+      if (read.kind === "pyz" && knownSize === undefined)
         this.#charge(read.header?.length ?? 0);
       const parts = await this.#pyzStore.memberSource(
         read,
@@ -212,18 +208,19 @@ export class PyInstallerArtifactReader implements ArtifactReader {
       const stream = pyInstallerMemberStream(parts.source, {
         sourceBytes:
           read.kind === "carchive" ? read.source.compressedSize : read.length,
-        compressed: read.kind === "pyz" || read.source.compressionFlag === 1,
+        compressed:
+          read.kind === "pyz"
+            ? read.compressed
+            : read.source.compressionFlag === 1,
         header: read.header,
         expectedBytes:
-          read.kind === "carchive"
-            ? read.source.uncompressedSize
-            : previousSize,
+          read.kind === "carchive" ? read.source.uncompressedSize : knownSize,
         maxBytes:
           read.kind === "carchive"
             ? read.source.uncompressedSize
-            : (previousSize ?? this.#budget - this.#charged),
+            : (knownSize ?? this.#budget - this.#charged),
         signal: active,
-        ...(read.kind === "pyz" && previousSize === undefined
+        ...(read.kind === "pyz" && knownSize === undefined
           ? { charge: (bytes: number) => this.#charge(bytes) }
           : {}),
         complete: async (bytes) => {
@@ -237,7 +234,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
           }
           await closeSource();
           abortIfNeeded(active);
-          if (read.kind === "pyz" && previousSize === undefined)
+          if (read.kind === "pyz" && knownSize === undefined)
             this.#openedPyzSizes.set(entry.adapterKey, bytes);
         },
       });
@@ -509,14 +506,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
         append(projectStoredMember(entry, cookie.archiveStart, magic));
         continue;
       }
-      append(
-        projectPyzContainer(
-          entry,
-          cookie.archiveStart,
-          image.archive,
-          encrypted,
-        ),
-      );
+      append(projectPyzContainer(entry, cookie.archiveStart, image, encrypted));
       if (image.archive.kind !== "entries") continue;
       for (const item of image.archive.entries) {
         if (members.length % 256 === 0) await setImmediate();

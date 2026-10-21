@@ -15,6 +15,13 @@ import type { PyInstallerEntryMetadata } from "../../domain/artifactFormatMetada
 
 const CRYPTO_KEY_NAME = "pyimod00_crypto_key";
 
+/** Parsed facts and the descriptor identity used to locate a retained image. */
+export interface PyzImage {
+  readonly archive: PyzArchive;
+  readonly handle: FileHandle;
+  readonly start: number;
+}
+
 /** Stable entry descriptions and bounded read plans; expanded member bytes are never retained. */
 export interface PyInstallerMember {
   readonly entry: ArtifactEntry;
@@ -30,6 +37,8 @@ export interface PyInstallerMember {
         readonly handle: FileHandle;
         readonly offset: number;
         readonly length: number;
+        readonly compressed: boolean;
+        readonly uncompressedSize: number | undefined;
         readonly header: Buffer | undefined;
       }
     | undefined;
@@ -108,9 +117,10 @@ export const projectStoredMember = (
 export const projectPyzContainer = (
   entry: CArchiveEntry,
   archiveStart: number,
-  archive: PyzArchive,
+  image: PyzImage,
   encrypted: boolean,
 ): PyInstallerMember => {
+  const { archive } = image;
   const path = canonicalMemberPath(entry.name);
   const byteOffset = sourceByteOffset(
     archiveStart + entry.offset,
@@ -142,12 +152,23 @@ export const projectPyzContainer = (
           encrypted,
         ),
       }),
-      read: {
-        kind: "carchive",
-        archiveStart,
-        source: entry,
-        header: undefined,
-      },
+      read:
+        entry.compressionFlag === 1
+          ? {
+              kind: "pyz",
+              handle: image.handle,
+              offset: image.start,
+              length: entry.uncompressedSize,
+              compressed: false,
+              uncompressedSize: entry.uncompressedSize,
+              header: undefined,
+            }
+          : {
+              kind: "carchive",
+              archiveStart,
+              source: entry,
+              header: undefined,
+            },
     };
   return {
     entry: {
@@ -254,7 +275,16 @@ export const projectPyzMember = (
         encryptionMarker,
       ),
     }),
-    read: range === undefined ? undefined : { kind: "pyz", ...range, header },
+    read:
+      range === undefined
+        ? undefined
+        : {
+            kind: "pyz",
+            ...range,
+            compressed: true,
+            uncompressedSize: undefined,
+            header,
+          },
   };
 };
 
