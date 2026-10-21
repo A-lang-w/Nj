@@ -66,6 +66,8 @@ export const resultFor = (
     case "Page.enable":
     case "Page.disable":
     case "Page.setLifecycleEventsEnabled":
+    case "Performance.enable":
+    case "Performance.disable":
     case "Network.enable":
     case "Network.disable":
     case "Debugger.disable":
@@ -75,6 +77,8 @@ export const resultFor = (
     case "DOM.enable":
     case "DOM.disable":
       return {};
+    case "Performance.getMetrics":
+      return { metrics: [{ name: "Timestamp", value: 0 }] };
     case "Debugger.enable":
       return { debuggerId: "fake-debugger" };
     case "Target.detachFromTarget":
