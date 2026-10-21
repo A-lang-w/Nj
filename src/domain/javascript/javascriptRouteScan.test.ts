@@ -385,6 +385,25 @@ it("retains mixed ordinary and typed siblings independently of scan order and bu
   }
 });
 
+it("withholds rejected mixed configuration data from every automatic interpretation", () => {
+  for (const children of [
+    "{path:'/x',element:X},{_$:'before',detail:{_$:'detail'}}",
+    "{_$:'before',detail:{_$:'detail'}},{path:'/x',element:X}",
+  ]) {
+    for (const mutation of [
+      "config.children[0].path='/after'",
+      "const alias=config;alias.children[1]._$='after'",
+      "config={children:[{_$:'replacement'}]}",
+    ]) {
+      const facts = analyze(
+        `let config={children:[${children}]};${mutation};createBrowserRouter(config);`,
+      );
+      expect(facts.candidates).toEqual([]);
+      expect(facts.unresolved.length).toBeGreaterThan(0);
+    }
+  }
+});
+
 it("owns structured navigation fragments without leaking partial destinations", () => {
   const facts = analyze(
     `createBrowserRouter([{path:'/users'}]);router.push({pathname:'/users/' + id});router.navigate(['/users/',id]);router.push({path:suffix + ['/users/',id]});`,

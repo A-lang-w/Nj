@@ -98,11 +98,12 @@ export class JavaScriptRouteScan {
     node: t.CallExpression | t.OptionalCallExpression;
     typed: boolean;
   }[] = [];
-  readonly #automaticRoots: { node: t.ObjectExpression; typed: boolean }[] = [];
+  readonly #automaticRoots = new Map<t.ObjectExpression, boolean>();
   readonly #claimed = {
     ordinary: new WeakSet<t.Node>(),
     typed: new WeakSet<t.Node>(),
   };
+  readonly #rejected = new WeakSet<t.Node>();
   readonly #seen = new Set<string>();
   readonly #literalPaths: { value: string; node: t.Node }[] = [];
   readonly #propertyValues = new WeakSet<t.Node>();
@@ -344,14 +345,14 @@ export class JavaScriptRouteScan {
       (typed || (hasView && (hasPath || hasChildren || hasIndex))) &&
       this.#queue(node)
     )
-      this.#automaticRoots.push({ node, typed });
+      this.#automaticRoots.set(node, typed);
   }
 
   *finishSteps(
     index: JavaScriptBindingIndex,
   ): Generator<void, JavaScriptRouteSourceFacts> {
     if (this.#result.capacity !== null) return this.#result;
-    if (this.#calls.length > 0 || this.#automaticRoots.length > 0)
+    if (this.#calls.length > 0 || this.#automaticRoots.size > 0)
       yield* index.indexMemberMutationFactsSteps();
     for (const call of this.#calls) {
       if (this.#result.capacity !== null) break;
@@ -372,26 +373,26 @@ export class JavaScriptRouteScan {
       this.#claimConfiguration(first, index, call.typed);
       yield* this.#walk(first, call.node, call.typed, index);
     }
-    for (const candidate of this.#automaticRoots) {
+    for (const [node, typed] of this.#automaticRoots) {
       if (this.#result.capacity !== null) break;
       yield;
-      const claimed = this.#claimed[candidate.typed ? "typed" : "ordinary"];
-      let root = candidate.node,
-        owned = claimed.has(root);
-      while (!owned && !candidate.typed) {
+      const claimed = this.#claimed[typed ? "typed" : "ordinary"];
+      let root = node,
+        owned = claimed.has(root) || this.#rejected.has(root);
+      while (!owned && !typed) {
         const parent = this.#routeParents.get(root);
         if (parent === undefined) break;
         root = parent;
-        owned = claimed.has(root);
+        owned = claimed.has(root) || this.#rejected.has(root);
       }
       if (!owned) {
         this.#unknown(
-          candidate.typed ? "typed-route-tree" : "nested-route-object",
+          typed ? "typed-route-tree" : "nested-route-object",
           root,
           "The routing root is inferred from configuration syntax without a bound route-builder call.",
         );
-        this.#claimConfiguration(root, index, candidate.typed);
-        yield* this.#walk(root, root, candidate.typed, index, true);
+        this.#claimConfiguration(root, index, typed);
+        yield* this.#walk(root, root, typed, index, true);
       }
     }
     const roots = new Set(
@@ -540,10 +541,16 @@ export class JavaScriptRouteScan {
     root: t.Node,
     index: JavaScriptBindingIndex,
     typed: boolean,
+    rejected = false,
   ): void {
-    const pending: t.Node[] = [],
-      claimed = this.#claimed[typed ? "typed" : "ordinary"];
-    const admit = (raw: t.Node | null | undefined): void => {
+    const pending: { node: t.Node; typed: boolean }[] = [],
+      visited = rejected
+        ? { ordinary: new WeakSet<t.Node>(), typed: new WeakSet<t.Node>() }
+        : this.#claimed;
+    const admit = (
+      raw: t.Node | null | undefined,
+      interpretation: boolean,
+    ): void => {
       if (raw == null) return;
       const node = unwrapJavaScriptExpression(raw).node;
       if (
@@ -563,21 +570,32 @@ export class JavaScriptRouteScan {
         )
       )
         return;
+      // Invalid selected data must not reappear through an independent syntax
+      // interpretation. Reuse the classifier that discovered those roots.
+      if (
+        rejected &&
+        t.isObjectExpression(node) &&
+        this.#automaticRoots.get(node) === true
+      )
+        interpretation = true;
+      const claimed = visited[interpretation ? "typed" : "ordinary"];
       if (!claimed.has(node) && this.#queue(node)) {
         claimed.add(node);
-        pending.push(node);
+        if (rejected) this.#rejected.add(node);
+        pending.push({ node, typed: interpretation });
       }
     };
-    admit(root);
+    admit(root, typed);
     while (pending.length > 0 && this.#result.capacity === null) {
-      const node = pending.pop()!;
+      const { node, typed } = pending.pop()!;
       if (t.isIdentifier(node)) {
         const binding = index.bindingForReferenceAt(node);
         // All source initializers belong to this binding, even when mutation,
         // conditional execution or projection prevents trusting a current value.
-        for (const value of binding?.initializers ?? []) admit(value.node);
+        for (const value of binding?.initializers ?? [])
+          admit(value.node, typed);
         for (const value of binding?.referenceInitializers ?? [])
-          admit(value.node);
+          admit(value.node, typed);
       } else if (t.isObjectExpression(node)) {
         for (const property of node.properties) {
           if (t.isObjectProperty(property)) {
@@ -594,25 +612,26 @@ export class JavaScriptRouteScan {
                 t.isObjectExpression(property.value) ||
                 t.isIdentifier(property.value))
             )
-              admit(property.value);
-          } else if (t.isSpreadElement(property)) admit(property.argument);
+              admit(property.value, typed);
+          } else if (t.isSpreadElement(property))
+            admit(property.argument, typed);
         }
       } else if (t.isArrayExpression(node))
-        for (const child of node.elements) admit(child);
+        for (const child of node.elements) admit(child, typed);
       else if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
-        admit(node.object);
+        admit(node.object, typed);
       else if (t.isConditionalExpression(node)) {
-        admit(node.consequent);
-        admit(node.alternate);
+        admit(node.consequent, typed);
+        admit(node.alternate, typed);
       } else if (t.isLogicalExpression(node)) {
-        admit(node.left);
-        admit(node.right);
+        admit(node.left, typed);
+        admit(node.right, typed);
       } else if (t.isSequenceExpression(node))
-        for (const child of node.expressions) admit(child);
-      else if (t.isAssignmentExpression(node)) admit(node.right);
-      else if (t.isSpreadElement(node)) admit(node.argument);
+        for (const child of node.expressions) admit(child, typed);
+      else if (t.isAssignmentExpression(node)) admit(node.right, typed);
+      else if (t.isSpreadElement(node)) admit(node.argument, typed);
       else if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
-        for (const child of node.arguments) admit(child);
+        for (const child of node.arguments) admit(child, typed);
     }
   }
 
@@ -631,6 +650,7 @@ export class JavaScriptRouteScan {
       const frame = frames.pop()!,
         node = this.#resolve(frame.node, site, index);
       if (node === undefined) {
+        this.#claimConfiguration(frame.node, index, typed, true);
         this.#unknown(
           mechanism,
           frame.node,
