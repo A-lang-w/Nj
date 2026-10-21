@@ -344,7 +344,12 @@ describe("production MCP doctor child lifecycle", () => {
     const result = await vi.waitFor(() => pending, { timeout: 10_000 });
     vi.useRealTimers();
     expect(result.healthy).toBe(false);
-    expect(result.checks[0]?.detail).toMatch(/deadline|abort|timed/iu);
+    expect(result.checks[0]?.detail).toContain("60000 ms");
+    expect(result.checks[0]?.detail).toContain("no runtime override");
+    expect(result.checks[0]?.detail).toContain(
+      "Codex startup_timeout_sec of 30 seconds is client guidance",
+    );
+    expect(result.checks[0]?.detail).not.toContain("REA_MCP_STARTUP");
     await expect(waitForExit(pid)).resolves.toBeUndefined();
   }, 10_000);
 });

@@ -36,7 +36,10 @@ import {
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { createEvidence } from "../domain/evidence.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
-import type { ToolResultDelivery } from "./toolResult.js";
+import {
+  mcpResponseOverflowProjection,
+  type ToolResultDelivery,
+} from "./toolResult.js";
 import { toolReturnsTargetContent } from "../contracts/toolEffects.js";
 import {
   carriesTargetContentMarker,
@@ -480,10 +483,20 @@ class ErrorEvidenceTransport implements Transport {
     );
     const recorded = this.recordEvidence?.(evidence);
     const retained = recorded !== undefined && recorded.ok;
+    const projected = mcpResponseOverflowProjection({
+      completed: false,
+      constraint: encoded.constraint,
+      effectiveResponseBytes: this.delivery.maximumResponseBytes,
+      nextStep: retained
+        ? "Export the retained original error through export_evidence_bundle to a caller-selected path. The connection remains usable."
+        : encoded.constraint === "string-length"
+          ? "The original error could not be retained by this server. Use complete CLI JSON output when the analysis completed. Repeating the unchanged MCP call fails the same way."
+          : "The original error could not be retained by this server. Restart REA with a larger REA_MCP_MAX_RESPONSE_BYTES and a matching client receive buffer, then retry.",
+    });
     const failure = new AnalysisResourceConstraintError(
       operation,
       "transport",
-      "The tool failed, but its complete error response exceeds the MCP response budget.",
+      projected.reason,
       {
         boundary: "mcp-response",
         ...(originalError?.success
@@ -510,11 +523,7 @@ class ErrorEvidenceTransport implements Transport {
           ? { retention_error: projectAnalysisError(recorded.error) }
           : {}),
       },
-      {
-        remediationAction: retained
-          ? "Export the retained original error through export_evidence_bundle to a caller-selected path. The connection remains usable."
-          : "Restart REA with a larger REA_MCP_MAX_RESPONSE_BYTES and matching client receive buffer, then retry. The original error could not be retained by this server.",
-      },
+      { remediationAction: projected.remediationAction },
     );
     const replacement = this.delivery.toErrorToolResult(failure, targetContent);
     return {

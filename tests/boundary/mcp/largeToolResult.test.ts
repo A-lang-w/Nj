@@ -22,7 +22,12 @@ import {
 import { ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
 import { registerOfficialTools } from "../../../src/server/registerOfficialTools.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import {
+  mcpResponseOverflowProjection,
+  ToolResultDelivery,
+} from "../../../src/server/toolResult.js";
+import { MINIMUM_RESPONSE_BYTES } from "../../../src/config/mcpResponseBudget.js";
+import { MCP_RESULT_STRING_LIMIT } from "../../../src/server/toolResultEncoding.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { encodeToolResult } from "../../../src/server/toolResultEncoding.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -95,6 +100,47 @@ const callPseudoCode = async (
     await Promise.all([client.close(), server.close()]);
   }
 };
+
+describe("MCP response budget recovery", () => {
+  it("names the stdio setting, floor, restart, and the separate string ceiling", () => {
+    const projected = mcpResponseOverflowProjection({
+      completed: true,
+      constraint: "receive-buffer",
+      effectiveResponseBytes: MINIMUM_RESPONSE_BYTES,
+      nextStep: "Use complete CLI JSON output to consume the analysis.",
+    });
+    expect(projected.reason).toContain(
+      `The effective REA_MCP_MAX_RESPONSE_BYTES value is ${String(MINIMUM_RESPONSE_BYTES)} bytes`,
+    );
+    expect(projected.reason).toContain("floor 10485760 bytes, 10 MiB");
+    expect(projected.reason).toContain("restarting the REA process");
+    expect(projected.reason).toContain("does not raise");
+    expect(projected.reason).toContain("no runtime override");
+    expect(projected.reason).toContain(String(MCP_RESULT_STRING_LIMIT));
+    expect(projected.remediationAction).toContain("REA_MCP_MAX_RESPONSE_BYTES");
+    expect(projected.remediationAction).not.toContain(
+      "set REA_MCP_MAX_RESPONSE_BYTES above Node",
+    );
+  });
+
+  it("does not offer REA_MCP_MAX_RESPONSE_BYTES as a way to raise the string ceiling", () => {
+    const projected = mcpResponseOverflowProjection({
+      completed: false,
+      constraint: "string-length",
+      effectiveResponseBytes: MINIMUM_RESPONSE_BYTES * 2,
+      nextStep: "Use complete CLI JSON output when the analysis completed.",
+    });
+    expect(projected.reason).toContain("single-string representation limit");
+    expect(projected.reason).toContain(
+      "REA_MCP_MAX_RESPONSE_BYTES does not raise it",
+    );
+    expect(projected.reason).toContain("no runtime override");
+    expect(projected.reason).not.toContain("floor 10485760");
+    expect(projected.remediationAction).toContain(
+      "REA_MCP_MAX_RESPONSE_BYTES does not raise it",
+    );
+  });
+});
 
 describe("large complete Evidence MCP delivery", () => {
   it("delivers a two MiB provider result with raw observations and one normalized payload", async () => {
@@ -226,14 +272,19 @@ describe("large complete Evidence MCP delivery", () => {
       .object({
         error: z.object({
           message: z.string(),
+          remediation: z.object({ action: z.string() }),
           details: z.object({
             reported_limits: z.record(z.string(), z.unknown()),
           }),
         }),
       })
       .parse(detached.structuredContent).error;
-    expect(limits.message).toContain("larger MCP response budget");
+    expect(limits.message).toContain("REA_MCP_MAX_RESPONSE_BYTES");
+    expect(limits.message).toContain("10485760");
+    expect(limits.message).toContain("restarting the REA process");
+    expect(limits.message).toContain("does not raise");
     expect(limits.message).not.toContain("Export retained evidence");
+    expect(limits.remediation.action).toContain("REA_MCP_MAX_RESPONSE_BYTES");
     expect(limits.details.reported_limits).not.toHaveProperty(
       "evidence_reference",
     );
