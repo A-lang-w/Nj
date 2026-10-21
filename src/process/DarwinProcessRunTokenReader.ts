@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import {
   DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS,
+  MAX_PROVIDER_STARTUP_TIMEOUT_MS,
   providerStartupTimeoutSchema,
 } from "../config/providerStartupTimeout.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -48,8 +49,23 @@ const identityResponseSchema = z.strictObject({
     z.discriminatedUnion("state", [
       z.strictObject({
         pid: z.number().int().positive(),
+        state: z.literal("absent"),
+        identity: z.null().optional(),
+        reason: z.literal("not-in-snapshot"),
+      }),
+      z.strictObject({
+        pid: z.number().int().positive(),
         state: z.literal("readable"),
         identity: z.string().min(1),
+        effective_uid: z.number().int().nonnegative().optional(),
+        lifecycle: z.enum(["non-zombie", "zombie"]).optional(),
+        relation: z
+          .strictObject({
+            state: z.literal("observed"),
+            parent_pid: z.number().int().nonnegative(),
+            process_group_id: z.number().int().nonnegative(),
+          })
+          .optional(),
         reason: z.null().optional(),
       }),
       z.strictObject({
@@ -90,7 +106,9 @@ export const SWIFTC_INTERRUPT = "SIGINT";
  * Swift SDK cache on the supported Intel macOS VM (about 88s), so compilation
  * stays bounded independently of short provider version probes. Invalid ambient
  * values fall back to the default; `parseConfig` still rejects them at CLI/MCP
- * admission.
+ * admission. The resolved value is captured when the reader is created.
+ * Production creates that reader from the launch environment at process start,
+ * so a change applies after REA restarts, on the next ownership-helper compile.
  */
 export const resolveSwiftcCompileTimeoutMs = (
   options: {
@@ -105,6 +123,10 @@ export const resolveSwiftcCompileTimeoutMs = (
   const parsed = providerStartupTimeoutSchema.safeParse(raw);
   return parsed.success ? parsed.data : DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS;
 };
+
+/** Name the existing swiftc deadline when a helper compile times out. */
+export const swiftcCompileTimeoutRecovery = (timeoutMs: number): string =>
+  `The effective REA_SWIFTC_COMPILE_TIMEOUT_MS value is ${String(timeoutMs)} ms (integer range 1..${String(MAX_PROVIDER_STARTUP_TIMEOUT_MS)}; omitted default ${String(DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS)} ms). Set it in the environment that starts REA and restart REA; the next ownership-helper compile uses the new value.`;
 
 /** Bound on compiler diagnostics embedded in the inspection failure text. */
 const STDERR_EXCERPT_LIMIT = 512;
@@ -257,8 +279,11 @@ const compilerOutcomeDescription = (
   if (outcome === undefined) return `compiler result: ${String(fallbackCode)}`;
   if (outcome.outcome === "exited")
     return `compiler result: exit code ${String(outcome.code)}`;
-  if (outcome.outcome === "timed_out")
-    return `compiler result: timed out after ${String(outcome.timeoutMs)} ms`;
+  if (outcome.outcome === "timed_out") {
+    if (outcome.timeoutMs === undefined)
+      return "compiler result: timed out. The effective REA_SWIFTC_COMPILE_TIMEOUT_MS value was not reported.";
+    return `compiler result: timed out after ${String(outcome.timeoutMs)} ms. ${swiftcCompileTimeoutRecovery(outcome.timeoutMs)}`;
+  }
   if (outcome.outcome === "signaled")
     return `compiler result: stopped by signal ${outcome.signal ?? "an unknown signal"}`;
   return `compiler result: ${String(outcome.code)}`;
@@ -287,8 +312,13 @@ const compilerInspectionError = (
     stderr.truncated ||
     outcome?.stderrTruncated === true ||
     outcome?.outputTruncated === true;
+  const truncationNote = !truncated
+    ? ""
+    : stderr.truncated
+      ? `… [diagnostics truncated at ${String(STDERR_EXCERPT_LIMIT)} bytes; this release has no runtime override]`
+      : "… [diagnostics truncated; this release has no runtime override]";
   const suffix = diagnostics
-    ? `: ${diagnostics}${truncated ? "… [diagnostics truncated]" : ""}`
+    ? `: ${diagnostics}${truncationNote}`
     : outcome === undefined
       ? `: ${cause instanceof Error ? cause.message : String(cause)}`
       : ": no compiler diagnostics were captured";
@@ -503,6 +533,9 @@ export const createDarwinProcessRunTokenReader = (
     } catch (cause: unknown) {
       operation.primaryFailure = { cause };
       if (operationRoot !== undefined) {
+        // execFileOutput has settled, so inherited compiler pipes are closed.
+        // That is not proof for a child that did not inherit them; this owner
+        // does not signal processes it did not launch.
         try {
           await cleanupRoot(operationRoot);
         } catch (cleanup: unknown) {
@@ -701,8 +734,33 @@ export const createDarwinProcessRunTokenReader = (
       observations.set(
         result.pid,
         result.state === "readable"
-          ? { state: "readable", identity: result.identity }
-          : { state: "unavailable", reason: result.reason },
+          ? {
+              state: "readable",
+              identity: result.identity,
+              ...(result.effective_uid === undefined
+                ? {}
+                : { effectiveUid: result.effective_uid }),
+              ...(result.lifecycle === undefined
+                ? {}
+                : {
+                    lifecycle: {
+                      state: "observed" as const,
+                      lifecycle: result.lifecycle,
+                    },
+                  }),
+              ...(result.relation === undefined
+                ? {}
+                : {
+                    relation: {
+                      state: "observed" as const,
+                      parentPid: result.relation.parent_pid,
+                      processGroupId: result.relation.process_group_id,
+                    },
+                  }),
+            }
+          : result.state === "absent"
+            ? { state: "absent", reason: result.reason }
+            : { state: "unavailable", reason: result.reason },
       );
     }
     if (observations.size !== requested.size)
