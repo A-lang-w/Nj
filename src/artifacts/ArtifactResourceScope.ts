@@ -268,9 +268,7 @@ export class ArtifactResourceScope {
       hookFailure,
       "close hook",
     );
-    const resources = [
-      ...new Set([...retained.resources, ...hook.resources]),
-    ];
+    const resources = [...new Set([...retained.resources, ...hook.resources])];
     const options = {
       cause: new AggregateError(
         [cleanup, hookFailure],

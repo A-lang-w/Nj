@@ -101,7 +101,8 @@ it("reuses one owned worker across analyses on the same resource scope", async (
     if (previous !== undefined) await exits.get(previous);
     const spawned = await spawnOwnedProviderProcess(request);
     const pid = spawned.process.pid;
-    if (pid === undefined) throw new Error("Owned analyzer has no observed PID");
+    if (pid === undefined)
+      throw new Error("Owned analyzer has no observed PID");
     exits.set(
       pid,
       new Promise((resolve) => {
