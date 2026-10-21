@@ -444,6 +444,50 @@ it.each([
     ).toHaveLength(1);
   },
 );
+it("keeps distinct handlers that separate outer calls pass through one wrapper call", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const e = require("electron");
+    function register(channel, handler) { e.ipcMain.on(channel, handler); }
+    function setup(tag, handler) { register("same", handler); }
+    setup("first", () => 1);
+    setup("second", () => 2);
+  `);
+  const registrations = result.electron.ipc.filter(
+    ({ channel }) => channel === "same",
+  );
+  // The wrapper call traced alone has an unresolved handler; each outer call
+  // supplies its own concrete handler.
+  expect(registrations.map(({ handler_kind }) => handler_kind).sort()).toEqual([
+    "dynamic-expression",
+    "inline-function",
+    "inline-function",
+  ]);
+  expect(
+    new Set(
+      registrations.map(({ handler_location }) =>
+        JSON.stringify(handler_location),
+      ),
+    ).size,
+  ).toBe(3);
+});
+it("keeps the source registration when only its channel is site-determined", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { ipcMain } = require("electron");
+    const CH = "ch";
+    function register(seed, handler) { ipcMain.on(CH, handler); }
+    register("seed", () => 1);
+  `);
+  expect(
+    result.electron.ipc.map(({ channel, handler_kind, resolution_basis }) => [
+      channel,
+      handler_kind,
+      resolution_basis ?? "direct",
+    ]),
+  ).toEqual([
+    [null, "identifier", "direct"],
+    ["ch", "inline-function", "wrapper-substitution"],
+  ]);
+});
 it("counts one exposed renderer listener callsite once and retains its bridge path", () => {
   const result = analyzeJavaScriptStaticSource(`
     const {contextBridge,ipcRenderer}=require("electron");

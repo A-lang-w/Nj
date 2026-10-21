@@ -54,10 +54,46 @@ interface IpcEndpointFacts {
   // that source registration, not another registration at the same callsite.
   observedRendererListener: boolean;
   readonly invocations: Set<string>;
+  // Call chains of substituted findings, by value and then by final call.
+  // Chains can only share a suffix when they end in the same call.
+  readonly reached: Map<string, Map<string, string[][]>>;
 }
 
 const ipcInvocationKey = (location: unknown): string =>
   String(JSON.stringify(location));
+
+/** A finding's facts apart from which entry invoked it. */
+const ipcValueKey = (value: ElectronIpcFinding): string =>
+  JSON.stringify({ ...value, invocation_location: undefined });
+
+/**
+ * Whether two call chains end in the same calls, so one entry traced the same
+ * physical call sequence with less enclosing context than the other.
+ */
+const sharesCallSuffix = (
+  left: readonly string[],
+  right: readonly string[],
+): boolean => {
+  const [shorter, longer] =
+    left.length <= right.length ? [left, right] : [right, left];
+  const offset = longer.length - shorter.length;
+  return shorter.every((call, index) => longer[offset + index] === call);
+};
+
+/** Whether an identical finding was reached through the same call sequence. */
+const reachedThroughSameCalls = (
+  facts: IpcEndpointFacts,
+  value: string,
+  calls: readonly string[],
+): boolean => {
+  const byLast = facts.reached.get(value);
+  if (byLast === undefined) return false;
+  // An empty chain is a suffix of every chain.
+  if (calls.length === 0) return byLast.size > 0;
+  return [byLast.get(calls.at(-1) ?? ""), byLast.get("")].some((chains) =>
+    chains?.some((prior) => sharesCallSuffix(prior, calls)),
+  );
+};
 
 /** One physical IPC operation, independent of how its channel was resolved. */
 const ipcSiteKey = (value: ElectronIpcFinding): string =>
@@ -69,6 +105,7 @@ const indexIpcFinding = (
   // A substitution that resolves a directly observed operation inherits its
   // observation, so later paths to that operation stay duplicates.
   observed = value.resolution_basis === undefined,
+  calls?: string[],
 ): void => {
   const key = ipcEndpointKey(value);
   let facts = index.get(key);
@@ -77,6 +114,7 @@ const indexIpcFinding = (
       observedTransmission: false,
       observedRendererListener: false,
       invocations: new Set(),
+      reached: new Map(),
     };
     index.set(key, facts);
   }
@@ -85,18 +123,19 @@ const indexIpcFinding = (
   facts.observedRendererListener ||=
     observed && value.side === "renderer" && value.mode === "listen";
   facts.invocations.add(ipcInvocationKey(value.invocation_location));
+  if (calls !== undefined) {
+    const valueKey = ipcValueKey(value);
+    const byLast = facts.reached.get(valueKey) ?? new Map<string, string[][]>();
+    facts.reached.set(valueKey, byLast);
+    const last = calls.at(-1) ?? "";
+    byLast.set(last, [...(byLast.get(last) ?? []), calls]);
+  }
 };
 
 interface PathContext {
   readonly entryNode: t.Node;
-  /**
-   * The source call that supplies this path's wrapper arguments: the nearest
-   * local call with a literal first argument, which is also an entry seed, or
-   * else the outermost local call. A bridge exposure is not an invocation, so
-   * a wrapper call reached through another entry and as its own entry keeps
-   * one invocation identity.
-   */
-  readonly invocationNode?: t.Node;
+  /** Source ranges of the local calls this path made since its entry. */
+  readonly calls: string[];
   readonly entry: string;
   readonly entryPath?: readonly string[];
   readonly entryKind: ElectronCallPath["entry_kind"] | null;
@@ -381,11 +420,10 @@ export const collectElectronWrappedCallPaths = (
     if (!handlerContext) return;
     const channel = first.value;
     const location = range(node);
-    const invocation = range(context.invocationNode ?? context.entryNode);
     const invocationLocation =
-      JSON.stringify(invocation) === JSON.stringify(location)
+      JSON.stringify(range(context.entryNode)) === JSON.stringify(location)
         ? undefined
-        : invocation;
+        : range(context.entryNode);
     const findingContext = {
       module_key: null,
       location,
@@ -439,13 +477,20 @@ export const collectElectronWrappedCallPaths = (
               };
     // A fully observed transmission stays one source fact when its callback is
     // traced. Registrations retain invocation identity because handlers compete.
+    // An entry nested in another entry's calls traces the same physical call
+    // sequence; an identical finding from it adds no invocation.
     const recorded = ipcAtEndpoint().get(ipcEndpointKey(finding));
+    const valueKey = ipcValueKey({
+      ...finding,
+      resolution_basis: "wrapper-substitution",
+    });
     const duplicate =
       recorded !== undefined &&
       (recorded.observedTransmission ||
         (context.entryKind === "bridge-member" &&
           recorded.observedRendererListener) ||
-        recorded.invocations.has(ipcInvocationKey(invocationLocation)));
+        recorded.invocations.has(ipcInvocationKey(invocationLocation)) ||
+        reachedThroughSameCalls(recorded, valueKey, context.calls));
     const findingGuarded =
       context.conditions.length > 0 || hasConditions(first) || guardedDispatch;
     // Registry facts do not establish every bridge entry's reachability. Only
@@ -470,14 +515,22 @@ export const collectElectronWrappedCallPaths = (
         ...finding,
         resolution_basis: "wrapper-substitution",
       };
-      // A channel the site itself determines, such as a local constant, is
-      // the same physical operation the syntax pass left unresolved, so it
-      // resolves that observation. A channel from an invocation argument is
-      // one candidate; other callers may pass channels this pass never sees.
+      // A finding the site itself determines, such as one whose channel is a
+      // local constant, is the same physical operation the syntax pass left
+      // unresolved, so it resolves that observation. A channel or handler from
+      // an invocation argument is one candidate; other callers may pass
+      // values this pass never sees.
       const site = ipcSiteKey(value);
+      const observed = unresolvedIpcSites?.get(site);
+      const direct =
+        observed === undefined ? undefined : accumulator.ipc[observed]?.value;
       const unresolved =
-        siteDeterminedChannel(node) === channel
-          ? unresolvedIpcSites?.get(site)
+        direct !== undefined &&
+        siteDeterminedChannel(node) === channel &&
+        direct.handler_kind === value.handler_kind &&
+        JSON.stringify(direct.handler_location) ===
+          JSON.stringify(value.handler_location)
+          ? observed
           : undefined;
       if (unresolved === undefined)
         accumulator.ipc.push({ offset: node.start ?? -1, value });
@@ -485,7 +538,12 @@ export const collectElectronWrappedCallPaths = (
         accumulator.ipc[unresolved] = { offset: node.start ?? -1, value };
         unresolvedIpcSites?.delete(site);
       }
-      indexIpcFinding(ipcAtEndpoint(), value, unresolved !== undefined);
+      indexIpcFinding(
+        ipcAtEndpoint(),
+        value,
+        unresolved !== undefined,
+        context.calls,
+      );
       if (descriptor.mode !== "send" && descriptor.mode !== "invoke" && !fn)
         accumulator.unknownFindings += 1;
     } else if (
@@ -629,6 +687,7 @@ export const collectElectronWrappedCallPaths = (
         {
           ...memberContext,
           entryNode: node,
+          calls: [],
           entryKind: "bridge-member",
           entry,
           entryPath: [key.value, ...path],
@@ -657,9 +716,7 @@ export const collectElectronWrappedCallPaths = (
           args,
           {
             ...branchContext,
-            invocationNode: t.isStringLiteral(node.arguments[0])
-              ? node
-              : (branchContext.invocationNode ?? node),
+            calls: [...branchContext.calls, ipcInvocationKey(range(node))],
             steps: [
               ...branchContext.steps,
               step(node, "call", callLabel(node.callee)),
@@ -765,6 +822,7 @@ export const collectElectronWrappedCallPaths = (
       const env = isolatedSeed?.env ?? resolver.environmentAt(node);
       let context: PathContext = {
         entryNode: node,
+        calls: [],
         entry: "",
         entryKind: null,
         channel: null,
