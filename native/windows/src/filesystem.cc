@@ -746,6 +746,8 @@ napi_value filesystemCall(napi_env env, const std::wstring& operation,
   if (operation == L"close") {
     retryRetainedNativeHandles();
     auto& file = static_cast<File&>(resource(env, args[0], Kind::File));
+    // Leave a failed handle on this File. The private runtime keeps that
+    // wrapper and retries this close before runtime_close.
     for (auto& handle : file.handles)
       requireReleased(handle, "Close admitted file handle failed", file.path);
     file.handles.clear();
