@@ -1,3 +1,4 @@
+import { KUNA_STRING_MIN_LENGTH } from "./KunaLimits.js";
 import { accessSync, constants, statSync } from "node:fs";
 
 import type {
@@ -7,30 +8,38 @@ import type {
   ProviderAvailability,
   ProviderTargetSupport,
 } from "../application/AnalysisProvider.js";
-import {
-  AnalysisCancelledError,
-  AnalysisCapabilityUnavailableError,
-} from "../domain/analysisErrorCore.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
   createAnalysisProfile,
   type AnalysisProfileCommitment,
 } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { err, ok } from "../domain/result.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import type { KunaProcessLauncher } from "./KunaCommand.js";
+import {
+  kunaFileCleanupError,
+  kunaRetainedResourceCleanupError,
+  type KunaProcessLauncher,
+} from "./KunaCommand.js";
 import {
   readKunaConfiguration,
   type KunaConfiguration,
 } from "./KunaConfiguration.js";
-import { inspectKunaInstallation } from "./KunaInstallation.js";
+import {
+  createKunaResourceScope,
+  inspectKunaInstallation,
+  kunaInstallationCancellation,
+} from "./KunaInstallation.js";
 import { KunaProjectCache } from "./KunaProjectCache.js";
 import {
   KUNA_PROVIDER_IDENTITY,
   kunaCapabilities,
 } from "./KunaProviderCapabilities.js";
 import { KUNA_COMMAND_REMEDIATION, KUNA_PROVIDER_ID } from "./KunaRelease.js";
+import { KunaRunSlots } from "./KunaRunSlots.js";
 import { KunaSessionClient } from "./KunaSessionClient.js";
+import { kunaUnavailable } from "./KunaUnavailable.js";
 
 /** Architectures REA verified Kuna on: x86-64 and AArch64 ELF and Mach-O, plus ARM Thumb. */
 const VERIFIED_ARCHITECTURES: ReadonlySet<string> = new Set([
@@ -47,18 +56,27 @@ export class KunaProvider implements AnalysisProviderCandidate {
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
   readonly #platform: NodeJS.Platform;
   readonly #launcher: KunaProcessLauncher | undefined;
+  readonly #probeTimeoutMs: number | undefined;
+  readonly #singleFunctionRuns: number | undefined;
   #cache: KunaProjectCache | undefined;
+  #runSlots: KunaRunSlots | undefined;
 
   constructor(
     environment: Readonly<NodeJS.ProcessEnv>,
     options: {
       readonly platform?: NodeJS.Platform;
       readonly launcher?: KunaProcessLauncher;
+      /** Test seam for bounded installation-probe lifecycle cases. */
+      readonly probeTimeoutMs?: number;
+      /** Test seam for foreground native runs; production derives it from the host. */
+      readonly singleFunctionRuns?: number;
     } = {},
   ) {
     this.#platform = options.platform ?? process.platform;
     this.#environment = snapshotEnvironment(environment, this.#platform);
     this.#launcher = options.launcher;
+    this.#probeTimeoutMs = options.probeTimeoutMs;
+    this.#singleFunctionRuns = options.singleFunctionRuns;
   }
 
   identity() {
@@ -156,20 +174,79 @@ export class KunaProvider implements AnalysisProviderCandidate {
     options?: AnalysisProfileResolutionOptions,
   ) {
     if (options?.signal?.aborted === true)
-      return err(new AnalysisCancelledError("kuna:profile"));
-    const installation = await inspectKunaInstallation(this.#environment, {
-      platform: this.#platform,
-      ...(options?.signal === undefined ? {} : { signal: options.signal }),
-    });
-    if (!installation.ok)
       return err(
-        new AnalysisCapabilityUnavailableError(
-          KUNA_PROVIDER_ID,
-          "open_binary",
-          installation.error.reason,
-          { userMessage: installation.error.reason },
+        new AnalysisCancelledError("kuna:profile", {
+          cause: options.signal.reason,
+        }),
+      );
+    let installation: Awaited<ReturnType<typeof inspectKunaInstallation>>;
+    const resourceScope = options?.resourceScope;
+    if (resourceScope === undefined)
+      return err(
+        kunaUnavailable(
+          "kuna:profile",
+          "Kuna profile inspection requires a durable resource scope",
         ),
       );
+    const kunaResources = createKunaResourceScope(resourceScope);
+    try {
+      installation = await inspectKunaInstallation(this.#environment, {
+        platform: this.#platform,
+        ...(options?.signal === undefined ? {} : { signal: options.signal }),
+        resourceScope: kunaResources.owner,
+        ...(this.#launcher === undefined
+          ? {}
+          : { processLauncher: this.#launcher }),
+        ...(this.#probeTimeoutMs === undefined
+          ? {}
+          : { probeTimeoutMs: this.#probeTimeoutMs }),
+      });
+    } catch (cause: unknown) {
+      const retainedCleanup = kunaRetainedResourceCleanupError(
+        cause,
+        "kuna:profile",
+      );
+      if (retainedCleanup !== undefined) return err(retainedCleanup);
+      const cancellation = kunaInstallationCancellation(cause);
+      if (
+        !(cause instanceof RegularFileCleanupFailure) &&
+        cancellation !== undefined
+      ) {
+        const error = new AnalysisCancelledError("kuna:profile", {
+          cause: cancellation.reason,
+          diagnostics: cancellation.diagnostics,
+          ...(!kunaResources.hasPending
+            ? {}
+            : {
+                cleanup: {
+                  reason: "Kuna version-probe process cleanup is unconfirmed.",
+                  resources: kunaResources.cleanupResources ?? [],
+                },
+              }),
+        });
+        kunaResources.bindRetainedFailure(error);
+        return err(error);
+      }
+      if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
+      const error = kunaFileCleanupError(cause, "kuna:profile");
+      kunaResources.bindFailure(cause, error);
+      return err(error);
+    }
+    if (!installation.ok) {
+      const error = kunaUnavailable("open_binary", installation.error.reason, {
+        diagnostics: installation.error.diagnostics,
+        ...(!kunaResources.hasPending
+          ? {}
+          : {
+              cleanup: {
+                reason: "Kuna version-probe process cleanup is unconfirmed.",
+                resources: kunaResources.cleanupResources ?? [],
+              },
+            }),
+      });
+      kunaResources.bindRetainedFailure(error);
+      return err(error);
+    }
     const { value } = installation;
     return ok({
       profile: createAnalysisProfile(
@@ -180,10 +257,33 @@ export class KunaProvider implements AnalysisProviderCandidate {
           verified_release: value.verified,
           jobs: value.configuration.jobs,
           export: "decompile-project",
+          reference_graph: {
+            command: "decompile-graph",
+            schema_version: 4,
+            bodies: false,
+            edge_kind: "call",
+          },
+          xrefs: { command: "xrefs", direction: "to", exact_address: true },
+          strings: {
+            command: "strings",
+            encoding: "all",
+            min_length: KUNA_STRING_MIN_LENGTH,
+            termination: "any",
+            xrefs: false,
+          },
           cache_policy: "live",
         },
       ),
     });
+  }
+
+  /** Shared cache cleanup belongs to the candidate, not a retired client. */
+  closeOwnedResources() {
+    return this.#cache?.close() ?? Promise.resolve(ok(null));
+  }
+
+  hasPendingOwnedResources(): boolean {
+    return this.#cache?.hasPendingCleanup === true;
   }
 
   createClient(
@@ -197,17 +297,12 @@ export class KunaProvider implements AnalysisProviderCandidate {
     if (!configuration.ok)
       return {
         execute: async (operation) =>
-          err(
-            new AnalysisCapabilityUnavailableError(
-              KUNA_PROVIDER_ID,
-              operation,
-              configuration.error.reason,
-            ),
-          ),
+          err(kunaUnavailable(operation, configuration.error.reason)),
         close: async () => ok(null),
       };
     return new KunaSessionClient(target, profile, {
       cache: this.#projectCache(configuration.value),
+      runSlots: this.#foregroundSlots(configuration.value),
       environment: this.#environment,
       ...(this.#launcher === undefined ? {} : { launcher: this.#launcher }),
     });
@@ -220,5 +315,14 @@ export class KunaProvider implements AnalysisProviderCandidate {
       ...(this.#launcher === undefined ? {} : { launcher: this.#launcher }),
     });
     return this.#cache;
+  }
+
+  /** One admission pool per provider, so concurrent sessions share the host's cores. */
+  #foregroundSlots(configuration: KunaConfiguration): KunaRunSlots {
+    this.#runSlots ??=
+      this.#singleFunctionRuns === undefined
+        ? KunaRunSlots.forHost(configuration.jobs)
+        : new KunaRunSlots(this.#singleFunctionRuns);
+    return this.#runSlots;
   }
 }

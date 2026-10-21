@@ -13,9 +13,11 @@ import {
   inspectWasmArtifactInputSchema,
   wasmArtifactSchema,
   wasmArtifactMatchesSubject,
+  DEFAULT_WASM_COMMAND_TIMEOUT_MS,
 } from "../../domain/wasm/wasmArtifact.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, type Result } from "../../domain/result.js";
+import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 const OPERATION = "inspect_wasm_artifact";
 
@@ -67,13 +69,13 @@ export class WasmArtifactService {
       return err(new AnalysisInputError(OPERATION, undefined, pathIssues));
     const inspected = await this.provider.inspect(input.data, options);
     if (!inspected.ok) return inspected;
-    if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
     const execution = inspected.value;
     const report = wasmArtifactSchema.safeParse(execution.result);
     if (
       !report.success ||
       report.data.artifact.path !== input.data.path ||
+      report.data.tool_profile.timeout_ms !==
+        (input.data.command_timeout_ms ?? DEFAULT_WASM_COMMAND_TIMEOUT_MS) ||
       !wasmArtifactMatchesSubject(report.data.artifact, execution.subject) ||
       JSON.stringify(report.data.glue.map((item) => item.artifact.path)) !==
         JSON.stringify(input.data.glue_paths) ||
@@ -88,7 +90,7 @@ export class WasmArtifactService {
           "WABT adapter returned malformed data or changed the selected artifact identity.",
         ),
       );
-    return ok(
+    return completeProviderEvidence(
       createEvidence(execution.subject, execution.provider, {
         operation: OPERATION,
         parameters: input.data,
@@ -100,6 +102,7 @@ export class WasmArtifactService {
         locations: execution.locations,
         limitations: execution.limitations,
       }),
+      options?.signal,
     );
   }
 }
