@@ -41,7 +41,12 @@ import {
   type Observed,
 } from "./environmentStateWriteObserve.js";
 import type { FieldRule, WriteCall } from "./environmentStateWriteRules.js";
-import { integerOf, isUuid, readClock } from "./environmentStateWriteValues.js";
+import {
+  integerOf,
+  isUuid,
+  nextSequence,
+  readClock,
+} from "./environmentStateWriteValues.js";
 
 /** The id a response names alone: a scalar body, or an object's id field or single scalar member. */
 const respondedId = (
@@ -180,9 +185,9 @@ const followsSequences = (
       (entity) =>
         rule.scope === "type" || entity.collection === created.collection,
     );
-    const next = Math.max(
-      nextInteger(fieldsOf(scope), rule.field) ?? 1,
-      (draft.sequences.get(key) ?? 0) + 1,
+    const next = nextSequence(
+      nextInteger(fieldsOf(scope), rule.field),
+      draft.sequences.get(key),
     );
     return integerOf(created.fields[rule.field]) === next;
   });

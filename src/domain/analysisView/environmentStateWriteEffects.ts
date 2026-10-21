@@ -1,10 +1,8 @@
 import type { JsonValue } from "../jsonValue.js";
 import { ok } from "../result.js";
 import {
-  collectionPathOf,
   isObject,
   isStateWrite,
-  lastSegmentValue,
   locateItem,
   at,
   same,
@@ -201,39 +199,46 @@ export const searchFrom = (context: EffectContext, step: WriteStep) => ({
   withBody: context.io.withBody,
 });
 
-/** The entity an update's response shows, located by its identity, else a later item read of it spelled as the call was. */
+/** The entity an update's response shows, located by its identity, else a later item read of the target the write resolved. */
 const updatedObservation = (
   context: EffectContext,
   step: WriteStep,
-  entity: { readonly type: string; readonly idField: string },
+  entity: {
+    readonly type: string;
+    readonly idField: string;
+    readonly collection: string;
+    readonly id: string;
+  },
 ): Observed | undefined => {
-  const target = {
-    ...entity,
-    collection: collectionPathOf(step.record, true),
-    id: lastSegmentValue(step.record.path),
-  };
   const own = context.io.withBody(
     step.record.ordinal,
     (body): Observed | undefined => {
       const located =
-        body === undefined ? undefined : locateItem(body, target.id);
+        body === undefined ? undefined : locateItem(body, entity.id);
       const object =
         located === undefined ? undefined : at(body!, located.pointer);
-      return located?.keys.includes(target.idField) === true && isObject(object)
+      return located?.keys.includes(entity.idField) === true && isObject(object)
         ? {
             ordinal: step.record.ordinal,
             pointer: located.pointer,
             object,
-            id: target.id,
+            id: entity.id,
           }
         : undefined;
     },
   );
   if (own !== undefined) return own;
   const later = laterObservation(searchFrom(context, step), {
-    ...target,
+    type: entity.type,
+    collection: entity.collection,
+    idField: entity.idField,
+    id: entity.id,
     held: () => true,
     isWrite: isStateWrite,
+    sameItem: (record) => {
+      const found = itemTarget(context.state, entity.type, record);
+      return found.collection === entity.collection && found.id === entity.id;
+    },
   });
   if (later !== undefined) context.observed(later.ordinal);
   return later;
@@ -365,7 +370,7 @@ export const applyUpdate = (
   const after =
     entity === undefined
       ? undefined
-      : updatedObservation(context, step, { type, idField });
+      : updatedObservation(context, step, { type, idField, collection, id });
   if (entity === undefined || after === undefined) {
     fail(draft, step, "no-observation");
     return UNKNOWN;

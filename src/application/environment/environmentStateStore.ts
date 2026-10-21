@@ -2,6 +2,7 @@ import type {
   StateEntity,
   StateType,
 } from "../../domain/analysisView/environmentStateRules.js";
+import { nextSequence } from "../../domain/analysisView/environmentStateWriteValues.js";
 import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
@@ -191,13 +192,19 @@ export class EnvironmentStateStore {
   /** Count an applied write and keep the sequence values it took, so a refused call takes none. */
   commitWrite(sequences: ReadonlyMap<string, number>): void {
     this.#writes += 1;
-    for (const [key, value] of sequences)
-      this.#sequences.set(key, Math.max(value, this.#sequences.get(key) ?? 0));
+    for (const [key, value] of sequences) {
+      const taken = this.#sequences.get(key);
+      // No earlier value leaves this one in place, including when it is negative.
+      this.#sequences.set(
+        key,
+        taken === undefined ? value : Math.max(taken, value),
+      );
+    }
   }
 
-  /** The next value of a sequence: one past both the largest held value and the largest an applied write took. */
-  sequenceAfter(key: string, held: number): number {
-    return Math.max(held, (this.#sequences.get(key) ?? 0) + 1);
+  /** The next value of a sequence: the next held integer, else one past the later of that and the last value taken. */
+  sequenceAfter(key: string, held: number | undefined): number {
+    return nextSequence(held, this.#sequences.get(key));
   }
 
   #restart(): void {
