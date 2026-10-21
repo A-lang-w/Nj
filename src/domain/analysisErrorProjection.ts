@@ -1,3 +1,5 @@
+import { projectArtifactIntegrityDetails } from "./artifactIntegrity.js";
+import type { AnalysisErrorRecovery } from "./analysisErrorRecovery.js";
 import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
 import { isImmutableJsonSnapshot } from "./immutableJson.js";
 
@@ -101,6 +103,7 @@ export const projectAnalysisError = (
             : jsonValueSchema.parse(partialObservation),
         }),
   };
+  const recovery = errorRecovery(error);
   return {
     code,
     category: analysisErrorCategory(error),
@@ -115,8 +118,26 @@ export const projectAnalysisError = (
     remediation: {
       action: analysisErrorRemediationAction(error),
     },
+    ...(recovery === undefined ? {} : { recovery }),
     ...(Object.keys(details).length === 0 ? {} : { details }),
   };
+};
+
+const errorRecovery = (
+  error: AnalysisError,
+): AnalysisErrorRecovery | undefined => {
+  if (error instanceof AnalysisInputError)
+    return {
+      kind: "inspect_input_contract",
+      operation: error.operation,
+    };
+  if (error instanceof AnalysisTimeoutError)
+    return {
+      kind: "inspect_timeout_state",
+      operation: error.operation,
+      timeout_ms: error.timeoutMs,
+    };
+  return undefined;
 };
 
 const underlyingErrorCode = (
@@ -335,12 +356,7 @@ const artifactStateErrorDetails = (
   error: AnalysisError,
 ): Readonly<Record<string, JsonValue>> | undefined => {
   if (error instanceof ArtifactOperationError && error.artifactDetails)
-    return {
-      logical_path: error.artifactDetails.logicalPath,
-      declared_sha256: error.artifactDetails.declaredSha256,
-      calculated_sha256: error.artifactDetails.calculatedSha256,
-      unpacked: error.artifactDetails.unpacked,
-    };
+    return projectArtifactIntegrityDetails(error.artifactDetails);
   if (error instanceof ArtifactOperationError)
     return {
       operation: error.operation,
@@ -354,6 +370,14 @@ const artifactStateErrorDetails = (
       operation: error.operation,
       reason: error.reason,
       ...(error.path === undefined ? {} : { path: error.path }),
+      ...(error.contentIssues === undefined
+        ? {}
+        : {
+            content_issues: error.contentIssues.map((issue) => ({
+              ...issue,
+              path: [...issue.path],
+            })),
+          }),
       ...(error.published === undefined
         ? {}
         : {
@@ -568,7 +592,6 @@ const lifecycleErrorDetails = (
 
 const RETRYABLE_CODES: ReadonlySet<AnalysisErrorProjection["code"]> = new Set([
   "artifact_changed",
-  "invalid_request",
   "provider_timeout",
   "cancelled",
   "revision_conflict",
@@ -615,5 +638,6 @@ export interface AnalysisErrorProjection extends Readonly<
   readonly remediation: Readonly<{
     action: string;
   }>;
+  readonly recovery?: AnalysisErrorRecovery;
   readonly details?: Readonly<Record<string, JsonValue>>;
 }
