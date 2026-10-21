@@ -4,6 +4,7 @@ import canonicalize from "canonicalize";
 
 import type { Evidence } from "../domain/evidence.js";
 import {
+  describeValidationFailure,
   parseEvidenceBundle,
   type EvidenceBundle,
 } from "../domain/evidenceBundle.js";
@@ -34,6 +35,14 @@ export interface ReconstructionObligationCandidate extends CandidateFields {
 export interface ReconstructionObligationCandidateSet {
   readonly candidates: readonly ReconstructionObligationCandidate[];
   readonly limitations: readonly string[];
+}
+
+/** Caller input cites review Evidence that its bundle does not contain. */
+export class MissingReviewEvidenceError extends TypeError {
+  constructor(evidenceId: string) {
+    super(`Reviewed obligation Evidence is missing: ${evidenceId}`);
+    this.name = "MissingReviewEvidenceError";
+  }
 }
 
 /** Derive conservative candidates from graph, process, and reviewed inputs. */
@@ -158,7 +167,7 @@ const deriveApplicationCandidates = (
       );
   } catch (cause: unknown) {
     limitations.add(
-      `Application Evidence ${evidence.evidence_id} could not generate candidates: ${errorMessage(cause)}`,
+      `Application Evidence ${evidence.evidence_id} could not generate candidates: ${describeValidationFailure(cause)}`,
     );
   }
 };
@@ -250,7 +259,7 @@ const deriveProcessCandidate = (
       );
   } catch (cause: unknown) {
     limitations.add(
-      `Process Evidence ${evidence.evidence_id} could not generate candidates: ${errorMessage(cause)}`,
+      `Process Evidence ${evidence.evidence_id} could not generate candidates: ${describeValidationFailure(cause)}`,
     );
   }
 };
@@ -322,9 +331,7 @@ const reviewedCandidate = (
     authority_references: reviewEvidenceIds.map((evidenceId) => {
       const evidence = records.get(evidenceId);
       if (evidence === undefined)
-        throw new TypeError(
-          `Reviewed obligation Evidence is missing: ${evidenceId}`,
-        );
+        throw new MissingReviewEvidenceError(evidenceId);
       return {
         evidence_id: evidenceId,
         authority: evidence.authority,
@@ -413,7 +420,22 @@ const addCandidate = (
       ...current.authority_references,
       ...candidate.authority_references,
     ]),
-    definitionCount: current.definitionCount + candidate.definitionCount,
+    // Each observation keeps its own unresolved authority and next steps.
+    unavailable_authority: uniqueBy(
+      [...current.unavailable_authority, ...candidate.unavailable_authority],
+      (item) => item,
+    ),
+    required_next_evidence: uniqueBy(
+      [...current.required_next_evidence, ...candidate.required_next_evidence],
+      (item) => item,
+    ),
+    // A generated ID digests its derivation key, so two generated candidates
+    // with one ID are the same claim seen by several records. Only another
+    // reviewed definition can introduce a competing definition.
+    definitionCount:
+      current.origin === "generated" && candidate.origin === "generated"
+        ? current.definitionCount
+        : current.definitionCount + candidate.definitionCount,
   });
 };
 
@@ -443,6 +465,3 @@ const digest = (value: unknown): string => {
     throw new TypeError("Reconstruction obligation key is not canonical JSON");
   return createHash("sha256").update(encoded).digest("hex");
 };
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : "unknown validation failure";

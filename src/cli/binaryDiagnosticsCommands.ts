@@ -1,5 +1,4 @@
 import { z } from "incur";
-import { resolve } from "node:path";
 import {
   createRecordedCrashService,
   createBinaryLayoutService,
@@ -10,9 +9,12 @@ import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { inspectBinaryLayoutInputSchema } from "../domain/native/binaryLayout.js";
+import { inspectRecordedCrashInputSchema } from "../domain/native/recordedCrash.js";
 import { inspectPeResourcesInputSchema } from "../domain/native/peResources.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
 /** Inspect operator-selected files through the same shared workflow as MCP. */
 export const registerBinaryDiagnosticsCommands = (
@@ -39,7 +41,7 @@ export const registerBinaryDiagnosticsCommands = (
               () =>
                 pe.inspect(
                   {
-                    path: resolve(args.path),
+                    path: absoluteCallerPath(args.path),
                     max_file_bytes: options.maxFileBytes,
                     max_entries: options.maxEntries,
                   },
@@ -48,6 +50,7 @@ export const registerBinaryDiagnosticsCommands = (
               pe,
               "rea-pe-resources",
               "inspect_pe_resources",
+              signal,
             ),
         );
       }),
@@ -59,11 +62,20 @@ export const registerBinaryDiagnosticsCommands = (
     args: z.object({
       path: z.string().describe("Local ELF binary or relocatable object"),
     }),
-    run: ({ args }) =>
+    options: z.object({
+      pwntoolsTimeoutMs:
+        inspectBinaryLayoutInputSchema.shape.pwntools_timeout_ms,
+    }),
+    run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectBinaryLayout, async () => {
           const result = await service.inspectAndClose(
-            { path: resolve(args.path) },
+            {
+              path: absoluteCallerPath(args.path),
+              ...(options.pwntoolsTimeoutMs === undefined
+                ? {}
+                : { pwntools_timeout_ms: options.pwntoolsTimeoutMs }),
+            },
             { signal },
           );
           return result.ok ? result.value : projectAnalysisError(result.error);
@@ -84,14 +96,19 @@ export const registerBinaryDiagnosticsCommands = (
         .boolean()
         .default(false)
         .describe("Add BYO core-only GDB/pwndbg mapping candidates"),
+      pwntoolsTimeoutMs:
+        inspectRecordedCrashInputSchema.shape.pwntools_timeout_ms,
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectRecordedCrash, async () => {
           const result = await recorded.inspectAndClose(
             {
-              path: resolve(args.path),
+              path: absoluteCallerPath(args.path),
               include_debugger_context: options.debuggerContext,
+              ...(options.pwntoolsTimeoutMs === undefined
+                ? {}
+                : { pwntools_timeout_ms: options.pwntoolsTimeoutMs }),
             },
             { signal },
           );

@@ -306,9 +306,11 @@ const visitReader = async (
       });
       if (cleanup.kind === "failed") {
         failure = {
-          cause: ArtifactReaderFailure.withCleanup(
-            failure === undefined ? cleanup.cause : failure.cause,
-            ArtifactReaderFailure.cleanupObservation(cleanup.cause, resource),
+          cause: context.resources.cleanupFailure(
+            failure === undefined
+              ? { kind: "completed" }
+              : { kind: "failed", cause: failure.cause },
+            [cleanup],
           ),
         };
       }
@@ -626,5 +628,6 @@ const abortIfNeeded = (signal?: AbortSignal): void => {
     throw new ArtifactReaderFailure(
       "cancelled",
       "JavaScript artifact reconstruction cancelled",
+      { cause: signal.reason },
     );
 };
