@@ -163,6 +163,11 @@ it.each([
   expect(commandMayChangeInferiorOutput(command)).toBe(expected);
 });
 
+it("classifies malformed input-only close arguments without regex backtracking", () => {
+  const command = `run <&- ${"arg ".repeat(28)}&`;
+  expect(commandMayChangeInferiorOutput(command)).toBe(true);
+});
+
 it.each([
   [new Error("provider failure"), "provider failure"],
   ["non-error provider failure", "non-error provider failure"],

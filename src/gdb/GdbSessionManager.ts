@@ -2376,7 +2376,7 @@ export const commandMayChangeInferiorOutput = (command: string): boolean => {
     // POSIX shell syntax also permits closing stdin with `<&-`. Only fd 0
     // preserves the configured output sink; closing an output descriptor is
     // still rejected below.
-    if (/^&-(?:\s+[^<>;&|\r\n]+)*\s*$/u.test(inputPath.trim())) {
+    if (/^&-(?:\s+[^<>;&|\s]+)*$/u.test(inputPath.trim())) {
       const descriptor = /(?:^|\s)(\d+)$/u.exec(argumentsAndFd)?.[1];
       return (
         (descriptor === undefined || descriptor === "0") &&
