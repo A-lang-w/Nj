@@ -431,7 +431,9 @@ naming the entity, collection or document path, or `{"source": "recording",
 "reason": …}` with the view's reason, `no-view` or `unrecorded-request`. A
 state answer carries the base record's status, content type and `replay`
 provenance with `truncated: false`; one whose JSON would exceed 256 KiB is
-refused as a `resource_constraint` tool error rather than cut. Serving is
+refused as a `resource_constraint` tool error rather than cut. Extraction does
+not state-back a document whose rendered JSON exceeds 256 KiB; that read stays
+recorded (`rendered-oversize`) and replays the captured body. Serving is
 read-only: `POST`, `PUT`, `PATCH` and `DELETE` tools, other than query `POST`s,
 are not served, so nothing a call does changes the state. Query `POST`s stay
 served and answer from their recordings with the reason `query-body`.
