@@ -1726,5 +1726,181 @@
     "docs_check_first_attempt": "Failed because the new README anchor differed from translated README link inventories; reused the existing MCP guide link.",
     "docs_checks": "Initial checks caught a new/duplicate README link absent from translated inventories; the introduction now names the existing guide without adding a link.",
     "docs_check_final": "Passed after preserving the translated README link inventory."
+  },
+  "review_followup": {
+    "root_cause": "The previous ambiguous CATALOG_IDENTITY denoted full advertisement while consumers assumed it represented the default live server.",
+    "structural_fix": "Explicit FULL_CATALOG_IDENTITY and DEFAULT_CATALOG_IDENTITY replace the ambiguous export; counts-only canonical consumers retain full identity; default diagnostics use the default; readiness records the typed live server catalog; Claude expectations use the shared input/output profile parsers.",
+    "source_sha256": {
+      "scripts/generate-skill-metadata.mjs": "e88f47e80a6d0e6b7eb14a464b7e5f3e44993529ecbc0ed6604c9569edb68ae7",
+      "scripts/lib/catalog-builders.mjs": "bb0cf8ebfe5a7d0ff090c1ddae6dd8760577b3b824cc1fd7cd9f2e83b558919e",
+      "scripts/lib/product-catalog.mjs": "20182284c3e1df7b37b858affb75028aa24724901147b638f4a07190908d9b9b",
+      "scripts/lib/release-package-canary.mjs": "c0f3e59832a0cce00829a3bf1e033588d9d840736d1305dbbad636506b2ac6d3",
+      "scripts/verify-claude-client.mjs": "8b098bbc00e9cb4877f86564245a16db696a2799fe6c48fe0e65f324629da4d7",
+      "scripts/verify-package-pack.mjs": "11b61499b846e896bc65689ca69c1c45db1ab4f0b14614518371a1dd59368a92",
+      "scripts/verify-reconstruction-readiness.mjs": "a7f4614694e0cc196b726b989a5bf5b0fdae574c48393e1a981699bc665f9d28",
+      "src/application/Doctor.fixture.ts": "e98481ff468f208561dd8b8132b8326317a088706a7ce366f5dd0dc521031292",
+      "src/application/Doctor.ts": "cd10aab92516c234e41c1597b35a126be289aae5dfaef0d964ef27ae5c648855",
+      "src/application/Setup.fixture.ts": "175487d3f6916852acac7635fccfb61d1616aca28d198278ec7d31a517b68c77",
+      "src/catalogIdentity.ts": "54e67816c09ab1abb12955ed0e87f4aa5e6f8607668aadb24ad1dc74e0ca85a3",
+      "src/server/EvidenceMcpServer.ts": "4f5913307b381815e7e319d777f4efe89fbee98da87978925028239b8773c88b",
+      "src/serverIdentity.ts": "b90af4f999ab0aadec352dfd3244b42f77b835542ec588577c8f3c1438f005df",
+      "tests/acceptance/applications/runtime.test.ts": "b57883f459018053893a268554a05910bf1aaa480599c6f7cad79cbbd0f9a1cf",
+      "tests/boundary/filesystem/dependencyInstall.test.ts": "055bb0cc573fd0a3b81155177e0dd913ee28bc776fbe370ef53076119e2b5cbd",
+      "tests/boundary/filesystem/generatedSkill.test.ts": "3197d6a2274fd505631b274329811c5b25c9f870c0bc6952f04f203b7cf360b2",
+      "tests/boundary/mcp/mcpDoctor.test.ts": "c88a665e8560ac97755ca809e6f45b2ad2354809a2eb7100470783a764f9decb",
+      "tests/boundary/mcp/outputSchemaProfile.test.ts": "d84e1e0636b811d48dde5d9b532de937f9fd3db49f394e20650e8258aa52ba85",
+      "tests/boundary/mcp/serverIdentity.test.ts": "dbe59d532b4a53635e502e93577fbd9f23d754ad31e715af73d461ada126934f",
+      "tests/boundary/process/packageTarListing.test.ts": "20581fed2bbbc0c3a3756560026cb138a66074e20f8c159e191d42de4e000f8d"
+    },
+    "validation": {
+      "review-tests": {
+        "passed": true,
+        "cpu_seconds": 137.239542,
+        "family_peak_bytes": 3058552832,
+        "log_sha256": "b380cc2270668d047245b3426cd143271658a7ad5da1aad3db073c356605c26c"
+      },
+      "review-check": {
+        "passed": true,
+        "cpu_seconds": 28.654837,
+        "family_peak_bytes": 1334308864,
+        "log_sha256": "b3182a46e432b0b0503088abec8abf8d0224c3da8025eb4f0e8777ac789e5e27"
+      },
+      "review-docs": {
+        "passed": true,
+        "cpu_seconds": 14.641149,
+        "family_peak_bytes": 507789312,
+        "log_sha256": "2f4aea6a070f6012ee7587ead635342cf9d318699b9701a8de09ef79021878d2"
+      },
+      "readiness-default": {
+        "passed": true,
+        "cpu_seconds": 29.813437,
+        "family_peak_bytes": 1241534464,
+        "log_sha256": "e864436ba2db543f6941bfb83ce58d37fdf1c17ca5ff38a78674e7c812b9abb7"
+      },
+      "readiness-full": {
+        "passed": true,
+        "cpu_seconds": 28.197651,
+        "family_peak_bytes": 1157550080,
+        "log_sha256": "f18fc53b6985aeef4d951cb2183eac7c12ea5c85d3426908a1766490ddf26da9"
+      },
+      "readiness-compact-off": {
+        "passed": true,
+        "cpu_seconds": 18.102913,
+        "family_peak_bytes": 861978624,
+        "log_sha256": "0fa90210e8e125f4f0c09db69a594f62ffc1f1c11fc71b848f701bd99e13baa0"
+      },
+      "review-sdk-default": {
+        "passed": true,
+        "cpu_seconds": 7.375525,
+        "family_peak_bytes": 861224960,
+        "log_sha256": "e95b4d93d772530b00a59ea09a4966a3b8eac9a99e640680f53af86f6288cf69"
+      }
+    },
+    "focused_tests": "9 files: 106 passed, 2 skipped.",
+    "readiness_profiles": ["default", "full", "compact input / output off"],
+    "sdk_catalog_and_complete_parent_unchanged": true,
+    "native_selected_identity_proof": [
+      {
+        "profile": "default",
+        "passed": true,
+        "saved_native_status_sha256": "b8fa284ad96587530d2664835a83f139b5ded29ddd4e5ab9fdaa15efc9500e00",
+        "catalog": {
+          "counts": {
+            "cli_commands": 160,
+            "mcp_tools": 213,
+            "mcp_prompts": 6
+          },
+          "digests": {
+            "tools_sha256": "b8c3712bb47a049ccd249b0de3afacdc27da0aea465baaadc8b7f17eef61daf3",
+            "prompts_sha256": "84c719b1aa48a7b12ad29e16278fc4c4254d9364f6620792cba6ceaef5b4a98c",
+            "combined_sha256": "0389e5636823b38f9c8a1561554e0c32d22a43528e792dc0995583ba37c460e4"
+          }
+        },
+        "readiness_catalog_digest": "0389e5636823b38f9c8a1561554e0c32d22a43528e792dc0995583ba37c460e4"
+      },
+      {
+        "profile": "full",
+        "passed": true,
+        "saved_native_status_sha256": "d1cb209b015da2a6662a56bcd167bf515fda8dd0baa1145b38d254f4eec0725c",
+        "catalog": {
+          "counts": {
+            "cli_commands": 160,
+            "mcp_tools": 213,
+            "mcp_prompts": 6
+          },
+          "digests": {
+            "tools_sha256": "7362fced4ad2726682316d0f1e8acf65e90c59192ef163c7cc4ce00c3d756767",
+            "prompts_sha256": "84c719b1aa48a7b12ad29e16278fc4c4254d9364f6620792cba6ceaef5b4a98c",
+            "combined_sha256": "5ab16853c717a6e98473cb6c5ac1871e186b9784f32ce1ac54d59ccaf1d3634e"
+          }
+        },
+        "readiness_catalog_digest": "5ab16853c717a6e98473cb6c5ac1871e186b9784f32ce1ac54d59ccaf1d3634e"
+      }
+    ],
+    "native_client_limit": {
+      "client": "Claude Code 2.1.296",
+      "model": "loopback Anthropic fixture; no live API claim",
+      "end_to_end_passed": false,
+      "reason": "The unchanged verifier requires binary_session inline; native Claude persists the ~55KB result. Same failure reproduced on untouched baseline product code after preparing its packaged skill.",
+      "probes": [
+        {
+          "case": "claude-default",
+          "fixture_failure": "AssertionError [ERR_ASSERTION]: Claude must return the inline binary_session result before continuing",
+          "payload_exit_code": 1,
+          "cleanup_verified": true,
+          "saved_status_catalog": {
+            "counts": {
+              "cli_commands": 160,
+              "mcp_tools": 213,
+              "mcp_prompts": 6
+            },
+            "digests": {
+              "tools_sha256": "b8c3712bb47a049ccd249b0de3afacdc27da0aea465baaadc8b7f17eef61daf3",
+              "prompts_sha256": "84c719b1aa48a7b12ad29e16278fc4c4254d9364f6620792cba6ceaef5b4a98c",
+              "combined_sha256": "0389e5636823b38f9c8a1561554e0c32d22a43528e792dc0995583ba37c460e4"
+            }
+          },
+          "saved_status_bytes": 55471
+        },
+        {
+          "case": "claude-full",
+          "fixture_failure": "AssertionError [ERR_ASSERTION]: Claude must return the inline binary_session result before continuing",
+          "payload_exit_code": 1,
+          "cleanup_verified": true,
+          "saved_status_catalog": {
+            "counts": {
+              "cli_commands": 160,
+              "mcp_tools": 213,
+              "mcp_prompts": 6
+            },
+            "digests": {
+              "tools_sha256": "7362fced4ad2726682316d0f1e8acf65e90c59192ef163c7cc4ce00c3d756767",
+              "prompts_sha256": "84c719b1aa48a7b12ad29e16278fc4c4254d9364f6620792cba6ceaef5b4a98c",
+              "combined_sha256": "5ab16853c717a6e98473cb6c5ac1871e186b9784f32ce1ac54d59ccaf1d3634e"
+            }
+          },
+          "saved_status_bytes": 55471
+        },
+        {
+          "case": "claude-baseline-full-complete",
+          "fixture_failure": "AssertionError [ERR_ASSERTION]: Claude must return the inline binary_session result before continuing",
+          "payload_exit_code": 1,
+          "cleanup_verified": true,
+          "saved_status_catalog": {
+            "counts": {
+              "cli_commands": 160,
+              "mcp_tools": 213,
+              "mcp_prompts": 6
+            },
+            "digests": {
+              "tools_sha256": "3e27909ade9f9f6e61f361fd0501c9a712b7412666b00758448195749ccb680e",
+              "prompts_sha256": "84c719b1aa48a7b12ad29e16278fc4c4254d9364f6620792cba6ceaef5b4a98c",
+              "combined_sha256": "71e51816c31c8e9f0dd6956c69b7f36e00ce53e0d5579b583b944979036028ed"
+            }
+          },
+          "saved_status_bytes": 55473
+        }
+      ]
+    }
   }
 }

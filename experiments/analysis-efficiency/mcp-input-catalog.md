@@ -134,3 +134,30 @@ passed on both bases. Documentation checks caught a new README link absent from
 translated link inventories (including a duplicate-link attempt); the
 introduction now names the existing guide without changing the link inventory.
 Final documentation and CI results qualify the PR.
+
+## Review follow-up: ownership of catalog identity
+
+The former `CATALOG_IDENTITY` meant the full advertisement, while two consumers
+treated it as the default live identity. The owner now exports explicit
+`FULL_CATALOG_IDENTITY` and `DEFAULT_CATALOG_IDENTITY`; the ambiguous export is
+removed. Canonical build/packaging consumers use full identity, default
+diagnostics use default identity, and custom/explicit profiles keep their own
+identity. Readiness captures and validates `binary_session` from the actual
+server rather than assuming a profile. Claude's verifier derives its expected
+identity using the shared input/output profile parsers.
+
+Nine related test files passed 106 tests with two platform skips. Static and
+documentation gates passed again. Actual readiness tasks passed with default,
+explicit full, and compact input/output-off settings. The final real Zellij SDK
+task reproduced the earlier complete parent and advertised catalog exactly.
+
+Real Claude Code 2.1.296 with the loopback fixture discovered all 213 schemas
+and returned `binary_session` for both profiles. It persisted the 55,471-byte
+result, preventing the verifier's existing inline-only recognizer from
+continuing. The untouched baseline reproduces the same failure (55,473-byte
+result) after preparing its matching packaged skill. This is not a passing
+end-to-end Claude analysis claim; the unrelated recognizer is left unchanged.
+The actual persisted native responses were independently parsed with the named
+production output contract: both selected catalog identities match, and the
+completed readiness reports record the same digests. Receipts retain the
+baseline/candidate failures, cleanup and this narrower successful check.

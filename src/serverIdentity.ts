@@ -2,7 +2,7 @@ import { dirname, basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  CATALOG_IDENTITY,
+  DEFAULT_CATALOG_IDENTITY,
   type createCatalogIdentity,
 } from "./catalogIdentity.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "./identity.js";
@@ -36,7 +36,7 @@ export const createServerIdentity = (input: {
   readonly protocolVersion?: string | undefined;
   readonly catalog?: ReturnType<typeof createCatalogIdentity>;
 }) => {
-  const catalog = input.catalog ?? CATALOG_IDENTITY;
+  const catalog = input.catalog ?? DEFAULT_CATALOG_IDENTITY;
   const serverPath = input.commandPath || undefined;
   const reasons: string[] = [];
   if (

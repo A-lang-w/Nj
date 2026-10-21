@@ -11,7 +11,8 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { machoImage } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import {
-  CATALOG_IDENTITY,
+  FULL_CATALOG_IDENTITY,
+  DEFAULT_CATALOG_IDENTITY,
   createCatalogDigestProfiles,
   createCatalogDigests,
   createCatalogIdentity,
@@ -114,16 +115,18 @@ describe("server and catalog identity", () => {
       packageJson.dependencies["@modelcontextprotocol/server"],
     );
     expect(new Set(CLI_COMMAND_NAMES).size).toBe(CLI_COMMAND_NAMES.length);
-    expect(CATALOG_IDENTITY.counts).toEqual({
+    expect(FULL_CATALOG_IDENTITY.counts).toEqual({
       cli_commands: CLI_COMMAND_NAMES.length,
       mcp_tools: TOOL_CONTRACTS.length,
       mcp_prompts: PROMPT_CONTRACTS.length,
     });
-    expect(CATALOG_IDENTITY.digests.combined_sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(FULL_CATALOG_IDENTITY.digests.combined_sha256).toMatch(
+      /^[a-f0-9]{64}$/u,
+    );
   });
 
   it("covers each tool's target-content policy in the catalog digest", () => {
-    expect(createCatalogDigests()).toEqual(CATALOG_IDENTITY.digests);
+    expect(createCatalogDigests()).toEqual(FULL_CATALOG_IDENTITY.digests);
     const [first] = TOOL_CONTRACTS;
     if (first === undefined) throw new Error("expected a tool contract");
     const toggled = TOOL_CONTRACTS.map((contract) =>
@@ -133,18 +136,20 @@ describe("server and catalog identity", () => {
     );
     const digests = createCatalogDigests(toggled);
     expect(digests.combined_sha256).not.toBe(
-      CATALOG_IDENTITY.digests.combined_sha256,
+      FULL_CATALOG_IDENTITY.digests.combined_sha256,
     );
     expect(digests.tools_sha256).not.toBe(
-      CATALOG_IDENTITY.digests.tools_sha256,
+      FULL_CATALOG_IDENTITY.digests.tools_sha256,
     );
     expect(digests.prompts_sha256).toBe(
-      CATALOG_IDENTITY.digests.prompts_sha256,
+      FULL_CATALOG_IDENTITY.digests.prompts_sha256,
     );
   });
 
   it("binds output schema profile and canonical output contracts into identity", () => {
     const profiles = createCatalogDigestProfiles();
+    expect(FULL_CATALOG_IDENTITY.digests).toEqual(profiles.full.full);
+    expect(DEFAULT_CATALOG_IDENTITY.digests).toEqual(profiles.compact.full);
     const changedOutput = TOOL_CONTRACTS.map((contract, index) =>
       index === 0
         ? {
@@ -199,7 +204,7 @@ describe("server and catalog identity", () => {
       commandPath: "/packaged/rea.mjs",
       expected: {
         package_version: PRODUCT_IDENTITY.packageVersion,
-        catalog_digest: CATALOG_IDENTITY.digests.combined_sha256,
+        catalog_digest: DEFAULT_CATALOG_IDENTITY.digests.combined_sha256,
         server_path: "/packaged/rea.mjs",
       },
     });
@@ -309,12 +314,14 @@ describe("guided prompt catalog identity", () => {
     );
     const digests = createCatalogDigests(TOOL_CONTRACTS, changed);
     expect(digests.prompts_sha256).not.toBe(
-      CATALOG_IDENTITY.digests.prompts_sha256,
+      FULL_CATALOG_IDENTITY.digests.prompts_sha256,
     );
     expect(digests.combined_sha256).not.toBe(
-      CATALOG_IDENTITY.digests.combined_sha256,
+      FULL_CATALOG_IDENTITY.digests.combined_sha256,
     );
-    expect(digests.tools_sha256).toBe(CATALOG_IDENTITY.digests.tools_sha256);
+    expect(digests.tools_sha256).toBe(
+      FULL_CATALOG_IDENTITY.digests.tools_sha256,
+    );
   });
 });
 
@@ -392,7 +399,7 @@ describe("live server identity over MCP", () => {
         reasons: [],
       });
       expect(server.catalogIdentity.digests.tools_sha256).not.toBe(
-        CATALOG_IDENTITY.digests.tools_sha256,
+        FULL_CATALOG_IDENTITY.digests.tools_sha256,
       );
     } finally {
       await Promise.allSettled([

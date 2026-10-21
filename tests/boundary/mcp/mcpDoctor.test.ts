@@ -15,7 +15,7 @@ import {
   runProductionMcpDoctorCli,
 } from "../../../src/mcpDoctor.js";
 import {
-  CATALOG_IDENTITY,
+  FULL_CATALOG_IDENTITY,
   createCatalogIdentity,
 } from "../../../src/catalogIdentity.js";
 import { compactPresentationForMcpInputSchemaProfile } from "../../../src/config/mcpInputSchemaProfile.js";
@@ -97,7 +97,7 @@ describe("production MCP doctor", () => {
         REA_MCP_INPUT_SCHEMA_PROFILE: "full",
         REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
       },
-      identity: CATALOG_IDENTITY,
+      identity: FULL_CATALOG_IDENTITY,
     },
     {
       name: "compact",
@@ -155,7 +155,7 @@ describe("production MCP doctor", () => {
         result.inventory?.tools.observed,
       );
       expect(result.inventory?.tools.expected).toBe(
-        CATALOG_IDENTITY.counts.mcp_tools,
+        FULL_CATALOG_IDENTITY.counts.mcp_tools,
       );
       expect(result.identity?.expected_catalog_digest).toBe(
         identity.digests.combined_sha256,
@@ -223,10 +223,10 @@ describe("production MCP doctor probe validation", () => {
       });
       expect(result.healthy).toBe(mode === "valid");
       expect(result.inventory?.tools.observed).toBe(
-        CATALOG_IDENTITY.counts.mcp_tools,
+        FULL_CATALOG_IDENTITY.counts.mcp_tools,
       );
       expect(result.inventory?.prompts.observed).toBe(
-        CATALOG_IDENTITY.counts.mcp_prompts,
+        FULL_CATALOG_IDENTITY.counts.mcp_prompts,
       );
       expect(result.checks).toContainEqual({
         name: "initialize",
