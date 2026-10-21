@@ -602,6 +602,46 @@ it("resolves an arrow handler in place when its inherited this is module scope",
       ]),
   ).toEqual([["ch", "wrapper-substitution"]]);
 });
+it("resolves a handler a module-level factory call created once in place", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { ipcMain } = require("electron");
+    const CH = "ch";
+    const make = () => { const value = Math.random(); return () => value; };
+    const handler = make();
+    function register(seed) { ipcMain.on(CH, handler); }
+    register("x");
+  `);
+  expect(
+    result.electron.ipc.map(({ channel, resolution_basis }) => [
+      channel,
+      resolution_basis ?? "direct",
+    ]),
+  ).toEqual([["ch", "wrapper-substitution"]]);
+  expect(result.parse_status).toBe("complete");
+});
+it("keeps separate outer calls that pass one shared handler through a wrapper", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { ipcMain } = require("electron");
+    const copy = () => {};
+    function register(ch, handler) { ipcMain.on(ch, handler); }
+    function setup(tag) { register("same", copy); }
+    setup("first");
+    setup("second");
+  `);
+  const registrations = result.electron.ipc.filter(
+    ({ channel }) => channel === "same",
+  );
+  // The shorter entry traced the same wrapper call alone; both outer calls
+  // supersede it as distinct invocations.
+  expect(registrations).toHaveLength(2);
+  expect(
+    new Set(
+      registrations.map(({ invocation_location }) =>
+        JSON.stringify(invocation_location),
+      ),
+    ).size,
+  ).toBe(2);
+});
 it("keeps a parameterless factory's closure as a per-invocation handler", () => {
   const result = analyzeJavaScriptStaticSource(`
     const { contextBridge, ipcRenderer } = require("electron");

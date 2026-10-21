@@ -60,7 +60,13 @@ interface IpcEndpointFacts {
   readonly invocations: Set<string>;
   // Call chains of substituted findings, by value and then by final call.
   // Chains can only share a suffix when they end in the same call.
-  readonly reached: Map<string, Map<string, string[][]>>;
+  readonly reached: Map<string, Map<string, ReachedChain[]>>;
+}
+
+/** One substituted finding's call chain and the slot holding its record. */
+interface ReachedChain {
+  calls: readonly string[];
+  readonly slot: number;
 }
 
 const ipcInvocationKey = (location: unknown): string =>
@@ -84,19 +90,34 @@ const sharesCallSuffix = (
   return shorter.every((call, index) => longer[offset + index] === call);
 };
 
-/** Whether an identical finding was reached through the same call sequence. */
-const reachedThroughSameCalls = (
+/**
+ * How an identical finding was already reached through the same trailing
+ * calls. A path with as much or more enclosing context makes this one a
+ * repeat. A shorter path is a nested entry this path invokes, so this path's
+ * fuller invocation supersedes its record, while other outer calls through the
+ * same sequence stay distinct invocations.
+ */
+const priorPath = (
   facts: IpcEndpointFacts,
   value: string,
   calls: readonly string[],
-): boolean => {
+): { readonly repeated: boolean; readonly shorter?: ReachedChain } => {
   const byLast = facts.reached.get(value);
-  if (byLast === undefined) return false;
+  if (byLast === undefined) return { repeated: false };
   // An empty chain is a suffix of every chain.
-  if (calls.length === 0) return byLast.size > 0;
-  return [byLast.get(calls.at(-1) ?? ""), byLast.get("")].some((chains) =>
-    chains?.some((prior) => sharesCallSuffix(prior, calls)),
-  );
+  const candidates =
+    calls.length === 0
+      ? [...byLast.values()].flat()
+      : [...(byLast.get(calls.at(-1) ?? "") ?? []), ...(byLast.get("") ?? [])];
+  let shorter: ReachedChain | undefined;
+  for (const prior of candidates) {
+    if (!sharesCallSuffix(prior.calls, calls)) continue;
+    if (prior.calls.length >= calls.length) return { repeated: true };
+    shorter ??= prior;
+  }
+  return shorter === undefined
+    ? { repeated: false }
+    : { repeated: false, shorter };
 };
 
 /** One physical IPC operation, independent of how its channel was resolved. */
@@ -109,7 +130,7 @@ const indexIpcFinding = (
   // A substitution that resolves a directly observed operation inherits its
   // observation, so later paths to that operation stay duplicates.
   observed = value.resolution_basis === undefined,
-  calls?: string[],
+  reached?: ReachedChain,
 ): void => {
   const key = ipcEndpointKey(value);
   let facts = index.get(key);
@@ -127,14 +148,15 @@ const indexIpcFinding = (
   facts.observedRendererListener ||=
     observed && value.side === "renderer" && value.mode === "listen";
   facts.invocations.add(ipcInvocationKey(value.invocation_location));
-  if (calls !== undefined) {
+  if (reached !== undefined) {
     const valueKey = ipcValueKey(value);
-    const byLast = facts.reached.get(valueKey) ?? new Map<string, string[][]>();
+    const byLast =
+      facts.reached.get(valueKey) ?? new Map<string, ReachedChain[]>();
     facts.reached.set(valueKey, byLast);
-    const last = calls.at(-1) ?? "";
+    const last = reached.calls.at(-1) ?? "";
     const chains = byLast.get(last);
-    if (chains === undefined) byLast.set(last, [calls]);
-    else chains.push(calls);
+    if (chains === undefined) byLast.set(last, [reached]);
+    else chains.push(reached);
   }
 };
 
@@ -287,26 +309,60 @@ export const collectElectronWrappedCallPaths = (
    * site determines. Bindings of unactivated scopes, such as module or bundle
    * factory scope, and the handler's own bindings are shared by every trace.
    */
-  const capturesActivationBindings = (fn: SymbolicFunction): boolean => {
+  const capturesActivationBindings = (
+    fn: SymbolicFunction,
+    context: PathContext,
+  ): boolean => {
     const cached = activationCaptures.get(fn);
     if (cached !== undefined) return cached;
-    const captures = closesOverActivation(fn);
-    activationCaptures.set(fn, captures);
+    const { captures, traceDependent } = closesOverActivation(fn, context);
+    if (!traceDependent) activationCaptures.set(fn, captures);
     return captures;
   };
-  const closesOverActivation = (fn: SymbolicFunction): boolean => {
+  /**
+   * Whether an activation was called outside every function except bundle
+   * module factories, such as a factory call in a module-level initializer.
+   * Unless the trace itself makes that call, it ran once per module load and
+   * its bindings are shared by every trace.
+   */
+  const calledAtModuleScope = (env: SymbolicEnvironment): boolean => {
+    const call = env.point;
+    if (call === undefined || call === env.scopeNode) return false;
+    for (
+      let current = state.parentsByNode.get(call);
+      current;
+      current = state.parentsByNode.get(current)
+    )
+      if (t.isFunction(current) && !resolver.isModuleFactory(current))
+        return false;
+    return true;
+  };
+  const closesOverActivation = (
+    fn: SymbolicFunction,
+    context: PathContext,
+  ): { readonly captures: boolean; readonly traceDependent: boolean } => {
     const activated = new Set<t.Node>();
+    let traceDependent = false;
+    const traced = (call: t.Node): boolean =>
+      call === context.entryNode ||
+      context.calls.includes(ipcInvocationKey(range(call)));
     for (
       let env: SymbolicEnvironment | undefined = fn.environment;
       env;
       env = env.parent
     )
       if (
-        env.activation !== undefined &&
-        env.scopeNode !== undefined &&
-        env.moduleFactory !== true
+        env.activation === undefined ||
+        env.scopeNode === undefined ||
+        resolver.isModuleFactory(env.scopeNode)
       )
-        activated.add(env.scopeNode);
+        continue;
+      else if (!calledAtModuleScope(env)) activated.add(env.scopeNode);
+      else {
+        traceDependent = true;
+        if (env.point !== undefined && traced(env.point))
+          activated.add(env.scopeNode);
+      }
     // Scopes from the handler out to the outermost activated function, and
     // whether the function owning an arrow handler's inherited context, such
     // as `this` and `arguments`, lies within them.
@@ -329,7 +385,7 @@ export const collectElectronWrappedCallPaths = (
         contextOwnerActivated ||= contextOwnerFound;
       }
     }
-    if (activatedScopes === 0) return false;
+    if (activatedScopes === 0) return { captures: false, traceDependent };
     const scopes = new Set(enclosing.slice(0, activatedScopes));
     let captures = false;
     t.traverseFast(fn.node, (node) => {
@@ -355,7 +411,7 @@ export const collectElectronWrappedCallPaths = (
             semanticResolutionBlocked(state, node, node.name)
           : scopes.has(binding.scopeId);
     });
-    return captures;
+    return { captures, traceDependent };
   };
   /**
    * Whether `this`, `arguments`, `super` or `new.target` at a node belongs to
@@ -382,6 +438,7 @@ export const collectElectronWrappedCallPaths = (
   const siteDeterminesHandler = (
     node: t.CallExpression | t.OptionalCallExpression,
     fn: SymbolicFunction | undefined,
+    context: PathContext,
   ): boolean => {
     const argument = node.arguments[1];
     if (argument === undefined) return fn === undefined;
@@ -393,7 +450,7 @@ export const collectElectronWrappedCallPaths = (
     return (
       only?.kind === "function" &&
       only.node === fn.node &&
-      !capturesActivationBindings(fn) &&
+      !capturesActivationBindings(fn, context) &&
       !only.conditions?.length
     );
   };
@@ -604,22 +661,25 @@ export const collectElectronWrappedCallPaths = (
     // An entry nested in another entry's calls traces the same physical call
     // sequence; an identical finding from it adds no invocation.
     const perInvocationHandler =
-      fn !== undefined && capturesActivationBindings(fn);
+      fn !== undefined && capturesActivationBindings(fn, context);
     const recorded = ipcAtEndpoint().get(ipcEndpointKey(finding));
     const valueKey = ipcValueKey({
       ...finding,
       resolution_basis: "wrapper-substitution",
     });
+    // A closure over this invocation's bindings is its own handler, even when
+    // another entry already traced the same calls.
+    const prior =
+      recorded === undefined || perInvocationHandler
+        ? undefined
+        : priorPath(recorded, valueKey, context.calls);
     const duplicate =
       recorded !== undefined &&
       (recorded.observedTransmission ||
         (context.entryKind === "bridge-member" &&
           recorded.observedRendererListener) ||
         recorded.invocations.has(ipcInvocationKey(invocationLocation)) ||
-        // A closure over this invocation's bindings is its own handler, even
-        // when a shorter entry already traced the same calls.
-        (!perInvocationHandler &&
-          reachedThroughSameCalls(recorded, valueKey, context.calls)));
+        prior?.repeated === true);
     const findingGuarded =
       context.conditions.length > 0 || hasConditions(first) || guardedDispatch;
     // Registry facts do not establish every bridge entry's reachability. Only
@@ -644,41 +704,51 @@ export const collectElectronWrappedCallPaths = (
         ...finding,
         resolution_basis: "wrapper-substitution",
       };
-      // A finding the site itself determines, such as one whose channel is a
-      // local constant, is the same physical operation the syntax pass left
-      // unresolved, so it resolves that observation. A channel or handler from
-      // an invocation argument is one candidate; other callers may pass
-      // values this pass never sees.
-      const site = ipcSiteKey(value);
-      const observed = unresolvedIpcSites?.get(site);
-      const unresolved =
-        observed !== undefined &&
-        siteDeterminedChannel(node) === channel &&
-        (descriptor.mode === "send" ||
-          descriptor.mode === "invoke" ||
-          siteDeterminesHandler(node, fn))
-          ? observed
-          : undefined;
-      if (unresolved === undefined)
-        accumulator.ipc.push({ offset: node.start ?? -1, value });
-      else {
-        accumulator.ipc[unresolved] = { offset: node.start ?? -1, value };
-        unresolvedIpcSites?.delete(site);
-        // The syntax pass counted this channel as unknown; it is now known.
-        accumulator.unknownFindings = Math.max(
-          0,
-          accumulator.unknownFindings - 1,
+      const shorter = prior?.shorter;
+      if (shorter !== undefined && recorded !== undefined) {
+        // This path invokes the sequence a nested entry traced alone, so its
+        // fuller invocation takes over that record instead of adding another.
+        accumulator.ipc[shorter.slot] = { offset: node.start ?? -1, value };
+        shorter.calls = context.calls;
+        recorded.invocations.add(ipcInvocationKey(invocationLocation));
+      } else {
+        // A finding the site itself determines, such as one whose channel is a
+        // local constant, is the same physical operation the syntax pass left
+        // unresolved, so it resolves that observation. A channel or handler from
+        // an invocation argument is one candidate; other callers may pass
+        // values this pass never sees.
+        const site = ipcSiteKey(value);
+        const observed = unresolvedIpcSites?.get(site);
+        const unresolved =
+          observed !== undefined &&
+          siteDeterminedChannel(node) === channel &&
+          (descriptor.mode === "send" ||
+            descriptor.mode === "invoke" ||
+            siteDeterminesHandler(node, fn, context))
+            ? observed
+            : undefined;
+        const slot = unresolved ?? accumulator.ipc.length;
+        if (unresolved === undefined)
+          accumulator.ipc.push({ offset: node.start ?? -1, value });
+        else {
+          accumulator.ipc[unresolved] = { offset: node.start ?? -1, value };
+          unresolvedIpcSites?.delete(site);
+          // The syntax pass counted this channel as unknown; it is now known.
+          accumulator.unknownFindings = Math.max(
+            0,
+            accumulator.unknownFindings - 1,
+          );
+        }
+        indexIpcFinding(
+          ipcAtEndpoint(),
+          value,
+          unresolved !== undefined,
+          // Its call chain can never deduplicate a later path.
+          perInvocationHandler ? undefined : { calls: context.calls, slot },
         );
+        if (descriptor.mode !== "send" && descriptor.mode !== "invoke" && !fn)
+          accumulator.unknownFindings += 1;
       }
-      indexIpcFinding(
-        ipcAtEndpoint(),
-        value,
-        unresolved !== undefined,
-        // Its call chain can never deduplicate a later path.
-        perInvocationHandler ? undefined : context.calls,
-      );
-      if (descriptor.mode !== "send" && descriptor.mode !== "invoke" && !fn)
-        accumulator.unknownFindings += 1;
     } else if (
       findingGuarded &&
       (registrationKey === undefined ||
