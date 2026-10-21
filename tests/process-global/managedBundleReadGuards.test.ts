@@ -444,3 +444,47 @@ it("authenticates escaped payloads without serializing either complete bundle", 
   }
   expect(resources.hasPending).toBe(false);
 });
+
+it("seals a fresh object-heavy Evidence tree without retaining a set of completed rows", () => {
+  const provider = { id: "fixture", name: "Fixture", version: "1" };
+  const row = { seal_probe: true, fields: [1, 2] };
+  const result = { rows: Array.from({ length: 512 }, () => row) };
+  const observation = {
+    operation: "inspect_managed_members",
+    parameters: {},
+    result,
+  };
+  const complete = createEvidence(undefined, provider, observation);
+  const add = Set.prototype.add;
+  const guarded = vi.spyOn(Set.prototype, "add").mockImplementation(function (
+    this: Set<unknown>,
+    value: unknown,
+  ) {
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      Object.hasOwn(value, "seal_probe") &&
+      this.size > 32
+    )
+      throw new Error(
+        "Sealing retained completed rows beyond its ancestry budget",
+      );
+    return add.call(this, value);
+  });
+  let sealed;
+  try {
+    sealed = createEvidence(undefined, provider, observation, {
+      immutable: true,
+    });
+  } finally {
+    guarded.mockRestore();
+  }
+  expect(sealed).toEqual(complete);
+  expect(isImmutableEvidence(sealed)).toBe(true);
+  const data = sealed.normalized_result as typeof result;
+  expect(data.rows[0]).not.toBe(row);
+  expect(data.rows[0]).not.toBe(data.rows[1]);
+  expect(Object.isFrozen(data.rows[0]!.fields)).toBe(true);
+  expect(Object.isFrozen(row)).toBe(false);
+  expect(parseEvidence(sealed)).toBe(sealed);
+});

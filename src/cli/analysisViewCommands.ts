@@ -15,7 +15,6 @@ import { parseCliJsonInput, resolveCliJsonPaths } from "../cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { localPathStringSchema } from "../domain/localPath.js";
@@ -116,34 +115,32 @@ export const registerAnalysisViewCommands = (
                 ),
               ),
             };
-          if (options.evidenceBundle !== undefined) {
-            const resources = new ArtifactResourceScope();
-            const path = options.evidenceBundle;
-            return finishAnalysisCommand(
-              () =>
-                inspectAnalysisViewFromBundle(
-                  parsed.data,
-                  path,
-                  resources,
-                  signal,
-                ),
-              resources,
-              ANALYSIS_VIEW_PROVIDER.id,
-              "inspect_analysis_view",
-              signal,
-            );
-          }
-          const result = await inspectAnalysisViewValidatedWithFiles(
-            parsed.data,
-            undefined,
-            { signal },
+          const resources = new ArtifactResourceScope();
+          const bundlePath = options.evidenceBundle;
+          const result = await finishAnalysisCommand(
+            () =>
+              bundlePath === undefined
+                ? inspectAnalysisViewValidatedWithFiles(
+                    parsed.data,
+                    undefined,
+                    { signal, resources },
+                  )
+                : inspectAnalysisViewFromBundle(
+                    parsed.data,
+                    bundlePath,
+                    resources,
+                    signal,
+                  ),
+            resources,
+            ANALYSIS_VIEW_PROVIDER.id,
+            "inspect_analysis_view",
+            signal,
           );
-          return result.ok
-            ? jsonValueSchema.parse(result.value)
-            : {
-                error: "Application workflow failed",
-                ...projectAnalysisError(result.error),
-              };
+          // Preserve the inline command's existing error label without copying
+          // the authenticated completed Evidence or its partial observation.
+          return bundlePath === undefined && "code" in result
+            ? { error: "Application workflow failed", ...result }
+            : result;
         }),
       ),
   });

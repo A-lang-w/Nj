@@ -1,4 +1,4 @@
-import { setImmediate } from "node:timers/promises";
+import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { requireAuthenticationHeadroom } from "./JsonAuthenticationHeadroom.js";
 
@@ -29,12 +29,6 @@ import {
   writeEvidenceBundle,
 } from "./EvidenceBundleFiles.js";
 import { inspectAnalysisViewValidated } from "./analysisView/AnalysisViewService.js";
-
-/** Drain queued callbacks, then the OS signal notifications they may enqueue. */
-const dispatchQueuedInterrupts = async (): Promise<void> => {
-  await setImmediate();
-  await setImmediate();
-};
 
 /** Validate a standalone bundle and report its complete record/revision counts. */
 export const importEvidenceBundleCommand = async (

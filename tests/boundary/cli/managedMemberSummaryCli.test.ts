@@ -448,3 +448,68 @@ cliTest.for(
     ).toBe(false);
   },
 );
+
+cliTest.for(
+  (process.platform === "win32"
+    ? (["event"] as const)
+    : (["event", "os"] as const)
+  ).flatMap((delivery) => [
+    { signal: "SIGINT" as const, status: 130, delivery },
+    { signal: "SIGTERM" as const, status: 143, delivery },
+  ]),
+)(
+  "retains complete default Evidence when $signal ($delivery) is queued during sealing",
+  async ({ signal, status, delivery }, { cli }) => {
+    const root = await createTestTempDirectory("rea-managed-complete-signal-");
+    const target = join(root, "fixture.dll"),
+      marker = join(root, "signal.json");
+    await writeFile(target, memberFixture());
+    const preload = resolve(
+      "tests/fixtures/evidenceCompletionSignalPreload.mjs",
+    );
+    const reply = await cli.run({
+      arguments: [
+        "inspect-managed-members",
+        target,
+        "--type",
+        "Fixture.Program",
+        "--json",
+      ],
+      environment: {
+        HOME: root,
+        REA_LOG_LEVEL: "silent",
+        REA_TEST_EVIDENCE_COMPLETION: JSON.stringify({
+          operation: "inspect_managed_members",
+          target_path: target,
+          marker,
+          signal,
+          delivery,
+        }),
+        NODE_OPTIONS: `--max-old-space-size=2048 --import=${pathToFileURL(preload).href}`,
+      },
+    });
+    expect(reply.exitCode).toBe(status);
+    const { error: _label, ...projection } =
+      analysisCliErrorEnvelopeSchema.parse(reply.json);
+    const error = analysisErrorProjectionSchema.parse(projection);
+    expect(error.code).toBe("cancelled");
+    expect(error.details?.operation).toBe("inspect_managed_members");
+    const partial = parseEvidence(error.details?.partial_observation);
+    expect(partial.operation).toBe("inspect_managed_members");
+    expect(partial.subject?.local_path).toBe(target);
+    expect(
+      managedMemberInspectionSchema.parse(partial.normalized_result).methods,
+    ).toHaveLength(2);
+    const proof = JSON.parse(await readFile(marker, "utf8"));
+    expect(proof).toMatchObject({
+      evidence_id: partial.evidence_id,
+      signal,
+      delivery,
+    });
+    expect(proof.listeners).toBeGreaterThan(0);
+    expect((await readdir(root)).sort()).toEqual([
+      "fixture.dll",
+      "signal.json",
+    ]);
+  },
+);

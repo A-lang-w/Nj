@@ -15,10 +15,12 @@
   },
   "measurement_inputs": {
     "baseline_revision": "3dbe314ada9f6dcc994ca4655dc0faf082503847",
-    "feature_parent_revision": "a641f6c081cf567b152d64918e40754aeb658960",
+    "feature_parent_revision": "4fab2dfda16236dc407aa179920780d6a970dda3",
     "merged_original_revision": "7b3ed4d025edd24d062cde0327a53bd311e174fc",
-    "feature_tracked_patch_sha256": "b3edb5d4f71fa27134e679baccfcc87a4783f6c0b04f23c7d07958c07e7091c5",
-    "untracked_source_sha256": {},
+    "feature_tracked_patch_sha256": "d950d199b3bed648d8752b67b2ff32725569528ca3d7102a65cf258722d1d98c",
+    "untracked_source_sha256": {
+      "src/process/queuedInterrupts.ts": "71ed47dc4a215a82f0f2c7b6bb3a32f22f1d5c2a8b7644cb6c9999539a16950d"
+    },
     "node": "v24.18.0",
     "npm": "11.16.0",
     "oracle_packages": {
@@ -28,28 +30,30 @@
     "no_overlapping_build_or_test": true,
     "production_sources_sha256": {
       "src/application/AnalysisProvider.ts": "97a8b6a01b1cbe50f8f0755a807f7ba93697b82705551bd613089a6f95f51f67",
-      "src/application/DirectAnalysis.ts": "42c170ea676fb3c6e99a1ac0b9bac86bd9250cccf3fc1dc1feb4e5afe0296723",
-      "src/application/EvidenceBundleCommands.ts": "01c3c9df3745dc0b1ac9ffb781c2b6939b9ecd747d3fdd802c962215f5662849",
+      "src/application/DirectAnalysis.ts": "00dd3d85729785953a81b08fc2591c905d4ea9b0a150c1b421f5e5061661d62b",
+      "src/application/EvidenceBundleCommands.ts": "571c69cde0b6e313a0eb3d0ed181aa07f33b0e4f943509fd8c28ca14f587f61f",
       "src/application/EvidenceBundleFiles.ts": "1dfd37b3bed5306a21f25ca334caa53172c8ef2e754a4961ccdfc3bb98e1bf8c",
       "src/application/EvidenceInputResolver.test.ts": "96c1bf405fd7ae492da75959bb9285ec91c2f6abc2f161316057e1fd8efee5aa",
       "src/application/EvidenceInputResolver.ts": "7b676ec2f70ad55b97c9a635dce51468101eca964e7a1205f9ce9633ec946f89",
       "src/application/JsonAuthenticationHeadroom.test.ts": "510e22d9fcbe976bfe6ffdfa57bd9fd5469e568519ec5474dcbb5957eb14a375",
       "src/application/JsonAuthenticationHeadroom.ts": "a6f46bf1906d2b614992f97c47cc0647d827b883a09b4d7fee54ce00081e01da",
       "src/application/JsonFiles.ts": "9071b2a303c76507f78f2ac902b7e5d041d74b8b73d66039cb8f7e2ec3496147",
+      "src/application/analysisView/AnalysisViewService.ts": "f7e4ce77705229039c5d81d2273bd6e08df11719436c24bb3c5c1d0452650ba9",
       "src/application/analysisView/evidenceFileSource.ts": "241a262f793bb1101cee7f623c2b297728231a938f9163ddc71453d1d36a45f4",
       "src/application/javascript/SourceToBundleReference.ts": "579917fe41ef3e447fc28915ced0c2c5809af70ec2763cc980f58930832ce4b6",
       "src/application/native/NativeMatchingBundleSources.ts": "ecf3c5e2d0c6872177d55b9746b692e0d585176027b336b589501809d5819b21",
-      "src/cli/analysisViewCommands.ts": "e1e7d0feae122a43804d77bb4f30ed08016d0461b0638dfb9ad01a5091efa7e5",
+      "src/cli/analysisViewCommands.ts": "0e228c83cf73d264535393cde851892ed11a302be0a77ee05a0d07e620226633",
+      "src/cli/finishAnalysisCommand.ts": "7eca30a3b5ea20fce9caeaedae791a0406364476aaa06e3919535bc000fda61f",
       "src/cli/managedCommands.ts": "4bca27702452f426efeeb7a034fa78613c2db458eac7b3f1c0afca3b144d4700",
       "src/composition/directAnalysis.ts": "d6d8002818fdb2d05d33d79563dd31dbe27e2d330a080ba9a9c64a99e9732006",
       "src/domain/analysisErrorPresentation.ts": "293685c9dd89c107aabe63fb2fa7242c2fd0f42101683722badcdf8b2eb7e24c",
-      "src/domain/evidence.test.ts": "5619f0a6e89f4216e3bb44d84dbf053f5784524d1d968d50f804998c0c18df15",
       "src/domain/evidence.ts": "eb1895f08ef034b0b644b2f0d18aa12a4790928ccd888c2301d967521d454b11",
       "src/domain/evidenceBundle.ts": "5f997e98512d4ddd11abd8d3902daed8ebd0821d04d48629863c3551b6b514d8",
       "src/domain/immutableJson.ts": "c1d977408b013514c55fd309533814caa18e82b647adedb08e2f1cba2401ca82",
       "src/domain/jsonSerialization.test.ts": "34f2acee9b65efb9fa59a888cbc7ea957dc915e7195e1459bc98afbfeaa10a9b",
       "src/domain/jsonSerialization.ts": "f47ed8571093675a2a60686bab3acb9c0e1d44cb7bfc956db38b89a4e9633ee9",
       "src/dotnet/ManagedPe.fixture.ts": "710af895b190f3b5dbdb17d922c87d3ee699b99c4c5fb46d1f3601fad97bb1a5",
+      "src/process/queuedInterrupts.ts": "71ed47dc4a215a82f0f2c7b6bb3a32f22f1d5c2a8b7644cb6c9999539a16950d",
       "src/server/registerBundleComparisonTool.ts": "b95a0a48ef1f9ea77ce589b873d62fcae0273f869320138ab3f3fb8c43f79fc6",
       "src/server/registerSessionRecordTools.ts": "d836c79459f241345d66b46c6402e5893a12c7ff5cb2ca2cc3bbe1da9976bb14"
     },
@@ -76,12 +80,12 @@
         "binding_version": 1,
         "root": "/home/yann/yann/rea-perf-managed-cli-20261021",
         "node": "v24.18.0",
-        "git_revision": "a641f6c081cf567b152d64918e40754aeb658960",
-        "source_diff_sha256": "88505b82622ba75362c5790a50cd0450c21948c65531ec28c42f087ab17cb271",
-        "untracked_source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "compiled_cli_sha256": "b12ac35202875a6322fb6574ef0610842446fecfcf2794c0ef6746b097ff9704",
-        "compiled_cli_files": 251,
-        "compiled_cli_bytes": 17323359
+        "git_revision": "4fab2dfda16236dc407aa179920780d6a970dda3",
+        "source_diff_sha256": "b4199304e4163e67f08a0b77337aa45bc73a7790646ca01e6fcc56e41eaa7f2a",
+        "untracked_source_sha256": "55691f6b55a13e9abbe9dbe2b5c75ac27021b370ed012fceafa91d4a8b60e25f",
+        "compiled_cli_sha256": "2e86e22eecc4a5012963311e2b14e3101e53750459092e45d07b8030bfb687b4",
+        "compiled_cli_files": 144,
+        "compiled_cli_bytes": 10305138
       }
     }
   },
@@ -89,37 +93,37 @@
     "cold": {
       "complete": {
         "wall_seconds": {
-          "median": 5.87,
-          "min": 5.562,
-          "max": 5.872
+          "median": 9.969,
+          "min": 5.267,
+          "max": 11.408
         },
         "cpu_seconds": {
-          "median": 5.621104,
-          "min": 5.390953,
-          "max": 5.630977
+          "median": 9.742865,
+          "min": 4.99231,
+          "max": 11.174552
         },
         "peak_process_family_bytes_including_page_cache": {
-          "median": 410574848,
-          "min": 409243648,
-          "max": 412491776
+          "median": 412385280,
+          "min": 410767360,
+          "max": 412815360
         },
         "whole_task_tokens_estimated": [451373, 451373, 451373]
       },
       "selected": {
         "wall_seconds": {
-          "median": 12.926,
-          "min": 12.925,
-          "max": 13.335
+          "median": 14.801,
+          "min": 12.929,
+          "max": 23.934
         },
         "cpu_seconds": {
-          "median": 12.724238,
-          "min": 12.668723,
-          "max": 13.113041
+          "median": 14.555183,
+          "min": 12.66105,
+          "max": 23.604561
         },
         "peak_process_family_bytes_including_page_cache": {
-          "median": 418537472,
-          "min": 417120256,
-          "max": 419606528
+          "median": 419532800,
+          "min": 416526336,
+          "max": 422551552
         },
         "whole_task_tokens_estimated": [13078, 13078, 13078]
       }
@@ -127,37 +131,37 @@
     "warm": {
       "complete": {
         "wall_seconds": {
-          "median": 5.653,
-          "min": 5.362,
-          "max": 5.893
+          "median": 10.339,
+          "min": 9.863,
+          "max": 11.283
         },
         "cpu_seconds": {
-          "median": 5.450633,
-          "min": 5.157313,
-          "max": 5.61973
+          "median": 10.097275,
+          "min": 9.65094,
+          "max": 11.039148
         },
         "peak_process_family_bytes_including_page_cache": {
-          "median": 419377152,
-          "min": 416587776,
-          "max": 426070016
+          "median": 421326848,
+          "min": 417812480,
+          "max": 421904384
         },
         "whole_task_tokens_estimated": [451373, 451373, 451373]
       },
       "selected": {
         "wall_seconds": {
-          "median": 13.269,
-          "min": 12.805,
-          "max": 13.355
+          "median": 24.141,
+          "min": 23.425,
+          "max": 24.698
         },
         "cpu_seconds": {
-          "median": 13.036533,
-          "min": 12.563222,
-          "max": 13.064088
+          "median": 23.84209,
+          "min": 23.121681,
+          "max": 24.436836
         },
         "peak_process_family_bytes_including_page_cache": {
-          "median": 426516480,
-          "min": 424353792,
-          "max": 428023808
+          "median": 426942464,
+          "min": 422301696,
+          "max": 428773376
         },
         "whole_task_tokens_estimated": [13078, 13078, 13078]
       }
@@ -181,12 +185,12 @@
         "compiled_cli_bytes": 10151181
       },
       "runtime_binding_audit_ms": {
-        "before": 107.00895400000002,
-        "after": 123.9283919999998
+        "before": 92.96445600000001,
+        "after": 96.76712599999973
       },
-      "wall_seconds": 5.562,
-      "cpu_seconds": 5.390953,
-      "peak_process_family_bytes_including_page_cache": 412491776,
+      "wall_seconds": 5.267,
+      "cpu_seconds": 4.99231,
+      "peak_process_family_bytes_including_page_cache": 412815360,
       "tokens_estimated": {
         "question_and_recipe": 58,
         "arguments": 50,
@@ -197,7 +201,7 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 2110.30379,
+          "elapsed_ms": 1961.4121309999998,
           "stdout_bytes": 1134,
           "stdout_file": "help-members.stdout"
         },
@@ -211,7 +215,7 @@
             "Newtonsoft.Json.JsonConvert",
             "--json"
           ],
-          "elapsed_ms": 2872.647234,
+          "elapsed_ms": 2694.6139500000004,
           "stdout_bytes": 1374919,
           "stdout_file": "complete.stdout"
         }
@@ -248,20 +252,20 @@
         "binding_version": 1,
         "root": "/home/yann/yann/rea-perf-managed-cli-20261021",
         "node": "v24.18.0",
-        "git_revision": "a641f6c081cf567b152d64918e40754aeb658960",
-        "source_diff_sha256": "88505b82622ba75362c5790a50cd0450c21948c65531ec28c42f087ab17cb271",
-        "untracked_source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "compiled_cli_sha256": "b12ac35202875a6322fb6574ef0610842446fecfcf2794c0ef6746b097ff9704",
-        "compiled_cli_files": 251,
-        "compiled_cli_bytes": 17323359
+        "git_revision": "4fab2dfda16236dc407aa179920780d6a970dda3",
+        "source_diff_sha256": "b4199304e4163e67f08a0b77337aa45bc73a7790646ca01e6fcc56e41eaa7f2a",
+        "untracked_source_sha256": "55691f6b55a13e9abbe9dbe2b5c75ac27021b370ed012fceafa91d4a8b60e25f",
+        "compiled_cli_sha256": "2e86e22eecc4a5012963311e2b14e3101e53750459092e45d07b8030bfb687b4",
+        "compiled_cli_files": 144,
+        "compiled_cli_bytes": 10305138
       },
       "runtime_binding_audit_ms": {
-        "before": 113.925243,
-        "after": 130.22416200000043
+        "before": 88.39460599999998,
+        "after": 126.48440400000072
       },
-      "wall_seconds": 12.925,
-      "cpu_seconds": 12.724238,
-      "peak_process_family_bytes_including_page_cache": 417120256,
+      "wall_seconds": 12.929,
+      "cpu_seconds": 12.66105,
+      "peak_process_family_bytes_including_page_cache": 419532800,
       "tokens_estimated": {
         "question_and_recipe": 93,
         "arguments": 330,
@@ -272,14 +276,14 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 2100.188401,
+          "elapsed_ms": 1941.8404130000001,
           "stdout_bytes": 1487,
           "stdout_file": "help-members.stdout"
         },
         {
           "label": "help-view",
           "arguments": ["rea", "inspect-analysis-view", "--help"],
-          "elapsed_ms": 2056.7219149999996,
+          "elapsed_ms": 1953.026523,
           "stdout_bytes": 1219,
           "stdout_file": "help-view.stdout"
         },
@@ -297,7 +301,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-1-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 3195.344285,
+          "elapsed_ms": 2909.7679009999997,
           "stdout_bytes": 6940,
           "stdout_file": "summary.stdout"
         },
@@ -311,7 +315,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-1-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2420.2149830000008,
+          "elapsed_ms": 2682.350791,
           "stdout_bytes": 20274,
           "stdout_file": "methods.stdout"
         },
@@ -325,7 +329,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-1-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2602.7021619999996,
+          "elapsed_ms": 2869.4516239999994,
           "stdout_bytes": 13803,
           "stdout_file": "member_refs.stdout"
         }
@@ -370,12 +374,12 @@
         "compiled_cli_bytes": 10151181
       },
       "runtime_binding_audit_ms": {
-        "before": 109.94062400000001,
-        "after": 130.2721820000006
+        "before": 165.90159300000002,
+        "after": 145.30863500000123
       },
-      "wall_seconds": 5.872,
-      "cpu_seconds": 5.621104,
-      "peak_process_family_bytes_including_page_cache": 410574848,
+      "wall_seconds": 9.969,
+      "cpu_seconds": 9.742865,
+      "peak_process_family_bytes_including_page_cache": 410767360,
       "tokens_estimated": {
         "question_and_recipe": 58,
         "arguments": 50,
@@ -386,7 +390,7 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 2193.162578,
+          "elapsed_ms": 4194.595781,
           "stdout_bytes": 1134,
           "stdout_file": "help-members.stdout"
         },
@@ -400,7 +404,7 @@
             "Newtonsoft.Json.JsonConvert",
             "--json"
           ],
-          "elapsed_ms": 3015.487969,
+          "elapsed_ms": 4995.024759999999,
           "stdout_bytes": 1374919,
           "stdout_file": "complete.stdout"
         }
@@ -437,20 +441,20 @@
         "binding_version": 1,
         "root": "/home/yann/yann/rea-perf-managed-cli-20261021",
         "node": "v24.18.0",
-        "git_revision": "a641f6c081cf567b152d64918e40754aeb658960",
-        "source_diff_sha256": "88505b82622ba75362c5790a50cd0450c21948c65531ec28c42f087ab17cb271",
-        "untracked_source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "compiled_cli_sha256": "b12ac35202875a6322fb6574ef0610842446fecfcf2794c0ef6746b097ff9704",
-        "compiled_cli_files": 251,
-        "compiled_cli_bytes": 17323359
+        "git_revision": "4fab2dfda16236dc407aa179920780d6a970dda3",
+        "source_diff_sha256": "b4199304e4163e67f08a0b77337aa45bc73a7790646ca01e6fcc56e41eaa7f2a",
+        "untracked_source_sha256": "55691f6b55a13e9abbe9dbe2b5c75ac27021b370ed012fceafa91d4a8b60e25f",
+        "compiled_cli_sha256": "2e86e22eecc4a5012963311e2b14e3101e53750459092e45d07b8030bfb687b4",
+        "compiled_cli_files": 144,
+        "compiled_cli_bytes": 10305138
       },
       "runtime_binding_audit_ms": {
-        "before": 117.541573,
-        "after": 131.46908199999962
+        "before": 121.436015,
+        "after": 140.179814000001
       },
-      "wall_seconds": 12.926,
-      "cpu_seconds": 12.668723,
-      "peak_process_family_bytes_including_page_cache": 419606528,
+      "wall_seconds": 14.801,
+      "cpu_seconds": 14.555183,
+      "peak_process_family_bytes_including_page_cache": 416526336,
       "tokens_estimated": {
         "question_and_recipe": 93,
         "arguments": 330,
@@ -461,14 +465,14 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 2084.824764,
+          "elapsed_ms": 2517.517109,
           "stdout_bytes": 1487,
           "stdout_file": "help-members.stdout"
         },
         {
           "label": "help-view",
           "arguments": ["rea", "inspect-analysis-view", "--help"],
-          "elapsed_ms": 2000.3382089999996,
+          "elapsed_ms": 1917.0473659999998,
           "stdout_bytes": 1219,
           "stdout_file": "help-view.stdout"
         },
@@ -486,7 +490,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-2-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 3140.372241,
+          "elapsed_ms": 2768.9943000000003,
           "stdout_bytes": 6940,
           "stdout_file": "summary.stdout"
         },
@@ -500,7 +504,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-2-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2523.316477999999,
+          "elapsed_ms": 2439.9305540000005,
           "stdout_bytes": 20274,
           "stdout_file": "methods.stdout"
         },
@@ -514,7 +518,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-2-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2555.129777,
+          "elapsed_ms": 4504.241926999999,
           "stdout_bytes": 13803,
           "stdout_file": "member_refs.stdout"
         }
@@ -559,12 +563,12 @@
         "compiled_cli_bytes": 10151181
       },
       "runtime_binding_audit_ms": {
-        "before": 119.34094300000001,
-        "after": 95.26877400000012
+        "before": 205.53081100000003,
+        "after": 201.48722199999975
       },
-      "wall_seconds": 5.87,
-      "cpu_seconds": 5.630977,
-      "peak_process_family_bytes_including_page_cache": 409243648,
+      "wall_seconds": 11.408,
+      "cpu_seconds": 11.174552,
+      "peak_process_family_bytes_including_page_cache": 412385280,
       "tokens_estimated": {
         "question_and_recipe": 58,
         "arguments": 50,
@@ -575,7 +579,7 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 2203.598908,
+          "elapsed_ms": 4881.421936,
           "stdout_bytes": 1134,
           "stdout_file": "help-members.stdout"
         },
@@ -589,7 +593,7 @@
             "Newtonsoft.Json.JsonConvert",
             "--json"
           ],
-          "elapsed_ms": 3054.977439,
+          "elapsed_ms": 5597.8320969999995,
           "stdout_bytes": 1374919,
           "stdout_file": "complete.stdout"
         }
@@ -626,20 +630,20 @@
         "binding_version": 1,
         "root": "/home/yann/yann/rea-perf-managed-cli-20261021",
         "node": "v24.18.0",
-        "git_revision": "a641f6c081cf567b152d64918e40754aeb658960",
-        "source_diff_sha256": "88505b82622ba75362c5790a50cd0450c21948c65531ec28c42f087ab17cb271",
-        "untracked_source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "compiled_cli_sha256": "b12ac35202875a6322fb6574ef0610842446fecfcf2794c0ef6746b097ff9704",
-        "compiled_cli_files": 251,
-        "compiled_cli_bytes": 17323359
+        "git_revision": "4fab2dfda16236dc407aa179920780d6a970dda3",
+        "source_diff_sha256": "b4199304e4163e67f08a0b77337aa45bc73a7790646ca01e6fcc56e41eaa7f2a",
+        "untracked_source_sha256": "55691f6b55a13e9abbe9dbe2b5c75ac27021b370ed012fceafa91d4a8b60e25f",
+        "compiled_cli_sha256": "2e86e22eecc4a5012963311e2b14e3101e53750459092e45d07b8030bfb687b4",
+        "compiled_cli_files": 144,
+        "compiled_cli_bytes": 10305138
       },
       "runtime_binding_audit_ms": {
-        "before": 147.560911,
-        "after": 127.02287199999955
+        "before": 188.422892,
+        "after": 141.58796399999846
       },
-      "wall_seconds": 13.335,
-      "cpu_seconds": 13.113041,
-      "peak_process_family_bytes_including_page_cache": 418537472,
+      "wall_seconds": 23.934,
+      "cpu_seconds": 23.604561,
+      "peak_process_family_bytes_including_page_cache": 422551552,
       "tokens_estimated": {
         "question_and_recipe": 93,
         "arguments": 330,
@@ -650,14 +654,14 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 2209.720529,
+          "elapsed_ms": 4050.1051940000007,
           "stdout_bytes": 1487,
           "stdout_file": "help-members.stdout"
         },
         {
           "label": "help-view",
           "arguments": ["rea", "inspect-analysis-view", "--help"],
-          "elapsed_ms": 2275.9125960000006,
+          "elapsed_ms": 3982.378068,
           "stdout_bytes": 1219,
           "stdout_file": "help-view.stdout"
         },
@@ -675,7 +679,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-3-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 3240.592259,
+          "elapsed_ms": 5668.475990999999,
           "stdout_bytes": 6940,
           "stdout_file": "summary.stdout"
         },
@@ -689,7 +693,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-3-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2410.8445789999996,
+          "elapsed_ms": 4786.150098,
           "stdout_bytes": 20274,
           "stdout_file": "methods.stdout"
         },
@@ -703,7 +707,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-cold-3-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2581.807589,
+          "elapsed_ms": 4575.609088000001,
           "stdout_bytes": 13803,
           "stdout_file": "member_refs.stdout"
         }
@@ -748,12 +752,12 @@
         "compiled_cli_bytes": 10151181
       },
       "runtime_binding_audit_ms": {
-        "before": 97.337064,
-        "after": 107.21184399999947
+        "before": 175.11634400000003,
+        "after": 152.94952399999966
       },
-      "wall_seconds": 5.362,
-      "cpu_seconds": 5.157313,
-      "peak_process_family_bytes_including_page_cache": 426070016,
+      "wall_seconds": 9.863,
+      "cpu_seconds": 9.65094,
+      "peak_process_family_bytes_including_page_cache": 421326848,
       "tokens_estimated": {
         "question_and_recipe": 58,
         "arguments": 50,
@@ -764,7 +768,7 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 2046.0746620000002,
+          "elapsed_ms": 3560.906756,
           "stdout_bytes": 1134,
           "stdout_file": "help-members.stdout"
         },
@@ -778,7 +782,7 @@
             "Newtonsoft.Json.JsonConvert",
             "--json"
           ],
-          "elapsed_ms": 2771.6830999999997,
+          "elapsed_ms": 5544.523894000001,
           "stdout_bytes": 1374919,
           "stdout_file": "complete.stdout"
         }
@@ -815,20 +819,20 @@
         "binding_version": 1,
         "root": "/home/yann/yann/rea-perf-managed-cli-20261021",
         "node": "v24.18.0",
-        "git_revision": "a641f6c081cf567b152d64918e40754aeb658960",
-        "source_diff_sha256": "88505b82622ba75362c5790a50cd0450c21948c65531ec28c42f087ab17cb271",
-        "untracked_source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "compiled_cli_sha256": "b12ac35202875a6322fb6574ef0610842446fecfcf2794c0ef6746b097ff9704",
-        "compiled_cli_files": 251,
-        "compiled_cli_bytes": 17323359
+        "git_revision": "4fab2dfda16236dc407aa179920780d6a970dda3",
+        "source_diff_sha256": "b4199304e4163e67f08a0b77337aa45bc73a7790646ca01e6fcc56e41eaa7f2a",
+        "untracked_source_sha256": "55691f6b55a13e9abbe9dbe2b5c75ac27021b370ed012fceafa91d4a8b60e25f",
+        "compiled_cli_sha256": "2e86e22eecc4a5012963311e2b14e3101e53750459092e45d07b8030bfb687b4",
+        "compiled_cli_files": 144,
+        "compiled_cli_bytes": 10305138
       },
       "runtime_binding_audit_ms": {
-        "before": 119.630402,
-        "after": 128.072642000001
+        "before": 139.815575,
+        "after": 183.66561400000137
       },
-      "wall_seconds": 13.269,
-      "cpu_seconds": 13.064088,
-      "peak_process_family_bytes_including_page_cache": 426516480,
+      "wall_seconds": 24.141,
+      "cpu_seconds": 23.84209,
+      "peak_process_family_bytes_including_page_cache": 428773376,
       "tokens_estimated": {
         "question_and_recipe": 93,
         "arguments": 330,
@@ -839,14 +843,14 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 2003.9806949999997,
+          "elapsed_ms": 4048.32056,
           "stdout_bytes": 1487,
           "stdout_file": "help-members.stdout"
         },
         {
           "label": "help-view",
           "arguments": ["rea", "inspect-analysis-view", "--help"],
-          "elapsed_ms": 2071.7038110000003,
+          "elapsed_ms": 3638.761117,
           "stdout_bytes": 1219,
           "stdout_file": "help-view.stdout"
         },
@@ -864,7 +868,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-1-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2974.3237389999995,
+          "elapsed_ms": 5129.003754000001,
           "stdout_bytes": 6940,
           "stdout_file": "summary.stdout"
         },
@@ -878,7 +882,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-1-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2881.9044350000004,
+          "elapsed_ms": 4614.337113000001,
           "stdout_bytes": 20274,
           "stdout_file": "methods.stdout"
         },
@@ -892,7 +896,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-1-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2767.4790919999996,
+          "elapsed_ms": 5891.990218999999,
           "stdout_bytes": 13803,
           "stdout_file": "member_refs.stdout"
         }
@@ -937,12 +941,12 @@
         "compiled_cli_bytes": 10151181
       },
       "runtime_binding_audit_ms": {
-        "before": 103.71291400000001,
-        "after": 124.60707199999979
+        "before": 213.612103,
+        "after": 150.689765000001
       },
-      "wall_seconds": 5.893,
-      "cpu_seconds": 5.61973,
-      "peak_process_family_bytes_including_page_cache": 419377152,
+      "wall_seconds": 10.339,
+      "cpu_seconds": 10.097275,
+      "peak_process_family_bytes_including_page_cache": 417812480,
       "tokens_estimated": {
         "question_and_recipe": 58,
         "arguments": 50,
@@ -953,7 +957,7 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 2018.867585,
+          "elapsed_ms": 3991.182484,
           "stdout_bytes": 1134,
           "stdout_file": "help-members.stdout"
         },
@@ -967,7 +971,7 @@
             "Newtonsoft.Json.JsonConvert",
             "--json"
           ],
-          "elapsed_ms": 3227.9488780000006,
+          "elapsed_ms": 5493.264734000001,
           "stdout_bytes": 1374919,
           "stdout_file": "complete.stdout"
         }
@@ -1004,20 +1008,20 @@
         "binding_version": 1,
         "root": "/home/yann/yann/rea-perf-managed-cli-20261021",
         "node": "v24.18.0",
-        "git_revision": "a641f6c081cf567b152d64918e40754aeb658960",
-        "source_diff_sha256": "88505b82622ba75362c5790a50cd0450c21948c65531ec28c42f087ab17cb271",
-        "untracked_source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "compiled_cli_sha256": "b12ac35202875a6322fb6574ef0610842446fecfcf2794c0ef6746b097ff9704",
-        "compiled_cli_files": 251,
-        "compiled_cli_bytes": 17323359
+        "git_revision": "4fab2dfda16236dc407aa179920780d6a970dda3",
+        "source_diff_sha256": "b4199304e4163e67f08a0b77337aa45bc73a7790646ca01e6fcc56e41eaa7f2a",
+        "untracked_source_sha256": "55691f6b55a13e9abbe9dbe2b5c75ac27021b370ed012fceafa91d4a8b60e25f",
+        "compiled_cli_sha256": "2e86e22eecc4a5012963311e2b14e3101e53750459092e45d07b8030bfb687b4",
+        "compiled_cli_files": 144,
+        "compiled_cli_bytes": 10305138
       },
       "runtime_binding_audit_ms": {
-        "before": 140.37339200000002,
-        "after": 120.01939300000049
+        "before": 190.953993,
+        "after": 140.88060499999847
       },
-      "wall_seconds": 13.355,
-      "cpu_seconds": 13.036533,
-      "peak_process_family_bytes_including_page_cache": 428023808,
+      "wall_seconds": 24.698,
+      "cpu_seconds": 24.436836,
+      "peak_process_family_bytes_including_page_cache": 426942464,
       "tokens_estimated": {
         "question_and_recipe": 93,
         "arguments": 330,
@@ -1028,14 +1032,14 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 2006.3478660000003,
+          "elapsed_ms": 4438.342933,
           "stdout_bytes": 1487,
           "stdout_file": "help-members.stdout"
         },
         {
           "label": "help-view",
           "arguments": ["rea", "inspect-analysis-view", "--help"],
-          "elapsed_ms": 2128.8803680000005,
+          "elapsed_ms": 4773.725002,
           "stdout_bytes": 1219,
           "stdout_file": "help-view.stdout"
         },
@@ -1053,7 +1057,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-2-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 3071.6557550000007,
+          "elapsed_ms": 5718.39093,
           "stdout_bytes": 6940,
           "stdout_file": "summary.stdout"
         },
@@ -1067,7 +1071,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-2-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2695.4698980000003,
+          "elapsed_ms": 4286.861861000001,
           "stdout_bytes": 20274,
           "stdout_file": "methods.stdout"
         },
@@ -1081,7 +1085,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-2-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2771.646742000001,
+          "elapsed_ms": 4702.040359000002,
           "stdout_bytes": 13803,
           "stdout_file": "member_refs.stdout"
         }
@@ -1126,12 +1130,12 @@
         "compiled_cli_bytes": 10151181
       },
       "runtime_binding_audit_ms": {
-        "before": 126.534533,
-        "after": 109.35379399999965
+        "before": 211.89498299999997,
+        "after": 138.75285499999882
       },
-      "wall_seconds": 5.653,
-      "cpu_seconds": 5.450633,
-      "peak_process_family_bytes_including_page_cache": 416587776,
+      "wall_seconds": 11.283,
+      "cpu_seconds": 11.039148,
+      "peak_process_family_bytes_including_page_cache": 421904384,
       "tokens_estimated": {
         "question_and_recipe": 58,
         "arguments": 50,
@@ -1142,7 +1146,7 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 2081.5586129999997,
+          "elapsed_ms": 4497.207909000001,
           "stdout_bytes": 1134,
           "stdout_file": "help-members.stdout"
         },
@@ -1156,7 +1160,7 @@
             "Newtonsoft.Json.JsonConvert",
             "--json"
           ],
-          "elapsed_ms": 2975.0536129999996,
+          "elapsed_ms": 5940.504772,
           "stdout_bytes": 1374919,
           "stdout_file": "complete.stdout"
         }
@@ -1193,20 +1197,20 @@
         "binding_version": 1,
         "root": "/home/yann/yann/rea-perf-managed-cli-20261021",
         "node": "v24.18.0",
-        "git_revision": "a641f6c081cf567b152d64918e40754aeb658960",
-        "source_diff_sha256": "88505b82622ba75362c5790a50cd0450c21948c65531ec28c42f087ab17cb271",
-        "untracked_source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "compiled_cli_sha256": "b12ac35202875a6322fb6574ef0610842446fecfcf2794c0ef6746b097ff9704",
-        "compiled_cli_files": 251,
-        "compiled_cli_bytes": 17323359
+        "git_revision": "4fab2dfda16236dc407aa179920780d6a970dda3",
+        "source_diff_sha256": "b4199304e4163e67f08a0b77337aa45bc73a7790646ca01e6fcc56e41eaa7f2a",
+        "untracked_source_sha256": "55691f6b55a13e9abbe9dbe2b5c75ac27021b370ed012fceafa91d4a8b60e25f",
+        "compiled_cli_sha256": "2e86e22eecc4a5012963311e2b14e3101e53750459092e45d07b8030bfb687b4",
+        "compiled_cli_files": 144,
+        "compiled_cli_bytes": 10305138
       },
       "runtime_binding_audit_ms": {
-        "before": 124.877433,
-        "after": 124.70215199999984
+        "before": 177.43348500000002,
+        "after": 171.273545
       },
-      "wall_seconds": 12.805,
-      "cpu_seconds": 12.563222,
-      "peak_process_family_bytes_including_page_cache": 424353792,
+      "wall_seconds": 23.425,
+      "cpu_seconds": 23.121681,
+      "peak_process_family_bytes_including_page_cache": 422301696,
       "tokens_estimated": {
         "question_and_recipe": 93,
         "arguments": 330,
@@ -1217,14 +1221,14 @@
         {
           "label": "help-members",
           "arguments": ["rea", "inspect-managed-members", "--help"],
-          "elapsed_ms": 2187.442688,
+          "elapsed_ms": 3439.6059069999997,
           "stdout_bytes": 1487,
           "stdout_file": "help-members.stdout"
         },
         {
           "label": "help-view",
           "arguments": ["rea", "inspect-analysis-view", "--help"],
-          "elapsed_ms": 1990.266838,
+          "elapsed_ms": 3851.0081439999994,
           "stdout_bytes": 1219,
           "stdout_file": "help-view.stdout"
         },
@@ -1242,7 +1246,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-3-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 3032.2255909999994,
+          "elapsed_ms": 5618.057167999999,
           "stdout_bytes": 6940,
           "stdout_file": "summary.stdout"
         },
@@ -1256,7 +1260,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-3-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2431.147575000001,
+          "elapsed_ms": 4301.484570999999,
           "stdout_bytes": 20274,
           "stdout_file": "methods.stdout"
         },
@@ -1270,7 +1274,7 @@
             "/tmp/rea-perf-managed-cli-20261021/pair-warm-3-selected/parent.json",
             "--json"
           ],
-          "elapsed_ms": 2557.0664880000004,
+          "elapsed_ms": 5387.867847999998,
           "stdout_bytes": 13803,
           "stdout_file": "member_refs.stdout"
         }
@@ -1313,15 +1317,15 @@
       "compiled_cli_bytes": 10151181
     },
     "runtime_binding_audit_ms": {
-      "before": 162.35517099266872,
-      "after": 176.33498999930453
+      "before": 293.54318098921794,
+      "after": 227.8408429992851
     },
     "repetitions": 1,
     "tokens_estimated_script_plus_help_plus_answer": 10555,
     "token_scope": "Projection source, original CLI help and returned answer; excludes shared question and launcher argv. No actual model usage measured.",
-    "wall_seconds": 6.185,
-    "cpu_seconds": 5.90675,
-    "peak_process_family_bytes_including_page_cache": 397185024,
+    "wall_seconds": 11.249,
+    "cpu_seconds": 10.999851,
+    "peak_process_family_bytes_including_page_cache": 393580544,
     "answer_matches": true,
     "cleanup_verified": true
   }

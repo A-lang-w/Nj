@@ -1,4 +1,5 @@
 import type { ExecutableFormatHint } from "../domain/dosCom.js";
+import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
 import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { DirectAnalysisDependencies } from "./DirectAnalysisDependencies.js";
@@ -204,6 +205,7 @@ export const runProviderAnalysis = async (
         arguments_,
         operationSignal,
       );
+      await dispatchQueuedInterrupts();
       if (!original.ok) return cliError(original.error);
       if (operationSignal.aborted)
         return cliError(

@@ -53,12 +53,12 @@ All trials complete with verified process cleanup and no OOM/resource-stop event
 | Whole task, median                              | Complete | Summary + two pages |
 | ----------------------------------------------- | -------: | ------------------: |
 | Estimated context tokens, both cache conditions |  451,373 |              13,078 |
-| Cold wall seconds                               |    5.870 |              12.926 |
-| Cold family CPU seconds                         |    5.621 |              12.724 |
-| Cold kernel family peak MiB                     |  391.555 |             399.148 |
-| Warm wall seconds                               |    5.653 |              13.269 |
-| Warm family CPU seconds                         |    5.451 |              13.037 |
-| Warm kernel family peak MiB                     |  399.949 |             406.758 |
+| Cold wall seconds                               |    9.969 |              14.801 |
+| Cold family CPU seconds                         |    9.743 |              14.555 |
+| Cold kernel family peak MiB                     |  393.281 |             400.098 |
+| Warm wall seconds                               |   10.339 |              24.141 |
+| Warm family CPU seconds                         |   10.097 |              23.842 |
+| Warm kernel family peak MiB                     |  401.809 |             407.164 |
 
 Context estimates include the question, supplied command recipe, all logical
 argv, actual help and stdout. Tokenizer `tiktoken==0.12.0`, `cl100k_base`.
@@ -79,8 +79,8 @@ was introduced.
 The unchanged baseline can already redirect full stdout to a file and select
 rows in code. [The measured control](managed-cli-local-control.py) returns the
 identical answer and retains the complete original Evidence. One cold run:
-6.185 s wall, 5.907 s family CPU,
-378.8 MiB kernel peak. Projection source,
+11.249 s wall, 11.000 s family CPU,
+375.3 MiB kernel peak. Projection source,
 original help and returned answer together estimate 10,555 tokens; the shared
 question and launcher argv are excluded. This single-run control does not
 establish stable performance or actual native-agent usage. It does demonstrate
@@ -96,45 +96,60 @@ original row order, signatures, source/page coverage and unknowns survive.
 Existing outputs are not replaced; failed publication retains completed facts.
 
 The Evidence factory parses mutable caller data into independent trees, computes
-its identity, then seals the fresh owned snapshot with only active ancestry and
-iterators. It does not retain a set or array of every completed object. Existing
-sealed subtrees can be shared; mutable input aliases are cloned independently.
-Caller input stays mutable and independent. General graph sealing retains its
-separate cycle, shared-reference, hidden-field and no-partial-freeze semantics.
-The final CLI error projection reuses the authenticated immutable parent by
-reference when admission refuses publication, without another payload copy.
+identity, then seals its fresh owned snapshot with active ancestry/iterators.
+It does not retain a set/array of every completed object. Existing sealed roots
+can be shared; mutable input aliases are cloned independently. General graph
+sealing keeps its separate cycle, sharing, hidden-field and atomic-failure rules.
+Managed and derived-view factories seal their own completed Evidence, so CLI
+error projection can borrow it without reauthentication or another payload copy.
+The view owner retains strict JSON normalization for optional-field contracts;
+the CLI no longer copies its already validated completed projection again.
 
-Shared heap admission also walks by depth, without queueing every report row
-or building an entries array. It reserves parsed working copies and actual
-escaping expansion before cloning/hashing, reporting UTF-16 storage explicitly
-rather than mislabelling it as UTF-8 wire bytes. Canonical bundle comparison
-uses bounded parts from the existing JSON encoder, preserving native text/key
-order, omitted members, negative zero and Unicode semantics without two
-whole-document strings. Every bundle reader explicitly carries its owning
-operation through assembly and authentication, including CLI export/compare/
-inspection, MCP comparison/import and both native-matching read passes. Errors
-retain the original cause and cleanup lease; confirmed retries release the
-exact owner.
+Shared heap admission traverses by depth rather than queueing every report row
+or allocating an entries array. It reserves parsed working copies and actual
+escaping expansion before cloning/hashing, reporting UTF-16 storage explicitly.
+Canonical bundle equality streams existing ordinary JSON encoder parts, preserving
+native key order, omission, negative zero and Unicode semantics without two
+whole-document strings. All production bundle readers explicitly pass their
+operation: CLI import/export/compare/inspection, retained views, MCP import/
+comparison and both native-matching read passes. Errors retain the original
+cause, cleanup primary and lease through retry.
 
-Publication, authentication and projection dispatch queued callbacks and then
-their OS signal notifications before accepting completion. Cancellation after
-publication keeps the committed receipt and linked partial summary. Four
-compiled SIGINT/SIGTERM cases (event dispatch and actual POSIX signals) fail
-with the publication checkpoint removed and pass restored. Two real Newtonsoft
-DLL OS-signal runs also preserve the identical parent and exit 130/143.
-Synchronous stages are cooperatively cancellable between stages, not preemptible.
+One process primitive dispatches queued callbacks and then their OS signal
+notifications. The managed producer checks it before accepting complete Evidence.
+Publication/read stages use it before their final checks. Inline, file and bundle
+CLI views share the existing command finalizer and actual resource scope; the
+finalizer checks interruption after close while preserving any primary/cleanup
+failure. Existing inline error labels remain intact. Synchronous analysis is
+cooperatively cancellable between stages, not preemptible.
 
-All 420 focused tests across 30 files, `npm run check` and
-`npm run docs:check` pass. Eight new negative-control cases catch graph-sized
-sealing/admission scratch and incorrect operation attribution in compiled CLI,
-actual SDK comparison and native matching, including its later reload. Every
-case fails against the preceding owner behavior and passes restored. Earlier
-admission, error-projection, escaped-encoding and cleanup regressions remain.
-No actual heap exhaustion is induced. The first expanded test attempt exposed
-a test-only module-spy reset leak; an initial traversal probe also recursively
-instrumented the mock framework. Both test harness issues were corrected before
-the passing full gates. Simulated providers/fault injection do not establish
-foreign-provider behavior; Windows OS signals remain unverified locally.
+Four compiled publication cases (SIGINT/SIGTERM × event/actual POSIX signal)
+fail without their checkpoint and pass restored. Eight additional compiled
+completion cases cover default complete delivery and inline projection; all fail
+with only their new completion checkpoints removed and pass restored. Fixture
+hooks match the selected target path or exact parent ID. Two real Newtonsoft
+publication runs and four real default/inline completion runs retain the identical
+parent or independently checked selected summary, exit 130/143 and preserve
+committed receipts where applicable. No target library code is executed.
+
+All 556 focused tests across 36 files pass, including direct
+finalizer/cleanup ownership, WASM/Android cancellation and native matching.
+All six `npm run check` tasks plus architecture guards, and all six
+`npm run docs:check` tasks plus five README tests pass. The expanded domain
+project passes 5,617 tests in 287 files with
+3 skipped cases; this overlaps the focused gate. Its first
+batched shard hit two existing 30-second timeouts in unchanged large synthetic
+tests. Both passed isolated and in the fresh shard rerun under the same timeout;
+the cause of the batch variation is unverified. No production/timeout change
+was made for those cases. An earlier unsplit expansion was manually stopped
+before its heap ceiling; that incomplete attempt is not counted as a pass.
+
+Eight producing/operation negative controls also catch graph-sized sealing/
+admission scratch and wrong operation attribution, including native reload.
+Native built-in instrumentation is confined to the isolated process-global lane.
+Initial test-only spy/probe/schema-import issues were corrected before these
+passing gates. No actual heap exhaustion is induced. Simulated providers do not
+qualify foreign engines; Windows OS signals remain unverified locally.
 
 ## Shared-reader real-artifact regression
 
@@ -146,9 +161,9 @@ An independent Python SHA-256/path oracle verifies 180 historical files,
 This uses the existing explicit semantic-node cap of one for static correspondence;
 it does not establish equivalent semantic-graph coverage or behavioral equivalence.
 
-One completed task: 17.387 s wall,
-16.962 s family CPU,
-942.4 MiB kernel family peak,
+One completed task: 21.380 s wall,
+21.023 s family CPU,
+928.9 MiB kernel family peak,
 56,378 estimated context tokens (one input catalog,
 all arguments and MCP text replies; excludes output schemas, framing and model
 reasoning). Corpus/reference preparation was performed earlier and excluded.
