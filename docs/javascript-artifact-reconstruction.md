@@ -50,6 +50,12 @@ The equivalent MCP input is:
 `input_path` must be absolute. `format` accepts `auto`, `asar`, or `directory`.
 `integrity_policy` accepts `fail` or `record-and-continue`; both CLI routes and
 the MCP tool default to `fail`.
+Evidence parameters retain the caller-selected `input_path`, including a
+symlink alias. Both CLI routes anchor relative inputs to their working
+directory without resolving symlinks. The subject and normalized result use
+the resolved path for artifact identity; the selected path remains a separate
+request fact. Older Evidence can omit this parameter; retained records are
+validated without resolving their paths against the live filesystem.
 The result retains the canonical local path, root artifact digest, artifact
 manifest and graph commitments, JavaScript Application Graph, static
 Electron summary, reconstruction statistics, and explicit limitations. It does
@@ -365,7 +371,15 @@ Recognized literal module-table bootstraps also support bounded lexical
 substitution through module exports, import helper bodies, local wrapper calls,
 returned closures, object spreads, and callback parameters. Recovered Electron
 paths retain source ranges, module identities, literal channels and branch
-conditions as static candidates. Unknown spreads, reassigned bindings, accessors,
+conditions as static candidates. A channel the IPC call site itself
+determines, such as a local constant, resolves that call's observation rather
+than adding a second one. A channel or registration handler supplied through
+a wrapper argument is a candidate beside the call's own unresolved
+observation, because callers outside the traced paths may pass other values.
+A wrapper call that is both its own entry and reached through another entry
+is recorded once when both paths find the same facts; calls that supply
+different handlers or channels stay distinct.
+Unknown spreads, reassigned bindings, accessors,
 dynamic channels and unsupported syntax do not become exact implementations.
 This pass neither executes the bundle nor proves that runtime guards pass.
 An ambiguous or unresolved handler retains its channel registration but does
@@ -585,6 +599,21 @@ also bounded by the remaining application capacity. Raising these controls does
 not bypass worker heap, execution deadline or parent result admission. Truncated
 coverage reports both effective node ceilings; omitted relationships remain
 unknown.
+
+Unknown records have independent defaults of 100000 across the application and
+20000 per source. Select `max_semantic_unknowns` and
+`max_semantic_unknowns_per_file` (CLI: `--max-semantic-unknowns` and
+`--max-semantic-unknowns-per-file`), each from 1 to 1000000. The parent offers the
+remaining capacity to the worker, and rejects excess records before adoption.
+Unknown admission happens before canonical identity and provenance construction.
+When capacity is exhausted, coverage is partial and truncated and names both
+effective unknown ceilings. `coverage.omitted_unknown_occurrences` counts examined
+emission occurrences by family and reason, including repeated emissions. It does
+not claim distinct discarded identities or count frontiers in unexamined source.
+Omitted unknown provenance and IDs are not retained. Existing source, node,
+execution and memory limits continue to determine examined coverage. Raising only
+a node capacity does not raise the unknown capacity. Graphs without unknown
+omissions omit this optional coverage field, preserving their existing identities.
 
 While sources remain, the sequential worker reserves one next compact static
 checkpoint at its 8 MiB bound with the same 6x retention expansion used at

@@ -9,12 +9,13 @@ import {
   schemaArrays,
   schemaChildren,
   schemaMaps,
-} from "../dist/contracts/inputSchemaPresentation.js";
+} from "../dist/contracts/jsonSchemaKeywords.js";
 import {
   TOOL_CONTRACTS,
   toolContract,
 } from "../dist/contracts/toolContracts.js";
 import { exec } from "./lib/verify-package-core.mjs";
+import { assertJavaScriptApplicationInputPaths } from "./lib/javascript-application-paths.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createGeminiModelFixture } from "./verify/clients/gemini-model-fixture.mjs";
 
@@ -307,7 +308,7 @@ const fixture = await createGeminiModelFixture({
       const evidence = toolContract(
         "analyze_javascript_application",
       ).outputSchema.parse(observed);
-      assert.equal(evidence.subject.local_path, target);
+      await assertJavaScriptApplicationInputPaths(evidence, target);
       const shape = evidence.normalized_result.graph.nodes
         .flatMap((n) => n.observations)
         .map((o) => o.properties)
