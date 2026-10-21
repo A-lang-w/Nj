@@ -63,7 +63,9 @@ const parserSchema = (
 
 const omissionRejected = (schema: z.ZodObject | undefined): string[] =>
   Object.entries(schema?.shape ?? {})
-    .filter(([, field]) => !field.safeParse(undefined).success)
+    // `exactOptional()` rejects an explicit undefined value while still admitting
+    // omission, so read zod's optionality marker instead of parsing undefined.
+    .filter(([, field]) => Reflect.get(field, "_zod")?.optin === undefined)
     .map(([key]) => key)
     .sort();
 
