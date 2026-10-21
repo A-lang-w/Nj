@@ -146,7 +146,7 @@ identity. Readiness captures and validates `binary_session` from the actual
 server rather than assuming a profile. Claude's verifier derives its expected
 identity using the shared input/output profile parsers.
 
-Nine related test files passed 106 tests with two platform skips. Static and
+Nine related test files passed 106 tests with two skips. Static and
 documentation gates passed again. Actual readiness tasks passed with default,
 explicit full, and compact input/output-off settings. The final real Zellij SDK
 task reproduced the earlier complete parent and advertised catalog exactly.
@@ -161,3 +161,13 @@ The actual persisted native responses were independently parsed with the named
 production output contract: both selected catalog identities match, and the
 completed readiness reports record the same digests. Receipts retain the
 baseline/candidate failures, cleanup and this narrower successful check.
+
+First-head CI found three remaining tests that assumed a full default
+advertisement. The ZIP retained-inventory, browser-endpoint and literal-seed
+cases now exercise full and compact: full retains its strict declaration and
+guidance assertions; both keep canonical refusal and valid workflow checks.
+Four affected files passed all 27 tests serially on main
+`6d356b84344659085f2b912857b5e27fe0160c9b`; static/documentation gates passed.
+An earlier parallel-file attempt was stopped at the 3 GiB early boundary before
+OOM and is incomplete. Serial execution stayed below the same boundary without
+raising the 4 GiB family limit. No performance cohort includes these test runs.

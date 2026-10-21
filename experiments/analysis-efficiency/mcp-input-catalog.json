@@ -1902,5 +1902,41 @@
         }
       ]
     }
+  },
+  "ci_followup": {
+    "integration_base": "6d356b84344659085f2b912857b5e27fe0160c9b",
+    "first_ci_run": 39601241054,
+    "cause": "Three tests assumed the old full default in nested input rejection/property guidance.",
+    "fix": "Parameterize affected ZIP retention, browser endpoint and literal-seed workflows for full and compact; retain strict full advertisement assertions and enforce canonical valid/invalid behavior for both.",
+    "serial_tests": "4 files, 27 passed.",
+    "validation": {
+      "ci-regression-tests-serial": {
+        "passed": true,
+        "family_peak_bytes": 2452987904,
+        "cpu_seconds": 216.800823,
+        "log_sha256": "8fe90cbb0c3c283559ae66be66035117e7884e3565b1637aaf61307400efa73f"
+      },
+      "check-before-review-push": {
+        "passed": true,
+        "family_peak_bytes": 1326555136,
+        "cpu_seconds": 39.301628,
+        "log_sha256": "ce739f3aca7279ef2da53faba08f6e74581a0801e2014c7eb6d6aa402f782e4c"
+      },
+      "docs-before-review-push": {
+        "passed": true,
+        "family_peak_bytes": 511111168,
+        "cpu_seconds": 11.300216,
+        "log_sha256": "7ed6e5274552bf34d89c2b70cdb792b8274b0dbbf80e61884657bb386d238cae"
+      }
+    },
+    "incomplete_attempt": {
+      "log_sha256": "22b6035a7b87f0642ab96afc8b25ef29911b69d37082849ef753f4302fe1bf4d",
+      "reason": "Parallel files reached the 3 GiB early-stop threshold (4 GiB hard limit), no OOM; incomplete, not a passing run. Serial files passed without raising limits."
+    },
+    "source_sha256": {
+      "tests/boundary/mcp/artifactMcp.inlineInventory.test.ts": "c6c875dd49fc76f7b7b4aae8b9a1f3d379748278bbd0ec2c15f7ae2a7d0ed364",
+      "tests/boundary/mcp/browserMcp.test.ts": "bf9d0ad7f8061d2d7963de6a126ef4ed108a9e4eccc8107cedcd4360ac7fe096",
+      "tests/boundary/mcp/retainedApplicationEvidenceMcp.test.ts": "1d0d7121d339100e72f454d2b0a34a307a2e3609df3c416dca3674844761a6ba"
+    }
   }
 }
