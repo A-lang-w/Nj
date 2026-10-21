@@ -77,9 +77,15 @@ const scopedPattern = (
   // Protect it from ignore's per-rule BOM and whitespace normalization.
   // A terminal directory globstar must consume a descendant. ignore otherwise
   // lets its zero-depth match include the named parent, including for negations.
-  const pattern = sourcePattern
-    .replace(/^(!?)\uFEFF/u, "$1[\uFEFF]")
-    .replace(/(^!?|\/)\*\*\/(?=\s*$)/u, "$1**/*/");
+  const withoutBom = sourcePattern.replace(/^(!?)\uFEFF/u, "$1[\uFEFF]");
+  // Keep slashless `foo/**` file matches intact. Only the explicit trailing
+  // slash makes this the directory-only form that needs a child boundary.
+  const hasTerminalDirectoryGlobstar = /(^!?|\/)\*\*\/(?=\s*$)/u.test(
+    withoutBom,
+  );
+  const pattern = hasTerminalDirectoryGlobstar
+    ? withoutBom.replace(/(^!?|\/)\*\*\/(?=\s*$)/u, "$1**/*/")
+    : withoutBom;
   if (prefix === undefined) return pattern;
   if (pattern.trim() === "" || pattern.startsWith("#")) return undefined;
   const negative = pattern.startsWith("!");

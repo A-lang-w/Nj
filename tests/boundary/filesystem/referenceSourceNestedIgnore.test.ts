@@ -254,6 +254,59 @@ const testCanonicalSymlinkUsesTargetRepository = async () => {
   );
 };
 
+const testTerminalGlobstarMatchesGit = async (
+  nested: boolean,
+  pattern: string,
+) => {
+  const root = await createTestTempDirectory(
+    "rea-reference-terminal-globstar-",
+  );
+  const prefix = nested ? "pkg/" : "";
+  const policyPath = nested ? "pkg/.gitignore" : ".gitignore";
+  const directPath = `${prefix}foo/direct.ts`;
+  const nestedPath = `${prefix}foo/sub/deep.ts`;
+  await writeTree(root, {
+    [policyPath]: `${pattern}\n`,
+    [directPath]: "export const direct = true;\n",
+    [nestedPath]: "export const deep = true;\n",
+    [`${prefix}keep.ts`]: "export const keep = true;\n",
+  });
+  const initialized = spawnSync("git", ["init", "--quiet", root], {
+    encoding: "utf8",
+  });
+  expect(initialized.status, initialized.stderr).toBe(0);
+
+  const gitIgnored = (path: string): boolean => {
+    const result = spawnSync(
+      "git",
+      ["-C", root, "check-ignore", "--no-index", "--", path],
+      { encoding: "utf8" },
+    );
+    expect([0, 1], result.stderr).toContain(result.status);
+    return result.status === 0;
+  };
+  const result = await importReferenceSource({
+    root,
+    caller: "nested-ignore-terminal-globstar-test",
+    policy: { secretPatterns: [] },
+  });
+  if (!result.ok) throw result.error;
+  const entries = new Set(result.value.entries.map(({ path }) => path));
+  for (const path of [directPath, nestedPath]) {
+    const ignored = gitIgnored(path);
+    expect(entries.has(path)).toBe(!ignored);
+    const provenance = result.value.exclusions.some(
+      (exclusion) =>
+        exclusion.reason === "project-ignored" &&
+        exclusion.policy_path === policyPath &&
+        exclusion.pattern === pattern &&
+        (exclusion.path === path || path.startsWith(`${exclusion.path}/`)),
+    );
+    expect(provenance).toBe(ignored);
+  }
+  expect(entries.has(`${prefix}keep.ts`)).toBe(true);
+};
+
 describe.skipIf(process.platform === "win32")(
   "nested reference ignore rules",
   () => {
@@ -620,6 +673,23 @@ describe.skipIf(process.platform === "win32")(
           "packages/pkg/direct.ts",
           "packages/sibling/direct.ts",
         ]);
+      },
+    );
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "terminal globstar ignore rules",
+  () => {
+    it.each([
+      { nested: false, pattern: "foo/**" },
+      { nested: false, pattern: "foo/**/" },
+      { nested: true, pattern: "foo/**" },
+      { nested: true, pattern: "foo/**/" },
+    ])(
+      "preserves Git file and directory semantics for $pattern (nested=$nested)",
+      async ({ nested, pattern }) => {
+        await testTerminalGlobstarMatchesGit(nested, pattern);
       },
     );
   },
