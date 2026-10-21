@@ -10,6 +10,7 @@ import {
 import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { ArtifactFileCleanupFailure } from "../../artifacts/ArtifactFileOperation.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
+import { readFileHandleChunks } from "../../filesystem/readFileHandleChunks.js";
 import { streamChunkToBuffer } from "../../artifacts/StreamBytes.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
@@ -52,10 +53,7 @@ const writeTarball = async (
 ): Promise<WrittenBundleFile> => {
   const hash = createHash("sha256");
   let observed = 0;
-  for await (const chunk of source.handle.createReadStream({
-    start: 0,
-    autoClose: false,
-  })) {
+  for await (const chunk of readFileHandleChunks(source.handle)) {
     const bytes = streamChunkToBuffer(chunk);
     observed += bytes.length;
     if (observed > source.size) throw new RegularFileChangedError(source.path);
@@ -64,7 +62,7 @@ const writeTarball = async (
   if (observed !== source.size) throw new RegularFileChangedError(source.path);
   const written = await tree.write(
     relative,
-    source.handle.createReadStream({ start: 0, autoClose: false }),
+    readFileHandleChunks(source.handle),
     {
       bytes: source.size,
       sha256: hash.digest("hex"),
