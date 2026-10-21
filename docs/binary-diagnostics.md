@@ -274,10 +274,11 @@ retrieve complete Evidence, or request its summary with `inspect_analysis_view`.
 The CLI returns complete Evidence through the same service. Summary detail
 requires a session capable of retaining Evidence.
 
-Reads use one block-sized buffer and a 256-entry histogram. Full Evidence and
-its serialization require memory proportional to the number of selected
-blocks; summary delivery reduces returned output but still retains that full
-series. The 32,768-row ceiling bounds the actual retained block objects and
+Reads use one block-sized buffer and a 256-entry histogram. Complete output
+can become very large because it includes one row per selected block, and
+summary delivery still retains that full list. Use a shorter length or a
+larger block size to reduce it. Full Evidence and its serialization require
+memory proportional to the number of selected blocks. The 32,768-row ceiling bounds the actual retained block objects and
 their serialized representation: a cap-sized run below produced 1,514,877
 serialized bytes and increased V8 heap use by 21.2 MiB on the measured host.
 The cap therefore bounds this output independently of file size; it is not a

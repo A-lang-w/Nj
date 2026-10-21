@@ -1,4 +1,5 @@
 import { inspectByteEntropyInputSchema } from "../../domain/native/byteEntropy.js";
+import { publicInputStrictObject } from "../../domain/publicInput.js";
 import { byteEntropyOutputSchema } from "../toolOutputSchemaGroups.js";
 import {
   inspectRecordedCrashInputSchema,
@@ -25,6 +26,14 @@ import {
 export const inspectBinaryLayoutRequestSchema =
   inspectBinaryLayoutInputSchema.extend({ detail: analysisDetailSchema });
 
+/**
+ * Public `inspect_byte_entropy` input. The shared constructor runs before
+ * `detail` is added so the advertised input stays closed.
+ */
+export const inspectByteEntropyRequestSchema = publicInputStrictObject(
+  inspectByteEntropyInputSchema.shape,
+).extend({ detail: analysisDetailSchema });
+
 /** Offline binary diagnostics are independent of macOS process/UI providers. */
 export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
   {
@@ -32,10 +41,8 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_byte_entropy"),
     kind: "native-provider",
     description:
-      "Inspect Shannon byte entropy for one explicit local file offline, without execution, extraction or external tools. Returns file-wide SHA-256 and entropy, fixed-block entropy for an optional offset/length window, and adjacent high (>=7.2) and low (<=1.0) runs with exact file offsets. Block size is a power of two from 256 to 65536 (default 4096). The selected window is limited to 32,768 output blocks; use a shorter length or larger block size for larger windows. Entropy cannot distinguish compression from encryption. Summary detail retains complete Evidence and returns file entropy plus the ten longest runs; retrieve parent Evidence for the full series. The entire file is read even for a window.",
-    inputSchema: inspectByteEntropyInputSchema.extend({
-      detail: analysisDetailSchema,
-    }),
+      "Inspect Shannon byte entropy for one explicit local file offline, without execution, extraction or external tools. Returns file-wide SHA-256 and entropy, fixed-block entropy for an optional offset/length window, and adjacent high (>=7.2) and low (<=1.0) runs with exact file offsets. Block size is a power of two from 256 to 65536 (default 4096). Complete output can become very large because it includes one row per selected block, and summary detail still retains that full list. Use a shorter length or a larger block_size; the selected window is limited to 32,768 output blocks. Entropy cannot distinguish compression from encryption. Summary detail returns file entropy plus the ten longest runs; retrieve parent Evidence for the full series. The entire file is read even for a window.",
+    inputSchema: inspectByteEntropyRequestSchema,
     outputSchema: byteEntropyOutputSchema,
     examples: [
       {
