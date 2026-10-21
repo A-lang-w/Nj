@@ -138,7 +138,11 @@ export const runAdbCapture = async (
       return err(
         new AnalysisProtocolError(`adb failed for ${operation}`, { cause }),
       );
-    if (failure.outputTruncated)
+    if (failure.outputTruncated) {
+      const allowance = fixedAllowanceOptions(
+        `The adb output capture allowance of ${String(limits.maxOutputBytes)} bytes`,
+        limits.volatileOutput === true ? "live" : "capture",
+      );
       return err(
         new AnalysisResourceConstraintError(
           operation,
@@ -147,14 +151,13 @@ export const runAdbCapture = async (
           { max_output_bytes: limits.maxOutputBytes },
           {
             cause,
-            ...fixedAllowanceOptions(
-              "The adb output capture allowance",
-              limits.volatileOutput === true ? "live" : "capture",
-            ),
+            ...allowance,
+            remediationAction: `${allowance.remediationAction} This release has no runtime override.`,
             ...(limits.volatileOutput === true ? { retryable: true } : {}),
           },
         ),
       );
+    }
     const stderr = failure.stderr.trim();
     const excerpt = stderr.slice(0, STDERR_EXCERPT_CHARACTERS);
     // Device-state words inside a reported file name are not device verdicts.
@@ -212,7 +215,11 @@ export const runAdbCapture = async (
     }
     if (failure.killed)
       return err(
-        new AnalysisTimeoutError(operation, limits.timeoutMs, { cause }),
+        new AnalysisTimeoutError(operation, limits.timeoutMs, {
+          cause,
+          userMessage: `adb ${operation} reached its ${String(limits.timeoutMs)} ms deadline (deadlineExpired). This release has no runtime override.`,
+          remediationAction: `This ${String(limits.timeoutMs)} ms adb deadline has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
+        }),
       );
     return err(
       new AdbProtocolError(
