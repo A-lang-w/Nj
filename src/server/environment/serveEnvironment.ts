@@ -200,10 +200,11 @@ interface CachedStateReplySize {
 }
 
 // Repeated `data/get` snapshots have fresh wrappers but share the installed
-// state's member arrays. Cache only while all three member identities match.
-const stateReplySizes = new WeakMap<object, CachedStateReplySize>();
-
-const cachedStateReplyResultBytes = (reply: RpcReply): number | undefined => {
+// state's member arrays. The request-scoped cache avoids retaining stale sizes.
+const cachedStateReplyResultBytes = (
+  stateReplySizes: WeakMap<object, CachedStateReplySize>,
+  reply: RpcReply,
+): number | undefined => {
   if (!("result" in reply) || !isRecord(reply.result)) return undefined;
   const parts = reply.result.parts;
   if (!Array.isArray(parts) || parts.length !== 1 || !isRecord(parts[0]))
@@ -221,6 +222,7 @@ const cachedStateReplyResultBytes = (reply: RpcReply): number | undefined => {
 };
 
 const rememberStateReplyResultBytes = (
+  stateReplySizes: WeakMap<object, CachedStateReplySize>,
   reply: RpcReply,
   replyBytes: number,
 ): void => {
@@ -281,12 +283,16 @@ const replyEncoder = (
   const refusals = messages.filter(expectsReply).map(refusalBytes);
   let reserved = refusals.reduce((sum, bytes) => sum + bytes, 0);
   let used = framed ? 2 + Math.max(0, refusals.length - 1) : 0;
+  const stateReplySizes = new WeakMap<object, CachedStateReplySize>();
   let index = 0;
   return (reply) => {
     reserved -= refusals[index] ?? 0;
     index += 1;
     const room = MAX_RPC_RESPONSE_BYTES - used - reserved;
-    const cachedResultBytes = cachedStateReplyResultBytes(reply);
+    const cachedResultBytes = cachedStateReplyResultBytes(
+      stateReplySizes,
+      reply,
+    );
     const knownBytes =
       cachedResultBytes === undefined
         ? undefined
@@ -309,12 +315,12 @@ const replyEncoder = (
     }
     if (bytes <= room) {
       if (cachedResultBytes === undefined)
-        rememberStateReplyResultBytes(reply, bytes);
+        rememberStateReplyResultBytes(stateReplySizes, reply, bytes);
       used += bytes;
       return parts.join("");
     }
     if (cachedResultBytes === undefined)
-      rememberStateReplyResultBytes(reply, bytes);
+      rememberStateReplyResultBytes(stateReplySizes, reply, bytes);
     const refused = JSON.stringify({
       jsonrpc: "2.0",
       id: reply.id,
