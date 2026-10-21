@@ -30,12 +30,10 @@ export const createJavaScriptSourceAnalysis = (
   limits: JavaScriptSourceAnalysisLimits,
   sourceCount: number,
   acquisition: JavaScriptSourceAnalysisAcquisition = {},
-): JavaScriptSourceAnalysisPort => {
+): Promise<JavaScriptSourceAnalysisPort> => {
   if (acquisition.scope === undefined)
-    return new JavaScriptAnalysisWorker(
-      limits,
-      acquisition.launcher,
-      sourceCount,
+    return Promise.resolve(
+      new JavaScriptAnalysisWorker(limits, acquisition.launcher, sourceCount),
     );
   return checkoutJavaScriptSourceAnalysis(
     acquisition.scope,
@@ -45,12 +43,12 @@ export const createJavaScriptSourceAnalysis = (
   );
 };
 
-const checkoutJavaScriptSourceAnalysis = (
+const checkoutJavaScriptSourceAnalysis = async (
   scope: ArtifactResourceScope,
   limits: JavaScriptSourceAnalysisLimits,
   sourceCount: number,
   launcher: typeof spawnOwnedProviderProcess | undefined,
-): JavaScriptSourceAnalysisPort => {
+): Promise<JavaScriptSourceAnalysisPort> => {
   registerJavaScriptSourceAnalysisClose(scope);
   const current = retained.get(scope);
   if (current !== undefined && !current.busy) {
@@ -62,19 +60,31 @@ const checkoutJavaScriptSourceAnalysis = (
       return new ScopeJavaScriptSourceAnalysis(scope, current.worker);
     }
     retained.delete(scope);
-    const replaced = current.worker;
+    await releaseReplacedJavaScriptWorker(scope, current.worker);
+  }
+  const worker = new JavaScriptAnalysisWorker(limits, launcher, sourceCount);
+  // A concurrent analysis may have claimed the slot while the replaced
+  // process was closing. This extra process is closed with its own port.
+  if (retained.get(scope)?.busy !== true)
+    retained.set(scope, { worker, limits, busy: true });
+  return new ScopeJavaScriptSourceAnalysis(scope, worker);
+};
+
+/** Stop a worker that cannot be reused before its replacement starts. */
+const releaseReplacedJavaScriptWorker = async (
+  scope: ArtifactResourceScope,
+  replaced: JavaScriptAnalysisWorker,
+): Promise<void> => {
+  try {
+    await replaced.close();
+  } catch {
+    // The replacement may proceed. The scope still owns the old process.
     scope.retain({
       kind: "lease",
       resource: "replaced JavaScript source analyzer",
       lease: { release: () => replaced.close() },
     });
   }
-  const worker = new JavaScriptAnalysisWorker(limits, launcher, sourceCount);
-  // A concurrent analysis already owns the retained process. This extra
-  // process is closed with its own port so scope close cannot orphan it.
-  if (current?.busy !== true)
-    retained.set(scope, { worker, limits, busy: true });
-  return new ScopeJavaScriptSourceAnalysis(scope, worker);
 };
 
 const registerJavaScriptSourceAnalysisClose = (

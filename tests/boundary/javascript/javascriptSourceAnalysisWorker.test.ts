@@ -95,10 +95,21 @@ it("reuses one real owned analyzer while retaining distinct source identities an
 it("reuses one owned worker across analyses on the same resource scope", async () => {
   const scope = new ArtifactResourceScope();
   const launches: number[] = [];
+  const exits = new Map<number, Promise<void>>();
   const launcher: typeof spawnOwnedProviderProcess = async (request) => {
+    const previous = launches.at(-1);
+    if (previous !== undefined) await exits.get(previous);
     const spawned = await spawnOwnedProviderProcess(request);
     const pid = spawned.process.pid;
     if (pid === undefined) throw new Error("Owned analyzer has no observed PID");
+    exits.set(
+      pid,
+      new Promise((resolve) => {
+        spawned.process.once("exit", () => {
+          resolve();
+        });
+      }),
+    );
     launches.push(pid);
     return spawned;
   };
@@ -108,7 +119,7 @@ it("reuses one owned worker across analyses on the same resource scope", async (
   const files = [first, second];
   try {
     for (const file of files) {
-      const worker = createJavaScriptSourceAnalysis(limits, 1, {
+      const worker = await createJavaScriptSourceAnalysis(limits, 1, {
         scope,
         launcher,
       });
@@ -124,7 +135,7 @@ it("reuses one owned worker across analyses on the same resource scope", async (
       }
     }
     expect(launches).toHaveLength(1);
-    const replaced = createJavaScriptSourceAnalysis(
+    const replaced = await createJavaScriptSourceAnalysis(
       { heapMb: 256, timeoutMs: 30_000 },
       1,
       { scope, launcher },
@@ -141,7 +152,7 @@ it("reuses one owned worker across analyses on the same resource scope", async (
     }
     expect(launches).toHaveLength(2);
     await scope.close();
-    const reopened = createJavaScriptSourceAnalysis(limits, 1, {
+    const reopened = await createJavaScriptSourceAnalysis(limits, 1, {
       scope,
       launcher,
     });
