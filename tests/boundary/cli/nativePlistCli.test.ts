@@ -228,8 +228,9 @@ describe.skipIf(process.platform !== "darwin")(
             "<key>CFBundleExecutable</key><string>App</string>",
             "<key>CFBundleIdentifier</key><string>com.example.types</string>",
             "<key>Blob</key><data>AAEC</data>",
+            "<key>Separators</key><string>a\u0085b\u2028c\u2029d</string>",
             "<key>Built</key><date>2020-01-01T00:00:00Z</date>",
-            // plutil writes years past 9999 unsigned, which the decoder rejects.
+            // Parse the unsigned extended year as a UTC field, without JS string-date inference.
             "<key>Far</key><date>11507-08-17T05:20:00Z</date>",
             "<key>Ratio</key><real>nan</real>",
             "<key>Nested</key><array><dict>",
@@ -261,11 +262,15 @@ describe.skipIf(process.platform !== "darwin")(
             value: {
               CFBundleIdentifier: "com.example.types",
               Blob: { $plist_type: "data", base64: "AAEC" },
+              Separators: "a\u0085b\u2028c\u2029d",
               Built: {
                 $plist_type: "date",
                 iso8601: "2020-01-01T00:00:00.000Z",
               },
-              Far: { $plist_type: "date", iso8601: null },
+              Far: {
+                $plist_type: "date",
+                iso8601: "+011507-08-17T05:20:00.000Z",
+              },
               Ratio: { $plist_type: "real", value: "nan" },
               Nested: [
                 {
@@ -284,7 +289,6 @@ describe.skipIf(process.platform !== "darwin")(
             limitations: [
               expect.stringContaining("XML conversion"),
               expect.stringContaining("2 non-finite real"),
-              expect.stringContaining("1 date value(s)"),
             ],
           },
         });
