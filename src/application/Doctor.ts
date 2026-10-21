@@ -11,7 +11,10 @@ import { constants } from "node:fs";
 import { access, readdir, stat } from "node:fs/promises";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { RetainedResourceScope } from "./AnalysisProvider.js";
+import { nativeAnalysisConfigurationError } from "../config/parseConfig.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
+import type { ConfigurationSettingIssue } from "../domain/configurationErrors.js";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { join } from "node:path";
 
 import { analysisErrorRemediationAction } from "../domain/analysisErrorPresentation.js";
@@ -42,7 +45,7 @@ import {
   type InstalledSkillIdentity,
   type SkillPathIssue,
 } from "./SetupSkill.js";
-import { CATALOG_IDENTITY } from "../catalogIdentity.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../catalogIdentity.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../identity.js";
 import {
   readClientRegistrationStatuses,
@@ -109,6 +112,11 @@ export interface DoctorHost {
   readonly homeDirectory: string;
   readonly configuredHopperPath?: string;
   readonly configuredHopperStartupTimeout?: string;
+  /**
+   * Settings `parseConfig` rejects before native analysis starts.
+   * Undefined means this host did not run that admission.
+   */
+  readonly configurationIssues?: readonly ConfigurationSettingIssue[];
   readonly configuredIlspyCmdPath?: string;
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
@@ -170,7 +178,8 @@ interface DoctorIdentity {
   readonly cli_package_version: string;
   readonly expected_skill_version: string;
   readonly sdk: typeof SDK_IDENTITY;
-  readonly catalog: typeof CATALOG_IDENTITY;
+  /** Package default advertisement; the active server reports its selected profile. */
+  readonly catalog: typeof DEFAULT_CATALOG_IDENTITY;
   readonly live_server: {
     readonly state: "unknown";
     readonly remediation: string;
@@ -382,8 +391,8 @@ const collectDoctorIdentity = async (
       expected_skill_version: PRODUCT_IDENTITY.skillVersion,
       sdk: SDK_IDENTITY,
       catalog: {
-        counts: CATALOG_IDENTITY.counts,
-        digests: CATALOG_IDENTITY.digests,
+        counts: DEFAULT_CATALOG_IDENTITY.counts,
+        digests: DEFAULT_CATALOG_IDENTITY.digests,
       },
       live_server: {
         state: "unknown",
@@ -414,7 +423,7 @@ const skillIdentityAligned = (
   identity: InstalledSkillIdentity | undefined,
 ): boolean =>
   identity?.version === PRODUCT_IDENTITY.skillVersion &&
-  identity.toolCount === CATALOG_IDENTITY.counts.mcp_tools &&
+  identity.toolCount === DEFAULT_CATALOG_IDENTITY.counts.mcp_tools &&
   identity.canonical;
 
 const skillIdentityState = (
@@ -508,6 +517,9 @@ export const systemDoctorHost = (
   const platform = options.platform ?? process.platform;
   const architecture = options.architecture ?? process.arch;
   const environment = options.environment ?? process.env;
+  const configurationError = nativeAnalysisConfigurationError(
+    snapshotEnvironment(environment, platform),
+  );
   const hostExecFileOutput = options.execFileOutput ?? execFileOutput;
   const homeDirectory = homeDirectoryFromEnvironment(environment, platform);
   const commandEnvironment = { env: environment };
@@ -548,6 +560,7 @@ export const systemDoctorHost = (
           configuredHopperStartupTimeout:
             environment.REA_HOPPER_STARTUP_TIMEOUT_MS,
         }),
+    configurationIssues: configurationError?.settings ?? [],
     ...(environment.REA_ILSPY_CMD_PATH === undefined
       ? {}
       : { configuredIlspyCmdPath: environment.REA_ILSPY_CMD_PATH }),
