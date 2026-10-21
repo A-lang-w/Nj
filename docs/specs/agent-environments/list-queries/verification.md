@@ -116,3 +116,9 @@ It then merged the list-lines branch at ed4b6dbb, which carries the write-plan b
 as serving names them, interference weighed per write, a zero page size bounding nothing only where a recording listed
 items under it, and the other fixes of that branch's fifteenth round. Over the 50 captures every view and write verdict
 is again as before, and the six environments compare exactly as before.
+
+A third review round merged the list-lines branch at 8eea9f6d, which carries the write-plan branch through 7cef2fb2,
+and fixed Greptile's finding on the second round's sort rule: a sorted read whose values tie shows the state's order
+among them, so it still fixes a create's insert position, and a later whole list can no longer move the create where
+that read showed otherwise. Its test fails on the previous head. Over the 50 captures every view and write verdict is
+as before, and the six environments compare exactly as before.

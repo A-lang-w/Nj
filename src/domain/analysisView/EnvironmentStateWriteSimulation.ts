@@ -61,7 +61,6 @@ import {
   unservedPlan,
   type StateWritePlan,
 } from "./environmentStateWriteRules.js";
-import { placesCreates } from "./environmentStateListQuery.js";
 import { WriteTaint } from "./environmentStateWriteTaint.js";
 import { writeVerdict } from "./environmentStateWriteVerdict.js";
 
@@ -368,7 +367,7 @@ export class EnvironmentStateWriteSimulation {
       outcome.pass ||
       (view.shape === "list" && this.#retryInsert(view, record, exercised));
     const unseen = pass
-      ? this.#confirm(view, record, keys, exercised)
+      ? this.#confirm(view, record, outcome, exercised)
       : undefined;
     if (!pass) {
       const interfered = [...exercised].filter((name) =>
@@ -410,18 +409,19 @@ export class EnvironmentStateWriteSimulation {
   #confirm(
     view: StateView,
     record: StateRecordFacts,
-    keys: readonly string[],
+    outcome: CheckOutcome,
     exercised: ReadonlySet<string>,
   ): Map<string, Set<string>> {
     const shown = shownWrites(this.#touched, this.#effects, {
-      keys,
+      keys: [...outcome.targets, ...outcome.unheld],
       exercised,
       fields: shownFields(view, this.#input.volatileOf),
     });
+    // A sort that orders every listed entity shows nothing of where a create placed one.
+    const places = view.shape === "list" && outcome.positional !== false;
     for (const name of shown.confirmed) {
       this.#drafts.get(name)!.confirmed.push(record.ordinal);
-      // A sorted read shows the order its sort gives, not where a create placed its entity.
-      if (placesCreates(view, record.query)) this.#placed.add(name);
+      if (places) this.#placed.add(name);
     }
     return shown.unseen;
   }

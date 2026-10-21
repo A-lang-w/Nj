@@ -692,6 +692,34 @@ describe("list reads on a line they did not name", () => {
     });
   });
 
+  it("lets a sorted read whose values tie fix a create's position, as its order shows where the create put it", () => {
+    const shelved = (id: number, name: string, shelf: string, at: number) => ({
+      ...book(id, name, bookClock(at)),
+      shelf,
+    });
+    const beta = shelved(1, "Beta", "a", 0);
+    const mike = shelved(2, "Mike", "b", 1);
+    const zulu = shelved(3, "Zulu", "a", 2);
+    const alpha = shelved(4, "Alpha", "a", 6);
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [beta, mike, zulu]],
+      ["GET", "/api/books?shelf=a", [beta, zulu]],
+      ["GET", "/api/books?sort=-id", [zulu, mike, beta]],
+      ["GET", "/api/books/1", beta],
+      ["GET", "/api/books/2", mike],
+      ["GET", "/api/books/3", zulu],
+      ["POST", "/api/books", alpha, 201, { name: "Alpha", shelf: "a" }],
+      // Every match shares the shelf, so the order is the state's: the create went last.
+      ["GET", "/api/books?shelf=a&sort=shelf", [beta, zulu, alpha]],
+      // A name order would put it first, which the read before contradicts.
+      ["GET", "/api/books", [alpha, beta, mike, zulu]],
+    ];
+    expect(planOf(stateOf(rows), "post_books")).toMatchObject({
+      served: false,
+      contradicted_by: 8,
+    });
+  });
+
   it("leaves a create's position open after a sorted read, for a later whole list to settle", () => {
     const shelved = (id: number, name: string, shelf: string, at: number) => ({
       ...book(id, name, bookClock(at)),

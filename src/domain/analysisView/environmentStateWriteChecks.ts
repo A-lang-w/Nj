@@ -142,6 +142,8 @@ export const withBodies = <T>(
 /** A check's outcome and the targets it covered. */
 export interface CheckOutcome {
   readonly pass: boolean;
+  /** Set to false when a sort orders every listed entity, so the read shows nothing of where a create placed one. */
+  readonly positional?: boolean;
   readonly targets: readonly string[];
   /** Entities the recording, or the served base of a recorded-membership list, lists that the state does not hold, by target. */
   readonly unheld: readonly string[];
@@ -314,6 +316,7 @@ const checkQueryList = (
   if (result === undefined) return undefined;
   return {
     pass: listCheck(view, check, result.page, result.total),
+    positional: result.positional,
     targets: [
       ...(result.whole ? [collectionTarget(view.type, collection)] : []),
       ...result.page.map((entity) =>

@@ -54,7 +54,8 @@ before paging (`totals`); a `number`-of-items member such as `numberOfElements` 
   as serving lists them. A read on a line that keeps its recorded members is compared with the totals it recorded, as
   serving answers it. A read on a line it did not name is compared in its own envelope: that line's envelope, such as
   a `next` link naming the line's own values, comes from another call, so it says nothing of a write. A read whose
-  query applies a sort shows the sort's order, so it fixes no create's insert position.
+  query applies a sort that orders every listed entity shows the sort's order, so it fixes no create's insert
+  position; one whose sort leaves ties shows state order among them, and does.
 
 The roles are inferences from recorded behaviour and are stated as such. Nothing changes for a list whose lines all
 list the whole collection, or that no role explains.

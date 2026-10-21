@@ -9,7 +9,6 @@ import {
   type JsonObject,
   type StateEntity,
   type StateListView,
-  type StateView,
 } from "./environmentStateRules.js";
 
 /** What one list query parameter does to a list, learned from the recorded lines it explains. */
@@ -98,25 +97,6 @@ export const queryValues = (
     values.set(name, value);
   }
   return values;
-};
-
-/** Whether a passing read shows where a create placed its entity: a list read whose answer keeps the state's order, as no sort its query learned applies to the read's values. */
-export const placesCreates = (
-  view: StateView,
-  call: string | undefined,
-): boolean => {
-  if (view.shape !== "list") return false;
-  const { query } = view;
-  const values = queryValues(call);
-  return (
-    query === undefined ||
-    values === undefined ||
-    ![...values.keys()].some(
-      (name) =>
-        Object.hasOwn(query.parameters, name) &&
-        query.parameters[name]!.role === "sort",
-    )
-  );
 };
 
 const textOf = (value: JsonValue | undefined): string | undefined =>
@@ -241,14 +221,17 @@ const readCall = (
   return call;
 };
 
-/** Entities in the order a sort value names, ties in state order; undefined when it names no field. */
+/** Entities in the order a sort value names, ties in state order, and whether state order shows in it: no sort, or ties; undefined when it names no field. */
 const sorted = (
   matched: readonly StateEntity[],
   entities: readonly StateEntity[],
   call: QueryCall,
-): StateEntity[] | undefined => {
+):
+  | { readonly entities: StateEntity[]; readonly positional: boolean }
+  | undefined => {
   // Nothing to order: an emptied collection answers no entities rather than a recording.
-  if (call.sort === undefined || matched.length === 0) return [...matched];
+  if (call.sort === undefined || matched.length === 0)
+    return { entities: [...matched], positional: true };
   const names = [
     ...new Set(entities.flatMap((entity) => Object.keys(entity.fields))),
   ];
@@ -259,7 +242,7 @@ const sorted = (
   )
     ? -1
     : 1;
-  return matched
+  const ordered = matched
     .map((entity, index) => ({ entity, index }))
     .sort(
       (left, right) =>
@@ -270,6 +253,17 @@ const sorted = (
           ) || left.index - right.index,
     )
     .map(({ entity }) => entity);
+  return {
+    entities: ordered,
+    positional: ordered.some(
+      (entity, index) =>
+        index > 0 &&
+        ascending(
+          ordered[index - 1]!.fields[key.field],
+          entity.fields[key.field],
+        ) === 0,
+    ),
+  };
 };
 
 /** The entities a query selects, in its order, and how many matched before paging; undefined when a value cannot be applied. */
@@ -277,17 +271,25 @@ export const evaluateQuery = (
   parameters: Readonly<Record<string, QueryParameter>>,
   values: ReadonlyMap<string, string>,
   entities: readonly StateEntity[],
-): { readonly page: StateEntity[]; readonly total: number } | undefined => {
+):
+  | {
+      readonly page: StateEntity[];
+      readonly total: number;
+      /** Whether where an entity sits in the state shows in the answer: no sort orders it, or the sort leaves ties. */
+      readonly positional: boolean;
+    }
+  | undefined => {
   const call = readCall(parameters, values);
   if (call === undefined) return undefined;
-  const matched = sorted(
+  const selection = sorted(
     entities.filter((entity) =>
       call.selections.every((selects) => selects(entity)),
     ),
     entities,
     call,
   );
-  if (matched === undefined) return undefined;
+  if (selection === undefined) return undefined;
+  const matched = selection.entities;
   let { offset } = call;
   const { limit, page } = call;
   if (page !== undefined && page.index > page.first) {
@@ -300,6 +302,7 @@ export const evaluateQuery = (
       limit === undefined ? undefined : offset + limit,
     ),
     total: matched.length,
+    positional: selection.positional,
   };
 };
 
@@ -312,6 +315,7 @@ export const answerQuery = (
   | {
       readonly page: StateEntity[];
       readonly total: number;
+      readonly positional: boolean;
       readonly whole: boolean;
     }
   | undefined => {

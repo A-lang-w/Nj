@@ -191,7 +191,7 @@ describe("queries the state can always answer", () => {
   it("answers a sort of an emptied collection with no entities rather than giving up", () => {
     expect(
       evaluateQuery({ sort: { role: "sort" } }, queryValues("?sort=-id")!, []),
-    ).toEqual({ page: [], total: 0 });
+    ).toEqual({ page: [], total: 0, positional: true });
   });
 
   it("learns no search from a term that matched no field, keeping it inert", () => {
