@@ -332,8 +332,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     ];
     let launched = false;
     try {
-      if (signal?.aborted === true)
-        return err(hopperCancelledBySignal(signal));
+      if (signal?.aborted === true) return err(hopperCancelledBySignal(signal));
       let expectedLinuxSha256: string | undefined;
       if (usesLinuxDemo(this.options)) {
         const inspected = await (
