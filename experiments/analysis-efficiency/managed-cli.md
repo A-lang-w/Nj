@@ -53,12 +53,12 @@ All trials complete with verified process cleanup and no OOM/resource-stop event
 | Whole task, median                              | Complete | Summary + two pages |
 | ----------------------------------------------- | -------: | ------------------: |
 | Estimated context tokens, both cache conditions |  451,373 |              13,078 |
-| Cold wall seconds                               |   12.047 |              25.636 |
-| Cold family CPU seconds                         |   11.784 |              25.310 |
-| Cold kernel family peak MiB                     |  395.516 |             399.977 |
-| Warm wall seconds                               |    5.703 |              13.127 |
-| Warm family CPU seconds                         |    5.450 |              12.898 |
-| Warm kernel family peak MiB                     |  401.988 |             409.477 |
+| Cold wall seconds                               |    5.870 |              12.926 |
+| Cold family CPU seconds                         |    5.621 |              12.724 |
+| Cold kernel family peak MiB                     |  391.555 |             399.148 |
+| Warm wall seconds                               |    5.653 |              13.269 |
+| Warm family CPU seconds                         |    5.451 |              13.037 |
+| Warm kernel family peak MiB                     |  399.949 |             406.758 |
 
 Context estimates include the question, supplied command recipe, all logical
 argv, actual help and stdout. Tokenizer `tiktoken==0.12.0`, `cl100k_base`.
@@ -79,8 +79,8 @@ was introduced.
 The unchanged baseline can already redirect full stdout to a file and select
 rows in code. [The measured control](managed-cli-local-control.py) returns the
 identical answer and retains the complete original Evidence. One cold run:
-8.382 s wall, 8.213 s family CPU,
-376.4 MiB kernel peak. Projection source,
+6.185 s wall, 5.907 s family CPU,
+378.8 MiB kernel peak. Projection source,
 original help and returned answer together estimate 10,555 tokens; the shared
 question and launcher argv are excluded. This single-run control does not
 establish stable performance or actual native-agent usage. It does demonstrate
@@ -92,49 +92,49 @@ same application/domain owner as MCP, without caller-maintained JSON slicing.
 
 The public CLI regression pages all eight managed collections after process
 exit, target deletion and a working-directory change. Complete parent identity,
-original row order, signatures, coverage and unknowns survive. Other tests cover
-bundle tampering, exact multi-record identity, conflicting sources, existing
-outputs, provider/publication failures, interrupted publication, cleanup retry,
-and queued SIGINT/SIGTERM during authentication/projection.
+original row order, signatures, source/page coverage and unknowns survive.
+Existing outputs are not replaced; failed publication retains completed facts.
 
-Additional producing-boundary regressions verify heap admission before cloning
-and hashing on publication and read, and exact cancellation identity. The first
-three regressions failed when those fixes were removed. Review corrections seal
-the freshly parsed/hashed managed Evidence at its existing factory, so the final
-CLI error projection reuses the same authenticated immutable object when heap
-admission refuses publication. Caller-owned provider input remains mutable and
-independent. The writer receives the caller operation at creation, preserving
-its exact cancellation cause, cleanup primary and lease through successful or
-unresolved retries. Four projection/operation regression cases fail with these
-producer fixes removed and pass when restored. No actual heap exhaustion is
-needed for fault injection; all real tasks remain within the resource guard.
-Bundle canonical-order validation now compares the existing ordinary JSON encoder's
-bounded parts instead of allocating two whole-document strings. Native JSON key
-order, omitted members, negative zero and Unicode/escaping comparison semantics
-remain covered. Heap admission also reserves actual escaping expansion for keys
-and values, including control characters and unpaired surrogates, before the
-remaining scalar/manifest encoding. Its UTF-16 storage estimate is reported
-explicitly; it is not a UTF-8 wire-byte count.
+The Evidence factory parses mutable caller data into independent trees, computes
+its identity, then seals the fresh owned snapshot with only active ancestry and
+iterators. It does not retain a set or array of every completed object. Existing
+sealed subtrees can be shared; mutable input aliases are cloned independently.
+Caller input stays mutable and independent. General graph sealing retains its
+separate cycle, shared-reference, hidden-field and no-partial-freeze semantics.
+The final CLI error projection reuses the authenticated immutable parent by
+reference when admission refuses publication, without another payload copy.
 
-The owning operation is carried through regular-file JSON assembly and bundle
-authentication, covering resource refusal as well as cancellation. Related
-Evidence-file and historical-reference readers use the same boundary; superseded
-error-relabeling wrappers are removed. Seven relevant negative-control cases fail
-when these producer/encoding fixes are disabled and pass restored. The escaped
-payload filesystem regression forbids whole-bundle stringification while checking
-original raw text and authenticated identity.
+Shared heap admission also walks by depth, without queueing every report row
+or building an entries array. It reserves parsed working copies and actual
+escaping expansion before cloning/hashing, reporting UTF-16 storage explicitly
+rather than mislabelling it as UTF-8 wire bytes. Canonical bundle comparison
+uses bounded parts from the existing JSON encoder, preserving native text/key
+order, omitted members, negative zero and Unicode semantics without two
+whole-document strings. Every bundle reader explicitly carries its owning
+operation through assembly and authentication, including CLI export/compare/
+inspection, MCP comparison/import and both native-matching read passes. Errors
+retain the original cause and cleanup lease; confirmed retries release the
+exact owner.
 
-All 360 focused tests across twenty-one files, `npm run check` and `npm run docs:check`
-pass for this correction. Four compiled CLI publication tests cover queued
-SIGINT/SIGTERM through both event dispatch and actual POSIX signals, with
-committed receipts and linked partial summaries. All four fail with only the
-publication checkpoint removed and pass restored. Two real Newtonsoft DLL
-publication runs also retain the identical full parent on actual SIGINT/SIGTERM.
-The shared checkpoint drains queued callbacks and then their OS notifications
-before accepting publication, authentication or projection. Windows OS signals
-were not exercised locally. These are fault-injection tests, not foreign-provider
-measurements. Authentication/projection remains synchronous with cooperative
-cancellation checkpoints between stages, not preemptible work.
+Publication, authentication and projection dispatch queued callbacks and then
+their OS signal notifications before accepting completion. Cancellation after
+publication keeps the committed receipt and linked partial summary. Four
+compiled SIGINT/SIGTERM cases (event dispatch and actual POSIX signals) fail
+with the publication checkpoint removed and pass restored. Two real Newtonsoft
+DLL OS-signal runs also preserve the identical parent and exit 130/143.
+Synchronous stages are cooperatively cancellable between stages, not preemptible.
+
+All 420 focused tests across 30 files, `npm run check` and
+`npm run docs:check` pass. Eight new negative-control cases catch graph-sized
+sealing/admission scratch and incorrect operation attribution in compiled CLI,
+actual SDK comparison and native matching, including its later reload. Every
+case fails against the preceding owner behavior and passes restored. Earlier
+admission, error-projection, escaped-encoding and cleanup regressions remain.
+No actual heap exhaustion is induced. The first expanded test attempt exposed
+a test-only module-spy reset leak; an initial traversal probe also recursively
+instrumented the mock framework. Both test harness issues were corrected before
+the passing full gates. Simulated providers/fault injection do not establish
+foreign-provider behavior; Windows OS signals remain unverified locally.
 
 ## Shared-reader real-artifact regression
 
@@ -146,10 +146,10 @@ An independent Python SHA-256/path oracle verifies 180 historical files,
 This uses the existing explicit semantic-node cap of one for static correspondence;
 it does not establish equivalent semantic-graph coverage or behavioral equivalence.
 
-One completed task: 19.099 s wall,
-18.739 s family CPU,
-950.1 MiB kernel family peak,
-56,376 estimated context tokens (one input catalog,
+One completed task: 17.387 s wall,
+16.962 s family CPU,
+942.4 MiB kernel family peak,
+56,378 estimated context tokens (one input catalog,
 all arguments and MCP text replies; excludes output schemas, framing and model
 reasoning). Corpus/reference preparation was performed earlier and excluded.
 This is a regression verification with resource observation, not a new paired

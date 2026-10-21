@@ -24,6 +24,7 @@ import {
 } from "./jsonValue.js";
 import {
   freezeJsonSnapshot,
+  freezeOwnedJsonTreeSnapshot,
   canBorrowParsedJsonSnapshot,
   isImmutableJsonSnapshot,
 } from "./immutableJson.js";
@@ -369,9 +370,13 @@ export const createEvidence = (
   };
   // Seal this already parsed, exclusively owned snapshot without authenticating
   // or copying its payload again, including later partial-error delivery.
-  return sharedResult || options?.immutable === true
-    ? rememberImmutableEvidence(evidence)
-    : evidence;
+  if (sharedResult || options?.immutable === true) {
+    // The normalizer's JSON parser clones mutable payloads into trees and only
+    // borrows previously sealed roots. No graph-sized sealing scratch is needed.
+    freezeOwnedJsonTreeSnapshot(evidence);
+    immutableEvidenceSnapshots.set(evidence, evidence);
+  }
+  return evidence;
 };
 
 /** Create Evidence from owned immutable JSON while exposing cooperative computation steps. */

@@ -1,4 +1,10 @@
 import { getHeapStatistics } from "node:v8";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { createServer } from "../../src/server/createServer.js";
+import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+import { loadNativeMatchingBundleSources } from "../../src/application/native/NativeMatchingBundleSources.js";
+import { NativeMatchingAdmission } from "../../src/application/native/NativeMatchingAdmission.js";
+import { matchNativeFunctionsInputSchema } from "../../src/contracts/native/functionMatchingContracts.js";
 import { createEvidence } from "../../src/domain/evidence.js";
 import { runProviderAnalysis } from "../../src/application/DirectAnalysis.js";
 import type { DirectAnalysisDependencies } from "../../src/application/DirectAnalysisDependencies.js";
@@ -37,6 +43,80 @@ vi.mock("node:v8", { spy: true });
 vi.mock("../../src/domain/evidenceBundle.js", { spy: true });
 afterEach(() => vi.restoreAllMocks());
 
+it.each(["compare_bundles", "match_native_functions"])(
+  "attributes bundle authentication refusal to the actual %s boundary",
+  async (operation) => {
+    const { path, parent } = await savedParent();
+    const actual = await vi.importActual<
+      typeof import("../../src/application/JsonAuthenticationHeadroom.js")
+    >("../../src/application/JsonAuthenticationHeadroom.js");
+    vi.mocked(requireAuthenticationHeadroom).mockImplementation(
+      (value, options) =>
+        actual.requireAuthenticationHeadroom(value, {
+          ...options,
+          availableBytes: 0,
+        }),
+    );
+    const resources = new ArtifactResourceScope();
+    try {
+      if (operation === "match_native_functions") {
+        const source = {
+          kind: "retained-evidence",
+          evidence_id: parent.evidence_id,
+        };
+        await expect(
+          loadNativeMatchingBundleSources({
+            input: matchNativeFunctionsInputSchema.parse({
+              left: source,
+              right: source,
+            }),
+            paths: [path],
+            resources,
+            admission: new NativeMatchingAdmission(operation),
+          }),
+        ).rejects.toMatchObject({
+          _tag: "AnalysisResourceConstraintError",
+          operation,
+        });
+      } else {
+        const session = createTestBinarySession(() => {
+          throw new Error("Comparison must not open a target");
+        });
+        const server = createServer({ kind: "session", session });
+        const client = new Client({
+          name: "bundle-operation-refusal",
+          version: "1",
+        });
+        const [clientTransport, serverTransport] =
+          InMemoryTransport.createLinkedPair();
+        try {
+          await server.connect(serverTransport);
+          await client.connect(clientTransport);
+          const result = await client.callTool({
+            name: operation,
+            arguments: { left_bundle_path: path, right_bundle_path: path },
+          });
+          expect(result.isError).toBe(true);
+          expect(parseMcpToolError(result)).toMatchObject({
+            error: { code: "resource_constraint", details: { operation } },
+          });
+          expect(session.exportEvidenceBundle().records).toEqual([]);
+        } finally {
+          await client.close();
+          await server.close();
+          await session.close();
+        }
+      }
+    } finally {
+      vi.mocked(requireAuthenticationHeadroom).mockImplementation(
+        actual.requireAuthenticationHeadroom,
+      );
+      await resources.close();
+    }
+    expect(resources.hasPending).toBe(false);
+  },
+);
+
 const savedParent = async () => {
   const root = await createTestTempDirectory("rea-managed-bundle-guard-");
   const path = join(root, "parent.json");
@@ -47,6 +127,58 @@ const savedParent = async () => {
   );
   return { path, parent };
 };
+
+it("keeps the owning operation when native matching reloads a needed earlier bundle", async () => {
+  const root = await createTestTempDirectory("rea-native-bundle-reload-");
+  const path = join(root, "parent.json"),
+    empty = join(root, "empty.json");
+  const parent = createEvidence(
+    undefined,
+    { id: "fixture", name: "Fixture", version: "1" },
+    { operation: "list_procedures", parameters: {}, result: {} },
+  );
+  await writeFile(
+    path,
+    JSON.stringify(createImmutableEvidenceBundle([parent])),
+  );
+  await writeFile(empty, JSON.stringify(createImmutableEvidenceBundle([])));
+  const actual = await vi.importActual<
+    typeof import("../../src/application/JsonAuthenticationHeadroom.js")
+  >("../../src/application/JsonAuthenticationHeadroom.js");
+  let reads = 0;
+  vi.mocked(requireAuthenticationHeadroom).mockImplementation(
+    (value, options) =>
+      actual.requireAuthenticationHeadroom(
+        value,
+        ++reads === 3 ? { ...options, availableBytes: 0 } : options,
+      ),
+  );
+  const resources = new ArtifactResourceScope();
+  const source = { kind: "retained-evidence", evidence_id: parent.evidence_id };
+  try {
+    await expect(
+      loadNativeMatchingBundleSources({
+        input: matchNativeFunctionsInputSchema.parse({
+          left: source,
+          right: source,
+        }),
+        paths: [path, empty],
+        resources,
+        admission: new NativeMatchingAdmission("match_native_functions"),
+      }),
+    ).rejects.toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      operation: "match_native_functions",
+    });
+    expect(reads).toBe(3);
+  } finally {
+    vi.mocked(requireAuthenticationHeadroom).mockImplementation(
+      actual.requireAuthenticationHeadroom,
+    );
+    await resources.close();
+  }
+  expect(resources.hasPending).toBe(false);
+});
 
 it("admits bundle authentication before cloning and hashing retained records", async () => {
   const { path } = await savedParent();

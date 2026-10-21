@@ -5,45 +5,45 @@
     "name": "Redux Toolkit 2.2.7",
     "tarball_sha256": "f2517c466b50424b661a27e48039f15db7783e5822f46b5c7d39f20104ac67a9"
   },
-  "runtime_parent_revision": "a772abac81a7e2376e44822f8901e9e36a93618a",
+  "runtime_parent_revision": "a641f6c081cf567b152d64918e40754aeb658960",
   "production_manifest": "managed-cli.json#measurement_inputs.production_sources_sha256",
   "input_schema_profile": "default compact",
   "output_schema_profile": "full",
   "tokens_estimated": {
     "input_catalog_once": 49054,
-    "arguments": 306,
-    "text_replies": 7016,
-    "whole_task": 56376
+    "arguments": 307,
+    "text_replies": 7017,
+    "whole_task": 56378
   },
   "token_scope": "tiktoken==0.12.0/cl100k_base; one name/description/input-schema catalog plus actual arguments and MCP text replies; excludes output schemas, framing, model prompts/reasoning and actual model usage. Not actual native-agent token usage.",
   "actual_model_usage": null,
-  "wall_seconds": 19.099,
-  "cpu_seconds": 18.739454,
-  "peak_process_family_bytes_including_page_cache": 996245504,
+  "wall_seconds": 17.387,
+  "cpu_seconds": 16.961671,
+  "peak_process_family_bytes_including_page_cache": 988196864,
   "calls": [
     {
       "name": "analyze_javascript_application",
-      "elapsed_ms": 8592.808151,
+      "elapsed_ms": 8034.423473,
       "is_error": false,
       "reply_bytes": 25941
     },
     {
       "name": "compare_source_to_bundle",
-      "elapsed_ms": 419.8093090000002,
+      "elapsed_ms": 294.6711439999999,
       "is_error": false,
       "reply_bytes": 13199
     },
     {
       "name": "inspect_analysis_view",
-      "elapsed_ms": 3242.7514530000008,
+      "elapsed_ms": 2609.633498000001,
       "is_error": false,
       "reply_bytes": 19393
     },
     {
       "name": "export_evidence_bundle",
-      "elapsed_ms": 89.58714200000031,
+      "elapsed_ms": 160.80449100000078,
       "is_error": false,
-      "reply_bytes": 364
+      "reply_bytes": 366
     }
   ],
   "independent_proof": {

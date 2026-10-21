@@ -40,7 +40,12 @@ const dispatchQueuedInterrupts = async (): Promise<void> => {
 export const importEvidenceBundleCommand = async (
   path: string,
 ): Promise<Result<JsonValue, AnalysisError>> => {
-  const loaded = await readEvidenceBundle(path);
+  const loaded = await readEvidenceBundle(
+    path,
+    undefined,
+    undefined,
+    "import_evidence_bundle",
+  );
   if (!loaded.ok) return loaded;
   return ok({
     imported: loaded.value.records.length,
@@ -56,7 +61,12 @@ export const exportEvidenceBundleCommand = async (
   overwrite: boolean,
 ): Promise<Result<JsonValue, AnalysisError>> => {
   // The sealed snapshot lets the writer reuse this authentication.
-  const loaded = await readImmutableEvidenceBundle(sourcePath);
+  const loaded = await readImmutableEvidenceBundle(
+    sourcePath,
+    undefined,
+    undefined,
+    "export_evidence_bundle",
+  );
   if (!loaded.ok) return loaded;
   return projectWrite(
     loaded.value,
@@ -203,8 +213,18 @@ export const compareEvidenceBundlesCommand = async (input: {
   // Sealed snapshots let comparison and its bundle digests reuse this
   // authentication instead of re-validating every record twice more.
   const [left, right] = await Promise.all([
-    readImmutableEvidenceBundle(input.leftPath),
-    readImmutableEvidenceBundle(input.rightPath),
+    readImmutableEvidenceBundle(
+      input.leftPath,
+      undefined,
+      undefined,
+      "compare_bundles",
+    ),
+    readImmutableEvidenceBundle(
+      input.rightPath,
+      undefined,
+      undefined,
+      "compare_bundles",
+    ),
   ]);
   if (!left.ok) return left;
   if (!right.ok) return right;

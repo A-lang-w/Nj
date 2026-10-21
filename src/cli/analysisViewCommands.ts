@@ -60,7 +60,12 @@ export const registerAnalysisViewCommands = (
               ),
             ),
           };
-        const loaded = await readEvidenceBundle(parsed.data.path);
+        const loaded = await readEvidenceBundle(
+          parsed.data.path,
+          undefined,
+          undefined,
+          "get_evidence_bundle",
+        );
         if (!loaded.ok)
           return {
             error: "Evidence bundle inspection failed",
