@@ -20,6 +20,29 @@ caller. IDs are positional within the recorded artifact SHA-256. Selecting `obje
 in a new inspection requires `expected_sha256` from that inventory; a changed
 file is rejected before parsing selected payloads.
 
+`target` is the inventory declaration used for selection; `payload_target` is
+the independently observed inner declaration when available. Object pages keep
+both values, their kind, `target_consistency` and inspection coverage even with
+selected fields.
+Conflicting base architectures retain both values, mark object/report/target
+coverage partial and annotate the affected kernels. CUBIN flags establish a base
+architecture: `base-only` explicitly leaves feature-profile agreement unknown,
+including `a` variants. A standalone declaration is `single-source`, and
+unexamined payloads remain `unexamined`. An exact AMDGPU target is normalized at
+its note owner for comparison with a Clang bundle declaration; raw values remain
+intact. Unresolved feature comparisons stay `unknown`.
+
+Target filters select inventory declarations. An unselected payload's inner
+target remains unexamined; an empty filtered result does not establish that
+no enclosed code declares that target. Discovering every inner declaration
+requires decoding those payloads.
+
+HIP IDs with one or two separators before the architecture retain the declared
+target. If a recognized AMDGPU bundle ID does not expose a target, the same
+bounded note-discovery owner used for standalone AMDGPU files establishes it
+before filtering. Those directory/note reads share the inspection work budget;
+successive queries can select the target returned by inventory.
+
 Decode selected targets and return a kernel page in the same call:
 
 ```json

@@ -27,6 +27,8 @@ export const gpuObject = (
     parent_id: source.containerId,
     kind,
     target: null,
+    payload_target: null,
+    target_consistency: "unexamined",
     bundle_id: null,
     compression: "none",
     compression_id: null,

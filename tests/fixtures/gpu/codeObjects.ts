@@ -87,6 +87,7 @@ export const cubinFixture = (
     name?: string;
     globalRecords?: number;
     globalAliases?: number;
+    architecture?: number;
   } = {},
 ): Buffer => {
   const name = options.name ?? "add_one";
@@ -139,6 +140,11 @@ export const cubinFixture = (
     ],
     0x81,
   );
+  if (options.architecture !== undefined)
+    result.writeUInt32LE(
+      (result.readUInt32LE(48) & ~0xff) | options.architecture,
+      48,
+    );
   const table = Number(result.readBigUInt64LE(40));
   for (let index = 8; index < result.readUInt16LE(60); index++) {
     result.writeBigUInt64LE(
@@ -195,7 +201,7 @@ export const cudaFixture = (
   compression: "none" | "zstd" = "none",
   entries = [
     { kind: 1, target: 80, bytes: Buffer.from(ptxFixture) },
-    { kind: 2, target: 90, bytes: cubinFixture() },
+    { kind: 2, target: 90, bytes: cubinFixture({ architecture: 90 }) },
   ],
 ): Buffer => {
   const records = entries.map(({ kind, target, bytes }) => {
@@ -223,8 +229,11 @@ export const cudaFixture = (
   );
   return Buffer.concat([header, ...records]);
 };
-export const hipFixture = (payload = amdFixture()): Buffer => {
-  const ids = ["host-x86_64-unknown-linux", "hipv4-amdgcn-amd-amdhsa--gfx900"];
+export const hipFixture = (
+  payload = amdFixture(),
+  targetId = "hipv4-amdgcn-amd-amdhsa--gfx900",
+): Buffer => {
+  const ids = ["host-x86_64-unknown-linux", targetId];
   const headers = ids.map((id) => Buffer.alloc(24 + Buffer.byteLength(id)));
   const start = 32 + headers.reduce((total, row) => total + row.length, 0);
   for (let index = 0; index < headers.length; index++) {

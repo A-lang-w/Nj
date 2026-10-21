@@ -97,11 +97,24 @@ cliTest(
 it("preserves incomplete decoder coverage through MCP target and object pages", async () => {
   const root = await createTestTempDirectory("rea-gpu-partial-"),
     { call } = await connectLocalToolsMcp();
-  for (const missing of ["section-names", "symbols", "later-amd-note"]) {
+  for (const missing of [
+    "section-names",
+    "symbols",
+    "later-amd-note",
+    "target-conflict",
+  ]) {
     const bytes =
         missing === "later-amd-note"
           ? amdFixture(false, Buffer.alloc(3))
-          : cubinFixture(),
+          : missing === "target-conflict"
+            ? cudaFixture("none", [
+                {
+                  kind: 2,
+                  target: 80,
+                  bytes: cubinFixture({ architecture: 90 }),
+                },
+              ])
+            : cubinFixture(),
       path = join(root, missing);
     if (missing === "section-names") bytes.writeUInt16LE(0, 62);
     else if (missing === "symbols")
@@ -130,7 +143,11 @@ it("preserves incomplete decoder coverage through MCP target and object pages", 
         kind: "retained-evidence",
         evidence_id: targets.parent_evidence_id,
       },
-      view: { kind: "gpu-code-objects", collection: "objects" },
+      view: {
+        kind: "gpu-code-objects",
+        collection: "objects",
+        fields: ["kind"],
+      },
     });
     expect(objectReply.isError, JSON.stringify(objectReply)).not.toBe(true);
     const objects = gpuCodeObjectsPageViewResultSchema.parse(
@@ -141,6 +158,12 @@ it("preserves incomplete decoder coverage through MCP target and object pages", 
         inspection: missing === "later-amd-note" ? "malformed" : "partial",
       }),
     ]);
+    if (missing === "target-conflict")
+      expect(objects.items[0]).toMatchObject({
+        target: "sm_80",
+        payload_target: "sm_90",
+        target_consistency: "conflict",
+      });
   }
 });
 

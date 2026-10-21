@@ -21,12 +21,14 @@ import {
 import {
   readElfSectionDirectory,
   readPeSectionDirectory,
+  type NativeSectionDirectory,
 } from "../native/metadata/NativeSectionDirectory.js";
 import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
   GpuBufferSource,
+  checkGpuRange,
   GPU_OBJECT_BYTES,
   GPU_REPORT_BYTES,
   GpuReportCapacityFailure,
@@ -41,6 +43,7 @@ import {
   readGpuElfKernels,
   readAmdElfMetadata,
   type AmdElfMetadata,
+  type GpuPayloadTarget,
 } from "./GpuElfKernels.js";
 import { readPtxKernels, readPtxTarget } from "./PtxKernels.js";
 
@@ -58,6 +61,7 @@ export class GpuInventory {
   unknown_section_names = 0;
   #factBytes = 0;
   #decodedBytes = 0;
+  readonly #outerTargets = new WeakMap<GpuObject, string | null>();
   readonly #selectedObjects: ReadonlySet<string> | undefined;
   readonly #selectedTargets: ReadonlySet<string> | undefined;
   constructor(
@@ -78,6 +82,8 @@ export class GpuInventory {
     this.#factBytes += bytes + 2;
   }
   #add(row: GpuObject): void {
+    if (row.raw_flags !== null || row.bundle_id !== null)
+      this.#outerTargets.set(row, row.target);
     this.#retain(row);
     this.#retain(" ".repeat(32)); // Reserve all later inspection-state changes.
     this.objects.push(row);
@@ -154,37 +160,14 @@ export class GpuInventory {
           size: source.size,
           kind: directory.machine === 190 ? "cubin" : "amdgpu",
         });
-        if (directory.machine === 190)
-          row.target = `sm_${directory.flags & 0xff}`;
         this.#add(row);
-        let preparedAmd: AmdElfMetadata | undefined;
-        if (directory.machine === 224) {
-          try {
-            const metadata = await readAmdElfMetadata(source, directory);
-            preparedAmd = metadata.ok ? metadata.value : metadata.error.partial;
-            this.#retain({ target: preparedAmd.target });
-            row.target = preparedAmd.target;
-            if (!metadata.ok) {
-              if (this.input.analysis === "kernels" && this.#selected(row))
-                await this.#elfFacts(
-                  {
-                    size: source.size,
-                    containerId: row.id,
-                    read: (offset, size) => source.read(offset, size),
-                  },
-                  row,
-                  "amdgpu",
-                  preparedAmd,
-                );
-              this.#retainFailure(row, metadata.error.cause);
-              return directory.format;
-            }
-          } catch (cause) {
-            this.#retainFailure(row, cause);
-            return directory.format;
-          }
+        if (directory.machine === 190) {
+          const target = `sm_${directory.flags & 0xff}`;
+          this.#target(row, { value: target, key: target, scope: "cuda-base" });
         }
-        await this.#payload(source, row, preparedAmd);
+        if (directory.machine === 224)
+          await this.#amdPayload(source, row, directory);
+        else await this.#payload(source, row);
       } else {
         for (const section of directory.sections) {
           this.examined_sections++;
@@ -360,6 +343,13 @@ export class GpuInventory {
         } catch {
           return rejectGpu("PTX is not valid UTF-8 text");
         }
+        const target = readPtxTarget(text);
+        const conflict = this.#target(row, {
+          value: target,
+          key: target,
+          scope: "exact",
+        });
+        if (conflict !== undefined) coverage = "partial";
         const parsed = readPtxKernels(text, row.id);
         const artifact = {
           id: `${row.id}/ptx`,
@@ -374,6 +364,7 @@ export class GpuInventory {
         this.#retain(artifact);
         this.ptx_artifacts.push(artifact);
         for (const kernel of parsed) {
+          if (conflict !== undefined) kernel.limitations.push(conflict);
           if (kernel.registers.virtual.some((r) => r.count === null))
             coverage = "partial";
           this.#retain(kernel);
@@ -393,27 +384,100 @@ export class GpuInventory {
       this.#retainFailure(row, cause);
     }
   }
+  #target(row: GpuObject, payload: GpuPayloadTarget): string | undefined {
+    const selectedTarget = row.target;
+    const outer = this.#outerTargets.get(row) ?? null;
+    const hasOuter = outer !== null;
+    let state: GpuObject["target_consistency"] = "unknown";
+    if (payload.value !== null && !hasOuter) state = "single-source";
+    else if (outer !== null && payload.key !== null) {
+      if (payload.scope === "cuda-base") {
+        const base = /^sm_([0-9]+)[a-z]*$/u.exec(outer)?.[1];
+        const inner = /^sm_([0-9]+)$/u.exec(payload.key)?.[1];
+        if (base !== undefined && inner !== undefined)
+          state = base === inner ? "base-only" : "conflict";
+      } else if (outer === payload.key) state = "consistent";
+      else if (
+        row.kind === "amdgpu" &&
+        outer.split(":")[0] === payload.key.split(":")[0]
+      )
+        state = "unknown";
+      else state = "conflict";
+    }
+    this.#retain({
+      payload_target: payload.value,
+      target_consistency: state,
+      target: selectedTarget ?? payload.value,
+    });
+    row.payload_target = payload.value;
+    row.target_consistency = state;
+    if (selectedTarget === null) row.target = payload.value;
+    if (state !== "conflict") return;
+    const message = `Conflicting target declarations: inventory ${outer}; payload ${payload.value}. Target agreement is not established.`;
+    this.#objectLimitations(row, [message]);
+    return message;
+  }
+  async #amdPayload(
+    source: GpuSource,
+    row: GpuObject,
+    directory?: NativeSectionDirectory,
+  ): Promise<void> {
+    const child: GpuSource = {
+      size: row.location.size,
+      containerId: row.id,
+      read: (offset, size) => {
+        checkGpuRange(row.location.size, offset, size);
+        this.#budgetDecoded(size);
+        return source.read(row.location.offset + offset, size);
+      },
+    };
+    try {
+      const native =
+        directory ??
+        (await readGpuNativeDirectory(
+          child,
+          readElfSectionDirectory(child.size),
+        ));
+      const inspected = await readAmdElfMetadata(child, native);
+      const prepared = inspected.ok ? inspected.value : inspected.error.partial;
+      this.#target(row, {
+        value: prepared.target,
+        key: prepared.target_key,
+        scope: "exact",
+      });
+      if (!inspected.ok) {
+        if (this.input.analysis === "kernels" && this.#selected(row))
+          await this.#elfFacts(child, row, "amdgpu", prepared);
+        this.#retainFailure(row, inspected.error.cause);
+        return;
+      }
+      await this.#payload(source, row, prepared);
+    } catch (cause) {
+      this.#retainFailure(row, cause);
+    }
+  }
   async #elfFacts(
     source: GpuSource,
     row: GpuObject,
     kind: "cubin" | "amdgpu",
     preparedAmd?: AmdElfMetadata,
   ): Promise<"complete" | "partial"> {
+    let conflict: string | undefined;
     const parsed = await readGpuElfKernels(
       source,
       kind,
       (kernel) => {
+        if (conflict !== undefined) kernel.limitations.push(conflict);
         this.#retain(kernel);
         this.kernels.push(kernel);
       },
       preparedAmd,
+      (target) => {
+        conflict = this.#target(row, target);
+      },
     );
-    if (row.target === null) {
-      this.#retain({ target: parsed.target });
-      row.target = parsed.target;
-    }
     this.#objectLimitations(row, parsed.limitations);
-    return parsed.coverage;
+    return row.target_consistency === "conflict" ? "partial" : parsed.coverage;
   }
   async #cuda(source: GpuSource): Promise<void> {
     for await (const row of readCudaFatbinary(source, this.signal)) {
@@ -439,6 +503,8 @@ export class GpuInventory {
         for (const row of directory.objects) {
           this.#add(row);
           if (row.kind === "host") row.inspection = "complete";
+          else if (row.kind === "amdgpu" && row.target === null)
+            await this.#amdPayload(source, row);
           else await this.#payload(source, row);
         }
         base = await nextGpuContainerOffset(source, directory.end);

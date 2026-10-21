@@ -78,18 +78,23 @@ const blankKernel = (
   sources: { parameters: null, registers: null, shared: null, private: null },
   limitations: [],
 });
+export interface GpuPayloadTarget {
+  readonly value: string | null;
+  readonly key: string | null;
+  readonly scope: "exact" | "cuda-base";
+}
 export const readGpuElfKernels = async (
   source: GpuSource,
   kind: "cubin" | "amdgpu",
   onKernel: (kernel: GpuKernel) => void,
   preparedAmd?: AmdElfMetadata,
+  onTarget?: (target: GpuPayloadTarget) => void,
 ): Promise<{
-  target: string | null;
   limitations: string[];
   coverage: "complete" | "partial";
 }> => {
   if (kind === "amdgpu" && preparedAmd !== undefined)
-    return amdKernels(source, preparedAmd, onKernel);
+    return amdKernels(source, preparedAmd, onKernel, onTarget);
   const directory = await readGpuNativeDirectory(
     source,
     readElfSectionDirectory(source.size),
@@ -97,10 +102,11 @@ export const readGpuElfKernels = async (
   if (directory.machine !== (kind === "cubin" ? 190 : 224))
     rejectGpu("GPU entry kind disagrees with ELF machine");
   if (kind === "cubin") {
+    const target = `sm_${directory.flags & 0xff}`;
+    onTarget?.({ value: target, key: target, scope: "cuda-base" });
     const coverage = await cudaKernels(source, directory, onKernel);
     return {
       coverage,
-      target: `sm_${directory.flags & 0xff}`,
       limitations: [
         ...(directory.sections.some((s) => s.name === null)
           ? [
@@ -120,6 +126,7 @@ export const readGpuElfKernels = async (
     source,
     metadata.ok ? metadata.value : metadata.error.partial,
     onKernel,
+    onTarget,
   );
   if (!metadata.ok) throw metadata.error.cause;
   return parsed;
@@ -322,6 +329,7 @@ const cudaKernels = async (
 };
 export interface AmdElfMetadata {
   readonly target: string | null;
+  readonly target_key: string | null;
   readonly limitations: string[];
   readonly notes: {
     section: NativeSection;
@@ -345,11 +353,16 @@ export const readAmdElfMetadata = async (
     limitations: string[] = [];
   const notes: AmdElfMetadata["notes"] = [];
   let retainedBytes = 0;
-  const observed = (): AmdElfMetadata => ({
-    target: targets.size === 1 ? [...targets][0]! : null,
-    limitations,
-    notes,
-  });
+  const observed = (): AmdElfMetadata => {
+    const target = targets.size === 1 ? [...targets][0]! : null;
+    const target_key =
+      target === null
+        ? null
+        : (/^amdgcn-amd-amdhsa--(gfx[a-zA-Z0-9]+(?::[^\s]+)?)$/u.exec(
+            target,
+          )?.[1] ?? null);
+    return { target, target_key, limitations, notes };
+  };
   try {
     if (directory.machine !== 224)
       rejectGpu("AMDGPU metadata requires an AMDGPU ELF machine");
@@ -413,7 +426,13 @@ const amdKernels = (
   source: GpuSource,
   prepared: AmdElfMetadata,
   onKernel: (kernel: GpuKernel) => void,
-): { target: string | null; limitations: string[]; coverage: "complete" } => {
+  onTarget?: (target: GpuPayloadTarget) => void,
+): { limitations: string[]; coverage: "complete" } => {
+  onTarget?.({
+    value: prepared.target,
+    key: prepared.target_key,
+    scope: "exact",
+  });
   for (const {
     section,
     noteOffset,
@@ -470,7 +489,6 @@ const amdKernels = (
     }
   }
   return {
-    target: prepared.target,
     limitations: prepared.limitations,
     coverage: "complete",
   };

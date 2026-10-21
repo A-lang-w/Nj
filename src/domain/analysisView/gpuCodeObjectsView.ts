@@ -58,9 +58,16 @@ export const gpuCodeObjectsSummarySchema = gpuCodeObjectsObjectSchema
   });
 export const gpuCodeObjectsItemsSchema = z.union([
   z.array(
-    gpuObjectSchema
-      .partial()
-      .required({ id: true, location: true, metadata_location: true }),
+    gpuObjectSchema.partial().required({
+      id: true,
+      kind: true,
+      target: true,
+      location: true,
+      metadata_location: true,
+      payload_target: true,
+      target_consistency: true,
+      inspection: true,
+    }),
   ),
   z.array(
     gpuKernelSchema.partial().required({
@@ -376,6 +383,11 @@ export const projectGpuCodeObjectsView = (
           key === "object_id" ||
           key === "location" ||
           key === "metadata_location" ||
+          key === "kind" ||
+          key === "target" ||
+          key === "payload_target" ||
+          key === "target_consistency" ||
+          key === "inspection" ||
           key === "sources" ||
           key === "representation" ||
           (view.collection === "targets" &&

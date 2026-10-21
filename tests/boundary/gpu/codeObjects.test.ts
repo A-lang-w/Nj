@@ -98,6 +98,57 @@ it("does not decode unselected payloads and keeps stable positional identities",
   expect(selected.value.kernels).toHaveLength(1);
   expect(selected.value.coverage.payloads).toBe("partial");
 });
+it.each(["cubin", "ptx"] as const)(
+  "retains conflicting container and %s target declarations as partial facts",
+  async (kind) => {
+    const bytes = cudaFixture("none", [
+      {
+        kind: kind === "cubin" ? 2 : 1,
+        target: 80,
+        bytes:
+          kind === "cubin"
+            ? cubinFixture({ architecture: 90 })
+            : Buffer.from(ptxFixture.replace("sm_80", "sm_90")),
+      },
+    ]);
+    const result = await inspect(bytes, { targets: ["sm_80"] });
+    if (!result.ok) throw result.error;
+    expect(result.value.objects[0]).toMatchObject({
+      target: "sm_80",
+      payload_target: "sm_90",
+      target_consistency: "conflict",
+      inspection: "partial",
+    });
+    expect(result.value.coverage.payloads).toBe("partial");
+    expect(result.value.kernels).toHaveLength(1);
+    expect(result.value.kernels[0]!.limitations.join(" ")).toContain(
+      "inventory sm_80; payload sm_90",
+    );
+    const unexamined = await inspect(bytes, { targets: ["sm_90"] });
+    if (!unexamined.ok) throw unexamined.error;
+    expect(unexamined.value.objects[0]).toMatchObject({
+      target: "sm_80",
+      payload_target: null,
+      target_consistency: "unexamined",
+      inspection: "not-selected",
+    });
+    expect(unexamined.value.coverage.payloads).toBe("partial");
+  },
+);
+it("keeps CUBIN base-only agreement distinct from verified feature-profile agreement", async () => {
+  const bytes = cudaFixture("none", [
+    { kind: 2, target: 90, bytes: cubinFixture({ architecture: 90 }) },
+  ]);
+  bytes.writeBigUInt64LE(bytes.readBigUInt64LE(16 + 40) | 0x100000n, 16 + 40);
+  const result = await inspect(bytes, { targets: ["sm_90a"] });
+  if (!result.ok) throw result.error;
+  expect(result.value.objects[0]).toMatchObject({
+    target: "sm_90a",
+    payload_target: "sm_90",
+    target_consistency: "base-only",
+    inspection: "complete",
+  });
+});
 it("discovers standalone AMD targets before exact selection", async () => {
   const bytes = amdFixture(),
     target = "amdgcn-amd-amdhsa--gfx900";
@@ -132,6 +183,30 @@ it("discovers standalone AMD targets before exact selection", async () => {
   });
   expect(skipped.value.kernels).toEqual([]);
   expect(skipped.value.coverage.payloads).toBe("partial");
+});
+it.each([
+  "hipv4-amdgcn-amd-amdhsa--gfx900",
+  "hipv4-amdgcn-amd-amdhsa-gfx900",
+  "hipv4-amdgcn-amd-amdhsa-opaque",
+])("keeps discovered HIP targets selectable for %s", async (targetId) => {
+  const bytes = hipFixture(amdFixture(), targetId);
+  const inventory = await inspect(bytes, { analysis: "inventory" });
+  if (!inventory.ok) throw inventory.error;
+  const row = inventory.value.objects.find((value) => value.kind === "amdgpu")!;
+  expect(row.target).not.toBeNull();
+  const selected = await inspect(bytes, { targets: [row.target!] });
+  if (!selected.ok) throw selected.error;
+  expect(selected.value.kernels).toHaveLength(1);
+  expect(
+    selected.value.objects.find((value) => value.kind === "amdgpu"),
+  ).toMatchObject({
+    target: row.target,
+    payload_target: "amdgcn-amd-amdhsa--gfx900",
+    target_consistency: targetId.endsWith("opaque")
+      ? "single-source"
+      : "consistent",
+    inspection: "complete",
+  });
 });
 it("bounds standalone AMD note discovery before retaining metadata", async () => {
   const result = await inspect(
