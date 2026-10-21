@@ -8,7 +8,14 @@ const byteRetentionSchema = z.strictObject({
   retained_bytes: z.number().int().nonnegative(),
   observed_frames: z.number().int().nonnegative(),
   retained_frames: z.number().int().nonnegative(),
+  unknown_size_frames: z.number().int().nonnegative().optional(),
 });
+
+const enumerationOmissionReasonSchema = z.enum([
+  "identity_changed",
+  "directory_unavailable",
+  "entry_unavailable",
+]);
 
 /** Filesystem enumeration and whole-file digest coverage for one checkpoint. */
 export const filesystemCoverageSchema = z.strictObject({
@@ -19,14 +26,13 @@ export const filesystemCoverageSchema = z.strictObject({
     z.enum([
       "files_limit",
       "depth_limit",
-      "identity_changed",
-      "directory_unavailable",
+      ...enumerationOmissionReasonSchema.options,
     ]),
   ),
   enumeration_omissions: z.array(
     z.strictObject({
       path: z.string(),
-      reason: z.literal("directory_unavailable"),
+      reason: enumerationOmissionReasonSchema,
       system_code: z.string().nullable(),
     }),
   ),
@@ -54,8 +60,18 @@ export const processCaptureTruncationDetailsSchema = z.strictObject({
     "UTF-8 bytes of original PTY chunks; whole chunks are retained or omitted.",
   ),
   rendered_terminal: byteRetentionSchema.describe(
-    "Cumulative UTF-8 bytes of serialized state plus visible lines, evaluated from retained PTY input; whole frames are retained or omitted.",
+    "Cumulative UTF-8 bytes of serialized state plus visible lines, evaluated from retained PTY input; whole frames are retained or omitted. When normalization exceeds a bound before the frame size is known, observed_bytes contains the exact total for size-known frames and unknown_size_frames counts the other omissions.",
   ),
+  normalized_terminal: z
+    .strictObject({
+      budget_bytes: z.number().int().nonnegative(),
+      retained_bytes: z.number().int().nonnegative(),
+      omitted_frames: z.number().int().nonnegative(),
+    })
+    .optional()
+    .describe(
+      "UTF-8 bytes of normalized raw-chunk text retained under output_bytes; omitted frames can have unknown final size when normalization exceeded an intermediate bound.",
+    ),
   filesystem_before: filesystemCoverageSchema,
   filesystem_after: filesystemCoverageSchema,
   process: z.strictObject({
@@ -72,6 +88,9 @@ export type ProcessCaptureTruncationDetails = z.infer<
   typeof processCaptureTruncationDetailsSchema
 >;
 export type TerminalRetention = ProcessCaptureTruncationDetails["raw_terminal"];
+export type NormalizedTerminalRetention = NonNullable<
+  ProcessCaptureTruncationDetails["normalized_terminal"]
+>;
 export type ProcessSamplingCoverage =
   ProcessCaptureTruncationDetails["process"];
 
@@ -88,13 +107,15 @@ export const hasCaptureTruncation = (
 ): boolean =>
   omitted(details.raw_terminal) ||
   omitted(details.rendered_terminal) ||
+  (details.normalized_terminal?.omitted_frames ?? 0) > 0 ||
+  (details.rendered_terminal.unknown_size_frames ?? 0) > 0 ||
   filesystemTruncated(details.filesystem_before) ||
   filesystemTruncated(details.filesystem_after) ||
   details.process.sampling_partial;
 
 /** Whether producer accounting reports a gap in the selected observation source. */
 export const processSourceTruncated = (
-  capture: UnverifiedProcessCapture,
+  capture: Pick<UnverifiedProcessCapture, "truncation_details">,
   source: ProcessObservationSource,
 ): boolean => {
   const details = capture.truncation_details;

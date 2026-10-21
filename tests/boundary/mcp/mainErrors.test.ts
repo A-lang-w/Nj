@@ -1,7 +1,12 @@
-import type { ServeStdioOptions } from "@modelcontextprotocol/server/stdio";
+import { spawnSync } from "node:child_process";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { run, runEntrypoint } from "../../../src/main.js";
+import { MCP_HTTP_LISTEN_FAILED } from "../../../src/main/messages.js";
+import type { McpServeOptions } from "../../../src/main/types.js";
+import { StreamableHttpListenError } from "../../../src/server/http/streamableHttpListenError.js";
 
 type RuntimeDependencies = NonNullable<Parameters<typeof run>[0]>;
 
@@ -35,11 +40,30 @@ const dependencies = ({
 });
 
 describe("MCP runtime errors", () => {
+  it("imports the compiled runtime when argv[1] is a missing synthetic path", () => {
+    const runtimeUrl = pathToFileURL(resolve("dist/main.js")).href;
+    const script = [
+      'process.argv[1] = "/rea-test-missing-entrypoint/main.js";',
+      `await import(${JSON.stringify(runtimeUrl)});`,
+      'console.log("IMPORT_OK");',
+    ].join("\n");
+    const child = spawnSync(
+      process.execPath,
+      ["--input-type=module", "--eval", script],
+      { cwd: process.cwd(), encoding: "utf8", timeout: 5_000 },
+    );
+
+    expect(child.error).toBeUndefined();
+    expect(child.status).toBe(0);
+    expect(child.stdout).toBe("IMPORT_OK\n");
+    expect(child.stderr).toBe("");
+  });
+
   it("reports connection loss without the transport cause", async () => {
     const output: string[] = [];
     const shutdown: Array<() => void> = [];
     const shutdownUnregistrations: string[] = [];
-    let options: ServeStdioOptions | undefined;
+    let options: McpServeOptions | undefined;
     let closeCalls = 0;
     const close = (): Promise<void> => {
       closeCalls += 1;
@@ -152,5 +176,50 @@ describe("MCP runtime errors", () => {
       "REA could not start. Run `rea doctor`, then restart REA from your MCP client.\n",
     ]);
     expect(exitCodes).toEqual([1]);
+  });
+});
+
+describe("MCP runtime HTTP transport errors", () => {
+  it("awaits an asynchronous transport start before installing shutdown", async () => {
+    const shutdown: Array<() => void> = [];
+    let closeCalls = 0;
+    expect(
+      await run(
+        dependencies({
+          serve: async () => ({
+            close: async () => {
+              closeCalls += 1;
+            },
+          }),
+          output: [],
+          shutdown,
+          exitCodes: [],
+        }),
+      ),
+    ).toBe(0);
+    expect(shutdown).toHaveLength(1);
+    shutdown[0]?.();
+    await nextTurn();
+    expect(closeCalls).toBe(1);
+  });
+
+  it("reports an HTTP listener that cannot bind without its cause", async () => {
+    const output: string[] = [];
+    expect(
+      await run(
+        dependencies({
+          serve: () =>
+            Promise.reject(
+              new StreamableHttpListenError(
+                new Error("SECRET EADDRINUSE 127.0.0.1:1"),
+              ),
+            ),
+          output,
+          shutdown: [],
+          exitCodes: [],
+        }),
+      ),
+    ).toBe(1);
+    expect(output).toEqual([`${MCP_HTTP_LISTEN_FAILED}\n`]);
   });
 });

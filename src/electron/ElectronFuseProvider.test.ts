@@ -575,8 +575,15 @@ it("enforces the 32 sentinel boundary with typed and public limit details", asyn
         expect(result.error._tag).toBe("AnalysisResourceConstraintError");
         expect(projectAnalysisError(result.error)).toMatchObject({
           code: "resource_constraint",
+          retryable: false,
           details: { reported_limits: { maximum_sentinels_per_slice: 32 } },
+          remediation: {
+            action: expect.stringContaining("sentinel inventory"),
+          },
         });
+        expect(
+          projectAnalysisError(result.error).remediation.action,
+        ).not.toMatch(/Wait for an active analysis/u);
       }
     }
   }
@@ -593,7 +600,11 @@ it("rejects a sparse artifact over 1 GiB before scanning", async () => {
     expect(result.error._tag).toBe("AnalysisResourceConstraintError");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "resource_constraint",
+      retryable: false,
       details: { reported_limits: { maximum_input_bytes: 1024 * 1024 * 1024 } },
+      remediation: {
+        action: expect.stringContaining("does not admit this input"),
+      },
     });
   }
 });
@@ -678,6 +689,23 @@ it("reports a checked version directory removed before open as changed", async (
   );
   const located = await resolveElectronFuseTarget(app);
   await rename(version, `${version}.saved`);
+  await expect(
+    readElectronFuseImage(located.file.path, { selection: located.file }),
+  ).rejects.toBeInstanceOf(RegularFileChangedError);
+});
+
+it("retains the identity of a directory removed by a terminal parent segment", async () => {
+  const root = await createTestTempDirectory("rea-electron-parent-identity-");
+  const framework = join(root, "Electron Framework.framework");
+  const versions = join(framework, "Versions");
+  await mkdir(versions, { recursive: true });
+  await writeFile(
+    join(framework, "Electron Framework"),
+    thinFuseImage([0x31]).bytes,
+  );
+  const located = await resolveElectronFuseTarget(`${versions}/..`);
+  await rename(versions, `${versions}.saved`);
+  await mkdir(versions);
   await expect(
     readElectronFuseImage(located.file.path, { selection: located.file }),
   ).rejects.toBeInstanceOf(RegularFileChangedError);
