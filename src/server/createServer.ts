@@ -921,7 +921,7 @@ const registerBinaryAnalysisTools = ({
     evidenceById,
     withAdmittedAnalysis,
   };
-  registerOfficialTools(server, analysisOptions);
+  registerOfficialTools(server, { ...analysisOptions, evidenceById });
   registerEnhancedTools(server, {
     ...analysisOptions,
     analysisProfile:

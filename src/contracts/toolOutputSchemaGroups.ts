@@ -12,6 +12,7 @@ import {
   machoSummaryViewResultSchema,
   managedArtifactSummaryViewResultSchema,
   managedMemberSummaryViewResultSchema,
+  procedurePseudocodeSummaryViewResultSchema,
 } from "../domain/analysisView/analysisView.js";
 import { evidenceBundleSummarySchema } from "../domain/evidenceRecordSummary.js";
 import {
@@ -203,7 +204,9 @@ export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
       references: z.array(referenceEdgeSchema),
     }),
   ),
-  procedure_pseudo_code: evidenceResultOf(nullableText),
+  procedure_pseudo_code: evidenceResultOf(
+    z.union([nullableText, procedurePseudocodeSummaryViewResultSchema]),
+  ),
   resolve_containing_procedure: evidenceResultOf(containingProcedureResolution),
   search_procedures: analysisDetailOutputSchemaOf(
     z.array(z.object({ address: z.string(), value: z.string() })),

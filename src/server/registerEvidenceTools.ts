@@ -16,6 +16,7 @@ import { mcpProgressReporter } from "./mcpProgress.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
+import { recordSessionEvidenceSources } from "./sessionEvidence.js";
 
 interface EvidenceToolRegistration {
   readonly logger: Logger;
@@ -132,14 +133,12 @@ export const registerEvidenceTools = (
                 evidenceLinks: sourceEvidence.map(({ evidence_id: id }) => id),
               },
             );
-            for (const source of sourceEvidence) {
-              const sourceRecorded = options.recordEvidence?.(source);
-              if (sourceRecorded !== undefined && !sourceRecorded.ok)
-                return server.delivery.toCallToolResult(
-                  sourceRecorded,
-                  contract,
-                );
-            }
+            const sourceRecorded = recordSessionEvidenceSources(
+              options.recordEvidence,
+              sourceEvidence,
+            );
+            if (!sourceRecorded.ok)
+              return server.delivery.toCallToolResult(sourceRecorded, contract);
             const projected =
               options.projectEvidence?.(contract.name, parameters, evidence) ??
               ok(evidence);

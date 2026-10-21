@@ -31,7 +31,8 @@ const retainedEvidenceContinuation = (
   evidence: Evidence,
 ): Readonly<Record<string, JsonValue>> => {
   const view =
-    evidence.operation === "analyze_function"
+    evidence.operation === "analyze_function" ||
+    evidence.operation === "procedure_pseudo_code"
       ? { kind: "native", facet: "pseudocode", offset: 0 }
       : isNativeInventoryOperation(evidence.operation)
         ? { kind: "native-inventory", offset: 0, limit: 64 }

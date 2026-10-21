@@ -99,6 +99,10 @@ import {
 } from "./webNetworkApiSurfaceView.js";
 import { projectNativeFunctionView } from "./nativeFunctionView.js";
 import {
+  projectProcedurePseudocodeView,
+  procedurePseudocodeSummarySchema,
+} from "./procedurePseudocodeView.js";
+import {
   projectEvmInterfaceView,
   evmViewRequestSchema,
   evmViewItemSchema,
@@ -398,6 +402,7 @@ const viewResultBase = {
     "inspect_desktop_application",
     "analyze_javascript_application",
     "analyze_function",
+    "procedure_pseudo_code",
     "inspect_artifact",
     "inventory_artifact",
     "inspect_wasm_artifact",
@@ -428,6 +433,13 @@ const summaryViewResultBase = {
   view: summaryViewSchema,
   ...viewResultBase,
 } as const;
+
+/** Original selector and text availability without the complete decompiled text. */
+export const procedurePseudocodeSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("procedure_pseudo_code"),
+  summary: procedurePseudocodeSummarySchema,
+});
 
 /** Opt-in command delivery keeps output once and retains the complete parent. */
 export const gdbCommandSummaryViewResultSchema = z.strictObject({
@@ -661,6 +673,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: environmentStateViewRequestSchema,
   }),
   z.discriminatedUnion("parent_operation", [
+    procedurePseudocodeSummaryViewResultSchema,
     gdbCommandSummaryViewResultSchema,
     objdumpSummaryViewResultSchema,
     fridaSessionStatusSummaryViewResultSchema,
@@ -950,6 +963,7 @@ const parentArtifactPath = (parent: AnalysisViewParent): string => {
 
 /** Named source owners for views that need no extra decoder or accumulator. */
 const retainedViewProjectors = new Map<string, typeof projectWasmArtifactView>([
+  ["procedure_pseudo_code", projectProcedurePseudocodeView],
   ["frida_session_status", projectFridaSessionStatusView],
   ["gdb_console", projectCommandObservationView],
   ["inspect_with_objdump", projectCommandObservationView],
