@@ -98,4 +98,6 @@ A fourth round merged the write-plan branch at 466ed8b4, which fixes four findin
 code: an update whose observation drops a field is refused, entities are named as serving names them, a later
 create's generated values must keep their forms, and a derived state too large to load back is not served. The page
 cap here now uses that branch's `pageBound`. Over the 50 captures no view or write plan changed and served write tools
-stay at 31; the six environments compare exactly as before.
+stay at 31; the six environments compare exactly as before. It then merged 7cef2fb2, whose fixes settle two more findings Greptile raised here against that branch's code: zero
+page sizes erasing positive bounds, and interference timed by a tool's call on another collection. Over the 50
+captures again no view or write plan changed, and the six environments compare exactly as before.
