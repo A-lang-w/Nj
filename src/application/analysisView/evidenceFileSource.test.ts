@@ -9,46 +9,17 @@ import {
 } from "../../../tests/fixtures/analysisView.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisResourceConstraintError,
+} from "../../domain/analysisErrorCore.js";
 import { JsonInputPhysicalReadFailure } from "../JsonInputFile.js";
 import { failFileReadAfterAbort } from "../../../tests/support/failFileReadAfterAbort.js";
 import { holdFirstFileRead } from "../../../tests/support/holdFirstFileRead.js";
 import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
-import {
-  estimateJsonValueBytes,
-  readEvidenceFileSource,
-  requireAuthenticationHeadroom,
-} from "./evidenceFileSource.js";
+import { readEvidenceFileSource } from "./evidenceFileSource.js";
 
-describe("evidence-file source", () => {
-  it("estimates parsed JSON at no less than its UTF-16 text", () => {
-    const text = "x".repeat(1000);
-    expect(estimateJsonValueBytes(text)).toBeGreaterThanOrEqual(2000);
-    expect(
-      estimateJsonValueBytes({ outer: [text, { inner: text }] }),
-    ).toBeGreaterThan(2 * estimateJsonValueBytes(text));
-  });
-
-  it("refuses authentication when live heap headroom cannot hold its copies", () => {
-    const value = { normalized_result: "y".repeat(10_000) };
-    expect(
-      requireAuthenticationHeadroom(value, "/tmp/capture.json", 1024),
-    ).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "AnalysisResourceConstraintError",
-        resource: "memory",
-        reportedLimits: {
-          input_path: "/tmp/capture.json",
-          available_heap_bytes: 1024,
-        },
-      },
-    });
-    expect(
-      requireAuthenticationHeadroom(value, "/tmp/capture.json", 1 << 30),
-    ).toEqual({ ok: true, value: undefined });
-  });
-
+describe("evidence-file source reads", () => {
   it("refuses a cancelled request before reading and reads within the caller's resource scope", async () => {
     const controller = new AbortController();
     const reason = new JsonInputPhysicalReadFailure(
