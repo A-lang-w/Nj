@@ -194,6 +194,20 @@ const assertModeOutcome = (
   result: Awaited<ReturnType<WabtArtifactProvider["inspect"]>>,
   path: string,
 ): void => {
+  if (mode.startsWith("invalid"))
+    expect(result).toMatchObject({
+      error: {
+        partialObservation: {
+          parameters: { command_timeout_ms: 42_000 },
+          normalized_result: {
+            tool_profile: {
+              timeout_ms: 42_000,
+              output_budget_bytes: WABT_LIMITS.outputBytes,
+            },
+          },
+        },
+      },
+    });
   if (mode === "success")
     expect(result).toMatchObject({
       ok: true,
@@ -226,6 +240,25 @@ const assertModeOutcome = (
         },
       },
     });
+};
+
+const assertValidationCleanupRecovery = async (
+  provider: WabtArtifactProvider,
+  result: Awaited<ReturnType<WabtArtifactProvider["inspect"]>>,
+  cleanupAttempts: () => number,
+): Promise<void> => {
+  expect(result).toMatchObject({ error: { cleanupIncomplete: true } });
+  await provider.close();
+  expect(cleanupAttempts()).toBe(2);
+  if (result.ok) throw new Error("Expected validation failure");
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "invalid_request",
+    details: {
+      captured_output: { stderr: "module.wasm: invalid bytes\n" },
+      cleanup_history: expect.any(Object),
+    },
+  });
 };
 
 it("returns actionable unavailable without creating a workspace when tools are absent", async () => {
@@ -690,6 +723,7 @@ const runOwnedArtifactOutcome = async (
       path,
       glue_paths: glueInputs.map(({ path }) => path),
       candidate_paths: [],
+      ...(mode.startsWith("invalid") ? { command_timeout_ms: 42_000 } : {}),
     },
     { signal: controller.signal },
   );
@@ -715,21 +749,12 @@ const runOwnedArtifactOutcome = async (
       cleanupAttempts: () => cleanupAttempts,
       cancellationReason: controller.signal.reason,
     });
-  if (mode === "invalid-close-failure") {
-    expect(result).toMatchObject({ error: { cleanupIncomplete: true } });
-    await provider.close();
-    expect(cleanupAttempts).toBe(2);
-    if (!result.ok) {
-      expect(result.error.cleanupIncomplete).toBe(false);
-      expect(projectAnalysisError(result.error)).toMatchObject({
-        code: "invalid_request",
-        details: {
-          captured_output: { stderr: "module.wasm: invalid bytes\n" },
-          cleanup_history: expect.any(Object),
-        },
-      });
-    }
-  }
+  if (mode === "invalid-close-failure")
+    await assertValidationCleanupRecovery(
+      provider,
+      result,
+      () => cleanupAttempts,
+    );
   if (
     mode === "snapshot-close-failure" ||
     mode === "snapshot-read-failure-late-abort"

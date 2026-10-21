@@ -372,6 +372,7 @@ try {
         path: invalidPath,
         glue_paths: [],
         candidate_paths: [],
+        ...(index === 0 ? { command_timeout_ms: 42_000 } : {}),
       };
       const cliError = await inspectCli(invalidInput);
       assert.equal(
@@ -404,6 +405,14 @@ try {
         ),
       );
       assert.equal(failed.subject.digest.sha256, sha256(invalidBytes));
+      assert.equal(
+        failed.normalized_result.tool_profile.timeout_ms,
+        invalidInput.command_timeout_ms ?? 30_000,
+      );
+      assert.equal(
+        failed.normalized_result.tool_profile.output_budget_bytes,
+        32 * 1024 * 1024,
+      );
       assert.equal(
         failed.normalized_result.validation,
         "rejected-by-selected-profile",

@@ -249,6 +249,15 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         command.version_banner = version.stdout.text;
         versionProbe = undefined;
       }
+      // Success and validation failure report the same admitted tool/execution facts.
+      const toolProfile = {
+        source: "https://github.com/WebAssembly/wabt",
+        release: WABT_VERSION,
+        source_commit: "ff0ef7e0009402740c805a9744c09b05be063e48",
+        commands,
+        timeout_ms: commandTimeoutMs,
+        output_budget_bytes: WABT_LIMITS.outputBytes,
+      };
       phase = "artifact";
       const selected = await readStableArtifact(
         input.path,
@@ -331,12 +340,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
                 result: {
                   artifact,
                   validation: "rejected-by-selected-profile",
-                  tool_profile: {
-                    source: "https://github.com/WebAssembly/wabt",
-                    release: WABT_VERSION,
-                    source_commit: "ff0ef7e0009402740c805a9744c09b05be063e48",
-                    commands,
-                  },
+                  tool_profile: toolProfile,
                   exit_code: validation.exitCode ?? null,
                   stdout: validation.stdout.text,
                   stderr: validation.stderr.text,
@@ -424,14 +428,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           sha256: digest(wat.stdout.text),
           representation: "decoded-wat",
         },
-        tool_profile: {
-          source: "https://github.com/WebAssembly/wabt",
-          release: WABT_VERSION,
-          source_commit: "ff0ef7e0009402740c805a9744c09b05be063e48",
-          commands,
-          timeout_ms: commandTimeoutMs,
-          output_budget_bytes: WABT_LIMITS.outputBytes,
-        },
+        tool_profile: toolProfile,
         candidates,
         glue,
         runtime_execution: "not-performed",
