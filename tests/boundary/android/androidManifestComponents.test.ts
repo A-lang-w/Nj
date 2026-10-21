@@ -115,6 +115,27 @@ it("does not inherit application permission through an explicit empty override",
   });
 });
 
+it("keeps symbolic effective permissions unknown without resource resolution", () => {
+  const manifest =
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application android:permission="com.example.APP"><activity android:name=".Resource" android:permission="@string/resource_permission"/><service android:name=".Theme" android:permission="?attr/theme_permission"/><receiver android:name=".Placeholder" android:permission="${manifestPermission}"/><provider android:name=".Inherited"/></application></manifest>';
+  const inventory = parseAndroidManifestComponents(manifest, "complete", "33");
+  expect(
+    inventory.items.map(({ permission, permission_source }) => [
+      permission,
+      permission_source,
+    ]),
+  ).toEqual([
+    [null, "unknown"],
+    [null, "unknown"],
+    [null, "unknown"],
+    ["com.example.APP", "application"],
+  ]);
+  expect(inventory.status).toBe("partial");
+  expect(inventory.limitations.join(" ")).toContain(
+    "unresolved resource or manifest-placeholder tokens",
+  );
+});
+
 it("bounds inherited permission copies across the inventory", () => {
   const permission = "p".repeat(2_050);
   const declarations = Array.from(

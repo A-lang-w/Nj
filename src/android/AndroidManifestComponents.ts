@@ -118,6 +118,9 @@ const trimmed = (element: Element, name: string): string | null => {
   return value === undefined || value.length === 0 ? null : value;
 };
 
+const containsUnresolvedToken = (value: string): boolean =>
+  value.includes("@") || value.includes("?") || value.includes("${");
+
 /**
  * Android resolves a component name against the manifest package: a leading
  * dot or a name without any dot is relative to the package, while a dotted
@@ -252,9 +255,7 @@ export const parseAndroidManifestComponents = (
     );
   const packageName = plainAttribute(root, "package")?.trim() || null;
   const packageHasUnresolvedToken =
-    packageName?.includes("@") === true ||
-    packageName?.includes("?") === true ||
-    packageName?.includes("${") === true;
+    packageName !== null && containsUnresolvedToken(packageName);
   const limitations: string[] = [];
   const items: AndroidManifestComponent[] = [];
   let truncated = false;
@@ -269,6 +270,7 @@ export const parseAndroidManifestComponents = (
   let unknownFilteredExportDefaults = 0;
   let capacityTruncated = false;
   let permissionBudgetLimited = false;
+  let unresolvedPermissionTokens = 0;
   let nameBudget = ANDROID_MANIFEST_LIMITS.resolvedNameBytes;
   let authorityBudget = ANDROID_MANIFEST_LIMITS.authorityBytes;
   let permissionBudget = ANDROID_MANIFEST_LIMITS.permissionBytes;
@@ -310,15 +312,10 @@ export const parseAndroidManifestComponents = (
       }
       // A huge manifest package would be copied into every resolved name;
       // once the byte budget is spent, later names keep their declared form.
-      const containsUnresolvedToken =
-        declared.startsWith("@") ||
-        declared.startsWith("?") ||
-        declared.includes("@") ||
-        declared.includes("?") ||
-        declared.includes("${");
+      const unresolvedName = containsUnresolvedToken(declared);
       const needsPackage = declared.startsWith(".") || !declared.includes(".");
       const packageKnown =
-        !containsUnresolvedToken &&
+        !unresolvedName &&
         (!needsPackage || (packageName !== null && !packageHasUnresolvedToken));
       const resolvedBytes = needsPackage
         ? Buffer.byteLength(packageName ?? "") +
@@ -329,7 +326,7 @@ export const parseAndroidManifestComponents = (
       const name = nameFits
         ? resolveAndroidComponentName(packageName, declared)
         : declared;
-      if (containsUnresolvedToken) unresolvedTokens += 1;
+      if (unresolvedName) unresolvedTokens += 1;
       else if (!packageKnown) unresolvedPackages += 1;
       else if (!nameFits) unresolvedNames += 1;
       else nameBudget -= resolvedBytes;
@@ -368,20 +365,26 @@ export const parseAndroidManifestComponents = (
         | "none"
         | "unknown" = permissionSource;
       if (permissionValue !== null) {
-        // Inherited application permission is the same string for every
-        // component. Measure it once at its owning boundary rather than
-        // rescanning a potentially large decoded value per inherited copy.
-        const permissionBytes =
-          declaredPermission === null
-            ? (applicationPermissionBytes ?? 0)
-            : Buffer.byteLength(permissionValue);
-        if (permissionBytes > permissionBudget) {
+        if (containsUnresolvedToken(permissionValue)) {
           permission = null;
           effectivePermissionSource = "unknown";
-          truncated = true;
-          capacityTruncated = true;
-          permissionBudgetLimited = true;
-        } else permissionBudget -= permissionBytes;
+          unresolvedPermissionTokens += 1;
+        } else {
+          // Inherited application permission is the same string for every
+          // component. Measure it once at its owning boundary rather than
+          // rescanning a potentially large decoded value per inherited copy.
+          const permissionBytes =
+            declaredPermission === null
+              ? (applicationPermissionBytes ?? 0)
+              : Buffer.byteLength(permissionValue);
+          if (permissionBytes > permissionBudget) {
+            permission = null;
+            effectivePermissionSource = "unknown";
+            truncated = true;
+            capacityTruncated = true;
+            permissionBudgetLimited = true;
+          } else permissionBudget -= permissionBytes;
+        }
       }
       const providerDefault =
         component.nodeName === "provider"
@@ -486,6 +489,12 @@ export const parseAndroidManifestComponents = (
     limitations.push(
       `Projected component permission values are capped at ${String(ANDROID_MANIFEST_LIMITS.permissionBytes)} total bytes; omitted copies have permission_source "unknown".`,
     );
+  if (unresolvedPermissionTokens > 0) {
+    limitations.push(
+      `${String(unresolvedPermissionTokens)} permission value(s) contain unresolved resource or manifest-placeholder tokens; their effective values are unknown.`,
+    );
+    truncated = true;
+  }
   if (invalidExported > 0) {
     limitations.push(
       `${String(invalidExported)} component(s) with intent filters target API 31 or later and omit android:exported; Android requires an explicit value, so the inventory does not infer a default.`,
