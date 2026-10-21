@@ -32,6 +32,19 @@ binaries and Ghidra projects are never committed.
   named limitations through the real read-only TCP bridge and provider Evidence
   projection; default Unix-socket transport, Windows, and the reported Amethyst
   artifact need separate verification. Fixture target code is never executed.
+- `ReaDecompilerFailureProbe.java` replaces the bridge decompiler after a real
+  import of `cross-format.c`, so one function's decompilation fails. It checks
+  that `analyze_function` still returns that function's assembly, callers,
+  callees, references and basic blocks unchanged, marks pseudocode, native API
+  and p-code value flow unavailable with the decompiler's reason, and that
+  cancellation still ends the request. Run `npm run build:cached`, then
+  `node scripts/verify-real-ghidra-decompiler-failure.mjs` on Linux or macOS
+  x64/arm64. The lane also parses the degraded dossier with REA's Ghidra output
+  contract and checks the healthy provider path through the real read-only TCP bridge.
+  Decompiler failure marks only that observation as live: retain its Evidence,
+  retry after backend recovery, and keep healthy dossier snapshot reuse.
+  The injection does not establish which natural inputs make the decompiler
+  fail.
 
 - `ReaDecompilerWarningProvenanceProbe.java` adds caller-authored entry plate
   comments to `decompiler-removed-block.S` in a real analysis database. Ghidra

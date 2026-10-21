@@ -459,6 +459,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 FunctionAnalysisObservation observation = analyzeFunctionObservation(request.params);
                 JsonObject result = functionObservation(observation.dossier(), observation.limitations());
                 result.add("relationship_coverage", observation.relationshipCoverage());
+                if (observation.decompilerFailed()) result.addProperty("cache_policy", "live");
                 yield result;
             }
             case "set_address_name", "set_addresses_names" -> {
@@ -1541,12 +1542,23 @@ public final class ReaGhidraBridge extends HeadlessScript {
         requireKeys(params, Set.of("procedure"));
         Function function = resolveProcedure(requireString(params, "procedure"));
         InstructionScan scan = scanInstructions(function, Integer.MAX_VALUE);
-        DecompileResults decompilation = decompile(function);
+        DecompileResults decompilation;
+        String decompilerFailure = null;
+        try {
+            decompilation = decompile(function);
+        } catch (RequestFailure failure) {
+            // The listing, reference and CFG facts below do not depend on the
+            // native decompiler. Cancellation still ends the request.
+            if (!failure.code.equals("decompile_failed")) throw failure;
+            decompilation = null;
+            decompilerFailure = failure.getMessage().strip();
+        }
         String pseudocode = decompiledText(decompilation);
         JsonObject availability = new JsonObject();
         availability.add("pseudocode", facetAvailability(
             pseudocode != null,
-            function.isExternal() ? "Ghidra does not decompile external functions."
+            decompilerFailure != null ? decompilerFailure
+                : function.isExternal() ? "Ghidra does not decompile external functions."
                 : function.getBody().isEmpty() ? "Ghidra has no function body to decompile."
                 : "Ghidra completed decompilation without returning pseudocode."
         ));
@@ -1596,9 +1608,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add("basic_blocks", blocks);
         result.add(
             "native_api",
-            nativeApiBoundary(function, decompilation)
+            decompilerFailure == null
+                ? nativeApiBoundary(function, decompilation)
+                : unavailableNativeApiBoundary(decompilerFailure)
         );
-        result.add("native_value_flow", nativeValueFlow(decompilation));
+        result.add(
+            "native_value_flow",
+            decompilerFailure == null
+                ? nativeValueFlow(decompilation)
+                : unavailableNativeValueFlow(decompilerFailure)
+        );
         if (removedBlocks != null) {
             JsonObject completeness = new JsonObject();
             completeness.add("removed_blocks", removedBlocks.blocks());
@@ -1670,6 +1689,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 "decompiler_completeness.unmapped_warnings lists them."
             );
         }
+        if (decompilerFailure != null) {
+            limitations.add(
+                decompilerFailure + (decompilerFailure.endsWith(".") ? " " : ". ") +
+                "Pseudocode, the native API boundary and p-code value flow are unavailable for this procedure; assembly, comments, callers, callees, references, strings, names and basic blocks come from the Ghidra program listing and were still collected."
+            );
+        }
         result.add("limitations", limitations);
         monitor.checkCancelled();
         int missingCallers = 0;
@@ -1678,25 +1703,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (unrepresentedCaller(reference, callerFunctions)) missingCallers++;
         }
         return new FunctionAnalysisObservation(result, calls.limitations(),
-            callRelationshipCoverage(calls, missingCallers));
+            callRelationshipCoverage(calls, missingCallers), decompilerFailure != null);
     }
 
     private JsonObject nativeValueFlow(DecompileResults decompilation) throws Exception {
         HighFunction highFunction =
             decompilation == null ? null : decompilation.getHighFunction();
         if (highFunction == null) {
-            JsonObject unavailable = new JsonObject();
-            unavailable.addProperty("available", false);
-            unavailable.addProperty(
-                "reason",
+            return unavailableNativeValueFlow(
                 "Ghidra has no HighFunction p-code model for this procedure"
             );
-            JsonArray limitations = new JsonArray();
-            limitations.add(
-                "No p-code operations or def-use relationships were recovered for this procedure."
-            );
-            unavailable.add("limitations", limitations);
-            return unavailable;
         }
 
         List<PcodeOpAST> selected = new ArrayList<>();
@@ -2382,6 +2398,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
             jumpTables.add(inferredJumpTable(recoveredJumpTables[index], caseTokens));
         }
         return result;
+    }
+
+    private static JsonObject unavailableNativeValueFlow(String reason) {
+        JsonObject unavailable = new JsonObject();
+        unavailable.addProperty("available", false);
+        unavailable.addProperty("reason", reason);
+        JsonArray limitations = new JsonArray();
+        limitations.add(
+            "No p-code operations or def-use relationships were recovered for this procedure."
+        );
+        unavailable.add("limitations", limitations);
+        return unavailable;
     }
 
     private static JsonObject unavailableNativeApiBoundary(String reason) {
@@ -5019,7 +5047,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private record InventoryItem(Address address, String value, JsonObject facts) {}
     private record AddressNameRequest(String inputAddress, Address address, String name) {}
     private record FunctionEntry(Function function, InventoryItem item) {}
-    private record FunctionAnalysisObservation(JsonObject dossier, List<String> limitations, JsonObject relationshipCoverage) {}
+    private record FunctionAnalysisObservation(JsonObject dossier, List<String> limitations, JsonObject relationshipCoverage, boolean decompilerFailed) {}
     private record CallBoundaryObservation(List<String> limitations, Integer unrepresentedCalleeCalls, JsonArray unresolvedCalls) {}
     private record SwiftStringLiteralDecode(JsonArray literals, JsonArray omissions) {}
     private record SwiftLiteralLayout(
