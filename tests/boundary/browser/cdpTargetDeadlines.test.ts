@@ -5,7 +5,11 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { CdpConnection } from "../../../src/browser/CdpConnection.js";
 import { openCdpEndpoint } from "../../../src/browser/CdpTargetSession.js";
-import { PlaywrightScenarioServiceWorkers } from "../../../src/browser/PlaywrightScenarioServiceWorkers.js";
+import {
+  PlaywrightScenarioServiceWorkers,
+  SERVICE_WORKER_POLICY_CHECK_TIMEOUT_MS,
+} from "../../../src/browser/PlaywrightScenarioServiceWorkers.js";
+import { AnalysisTimeoutError } from "../../../src/domain/analysisErrorCore.js";
 import { CdpWebRuntimeProvider } from "../../../src/browser/execution/CdpWebRuntimeProvider.js";
 import { CDP_DISCOVERY_RESPONSE_TIMEOUT_MS } from "../../../src/domain/browserDeadline.js";
 import { BrowserObservationError } from "../../../src/domain/browserObservationError.js";
@@ -377,6 +381,56 @@ it("gives browser-socket attach its own command deadline after the handshake", a
   }
 });
 
+it("stops a stalled blocked-service-worker check before discovery", async () => {
+  const commandTimeoutMs = 25_000;
+  const browser = await startFakeCdpBrowser();
+  const frame = {
+    evaluate: () => new Promise<null>(() => undefined),
+    isDetached: () => false,
+    url: () => `${browser.allowedOrigin}/app`,
+  };
+  const workers = new PlaywrightScenarioServiceWorkers(
+    {
+      frames: () => [frame],
+      isClosed: () => false,
+      mainFrame: () => frame,
+    } as unknown as ConstructorParameters<
+      typeof PlaywrightScenarioServiceWorkers
+    >[0],
+    browser.endpoint,
+    "allowed-page",
+    commandTimeoutMs,
+  );
+  const pending = workers.initialize();
+  try {
+    await vi.waitFor(() =>
+      expect(activeTimers(SERVICE_WORKER_POLICY_CHECK_TIMEOUT_MS)).toHaveLength(
+        1,
+      ),
+    );
+    expect(browser.httpRequests).toHaveLength(0);
+    expect(browser.commands).toHaveLength(0);
+    expect(activeTimers(commandTimeoutMs)).toHaveLength(0);
+    expireTimer(SERVICE_WORKER_POLICY_CHECK_TIMEOUT_MS);
+    const failure = await pending.catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(AnalysisTimeoutError);
+    if (!(failure instanceof AnalysisTimeoutError))
+      throw new Error("Expected a policy-check deadline");
+    const text = `${failure.userMessage ?? ""}\n${failure.message}`;
+    expect(text).toContain(
+      `${String(SERVICE_WORKER_POLICY_CHECK_TIMEOUT_MS)} ms deadline before CDP discovery`,
+    );
+    expect(text).toContain("command_timeout_ms does not apply");
+    expect(browser.httpRequests).toHaveLength(0);
+    expect(activeTimers(commandTimeoutMs)).toHaveLength(0);
+  } finally {
+    const closing = workers.close().catch(() => undefined);
+    await browser.close();
+    await closing;
+    await pending.catch(() => undefined);
+  }
+});
+
 it("keeps blocked service-worker attachment outside the discovery deadline", async () => {
   const commandTimeoutMs = 25_000;
   const browser = await startFakeCdpBrowser({
@@ -451,6 +505,10 @@ it("reports browser-socket discovery on its own deadline", async () => {
     expect(text).toContain("80");
     expect(text).not.toContain("30 ms");
     expect(text).toContain("browser-socket discovery");
+    expect(text).toContain(
+      `${String(WEB_RUNTIME_LIMITS.protocolBytes)}-byte browser-socket message budget`,
+    );
+    expect(text).not.toContain("8388608-byte discovery document budget");
   } finally {
     for (const socket of sockets) socket.destroy();
     await new Promise<void>((resolve) => server.close(() => resolve()));

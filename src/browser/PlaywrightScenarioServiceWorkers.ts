@@ -5,8 +5,13 @@ import type { Frame, Page } from "playwright-core";
 
 import {
   CDP_CLEANUP_GRACE_MS,
+  CDP_DISCOVERY_RESPONSE_TIMEOUT_MS,
   selectedCdpCommandTimeoutMs,
 } from "../domain/browserDeadline.js";
+import {
+  AnalysisCancelledError,
+  AnalysisTimeoutError,
+} from "../domain/analysisErrorCore.js";
 import { browserObservationEndpointSchema } from "../domain/browserObservation.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { CdpConnection } from "./CdpConnection.js";
@@ -23,6 +28,63 @@ const OPERATION = "capture_browser_scenario" as const;
 // own bounded close. A single round-trip deadline is too short for the complete
 // chain on a loaded Windows browser, while retries must still stay bounded.
 const POLICY_CLEANUP_CONFIRMATION_TIMEOUT_MS = CDP_CLEANUP_GRACE_MS;
+/**
+ * First blocked-service-worker registration check, before discovery starts.
+ * It keeps the previous fixed 10-second bound. command_timeout_ms does not
+ * apply yet, and this timer is not the discovery or attach deadline.
+ */
+export const SERVICE_WORKER_POLICY_CHECK_TIMEOUT_MS =
+  CDP_DISCOVERY_RESPONSE_TIMEOUT_MS;
+
+const serviceWorkerPolicyCheckTimeout = (): AnalysisTimeoutError => {
+  const timeoutMs = SERVICE_WORKER_POLICY_CHECK_TIMEOUT_MS;
+  return new AnalysisTimeoutError(OPERATION, timeoutMs, {
+    userMessage: `Blocked service-worker policy check exceeded its ${String(timeoutMs)} ms deadline before CDP discovery. command_timeout_ms does not apply to this check.`,
+    remediationAction: `The ${String(timeoutMs)} ms blocked service-worker policy check stays fixed. This release has no runtime override. command_timeout_ms does not raise it.`,
+  });
+};
+
+const withServiceWorkerPolicyDeadline = <Value>(
+  work: () => Promise<Value>,
+  signal: AbortSignal,
+): Promise<Value> => {
+  if (signal.aborted)
+    return Promise.reject(
+      new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+    );
+  return new Promise<Value>((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      fail(serviceWorkerPolicyCheckTimeout());
+    }, SERVICE_WORKER_POLICY_CHECK_TIMEOUT_MS);
+    timer.unref();
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+    };
+    const succeed = (value: Value): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+    const fail = (error: unknown): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const onAbort = (): void => {
+      fail(new AnalysisCancelledError(OPERATION, { cause: signal.reason }));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    void work().then(succeed, fail);
+  });
+};
 const scriptResponse = z.object({ identifier: z.string() });
 const restorationResponse = z.object({
   result: z.object({ value: z.literal("policy_owned").nullable() }),
@@ -74,9 +136,8 @@ export class PlaywrightScenarioServiceWorkers {
   }
 
   private async install(): Promise<void> {
-    await withPlaywrightExecutionBoundary(
+    await withServiceWorkerPolicyDeadline(
       () => this.assertBlocked(),
-      undefined,
       this.#setup.signal,
     );
     // Discovery stays on its fixed deadline. The following handshake and
