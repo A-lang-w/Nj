@@ -57,7 +57,8 @@ if native.exists():
     receipt = next(json.loads(line) for line in reversed((root / 'native-control.log').read_text().splitlines()) if line.startswith('{"resource_scope":'))
     obs = receipt['payload_resource_observation']
     assert receipt['abort'] is None and receipt['payload_resource_observation_verified'] and obs['payload_exit_code'] == 0 and obs['payload_cleanup_verified']
-    assert json.loads((native / 'answer.json').read_text()) == json.loads((root / 'pilot-complete/answer.json').read_text())
+    baseline_case = root / next(run['case'] for run in runs if run['mode'] == 'complete')
+    assert json.loads((native / 'answer.json').read_text()) == json.loads((baseline_case / 'answer.json').read_text())
     control_source = Path(__file__).with_name('managed-cli-local-control.py').read_text()
     result['existing_native_control'] = {'runtime': 'unchanged baseline', 'repetitions': 1,
         'tokens_estimated_script_plus_help_plus_answer': count(control_source) + count((native / 'help.txt').read_text()) + count((native / 'answer.json').read_text()),
