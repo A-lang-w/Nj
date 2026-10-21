@@ -1,5 +1,6 @@
 import type { EvmWorkerLimits } from "./EvmWorkerLimits.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { artifactFileCancellationCause } from "../artifacts/ArtifactFileOperation.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
@@ -68,6 +69,7 @@ export const evmInterfaceFailure = (
       );
     if (cause.reason === "cancelled")
       return new AnalysisCancelledError("inspect_evm_interface", {
+        cause: cause.cancellation?.reason,
         ...outputOptions,
         ...cleanupOptions,
       });
@@ -129,7 +131,7 @@ export const evmInterfaceFailure = (
   if (cause instanceof ArtifactReaderFailure) {
     if (cause.reason === "cancelled")
       return new AnalysisCancelledError("inspect_evm_interface", {
-        cause,
+        cause: artifactFileCancellationCause(cause),
         ...cleanupOptions,
       });
     if (cause.reason === "integrity")
@@ -183,6 +185,9 @@ export const evmInterfaceFailure = (
     {
       cause,
       ...cleanupOptions,
+      ...(cause instanceof OwnedCommandFailure && cause.snapshot !== null
+        ? { capturedOutput: capturedEvmOutput(cause.snapshot) }
+        : {}),
       diagnostics: {
         phase,
         path,
@@ -198,13 +203,6 @@ export const evmInterfaceFailure = (
               failure_kind: cause.reason,
               exit_code: cause.snapshot?.exitCode ?? null,
               signal: cause.snapshot?.signal ?? null,
-              stdout: cause.snapshot?.stdout.text ?? null,
-              stderr: cause.snapshot?.stderr.text ?? null,
-              ...(cause.snapshot === null
-                ? {}
-                : {
-                    captured_output: { ...capturedEvmOutput(cause.snapshot) },
-                  }),
             }
           : {}),
       },

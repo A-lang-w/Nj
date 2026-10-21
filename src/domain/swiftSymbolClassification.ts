@@ -38,7 +38,13 @@ export const classifySwiftSymbol = (
   let category: SwiftTypeCategory | null = null;
   for (;;) {
     const end = identifierEnd(mangling, offset);
-    if (end === undefined) break;
+    if (end === undefined) {
+      // A zero-prefixed identifier uses word substitutions or Punycode. We
+      // cannot tell whether it continues a nested type or names a member, so
+      // retaining the outer category would be a guess.
+      if (mangling.charAt(offset) === "0") category = null;
+      break;
+    }
     const kind = mangling.charAt(end);
     const nominal = NOMINAL_CATEGORIES.get(kind);
     if (nominal === undefined) {
@@ -54,6 +60,26 @@ export const classifySwiftSymbol = (
   }
   return { category };
 };
+
+/**
+ * Prefixes accepted by Swift's demangler as manglings. This is deliberately
+ * narrower than visible Swift runtime class names (`_Tt…`): those names are
+ * useful metadata symbols but are not themselves demangler manglings.
+ */
+const SWIFT_MANGLING_PREFIXES = [
+  "_T0",
+  "$S",
+  "_$S",
+  "$s",
+  "_$s",
+  "@__swiftmacro_",
+  "$e",
+  "_$e",
+] as const;
+
+/** Recognize names the Swift demangler accepts as mangled symbols. */
+export const isSwiftMangledSymbolName = (name: string): boolean =>
+  SWIFT_MANGLING_PREFIXES.some((prefix) => name.startsWith(prefix));
 
 const identifierEnd = (
   mangling: string,

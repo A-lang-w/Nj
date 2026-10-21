@@ -1,8 +1,12 @@
 import { expect, it } from "vitest";
 
-import { snapshotRoots } from "./FilesystemSnapshot.js";
+import {
+  ProcessCaptureSnapshotFailure,
+  snapshotRoots,
+} from "./FilesystemSnapshot.js";
 import { buildCaptureResult } from "./ProcessCaptureLifecycle.js";
-import { isInitializedPtyRoot, readLinuxChildren } from "./ProcessSampling.js";
+import { isInitializedPtyRoot } from "./ProcessSampling.js";
+import { readLinuxChildren } from "./LinuxProcessSampling.js";
 import { TerminalRenderer } from "./TerminalRenderer.js";
 import { parseProcessScenario } from "../../domain/process/processScenario.js";
 import type { ProcessCapture } from "../../domain/process/processCaptureParsing.js";
@@ -66,7 +70,12 @@ it("returns detached terminal observations", async () => {
     rows: 12,
     scrollback: 100,
     maxBytes: 100_000,
-    normalize: (value) => value,
+    normalize: (value, maxBytes) => {
+      const utf8Bytes = Buffer.byteLength(value);
+      return utf8Bytes <= maxBytes
+        ? { state: "normalized", value, utf8Bytes }
+        : { state: "over_budget" };
+    },
     recordEvent: (collection, index) =>
       observed.push(`${collection}:${String(index)}`),
   });
@@ -210,7 +219,10 @@ it("collects and deduplicates children from every Linux thread", async () => {
           taskId === 100 ? "201 202" : taskId === 101 ? "202 203" : "",
         ),
     }),
-  ).toEqual([201, 202, 203]);
+  ).toEqual({
+    value: [201, 202, 203],
+    diagnostics: { count: 0, first: null, interrupted: false },
+  });
 });
 
 it("admits PTY samples only after stable session and token setup", () => {
@@ -262,13 +274,33 @@ it("admits PTY samples only after stable session and token setup", () => {
 it("cancels filesystem snapshots before traversing declared roots", async () => {
   const controller = new AbortController();
   controller.abort();
-  await expect(
-    snapshotRoots(
-      parseProcessScenario({
-        ...base,
-        filesystem_observation_paths: ["/tmp"],
-      }),
-      controller.signal,
-    ),
-  ).rejects.toMatchObject({ name: "AbortError" });
+  const failure: unknown = await snapshotRoots(
+    parseProcessScenario({
+      ...base,
+      filesystem_observation_paths: ["/tmp"],
+    }),
+    controller.signal,
+  ).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(ProcessCaptureSnapshotFailure);
+  expect(failure).toMatchObject({
+    _tag: "ProcessCaptureError",
+    reason: "cancelled",
+    userCategory: "cancelled",
+    cause: expect.objectContaining({ name: "AbortError" }),
+    snapshot: {
+      files: [],
+      truncated: true,
+      completeRoots: [],
+      coverage: {
+        hashed_bytes: 0,
+        enumeration_omissions: [],
+        hash_omissions: [],
+      },
+    },
+    cleanupLeases: [],
+    readFailures: [],
+  });
+  expect(failure instanceof Error ? failure.cause : undefined).toBe(
+    controller.signal.reason,
+  );
 });

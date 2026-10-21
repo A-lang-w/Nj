@@ -10,11 +10,14 @@ const HOST_TEST_OWNERS = ["apple", "package", "sqlite"];
 // workflows' release, publication and self-hosted runner safeguards.
 const GUARDED_WORKFLOWS = new Set([
   ".github/workflows/pr-title.yml",
+  ".github/workflows/pr-readiness.yml",
   ".github/workflows/ci-full-pr.yml",
   ".github/workflows/release.yml",
+  ".github/workflows/release-recovery.yml",
   ".github/workflows/real-ghidra-windows.yml",
   ".github/workflows/sqlite-runtime.yml",
   ".github/workflows/ci-timings.yml",
+  ".github/workflows/mutation.yml",
 ]);
 // Sources compiled by build-conformance-fixtures.mjs. The readiness journey
 // analyzes the built C fixture as well as its own applications.
@@ -39,8 +42,18 @@ const matchesAny = (file, patterns) =>
   patterns.some((pattern) => matchesGlob(file, pattern));
 const selected = Object.fromEntries(flags.map((flag) => [flag, false]));
 const reasons = [];
+// Shared process, contract, CLI, and CI-script edits are not a specific provider.
+// Fast qualification keeps the portable suite and the Linux x64 runtime
+// baseline. Full qualification still selects every lane.
+const SHARED_BOUNDARY =
+  /^(src\/process\/|src\/filesystem\/|src\/contracts\/tool|src\/server\/createServer|src\/cli\.ts|scripts\/ci\/)/;
 const full = (reason) => {
-  for (const flag of flags) selected[flag] = true;
+  if (tier === "full") {
+    for (const flag of flags) selected[flag] = true;
+  } else {
+    selected.code = true;
+    selected.runtime = true;
+  }
   reasons.push(reason);
 };
 const git = (...args) =>
@@ -50,6 +63,31 @@ function classifyPackage(base, head) {
   const after = JSON.parse(git("show", `${head}:package.json`));
   const { scripts: beforeScripts, ...beforeRest } = before;
   const { scripts: afterScripts, ...afterRest } = after;
+  const compilerDependencies = (metadata) => ({
+    dependencies: {
+      typescript: metadata.dependencies?.typescript,
+      tsrs: metadata.dependencies?.tsrs,
+    },
+    devDependencies: {
+      typescript: metadata.devDependencies?.typescript,
+      tsrs: metadata.devDependencies?.tsrs,
+    },
+  });
+  const compilerScripts = [
+    "compile",
+    "typecheck",
+    "build",
+    "build:cached",
+    "test:prepare",
+    "docs:prepare",
+    "verify:frida:bindings",
+  ].flatMap((name) => [name, `pre${name}`, `post${name}`]);
+  selected.package ||=
+    JSON.stringify(compilerDependencies(before)) !==
+      JSON.stringify(compilerDependencies(after)) ||
+    compilerScripts.some(
+      (name) => beforeScripts?.[name] !== afterScripts?.[name],
+    );
   if (JSON.stringify(beforeRest) !== JSON.stringify(afterRest)) {
     full("Package metadata or dependencies changed");
     return;
@@ -175,6 +213,11 @@ if (tier === "reused") {
         file.startsWith(".github/ISSUE_TEMPLATE/")
       ) {
         selected.docs = true;
+        // Authored code and its Node package scopes belong to static checkers.
+        selected.code ||=
+          file.startsWith("docs/") &&
+          (/\.(?:[cm]?[jt]s|[jt]sx)$/u.test(file) ||
+            file.endsWith("/package.json"));
         selected.website ||= matchesAny(file, SCOPES.website);
         continue;
       }
@@ -186,6 +229,28 @@ if (tier === "reused") {
       }
       if (matchesAny(file, MANUAL_VERIFIERS)) {
         selected.code = true;
+        continue;
+      }
+      // Timing and report helpers stay on the portable suite. They are not a
+      // runtime or provider change.
+      if (PORTABLE_CI_REPORTERS.has(file)) {
+        selected.code = true;
+        continue;
+      }
+      // A shared boundary is not evidence that every provider or host changed.
+      // One matching owner is path evidence. Several owners means the same
+      // registration file is listed by many lanes; fast qualification does not
+      // fan those out or start the multi-host package matrix.
+      if (tier !== "full" && SHARED_BOUNDARY.test(file)) {
+        selected.code = true;
+        selected.runtime = true;
+        const owners = Object.entries(SCOPES)
+          .filter(([, patterns]) =>
+            patterns.some((pattern) => matchesGlob(file, pattern)),
+          )
+          .map(([owner]) => owner);
+        if (owners.length === 1) selected[owners[0]] = true;
+        reasons.push(`Shared boundary on fast tier: ${file}`);
         continue;
       }
       const owners = Object.entries(SCOPES)
@@ -218,7 +283,6 @@ if (tier === "reused") {
       }
       if (matchesAny(file, READINESS_SOURCES)) selected.readiness = true;
       if (file.startsWith("tests/")) continue;
-      if (PORTABLE_CI_REPORTERS.has(file)) continue;
       if (
         /^(src\/process\/|src\/filesystem\/|src\/contracts\/tool|src\/server\/createServer|src\/cli\.ts|scripts\/ci\/)/.test(
           file,

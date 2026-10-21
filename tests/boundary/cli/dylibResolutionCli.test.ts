@@ -17,7 +17,11 @@ import {
 import { dylibResolutionResultSchema } from "../../../src/domain/apple/dylibResolution.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
+import {
+  cliTest,
+  runFileCli,
+  type TestCli,
+} from "../../support/cli/cliFixture.js";
 
 const ENVIRONMENT = { REA_LOG_LEVEL: "silent", REA_ANALYSIS_PROVIDER: "auto" };
 
@@ -46,7 +50,7 @@ const expectRootInputError = async (
     readonly message: string;
   },
 ): Promise<void> => {
-  const rejected = await cli.run({
+  const rejected = await runFileCli(cli, {
     arguments: ["trace-dylib-resolution", app, "--root", root, "--json"],
     environment: ENVIRONMENT,
   });
@@ -127,7 +131,7 @@ cliTest(
         ],
       }),
     });
-    const output = await cli.run({
+    const output = await runFileCli(cli, {
       arguments: ["trace-dylib-resolution", app, "--json"],
       environment: ENVIRONMENT,
     });
@@ -160,7 +164,7 @@ cliTest(
 describe("trace-dylib-resolution CLI", () => {
   cliTest("traces every executable root of an app bundle", async ({ cli }) => {
     const app = await fixtureApp();
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: ["trace-dylib-resolution", app, "--json"],
       environment: ENVIRONMENT,
     });
@@ -211,7 +215,7 @@ describe("trace-dylib-resolution CLI", () => {
     "narrows roots and architecture, and rejects escaping roots",
     async ({ cli }) => {
       const app = await fixtureApp();
-      const narrowed = await cli.run({
+      const narrowed = await runFileCli(cli, {
         arguments: [
           "trace-dylib-resolution",
           app,
@@ -267,7 +271,7 @@ describe("trace-dylib-resolution CLI", () => {
         }),
         "unrelated.txt": "not traversed",
       });
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: [
           "trace-dylib-resolution",
           join(directory, "tool"),
@@ -292,7 +296,7 @@ describe("trace-dylib-resolution CLI", () => {
     async ({ cli }) => {
       const app = await fixtureApp();
       await withBrokenHelper(app);
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["trace-dylib-resolution", app, "--json"],
         environment: ENVIRONMENT,
       });
@@ -343,7 +347,7 @@ cliTest(
       });
     }
 
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: ["trace-dylib-resolution", app, "--json"],
       environment: ENVIRONMENT,
     });
@@ -400,7 +404,7 @@ cliTest(
         commands: [buildVersionCommand(1)],
       }),
     });
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: ["trace-dylib-resolution", join(directory, "tool"), "--json"],
       environment: ENVIRONMENT,
     });
@@ -450,7 +454,7 @@ describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
         });
         await chmod(join(directory, "libsecret.dylib"), 0o000);
         try {
-          const result = await cli.run({
+          const result = await runFileCli(cli, {
             arguments: [
               "trace-dylib-resolution",
               join(directory, "tool"),
@@ -498,7 +502,7 @@ cliTest(
           ],
         }),
       });
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: [
           "trace-dylib-resolution",
           app,
@@ -559,7 +563,7 @@ cliTest(
           { cpu: CPU.x86_64, bytes: machoImage({ cpu: CPU.x86_64 }) },
         ]),
       });
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: [
           "trace-dylib-resolution",
           app,
@@ -609,7 +613,7 @@ cliTest(
         commands: [buildVersionCommand(1)],
       }),
     });
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: [
         "trace-dylib-resolution",
         app,
@@ -663,7 +667,7 @@ cliTest(
           ],
         }),
       );
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["trace-dylib-resolution", path, "--json"],
         environment: ENVIRONMENT,
       });
@@ -685,3 +689,79 @@ cliTest(
     }
   },
 );
+
+/** An app bundle whose roots sit among more files than one batch of magic reads. */
+const crowdedApp = async (): Promise<string> => {
+  const app = await fixtureApp();
+  await withBrokenHelper(app);
+  const resources: Record<string, string | Uint8Array> = {};
+  for (let index = 0; index < 40; index += 1)
+    resources[`Contents/Resources/r${index % 4}/file${index}.dat`] = "x".repeat(
+      index % 5,
+    );
+  for (const index of [0, 1, 2])
+    resources[`Contents/Resources/r${index}/tool${index}`] = machoImage({
+      commands: [buildVersionCommand(1)],
+    });
+  resources["Contents/Resources/r3/libextra.dylib"] = machoImage({
+    fileType: FILE_TYPE.dylib,
+  });
+  await writeFiles(app, resources);
+  return app;
+};
+
+describe("trace-dylib-resolution root enumeration", () => {
+  cliTest(
+    "classifies every Mach-O among more files than one batch of magic reads",
+    async ({ cli }) => {
+      const app = await crowdedApp();
+      const result = await runFileCli(cli, {
+        arguments: ["trace-dylib-resolution", app, "--json"],
+        environment: ENVIRONMENT,
+      });
+      expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
+      const trace = dylibResolutionResultSchema.parse(
+        (result.json as { normalized_result: unknown }).normalized_result,
+      );
+      expect(trace.roots.map(({ image }) => image)).toEqual([
+        "Contents/Helpers/tool",
+        "Contents/MacOS/App",
+        "Contents/Resources/r0/tool0",
+        "Contents/Resources/r1/tool1",
+        "Contents/Resources/r2/tool2",
+      ]);
+      expect(trace.coverage).toMatchObject({
+        status: "partial",
+        unparsed_images: ["Contents/Helpers/broken"],
+      });
+    },
+  );
+
+  // This permission fixture requires POSIX mode bits and a non-root caller.
+  cliTest.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "reports an unreadable bundle file found while enumerating roots",
+    async ({ cli }) => {
+      const app = await crowdedApp();
+      const secret = join(app, "Contents/Resources/r2/secret.dat");
+      await writeFile(secret, "x");
+      await chmod(secret, 0o000);
+      try {
+        const result = await runFileCli(cli, {
+          arguments: ["trace-dylib-resolution", app, "--json"],
+          environment: ENVIRONMENT,
+        });
+        expect(result.exitCode).toBe(1);
+        expect(result.json).toMatchObject({
+          details: {
+            reason: "unavailable",
+            detail: expect.stringContaining(
+              "Permission denied (EACCES) reading Contents/Resources/r2/secret.dat",
+            ),
+          },
+        });
+      } finally {
+        await chmod(secret, 0o644);
+      }
+    },
+  );
+});

@@ -1,25 +1,32 @@
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
-import {
-  effectiveClientConfiguration,
-  readClientConfigurationFiles,
-} from "./ClientConfigurationFiles.js";
+import { readEffectiveClientRegistrationConfiguration } from "./ClientConfigurationFiles.js";
 import {
   clientServerForcedEnabled,
   clientServerListedDisabled,
   effectiveClientServer,
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
-import { access } from "node:fs/promises";
-import { resolve } from "node:path";
+import { lstat } from "node:fs/promises";
+import { err, ok, type Result } from "../domain/result.js";
+import { isAbsolute } from "node:path";
 
 import { z } from "zod";
 import { valid } from "semver";
 
+import { RegularFileCleanupFailure } from "./RegularFileRead.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { MCP_STARTUP_POLICY } from "../mcpStartupPolicy.js";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
+import {
+  MCP_STARTUP_POLICY,
+  mcpProviderDeadlineAllowanceMs,
+  recommendedMcpToolTimeoutMs,
+  recommendedMcpToolTimeoutSeconds,
+  type McpToolTimeoutInputs,
+} from "../mcpStartupPolicy.js";
 import {
   clientRegistrationPackageReference,
-  isOwnedClientRegistrationCommand,
+  classifyClientRegistrationCommand,
   packageRunnerRegistrationCommand,
 } from "./ClientRegistrationIdentity.js";
 import {
@@ -30,6 +37,8 @@ import {
 import type { SetupClient } from "./SupportedClients.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { dshDocument } from "./DshCordisPatch.js";
+import { clientRegistrationEnvironmentDetailsWithBudget } from "./ClientRegistrationEnvironment.js";
+import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
 interface ClientRegistrationStatusBase {
@@ -37,6 +46,8 @@ interface ClientRegistrationStatusBase {
   readonly config_path: string;
   /** Exact package reference requested by npx/bunx, when registration uses one. */
   readonly package_reference?: string;
+  /** Non-blocking timeout guidance; caller-selected values remain aligned. */
+  readonly advisory?: string;
 }
 
 type RegistrationCommand = readonly [string, ...string[]];
@@ -54,6 +65,11 @@ export type ClientRegistrationStatus = ClientRegistrationStatusBase &
         readonly remediation: string;
       }
     | {
+        readonly command: RegistrationCommand;
+        readonly state: "unknown";
+        readonly remediation: string;
+      }
+    | {
         readonly command: readonly [];
         readonly state: "missing" | "invalid" | "manual";
         readonly remediation: string;
@@ -65,11 +81,18 @@ export type UnhealthyClientRegistrationStatus = Exclude<
   { readonly state: "aligned" }
 >;
 
+const tomlTimeoutSchema = z.union([
+  z.number().positive(),
+  z.bigint().positive(),
+]);
+
 const registrationSchema = z
   .object({
     command: z.string().min(1),
     args: z.array(z.string()).default([]),
-    startup_timeout_sec: z.number().positive().optional(),
+    // TOML keeps integers beyond the safe Number range exact as bigint.
+    startup_timeout_sec: tomlTimeoutSchema.optional(),
+    tool_timeout_sec: tomlTimeoutSchema.optional(),
     startupTimeoutMs: z.number().positive().optional(),
     toolTimeoutMs: z.number().positive().optional(),
     type: z.string().optional(),
@@ -85,6 +108,7 @@ interface ClientRegistrationReadOptions {
   readonly platform?: NodeJS.Platform;
   readonly environment?: NodeJS.ProcessEnv;
   readonly resources?: ArtifactResourceScope;
+  readonly resolveProviderRequestBudget?: ProviderRequestBudgetResolver;
 }
 
 /** Registration facts shared by diagnostics and update maintenance. */
@@ -96,17 +120,19 @@ export interface ClientRegistrationInspection {
 /** Project diagnostics from the same inspection used to select maintenance. */
 export const readClientRegistrationStatuses = async (
   home: string,
-  currentCommandPath: string = resolve(process.argv[1] ?? "unknown"),
+  currentCommandPath: string | undefined = CURRENT_ENTRYPOINT_PATH,
   options: ClientRegistrationReadOptions = {},
 ): Promise<readonly ClientRegistrationStatus[]> =>
   (
     await readClientRegistrationInspections(home, currentCommandPath, options)
   ).map(({ status }) => status);
 
-/** Parse effective registrations and their client-specific activation once. */
+/** Parse effective registrations and their client-specific activation once.
+ * A supplied scope retains failed cleanup; otherwise transfer its exact failure.
+ */
 export const readClientRegistrationInspections = async (
   home: string,
-  currentCommandPath: string = resolve(process.argv[1] ?? "unknown"),
+  currentCommandPath: string | undefined = CURRENT_ENTRYPOINT_PATH,
   options: ClientRegistrationReadOptions = {},
 ): Promise<readonly ClientRegistrationInspection[]> => {
   const inspections: ClientRegistrationInspection[] = [];
@@ -131,7 +157,18 @@ export const readClientRegistrationInspections = async (
       });
       continue;
     }
-    if (!(await clientEvidencePresent(client))) continue;
+    const presence = await clientEvidencePresent(client);
+    if (!presence.ok) {
+      record({
+        client: client.name,
+        config_path: presence.error.path,
+        command: [],
+        state: "invalid",
+        remediation: presence.error.detail,
+      });
+      continue;
+    }
+    if (!presence.value) continue;
     const manualRemediation = manualRegistrationRemediation(client.name);
     if (client.format === "unsupported") {
       if (manualRemediation !== undefined)
@@ -144,24 +181,32 @@ export const readClientRegistrationInspections = async (
         });
       continue;
     }
+    let selectedConfigPath = client.configPath;
     try {
-      const files = await readClientConfigurationFiles(
+      const configuration = await readEffectiveClientRegistrationConfiguration(
         client,
         options.resources,
+        options.platform,
       );
-      if (!files.ok) {
+      if (!configuration.ok) {
+        if (
+          options.resources === undefined &&
+          configuration.error.cleanupFailure !== undefined
+        )
+          throw configuration.error.cleanupFailure;
         record({
           client: client.name,
-          config_path: client.configPath,
+          config_path: configuration.error.path,
           command: [],
           state: "invalid",
-          remediation: files.error.detail,
+          remediation: configuration.error.detail,
         });
         continue;
       }
-      const parsed = effectiveClientConfiguration(files.value);
+      const { document: parsed, configPath } = configuration.value;
+      selectedConfigPath = configPath;
       if (parsed === undefined) {
-        record(unavailableStatus(client, "missing"));
+        record(unavailableStatus(client, "missing", configPath));
         continue;
       }
       const policy = await readClientPolicyBlock(
@@ -171,9 +216,14 @@ export const readClientRegistrationInspections = async (
         options.resources,
       );
       if (!policy.ok) {
+        if (
+          options.resources === undefined &&
+          policy.error.cleanupFailure !== undefined
+        )
+          throw policy.error.cleanupFailure;
         record({
           client: client.name,
-          config_path: client.configPath,
+          config_path: configPath,
           command: [],
           state: "invalid",
           remediation: policy.error.detail,
@@ -190,17 +240,49 @@ export const readClientRegistrationInspections = async (
         if (editabilityError !== undefined) {
           record({
             client: client.name,
-            config_path: client.configPath,
+            config_path: configPath,
             command: [],
             state: "invalid",
             remediation: editabilityError.message,
           });
           continue;
         }
-        record(unavailableStatus(client, "missing"));
+        record(unavailableStatus(client, "missing", configPath));
         continue;
       }
-      const registration = parseRegistration(raw, client);
+      const effectiveClient: SetupClient =
+        parsed.dialect === "zcode_fallback"
+          ? {
+              ...client,
+              configPath,
+              configPaths: [configPath],
+              format: "zcode_fallback",
+            }
+          : client;
+      const registration = parseRegistration(raw, effectiveClient);
+      const registrationEnvironment =
+        client.name === "kimi" || client.name === "codex"
+          ? await clientRegistrationEnvironmentDetailsWithBudget(
+              parsed,
+              {},
+              "effective",
+              options.resolveProviderRequestBudget,
+              options.platform,
+            )
+          : undefined;
+      if (
+        registrationEnvironment !== undefined &&
+        !registrationEnvironment.ok
+      ) {
+        record({
+          client: client.name,
+          config_path: configPath,
+          command: [],
+          state: "invalid",
+          remediation: registrationEnvironment.error.message,
+        });
+        continue;
+      }
       const command: RegistrationCommand = [
         registration.command,
         ...registration.args,
@@ -211,33 +293,61 @@ export const readClientRegistrationInspections = async (
       const packageVersionDrift =
         packageVersion !== undefined &&
         packageVersion !== PRODUCT_IDENTITY.packageVersion;
+      const alignment = registrationAligned({
+        registration,
+        client: effectiveClient,
+        currentCommandPath,
+        platform: options.platform ?? process.platform,
+        kimiInputSchemaProfileSelected:
+          registrationEnvironment?.ok === true &&
+          snapshotEnvironment(
+            registrationEnvironment.value.values,
+            options.platform,
+          ).REA_MCP_INPUT_SCHEMA_PROFILE !== undefined,
+      });
       record(
         configuredStatus(
-          client,
+          effectiveClient,
           command,
-          activation === "enabled" &&
-            !packageVersionDrift &&
-            registrationAligned(
-              registration,
-              client,
-              currentCommandPath,
-              options.platform ?? process.platform,
-            ) &&
-            (parsed.dialect !== "dsh" || dshDocument(parsed.document).ready) &&
-            policyBlock === undefined
-            ? "aligned"
-            : "stale",
+          alignment === "unknown"
+            ? "unknown"
+            : activation === "enabled" &&
+                !packageVersionDrift &&
+                alignment === "aligned" &&
+                (parsed.dialect !== "dsh" ||
+                  dshDocument(parsed.document).ready) &&
+                policyBlock === undefined
+              ? "aligned"
+              : "stale",
           policyBlock ??
             (packageVersionDrift
               ? packageVersionRemediation(packageReference ?? "", client)
-              : undefined),
+              : alignment === "unknown"
+                ? unknownEntryPointRemediation()
+                : undefined),
           packageReference,
+          registrationEnvironment?.ok === true
+            ? timeoutAdvisory(
+                client,
+                registration,
+                registrationEnvironment.value.timeoutInputs,
+              )
+            : undefined,
         ),
         activation,
       );
     } catch (cause: unknown) {
+      if (
+        options.resources === undefined &&
+        cause instanceof RegularFileCleanupFailure
+      )
+        throw cause;
       record(
-        unavailableStatus(client, isMissing(cause) ? "missing" : "invalid"),
+        unavailableStatus(
+          client,
+          isMissing(cause) ? "missing" : "invalid",
+          selectedConfigPath,
+        ),
       );
     }
   }
@@ -254,33 +364,51 @@ const registrationActivation = (
   (client.format !== "grok" && registration.disabled === true) ||
   (registration.enabled === false &&
     !clientServerForcedEnabled(parsed, PRODUCT_IDENTITY.mcpServerKey)) ||
-  (client.format === "zcode" && registration.enable === false) ||
+  ((parsed.dialect === "zcode" || parsed.dialect === "zcode_fallback") &&
+    registration.enable === false) ||
   clientServerListedDisabled(parsed, PRODUCT_IDENTITY.mcpServerKey)
     ? "disabled"
     : "enabled";
 
-const registrationAligned = (
-  registration: z.output<typeof registrationSchema>,
-  client: SetupClient,
-  currentCommandPath: string,
-  platform: NodeJS.Platform,
-): boolean => {
+const registrationAligned = ({
+  registration,
+  client,
+  currentCommandPath,
+  platform,
+  kimiInputSchemaProfileSelected,
+}: {
+  readonly registration: z.output<typeof registrationSchema>;
+  readonly client: SetupClient;
+  readonly currentCommandPath: string | undefined;
+  readonly platform: NodeJS.Platform;
+  readonly kimiInputSchemaProfileSelected: boolean;
+}): "aligned" | "stale" | "unknown" => {
   const command = [registration.command, ...registration.args];
-  if (!isOwnedClientRegistrationCommand(command, currentCommandPath))
-    return false;
+  const identity = classifyClientRegistrationCommand(
+    command,
+    currentCommandPath,
+  );
+  if (identity === "unknown") return "unknown";
+  if (identity === "foreign") return "stale";
   if (
-    (client.name === "codex" || client.name === "grok_build") &&
+    client.name === "grok_build" &&
     registration.startup_timeout_sec !==
       MCP_STARTUP_POLICY.codexStartupTimeoutSeconds
   )
-    return false;
+    return "stale";
+  if (
+    client.name === "codex" &&
+    (registration.startup_timeout_sec === undefined ||
+      registration.tool_timeout_sec === undefined)
+  )
+    return "stale";
   if (
     client.name === "kimi" &&
-    (registration.startupTimeoutMs !==
-      MCP_STARTUP_POLICY.kimiStartupTimeoutMs ||
-      registration.toolTimeoutMs !== MCP_STARTUP_POLICY.kimiToolTimeoutMs)
+    (registration.startupTimeoutMs === undefined ||
+      registration.toolTimeoutMs === undefined)
   )
-    return false;
+    return "stale";
+  if (client.name === "kimi" && !kimiInputSchemaProfileSelected) return "stale";
   if (
     (client.format === "kimi" ||
       client.format === "omp" ||
@@ -288,45 +416,39 @@ const registrationAligned = (
     registration.type !== undefined &&
     registration.type !== "stdio"
   )
-    return false;
-  if (client.format === "vscode" && registration.type !== "stdio") return false;
+    return "stale";
+  if (client.format === "vscode" && registration.type !== "stdio")
+    return "stale";
   // A Harness registration only connects as the rea stdio server; another
   // server name or transport leaves the session without REA tools.
   if (
     client.format === "dsh" &&
     (registration.serverName !== "rea" || registration.transport !== "stdio")
   )
-    return false;
+    return "stale";
   if (
     client.format === "copilot_cli" &&
     (registration.type !== "stdio" ||
       JSON.stringify(registration.tools) !== JSON.stringify(["*"]))
   )
-    return false;
+    return "stale";
   if (client.format === "commandcode" && registration.transport !== "stdio")
-    return false;
-  if (
-    command.length === 3 &&
-    command[2] === "mcp" &&
-    resolve(command[0] ?? "") === resolve(process.execPath) &&
-    resolve(command[1] ?? "") === currentCommandPath
-  )
-    return true;
+    return "stale";
   if (
     (["npx", "bunx"] as const).some((runner) => {
-      const runnerCommand = packageRunnerRegistrationCommand(runner, platform);
+      const expected = packageRunnerRegistrationCommand(runner, platform);
       return (
-        command.length === runnerCommand.length &&
-        command.every((argument, index) => argument === runnerCommand[index])
+        command.length === expected.length &&
+        command.every((argument, index) => argument === expected[index])
       );
     })
   )
-    return true;
-  return (
-    command.length === 2 &&
-    command[1] === "mcp" &&
-    resolve(command[0] ?? "") === currentCommandPath
-  );
+    return "aligned";
+  // Other owned package references remain stale until pinned to this version.
+  if (clientRegistrationPackageReference(command) !== undefined) return "stale";
+  // The identity owner already established an exact direct launcher match.
+  // A bare command still depends on the client's PATH, so cannot prove alignment.
+  return isAbsolute(command[0] ?? "") ? "aligned" : "stale";
 };
 
 const parseRegistration = (
@@ -387,12 +509,16 @@ const remediation = (client: SetupClient): string => {
   return `Quit ${name} fully, run rea setup to refresh this registration, then start ${name} again. A running ${name} can rewrite its configuration from memory and drop the registration.`;
 };
 
+const unknownEntryPointRemediation = (): string =>
+  "The existing registration was retained because its executable identity cannot be verified. Check the registered launcher path, symlink targets and access permissions. Run the installed REA CLI or a supported package runner, then rerun rea doctor; no registration was changed.";
+
 const configuredStatus = (
   client: SetupClient,
   command: RegistrationCommand,
-  state: "aligned" | "stale",
+  state: "aligned" | "stale" | "unknown",
   policyRemediation?: string,
   packageReference?: string,
+  advisory?: string,
 ): ClientRegistrationStatus =>
   state === "aligned"
     ? {
@@ -404,6 +530,7 @@ const configuredStatus = (
           : { package_reference: packageReference }),
         state,
         remediation: null,
+        ...(advisory === undefined ? {} : { advisory }),
       }
     : {
         client: client.name,
@@ -415,6 +542,36 @@ const configuredStatus = (
         state,
         remediation: policyRemediation ?? remediation(client),
       };
+
+const timeoutAdvisory = (
+  client: SetupClient,
+  registration: z.output<typeof registrationSchema>,
+  timeoutInputs: McpToolTimeoutInputs,
+): string | undefined => {
+  const toolTimeout =
+    client.name === "kimi"
+      ? registration.toolTimeoutMs
+      : client.name === "codex"
+        ? registration.tool_timeout_sec
+        : undefined;
+  if (toolTimeout === undefined) return undefined;
+  const providerAllowance = mcpProviderDeadlineAllowanceMs(timeoutInputs);
+  const isKimi = client.name === "kimi";
+  // A bigint is beyond the safe Number range, so rounding cannot cross the allowance.
+  const toolTimeoutMs = Number(toolTimeout) * (isKimi ? 1 : 1000);
+  if (toolTimeoutMs >= providerAllowance) return undefined;
+  const setting = isKimi ? "toolTimeoutMs" : "tool_timeout_sec";
+  const currentValue = isKimi
+    ? `${String(toolTimeout)} ms`
+    : `${String(toolTimeout)} seconds`;
+  const recommendedValue = isKimi
+    ? `${String(recommendedMcpToolTimeoutMs(timeoutInputs))} ms`
+    : `${String(recommendedMcpToolTimeoutSeconds(timeoutInputs))} seconds`;
+  const headroom = isKimi
+    ? `${String(MCP_STARTUP_POLICY.toolOperationHeadroomMs)} ms`
+    : `${String(MCP_STARTUP_POLICY.toolOperationHeadroomMs / 1000)} seconds`;
+  return `The configured ${setting} (${currentValue}) is shorter than REA's known provider allowance (${String(providerAllowance)} ms), so provider startup or an upstream request may exceed this client deadline. REA recommends ${setting} = ${recommendedValue} to cover that allowance plus ${headroom} of operation headroom; this additional headroom is a recommendation, not a guarantee for every analysis.`;
+};
 
 const exactRegisteredPackageVersion = (
   packageReference: string | undefined,
@@ -435,30 +592,37 @@ const packageVersionRemediation = (
 const unavailableStatus = (
   client: SetupClient,
   state: "missing" | "invalid",
+  configPath: string = client.configPath,
 ): ClientRegistrationStatus => ({
   client: client.name,
-  config_path: client.configPath,
+  config_path: configPath,
   command: [],
   state,
   remediation: remediation(client),
 });
 
-const clientEvidencePresent = async (client: SetupClient): Promise<boolean> => {
-  for (const path of clientEvidencePaths(client))
-    if (await exists(path)) return true;
-  return false;
-};
-
-const exists = async (path: string | undefined): Promise<boolean> => {
-  if (path === undefined) return false;
-  try {
-    await access(path);
-    return true;
-  } catch (cause: unknown) {
-    // best-effort cleanup: optional registration probing; absence means unregistered.
-    void cause;
-    return false;
+/** Entry presence is independent of whether its target can currently be read. */
+const clientEvidencePresent = async (
+  client: SetupClient,
+): Promise<
+  Result<boolean, { readonly path: string; readonly detail: string }>
+> => {
+  let unavailable:
+    | { readonly path: string; readonly detail: string }
+    | undefined;
+  for (const path of clientEvidencePaths(client)) {
+    try {
+      await lstat(path);
+      return ok(true);
+    } catch (cause: unknown) {
+      if (!isMissing(cause))
+        unavailable ??= {
+          path,
+          detail: `Client configuration evidence at ${path} could not be inspected: ${cause instanceof Error ? cause.message : String(cause)}. Check file permissions and rerun rea doctor.`,
+        };
+    }
   }
+  return unavailable === undefined ? ok(false) : err(unavailable);
 };
 
 const isMissing = (cause: unknown): boolean =>
