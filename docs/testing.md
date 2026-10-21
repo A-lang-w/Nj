@@ -167,8 +167,10 @@ File teardown stops the shared CLI process, including startup still in flight,
 and does not open another after close.
 `exportedFunctionBindingsCli.test.ts` keeps its own compiled CLI parity
 process for the file and still compares that process's JSON command results
-with the MCP session. A command that does not respond is rejected and that
-process is replaced. Closing the session reports a failure when the process
+with the MCP session. A command that does not respond is rejected. That
+process stays owned until it exits, and another process does not start while
+it remains. A process that stays running after SIGKILL remains owned so a
+later close can retry. Closing the session reports a failure when the process
 does not exit after stdin closes, once the child has been stopped.
 
 The Apple artifact verifier step shares a job-temporary bytecode cache among

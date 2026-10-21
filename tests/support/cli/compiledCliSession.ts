@@ -29,15 +29,22 @@ interface PendingResponse {
   readonly reject: (cause: unknown) => void;
 }
 
+interface OwnedStop {
+  readonly child: ChildProcessWithoutNullStreams;
+  attempt: Promise<boolean> | undefined;
+}
+
 interface SessionState {
   child: ChildProcessWithoutNullStreams | undefined;
   starting: Promise<void> | undefined;
   buffer: string;
   nextId: number;
   readonly pending: Map<number, PendingResponse>;
+  readonly stopping: OwnedStop[];
   queue: Promise<void>;
   stderr: string;
   closed: boolean;
+  closing: Promise<void> | undefined;
   ready: boolean;
   readonly requestTimeoutMs: number;
   readonly stopTimeoutMs: number;
@@ -91,9 +98,11 @@ const createSessionState = (
   buffer: "",
   nextId: 1,
   pending: new Map(),
+  stopping: [],
   queue: Promise.resolve(),
   stderr: "",
   closed: false,
+  closing: undefined,
   ready: false,
   requestTimeoutMs: positiveMilliseconds(
     options.requestTimeoutMs,
@@ -185,11 +194,13 @@ const failureText = (state: SessionState, response: CliResponse): string => {
     : `Compiled CLI command failed with status ${String(response.exitCode)}: ${detail}\n${stderr}`;
 };
 
-const ensureStarted = (state: SessionState): Promise<void> => {
-  if (state.closed) return Promise.reject(sessionClosed());
-  if (state.ready && state.child !== undefined) return Promise.resolve();
+const ensureStarted = async (state: SessionState): Promise<void> => {
+  if (state.closed) throw sessionClosed();
+  await releaseRetired(state);
+  if (state.closed) throw sessionClosed();
+  if (state.ready && state.child !== undefined) return;
   state.starting ??= launch(state);
-  return state.starting;
+  await state.starting;
 };
 
 const launch = (state: SessionState): Promise<void> =>
@@ -240,17 +251,77 @@ const launch = (state: SessionState): Promise<void> =>
     });
   });
 
+const hasExited = (child: ChildProcessWithoutNullStreams): boolean =>
+  child.exitCode !== null || child.signalCode !== null;
+
+const signalChild = (
+  child: ChildProcessWithoutNullStreams,
+  signal: NodeJS.Signals,
+): void => {
+  try {
+    child.kill(signal);
+  } catch (error) {
+    const code =
+      error instanceof Error && "code" in error ? error.code : undefined;
+    if (code !== "ESRCH") throw error;
+  }
+};
+
+const detachChild = (
+  state: SessionState,
+  child: ChildProcessWithoutNullStreams,
+): void => {
+  if (state.child !== child) return;
+  state.child = undefined;
+  state.ready = false;
+  state.starting = undefined;
+  state.buffer = "";
+};
+
+const stopOwned = (state: SessionState, entry: OwnedStop): Promise<boolean> => {
+  entry.attempt ??= (async () => {
+    if (hasExited(entry.child)) return true;
+    signalChild(entry.child, "SIGKILL");
+    return waitForExit(entry.child, state.stopTimeoutMs);
+  })().finally(() => {
+    entry.attempt = undefined;
+  });
+  return entry.attempt;
+};
+
+const trackRetired = (
+  state: SessionState,
+  child: ChildProcessWithoutNullStreams,
+): OwnedStop => {
+  const existing = state.stopping.find((entry) => entry.child === child);
+  if (existing !== undefined) return existing;
+  const entry: OwnedStop = { child, attempt: undefined };
+  state.stopping.push(entry);
+  if (!hasExited(child)) void stopOwned(state, entry).catch(() => undefined);
+  return entry;
+};
+
+const releaseRetired = async (state: SessionState): Promise<void> => {
+  let failed = false;
+  for (const entry of [...state.stopping]) {
+    if (hasExited(entry.child)) continue;
+    const stopped = await stopOwned(state, entry).catch(() => false);
+    if (!stopped || !hasExited(entry.child)) failed = true;
+  }
+  const retained = state.stopping.filter((entry) => !hasExited(entry.child));
+  state.stopping.length = 0;
+  state.stopping.push(...retained);
+  if (failed)
+    throw new Error("Compiled CLI session stayed running after SIGKILL");
+};
+
 const retireChild = (
   state: SessionState,
   child: ChildProcessWithoutNullStreams,
 ): void => {
-  if (state.child === child) {
-    state.child = undefined;
-    state.ready = false;
-    state.starting = undefined;
-    state.buffer = "";
-  }
-  child.kill("SIGKILL");
+  detachChild(state, child);
+  if (hasExited(child)) return;
+  trackRetired(state, child);
 };
 
 const drainLines = (state: SessionState, onReady: () => void): void => {
@@ -309,21 +380,52 @@ const rejectPending = (state: SessionState, cause: Error): void => {
   state.pending.clear();
 };
 
-const closeSession = async (state: SessionState): Promise<void> => {
-  if (state.closed) return;
+const closeSession = (state: SessionState): Promise<void> => {
   state.closed = true;
+  if (state.closing !== undefined) return state.closing;
+  let attempt: Promise<void>;
+  attempt = shutdown(state).catch((error: unknown) => {
+    if (state.closing === attempt) state.closing = undefined;
+    throw error;
+  });
+  state.closing = attempt;
+  return attempt;
+};
+
+const shutdown = async (state: SessionState): Promise<void> => {
   const child = state.child;
-  if (child === undefined) return;
-  rejectPending(state, sessionClosed());
-  child.stdin.end();
-  if (await waitForExit(child, state.stopTimeoutMs)) return;
-  child.kill("SIGTERM");
-  if (!(await waitForExit(child, state.stopTimeoutMs))) {
-    child.kill("SIGKILL");
-    if (!(await waitForExit(child, state.stopTimeoutMs)))
-      throw new Error("Compiled CLI session stayed running after SIGKILL");
+  let forced = false;
+  const stillRunning: OwnedStop[] = [];
+  if (child !== undefined) {
+    rejectPending(state, sessionClosed());
+    detachChild(state, child);
+    const stopped = await stopGracefully(state, child);
+    if (stopped === "forced") forced = true;
+    if (stopped === "stuck" && !hasExited(child))
+      stillRunning.push({ child, attempt: undefined });
   }
-  throw new Error("Compiled CLI session did not exit after stdin closed");
+  try {
+    await releaseRetired(state);
+  } finally {
+    state.stopping.push(...stillRunning);
+  }
+  if (state.stopping.length > 0)
+    throw new Error("Compiled CLI session stayed running after SIGKILL");
+  if (forced)
+    throw new Error("Compiled CLI session did not exit after stdin closed");
+};
+
+const stopGracefully = async (
+  state: SessionState,
+  child: ChildProcessWithoutNullStreams,
+): Promise<"clean" | "forced" | "stuck"> => {
+  child.stdin.end();
+  if (await waitForExit(child, state.stopTimeoutMs)) return "clean";
+  signalChild(child, "SIGTERM");
+  if (await waitForExit(child, state.stopTimeoutMs)) return "forced";
+  signalChild(child, "SIGKILL");
+  if (await waitForExit(child, state.stopTimeoutMs)) return "forced";
+  return "stuck";
 };
 
 const sessionClosed = (): Error => new Error("Compiled CLI session is closed");

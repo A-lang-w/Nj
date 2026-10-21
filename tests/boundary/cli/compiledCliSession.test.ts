@@ -98,6 +98,80 @@ test("rejects a compiled CLI command that never replies and serves the next one"
   await session.close();
 });
 
+test("keeps a timed-out compiled CLI worker until it exits", async () => {
+  const children: FakeCliProcess[] = [];
+  let releaseExit: (() => void) | undefined;
+  const session = startCompiledCliSession({
+    requestTimeoutMs: 20,
+    stopTimeoutMs: 40,
+    spawnWorker: () => {
+      const child = fakeProcess(90 + children.length);
+      children.push(child);
+      if (children.length === 1) {
+        child.kill = () => {
+          releaseExit = () => {
+            if (child.exitCode !== null || child.signalCode !== null) return;
+            child.signalCode = "SIGKILL";
+            child.emit("exit", null, "SIGKILL");
+            child.emit("close", null, "SIGKILL");
+          };
+          return true;
+        };
+      } else {
+        exitWhenStdinCloses(child);
+        replyWhenAsked(child, JSON.stringify({ ok: true }));
+      }
+      ready(child);
+      return asCliProcess(child);
+    },
+  });
+
+  const stalled = session.run(["stuck"]);
+  const next = session.run(["next"]);
+  await expect(stalled).rejects.toThrow(/did not respond/);
+  expect(children).toHaveLength(1);
+  expect(children[0]?.signalCode).toBeNull();
+  releaseExit?.();
+  await expect(next).resolves.toEqual({ ok: true });
+  expect(children).toHaveLength(2);
+  await session.close();
+});
+
+test("retries a timed-out compiled CLI worker that survives SIGKILL", async () => {
+  let child: FakeCliProcess | undefined;
+  const signals: NodeJS.Signals[] = [];
+  const session = startCompiledCliSession({
+    requestTimeoutMs: 20,
+    stopTimeoutMs: 20,
+    spawnWorker: () => {
+      child = fakeProcess(91);
+      child.kill = (signal: NodeJS.Signals = "SIGTERM") => {
+        signals.push(signal);
+        return true;
+      };
+      ready(child);
+      return asCliProcess(child);
+    },
+  });
+
+  await expect(session.run(["stuck"])).rejects.toThrow(/did not respond/);
+  const replacement = session.run(["next"]);
+  await expect(replacement).rejects.toThrow(/stayed running after SIGKILL/);
+  await expect(session.close()).rejects.toThrow(/stayed running after SIGKILL/);
+  expect(signals).toEqual(["SIGKILL", "SIGKILL"]);
+  const stalledChild = child;
+  if (stalledChild === undefined) throw new Error("missing stalled worker");
+  stalledChild.kill = (signal: NodeJS.Signals = "SIGKILL") => {
+    signals.push(signal);
+    stalledChild.signalCode = signal;
+    stalledChild.emit("exit", null, signal);
+    stalledChild.emit("close", null, signal);
+    return true;
+  };
+  await session.close();
+  expect(stalledChild.signalCode).toBe("SIGKILL");
+});
+
 test("reports a compiled CLI session that needed a signal after stdin closed", async () => {
   let child: FakeCliProcess | undefined;
   const signals: NodeJS.Signals[] = [];
