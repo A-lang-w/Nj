@@ -406,9 +406,12 @@ it("preserves cancellation and explicit format diagnostics", async () => {
   const controller = new AbortController();
   const reason = Object.freeze({ requested: "reconstruction-stop" });
   controller.abort(reason);
-  await expect(
-    reconstructJavaScriptArtifact({ input_path: root }, controller.signal),
-  ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+  const cancelled: unknown = await reconstructJavaScriptArtifact(
+    { input_path: root },
+    controller.signal,
+  ).catch((caught: unknown) => caught);
+  expect(cancelled).toMatchObject({ reason: "cancelled" });
+  expect((cancelled as { cause?: unknown }).cause).toBe(reason);
   await expect(
     reconstructJavaScriptArtifact({ input_path: root, format: "asar" }),
   ).rejects.toMatchObject({

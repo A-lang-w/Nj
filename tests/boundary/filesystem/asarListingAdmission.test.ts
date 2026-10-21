@@ -34,10 +34,9 @@ it("interrupts expanded listing admission between traversal batches", async () =
   const listing = readAsarListing(header, controller.signal);
   await setImmediate();
   controller.abort(reason);
-  await expect(listing).rejects.toMatchObject({
-    reason: "cancelled",
-    cause: reason,
-  });
+  const error: unknown = await listing.catch((caught: unknown) => caught);
+  expect(error).toMatchObject({ reason: "cancelled" });
+  expect((error as { cause?: unknown }).cause).toBe(reason);
 });
 
 it("rejects path expansion before publishing any inventory, preserving the input", async () => {
