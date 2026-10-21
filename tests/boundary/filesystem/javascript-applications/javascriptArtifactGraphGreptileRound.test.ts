@@ -12,6 +12,18 @@ import { buildJavaScriptArtifactGraph } from "../../../../src/application/javasc
 
 const sources = [
   {
+    file: "wrapped-class.js",
+    source:
+      '(new(0,class{run([x]){}})()).run((function*(){new Socket("wss://example.test/wrapped-class");yield 0})());const Socket=globalThis.WebSocket;',
+  },
+  {
+    file: "required-pattern-key.js",
+    endpoint: "wss://example.test/later-key",
+    source:
+      '(async()=>{const[{missing=await 0,[await 0]:x},next]=(function*(){yield{};new Socket("wss://example.test/later-key");yield 1})();})();const Socket=globalThis.WebSocket;',
+  },
+
+  {
     file: "stored-after-wait.js",
     endpoint: "wss://example.test/stored-after-wait",
     source:

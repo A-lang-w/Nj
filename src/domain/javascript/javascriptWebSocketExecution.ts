@@ -1116,6 +1116,7 @@ const webSocketBindingCompletion = (
   value: t.Node | undefined,
   state: JavaScriptSemanticAnalysisState,
   ownedResultEscape?: t.Node,
+  normalContinuation = false,
 ): {
   readonly phase: ReturnType<typeof semanticPatternCompletion>;
   readonly suspension: WebSocketSuspension | undefined;
@@ -1132,6 +1133,7 @@ const webSocketBindingCompletion = (
     },
     (node) => webSocketExecutionContexts(node, state, true),
     ownedResultEscape,
+    normalContinuation,
   );
   // Keep a wait already completed before an uncertain write. Reaching a body
   // proves that write finished; this does not credit any work after uncertainty.
@@ -1605,7 +1607,7 @@ const webSocketImmediateCaller = (
     if (node !== call && t.isNewExpression(node)) {
       // A fresh literal class receiver still owns its selected method/setter.
       // Its constructor arguments cannot identify the outer invocation.
-      const selected = unwrapJavaScriptExpression(node.callee).node;
+      const selected = webSocketSelectedCallee(node.callee);
       if (t.isClass(selected)) pending.push(selected);
       continue;
     }
@@ -2114,6 +2116,7 @@ const webSocketGeneratorConsumerPhase = (
                 value,
                 state,
                 ownedResultEscape,
+                !cleanup,
               ).phase,
           );
     if (bindingPhase === "blocked" || bindingPhase === "suspended-blocked")

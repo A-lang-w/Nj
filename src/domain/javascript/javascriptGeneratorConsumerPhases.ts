@@ -38,6 +38,7 @@ interface PatternWaitCache {
   readonly ambientEffectCount: number;
   readonly iterationUnknown: boolean | undefined;
   readonly ownedResultEscape: t.Node | undefined;
+  readonly normalContinuation: boolean;
   readonly index: number | null;
   readonly blockedIndex: number | null;
 }
@@ -487,15 +488,18 @@ const patternCompletedSuspension = (
   target?: t.Node,
   targetPath?: ReadonlySet<t.Node>,
   executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
+  normalContinuation = false,
 ): PatternCompletion => {
   if (depth >= 128 || value.completionUnknown) return "unproven";
   if (pattern === target)
     return patternExpressionCompletion(pattern, suspended);
   if (t.isAssignmentPattern(pattern)) {
     const selectsDefault = undefinedPatternValue(value, state);
-    // An unknown inherited slot may select its awaited default. It proves
-    // neither an early synchronous getter entry nor a completed later wait.
-    if (!value.known && suspended(pattern.right)) return "unproven";
+    // Optional default selection does not establish a required wait. A normal
+    // next-step query may still inspect later mandatory work; cleanup/getter
+    // entry does not itself prove that this earlier binding completed.
+    if (!value.known && suspended(pattern.right) && !normalContinuation)
+      return "unproven";
     const prefix = selectsDefault
       ? patternExpressionCompletion(pattern.right, suspended)
       : "completed";
@@ -511,6 +515,7 @@ const patternCompletedSuspension = (
         target,
         targetPath,
         executionFrames,
+        normalContinuation,
       ),
     );
   }
@@ -562,6 +567,7 @@ const patternCompletedSuspension = (
             target,
             targetPath,
             executionFrames,
+            normalContinuation,
           ),
         );
         if (patternStopped(phase) || targetPath?.has(property)) return phase;
@@ -589,6 +595,7 @@ const patternCompletedSuspension = (
         target,
         targetPath,
         executionFrames,
+        normalContinuation,
       );
       phase = combinePatternCompletion(phase, completion);
       if (patternStopped(phase)) return phase;
@@ -630,6 +637,7 @@ const patternCompletedSuspension = (
         target,
         targetPath,
         executionFrames,
+        normalContinuation,
       );
       phase = combinePatternCompletion(phase, completion);
       if (patternStopped(phase)) return phase;
@@ -675,6 +683,7 @@ export const semanticPatternCompletion = (
   suspended: (node: t.Node) => boolean,
   executionFrames?: (node: t.Node) => readonly SemanticExecutionFrame[],
   ownedResultEscape?: t.Node,
+  normalContinuation = false,
 ): PatternCompletion =>
   patternCompletedSuspension(
     pattern,
@@ -691,6 +700,7 @@ export const semanticPatternCompletion = (
     undefined,
     undefined,
     executionFrames,
+    normalContinuation,
   );
 
 /** Selected defaults and keys before a particular destructuring write share slot semantics. */
@@ -777,7 +787,8 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
     cached.effects === state.literalMemberEffects &&
     cached.ambientEffectCount === state.ambientReferenceEffects.length &&
     cached.iterationUnknown === state.arrayIterationUnknown &&
-    cached.ownedResultEscape === ownedResultEscape
+    cached.ownedResultEscape === ownedResultEscape &&
+    cached.normalContinuation === !cleanup
   )
     return waited(cached.index, cached.blockedIndex);
   const cache = (index: number | null, blockedIndex: number | null): void => {
@@ -786,6 +797,7 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
       ambientEffectCount: state.ambientReferenceEffects.length,
       iterationUnknown: state.arrayIterationUnknown,
       ownedResultEscape,
+      normalContinuation: !cleanup,
       index,
       blockedIndex,
     });
@@ -811,6 +823,7 @@ export const semanticPatternSuspendsBeforeGeneratorRead = ({
       undefined,
       undefined,
       executionFrames,
+      !cleanup,
     );
     if (patternSuspended(completion)) firstWait ??= index;
     if (patternStopped(completion)) {

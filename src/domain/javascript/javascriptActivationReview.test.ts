@@ -5,6 +5,58 @@ import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 const cases = [
   [
+    "wrapped class after prefix wait",
+    '(async()=>{(new (await 0,class{run([x]){}})()).run((function*(){new Socket("wss://example.test/wrapped-after-wait");yield 0})())})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/wrapped-after-wait"],
+  ],
+  [
+    "loop required key after optional default",
+    '(async()=>{for(const{missing=await 0,[await 0]:x}of(function*(){yield{};new Socket("wss://example.test/loop-later-key");yield{}})()){} })();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/loop-later-key"],
+  ],
+
+  [
+    "wrapped class method",
+    '(new (0,class{run([x]){}})()).run((function*(){new Socket("wss://example.test/wrapped-class");yield 0})());const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "initialized wrapped class method",
+    'const Socket=globalThis.WebSocket;(new (0,class{run([x]){}})()).run((function*(){new Socket("wss://example.test/wrapped-initialized");yield 0})());',
+    ["wss://example.test/wrapped-initialized"],
+  ],
+  [
+    "wrapped class setter",
+    '(new (0,class{set run([x]){}})()).run=(function*(){new Socket("wss://example.test/wrapped-setter");yield 0})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "conditional class method",
+    '(new (true?class{run([x]){}}:class{})()).run((function*(){new Socket("wss://example.test/conditional-class");yield 0})());const Socket=globalThis.WebSocket;',
+    [],
+  ],
+  [
+    "required key after optional default",
+    '(async()=>{const[{missing=await 0,[await 0]:x},next]=(function*(){yield{};new Socket("wss://example.test/later-key");yield 1})();})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/later-key"],
+  ],
+  [
+    "required key after selected default",
+    '(async()=>{const[{missing=await 0,[await 0]:x},next]=(function*(){yield{missing:undefined};new Socket("wss://example.test/selected-key");yield 1})();})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/selected-key"],
+  ],
+  [
+    "required key after skipped default",
+    '(async()=>{const[{missing=await 0,[await 0]:x},next]=(function*(){yield{missing:1};new Socket("wss://example.test/skipped-key");yield 1})();})();const Socket=globalThis.WebSocket;',
+    ["wss://example.test/skipped-key"],
+  ],
+  [
+    "cleanup cannot borrow key after optional default",
+    'Object.defineProperty(Object.prototype,"missing",{get(){throw 0},configurable:true});(async()=>{try{const[{missing=await 0,[await 0]:x},next]=(function*(){try{yield{};yield 1}finally{new Socket("wss://example.test/cleanup-key")}})()}catch{}})();const Socket=globalThis.WebSocket;',
+    [],
+  ],
+
+  [
     "fresh instance method parameter",
     '(new(class{run([x]){}})()).run((function*(){new Socket("wss://example.test/instance-method");yield 0})());const Socket=globalThis.WebSocket;',
     [],
