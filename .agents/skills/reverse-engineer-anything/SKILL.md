@@ -283,9 +283,10 @@ know which engine is better for the user's question.
 When the state is `selection_required`, no provider is bound and no engine was
 started. Each deep operation then appears in `binary_session`'s
 `tool_availability` as `provider_selection_required`; the eligible provider IDs it
-names are the ones that declared what that operation needs, so use them as a
-starting point rather than the whole candidate list. An operation reported as
-`provider_missing` instead cannot be run by any eligible provider, so selecting
+names are the ones that declared what that operation still needs from a provider,
+so use them as a starting point rather than the whole candidate list. Coverage an
+auxiliary provider already supplies is not part of that ask. An operation reported
+as `provider_missing` instead cannot be run by any eligible provider, so selecting
 one will not help. Do not read either reason as a missing installation, because
 the providers are installed, available, and target-compatible. Decide the
 provider yourself:

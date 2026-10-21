@@ -459,10 +459,12 @@ from `provider_selection_required` (configured and eligible providers exist, but
 the admitted target has no deep binding yet); the latter names the eligible
 provider IDs and tells the caller to select one through `open_binary`. The
 choices it names are resolvable ones: only candidates that declared every
-operation the tool requires are offered, so a provider that is eligible for the
-target but cannot run the requested operation is never recommended for it. When
-no eligible provider declares those operations, the reason stays
-`provider_missing`, because the pending choice is not what blocks the call. The
+requirement the current route cannot satisfy are offered, so a provider that is
+eligible for the target but cannot run the requested operation is never
+recommended for it. A requirement the route already satisfies, including through
+an auxiliary provider, is not part of the ask. When no eligible provider covers
+what remains, the reason reports the route's own failure (`provider_missing`,
+`provider_unavailable`, or `unsupported_host`) instead of a pending choice. The
 optional inputs `expected_package_version`, `expected_catalog_digest`, and
 `expected_server_path` compare the live session with the caller's expectations.
 

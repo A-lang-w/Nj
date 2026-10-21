@@ -804,11 +804,13 @@ const providerAvailability = ({
  * binding is missing, so telling the caller to install or configure a provider
  * would send it to fix a condition that does not hold.
  *
- * Advice must also be resolvable. Session-level eligibility says nothing about a
- * specific operation, so only candidates that declared every operation this tool
- * needs are offered. When no eligible candidate can run it, the choice is not the
- * blocker and this returns `undefined` so the caller reports the missing
- * capability instead of sending the caller to pick a provider that cannot help.
+ * Advice must also be resolvable. Callers pass the requirement groups the current
+ * route cannot satisfy, and only candidates that declared a source for every one
+ * of those groups are offered. A group the route already covers — including
+ * through an auxiliary provider — needs nothing from the candidate. When no
+ * eligible candidate can run what remains, the choice is not the blocker and
+ * this returns `undefined` so the caller reports the missing capability instead
+ * of sending the caller to pick a provider that cannot help.
  */
 const selectionRequiredAvailability = (
   { eligible }: SelectionContext,
@@ -890,20 +892,24 @@ const composedAvailabilityFor = (
   const missingOperations = [
     ...new Set(unmet.flatMap((group) => group.operations)),
   ];
+  // A pending choice is the actionable answer whenever one candidate supplies
+  // everything the current route cannot. Requirements the route already
+  // satisfies are not part of the ask, and an unavailable auxiliary declaration
+  // does not make the host incapable when a candidate offers an alternative
+  // source for that same requirement group.
+  const pending =
+    selection?.required === true && unmet.length > 0
+      ? selectionRequiredAvailability(
+          selection,
+          unmet.map(({ operations }) => operations),
+        )
+      : undefined;
+  if (pending !== undefined)
+    return { availability: pending, missingOperations };
   // Preserve the existing admission rule: report an undeclared prerequisite
   // before an unhealthy declaration, in requirement order within each class.
   const undeclared = unmet.find((group) => group.unavailable === undefined);
-  if (undeclared !== undefined) {
-    // The providers are installed, available, and target-compatible; only the
-    // deep binding is pending, so the actionable reason is the choice itself.
-    // A pending selection that cannot run these requirements keeps the missing
-    // capability, because sending the caller to pick a provider cannot help.
-    const pending =
-      selection?.required === true
-        ? selectionRequiredAvailability(selection, requirements)
-        : undefined;
-    if (pending !== undefined)
-      return { availability: pending, missingOperations };
+  if (undeclared !== undefined)
     return {
       missingOperations,
       availability: {
@@ -914,7 +920,6 @@ const composedAvailabilityFor = (
             : `Configure a provider for one of: ${undeclared.operations.join(", ")}.`,
       },
     };
-  }
   const unavailable = unmet[0]?.unavailable;
   if (unavailable !== undefined)
     return {
