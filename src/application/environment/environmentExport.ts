@@ -96,7 +96,7 @@ const systemCode = (cause: unknown): string | undefined =>
 
 /** Recovery for a host write failure that may leave partial output behind. */
 const hostWriteFailure = (directory: string) => ({
-  userMessage: `Writing the environment bundle to ${directory} failed on the host; the details name the cause and failed path.`,
+  userMessage: `Writing the environment bundle to ${directory} failed on the host; the details name the cause and, when it failed on one bundle file, that file.`,
   remediationAction: `Resolve the reported host failure (for example, choose a shorter destination path or free disk space). Inspect ${directory} and remove any partial output this export wrote before retrying, since a retry refuses a non-empty directory.`,
   diagnostics: { output_directory: directory },
 });
