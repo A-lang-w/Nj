@@ -614,7 +614,7 @@ const createFileTarget = (
           json_top_level_keys: json?.top_level_keys ?? [],
           omitted_json_top_level_keys:
             json === undefined
-              ? isJsonModuleTarget(file.path, file.kind)
+              ? file.kind === "json" || file.kind === "package-json"
                 ? null
                 : 0
               : json.omitted_top_level_keys,
