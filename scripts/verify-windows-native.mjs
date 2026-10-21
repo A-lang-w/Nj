@@ -385,6 +385,9 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
             # Guard the independent observer against accidental account-name resolution.
             # Access is a PowerShell convenience property that requests NTAccount rules.
             Update-TypeData -TypeName ($a.GetType().FullName) -MemberType ScriptProperty -MemberName Access -Value { throw 'ACL observation must use SID rules' } -Force
+            if ($a.PSObject.Properties['Access'].MemberType -ne [Management.Automation.PSMemberTypes]::ScriptProperty) {
+              throw 'ACL observation Access guard was not installed'
+            }
             $rules = @($a.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
             Trace-AclPhase 'rule-sids-read'
             [IO.File]::SetAttributes($p, [IO.FileAttributes]([int][IO.File]::GetAttributes($p) -bor 1))
