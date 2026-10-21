@@ -515,6 +515,7 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | WorkBuddy          | `workbuddy`      |
 | ZCode              | `zcode`          |
 | DeepSeek Harness   | `dsh`            |
+| Puku CLI           | `puku_cli`        |
 
 `droid`, `dsh`, `kimi`, `qoder`, `trae`, `workbuddy`, and `zcode` require
 `rea-agents@6.5.0` or later. The 6.4.0 registry check above does not cover them.
