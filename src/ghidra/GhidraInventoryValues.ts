@@ -1,3 +1,4 @@
+import { nativeByteReadSchema } from "../domain/native/nativeByteRead.js";
 import { z } from "zod";
 import {
   bytePatternFields,
@@ -297,8 +298,8 @@ const resultSchemas = {
     .strictObject({
       document: identifier,
       segments: z.array(segment),
-      procedure_count: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-      string_count: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+      procedure_count: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
+      string_count: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
     })
     .transform(projectBinaryOverview),
   search_bytes: byteSearchResultSchema.superRefine((value, context) => {
@@ -320,25 +321,9 @@ const resultSchemas = {
       });
   }),
   inspect_native_load_image: nativeLoadImageObservationSchema,
-  read_bytes: z
-    .strictObject({
-      address: canonicalAddress,
-      requested_bytes: z.int().min(1),
-      returned_bytes: z.int().min(0),
-      bytes_hex: z.string().regex(/^(?:[a-f0-9]{2})*$/u),
-      complete: z.boolean(),
-    })
-    .superRefine((value, context) => {
-      if (
-        value.returned_bytes * 2 !== value.bytes_hex.length ||
-        value.returned_bytes > value.requested_bytes ||
-        value.complete !== (value.returned_bytes === value.requested_bytes)
-      )
-        context.addIssue({
-          code: "custom",
-          message: "Read-byte length and completeness disagree",
-        });
-    }),
+  read_bytes: nativeByteReadSchema
+    .safeExtend({ address: canonicalAddress })
+    .strict(),
   address_to_file_offset: z.strictObject({
     address: canonicalAddress,
     file_offset: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
