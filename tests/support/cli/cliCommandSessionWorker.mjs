@@ -114,7 +114,12 @@ async function handle(value) {
     prepareCliProcess();
     process.chdir(request.cwd);
     const result = await runOneShot(request.arguments);
-    await writeFrame({ id: request.id, pid: process.pid, ...result });
+    await writeFrame({
+      id: request.id,
+      pid: process.pid,
+      rss: process.memoryUsage().rss,
+      ...result,
+    });
   } catch (error) {
     const id =
       request !== null && typeof request === "object" ? request.id : undefined;

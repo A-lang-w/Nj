@@ -13,6 +13,10 @@ const workerPath = fileURLToPath(
   new URL("./cliCommandSessionWorker.mjs", import.meta.url),
 );
 const SHUTDOWN_GRACE_MS = 1_000;
+/** Restart after this many commands so one file cannot retain every heap. */
+const COMMAND_REUSE_LIMIT = 32;
+/** Restart when the worker reports a resident set at least this large. */
+const RESIDENT_REUSE_LIMIT_BYTES = 1024 * 1024 * 1024;
 
 const responseSchema = z.object({
   ready: z.boolean().optional(),
@@ -21,6 +25,7 @@ const responseSchema = z.object({
   stdout: z.string().optional(),
   stderr: z.string().optional(),
   pid: z.number().optional(),
+  rss: z.number().finite().nonnegative().optional(),
   fatal: z.boolean().optional(),
 });
 
@@ -52,6 +57,10 @@ interface CliCommandSessionDependencies {
   readonly spawnWorker?: (
     environment: Readonly<Record<string, string>>,
   ) => ChildProcessWithoutNullStreams;
+  /** Commands served by one process before the next command starts a new one. */
+  readonly commandLimit?: number;
+  /** Resident-set bytes, reported by the worker, that start a new process. */
+  readonly residentLimitBytes?: number;
 }
 
 interface PendingCommand {
@@ -63,6 +72,11 @@ interface PendingCommand {
 type SessionResponse = z.infer<typeof responseSchema>;
 
 const closedError = (): Error => new Error("Shared CLI session is closed");
+
+const positiveLimit = (value: number | undefined, fallback: number): number =>
+  value !== undefined && Number.isSafeInteger(value) && value > 0
+    ? value
+    : fallback;
 
 const envKey = (environment: Readonly<Record<string, string>>): string =>
   JSON.stringify(
@@ -141,8 +155,13 @@ class SharedCliProcess implements CliCommandSession {
     environment: Readonly<Record<string, string>>,
   ) => ChildProcessWithoutNullStreams;
 
+  readonly #commandLimit: number;
+  readonly #residentLimitBytes: number;
   #child: ChildProcessWithoutNullStreams | undefined;
   #childEnvKey: string | undefined;
+  #commands = 0;
+  #residentBytes: number | undefined;
+  #retiring: Promise<void> | undefined;
   #closed = false;
   #closing: Promise<void> | undefined;
   #starting: Promise<void> | undefined;
@@ -154,6 +173,14 @@ class SharedCliProcess implements CliCommandSession {
 
   constructor(dependencies: CliCommandSessionDependencies) {
     this.#spawnWorker = dependencies.spawnWorker ?? defaultSpawnWorker;
+    this.#commandLimit = positiveLimit(
+      dependencies.commandLimit,
+      COMMAND_REUSE_LIMIT,
+    );
+    this.#residentLimitBytes = positiveLimit(
+      dependencies.residentLimitBytes,
+      RESIDENT_REUSE_LIMIT_BYTES,
+    );
   }
 
   run(request: CliCommandRequest): Promise<CliCommandResult> {
@@ -186,9 +213,11 @@ class SharedCliProcess implements CliCommandSession {
   }
 
   async #shutdown(): Promise<void> {
-    const owner = this.#child;
     try {
+      const owner = this.#child;
       if (owner !== undefined) await stopChild(owner);
+      const retiring = this.#retiring;
+      if (retiring !== undefined) await retiring;
     } catch (error) {
       this.#closing = undefined;
       throw error;
@@ -220,21 +249,45 @@ class SharedCliProcess implements CliCommandSession {
     } catch (error) {
       this.#failPending(error);
     }
-    return result;
+    const outcome = await result;
+    await this.#finishRetirement();
+    return outcome;
+  }
+
+  async #finishRetirement(): Promise<void> {
+    const retiring = this.#retiring;
+    if (retiring === undefined) return;
+    try {
+      await retiring;
+    } finally {
+      if (this.#retiring === retiring) this.#retiring = undefined;
+    }
+  }
+
+  #reusable(
+    current: ChildProcessWithoutNullStreams | undefined,
+    key: string,
+  ): current is ChildProcessWithoutNullStreams {
+    if (
+      current === undefined ||
+      current.exitCode !== null ||
+      current.signalCode !== null ||
+      this.#childEnvKey !== key
+    ) {
+      return false;
+    }
+    if (this.#commands >= this.#commandLimit) return false;
+    return !(
+      this.#residentBytes !== undefined &&
+      this.#residentBytes >= this.#residentLimitBytes
+    );
   }
 
   async #ensure(environment: Readonly<Record<string, string>>): Promise<void> {
     if (this.#closed) throw closedError();
     const key = envKey(environment);
     const current = this.#child;
-    if (
-      current !== undefined &&
-      current.exitCode === null &&
-      current.signalCode === null &&
-      this.#childEnvKey === key
-    ) {
-      return;
-    }
+    if (this.#reusable(current, key)) return;
     if (current !== undefined) await stopChild(current);
     if (this.#closed) throw closedError();
     await this.#start(environment);
@@ -245,6 +298,8 @@ class SharedCliProcess implements CliCommandSession {
     const started = this.#spawnWorker(environment);
     this.#child = started;
     this.#childEnvKey = envKey(environment);
+    this.#commands = 0;
+    this.#residentBytes = undefined;
     const ready = new Promise<void>((resolve, reject) => {
       this.#resolveReady = resolve;
       this.#rejectReady = reject;
@@ -317,7 +372,23 @@ class SharedCliProcess implements CliCommandSession {
       return;
     }
     this.#pending = undefined;
+    if (message.fatal === true) {
+      this.#retire(owner);
+    } else {
+      this.#commands += 1;
+      if (message.rss !== undefined) this.#residentBytes = message.rss;
+    }
     current.resolve(commandResult(message));
+  }
+
+  #retire(owner: ChildProcessWithoutNullStreams): void {
+    if (this.#child === owner) {
+      this.#child = undefined;
+      this.#childEnvKey = undefined;
+    }
+    this.#commands = 0;
+    this.#residentBytes = undefined;
+    this.#retiring = stopChild(owner);
   }
 
   #onClose(
@@ -360,7 +431,11 @@ class SharedCliProcess implements CliCommandSession {
   }
 }
 
-/** Keep one compiled CLI process for commands that share an environment. */
+/**
+ * Keep one compiled CLI process for commands that share an environment.
+ * The process restarts after its command limit, after a reported resident-set
+ * limit, when the environment changes, or when a command fails fatally.
+ */
 export const createCliCommandSession = (
   dependencies: CliCommandSessionDependencies = {},
 ): CliCommandSession => new SharedCliProcess(dependencies);

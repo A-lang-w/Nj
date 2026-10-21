@@ -101,6 +101,19 @@ test("rejects an oversized CLI session frame", () => {
   expect(() => reader(header)).toThrow(/limit/);
 });
 
+test("reads a CLI session frame delivered one byte at a time", () => {
+  const frames: unknown[] = [];
+  const reader = createCliSessionFrameReader((frame) => {
+    frames.push(frame);
+  });
+  const encoded = encodeCliSessionFrame({
+    id: 7,
+    note: "x".repeat(64),
+  });
+  for (const byte of encoded) reader(Buffer.from([byte]));
+  expect(frames).toEqual([{ id: 7, note: "x".repeat(64) }]);
+});
+
 test("stops an unready shared CLI process when the session closes", async () => {
   let spawned: FakeCliProcess | undefined;
   const session = createCliCommandSession({
@@ -195,6 +208,47 @@ test("reuses one process and restarts it when the environment changes", async ()
   expect(session.processId()).toBeUndefined();
 });
 
+const reply = (
+  child: FakeCliProcess,
+  id: number,
+  fields: {
+    exitCode?: number;
+    stdout?: string;
+    stderr?: string;
+    rss?: number;
+    fatal?: boolean;
+  },
+): void => {
+  child.stdout.write(
+    encodeCliSessionFrame({
+      id,
+      exitCode: fields.exitCode ?? 0,
+      stdout: fields.stdout ?? "",
+      stderr: fields.stderr ?? "",
+      ...(fields.rss === undefined ? {} : { rss: fields.rss }),
+      ...(fields.fatal === undefined ? {} : { fatal: fields.fatal }),
+    }),
+  );
+};
+
+const respondingProcess = (
+  pid: number,
+  onRequest: (
+    request: { id: number; arguments: string[] },
+    child: FakeCliProcess,
+  ) => void,
+): FakeCliProcess => {
+  const child = fakeProcess(pid);
+  child.stdout.write(encodeCliSessionFrame({ ready: true }));
+  const reader = createCliSessionFrameReader((value) => {
+    onRequest(requestSchema.parse(value), child);
+  });
+  child.stdin.on("data", (chunk: Buffer) => {
+    reader(chunk);
+  });
+  return child;
+};
+
 test("starts another process after the shared CLI process exits", async () => {
   const children: FakeCliProcess[] = [];
   const session = createCliCommandSession({
@@ -235,6 +289,127 @@ test("starts another process after the shared CLI process exits", async () => {
     stdout: "recovered",
   });
   expect(children).toHaveLength(2);
+  await session.close();
+});
+
+test("retires a fatal worker before starting the next command", async () => {
+  const events: string[] = [];
+  const session = createCliCommandSession({
+    spawnWorker: () => {
+      const generation = events.filter((event) =>
+        event.startsWith("spawn"),
+      ).length;
+      events.push(`spawn:${generation}`);
+      const child = respondingProcess(80 + generation, (request, current) => {
+        events.push(`command:${generation}`);
+        if (generation === 0) {
+          reply(current, request.id, {
+            exitCode: 1,
+            stderr: "boom",
+            fatal: true,
+          });
+          return;
+        }
+        reply(current, request.id, { stdout: "next" });
+      });
+      const stop = child.kill.bind(child);
+      child.kill = (signal?: NodeJS.Signals) => {
+        events.push(`kill:${generation}`);
+        return stop(signal);
+      };
+      return asCliProcess(child);
+    },
+  });
+  const fatal = session.run(command(["fail"], { PATH: "/usr/bin" }));
+  const next = session.run(command(["next"], { PATH: "/usr/bin" }));
+  await expect(fatal).resolves.toMatchObject({ exitCode: 1, stderr: "boom" });
+  await expect(next).resolves.toMatchObject({ exitCode: 0, stdout: "next" });
+  expect(events).toEqual([
+    "spawn:0",
+    "command:0",
+    "kill:0",
+    "spawn:1",
+    "command:1",
+  ]);
+  await session.close();
+});
+
+test("restarts the shared CLI process after the command limit", async () => {
+  const children: FakeCliProcess[] = [];
+  const session = createCliCommandSession({
+    commandLimit: 2,
+    spawnWorker: () => {
+      const child = respondingProcess(
+        90 + children.length,
+        (request, current) => {
+          reply(current, request.id, {
+            stdout: String(children.indexOf(current)),
+          });
+        },
+      );
+      children.push(child);
+      return asCliProcess(child);
+    },
+  });
+  const first = await session.run(command(["one"], { PATH: "/usr/bin" }));
+  const second = await session.run(command(["two"], { PATH: "/usr/bin" }));
+  expect(children).toHaveLength(1);
+  expect(first.stdout).toBe("0");
+  expect(second.stdout).toBe("0");
+  const third = await session.run(command(["three"], { PATH: "/usr/bin" }));
+  expect(children).toHaveLength(2);
+  expect(children[0]?.signalCode).toBe("SIGTERM");
+  expect(third.stdout).toBe("1");
+  expect(session.processId()).toBe(91);
+  await session.close();
+});
+
+test("restarts the shared CLI process after the resident-set limit", async () => {
+  const children: FakeCliProcess[] = [];
+  const session = createCliCommandSession({
+    commandLimit: 100,
+    residentLimitBytes: 100,
+    spawnWorker: () => {
+      const generation = children.length;
+      const child = respondingProcess(100 + generation, (request, current) => {
+        reply(current, request.id, {
+          stdout: String(generation),
+          rss: generation === 0 ? 150 : 10,
+        });
+      });
+      children.push(child);
+      return asCliProcess(child);
+    },
+  });
+  await expect(
+    session.run(command(["one"], { PATH: "/usr/bin" })),
+  ).resolves.toMatchObject({ stdout: "0" });
+  expect(session.processId()).toBe(100);
+  await expect(
+    session.run(command(["two"], { PATH: "/usr/bin" })),
+  ).resolves.toMatchObject({ stdout: "1" });
+  expect(children[0]?.signalCode).toBe("SIGTERM");
+  expect(session.processId()).toBe(101);
+  await session.close();
+});
+
+test("starts a new process after the real worker reports a fatal failure", async () => {
+  const session = createCliCommandSession();
+  const failed = await session.run({
+    arguments: ["--version"],
+    cwd: "/workspace/this-directory-does-not-exist",
+    environment: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
+  });
+  expect(failed.exitCode).toBe(1);
+  expect(failed.stderr).toMatch(/ENOENT/);
+  const recovered = await session.run({
+    arguments: ["--version"],
+    cwd: process.cwd(),
+    environment: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
+  });
+  expect(recovered.exitCode).toBe(0);
+  expect(recovered.stdout.length).toBeGreaterThan(0);
+  expect(session.processId()).toEqual(expect.any(Number));
   await session.close();
 });
 
