@@ -11,6 +11,7 @@ import {
   CPU,
   machoImage,
 } from "../../../../src/artifacts/apple/MachoImage.fixture.js";
+import { cArchiveExecutable } from "../../../../src/artifacts/pyinstaller/CArchive.fixture.js";
 import { artifactExtractionExecutionSchema } from "../../../../src/contracts/artifactToolContracts.js";
 import { artifactExtractionResultSchema } from "../../../../src/domain/artifactGraph.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
@@ -71,6 +72,43 @@ describe("artifact extraction format support", () => {
       },
     });
     await expect(access(output)).rejects.toThrow();
+  });
+
+  it("keeps a thin Mach-O PyInstaller onefile extractable", async () => {
+    const root = await createTestTempDirectory("rea-extract-thin-macho-pyi-");
+    const binary = join(root, "hello");
+    await writeFile(
+      binary,
+      Buffer.concat([
+        machoImage({ cpu: CPU.arm64 }),
+        cArchiveExecutable({
+          layout: "2.1",
+          pythonVersion: 314,
+          pythonLibrary: "libpython3.14.dylib",
+          members: [
+            {
+              name: "hello",
+              typeCode: "s",
+              payload: Buffer.from("print('hi')"),
+              compress: true,
+            },
+          ],
+        }),
+      ]),
+    );
+    const result = await new ArtifactProvider(process.env)
+      .createClient(thinMachOTarget(binary))
+      .execute(
+        "extract_artifact",
+        artifactExtractionExecutionSchema.parse({
+          output_root: join(root, "output"),
+        }),
+      );
+    if (!result.ok) throw result.error;
+    const extracted = artifactExtractionResultSchema.parse(result.value.result);
+    expect(
+      extracted.artifacts.map(({ relative_path }) => relative_path),
+    ).toContain("hello");
   });
 
   it.each(["zip", "hap", "hsp", "app-pack"] as const)(
