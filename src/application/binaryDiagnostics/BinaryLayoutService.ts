@@ -127,7 +127,12 @@ export class BinaryLayoutService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input,
+          parameters: {
+            path: input.path,
+            ...(input.pwntools_timeout_ms === undefined
+              ? {}
+              : { pwntools_timeout_ms: input.pwntools_timeout_ms }),
+          },
           result: value,
           // The decoded report is the only representation; do not repeat it.
           rawResult: null,

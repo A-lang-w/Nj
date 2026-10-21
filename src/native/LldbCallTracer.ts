@@ -59,9 +59,22 @@ const LLDB_REQUIREMENT =
   "LLDB from Xcode or the Command Line Tools is not available";
 /** Captured target output kept per stream; the rest is counted, not stored. */
 const MAX_OUTPUT_BYTES = 1024 * 1024;
-/** LLDB startup, symbol loading and teardown beyond the observation window. */
+/**
+ * LLDB startup, symbol loading and teardown beyond the observation window.
+ * This grace has no runtime override; duration_ms is the caller-selected window.
+ */
 const DEADLINE_GRACE_MS = 60_000;
 const DIAGNOSTIC_BYTES = 16 * 1024;
+
+const lldbGraceRecovery = (
+  durationMs: number,
+): { readonly userMessage: string; readonly remediationAction: string } => {
+  const total = durationMs + DEADLINE_GRACE_MS;
+  return {
+    userMessage: `observe_native_calls reached its ${String(total)} ms server/provider deadline: duration_ms ${String(durationMs)} plus a fixed ${String(DEADLINE_GRACE_MS)} ms LLDB startup, symbol loading, and teardown grace. This is not the MCP client deadline.`,
+    remediationAction: `This release has no runtime override for the ${String(DEADLINE_GRACE_MS)} ms grace. Increase duration_ms on the next call when the observation window was too short; the grace stays added to that window. Captured output beyond ${String(MAX_OUTPUT_BYTES)} bytes per stream is counted and not kept, and that byte allowance has no runtime override. Failure diagnostics keep at most ${String(DIAGNOSTIC_BYTES)} bytes and that excerpt has no runtime override. Allow execution, cleanup, and delivery headroom in the outer MCP client deadline. Confirm the owned process was killed and cleanup finished before retrying.`,
+  };
+};
 
 const BRIDGE = fileURLToPath(
   new URL("../../bridge/native/rea_lldb_tracer.py", import.meta.url),
@@ -601,6 +614,7 @@ export class LldbCallTracer implements NativeCallTracer {
                 ? {}
                 : { cleanup: lifecycleCleanup }),
               partialObservation,
+              ...lldbGraceRecovery(input.duration_ms),
             },
           ),
       );
@@ -735,13 +749,29 @@ export class LldbCallTracer implements NativeCallTracer {
         }),
       );
     }
-    return ok({
+    const trace: NativeCallTrace = {
       debugger: { ...lldb, version: output.version },
       run: output,
       stdout: stdout.value,
       stderr: stderr.value,
       terminated,
-    });
+    };
+    if (exited.lateTimeout === true)
+      return err(
+        new AnalysisTimeoutError(
+          OPERATION,
+          input.duration_ms + DEADLINE_GRACE_MS,
+          {
+            partialObservation: partialObservationFromTrace(
+              request,
+              trace,
+              "timeout",
+            ),
+            ...lldbGraceRecovery(input.duration_ms),
+          },
+        ),
+      );
+    return ok(trace);
   }
 }
 
@@ -1056,6 +1086,8 @@ type LldbExit = LldbOutcome & {
   readonly targetLaunched: boolean;
   readonly targetIdentity: string | undefined;
   readonly cleanupFailure: string | undefined;
+  /** Internal deadline elapsed during cleanup after a physical LLDB exit. */
+  readonly lateTimeout?: true;
   readonly cleanupOwner?: ProviderProcessSupervisor;
 };
 
@@ -1095,17 +1127,34 @@ const runLldb = async (
   let targetIdentity: string | undefined;
   let supervisor: ProviderProcessSupervisor | undefined;
   let retained = false;
+  let processFailureBeforeInterruption:
+    | {
+        readonly exitCode: number | null;
+        readonly output: string;
+      }
+    | undefined;
   const finish = async (outcome: LldbOutcome): Promise<LldbExit> => {
+    // Select the primary result once at the owner boundary, before cleanup.
+    // An exit observed before interruption outranks an interrupted wait, while
+    // an already selected exit keeps its fuller snapshot and diagnostics.
+    const selectedOutcome =
+      outcome.kind !== "exited" &&
+      processFailureBeforeInterruption !== undefined
+        ? { kind: "exited" as const, ...processFailureBeforeInterruption }
+        : outcome;
     const stopped = await supervisor?.stop();
     retained = stopped?.status === "incomplete";
+    const lateTimeout =
+      selectedOutcome.kind === "exited" && deadline.interruption === "timeout"
+        ? true
+        : undefined;
     return {
-      ...(deadline.interruption === undefined
-        ? outcome
-        : { kind: deadline.interruption }),
+      ...selectedOutcome,
       targetLaunched: supervisor !== undefined,
       targetIdentity,
       cleanupFailure:
         stopped?.status === "incomplete" ? stopped.reason : undefined,
+      ...(lateTimeout === undefined ? {} : { lateTimeout }),
       ...(retained && supervisor !== undefined
         ? { cleanupOwner: supervisor }
         : {}),
@@ -1126,7 +1175,24 @@ const runLldb = async (
         ownsProcessLifetime: true,
         cleanup: () => cleanupOwnedProcessGroup(launched.ownership),
       },
-      { maxDiagnosticBytes: DIAGNOSTIC_BYTES },
+      {
+        maxDiagnosticBytes: DIAGNOSTIC_BYTES,
+        onDiagnostic: (event) => {
+          // Latch failure at the process event; a later snapshot cannot order it against abort.
+          if (
+            event.type === "exit" &&
+            deadline.interruption === undefined &&
+            (event.signal !== null || (event.code !== null && event.code !== 0))
+          )
+            processFailureBeforeInterruption ??= {
+              exitCode: event.code,
+              output:
+                `${event.snapshot.stdout.text}${event.snapshot.stderr.text}`.slice(
+                  -DIAGNOSTIC_BYTES,
+                ),
+            };
+        },
+      },
     );
     let identityAckWritten = false;
     while (!(await supervisor.waitForOutputClose(20))) {
@@ -1148,8 +1214,9 @@ const runLldb = async (
         identityAckWritten = true;
       }
       const interruption = deadline.interruption;
-      if (interruption !== undefined)
+      if (interruption !== undefined) {
         return await finish({ kind: interruption });
+      }
       await waitForAbortableDelay(20, deadline.signal);
     }
     const snapshot = supervisor.snapshot();
