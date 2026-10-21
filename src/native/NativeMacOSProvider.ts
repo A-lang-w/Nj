@@ -764,7 +764,7 @@ class NativeMacOSClient implements AnalysisClient {
         binding,
         parsed.format,
         executablePaths,
-        captures,
+        { captures, limitations },
         {
           requirements: requirements.value.exitCode,
           entitlements: entitlements.value.exitCode,
@@ -777,7 +777,6 @@ class NativeMacOSClient implements AnalysisClient {
         );
         return err(slices.error.retainPartialObservation(observation()));
       }
-      limitations.push(...slices.value);
     }
     const version = await verifySignatureTarget(this.target, binding, signal);
     if (!version.ok)
@@ -789,14 +788,27 @@ class NativeMacOSClient implements AnalysisClient {
     binding: SignatureTargetBinding,
     format: string | null,
     executablePaths: readonly string[],
-    captures: NativeCommandCapture[],
+    observation: { captures: NativeCommandCapture[]; limitations: string[] },
     aggregateExits: Readonly<{
       requirements: number | null;
       entitlements: number | null;
     }>,
     signal?: AbortSignal,
-  ): Promise<Result<readonly string[], AnalysisError>> {
+  ): Promise<Result<void, AnalysisError>> {
+    const { captures, limitations } = observation;
     const unsigned: string[] = [];
+    const unsignedNote = limitations.length;
+    limitations.push(
+      "One or more Mach-O slices are unsigned, but their architectures could not be classified.",
+    );
+    if (aggregateExits.requirements !== 0)
+      limitations.push(
+        "The aggregate designated requirement is unavailable because Mach-O slices have mixed signing states.",
+      );
+    if (aggregateExits.entitlements !== 0)
+      limitations.push(
+        "The aggregate entitlements are unavailable because Mach-O slices have mixed signing states.",
+      );
     for (const architecture of codeSignArchitectures(format, this.target)) {
       const slice = await this.#captureSignature(
         binding,
@@ -813,21 +825,10 @@ class NativeMacOSClient implements AnalysisClient {
       );
       if (failure !== null) return err(failure);
       unsigned.push(architecture);
+      limitations[unsignedNote] =
+        `Unsigned Mach-O slices: ${unsigned.join(", ")}.`;
     }
-    const limitations = [
-      unsigned.length > 0
-        ? `Unsigned Mach-O slices: ${unsigned.join(", ")}.`
-        : "One or more Mach-O slices are unsigned, but their architectures could not be classified.",
-    ];
-    if (aggregateExits.requirements !== 0)
-      limitations.push(
-        "The aggregate designated requirement is unavailable because Mach-O slices have mixed signing states.",
-      );
-    if (aggregateExits.entitlements !== 0)
-      limitations.push(
-        "The aggregate entitlements are unavailable because Mach-O slices have mixed signing states.",
-      );
-    return ok(limitations);
+    return ok(undefined);
   }
 
   async #captureSignature(

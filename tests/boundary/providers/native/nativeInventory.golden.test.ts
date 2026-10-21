@@ -157,71 +157,98 @@ it("rejects nonzero supplemental codesign output that is not an unsigned observa
   });
 });
 
-it.each(["extra diagnostic", "foreign executable", "slice diagnostic"])(
-  "rejects an unsigned response with %s",
-  async (kind) => {
-    const signed = (await fixture("codesign.txt")).replace(
-      /^Format=.*$/mu,
-      "Format=Mach-O universal (x86_64 arm64)",
-    );
-    const replay = signatureRunner({
-      signed,
-      unsigned: "code object is not signed at all",
-      entitlements: await fixture("entitlements.xml"),
-      unsignedHeader: true,
-    });
-    const runner: NativeCommandRunner = {
-      async run(tool, args, options) {
-        const result = await replay.run(tool, args, options);
-        if (!result.ok || result.value.exitCode === 0) return result;
-        const isSlice = args.includes("-a");
-        if ((kind === "slice diagnostic") !== isSlice) return result;
-        const stderr =
-          kind === "foreign executable"
-            ? result.value.stderr.replace(
-                /^Executable=.*\n/u,
-                "Executable=/foreign/program\n",
-              )
-            : `${result.value.stderr}additional codesign failure\n`;
+it.each([
+  "extra diagnostic",
+  "foreign executable",
+  "slice diagnostic",
+  "later slice diagnostic",
+])("rejects an unsigned response with %s", async (kind) => {
+  const signed = (await fixture("codesign.txt")).replace(
+    /^Format=.*$/mu,
+    "Format=Mach-O universal (x86_64 arm64)",
+  );
+  const replay = signatureRunner({
+    signed,
+    unsigned: "code object is not signed at all",
+    entitlements: await fixture("entitlements.xml"),
+    unsignedHeader: true,
+  });
+  const runner: NativeCommandRunner = {
+    async run(tool, args, options) {
+      const result = await replay.run(tool, args, options);
+      if (!result.ok) return result;
+      if (kind === "later slice diagnostic") {
+        if (!args.includes("arm64")) return result;
+        const stderr = "later architecture probe failed\n";
         return ok({
           ...result.value,
+          exitCode: 1,
           stderr,
           stderrBytes: Buffer.byteLength(stderr),
         });
-      },
-    };
-    const result = await new NativeMacOSProvider({}, runner, "darwin")
-      .createClient(await signatureTarget())
-      .execute("inspect_signature", {});
-    expect(result).toMatchObject({
-      ok: false,
-      error: { _tag: "ProviderAdapterError" },
-    });
-    if (kind === "slice diagnostic" && !result.ok) {
-      const partial = inspectSignatureSchema.parse(
-        result.error.partialObservation,
-      );
-      expect(partial).toMatchObject({
-        signed: true,
-        identifier: "com.example.fixture",
-        entitlements: { "com.apple.security.app-sandbox": true },
-        designated_requirement: null,
-        limitations: expect.arrayContaining([
-          expect.stringContaining("Partial signature coverage"),
-          expect.stringContaining("did not complete"),
-        ]),
+      }
+      if (result.value.exitCode === 0) return result;
+      const isSlice = args.includes("-a");
+      if ((kind === "slice diagnostic") !== isSlice) return result;
+      const stderr =
+        kind === "foreign executable"
+          ? result.value.stderr.replace(
+              /^Executable=.*\n/u,
+              "Executable=/foreign/program\n",
+            )
+          : `${result.value.stderr}additional codesign failure\n`;
+      return ok({
+        ...result.value,
+        stderr,
+        stderrBytes: Buffer.byteLength(stderr),
       });
-      expect(partial.provenance).toHaveLength(4);
-      expect(partial.provenance[0]?.command).toContain("--verbose=4");
-      expect(partial.provenance[1]?.command).toContain("-r-");
-      expect(partial.provenance[2]?.command).toContain("--entitlements");
-      expect(partial.provenance[3]).toMatchObject({
-        command: expect.arrayContaining(["-a", "x86_64"]),
+    },
+  };
+  const result = await new NativeMacOSProvider({}, runner, "darwin")
+    .createClient(await signatureTarget())
+    .execute("inspect_signature", {});
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "ProviderAdapterError" },
+  });
+  if (kind.endsWith("slice diagnostic") && !result.ok) {
+    const partial = inspectSignatureSchema.parse(
+      result.error.partialObservation,
+    );
+    expect(partial).toMatchObject({
+      signed: true,
+      identifier: "com.example.fixture",
+      entitlements: { "com.apple.security.app-sandbox": true },
+      designated_requirement: null,
+      limitations: expect.arrayContaining([
+        expect.stringContaining("Partial signature coverage"),
+        expect.stringContaining("did not complete"),
+      ]),
+    });
+    expect(partial.provenance).toHaveLength(
+      kind === "later slice diagnostic" ? 5 : 4,
+    );
+    expect(partial.provenance[0]?.command).toContain("--verbose=4");
+    expect(partial.provenance[1]?.command).toContain("-r-");
+    expect(partial.provenance[2]?.command).toContain("--entitlements");
+    if (kind === "later slice diagnostic") {
+      expect(partial.limitations).toEqual(
+        expect.arrayContaining([
+          "Unsigned Mach-O slices: x86_64.",
+          "The aggregate designated requirement is unavailable because Mach-O slices have mixed signing states.",
+        ]),
+      );
+      expect(partial.provenance[4]).toMatchObject({
+        command: expect.arrayContaining(["-a", "arm64"]),
         exit: { code: 1, signal: null },
       });
     }
-  },
-);
+    expect(partial.provenance[3]).toMatchObject({
+      command: expect.arrayContaining(["-a", "x86_64"]),
+      exit: { code: 1, signal: null },
+    });
+  }
+});
 
 it("retains native inventory facts from captured Apple tool output", async () => {
   const outputs: Record<string, string> = {};
