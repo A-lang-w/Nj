@@ -53,6 +53,7 @@ import {
   type StateWritePlan,
 } from "./environmentStateWriteRules.js";
 import { WriteTaint } from "./environmentStateWriteTaint.js";
+import { queryValues } from "./environmentStateListQuery.js";
 
 /** What the write gate reads: the manifest tools, the timeline, the read views and the initial state. */
 export interface WriteSimulationInput {
@@ -349,6 +350,9 @@ export class EnvironmentStateWriteSimulation {
         : checkListRead(this.#state, view, record, {
             ...check,
             all: listsAll(view, base),
+            query: view.query?.record_ordinals.includes(base)
+              ? queryValues(record.query)
+              : undefined,
           });
     });
   }

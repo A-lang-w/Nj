@@ -28,6 +28,7 @@ import {
   type StateToolFacts,
   type StateView,
 } from "./environmentStateRules.js";
+import { evaluateQuery, renderQueryList } from "./environmentStateListQuery.js";
 
 /** A query as replay compares a call's: decoded values by name, in any order. A query repeating a name, which no call's arguments can carry, keeps its spelling. */
 const queryKey = (query: string | undefined): string => {
@@ -392,6 +393,7 @@ const listCheck = (
   view: StateListView,
   check: ListBodies,
   members: readonly StateEntity[],
+  total = members.length,
 ): boolean => {
   if (
     members.some(
@@ -406,7 +408,64 @@ const listCheck = (
   const rendered = members.map((entity) =>
     renderStateEntity(entity, view, check.volatile, observed.get(entity.id)),
   );
-  return same(renderStateList(view, check.base, rendered), check.body);
+  const answer =
+    view.query === undefined
+      ? renderStateList(view, check.base, rendered)
+      : renderQueryList(
+          { ...view, query: view.query },
+          check.base,
+          rendered,
+          total,
+        );
+  return same(answer, check.body);
+};
+
+/**
+ * A list read on a line the query answers: the query's matches in the state, in its order and page. Only a line whose
+ * parameters all sort or page, and that shows every match, covers the collection; any other covers the entities it lists.
+ */
+const checkQueryList = (
+  state: SimulatedState,
+  view: StateListView,
+  check: ListBodies,
+  values: ReadonlyMap<string, string>,
+): CheckOutcome | undefined => {
+  const { collection } = check;
+  const result = evaluateQuery(
+    view.query!.parameters,
+    values,
+    state.members(view.type, collection),
+  );
+  if (result === undefined) return undefined;
+  const selects = [...values.keys()].some((name) => {
+    const role = view.query!.parameters[name]?.role;
+    return role === "filter" || role === "search" || role === "inert";
+  });
+  const whole = !selects && result.page.length === result.total;
+  const held = new Set(result.page.map((entity) => entity.id));
+  return {
+    pass: listCheck(view, check, result.page, result.total),
+    targets: [
+      ...(whole ? [collectionTarget(view.type, collection)] : []),
+      ...result.page.map((entity) =>
+        entityTarget(view.type, collection, entity.id),
+      ),
+    ],
+    // What the base line or the read listed that the state no longer holds: the read shows whether it went.
+    unheld: [
+      ...new Set(
+        [...check.baseItems, ...check.items].map(
+          (item) => scalarText(item[check.idField]) ?? "",
+        ),
+      ),
+    ]
+      .filter(
+        (id) =>
+          !held.has(id) &&
+          state.entity(view.type, collection, id) === undefined,
+      )
+      .map((id) => entityTarget(view.type, collection, id)),
+  };
 };
 
 /** A list read of every entity of a collection: membership, order, fields and counters must render from the state. */
@@ -465,6 +524,8 @@ export const checkListRead = (
     readonly collection: string;
     /** Whether the base line lists every entity of its collection. */
     readonly all: boolean;
+    /** The read's query values, when the query answers its line. */
+    readonly query?: ReadonlyMap<string, string> | undefined;
   },
 ): CheckOutcome | undefined => {
   if (!succeeded(record)) return undefined;
@@ -478,7 +539,10 @@ export const checkListRead = (
   const bodies = { ...check, body, base, items: items ?? [], baseItems };
   const outcome = check.all
     ? checkAllList(state, view, bodies)
-    : checkRecordedList(state, view, bodies);
+    : check.query === undefined
+      ? checkRecordedList(state, view, bodies)
+      : checkQueryList(state, view, bodies, check.query);
+  if (outcome === undefined) return undefined;
   return items === undefined ? { ...outcome, pass: false } : outcome;
 };
 

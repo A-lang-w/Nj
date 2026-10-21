@@ -19,6 +19,10 @@ import {
   type StateView,
 } from "../../domain/analysisView/environmentStateRules.js";
 import { isAbsence } from "../../domain/analysisView/environmentStateWriteChecks.js";
+import {
+  evaluateQuery,
+  renderQueryList,
+} from "../../domain/analysisView/environmentStateListQuery.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,
@@ -64,7 +68,7 @@ export type StateProvenance =
       readonly view: "list";
       readonly type: string;
       readonly collection: string;
-      readonly membership: "all" | "recorded";
+      readonly membership: "all" | "query" | "recorded";
       readonly listed: number;
     }
   | {
@@ -407,7 +411,53 @@ interface ToolCall {
   readonly exact: boolean;
 }
 
-/** A list call renders the members of the checked line it names from the state. */
+/** A call's query arguments by parameter name. */
+const callQuery = (
+  tool: EnvironmentManifestTool,
+  args: ReplayArguments,
+): Map<string, string> =>
+  new Map(
+    [...environmentToolArguments(tool).query].flatMap(
+      ([name, argument]): [string, string][] => {
+        const value = args[argument];
+        return value === undefined ? [] : [[name, String(value)]];
+      },
+    ),
+  );
+
+/** For a list with a query, a call whose every query argument has a role answers on a query or whole line of the collection its path arguments name. */
+const queryLine = (
+  source: EnvironmentSource,
+  tool: EnvironmentManifestTool,
+  view: StateListView,
+  args: ReplayArguments,
+): RecordedExchange | undefined => {
+  const query = view.query;
+  const segments = callSegments(tool, args);
+  if (
+    query === undefined ||
+    segments === undefined ||
+    [...callQuery(tool, args).keys()].some(
+      (name) => query.parameters[name] === undefined,
+    )
+  )
+    return undefined;
+  const lines = new Map<number, RecordedExchange>();
+  for (const ordinal of [...query.record_ordinals, ...allLines(view)]) {
+    const exchange = source.exchanges.get(ordinal);
+    if (
+      exchange !== undefined &&
+      collectionMatch(collectionPathOf(exchange, false), segments) !== undefined
+    )
+      lines.set(ordinal, exchange);
+  }
+  return selectReplayExchange(tool, lines, args)?.exchange;
+};
+
+/**
+ * A list call renders from the state on its line: every entity of the collection on a whole line, the query's matches
+ * on a line the query answers or for a call it computes, else the line's recorded members still held.
+ */
 const answerList = (
   serving: StateServing,
   { tool, args, exact }: ToolCall,
@@ -422,17 +472,34 @@ const answerList = (
     return fromRecording(source, tool, args, "body-unusable");
   const collection = collectionPathOf(base, false);
   const type = store.type(view.type);
-  const all = listsAll(view, base.ordinal);
+  const values = callQuery(tool, args);
+  // A named query line, or a call with query arguments answered on a line it did not name, evaluates the query.
+  const queried =
+    view.query !== undefined &&
+    (exact
+      ? view.query.record_ordinals.includes(base.ordinal)
+      : values.size > 0);
+  const all = !queried && listsAll(view, base.ordinal);
+  const computed = queried
+    ? evaluateQuery(
+        view.query!.parameters,
+        values,
+        store.inCollection(view.type, collection),
+      )
+    : undefined;
+  if (queried && computed === undefined)
+    return fromRecording(source, tool, args, "unrecorded-request");
   const members: readonly StateEntity[] = all
     ? store.inCollection(view.type, collection)
-    : recorded.flatMap((item) => {
+    : (computed?.page ??
+      recorded.flatMap((item) => {
         const id = scalarText(item[type?.id_field ?? ""]);
         const entity =
           id === undefined
             ? undefined
             : store.entity(view.type, collection, id);
         return entity === undefined ? [] : [entity];
-      });
+      }));
   const volatile = new Set(type?.volatile_fields);
   const items: JsonObject[] = [];
   for (const entity of members) {
@@ -440,19 +507,23 @@ const answerList = (
     if (!shown.ok) return shown;
     items.push(shown.value);
   }
-  return stateAnswer(
-    serving,
-    { exchange: base, exact },
-    renderStateList(view, envelope, items),
-    {
-      source: "state",
-      view: "list",
-      type: view.type,
-      collection,
-      membership: all ? "all" : "recorded",
-      listed: items.length,
-    },
-  );
+  const body =
+    view.query === undefined || (!all && computed === undefined)
+      ? renderStateList(view, envelope, items)
+      : renderQueryList(
+          { ...view, query: view.query },
+          envelope,
+          items,
+          computed?.total ?? items.length,
+        );
+  return stateAnswer(serving, { exchange: base, exact }, body, {
+    source: "state",
+    view: "list",
+    type: view.type,
+    collection,
+    membership: all ? "all" : computed === undefined ? "recorded" : "query",
+    listed: items.length,
+  });
 };
 
 /** A document call answers the state's value for the document on its checked line's status and provenance. */
@@ -487,7 +558,8 @@ const answerCheckedLine = (
   const base =
     named ??
     (view.shape === "list"
-      ? unfilteredLine(serving.source, tool, allLines(view), args)
+      ? (unfilteredLine(serving.source, tool, allLines(view), args) ??
+        queryLine(serving.source, tool, view, args))
       : undefined);
   if (base === undefined)
     return fromRecording(serving.source, tool, args, "unrecorded-request");

@@ -363,7 +363,7 @@ describe("paged list lines", () => {
 });
 
 describe("list lines", () => {
-  it("lists a created book on the line that lists every book, while a filtered line keeps its recorded members", () => {
+  it("lists a created book on the line that lists every book, and a filtered line by its filter", () => {
     const books = servedFrom(LIST_LINE_ROWS);
     const created = books.answer("post_books", CREATE_NEW_BOOK).body as Book;
     expect(books.answer("get_books")).toMatchObject({
@@ -372,7 +372,7 @@ describe("list lines", () => {
     });
     expect(books.answer("get_books", { name: "First Book" })).toMatchObject({
       body: bookPage([FIRST_BOOK]),
-      state: { source: "state", membership: "recorded", listed: 1 },
+      state: { source: "state", membership: "query", listed: 1 },
     });
   });
 });
