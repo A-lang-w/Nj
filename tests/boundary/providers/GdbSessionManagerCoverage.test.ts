@@ -4059,6 +4059,54 @@ it("keeps running threads interruptible after a non-stop partial stop", async ()
   expect(child.killSignals).toEqual(["SIGINT"]);
 });
 
+it("does not release the shared stop owner when one non-stop inferior exits", async () => {
+  let observedRun!: () => void;
+  const runStarted = new Promise<void>((resolve) => {
+    observedRun = resolve;
+  });
+  const fake = createFakeSpawner((child, token, command) => {
+    if (command.includes('console "run"')) {
+      child.stdout.write(
+        `=thread-group-started,id="i1"\n=thread-group-started,id="i2"\n${token}^running\n*running,thread-id="all"\n`,
+      );
+      observedRun();
+    } else if (command === "-thread-info") {
+      child.stdout.write(
+        `${token}^done,threads=[{id="2",target-id="Thread 2",state="running"}]\n`,
+      );
+    } else
+      child.stdout.write(
+        command.includes("list-thread-groups")
+          ? `${token}^done,groups=[]\n`
+          : `${token}^done\n`,
+      );
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    commandTimeoutMs: 500,
+  });
+  const started = await expectGdbSessionStarted(manager);
+  const run = manager.execute(started.value.session_id, "run");
+  await runStarted;
+  const ownerCompletion = manager.waitForInferiorStop(started.value.session_id);
+  let ownerReleased = false;
+  void ownerCompletion.then(() => {
+    ownerReleased = true;
+  });
+
+  const child = fake.children[0]!;
+  child.stdout.write('=thread-group-exited,id="i1"\n');
+  child.stdout.write('*stopped,reason="exited-normally"\n');
+  await expect(run).resolves.toMatchObject({ ok: true });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(ownerReleased).toBe(false);
+
+  child.stdout.write(
+    '*stopped,reason="breakpoint-hit",thread-id="2",stopped-threads="all"\n',
+  );
+  await ownerCompletion;
+  expect(ownerReleased).toBe(true);
+});
+
 it("finishes interrupt after the last per-thread stop is verified by MI", async () => {
   let observedRun!: () => void;
   const runStarted = new Promise<void>((resolve) => {

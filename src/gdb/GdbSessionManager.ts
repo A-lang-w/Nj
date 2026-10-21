@@ -1876,9 +1876,14 @@ export class GdbSessionManager {
         const stoppedThreadId = /(?:^|,)thread-id="([^"]+)"(?:,|$)/u.exec(
           line,
         )?.[1];
+        const inferiorExited = /(?:^|,)reason="exited(?:-[^"]+)?"(?:,|$)/u.test(
+          line,
+        );
         const confirmsAllThreadsStopped =
           stoppedThreads === '"all"' ||
-          (stoppedThreads === undefined && stoppedThreadId === undefined);
+          (stoppedThreads === undefined &&
+            stoppedThreadId === undefined &&
+            !inferiorExited);
         if (confirmsAllThreadsStopped) this.#confirmInferiorStopped(session);
         // A partial stop completes run/step commands in non-stop mode. Query
         // thread state because the last running thread also reports a per-thread
