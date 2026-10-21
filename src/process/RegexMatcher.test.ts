@@ -410,6 +410,26 @@ it("recovers launch exec argv from the command line, not process.execArgv", () =
   expect(execArgvFromCommandLine(Buffer.from([0xff, 0]))).toEqual({
     kind: "unrecoverable",
   });
+  expect(execArgvFromCommandLine(commandLine("rea"))).toEqual({
+    kind: "unrecoverable",
+  });
+  expect(
+    execArgvFromCommandLine(
+      Buffer.concat([Buffer.from("rea\0"), Buffer.alloc(32)]),
+    ),
+  ).toEqual({ kind: "unrecoverable" });
+  expect(
+    resolveLaunchRegexWorkerHeap(
+      execArgvFromCommandLine(
+        Buffer.concat([Buffer.from("rea\0"), Buffer.alloc(32)]),
+      ),
+      { kind: "recovered", value: undefined },
+    ),
+  ).toEqual({ kind: "unknown" });
+  expect(execArgvFromCommandLine(commandLine("node", "script.js"))).toEqual({
+    kind: "recovered",
+    value: [],
+  });
   const before = readLaunchExecArgv();
   const snapshot = [...process.execArgv];
   process.execArgv.length = 0;

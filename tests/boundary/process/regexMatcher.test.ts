@@ -250,11 +250,36 @@ it("lets a launch --max-old-space-size override the 128 MiB worker request", () 
   expect(smaller.heap).toBeLessThan(larger.heap);
 });
 
-it("does not report the 128 MiB request after a preload clears process.execArgv", () => {
-  const directory = mkdtempSync(join(tmpdir(), "rea-regex-exec-argv-"));
-  const preload = join(directory, "preload.cjs");
+const assertUnrecoverableOffLinux = (): boolean => {
+  if (process.platform === "linux") return false;
+  const launchExecArgv = readLaunchExecArgv();
+  expect(launchExecArgv).toEqual({ kind: "unrecoverable" });
+  expect(
+    resolveLaunchRegexWorkerHeap(launchExecArgv, {
+      kind: "recovered",
+      value: "--max-old-space-size=64",
+    }),
+  ).toEqual({ kind: "unknown" });
+  return true;
+};
+
+const spawnCommandLineReport = (
+  directory: string,
+  args: readonly string[],
+  preloadBody: string | undefined,
+): {
+  execLen: number;
+  cmdline: string;
+  heap: number;
+  resourceOld: number;
+} => {
   const script = join(directory, "report.cjs");
-  writeFileSync(preload, "process.execArgv.length = 0;\n");
+  const launchArgs = [...args];
+  if (preloadBody !== undefined) {
+    const preload = join(directory, "preload.cjs");
+    writeFileSync(preload, preloadBody);
+    launchArgs.push(`--require=${preload}`);
+  }
   writeFileSync(
     script,
     `const { Worker } = require("node:worker_threads");
@@ -282,19 +307,27 @@ worker.once("error", (error) => {
 });
 `,
   );
+  launchArgs.push(script);
+  const result = spawnSync(process.execPath, launchArgs, { encoding: "utf8" });
+  expect(result.status).toBe(0);
+  return JSON.parse(result.stdout ?? "") as {
+    execLen: number;
+    cmdline: string;
+    heap: number;
+    resourceOld: number;
+  };
+};
+
+it("does not report the 128 MiB request after a preload clears process.execArgv", () => {
+  if (assertUnrecoverableOffLinux()) return;
+  const directory = mkdtempSync(join(tmpdir(), "rea-regex-exec-argv-"));
   try {
-    const result = spawnSync(
-      process.execPath,
-      ["--max-old-space-size=64", `--require=${preload}`, script],
-      { encoding: "utf8" },
+    const reported = spawnCommandLineReport(
+      directory,
+      ["--max-old-space-size=64"],
+      "process.execArgv.length = 0;\n",
     );
-    expect(result.status).toBe(0);
-    const reported = JSON.parse(result.stdout ?? "") as {
-      execLen: number;
-      cmdline: string;
-      heap: number;
-      resourceOld: number;
-    };
+    const preload = join(directory, "preload.cjs");
     const pinned = probeWorkerHeap(["--max-old-space-size=64"], undefined);
     const larger = probeWorkerHeap(["--max-old-space-size=256"], undefined);
     expect(reported.execLen).toBe(0);
@@ -319,6 +352,60 @@ worker.once("error", (error) => {
       mib: 128,
       overridden: false,
     });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("leaves the heap unknown when a preload title overwrites the command line", () => {
+  if (assertUnrecoverableOffLinux()) return;
+  const directory = mkdtempSync(join(tmpdir(), "rea-regex-title-"));
+  try {
+    const reported = spawnCommandLineReport(
+      directory,
+      ["--max-old-space-size=64"],
+      'process.title = "rea";\n',
+    );
+    const pinned = probeWorkerHeap(["--max-old-space-size=64"], undefined);
+    expect(reported.resourceOld).toBe(128);
+    expect(relativeHeapGap(reported.heap, pinned.heap)).toBeLessThan(0.05);
+    const recovered = execArgvFromCommandLine(
+      Buffer.from(reported.cmdline, "base64"),
+    );
+    expect(recovered).toEqual({ kind: "unrecoverable" });
+    expect(
+      resolveLaunchRegexWorkerHeap(recovered, {
+        kind: "recovered",
+        value: undefined,
+      }),
+    ).toEqual({ kind: "unknown" });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("leaves the heap unknown when --title overwrites the command line", () => {
+  if (assertUnrecoverableOffLinux()) return;
+  const directory = mkdtempSync(join(tmpdir(), "rea-regex-title-flag-"));
+  try {
+    const reported = spawnCommandLineReport(
+      directory,
+      ["--title=rea", "--max-old-space-size=64"],
+      undefined,
+    );
+    const pinned = probeWorkerHeap(["--max-old-space-size=64"], undefined);
+    expect(reported.resourceOld).toBe(128);
+    expect(relativeHeapGap(reported.heap, pinned.heap)).toBeLessThan(0.05);
+    const recovered = execArgvFromCommandLine(
+      Buffer.from(reported.cmdline, "base64"),
+    );
+    expect(recovered).toEqual({ kind: "unrecoverable" });
+    expect(
+      resolveLaunchRegexWorkerHeap(recovered, {
+        kind: "recovered",
+        value: undefined,
+      }),
+    ).toEqual({ kind: "unknown" });
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

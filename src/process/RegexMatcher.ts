@@ -37,11 +37,13 @@ const WORKER_HEAP_MIB = 128;
  *
  * `process.execArgv` is mutable in the same way. A preload can empty it after
  * V8 has applied `--max-old-space-size`. Linux keeps the original tokens in
- * `/proc/self/cmdline`. The recovered list skips the executable and the
- * program entry the way Node builds `execArgv`, and it stops at `--`. When
- * that block cannot be read, the entry boundary is ambiguous, or the platform
- * has no equivalent block, the effective heap stays unestablished. The
- * mutable array is not a fallback.
+ * `/proc/self/cmdline` until `process.title` or `--title` overwrites that
+ * same memory with the title. The recovered list skips the executable and the
+ * program entry the way Node builds `execArgv`, and it stops at `--`. A
+ * buffer without a program entry is not an empty option list. When that block
+ * cannot be read, the entry cannot be established, or the platform has no
+ * equivalent block, the effective heap stays unestablished. The mutable array
+ * is not a fallback.
  *
  * `--max-heap-size` is the total heap, not the old generation. A positive
  * value can be lower than the 128 MiB request and still changes the result
@@ -293,41 +295,66 @@ const normalizedOption = (
   };
 };
 
+/** Options whose argument is the program entry rather than a script path. */
+const ENTRY_OPTIONS = new Set(["-e", "--eval", "-p", "--print", "-pe"]);
+
 /**
  * Node option tokens from an `execve` command line. The executable and the
- * program entry are omitted. `--` ends the list and is omitted. The buffer
- * is not retained.
+ * program entry are omitted. `--` ends the list and is omitted. A title
+ * overwrite leaves one token and null padding, which has no program entry.
+ * The buffer is not retained.
  */
 export const execArgvFromCommandLine = (raw: Buffer): LaunchExecArgv => {
   const tokens = commandLineTokens(raw);
-  if (tokens === "invalid") return { kind: "unrecoverable" };
+  if (tokens === "invalid" || tokens.length === 0 || tokens[0] === "")
+    return { kind: "unrecoverable" };
   const exec: string[] = [];
+  let sawEntry = false;
   for (let index = 1; index < tokens.length; index += 1) {
     const token = tokens[index] ?? "";
-    if (token.length <= 1 || !token.startsWith("-") || token === "--") break;
+    if (token.length === 0) return { kind: "unrecoverable" };
+    if (token === "--") {
+      const entry = tokens[index + 1];
+      if (entry === undefined || entry.length === 0)
+        return { kind: "unrecoverable" };
+      sawEntry = true;
+      break;
+    }
+    if (token === "-" || !token.startsWith("-")) {
+      sawEntry = true;
+      break;
+    }
     exec.push(token);
     const option = normalizedOption(token);
-    if (option.inline) continue;
+    const entryOption = ENTRY_OPTIONS.has(option.name);
+    if (option.inline) {
+      if (entryOption) sawEntry = true;
+      continue;
+    }
     if (VALUE_OPTIONS.has(option.name)) {
       const value = tokens[index + 1];
-      if (value === undefined || value.startsWith("-"))
+      if (value === undefined || value.length === 0 || value.startsWith("-"))
         return { kind: "unrecoverable" };
       exec.push(value);
       index += 1;
+      if (entryOption) sawEntry = true;
       continue;
     }
     if (FLAG_OPTIONS.has(option.name)) continue;
     const next = tokens[index + 1];
-    if (next !== undefined && (next.length <= 1 || !next.startsWith("-")))
+    if (next !== undefined && (next.length === 0 || !next.startsWith("-")))
       return { kind: "unrecoverable" };
   }
+  // No script, eval string, or stdin entry. A title-only buffer looks like this.
+  if (!sawEntry) return { kind: "unrecoverable" };
   return { kind: "recovered", value: exec };
 };
 
 /**
  * Linux keeps the `execve` argument vector in `/proc/self/cmdline` after
- * `process.execArgv` is rewritten. Other platforms have no equivalent
- * immutable block, so the launch options stay unrecoverable there.
+ * `process.execArgv` is rewritten. `process.title` and `--title` overwrite
+ * that vector. Other platforms have no equivalent immutable block, so the
+ * launch options stay unrecoverable there.
  */
 export const readLaunchExecArgv = (): LaunchExecArgv => {
   if (process.platform !== "linux") return { kind: "unrecoverable" };
