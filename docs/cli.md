@@ -103,6 +103,19 @@ Formats 2, 3 and 4 retain header, directory and integrity facts. Compact deliver
 keeps complete Evidence in the requested bundle. See [Godot PCK](godot-pck.md)
 for embedded packs, batch queries and unknown encrypted coverage.
 
+Inspect local model declarations without loading weights:
+
+```bash
+rea inspect-model-artifact /absolute/path/model.gguf --json
+rea inspect-model-artifact /absolute/path/model.safetensors --hash full --json
+```
+
+Default hashing reads only headers and leaves full-file identity unknown.
+`--hash full` streams the complete file for SHA-256. Both return typed metadata,
+original tensor declarations and derived totals. MCP summaries retain complete
+Evidence for filtered metadata, tensor and type-total pages; CLI compact delivery
+uses `--detail summary --evidence_output FILE`. See [model files](model-artifacts.md).
+
 Inspect Unity IL2CPP metadata names without Unity or a disassembler:
 
 ```bash
@@ -483,10 +496,12 @@ error and exit `1`, as does a listener that fails after binding.
 pair refusals, a non-empty or file-occupied directory, a missing package
 tarball or a name that is not a kebab-case label or is a Windows device name,
 writing nothing in each case.
-A write that fails after the first file (a permission or disk-space failure
-on a later path) propagates as the host's failure and leaves the partial
-folder in place for inspection; remove it before retrying, since the next
-attempt refuses the non-empty directory.
+A write that fails after the first file (a permission, disk-space or
+pathname-length failure on a later path) propagates as the host's failure,
+naming its cause and, when it failed on one bundle file or the package
+tarball, that file. A failure while syncing the finished folder names only its
+cause. Either way the partial folder stays in place for inspection; remove it
+before retrying, since the next attempt refuses the non-empty directory.
 
 A `cancelled` result does not by itself determine the exit status; it depends on
 the command's signal handling. Commands routed through the shared
