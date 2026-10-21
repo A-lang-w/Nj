@@ -210,6 +210,8 @@ it("preserves cancellation when staging cleanup also fails", async () => {
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.cleanupIncomplete).toBe(true);
+    // The caller's exact abort reason stays the cause; the retained staging
+    // directory is reported as cleanup state, not as the cancellation cause.
     expect(result.error.cause).toBe(controller.signal.reason);
     expect(result.error.cleanupPrimary).toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.cleanupPrimary).toMatchObject({
