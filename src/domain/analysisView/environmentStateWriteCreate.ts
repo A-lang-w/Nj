@@ -41,7 +41,11 @@ import {
   type Observed,
 } from "./environmentStateWriteObserve.js";
 import type { FieldRule, WriteCall } from "./environmentStateWriteRules.js";
-import { integerOf, isUuid, readClock } from "./environmentStateWriteValues.js";
+import {
+  isUuid,
+  readClock,
+  sequenceNumber,
+} from "./environmentStateWriteValues.js";
 
 /** The id a response names alone: a scalar body, or an object's id field or single scalar member. */
 const respondedId = (
@@ -184,7 +188,7 @@ const followsSequences = (
       nextInteger(fieldsOf(scope), rule.field) ?? 1,
       (draft.sequences.get(key) ?? 0) + 1,
     );
-    return integerOf(created.fields[rule.field]) === next;
+    return sequenceNumber(created.fields[rule.field]) === next;
   });
 
 /** Whether a later call's generated values take the forms serving generates them in: clocks in the learned format, unique values and UUID identities as UUIDs, and sequences in order. */
@@ -212,7 +216,7 @@ const takeSequences = (
   created: Pick<StateEntity, "collection" | "fields">,
 ): void => {
   for (const { rule, key } of sequencesOf(draft, created.collection)) {
-    const value = integerOf(created.fields[rule.field]);
+    const value = sequenceNumber(created.fields[rule.field]);
     if (value !== undefined) draft.sequences.set(key, value);
   }
 };

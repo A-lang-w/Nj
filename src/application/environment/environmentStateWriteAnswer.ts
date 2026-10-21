@@ -21,6 +21,7 @@ import {
   isUuid,
   seededToken,
   seededUuid,
+  sequenceNumber,
   spelledLike,
 } from "../../domain/analysisView/environmentStateWriteValues.js";
 import {
@@ -130,7 +131,7 @@ const observedEntity = (
 const nextInteger = (entities: readonly StateEntity[], field: string): number =>
   entities.reduce(
     (largest, entity) =>
-      Math.max(largest, integerOf(entity.fields[field]) ?? 0),
+      Math.max(largest, sequenceNumber(entity.fields[field]) ?? 0),
     0,
   ) + 1;
 

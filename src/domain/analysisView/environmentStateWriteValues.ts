@@ -109,7 +109,46 @@ export const integerOf = (value: JsonValue | undefined): number | undefined =>
 
 /** An integer spelled as the recorded value spells integers: a number, or a string of digits. */
 export const spelledLike = (exemplar: JsonValue, value: number): JsonValue =>
-  typeof exemplar === "string" ? String(value) : value;
+  maskedCount(exemplar) !== undefined
+    ? fillMask(exemplar as string, value)
+    : typeof exemplar === "string"
+      ? String(value)
+      : value;
+
+const MASKED_DIGITS = /^\d+(?:[-.]\d+)+$/u;
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/u;
+
+/** The count digit groups spell, such as an asset number `000-005`; a date is not a count. */
+const maskedCount = (value: JsonValue | undefined): number | undefined => {
+  if (
+    typeof value !== "string" ||
+    !MASKED_DIGITS.test(value) ||
+    ISO_DATE.test(value)
+  )
+    return undefined;
+  const digits = value.replace(/\D/gu, "");
+  return digits.length <= 15 ? Number(digits) : undefined;
+};
+
+/** A sequence's number: an integer, or digit groups that count. */
+export const sequenceNumber = (
+  value: JsonValue | undefined,
+): number | undefined => integerOf(value) ?? maskedCount(value);
+
+/** A number written into a mask's digit positions, zero-padded; digits that outgrow the mask lead it. */
+const fillMask = (mask: string, value: number): string => {
+  const padded = String(value).padStart(mask.replace(/\D/gu, "").length, "0");
+  let next = padded.length - 1;
+  let out = "";
+  for (let at = mask.length - 1; at >= 0; at -= 1) {
+    const character = mask[at]!;
+    if (/\d/u.test(character)) {
+      out = padded[next]! + out;
+      next -= 1;
+    } else out = character + out;
+  }
+  return padded.slice(0, next + 1) + out;
+};
 
 /** Lower case, with every run of other characters joined by one `-` and none at either end. */
 export const slugOf = (text: string): string =>

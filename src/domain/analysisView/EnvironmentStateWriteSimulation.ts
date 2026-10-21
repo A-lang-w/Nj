@@ -4,6 +4,7 @@ import {
   isObject,
   isStateWrite,
   normalizedPath,
+  projectsFields,
   type JsonObject,
   type StateEntity,
   type StateRecordFacts,
@@ -12,6 +13,7 @@ import {
   type StateView,
 } from "./environmentStateRules.js";
 import { updatedEntity } from "./environmentStateWriteApply.js";
+import { OmittedFields } from "./environmentStateWriteOmitted.js";
 import {
   checkDocumentRead,
   checkItemRead,
@@ -87,6 +89,8 @@ export class EnvironmentStateWriteSimulation {
   readonly #taint: WriteTaint;
   readonly #touched: TouchedTargets = new Map();
   readonly #effects = new WriteEffects();
+  /** Fields reads show the application leaves out, which serving then does not require. */
+  readonly omitted: OmittedFields;
   readonly #lastCheck = new Map<string, number>();
   /** When the latest modelled write to each target since its last check ended. */
   readonly #touchedSince: PendingTargets = new Map();
@@ -104,6 +108,7 @@ export class EnvironmentStateWriteSimulation {
 
   constructor(input: WriteSimulationInput) {
     this.#input = input;
+    this.omitted = new OmittedFields(input.io.retain);
     this.#state = new SimulatedState(input.entities, input.documents);
     for (const type of input.types)
       this.#types.set(type.collection_template, type);
@@ -292,6 +297,13 @@ export class EnvironmentStateWriteSimulation {
 
   #check(view: StateView, record: StateRecordFacts): CheckOutcome | undefined {
     if (view.shape === "recorded") return undefined;
+    // A read that asks for some fields only is answered by replay, so it checks nothing.
+    if (
+      view.shape === "item" &&
+      view.projected_record_ordinals !== undefined &&
+      projectsFields(record.query)
+    )
+      return undefined;
     const line = this.#line(view, record);
     if (view.shape !== "item" && line === undefined) return undefined;
     if (view.shape === "document")
@@ -325,9 +337,10 @@ export class EnvironmentStateWriteSimulation {
         volatile: this.#input.volatileOf(view.type),
         collection,
       };
-      return item
-        ? checkItemRead(this.#state, view, record, check)
-        : checkListRead(this.#state, view, record, check);
+      const relaxed = this.omitted.relax(view, record, check);
+      return relaxed.shape === "item"
+        ? checkItemRead(this.#state, relaxed, record, check)
+        : checkListRead(this.#state, relaxed, record, check);
     });
   }
 

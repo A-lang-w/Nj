@@ -399,16 +399,23 @@ describe("reads the served answer no longer matches", () => {
     });
   });
 
-  it("confirms no create whose entity lacks a field every recording of its item view carried", () => {
+  it("confirms a create that lacks a field every item recording carried only when its own read leaves the field out too", () => {
     const detailed = (entry: Book): Book => ({ ...entry, detail: "x" });
-    const rows: TimedCaptureRow[] = [
+    const rows = (readBack: Book): TimedCaptureRow[] => [
       ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
       ["GET", "/api/books/1", detailed(FIRST_BOOK)],
       ["GET", "/api/books/2", detailed(SECOND_BOOK)],
       ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
-      ["GET", "/api/books/3", THIRD_BOOK],
+      ["GET", "/api/books/3", readBack],
     ];
-    expect(gated(rows, "post_books")).toMatchObject({ served: false });
+    // The application omits the field for this book, so serving need not invent it.
+    expect(gated(rows(THIRD_BOOK), "post_books")).toMatchObject({
+      served: true,
+    });
+    // The read shows the field the create's own answer left out: the state cannot render it.
+    expect(gated(rows(detailed(THIRD_BOOK)), "post_books")).toMatchObject({
+      served: false,
+    });
   });
 });
 

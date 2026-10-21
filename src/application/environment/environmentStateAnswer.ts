@@ -1,6 +1,7 @@
 import { stateBodyJson } from "../../domain/analysisView/EnvironmentStateAccumulator.js";
 import {
   collectionPathOf,
+  isProjectionParameter,
   listItems,
   missingRequiredFields,
   renderStateEntity,
@@ -55,7 +56,8 @@ export type StateProvenance =
         | RecordedViewReason
         | "no-view"
         | "unrecorded-request"
-        | "page-exceeded";
+        | "page-exceeded"
+        | "projection";
     }
   | {
       readonly source: "state";
@@ -135,6 +137,18 @@ const fromRecording = (
     ? ok({ ...replayed.value, state: { source: "recording", reason } })
     : replayed;
 };
+
+/** Whether a call supplies a query argument that asks for some fields only. */
+const asksProjection = (
+  tool: EnvironmentManifestTool,
+  args: ReplayArguments,
+): boolean =>
+  [...environmentToolArguments(tool).query].some(
+    ([name, argument]) =>
+      isProjectionParameter(name) &&
+      args[argument] !== undefined &&
+      args[argument] !== "",
+  );
 
 /** A recorded body the state renders into, usable exactly when extraction could use it. */
 export const recordedJson = (
@@ -320,6 +334,12 @@ const answerItem = (
   args: ReplayArguments,
 ): Result<StateAnswer, AnalysisError> => {
   const { source, store } = serving;
+  // The state holds whole entities, so a call for some fields only replays as the capture's projected reads did.
+  if (
+    view.projected_record_ordinals !== undefined &&
+    asksProjection(tool, args)
+  )
+    return fromRecording(source, tool, args, "projection");
   const call = itemCall(tool, args);
   if (call === undefined)
     return err(refused(tool, `Tool ${tool.name} needs every path argument.`));
