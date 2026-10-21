@@ -1097,6 +1097,30 @@ describe("what an unmodelled write explains", () => {
     });
   });
 
+  it("weighs no unmodelled write against a call whose effect a later write overwrote", () => {
+    const named = (id: number, name: string) => ({
+      ...book(id, name, bookClock(0)),
+      id,
+    });
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [named(1, "A"), named(2, "B")]],
+      ["GET", "/api/books/1", named(1, "A")],
+      ["GET", "/api/books/2", named(2, "B")],
+      ["PATCH", "/api/books/1", named(1, "A2"), 200, { name: "A2" }],
+      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
+      // The PUT overwrites the patch's only change on book 1.
+      ["PUT", "/api/books/1", named(1, "A3"), 200, { name: "A3" }],
+      ["PATCH", "/api/books/2", named(2, "B2"), 200, { name: "B2" }],
+      ["GET", "/api/books/2", named(2, "B2")],
+      // The export came before book 2's patch, which the list shows undone.
+      ["GET", "/api/books", [named(1, "A3"), named(2, "B")]],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: false,
+      contradicted_by: 8,
+    });
+  });
+
   it("contradicts by a failed item read the writes no unmodelled write came after, checking only the others' members", () => {
     const enveloped = (data: Record<string, JsonValue>, revision: string) => ({
       data,

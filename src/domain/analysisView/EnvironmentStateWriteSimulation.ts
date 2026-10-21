@@ -426,9 +426,10 @@ export class EnvironmentStateWriteSimulation {
     this.#unmodelledAt.push(index);
   }
 
-  /** Whether a write the gate does not model came after a tool's latest call on one of these targets, so it may explain what a read shows there. */
+  /** Whether a write the gate does not model came after a tool's latest call on one of these targets where its effect survives, so it may explain what a read shows there. */
   #interferedWith(tool: string, keys: readonly string[]): boolean {
     return keys.some((key) => {
+      if (this.#touched.get(key)?.has(tool) !== true) return false;
       const at = this.#touchedSince.get(key)?.at.get(tool);
       return at !== undefined && this.#unmodelledAt.some((index) => index > at);
     });
