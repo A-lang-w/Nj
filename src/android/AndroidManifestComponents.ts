@@ -253,7 +253,10 @@ export const parseAndroidManifestComponents = (
     return unavailable(
       "The decoded manifest root is not <manifest>, so its component inventory is unavailable.",
     );
-  const packageName = plainAttribute(root, "package")?.trim() || null;
+  const rawPackageName = plainAttribute(root, "package");
+  const packageName = rawPackageName?.trim() || null;
+  const packageHasInvalidWhitespace =
+    rawPackageName !== null && rawPackageName !== rawPackageName.trim();
   const packageHasUnresolvedToken =
     packageName !== null && containsUnresolvedToken(packageName);
   const packageNameBytes =
@@ -269,6 +272,7 @@ export const parseAndroidManifestComponents = (
   let unresolvedPackages = 0;
   let unresolvedTokens = 0;
   let invalidNames = 0;
+  let providerPermissionOverridesUnknown = 0;
   let invalidExported = 0;
   let unknownFilteredExportDefaults = 0;
   let capacityTruncated = false;
@@ -326,7 +330,10 @@ export const parseAndroidManifestComponents = (
       const packageKnown =
         !invalidDeclaredName &&
         !unresolvedName &&
-        (!needsPackage || (packageName !== null && !packageHasUnresolvedToken));
+        (!needsPackage ||
+          (packageName !== null &&
+            !packageHasInvalidWhitespace &&
+            !packageHasUnresolvedToken));
       const declaredBytes = Buffer.byteLength(declared);
       const resolvedBytes =
         needsPackage && packageKnown
@@ -349,6 +356,11 @@ export const parseAndroidManifestComponents = (
       }
       let authorities: readonly string[] | null = null;
       if (component.nodeName === "provider") {
+        if (
+          androidAttribute(component, "readPermission") !== null ||
+          androidAttribute(component, "writePermission") !== null
+        )
+          providerPermissionOverridesUnknown += 1;
         const declaredAuthorities = trimmed(component, "authorities");
         if (declaredAuthorities !== null) {
           const split = providerAuthorities(
@@ -491,6 +503,18 @@ export const parseAndroidManifestComponents = (
   if (invalidNames > 0) {
     limitations.push(
       `${String(invalidNames)} component name value(s) are empty or have surrounding whitespace; the raw declaration is retained without resolving it as an identity.`,
+    );
+    truncated = true;
+  }
+  if (packageHasInvalidWhitespace) {
+    limitations.push(
+      "The manifest package has surrounding whitespace; relative component names were not resolved against it.",
+    );
+    truncated = true;
+  }
+  if (providerPermissionOverridesUnknown > 0) {
+    limitations.push(
+      `${String(providerPermissionOverridesUnknown)} provider(s) declare android:readPermission or android:writePermission; operation-specific permission overrides are retained in the manifest text but are not projected.`,
     );
     truncated = true;
   }

@@ -52,6 +52,10 @@ value omitted because its resource/manifest-placeholder token is unresolved
 or the total permission-byte budget was reached. Resource and placeholder
 references are not expanded at this parser boundary. Repeated inherited
 values share one inventory-wide byte budget.
+Provider `android:readPermission` and `android:writePermission` overrides are
+not projected as separate fields; their presence marks the inventory partial
+and is called out in `limitations`. Relative component names are not resolved
+against a manifest package with surrounding whitespace.
 
 `exported` is the declared literal `true` or `false`, otherwise null.
 `exported_default` is the documented default only where it can be established;

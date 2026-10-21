@@ -115,6 +115,26 @@ it("does not inherit application permission through an explicit empty override",
   });
 });
 
+it("marks unprojected provider read and write permission overrides partial", () => {
+  const manifest =
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><provider android:name=".ReadOnly" android:readPermission="com.example.READ"/><provider android:name=".WriteOnly" android:writePermission="com.example.WRITE"/><provider android:name=".Generic" android:permission="com.example.GENERIC" android:readPermission="com.example.READ"/></application></manifest>';
+  const inventory = parseAndroidManifestComponents(manifest, "complete", "33");
+  expect(
+    inventory.items.map(({ permission, permission_source }) => [
+      permission,
+      permission_source,
+    ]),
+  ).toEqual([
+    [null, "none"],
+    [null, "none"],
+    ["com.example.GENERIC", "component"],
+  ]);
+  expect(inventory.status).toBe("partial");
+  expect(inventory.limitations.join(" ")).toContain(
+    "operation-specific permission overrides are retained",
+  );
+});
+
 it("does not apply application or target permissions through an activity alias", () => {
   const manifest =
     '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application android:permission="com.example.APP"><activity android:name=".Target" android:permission="com.example.TARGET"/><activity-alias android:name=".Alias" android:targetActivity=".Target"/></application></manifest>';
@@ -311,6 +331,22 @@ it("keeps relative names unresolved when the manifest package is absent", () => 
   expect(inventory.status).toBe("partial");
   expect(inventory.limitations.join(" ")).toContain(
     "manifest package is absent",
+  );
+});
+
+it("does not trim malformed package names into resolved component identities", () => {
+  const inventory = parseAndroidManifestComponents(
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package=" com.example "><application><activity android:name=".Main"/></application></manifest>',
+    "complete",
+    "33",
+  );
+  expect(inventory.items[0]).toMatchObject({
+    declared_name: ".Main",
+    name: ".Main",
+  });
+  expect(inventory.status).toBe("partial");
+  expect(inventory.limitations.join(" ")).toContain(
+    "package has surrounding whitespace",
   );
 });
 
