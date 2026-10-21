@@ -392,6 +392,18 @@ describe("managed CIL prefix completion", () => {
     expect(coverage.state).toBe("partial");
   });
 
+  it("rejects a fat method ending in a prefix without a normalized fingerprint", () => {
+    expect(fatBody(Buffer.from([0xfe, 0x13]))).toMatchObject({
+      status: "malformed",
+      header_format: "fat",
+      il_size: 2,
+      decoded_instruction_count: 1,
+      opcode_counts: { "volatile.": 1 },
+      normalized_il_sha256: null,
+      issue: "CIL prefix chain at IL offset 0 has no following instruction",
+    });
+  });
+
   it("keeps a completed prefix chain present with its fingerprint", () => {
     const { body, coverage } = tinyBody([
       0xfe, 0x12, 1, 0xfe, 0x13, 0x4a, 0x2a,
