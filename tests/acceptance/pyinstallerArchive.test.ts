@@ -191,7 +191,7 @@ it("reports unknown traversal through the CLI for an opaque PYZ", async () => {
     encrypted: false,
     hash_status: "verified",
     artifact_id: expect.any(String),
-    source_location: { kind: "byte-span" },
+    source_location: { offset: expect.any(Number), length: expect.any(Number) },
   });
   expect(opaque?.format_metadata).toMatchObject({
     pyz_python_magic: "00000000",

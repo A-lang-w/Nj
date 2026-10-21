@@ -100,64 +100,69 @@ const assertMetadataQueries = async (
   );
 };
 
+const writeExecutable = async (opaque: boolean): Promise<string> => {
+  const directory = await createTestTempDirectory("rea-pyinstaller-mcp-");
+  const path = join(directory, "hello");
+  await writeFile(
+    path,
+    cArchiveExecutable({
+      layout: "2.1",
+      pythonVersion: 312,
+      pythonLibrary: "libpython3.12.so",
+      members: [
+        {
+          name: "pyi-contents-directory _internal",
+          typeCode: "o",
+          payload: Buffer.alloc(0),
+          compress: false,
+        },
+        {
+          name: "pyi-contents-directory _internal",
+          typeCode: "o",
+          payload: Buffer.alloc(0),
+          compress: false,
+        },
+        {
+          name: "hello",
+          typeCode: "s",
+          payload: Buffer.from("print('hi')"),
+          compress: false,
+        },
+        {
+          name: "../shared/app:assets/data.bin",
+          typeCode: "d",
+          payload: Buffer.alloc(0),
+          compress: false,
+        },
+        {
+          name: "PYZ.pyz",
+          typeCode: "z",
+          payload: pyzArchive({
+            magic: opaque ? Buffer.alloc(4) : PYTHON_39_MAGIC,
+            modules: [{ name: "app", typeCode: 0, body: Buffer.from("app") }],
+          }),
+          compress: false,
+        },
+        ...(opaque
+          ? [
+              {
+                name: "pyimod00_crypto_key",
+                typeCode: "m",
+                payload: Buffer.from("key"),
+                compress: false,
+              },
+            ]
+          : []),
+      ],
+    }),
+  );
+  return path;
+};
+
 it.each([false, true])(
   "inventories a PyInstaller executable through inspect_artifact (opaque: %s)",
   async (opaque) => {
-    const directory = await createTestTempDirectory("rea-pyinstaller-mcp-");
-    const path = join(directory, "hello");
-    await writeFile(
-      path,
-      cArchiveExecutable({
-        layout: "2.1",
-        pythonVersion: 312,
-        pythonLibrary: "libpython3.12.so",
-        members: [
-          {
-            name: "pyi-contents-directory _internal",
-            typeCode: "o",
-            payload: Buffer.alloc(0),
-            compress: false,
-          },
-          {
-            name: "pyi-contents-directory _internal",
-            typeCode: "o",
-            payload: Buffer.alloc(0),
-            compress: false,
-          },
-          {
-            name: "hello",
-            typeCode: "s",
-            payload: Buffer.from("print('hi')"),
-            compress: false,
-          },
-          {
-            name: "../shared/app:assets/data.bin",
-            typeCode: "d",
-            payload: Buffer.alloc(0),
-            compress: false,
-          },
-          {
-            name: "PYZ.pyz",
-            typeCode: "z",
-            payload: pyzArchive({
-              magic: opaque ? Buffer.alloc(4) : PYTHON_39_MAGIC,
-              modules: [{ name: "app", typeCode: 0, body: Buffer.from("app") }],
-            }),
-            compress: false,
-          },
-          ...(opaque
-            ? [
-                {
-                  name: "pyimod00_crypto_key",
-                  typeCode: "m",
-                  payload: Buffer.from("key"),
-                  compress: false,
-                },
-              ]
-            : []),
-        ],
-      }),
-    );
+    const path = await writeExecutable(opaque);
     const session = await createArtifactBinarySession(process.env);
     const server = createServer({ kind: "session", session });
     const client = new Client({ name: "pyinstaller-mcp-test", version: "1" });
