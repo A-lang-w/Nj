@@ -184,7 +184,9 @@ const parseEffectiveIgnoreCase = (text: string): boolean | null => {
     }
   }
   if (worktreeConfig === true || worktreeConfigUnknown) return null;
-  return parseGitBoolean(values.at(-1));
+  const parsedValues = values.map(parseGitBoolean);
+  if (parsedValues.some((value) => value === null)) return null;
+  return parsedValues.at(-1) ?? null;
 };
 
 const parseGitBoolean = (value: string | undefined): boolean | null => {

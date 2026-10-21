@@ -179,6 +179,57 @@ const testMalformedGitIgnoreConfig = async () => {
   );
 };
 
+const testRepeatedInvalidIgnoreCase = async () => {
+  const root = await createTestTempDirectory(
+    "rea-reference-ignore-repeated-invalid-config-",
+  );
+  await writeTree(root, {
+    ".gitignore": "generated/\n",
+    "Generated/keep.ts": "unknown case semantics must not retain this file\n",
+    "generated/keep.ts": "lowercase match\n",
+  });
+  expect(
+    spawnSync("git", ["init", "--quiet", "--initial-branch=main", root], {
+      encoding: "utf8",
+    }).status,
+  ).toBe(0);
+  const configPath = join(root, ".git", "config");
+  await writeFile(
+    configPath,
+    `${await readFile(configPath, "utf8")}\n[core]\n\tignoreCase = auto\n\tignoreCase = false\n`,
+  );
+  const gitConfig = spawnSync(
+    "git",
+    ["-C", root, "config", "--bool", "--get", "core.ignoreCase"],
+    { encoding: "utf8" },
+  );
+  expect(gitConfig.status).not.toBe(0);
+  const gitCheck = spawnSync(
+    "git",
+    ["-C", root, "check-ignore", "--no-index", "-v", "--", "Generated/keep.ts"],
+    { encoding: "utf8" },
+  );
+  expect(gitCheck.status).not.toBe(0);
+
+  const result = await importReferenceSource({
+    root,
+    caller: "nested-ignore-repeated-invalid-config-test",
+    policy: { secretPatterns: [] },
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.limitations).toContain(
+    "Effective Git core.ignoreCase is unknown; project ignore matching used case-insensitive rules.",
+  );
+  expect(result.value.exclusions).toContainEqual(
+    expect.objectContaining({
+      path: "Generated",
+      reason: "project-ignored",
+      pattern: "generated/",
+      policy_path: ".gitignore",
+    }),
+  );
+};
+
 const testCanonicalSymlinkUsesTargetRepository = async () => {
   const root = await createTestTempDirectory("rea-reference-vcs-symlink-");
   const repositoryA = join(root, "repository-a");
@@ -307,6 +358,126 @@ const testTerminalGlobstarMatchesGit = async (
   expect(entries.has(`${prefix}keep.ts`)).toBe(true);
 };
 
+const testLiteralWhitespaceIgnoreMatchesGit = async (
+  nested: boolean,
+  name: string,
+  pattern = name,
+) => {
+  const root = await createTestTempDirectory(
+    "rea-reference-literal-whitespace-ignore-",
+  );
+  const prefix = nested ? "pkg/" : "";
+  const policyPath = nested ? "pkg/.gitignore" : ".gitignore";
+  const ignoredPath = `${prefix}${name}`;
+  await writeTree(root, {
+    [policyPath]: `${pattern}\n`,
+    [ignoredPath]: "must be excluded by Git's literal whitespace rule\n",
+    [`${prefix}keep.ts`]: "retained\n",
+  });
+  const initialized = spawnSync("git", ["init", "--quiet", root], {
+    encoding: "utf8",
+  });
+  expect(initialized.status, initialized.stderr).toBe(0);
+  const git = spawnSync(
+    "git",
+    ["-C", root, "check-ignore", "--no-index", "-v", "--", ignoredPath],
+    { encoding: "utf8" },
+  );
+  expect(git.status, git.stderr).toBe(0);
+
+  const result = await importReferenceSource({
+    root,
+    caller: "nested-ignore-literal-whitespace-test",
+    policy: { secretPatterns: [] },
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.entries.map(({ path }) => path)).not.toContain(
+    ignoredPath,
+  );
+  expect(result.value.entries.map(({ path }) => path)).toContain(
+    `${prefix}keep.ts`,
+  );
+  expect(result.value.exclusions).toContainEqual(
+    expect.objectContaining({
+      path: ignoredPath,
+      reason: "project-ignored",
+      pattern,
+      policy_path: policyPath,
+    }),
+  );
+};
+
+const testWhitespaceGlobCardinalityMatchesGit = async (
+  nested: boolean,
+  whitespace: string,
+) => {
+  const root = await createTestTempDirectory(
+    "rea-reference-whitespace-glob-cardinality-",
+  );
+  const prefix = nested ? "pkg/" : "";
+  const policyPath = nested ? "pkg/.gitignore" : ".gitignore";
+  const pattern = "foo?bar";
+  const targetPaths = [`${prefix}foo${whitespace}bar`, `${prefix}fooXbar`];
+  await writeTree(root, {
+    [policyPath]: `${pattern}\n`,
+    [targetPaths[0]!]: "literal whitespace match\n",
+    [targetPaths[1]!]: "single-character glob match\n",
+    [`${prefix}keep.ts`]: "retained\n",
+  });
+  expect(
+    spawnSync("git", ["init", "--quiet", root], { encoding: "utf8" }).status,
+  ).toBe(0);
+  for (const targetPath of targetPaths) {
+    const git = spawnSync(
+      "git",
+      ["-C", root, "check-ignore", "--no-index", "-v", "--", targetPath],
+      { encoding: "utf8" },
+    );
+    expect(git.status, git.stderr).toBe(0);
+  }
+  const result = await importReferenceSource({
+    root,
+    caller: "nested-ignore-whitespace-glob-test",
+    policy: { secretPatterns: [] },
+  });
+  if (!result.ok) throw result.error;
+  for (const targetPath of targetPaths)
+    expect(result.value.entries.map(({ path }) => path)).not.toContain(
+      targetPath,
+    );
+  expect(result.value.entries.map(({ path }) => path)).toContain(
+    `${prefix}keep.ts`,
+  );
+};
+
+const testLiteralWhitespaceSecretPattern = async () => {
+  const root = await createTestTempDirectory(
+    "rea-reference-literal-whitespace-secret-",
+  );
+  await writeTree(root, {
+    ".gitignore": "",
+    "\t": "excluded by the caller's secret rule\n",
+    "keep.ts": "retained\n",
+  });
+  expect(
+    spawnSync("git", ["init", "--quiet", root], { encoding: "utf8" }).status,
+  ).toBe(0);
+  const result = await importReferenceSource({
+    root,
+    caller: "literal-whitespace-secret-test",
+    policy: { secretPatterns: ["\t"] },
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.entries.map(({ path }) => path)).not.toContain("\t");
+  expect(result.value.exclusions).toContainEqual(
+    expect.objectContaining({
+      path: "\t",
+      reason: "configured-secret",
+      pattern: "\t",
+    }),
+  );
+};
+
 describe.skipIf(process.platform === "win32")(
   "nested reference ignore rules",
   () => {
@@ -367,6 +538,9 @@ describe.skipIf(process.platform === "win32")(
         ).toBe(!ignoreCase);
       },
     );
+    it("preserves literal whitespace in caller secret patterns", async () => {
+      await testLiteralWhitespaceSecretPattern();
+    });
 
     it("retains unknown ignore case when Git config uses includes", async () => {
       await testUnknownIncludedGitIgnoreCase();
@@ -696,3 +870,45 @@ describe.skipIf(process.platform === "win32")(
     );
   },
 );
+
+describe.skipIf(process.platform === "win32")(
+  "literal whitespace in ignore rules",
+  () => {
+    it.each([
+      { nested: false, name: "\t" },
+      { nested: false, name: "\u00a0" },
+      { nested: true, name: "\t" },
+      { nested: true, name: "\u00a0" },
+    ])("matches Git for $name (nested=$nested)", async ({ nested, name }) => {
+      await testLiteralWhitespaceIgnoreMatchesGit(nested, name);
+    });
+    it.each([
+      { nested: false, whitespace: "\t" },
+      { nested: true, whitespace: "\t" },
+    ])(
+      "preserves one-character glob matching for $whitespace (nested=$nested)",
+      async ({ nested, whitespace }) => {
+        await testWhitespaceGlobCardinalityMatchesGit(nested, whitespace);
+      },
+    );
+    it.each([
+      { nested: false, name: "\t" },
+      { nested: true, name: "\t" },
+    ])(
+      "preserves an existing character class for $name (nested=$nested)",
+      async ({ nested, name }) => {
+        await testLiteralWhitespaceIgnoreMatchesGit(nested, name, `[${name}]`);
+      },
+    );
+    it.each([false, true])(
+      "keeps an escaped opening bracket literal (nested=%s)",
+      async (nested) => {
+        await testLiteralWhitespaceIgnoreMatchesGit(nested, `[\t`, `\\[\t`);
+      },
+    );
+  },
+);
+
+it("keeps repeated invalid Git ignoreCase values unknown", async () => {
+  await testRepeatedInvalidIgnoreCase();
+});

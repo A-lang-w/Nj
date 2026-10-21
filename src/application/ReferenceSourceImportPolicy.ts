@@ -68,33 +68,113 @@ const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;
 
 type IgnoreReason = "project-ignored" | "default-ignored" | "caller-excluded";
 
+/** Preserve literal whitespace as one glob atom; `ignore` rewrites it to space. */
+const protectLiteralWhitespace = (pattern: string): string => {
+  let result = "";
+  let inClass = false;
+  let classFirst = false;
+  let classAllowsInitialClose = false;
+  for (let index = 0; index < pattern.length;) {
+    const character = pattern[index]!;
+    if (character === "\\") {
+      let end = index;
+      while (pattern[end] === "\\") end += 1;
+      const count = end - index;
+      const next = pattern[end];
+      if (next !== undefined && /\s/u.test(next) && next !== " ") {
+        result += "\\".repeat(count - (count % 2));
+        result += inClass ? next : `[${next}]`;
+        index = end + 1;
+        continue;
+      }
+      result += pattern.slice(index, end);
+      if (next !== undefined && count % 2 === 1) {
+        result += next;
+        if (inClass) {
+          classFirst = false;
+          classAllowsInitialClose = false;
+        }
+        index = end + 1;
+        continue;
+      }
+      index = end;
+      continue;
+    }
+    if (inClass) {
+      if (classFirst && (character === "!" || character === "^")) {
+        result += character;
+        classFirst = false;
+        index += 1;
+        continue;
+      }
+      if (classAllowsInitialClose && character === "]") {
+        result += character;
+        classFirst = false;
+        classAllowsInitialClose = false;
+        index += 1;
+        continue;
+      }
+      if (
+        character === "[" &&
+        [":", ".", "="].includes(pattern[index + 1] ?? "")
+      ) {
+        const close = `${pattern[index + 1]}]`;
+        const end = pattern.indexOf(close, index + 2);
+        if (end !== -1) {
+          result += pattern.slice(index, end + 2);
+          index = end + 2;
+          classFirst = false;
+          continue;
+        }
+      }
+      if (character === "]") inClass = false;
+      else {
+        classFirst = false;
+        classAllowsInitialClose = false;
+      }
+      result += character;
+      index += 1;
+      continue;
+    }
+    if (character === "[") {
+      inClass = true;
+      classFirst = true;
+      classAllowsInitialClose = true;
+    }
+    if (!inClass && character !== " " && /\s/u.test(character))
+      result += `[${character}]`;
+    else result += character;
+    index += 1;
+  }
+  return result;
+};
+
 /** Scope Git patterns once while retaining their original text for evidence. */
 const scopedPattern = (
   sourcePattern: string,
   prefix: string | undefined,
 ): string | undefined => {
-  // A U+FEFF remaining in a rule is a literal character, not a file signature.
-  // Protect it from ignore's per-rule BOM and whitespace normalization.
   // A terminal directory globstar must consume a descendant. ignore otherwise
   // lets its zero-depth match include the named parent, including for negations.
-  const pattern = sourcePattern
-    .replace(/^(!?)\uFEFF/u, "$1[\uFEFF]")
-    .replace(/(^!?|\/)\*\*\/(?=\s*$)/u, "$1**/*/");
-  if (prefix === undefined) return pattern;
-  if (pattern.trim() === "" || pattern.startsWith("#")) return undefined;
+  const pattern = sourcePattern.replace(/(^!?|\/)\*\*\/(?= *$)/u, "$1**/*/");
+  if (prefix === undefined) return protectLiteralWhitespace(pattern);
+  if (pattern.length === 0 || /^ *$/u.test(pattern) || pattern.startsWith("#"))
+    return undefined;
   const negative = pattern.startsWith("!");
   // Account for escaped trailing whitespace before deciding whether a slash
   // anchors the rule to its own directory.
   const body = negative ? pattern.slice(1) : pattern;
   const normalized = body.replace(
-    /((?:\\\\)*?)(\\?\s+)$/u,
+    /((?:\\\\)*?)(\\? +)$/u,
     (_match, pairs: string, trailing: string) =>
       pairs + (trailing.startsWith("\\") ? " " : ""),
   );
   if (normalized === "" || normalized === "/") return undefined;
   const anchored =
     normalized.startsWith("/") || normalized.slice(0, -1).includes("/");
-  return `${negative ? "!" : ""}/${prefix}/${anchored ? "" : "**/"}${body.replace(/^\//u, "")}`;
+  return protectLiteralWhitespace(
+    `${negative ? "!" : ""}/${prefix}/${anchored ? "" : "**/"}${body.replace(/^\//u, "")}`,
+  );
 };
 
 const addMarkedPatterns = (
@@ -312,7 +392,12 @@ export const prepareReferenceSourceImport = async (
       );
       for (const path of options.excludePaths ?? [])
         addMarkedPatterns(overrides, [path, `${path}/`], "caller-excluded");
-      const secrets = ignore().add([...options.policy.secretPatterns]);
+      const secrets = ignore();
+      for (const pattern of options.policy.secretPatterns)
+        secrets.add({
+          pattern: protectLiteralWhitespace(pattern),
+          mark: pattern,
+        });
       return ok({
         root: root.value,
         limitations:
@@ -430,7 +515,10 @@ const createShouldExclude =
         path,
         entry_kind: kind,
         reason: "configured-secret",
-        pattern: secretMatch.rule.pattern,
+        pattern:
+          typeof secretMatch.rule.mark === "string"
+            ? secretMatch.rule.mark
+            : secretMatch.rule.pattern,
       });
       return true;
     }
