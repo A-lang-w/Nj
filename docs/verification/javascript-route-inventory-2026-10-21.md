@@ -1,9 +1,11 @@
 # Static JavaScript route inventory verification
 
 Issue: [#4772](https://github.com/morluto/rea/issues/4772). Qualified runtime:
-`135c56bc2f4d9a5e1c39757c2319460788b73897`, tree `ef6482f750653e8b6ffc1fac37db95ffab4a300d`,
-on main base `6d356b843`. All current corpus, public-interface and delivery
-measurements below use that runtime. The JSON retains exact source digests,
+`66e1ca85242f4ac17559735d0423718be271977c`, tree `1fa563f913e96bd040b2506ebd47f097e58e2216`,
+on main base `6d356b843`. Public-interface and delivery measurements use that runtime. The 67 isolated
+source workers ran at `7dff8ea4e`; only the inventory owner/tests changed afterward.
+Their complete inventories replayed identically through the current owner; this
+reuses validated checkpoints and does not claim a new full worker analysis. The JSON retains exact source digests,
 commands, profiles, historical controls and material failed attempts. Earlier
 qualification records are pinned to `48cc5fbc7` (runtime `b5ffdba6f`) and
 `13bfba73a` (root correction `4d0630abb`); verification-only commits do not change
@@ -21,8 +23,8 @@ checkpoints for 65/67 sources. 3 jobs reached the unchanged 15-second deadline;
 1 of those retained route facts. Unavailable sources and partial enumeration
 remain visible. Each worker had a caller-selected 512 MiB old-space limit and
 one semantic projection node; route syntax precedes semantic projection. The
-complete probe took 268.862 s elapsed, 404.374 CPU s and
-494,362,624 sampled peak family RSS bytes. No resource guard
+complete probe took 200.898 s elapsed, 298.470 CPU s and
+487,661,568 sampled peak family RSS bytes. No resource guard
 stopped it. These captures do not establish lazy/server-only code, reachability
 or a complete application route denominator.
 
@@ -49,7 +51,7 @@ it. Actual CLI and SDK `analyze_web_bundle` calls captured that inert source via
 CDP and returned all 18 patterns, its original URL and exact SHA-256.
 Selected-source parsing was `complete` and candidate enumeration
 `partial`; application coverage stayed unknown. The verifier took
-19.257 s elapsed, 23.607 CPU s and 2,140,971,008 sampled
+9.881 s elapsed, 12.341 CPU s and 2,198,265,856 sampled
 peak family RSS bytes. Owned browser-group and temporary-profile cleanup succeeded.
 This qualifies passive capture, not the published application's UI behavior.
 
@@ -58,33 +60,35 @@ This qualifies passive capture, not the published application's UI behavior.
 Both fresh SDK sessions used the same source, semantic budget, 512 MiB worker,
 15-second deadline and `/docs` query with path, confidence, mechanisms and source
 provenance. Both retained the identical parent Evidence ID
-`ev_4c44a363e477964c15918761bd7922b01db9810f07ab22fc2bfb674b42a23a16`,
+`ev_345bf4f2dff7e6a89b26a896d07c4a1ff5a8fd22d092c7ead2cba04d4b021509`,
 performed three additional historical reads and exported complete Evidence.
 OS caches were already warm; there was no storage-cold or statistical study.
 The benchmark MCP host had a 2 GiB old-space choice; its driver had 3 GiB.
+Input advertisements were explicitly `full`. New main defaults to `compact`;
+that default catalog cost is not measured by this comparison.
 
 | Measured complete workflow                                    | Complete delivery then route view | Selected view in analysis call |
 | ------------------------------------------------------------- | --------------------------------: | -----------------------------: |
-| Estimated tokens, used input declarations + all calls/replies |                         1,935,052 |                         58,249 |
-| Estimated tokens, entire catalog + all calls/replies          |                         3,017,626 |                      1,140,823 |
-| Elapsed seconds, including startup and cleanup                |                            17.564 |                         24.562 |
-| CPU seconds, process family                                   |                            22.690 |                         31.082 |
-| Peak sampled process-family RSS bytes                         |                     1,525,354,496 |                  1,292,701,696 |
+| Estimated tokens, used input declarations + all calls/replies |                         1,937,109 |                         58,249 |
+| Estimated tokens, entire catalog + all calls/replies          |                         3,019,683 |                      1,140,823 |
+| Elapsed seconds, including startup and cleanup                |                            14.017 |                         12.500 |
+| CPU seconds, process family                                   |                            18.612 |                         16.375 |
+| Peak sampled process-family RSS bytes                         |                     1,545,674,752 |                  1,297,858,560 |
 
 The primary question required two calls with complete delivery and one with
 selected delivery: used declarations plus primary replies estimate
-1,908,115 versus 11,260 tokens. The complete analysis
-reply was 6,195,709 SDK JSON bytes, versus 28,885 for the route page.
+1,910,172 versus 11,260 tokens. The complete analysis
+reply was 6,202,233 SDK JSON bytes, versus 28,885 for the route page.
 `tokenx` estimates use actual declarations, arguments and full SDK replies; they
 are not actual model usage. JSON-RPC initialization/envelopes remain unmeasured.
 Full-catalog costs are shown separately. SDK/Ajv validation and token-estimation
 instrumentation are included in driver time, CPU and memory; their separate cost
-is unmeasured. Selected delivery was slower in this run despite returning fewer
-tokens and using less peak memory. No latency or underlying analysis-speedup
-claim is made, and earlier faster runs are not substituted for this result.
+is unmeasured. Timing varied between runs: the earlier `135c56bc2` qualification had slower
+selected delivery and remains pinned at `38f2f9637`. These samples establish no
+stable latency or underlying analysis-speedup claim.
 
-Complete-mode view calls took 3457.7, 51.3, 22.1, 20.1 ms; selected-mode historical calls took
-4009.0, 43.0, 25.6 ms. First calls include cold client/tool preparation that was not separately
+Complete-mode view calls took 1963.1, 29.0, 13.2, 15.5 ms; selected-mode historical calls took
+2029.9, 19.6, 12.9 ms. First calls include cold client/tool preparation that was not separately
 profiled. The immutable-snapshot cache does not establish zero preparation cost.
 Projection preserves complete Evidence materialization.
 
@@ -106,22 +110,29 @@ status and an 8 GiB family / 420-second stop guard; no qualifying run hit it.
   Changed bindings cannot revive stale roots; ordinary wrappers do not become URL
   segments. Claiming follows route-child relationships consumed by the walker,
   leaving component/loader inputs independently discoverable with uncertainty.
-- Dynamic route/navigation expressions own their literal fragments. Rooted
-  dynamic navigation records an unknown at the whole expression; fragments are
+- Dynamic route/navigation expressions own their literal fragments. Recognized
+  dynamic navigation, including variable/member destinations, records an unknown
+  at the whole expression; fragments are
   not complete paths. Ownership stops at arrays, objects and callable/class
   definitions, preserving independent constants inside bundled module bodies.
-- Generic constants are anchored before adding an inferred base. Inferred root
+- Based and unbased generic constants/anchors compare the same application
+  segments before adding an inferred base; unrelated framework strings stay excluded. Inferred root
   `/` joins to the base itself; explicit `/app/` remains distinct. Next module
   parsing starts after `/_next/`, so deployment `app` is not a source directory.
 - Typed trees share page classification with nested configuration. Name-only
   calls stay unknown because they can denote server endpoints. TypeScript page
-  filenames retain metadata-only provenance. Known capture omissions survive as
+  filenames retain metadata-only provenance. Raw private `_folder` trees are
+  excluded before decoding, while public `%5Ffolder` spelling remains supported
+  ([Next.js folder rules](https://nextjs.org/docs/app/getting-started/project-structure#private-folders)). Known capture omissions survive as
   global gaps and compact summary metadata without invented script identities.
 
-Current execution: **187/187 source regressions** and **21/21 production-worker /
+Current execution: **196/196 source regressions** and **28/28 production-worker /
 public CLI/SDK tests** passed, including source deletion before exported-Evidence
 queries, Turbopack-shaped modules, dynamic prefixes and independent component
-route tables. `npm run check:fast` and `npm run docs:check` passed. Earlier matched
+route tables. Exact advertised-input tests explicitly select the full profile;
+SDK tests cover both full and compact advertisements, canonical rejection of
+invalid selectors and recovery. This fixes the CI integration with main #5975
+without weakening canonical validation. `npm run check:fast` and `npm run docs:check` passed. Earlier matched
 main/initial-runtime real-worker/browser-MCP/retention controls passed **23/23**
 each; isolated browser/legacy controls passed **6/6**. An initial aggregate browser
 timeout was not reproduced without changing its deadline; its cause is unproven.

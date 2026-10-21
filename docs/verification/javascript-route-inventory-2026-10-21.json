@@ -1,10 +1,10 @@
 {
-  "equivalent_parent_evidence_id": "ev_4c44a363e477964c15918761bd7922b01db9810f07ab22fc2bfb674b42a23a16",
+  "equivalent_parent_evidence_id": "ev_345bf4f2dff7e6a89b26a896d07c4a1ff5a8fd22d092c7ead2cba04d4b021509",
   "issue": 4772,
   "date": "2026-10-21",
   "base_commit": "6d356b843",
-  "implementation_commit": "135c56bc2f4d9a5e1c39757c2319460788b73897",
-  "implementation_tree": "ef6482f750653e8b6ffc1fac37db95ffab4a300d",
+  "implementation_commit": "66e1ca85242f4ac17559735d0423718be271977c",
+  "implementation_tree": "1fa563f913e96bd040b2506ebd47f097e58e2216",
   "host": {
     "platform": "linux",
     "arch": "x64",
@@ -13,7 +13,8 @@
     "parent_old_space_mib": 3072,
     "source_worker_old_space_mib": 512,
     "source_worker_timeout_ms": 15000,
-    "benchmark_mcp_host_old_space_mib": 2048
+    "benchmark_mcp_host_old_space_mib": 2048,
+    "benchmark_input_schema_profile": "full"
   },
   "qualification_limits": [
     "Captured homepage script references only; lazy and server-only code remain unknown.",
@@ -23,7 +24,9 @@
     "3 jobs reached the 15s deadline; 1 retained route-fact checkpoints. 64 jobs completed and 65 sources retained route facts.",
     "New sessions with OS caches already warm; no filesystem cache flush or repeated statistical timing study.",
     "Tokenx estimates include actual advertised declarations and SDK replies; not actual model usage. Initialization/JSON-RPC envelope tokens are unmeasured.",
-    "Same implementation compared with complete vs selected delivery; no claim of faster underlying source analysis."
+    "Same implementation compared with complete vs selected delivery; no claim of faster underlying source analysis.",
+    "SDK cost measurements explicitly use full input advertisements. New main defaults to compact advertisements; those default costs are not measured here.",
+    "Dynamic push/replace receiver recognition uses navigation naming conventions, not framework instance/type resolution. Arbitrary aliases and application reachability remain unknown."
   ],
   "corpus": [
     {
@@ -45,7 +48,7 @@
           "bytes": 32352,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3969.2413420000003,
+          "elapsed_ms": 2184.926372,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -58,7 +61,7 @@
           "bytes": 33951,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3857.1113570000007,
+          "elapsed_ms": 1913.8341770000002,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -71,7 +74,7 @@
           "bytes": 112594,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 12456.862033,
+          "elapsed_ms": 6548.694606,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -84,7 +87,7 @@
           "bytes": 15009,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2137.738911999997,
+          "elapsed_ms": 1072.790221000001,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -97,7 +100,7 @@
           "bytes": 133360,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 7144.589200999999,
+          "elapsed_ms": 4748.036378999999,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -110,7 +113,7 @@
           "bytes": 229185,
           "source_analysis_completed": false,
           "route_facts_retained": false,
-          "elapsed_ms": 15485.434978000001,
+          "elapsed_ms": 15210.153809,
           "parse_status": null,
           "parse_error_count": null,
           "error": {
@@ -125,7 +128,7 @@
           "bytes": 28175,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 9787.666240000006,
+          "elapsed_ms": 5786.323611000003,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -138,7 +141,7 @@
           "bytes": 12863,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2282.4441110000043,
+          "elapsed_ms": 1330.4814370000022,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -151,7 +154,7 @@
           "bytes": 20385,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2385.2341439999946,
+          "elapsed_ms": 1313.2419470000023,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -164,7 +167,7 @@
           "bytes": 31944,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3242.265991,
+          "elapsed_ms": 2210.606141999997,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -177,7 +180,7 @@
           "bytes": 34609,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3089.4065249999985,
+          "elapsed_ms": 1796.3342889999985,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -190,7 +193,7 @@
           "bytes": 26926,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2487.760905999996,
+          "elapsed_ms": 1307.3387379999986,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -203,7 +206,7 @@
           "bytes": 32709,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3096.469822999992,
+          "elapsed_ms": 1799.4180689999994,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -216,7 +219,7 @@
           "bytes": 32580,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3273.675747999994,
+          "elapsed_ms": 1842.544879000001,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -229,7 +232,7 @@
           "bytes": 44459,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3717.8644700000004,
+          "elapsed_ms": 2259.640151000007,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -242,7 +245,7 @@
           "bytes": 155519,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 10041.786072000003,
+          "elapsed_ms": 5823.491450999994,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -255,7 +258,7 @@
           "bytes": 42730,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3123.1037090000027,
+          "elapsed_ms": 1723.7191010000024,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -268,7 +271,7 @@
           "bytes": 27406,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3128.8375090000045,
+          "elapsed_ms": 1805.3009200000015,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -281,7 +284,7 @@
           "bytes": 42218,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 4354.495632000006,
+          "elapsed_ms": 2072.645414999999,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -294,7 +297,7 @@
           "bytes": 166723,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3556.344097999987,
+          "elapsed_ms": 2043.6090949999998,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -307,7 +310,7 @@
           "bytes": 17846,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2871.724949999989,
+          "elapsed_ms": 1603.1218220000083,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -320,7 +323,7 @@
           "bytes": 24269,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2451.4245660000015,
+          "elapsed_ms": 1418.2115159999958,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -333,7 +336,7 @@
           "bytes": 31418,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3230.5168269999995,
+          "elapsed_ms": 1895.4792279999965,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -346,7 +349,7 @@
           "bytes": 75012,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 5518.246077000003,
+          "elapsed_ms": 3116.948107000004,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -359,7 +362,7 @@
           "bytes": 42111,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3981.995775000003,
+          "elapsed_ms": 1968.8328869999968,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -372,7 +375,7 @@
           "bytes": 10240,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2029.216002999994,
+          "elapsed_ms": 1093.7800419999985,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -385,7 +388,7 @@
           "bytes": 35473,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3090.222191000008,
+          "elapsed_ms": 1728.0810800000036,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -398,7 +401,7 @@
           "bytes": 17541,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2516.298385000002,
+          "elapsed_ms": 1430.6624560000055,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -411,7 +414,7 @@
           "bytes": 23491,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2411.9193719999894,
+          "elapsed_ms": 1367.4312270000082,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -442,6 +445,262 @@
             "kind": "source-unavailable",
             "source_range": null,
             "reason": "Analysis operation timed out after 15000ms: analyze_javascript_application"
+          },
+          {
+            "id": "jsg:eef942821859260ad170dde22b71edf0",
+            "source_id": "jss:44eea7aa9039538535f02974f95fbb32",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 12610
+              },
+              "end": {
+                "line": 2,
+                "column": 12611
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:0782cb08f958e666d6df53b0f1632370",
+            "source_id": "jss:44eea7aa9039538535f02974f95fbb32",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 131,
+                "column": 1596
+              },
+              "end": {
+                "line": 131,
+                "column": 1602
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:7465d4effa359c558121e3814ff0c1d6",
+            "source_id": "jss:54d4fcac6a3e7c953a3b91b4842fd8f6",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 12909
+              },
+              "end": {
+                "line": 2,
+                "column": 12910
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:de2a4b468ba767d2cf4175c78d8bb13b",
+            "source_id": "jss:54d4fcac6a3e7c953a3b91b4842fd8f6",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 13168
+              },
+              "end": {
+                "line": 2,
+                "column": 13187
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:f2fe32790766245e17bf2022b5b01bb2",
+            "source_id": "jss:54d4fcac6a3e7c953a3b91b4842fd8f6",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 8,
+                "column": 14289
+              },
+              "end": {
+                "line": 8,
+                "column": 14290
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:24009621cb0af1a39e724a5cc8e91b88",
+            "source_id": "jss:54d4fcac6a3e7c953a3b91b4842fd8f6",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 8,
+                "column": 19913
+              },
+              "end": {
+                "line": 8,
+                "column": 19914
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:db974494335f8a505db17b1080af3a0d",
+            "source_id": "jss:5ae07ee22ad53e32d371e4e32a572492",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 3730
+              },
+              "end": {
+                "line": 2,
+                "column": 3736
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:6506a958445f6889a7e333926877c8ce",
+            "source_id": "jss:5ae07ee22ad53e32d371e4e32a572492",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 11139
+              },
+              "end": {
+                "line": 2,
+                "column": 11140
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:b870aceca7688fab0f3953d88dee7bc7",
+            "source_id": "jss:5ae07ee22ad53e32d371e4e32a572492",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 11277
+              },
+              "end": {
+                "line": 2,
+                "column": 11278
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:5a75f3e9f375cc93ad2d19d23cd7d0ec",
+            "source_id": "jss:5ae07ee22ad53e32d371e4e32a572492",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 11499
+              },
+              "end": {
+                "line": 2,
+                "column": 11500
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:1b812a68a086eae3ba1c2807fe7b8919",
+            "source_id": "jss:5ae07ee22ad53e32d371e4e32a572492",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 12093
+              },
+              "end": {
+                "line": 2,
+                "column": 12097
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:1ad4c189a80f01c7ec8a15d54018ada6",
+            "source_id": "jss:6b66429f6b9eceb413da12e1dc366d75",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 791
+              },
+              "end": {
+                "line": 2,
+                "column": 792
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:06f2043d2bf65363156914f3fdfbdd75",
+            "source_id": "jss:6b66429f6b9eceb413da12e1dc366d75",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 838
+              },
+              "end": {
+                "line": 2,
+                "column": 839
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:7c8774707a216d0d0a56557e92a9bc22",
+            "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 3508
+              },
+              "end": {
+                "line": 2,
+                "column": 3529
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:8e0b77c9c892ed2a633d85082927a595",
+            "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 4,
+                "column": 2859
+              },
+              "end": {
+                "line": 4,
+                "column": 2860
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:84d8f46f52b650c49125dcd596d8dabd",
+            "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 4,
+                "column": 3004
+              },
+              "end": {
+                "line": 4,
+                "column": 3005
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
           },
           {
             "id": "jsg:c5bac56fda68a9589349c70708e7ff7b",
@@ -476,6 +735,22 @@
             "reason": "The routing root is inferred from configuration syntax without a bound route-builder call."
           },
           {
+            "id": "jsg:fde9b96dfb2404c64d74de6bf826a521",
+            "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 4,
+                "column": 3215
+              },
+              "end": {
+                "line": 4,
+                "column": 3234
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
             "id": "jsg:082c469ebc3722610e6e2bef887469bf",
             "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
             "kind": "interpretation",
@@ -506,6 +781,22 @@
               }
             },
             "reason": "The routing root is inferred from configuration syntax without a bound route-builder call."
+          },
+          {
+            "id": "jsg:f9e9ffec71d94c66e8a20b5409974b44",
+            "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 4,
+                "column": 3393
+              },
+              "end": {
+                "line": 4,
+                "column": 3394
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
           },
           {
             "id": "jsg:b370f438ee78140ddab6689143e4d20d",
@@ -540,7 +831,391 @@
             "reason": "The routing root is inferred from configuration syntax without a bound route-builder call."
           },
           {
-            "id": "jsg:fa750e742055a21f7ad6d2b1252e61cd",
+            "id": "jsg:795041ed9c5d2aa599ff3045656ffce3",
+            "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 4,
+                "column": 3790
+              },
+              "end": {
+                "line": 4,
+                "column": 3791
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:cada3df014b56c117860bbda425b6da7",
+            "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 4,
+                "column": 4151
+              },
+              "end": {
+                "line": 4,
+                "column": 4152
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:114a11718caa7a3a752feae1bf7f671f",
+            "source_id": "jss:78d278743f4caa3b19823c850b1ebd68",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 4,
+                "column": 4312
+              },
+              "end": {
+                "line": 4,
+                "column": 4313
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:ea57049185afa8cb7f71fcb472cf35c0",
+            "source_id": "jss:8c17a558b53c6f8519305af7bb07b35a",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 4690
+              },
+              "end": {
+                "line": 2,
+                "column": 4691
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:865c3a677eeb32b7412d34a6522ebbe2",
+            "source_id": "jss:8c17a558b53c6f8519305af7bb07b35a",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 11119
+              },
+              "end": {
+                "line": 2,
+                "column": 11120
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:f79d9f53f12eb3fce3c67d2ed630fcfc",
+            "source_id": "jss:a63d0875de84d7c69034d3da7339055e",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 4508
+              },
+              "end": {
+                "line": 2,
+                "column": 4514
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:b7974062e103780a12312f8b3fb694e1",
+            "source_id": "jss:a63d0875de84d7c69034d3da7339055e",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 11917
+              },
+              "end": {
+                "line": 2,
+                "column": 11918
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:19b88052cacccf128e1658bd2c274849",
+            "source_id": "jss:a63d0875de84d7c69034d3da7339055e",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 12055
+              },
+              "end": {
+                "line": 2,
+                "column": 12056
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:8bbd7c9117e972189d3bbd819ed86dc1",
+            "source_id": "jss:a63d0875de84d7c69034d3da7339055e",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 12277
+              },
+              "end": {
+                "line": 2,
+                "column": 12278
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:459972b2c7557f08089d9fa12df79b0f",
+            "source_id": "jss:a63d0875de84d7c69034d3da7339055e",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 12871
+              },
+              "end": {
+                "line": 2,
+                "column": 12875
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:6591b8b3e29a655a78b2efa5ff889af9",
+            "source_id": "jss:bad246409157001cf4d80f919d65e171",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 6,
+                "column": 4524
+              },
+              "end": {
+                "line": 6,
+                "column": 4525
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:fedfab5cb5cbf222464b448b72d806e1",
+            "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 3834
+              },
+              "end": {
+                "line": 2,
+                "column": 3840
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:e433901d372c1e898ef2691790aa41e8",
+            "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 4017
+              },
+              "end": {
+                "line": 2,
+                "column": 4023
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:119cb1aefa066ef4aa80ec50d51d4942",
+            "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 4817
+              },
+              "end": {
+                "line": 2,
+                "column": 4818
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:a2d2a65ebb0ebcb992e0a21f5e33e6be",
+            "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 5169
+              },
+              "end": {
+                "line": 2,
+                "column": 5170
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:35d627eb2b451e326a871ccdf4cd0e1d",
+            "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 5311
+              },
+              "end": {
+                "line": 2,
+                "column": 5312
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:2ea90aae20b428a31c8351a0eccddce4",
+            "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 5390
+              },
+              "end": {
+                "line": 2,
+                "column": 5391
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:73e7419fea7fb0636a140c5294e12e25",
+            "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 5600
+              },
+              "end": {
+                "line": 2,
+                "column": 5601
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:b60b4042c718f8d89d9fc23cb35f792c",
+            "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 5742
+              },
+              "end": {
+                "line": 2,
+                "column": 5743
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:eb49e454e0f09e3d008160aecc97d538",
+            "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 6034
+              },
+              "end": {
+                "line": 2,
+                "column": 6040
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:a5714a760fd8bdffaccf8074f670be8e",
+            "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 8149
+              },
+              "end": {
+                "line": 2,
+                "column": 8155
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:9dd2c882f3a74b3db6a792f86a334fa5",
+            "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 10657
+              },
+              "end": {
+                "line": 2,
+                "column": 10663
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:169a3d0e19949336bb4774d4dfb80c58",
+            "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 10733
+              },
+              "end": {
+                "line": 2,
+                "column": 10734
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:ded2f2e84a6b4a1df07ac3d597ebd5e2",
+            "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 38771
+              },
+              "end": {
+                "line": 2,
+                "column": 38772
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:6e83faa139252593f59340a1514b7b64",
             "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
             "kind": "interpretation",
             "source_range": {
@@ -553,7 +1228,279 @@
                 "column": 40360
               }
             },
-            "reason": "The navigation target is dynamic; literal fragments do not establish a complete path."
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:c9f29c9ed77bfd03f6568ea8b784d7a0",
+            "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 40720
+              },
+              "end": {
+                "line": 2,
+                "column": 40721
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:4539f4d6fb2a0b6f43a52d53ca746d4b",
+            "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 41533
+              },
+              "end": {
+                "line": 2,
+                "column": 41539
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:d52f17d4232609d38a42a8effe4cbe4d",
+            "source_id": "jss:c89a4aaef1a39208b2c52cb451ac576c",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 41698
+              },
+              "end": {
+                "line": 2,
+                "column": 41704
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:b587a02149adb9712fd126fd541fb564",
+            "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 39190
+              },
+              "end": {
+                "line": 2,
+                "column": 39191
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:ac0381bf6d65b83ad928d26a5a92e230",
+            "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 39239
+              },
+              "end": {
+                "line": 2,
+                "column": 39240
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:1e896b4f997c06006627298f6a69fca3",
+            "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 54101
+              },
+              "end": {
+                "line": 2,
+                "column": 54106
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:8961d94cdb09fc9e27e1e65b9ffea4ae",
+            "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 58193
+              },
+              "end": {
+                "line": 2,
+                "column": 58198
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:2abf4903506c5487c18fe213dbce331b",
+            "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 88661
+              },
+              "end": {
+                "line": 2,
+                "column": 88666
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:eb6342cc08f2e3ebc9d4fabc3ef1ad8d",
+            "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 88780
+              },
+              "end": {
+                "line": 2,
+                "column": 88781
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:94ad4838d991740c568e2f26ea778ec4",
+            "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 88868
+              },
+              "end": {
+                "line": 2,
+                "column": 88869
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:837187b57ab1024d93a4c99187f39f28",
+            "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 95102
+              },
+              "end": {
+                "line": 2,
+                "column": 95107
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:ada3d244e61fe9bc07f5fff9c6790e86",
+            "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 4,
+                "column": 1359
+              },
+              "end": {
+                "line": 4,
+                "column": 1364
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:7cffc7da5a586812af8b4b98d47b4a99",
+            "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 4,
+                "column": 3851
+              },
+              "end": {
+                "line": 4,
+                "column": 3862
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:1d8bf40921d2c5c08896d35fb16fd036",
+            "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 4,
+                "column": 4366
+              },
+              "end": {
+                "line": 4,
+                "column": 4371
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:a86e180c6ce37d6303bd3c503e970904",
+            "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 4,
+                "column": 5097
+              },
+              "end": {
+                "line": 4,
+                "column": 5102
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:02ee353b089b1045c53dfb56f3c76062",
+            "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 4,
+                "column": 5280
+              },
+              "end": {
+                "line": 4,
+                "column": 5285
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:c1244433da691536eb45e9847bf7106e",
+            "source_id": "jss:d164af1ee460751d42f08619fdf75684",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 4,
+                "column": 9033
+              },
+              "end": {
+                "line": 4,
+                "column": 9038
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
           },
           {
             "id": "jsg:412cd352cafc76625a4b2b098ed0753d",
@@ -570,6 +1517,102 @@
               }
             },
             "reason": "The navigation target is dynamic; literal fragments do not establish a complete path."
+          },
+          {
+            "id": "jsg:24d362ed01dcbc88ae19bbb5d3a1de09",
+            "source_id": "jss:d3444459b453e60ae4c002986e0df926",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 625
+              },
+              "end": {
+                "line": 2,
+                "column": 626
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:44a878acffb7d49b6c5cbe32eee3394e",
+            "source_id": "jss:d3444459b453e60ae4c002986e0df926",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 2362
+              },
+              "end": {
+                "line": 2,
+                "column": 2363
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:2a82a9e5c3f1cb1b51af7b62d218cc4e",
+            "source_id": "jss:d3444459b453e60ae4c002986e0df926",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 6400
+              },
+              "end": {
+                "line": 2,
+                "column": 6401
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:67f9f778956551ba4e66dedcb2bfa14c",
+            "source_id": "jss:db743839f53cc0e1befccf0eeb4950ad",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 1971
+              },
+              "end": {
+                "line": 2,
+                "column": 1972
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:78713e9d7881a8f86bf33a4ca40b918d",
+            "source_id": "jss:db743839f53cc0e1befccf0eeb4950ad",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 2,
+                "column": 13233
+              },
+              "end": {
+                "line": 2,
+                "column": 13234
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:7a8d49f8235259c9bfeb7fee00ecaf2c",
+            "source_id": "jss:db743839f53cc0e1befccf0eeb4950ad",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 55,
+                "column": 3602
+              },
+              "end": {
+                "line": 55,
+                "column": 3603
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
           }
         ]
       }
@@ -593,7 +1636,7 @@
           "bytes": 31543,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3987.6953599999833,
+          "elapsed_ms": 1998.7751759999956,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -606,7 +1649,7 @@
           "bytes": 63279,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 4487.5718329999945,
+          "elapsed_ms": 2448.8322079999925,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -619,7 +1662,7 @@
           "bytes": 112594,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 11617.641115000006,
+          "elapsed_ms": 6613.911947999994,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -632,7 +1675,7 @@
           "bytes": 14486,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1945.8207870000042,
+          "elapsed_ms": 1111.4011009999958,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -645,7 +1688,7 @@
           "bytes": 228552,
           "source_analysis_completed": false,
           "route_facts_retained": false,
-          "elapsed_ms": 15295.25305900001,
+          "elapsed_ms": 15236.504432999995,
           "parse_status": null,
           "parse_error_count": null,
           "error": {
@@ -660,7 +1703,7 @@
           "bytes": 155988,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 12013.076709999994,
+          "elapsed_ms": 11314.346979000009,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -673,7 +1716,7 @@
           "bytes": 10987,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1233.9017779999995,
+          "elapsed_ms": 1369.4930370000075,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -686,7 +1729,7 @@
           "bytes": 14992,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1399.0322309999901,
+          "elapsed_ms": 1228.7073600000003,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -699,7 +1742,7 @@
           "bytes": 37582,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2142.552886999998,
+          "elapsed_ms": 2113.3070639999933,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -712,7 +1755,7 @@
           "bytes": 16480,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1469.2480819999764,
+          "elapsed_ms": 1425.968326000002,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -725,7 +1768,7 @@
           "bytes": 21421,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1712.2068470000231,
+          "elapsed_ms": 1547.1486940000032,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -738,7 +1781,7 @@
           "bytes": 35536,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2145.5375270000077,
+          "elapsed_ms": 1692.7380030000058,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -751,7 +1794,7 @@
           "bytes": 40090,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2145.700116000022,
+          "elapsed_ms": 1860.11997900001,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -764,7 +1807,7 @@
           "bytes": 25890,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1818.6821289999934,
+          "elapsed_ms": 1712.0628819999984,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -777,7 +1820,7 @@
           "bytes": 350746,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 11488.245438999991,
+          "elapsed_ms": 10212.801288000017,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -790,7 +1833,7 @@
           "bytes": 26497,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1840.0744279999926,
+          "elapsed_ms": 1633.2997430000105,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -803,7 +1846,7 @@
           "bytes": 34416,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1976.9123899999831,
+          "elapsed_ms": 1829.773210000014,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -816,7 +1859,7 @@
           "bytes": 26406,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1580.202562999999,
+          "elapsed_ms": 1455.2802660000161,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -829,7 +1872,7 @@
           "bytes": 64639,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2689.191065000021,
+          "elapsed_ms": 2520.0977489999786,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -842,7 +1885,7 @@
           "bytes": 32890,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2030.119399999996,
+          "elapsed_ms": 1985.2432060000137,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -855,7 +1898,7 @@
           "bytes": 30074,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1957.4543999999878,
+          "elapsed_ms": 1815.1842900000047,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -868,7 +1911,7 @@
           "bytes": 1004,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 830.5025460000033,
+          "elapsed_ms": 665.3805089999805,
           "parse_status": "complete",
           "parse_error_count": 0,
           "error": null,
@@ -881,7 +1924,7 @@
           "bytes": 20530,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1767.9820650000183,
+          "elapsed_ms": 1685.2595319999964,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -894,7 +1937,7 @@
           "bytes": 21998,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1741.3927540000004,
+          "elapsed_ms": 1506.3410440000007,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -907,7 +1950,7 @@
           "bytes": 36684,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2543.212319000013,
+          "elapsed_ms": 2237.278783000016,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -920,7 +1963,7 @@
           "bytes": 23435,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1788.9672539999883,
+          "elapsed_ms": 1555.4837629999965,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -933,7 +1976,7 @@
           "bytes": 59881,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2222.129602000001,
+          "elapsed_ms": 1971.2966270000034,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -946,7 +1989,7 @@
           "bytes": 86218,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2671.220781000011,
+          "elapsed_ms": 2485.3800579999806,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -959,7 +2002,7 @@
           "bytes": 133226,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1220.1812130000035,
+          "elapsed_ms": 1078.6055820000183,
           "parse_status": "complete",
           "parse_error_count": 0,
           "error": null,
@@ -972,7 +2015,7 @@
           "bytes": 19607,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1560.5436199999822,
+          "elapsed_ms": 1402.577455999999,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -985,7 +2028,7 @@
           "bytes": 30064,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1513.2965180000174,
+          "elapsed_ms": 1422.452866000007,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -998,7 +2041,7 @@
           "bytes": 44497,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 3095.218427999993,
+          "elapsed_ms": 2803.7907530000084,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1011,7 +2054,7 @@
           "bytes": 30296,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2248.510752000002,
+          "elapsed_ms": 1912.3814180000045,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1024,7 +2067,7 @@
           "bytes": 34851,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 1898.7022449999931,
+          "elapsed_ms": 1735.2790300000052,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1037,7 +2080,7 @@
           "bytes": 347373,
           "source_analysis_completed": false,
           "route_facts_retained": true,
-          "elapsed_ms": 15353.930824999989,
+          "elapsed_ms": 15230.74929800001,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": {
@@ -1052,7 +2095,7 @@
           "bytes": 53417,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2749.944838000025,
+          "elapsed_ms": 2570.273687000008,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1065,7 +2108,7 @@
           "bytes": 114918,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 4979.989736000018,
+          "elapsed_ms": 4520.427615000022,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1078,7 +2121,7 @@
           "bytes": 31991,
           "source_analysis_completed": true,
           "route_facts_retained": true,
-          "elapsed_ms": 2029.2512950000237,
+          "elapsed_ms": 1942.9910070000042,
           "parse_status": "partial",
           "parse_error_count": 0,
           "error": null,
@@ -1195,6 +2238,38 @@
         ],
         "unknowns": [
           {
+            "id": "jsg:0870b744b76b39aed48e4ff01ae78997",
+            "source_id": "jss:05397e888c7bc3a2504cf830bd4e3140",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 1,
+                "column": 14116
+              },
+              "end": {
+                "line": 1,
+                "column": 14117
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:3a768700a2498a6e57bcb882369eedba",
+            "source_id": "jss:05397e888c7bc3a2504cf830bd4e3140",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 1,
+                "column": 17881
+              },
+              "end": {
+                "line": 1,
+                "column": 17902
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
             "id": "jsg:197de14232c580cd78b72450533434ab",
             "source_id": "jss:069bcdffc70d03b26b303b1ad1d98c97",
             "kind": "source-unavailable",
@@ -1232,6 +2307,198 @@
               }
             },
             "reason": "The navigation target is dynamic; literal fragments do not establish a complete path."
+          },
+          {
+            "id": "jsg:155a6d2e93c159844d72c8507949d138",
+            "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 1,
+                "column": 14350
+              },
+              "end": {
+                "line": 1,
+                "column": 14400
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:efaf5967d5ac475282318c251d94db2e",
+            "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 1,
+                "column": 35516
+              },
+              "end": {
+                "line": 1,
+                "column": 35522
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:d60959e1f7eb8985ee1a45355d90d216",
+            "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 1,
+                "column": 36309
+              },
+              "end": {
+                "line": 1,
+                "column": 36310
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:1dc503c655d3c92bed5385232d382fa3",
+            "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 1,
+                "column": 36412
+              },
+              "end": {
+                "line": 1,
+                "column": 36413
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:7c29496acb20438c1601b02f334be17f",
+            "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 1,
+                "column": 38322
+              },
+              "end": {
+                "line": 1,
+                "column": 38328
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:f8e07996f2136248aa48620679b826bd",
+            "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 1,
+                "column": 38602
+              },
+              "end": {
+                "line": 1,
+                "column": 38603
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:b6ab46856bd0128c5e8a0e87ca2d4711",
+            "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 1,
+                "column": 38666
+              },
+              "end": {
+                "line": 1,
+                "column": 38667
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:83e339b93ab0999acd951c3e13f15f31",
+            "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 1,
+                "column": 39238
+              },
+              "end": {
+                "line": 1,
+                "column": 39243
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:aec189c181a535d049eb30f8feba5973",
+            "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 25,
+                "column": 32110
+              },
+              "end": {
+                "line": 25,
+                "column": 32111
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:2a350d947a95dca2aba4596a5e84fa22",
+            "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 25,
+                "column": 33860
+              },
+              "end": {
+                "line": 25,
+                "column": 33861
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:5ec014d468597946289b5f29b41f998c",
+            "source_id": "jss:2839eff11b94da955bf6e5e255c7deeb",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 25,
+                "column": 44185
+              },
+              "end": {
+                "line": 25,
+                "column": 44186
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
+          },
+          {
+            "id": "jsg:7a3a0e01037ff5978d74fe664b5f5bb4",
+            "source_id": "jss:8977c2e81031898d4c7fde7839fbbfce",
+            "kind": "interpretation",
+            "source_range": {
+              "start": {
+                "line": 1,
+                "column": 65979
+              },
+              "end": {
+                "line": 1,
+                "column": 65997
+              }
+            },
+            "reason": "The recognized navigation destination is not a supported literal."
           }
         ]
       }
@@ -1243,15 +2510,16 @@
       "-c",
       "0,1",
       "node",
-      "/home/yann/yann/rea-4772-lab/probe-scope-routes.mjs"
+      "/home/yann/yann/rea-4772-lab/probe-nav-routes.mjs"
     ],
     "exit_code": 0,
-    "wall_s": 268.861591314002,
-    "cpu_s": 404.37430500000005,
+    "wall_s": 200.8979448350001,
+    "cpu_s": 298.469978,
     "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-    "peak_family_rss_bytes": 494362624,
+    "peak_family_rss_bytes": 487661568,
     "sample_ms": 20,
-    "guard_stop": null
+    "guard_stop": null,
+    "runtime_commit": "7dff8ea4e37b7a5591d1542c0e4c9abee99623b5"
   },
   "independent_oracle": {
     "method": "All 18 unescaped ASCII /docs quoted literals enumerated directly from the immutable 86218-byte production chunk with a regular expression independent of the AST route decoder; 12 are direct href property literals. These are static declaration checks, not runtime routes.",
@@ -1280,7 +2548,7 @@
     {
       "runtime": "/home/yann/yann/rea-4772-route-inventory",
       "mode": "complete",
-      "label": "real-full-scope",
+      "label": "real-full-mixed",
       "parameters": {
         "input_path": "/home/yann/yann/rea-4772-lab/public-assets/shadcn-ui",
         "source_paths": ["_next/static/immutable/chunks/0ftd4gqztonqp.js"],
@@ -1316,45 +2584,45 @@
         "application_routes": "unknown"
       },
       "primary_calls": 2,
-      "primary_estimated_tokens": 1885708,
-      "used_input_declarations_plus_primary_estimated_tokens": 1908115,
-      "all_catalog_plus_primary_estimated_tokens": 2990909,
+      "primary_estimated_tokens": 1887765,
+      "used_input_declarations_plus_primary_estimated_tokens": 1910172,
+      "all_catalog_plus_primary_estimated_tokens": 2992966,
       "token_accounting": "tokenx estimates of actual advertised SDK declarations, arguments and complete SDK replies; JSON-RPC envelopes/initialize omitted, not actual model usage",
-      "task_wall_s": 15.991135760999999,
+      "task_wall_s": 12.654678873,
       "calls": [
         {
           "name": "analyze_javascript_application",
-          "wall_ms": 4860.137442,
-          "estimated_reply_tokens": 1876762,
-          "reply_bytes": 6195709
+          "wall_ms": 4296.224553,
+          "estimated_reply_tokens": 1878819,
+          "reply_bytes": 6202233
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 3457.7455309999987,
+          "wall_ms": 1963.0808199999992,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 51.28538099999969,
+          "wall_ms": 29.017068999999537,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 22.081351000000723,
+          "wall_ms": 13.245450000000346,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 20.054582000000664,
+          "wall_ms": 15.468479999999545,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "export_evidence_bundle",
-          "wall_ms": 137.0500350000002,
+          "wall_ms": 97.21304899999996,
           "estimated_reply_tokens": 120,
           "reply_bytes": 314
         }
@@ -1365,26 +2633,27 @@
           "-c",
           "0,1",
           "node",
-          "/home/yann/yann/rea-4772-lab/bench-routes-scope.mjs",
+          "/home/yann/yann/rea-4772-lab/bench-routes-nav.mjs",
           "complete",
-          "real-full-scope"
+          "real-full-mixed"
         ],
         "exit_code": 0,
-        "wall_s": 17.56410867500381,
-        "cpu_s": 22.690265,
+        "wall_s": 14.016970381002466,
+        "cpu_s": 18.612154999999998,
         "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-        "peak_family_rss_bytes": 1525354496,
+        "peak_family_rss_bytes": 1545674752,
         "sample_ms": 20,
         "guard_stop": null
       },
-      "all_calls_estimated_tokens": 1912425,
-      "used_input_declarations_plus_all_calls_estimated_tokens": 1935052,
-      "full_catalog_plus_all_calls_estimated_tokens": 3017626
+      "all_calls_estimated_tokens": 1914482,
+      "used_input_declarations_plus_all_calls_estimated_tokens": 1937109,
+      "full_catalog_plus_all_calls_estimated_tokens": 3019683,
+      "runtime_commit": "66e1ca85242f4ac17559735d0423718be271977c"
     },
     {
       "runtime": "/home/yann/yann/rea-4772-route-inventory",
       "mode": "selected",
-      "label": "real-selected-scope",
+      "label": "real-selected-mixed",
       "parameters": {
         "input_path": "/home/yann/yann/rea-4772-lab/public-assets/shadcn-ui",
         "source_paths": ["_next/static/immutable/chunks/0ftd4gqztonqp.js"],
@@ -1424,35 +2693,35 @@
       "used_input_declarations_plus_primary_estimated_tokens": 11260,
       "all_catalog_plus_primary_estimated_tokens": 1114103,
       "token_accounting": "tokenx estimates of actual advertised SDK declarations, arguments and complete SDK replies; JSON-RPC envelopes/initialize omitted, not actual model usage",
-      "task_wall_s": 23.490109611,
+      "task_wall_s": 11.816254186,
       "calls": [
         {
           "name": "analyze_javascript_application",
-          "wall_ms": 7405.021811,
+          "wall_ms": 3648.138853,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 4008.9572229999976,
+          "wall_ms": 2029.9466479999992,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 43.01191100000142,
+          "wall_ms": 19.593948999998247,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "inspect_analysis_view",
-          "wall_ms": 25.584561000003305,
+          "wall_ms": 12.888459999998304,
           "estimated_reply_tokens": 8762,
           "reply_bytes": 28885
         },
         {
           "name": "export_evidence_bundle",
-          "wall_ms": 190.88776700000017,
+          "wall_ms": 105.36357899999894,
           "estimated_reply_tokens": 122,
           "reply_bytes": 322
         }
@@ -1463,21 +2732,22 @@
           "-c",
           "0,1",
           "node",
-          "/home/yann/yann/rea-4772-lab/bench-routes-scope.mjs",
+          "/home/yann/yann/rea-4772-lab/bench-routes-nav.mjs",
           "selected",
-          "real-selected-scope"
+          "real-selected-mixed"
         ],
         "exit_code": 0,
-        "wall_s": 24.561644880996027,
-        "cpu_s": 31.082017,
+        "wall_s": 12.500481164999655,
+        "cpu_s": 16.374721,
         "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-        "peak_family_rss_bytes": 1292701696,
+        "peak_family_rss_bytes": 1297858560,
         "sample_ms": 20,
         "guard_stop": null
       },
       "all_calls_estimated_tokens": 35622,
       "used_input_declarations_plus_all_calls_estimated_tokens": 58249,
-      "full_catalog_plus_all_calls_estimated_tokens": 1140823
+      "full_catalog_plus_all_calls_estimated_tokens": 1140823,
+      "runtime_commit": "66e1ca85242f4ac17559735d0423718be271977c"
     }
   ],
   "real_browser": {
@@ -1529,7 +2799,7 @@
         "base_path": null
       }
     ],
-    "elapsed_s": 17.418324944,
+    "elapsed_s": 8.834154863,
     "authority_limits": [
       "Not a live published-page or application execution test",
       "No reachability, route loading or full application route denominator proof"
@@ -1541,20 +2811,20 @@
         "-c",
         "0,1",
         "node",
-        "/home/yann/yann/rea-4772-lab/verify-real-browser-routes-scope.mjs"
+        "/home/yann/yann/rea-4772-lab/verify-real-browser-routes-mixed.mjs"
       ],
       "exit_code": 0,
-      "wall_s": 19.257386313998722,
-      "cpu_s": 23.607202,
+      "wall_s": 9.881348616996547,
+      "cpu_s": 12.340812,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 2140971008,
+      "peak_family_rss_bytes": 2198265856,
       "sample_ms": 20,
       "guard_stop": null
     }
   },
   "checks": [
     {
-      "name": "route-scope-source-tests",
+      "name": "route-mixed-source-tests",
       "command": [
         "taskset",
         "-c",
@@ -1573,15 +2843,16 @@
         "src/domain/javascript/javascriptStaticAnalysis.routeProperties.test.ts"
       ],
       "exit_code": 0,
-      "wall_s": 13.974063224995916,
-      "cpu_s": 20.769561,
+      "wall_s": 12.190017565000744,
+      "cpu_s": 18.840821000000002,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 1513041920,
+      "peak_family_rss_bytes": 1490296832,
       "sample_ms": 20,
-      "guard_stop": null
+      "guard_stop": null,
+      "runtime_commit": "66e1ca85242f4ac17559735d0423718be271977c"
     },
     {
-      "name": "route-scope-public-worker-tests",
+      "name": "route-mixed-public-worker-selection-tests",
       "command": [
         "taskset",
         "-c",
@@ -1593,37 +2864,41 @@
         "tests/boundary/javascript/javascriptSourceAnalysisWorker.test.ts",
         "src/browser/WebBundleAnalysisWorkerServer.test.ts",
         "tests/acceptance/javascriptRoutesCli.test.ts",
-        "tests/acceptance/browser/webBundleSchemaCoverageCliMcp.test.ts"
+        "tests/acceptance/browser/webBundleSchemaCoverageCliMcp.test.ts",
+        "tests/boundary/mcp/javascriptSourceSelection.test.ts"
       ],
       "exit_code": 0,
-      "wall_s": 62.31983238700195,
-      "cpu_s": 107.459585,
+      "wall_s": 82.42782636099582,
+      "cpu_s": 144.023,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 2247155712,
+      "peak_family_rss_bytes": 2662363136,
       "sample_ms": 20,
-      "guard_stop": null
+      "guard_stop": null,
+      "runtime_commit": "66e1ca85242f4ac17559735d0423718be271977c"
     },
     {
-      "name": "route-scope-check-fast",
+      "name": "route-mixed-check-fast",
       "command": ["taskset", "-c", "0,1", "npm", "run", "check:fast"],
       "exit_code": 0,
-      "wall_s": 12.049274270000751,
-      "cpu_s": 22.815286,
+      "wall_s": 10.283115161000751,
+      "cpu_s": 19.039511,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 1545572352,
+      "peak_family_rss_bytes": 1543532544,
       "sample_ms": 20,
-      "guard_stop": null
+      "guard_stop": null,
+      "runtime_commit": "66e1ca85242f4ac17559735d0423718be271977c"
     },
     {
-      "name": "route-scope-docs-check",
+      "name": "route-mixed-docs-check",
       "command": ["taskset", "-c", "0,1", "npm", "run", "docs:check"],
       "exit_code": 0,
-      "wall_s": 4.599985583998205,
-      "cpu_s": 6.606703000000039,
+      "wall_s": 4.205853854997258,
+      "cpu_s": 6.091397999999998,
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
-      "peak_family_rss_bytes": 809390080,
+      "peak_family_rss_bytes": 808087552,
       "sample_ms": 20,
-      "guard_stop": null
+      "guard_stop": null,
+      "runtime_commit": "66e1ca85242f4ac17559735d0423718be271977c"
     },
     {
       "name": "route-browser-boundary-isolated",
@@ -1644,7 +2919,8 @@
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
       "peak_family_rss_bytes": 2051870720,
       "sample_ms": 20,
-      "guard_stop": null
+      "guard_stop": null,
+      "runtime_commit": "6c7a72505815f72a483b2acccbf09bfe71d5097e"
     },
     {
       "name": "route-baseline-worker-mcp-boundaries",
@@ -1666,7 +2942,8 @@
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
       "peak_family_rss_bytes": 2951680000,
       "sample_ms": 20,
-      "guard_stop": null
+      "guard_stop": null,
+      "runtime_commit": "6d356b843"
     },
     {
       "name": "route-current-worker-mcp-boundaries-controlled",
@@ -1688,7 +2965,8 @@
       "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
       "peak_family_rss_bytes": 2869239808,
       "sample_ms": 20,
-      "guard_stop": null
+      "guard_stop": null,
+      "runtime_commit": "6c7a72505815f72a483b2acccbf09bfe71d5097e"
     }
   ],
   "failed_attempts": [
@@ -1845,7 +3123,9 @@
     "e38943545: replace mixed expanded/parent state with separate configuration ownership and actual children ancestry; retain known capture omissions in summary and queryable gap records.",
     "4d0630abb: join inferred root to the base while preserving explicit trailing slashes; parse Next module paths after the asset boundary.",
     "9437a1215: propagate dynamic route-expression ownership through the shared AST walk; retain rooted dynamic-navigation uncertainty; restrict configuration ownership to the route relationships actually consumed, leaving component inputs independently discoverable.",
-    "135c56bc2: stop dynamic value ownership at arrays, objects and callable/class definitions, preserving independent module constants; production SDK/CLI acceptance covers a Turbopack-shaped module registration."
+    "135c56bc2: stop dynamic value ownership at arrays, objects and callable/class definitions, preserving independent module constants; production SDK/CLI acceptance covers a Turbopack-shaped module registration.",
+    "7dff8ea4e: preserve recognized dynamic navigation destinations as unknown, retain source enumeration partial, reject raw Next private folders while preserving encoded public underscores, and verify canonical selectors through full/compact advertisements.",
+    "66e1ca852: compare both based and unbased anchors/constants in application path space while retaining exact raw/output paths and explicit trailing slashes."
   ],
   "result_budget_regression": {
     "source": "12000 literal route registrations, 1452889 UTF-8 bytes",
@@ -2058,6 +3338,141 @@
       "runtime_commit": "4d0630abb2e34675a875a49d5eecba89a6b442b2",
       "record_commit": "13bfba73a",
       "scope": "Deployment-root correction; 183 source / 5 public tests, checkpoint replay and fresh real-source SDK/Chromium tasks."
+    },
+    {
+      "runtime_commit": "135c56bc2f4d9a5e1c39757c2319460788b73897",
+      "record_commit": "38f2f96374e5e3ef1a5530991988850feb0bba4b",
+      "limits": "This earlier run had selected delivery slower than complete delivery; retained rather than discarded. New code requires new measurements."
     }
-  ]
+  ],
+  "source_worker_qualification": {
+    "implementation_commit": "7dff8ea4e37b7a5591d1542c0e4c9abee99623b5",
+    "implementation_tree": "920b4c750a758313eb953691a778ded0723e39bf",
+    "limit": "Only the inventory owner and its tests changed afterward; source-worker facts were retained and replayed, not reanalyzed.",
+    "inventory_replay": {
+      "method": "Replay prior 7dff8ea4e source-worker checkpoints through the current inventory owner; not a new full source analysis",
+      "replay": [
+        {
+          "site": "nextjs-org",
+          "sources": 29,
+          "inventory_id": "jsri:1d9dc2b16726aa085510af00ab9d0ac6d1fb4a722f891ac602012cb08d49ae62",
+          "statistics": {
+            "sources_seen": 29,
+            "sources_retained": 29,
+            "route_patterns": 0,
+            "occurrences": 0,
+            "unanchored_literals_excluded": 126
+          },
+          "coverage": {
+            "scope": "provided-code-sources",
+            "source_parsing": "partial",
+            "candidate_enumeration": "partial",
+            "application_routes": "unknown"
+          },
+          "identical": true
+        },
+        {
+          "site": "shadcn-ui",
+          "sources": 38,
+          "inventory_id": "jsri:37945310ed6710ef87b6bf47e2ce4b37a01672ac448b0398565dc1d1aa14654a",
+          "statistics": {
+            "sources_seen": 38,
+            "sources_retained": 38,
+            "route_patterns": 18,
+            "occurrences": 31,
+            "unanchored_literals_excluded": 89
+          },
+          "coverage": {
+            "scope": "provided-code-sources",
+            "source_parsing": "partial",
+            "candidate_enumeration": "partial",
+            "application_routes": "unknown"
+          },
+          "identical": true
+        }
+      ],
+      "profile": {
+        "command": [
+          "taskset",
+          "-c",
+          "0,1",
+          "node",
+          "/home/yann/yann/rea-4772-lab/replay-mixed-inventory.mjs"
+        ],
+        "exit_code": 0,
+        "wall_s": 0.20689491600205656,
+        "cpu_s": 0.23048,
+        "cpu_accounting": "payload family wait rusage delta; inherited shell child usage excluded",
+        "peak_family_rss_bytes": 79269888,
+        "sample_ms": 20,
+        "guard_stop": null
+      }
+    }
+  },
+  "input_schema_profile_integration": {
+    "ci_run": 39635196133,
+    "ci_merge_commit": "4f86667e5389969f6ca8a554c15ea0f778345315",
+    "ci_base_commit": "aa51e4343963fdd0b97ec2ebdc3c41579fd9cb38",
+    "failure": "Existing exact advertised source_paths assertion assumed full schemas after main #5975 changed the default to compact. The new route view makes that input exceed the compact budget.",
+    "probe": [
+      {
+        "profile": "full",
+        "source_schema": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Exact relevant file paths from the artifact inventory, relative to the application root, analyzed in first-request order before unselected scopes; no globs or implicit dependencies. Omit to analyze all sources."
+        },
+        "selectors": [
+          {
+            "source_paths": [],
+            "advertised_accepts": false,
+            "server_rejects": true
+          },
+          {
+            "source_paths": [""],
+            "advertised_accepts": false,
+            "server_rejects": true
+          },
+          {
+            "source_paths": [1],
+            "advertised_accepts": false,
+            "server_rejects": true
+          }
+        ]
+      },
+      {
+        "profile": "compact",
+        "source_schema": {
+          "type": "array",
+          "items": {
+            "type": ["null", "boolean", "object", "array", "number", "string"],
+            "items": {}
+          },
+          "description": "Exact relevant file paths from the artifact inventory, relative to the application root, analyzed in first-request order before unselected scopes; no globs or implicit dependencies. Omit to analyze all sources."
+        },
+        "selectors": [
+          {
+            "source_paths": [],
+            "advertised_accepts": true,
+            "server_rejects": true
+          },
+          {
+            "source_paths": [""],
+            "advertised_accepts": true,
+            "server_rejects": true
+          },
+          {
+            "source_paths": [1],
+            "advertised_accepts": true,
+            "server_rejects": true
+          }
+        ]
+      }
+    ],
+    "fix": "Exact-schema tests explicitly choose full; public SDK tests cover both profiles, invalid selector rejection, successful recovery and retained route queries. Canonical validation was not weakened."
+  }
 }
