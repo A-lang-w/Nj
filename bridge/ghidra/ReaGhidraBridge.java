@@ -453,7 +453,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
             case "search_procedures" -> search(request.params, true);
             case "search_strings" -> search(request.params, false);
             case "inspect_native_data_type" -> inspectNativeDataType(request.params);
-            case "inspect_native_instruction" -> inspectNativeInstruction(request.params, true);
+            case "inspect_native_instruction" -> {
+                var observation = inspectNativeInstruction(request.params, true);
+                yield functionObservation(observation.value(), observation.limitations());
+            }
             case "resolve_native_call_targets" -> resolveNativeCallTargets(request.params);
             case "xrefs" -> xrefs(request.params);
             case "analyze_function" -> {
@@ -1254,7 +1257,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return item;
     }
 
-    private JsonObject inspectNativeInstruction(JsonObject params, boolean includeIncoming) throws Exception {
+    private record NativeInstructionObservation(JsonObject value, List<String> limitations) {}
+
+    private NativeInstructionObservation inspectNativeInstruction(JsonObject params, boolean includeIncoming) throws Exception {
         requireKeys(params, Set.of("document", "address"));
         requireDocument(params);
         Address address = requireAddress(params, "address");
@@ -1362,11 +1367,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         List<String> limitations = new ArrayList<>(List.of("Operand components are Ghidra Listing decoder tokens; effective memory base/index/displacement roles and per-instruction context mode are unavailable. The mode field is the program language variant."));
         if (flow.get("kind").getAsString().equals("terminal")) limitations.add("No RETURN operation was observed in the provider's instruction p-code; terminal classification remains generic.");
         result.add("limitations", GSON.toJsonTree(limitations));
-        return result;
+        return new NativeInstructionObservation(result, sehLimitationsAt(address));
     }
 
     private JsonObject resolveNativeCallTargets(JsonObject params) throws Exception {
-        JsonObject instruction = inspectNativeInstruction(params, false);
+        var observation = inspectNativeInstruction(params, false);
+        JsonObject instruction = observation.value();
         JsonObject result = new JsonObject();
         result.add("call_site", instruction.get("address"));
         result.add("procedure", instruction.get("procedure"));
@@ -1397,7 +1403,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.addProperty("mechanism", !call ? "unavailable" : computed ? "computed" : "direct");
         result.add("targets", targets);
         result.add("limitations", GSON.toJsonTree(List.of("Targets are static Ghidra ReferenceManager call-reference observations. Computed calls without call references remain unresolved; a resolved reference is not proof of runtime execution.", "Objective-C, Swift, vtable and closure mechanisms are not identified by this reference-only boundary.")));
-        return result;
+        return functionObservation(result, observation.limitations());
     }
 
     private JsonArray xrefs(JsonObject params) throws Exception {
@@ -2082,19 +2088,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (function != null) {
             result.addProperty("found", true);
             result.add("procedure", procedureIdentity(function));
-            return functionObservation(result, new FunctionBoundaryLimitations(function).values());
+            return functionObservation(result, sehLimitationsAt(query));
         }
         result.addProperty("found", false);
         result.add("procedure", JsonNull.INSTANCE);
         boolean inside = query.isMemoryAddress() && currentProgram.getMemory().contains(query);
         result.addProperty("reason", inside ? "not_in_procedure" : "outside_segments");
-        List<String> limitations = new ArrayList<>();
-        for (var observation : sehObservations.values()) {
-            if (!observation.handlers().contains(query)) continue;
-            limitations.addAll(observation.diagnostics());
-            limitations.addAll(observation.omissions());
-        }
-        return functionObservation(result, limitations);
+        return functionObservation(result, sehLimitationsAt(query));
     }
 
     private JsonArray search(JsonObject params, boolean procedureSearch) throws Exception {
@@ -3405,6 +3405,21 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add("value", value);
         result.add("limitations", GSON.toJsonTree(limitations));
         return result;
+    }
+
+    /** One producing owner for every address-level consumer of recovered facts. */
+    private List<String> sehLimitationsAt(Address address) {
+        Function owner = currentProgram.getFunctionManager().getFunctionAt(address);
+        if (owner == null) owner = currentProgram.getFunctionManager().getFunctionContaining(address);
+        Set<String> limitations = new java.util.LinkedHashSet<>();
+        for (var entry : sehObservations.entrySet()) {
+            var observation = entry.getValue();
+            if ((owner == null || !entry.getKey().equals(owner.getEntryPoint())) &&
+                    !observation.handlers().contains(address)) continue;
+            limitations.addAll(observation.diagnostics());
+            limitations.addAll(observation.omissions());
+        }
+        return List.copyOf(limitations);
     }
 
     private Map<Address, ReaGhidraBorlandSeh.Observation> sehObservations = Map.of();

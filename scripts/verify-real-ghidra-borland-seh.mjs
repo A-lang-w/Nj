@@ -175,6 +175,21 @@ try {
     );
     assert.equal(resolved.normalized_result.found, true);
     assert.equal(resolved.normalized_result.procedure.address, "0x401000");
+    for (const operation of [
+      "inspect_native_instruction",
+      "resolve_native_call_targets",
+    ]) {
+      const observation = parseEvidence(
+        await call(operation, { address: "0x40102a" }),
+      );
+      assert.ok(
+        observation.limitations.some(
+          (text) =>
+            text.includes("SEH registration") &&
+            text.includes("supplied/imported Borland RTL symbol"),
+        ),
+      );
+    }
     const info = parseEvidence(
       await call("procedure_info", { procedure: "0x401000" }),
     );
@@ -265,6 +280,9 @@ try {
         "in_span_independent_rtl",
         "initially_undecoded_veneer_provenance",
         "bounded_gap_omission",
+        "instruction_and_call_target_provenance",
+        "original_and_recovered_mid_instruction_paths_omitted",
+        "decoded_terminal_call_recovered",
         "nonzero_fs_rejected",
         "independent_owner_preserved",
         "windows_observe_only_policy",

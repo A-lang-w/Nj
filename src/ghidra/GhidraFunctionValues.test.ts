@@ -29,6 +29,8 @@ const observationOperations: ReadonlySet<GhidraFunctionOperation> = new Set([
   "procedure_pseudo_code",
   "procedure_references",
   "read_function_instructions",
+  "inspect_native_instruction",
+  "resolve_native_call_targets",
 ]);
 
 // Existing assertions focus on the value schema; this helper builds the current

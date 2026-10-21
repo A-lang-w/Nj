@@ -71,3 +71,32 @@ and positive/omitted containment provenance. Target SHA-256 remained unchanged;
 runtime roots were empty and process lineage was positively verified empty.
 Static and documentation checks passed. Windows-host and full public-binary
 coverage remain unverified; no new performance improvement is claimed.
+
+## Instruction-boundary review
+
+Require exact decoded instruction starts before reusing either original-body or
+newly recovered destinations; a jump into an immediate is an omission, not a
+completed path. Admit a decoded terminal FlowType as a static terminator and
+retain that provider classification as a caveat, without claiming runtime
+non-return. Share one address-to-SEH-observation owner across containment,
+instruction inspection and call-target resolution. Bind the new envelopes into
+the cache profile and test the real producer's overlap/terminal controls.
+Update the tar-listing test to consume the canonical bridge source manifest,
+while retaining independent negative cases for missing entries and bytecode.
+
+Latest instruction-boundary review: 122 focused regressions passed, including
+LF/CRLF tar listings, missing required helper and forbidden bytecode. Static
+and docs checks passed. Sequential real Ghidra 12.1.4 producer/CLI/MCP verification
+passed exact instruction boundaries (including an already-owned registered
+mid-instruction entry), terminal calls with static caveats, and instruction/
+call-target provenance; target bytes were unchanged, runtime empty and process
+lineage positively verified empty.
+
+The full package verifier was attempted twice on this revision and did not
+complete: first the packaged MCP startup probe exceeded its 5-second timeout;
+then the update fixture failed with ERR_HTTP_HEADERS_SENT at
+scripts/verify-package-update.mjs:29 during registry proxying. Package install
+completed in the second run, but that does not establish the later update/MCP
+checks. The previous review revision passed full package verification. The
+fixture/network failure is a separate validation gap; this revision does not
+claim a successful full-package run or a performance improvement.

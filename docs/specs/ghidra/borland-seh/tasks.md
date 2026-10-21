@@ -22,3 +22,14 @@
 - [x] Carry containment provenance/omissions through a strict observation envelope.
 - [x] Pass 204 focused tests, full static/docs checks, and real Ghidra 12.1.4
       producer/CLI/MCP verification with immutable source and verified empty lineage.
+
+## Instruction-boundary and CI review
+
+- [x] Reject mid-instruction reused paths and registered entries.
+- [x] Preserve address-level instruction/call-target provenance in one owner.
+- [x] Admit decoded terminal flows with a static-model caveat.
+- [x] Use the canonical packed bridge manifest in the tar-listing regression.
+- [x] Pass 122 focused regressions, static/docs and real Ghidra CLI/MCP checks.
+- [ ] Complete full package verification after resolving the unrelated update
+      fixture's registry-proxy failure; two attempted runs and limits are recorded
+      in plan.md. Earlier revision's successful run does not cover this gap.

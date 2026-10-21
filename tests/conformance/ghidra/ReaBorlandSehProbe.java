@@ -43,6 +43,7 @@ public class ReaBorlandSehProbe extends GhidraScript {
         require(signature.equals(function.getPrototypeString(false, true)), "signature changed");
         require(!observations.containsKey(at(0x4010a0)), "nonzero FS offset misidentified");
         function.setBody(original);
+        verifyInstructionPaths(function, original);
         var immutable = ReaGhidraBorlandSeh.analyze(currentProgram, monitor, false);
         require(!immutable.get(function.getEntryPoint()).omissions().isEmpty(), "read-only omission lost");
         require(!function.getBody().contains(at(0x401025)), "read-only body mutated");
@@ -53,6 +54,60 @@ public class ReaBorlandSehProbe extends GhidraScript {
         require(currentProgram.getFunctionManager().getFunctionContaining(at(0x401020)).equals(independent), "independent owner changed");
         verifyBudget();
         println("REA_BORLAND_SEH_PROBE_PASSED");
+    }
+
+    private void verifyInstructionPaths(ghidra.program.model.listing.Function function, AddressSet original) throws Exception {
+        var memory = currentProgram.getMemory();
+        byte[] saved = getBytes(at(0x401025), 15);
+        byte[] registered = getBytes(at(0x401007), 4);
+        clearListing(at(0x401006), at(0x40100a));
+        memory.setBytes(at(0x401007), new byte[] {4, 0x10, 0x40, 0});
+        var registration = new AddressSet(at(0x401006), at(0x40100a));
+        var decodeRegistration = new ghidra.app.cmd.disassemble.DisassembleCommand(registration, registration, false);
+        decodeRegistration.enableCodeAnalysis(false);
+        decodeRegistration.applyTo(currentProgram, monitor);
+        var midEntry = ReaGhidraBorlandSeh.analyze(currentProgram, monitor, true);
+        require(midEntry.get(function.getEntryPoint()).omissions().stream().anyMatch(text ->
+            text.contains("instruction boundary")), "mid-instruction registered entry was claimed included");
+        clearListing(at(0x401006), at(0x40100a));
+        memory.setBytes(at(0x401007), registered);
+        decodeRegistration.applyTo(currentProgram, monitor);
+        byte[][] cases = {
+            // Conditional path decodes MOV first; the other path enters its immediate.
+            {(byte)0x75, 5, (byte)0xeb, 4, (byte)0x90, (byte)0x90, (byte)0x90,
+                (byte)0xb8, (byte)0x90, (byte)0xe8, 0, 0, (byte)0xeb, 0x1d, (byte)0x90},
+            // Jump into the original XOR EAX,EAX immediate/second byte.
+            {(byte)0xeb, (byte)0xdd}
+        };
+        for (byte[] code : cases) {
+            function.setBody(original);
+            clearListing(at(0x401025), at(0x401033));
+            memory.setBytes(at(0x401025), code);
+            var result = ReaGhidraBorlandSeh.analyze(currentProgram, monitor, true);
+            require(result.get(function.getEntryPoint()).omissions().stream().anyMatch(
+                text -> text.contains("instruction boundary")), "overlapping path was claimed complete");
+            require(function.getBody().equals(original), "overlapping path published a partial body");
+        }
+        clearListing(at(0x401025), at(0x401033));
+        memory.setBytes(at(0x401025), new byte[] {(byte)0xe8, 0x66, 0, 0, 0});
+        var terminal = currentProgram.getFunctionManager().getFunctionAt(at(0x401090));
+        terminal.setNoReturn(true);
+        var extent = new AddressSet(at(0x401025), at(0x401029));
+        var command = new ghidra.app.cmd.disassemble.DisassembleCommand(new AddressSet(at(0x401025)), extent, false);
+        command.enableCodeAnalysis(false);
+        command.applyTo(currentProgram, monitor);
+        currentProgram.getListing().getInstructionAt(at(0x401025)).setFlowOverride(
+            ghidra.program.model.listing.FlowOverride.CALL_RETURN);
+        var result = ReaGhidraBorlandSeh.analyze(currentProgram, monitor, true);
+        require(result.get(function.getEntryPoint()).omissions().isEmpty(), "decoded terminal call was rejected");
+        require(function.getBody().contains(at(0x401029)), "terminal call was not owned");
+        require(!function.getBody().contains(at(0x40102a)), "terminal fallthrough was invented");
+        require(result.get(function.getEntryPoint()).diagnostics().stream().anyMatch(
+            text -> text.contains("static flow model")), "terminal static caveat lost");
+        function.setBody(original);
+        terminal.setNoReturn(false);
+        clearListing(at(0x401025), at(0x401033));
+        memory.setBytes(at(0x401025), saved);
     }
 
     private void verifyBudget() throws Exception {

@@ -50,10 +50,13 @@ public final class ReaGhidraBorlandSeh {
                 String prefix = "Borland-style Win32 SEH registration in function " +
                     function.getEntryPoint() + " identifies handler " + handler + ": ";
                 Instruction entry = program.getListing().getInstructionAt(handler);
-                boolean included = function.getBody().contains(handler) &&
+                Instruction following = entry == null || entry.getMaxAddress().next() == null ? null :
+                    program.getListing().getInstructionAt(entry.getMaxAddress().next());
+                boolean included = entry != null &&
+                    function.getBody().contains(entry.getMinAddress(), entry.getMaxAddress()) &&
                     (!externalJump(program, function, entry) ||
-                        (rtlVeneer(program, function, entry) &&
-                            function.getBody().contains(entry.getMaxAddress().next())));
+                        (rtlVeneer(program, function, entry) && following != null &&
+                            function.getBody().contains(following.getMinAddress(), following.getMaxAddress())));
                 String failure = included ? null :
                     !allowMutation ? "Windows P0 does not admit handler body recovery." :
                     recover(program, function, handler, owned, monitor, budget);
@@ -66,6 +69,7 @@ public final class ReaGhidraBorlandSeh {
                     "handler instructions are included in the Ghidra function body; " +
                     (rtlVeneer(program, function, entry)
                         ? "the continuation after its JMP is derived from the supplied/imported Borland RTL symbol; " : "") +
+                    "decoded terminal flows, when present, follow Ghidra's static flow model and do not prove runtime non-return; " +
                     "this is a static registration observation, not proof of runtime execution.");
                 else omissions.add(prefix + failure +
                     " Handler callees, strings and instructions may be excluded from function queries.");
@@ -160,13 +164,19 @@ public final class ReaGhidraBorlandSeh {
             Address address = pending.removeFirst();
             if (original.contains(address)) {
                 Instruction existing = program.getListing().getInstructionAt(address);
+                if (existing == null || !original.contains(existing.getMinAddress(), existing.getMaxAddress()))
+                    return "Handler flow enters the original body outside a decoded instruction boundary.";
                 if (address.equals(handler) && rtlVeneer(program, function, existing)) {
                     veneer = true;
                     pending.add(existing.getMaxAddress().next());
                 } else continuation = true;
                 continue;
             }
-            if (added.contains(address)) continue;
+            if (added.contains(address)) {
+                if (program.getListing().getInstructionAt(address) == null)
+                    return "Handler flow overlaps recovered bytes outside a decoded instruction boundary.";
+                continue;
+            }
             if (!allowed.contains(address)) return "Handler flow crosses a data or ownership boundary.";
             Instruction instruction = program.getListing().getInstructionAt(address);
             if (instruction == null) {
@@ -205,7 +215,7 @@ public final class ReaGhidraBorlandSeh {
             else if (!flow.isJump()) {
                 boolean returns = Arrays.stream(instruction.getPcode()).anyMatch(op ->
                     op.getOpcode() == ghidra.program.model.pcode.PcodeOp.RETURN);
-                if (returns) continuation = true;
+                if (returns || flow.isTerminal()) continuation = true;
                 else return "Handler instruction " + instruction.getAddress() + " (" +
                     instruction.getMnemonicString() + ") has no decoded continuation.";
             }

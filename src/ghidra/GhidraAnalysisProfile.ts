@@ -43,7 +43,8 @@ import {
 } from "../domain/native/nativeAotPe.js";
 
 const callRelationshipCoverage = "function-body-call-coverage-v5";
-const functionBoundaryObservations = "ghidra-function-boundary-limitations-v4";
+const functionBoundaryObservations =
+  "ghidra-function-and-address-boundary-limitations-v5";
 const instructionReferenceCoverage =
   "exact-address-incoming-without-synthetic-entry-v2";
 
@@ -249,8 +250,8 @@ export const resolveGhidraAnalysisProfile = async (
           ? {
               borland_seh_recovery:
                 installation.platform === "win32"
-                  ? "observe-only-windows-p0-containment-v2"
-                  : "bounded-rtl-identity-and-containment-v3",
+                  ? "observe-only-windows-p0-address-provenance-v3"
+                  : "bounded-instruction-flow-and-provenance-v4",
             }
           : {}),
         function_references: "complete-body-and-entry-reference-manager-v2",

@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 
+import { GHIDRA_BRIDGE_SOURCES } from "../../../src/ghidra/GhidraBridgeSources.js";
 import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -16,15 +17,9 @@ const bridge = "package/bridge/hopper_bridge.py";
 const members = [
   bridge,
   "package/bridge/cutter/rea_bridge.py",
-  "package/bridge/ghidra/ReaGhidraBridge.java",
-  "package/bridge/ghidra/ReaGhidraBundleActivator.java",
-  "package/bridge/ghidra/ReaGhidraExtensions.java",
-  "package/bridge/ghidra/ReaGhidraPrepareCom.java",
-  "package/bridge/ghidra/ReaGhidraPrepareRaw.java",
-  "package/bridge/ghidra/ReaGhidraApplySeeds.java",
-  "package/bridge/ghidra/ReaGhidraAnalysisOptions.java",
-  "package/bridge/ghidra/ReaGhidraNoReturnFix.java",
-  "package/bridge/ghidra/ReaGhidraMipsSoftFloat.java",
+  ...Object.values(GHIDRA_BRIDGE_SOURCES).map(
+    (name) => `package/bridge/ghidra/${name}`,
+  ),
 ];
 
 async function verifyListing(listing: string) {
@@ -96,4 +91,15 @@ it("accepts exact bridge entries from a CRLF tar listing and still rejects gener
 it("accepts exact bridge entries from an LF tar listing", async () => {
   const { result } = await verifyListing(members.join("\n") + "\n");
   expect(result.bridgeParsed).toBe(true);
+});
+
+it("rejects a missing required helper from the canonical manifest", async () => {
+  const helper = `package/bridge/ghidra/${GHIDRA_BRIDGE_SOURCES.borlandSeh}`;
+  const { result } = await verifyListing(
+    members.filter((member) => member !== helper).join("\n") + "\n",
+  );
+  expect(result).toEqual({
+    error: `package omitted ${helper}`,
+    bridgeParsed: false,
+  });
 });
