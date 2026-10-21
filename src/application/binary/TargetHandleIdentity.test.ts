@@ -178,6 +178,34 @@ describe("a reused background target", () => {
     expect(registry.targets()).toHaveLength(1);
     expect(seen).toEqual([]);
   });
+
+  /**
+   * A background request that replaces the targets still replaces them.
+   *
+   * A background open that reuses the target the primary already holds skips
+   * the replace path, so the other targets stayed open although the request
+   * asked to replace them.
+   */
+  it("closes the other targets when the request replaces them", async () => {
+    const [first, second] = await createBinarySessionTargets();
+    const registry = createTestBinaryTargetRegistry(createCacheProvider([]));
+
+    // The first target takes the primary slot, the second one a slot of its own.
+    expect((await registry.open(first)).ok).toBe(true);
+    expect((await registry.open(second, { keepOthersOpen: true })).ok).toBe(
+      true,
+    );
+    expect(registry.targets()).toHaveLength(2);
+    const secondId = registry.currentTargetId();
+
+    // The background reopen of the primary target replaces the other targets.
+    const reopened = await registry.open(first, { analysisMode: "background" });
+    expect(reopened.ok).toBe(true);
+
+    expect(registry.targets()).toHaveLength(1);
+    expect(registry.targets()[0]?.target_id).not.toBe(secondId);
+    expect(registry.activeTarget()?.path).toBe(first);
+  });
 });
 
 /**

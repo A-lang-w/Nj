@@ -332,6 +332,11 @@ export class BinaryTargetRegistry implements BinarySessionPort {
         ? undefined
         : this.#reusableSlot(existing, parsed.value, options);
     if (reusable !== undefined) {
+      // A reused target answers for the slot that holds it, but the request
+      // still replaces the other targets, so they are closed here. The replace
+      // path that closes them is skipped by the reuse.
+      const closed = await this.#closeReplacedSlots(options);
+      if (!closed.ok) return closed;
       const job = this.#blockingJob(reusable);
       if (job !== undefined) {
         // The reused job answers for its own slot, so that slot becomes the
@@ -392,6 +397,11 @@ export class BinaryTargetRegistry implements BinarySessionPort {
         ? undefined
         : this.#reusableSlot(existing, resolved.target, options);
     if (reusable !== undefined) {
+      // A reused target answers for the slot that holds it, but the request
+      // still replaces the other targets, so they are closed here. The replace
+      // path that closes them is skipped by the reuse.
+      const closed = await this.#closeReplacedSlots(options);
+      if (!closed.ok) return closed;
       const job = this.#blockingJob(reusable);
       if (job !== undefined) {
         this.#currentId = reusable.id;
@@ -444,6 +454,21 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     const live = slot.session.activeTarget() ?? this.#jobs.get(slot.id)?.target;
     if (live === undefined) return undefined;
     return sameSessionTarget(live, requested) ? slot : undefined;
+  }
+
+  /**
+   * Close the targets a request that replaces them leaves open.
+   *
+   * A background open that reuses the target the primary already holds skips
+   * the replace path, so the other targets would stay open although the
+   * request asked to replace them. The primary keeps the target and the job
+   * the reuse answers for; only the other slots are closed.
+   */
+  async #closeReplacedSlots(
+    options: OpenOptions,
+  ): Promise<Result<null, AnalysisError>> {
+    if (options.keepOthersOpen === true) return ok(null);
+    return this.#closeSlotsExcept(this.#primary);
   }
 
   async #slotForJob(
