@@ -1499,6 +1499,28 @@ describe("what an unmodelled write explains", () => {
     });
   });
 
+  it("contradicts by a list a write made after an unmodelled one, though the tool's earlier change elsewhere came before it", () => {
+    const named = (id: number, name: string) => ({
+      ...book(id, name, bookClock(0)),
+      id,
+    });
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [named(1, "A"), named(2, "B")]],
+      ["GET", "/api/books/1", named(1, "A")],
+      ["GET", "/api/books/2", named(2, "B")],
+      ["PATCH", "/api/books/1", named(1, "A2"), 200, { name: "A2" }],
+      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
+      ["PATCH", "/api/books/2", named(2, "B2"), 200, { name: "B2" }],
+      ["GET", "/api/books/2", named(2, "B2")],
+      // Only book 2 differs, and its patch came after the export.
+      ["GET", "/api/books", [named(1, "A2"), named(2, "B")]],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: false,
+      contradicted_by: 7,
+    });
+  });
+
   it("contradicts a write made after an unmodelled one, though an earlier pending write came before it", () => {
     const summary = (name: string) => [
       { id: 1, name },
