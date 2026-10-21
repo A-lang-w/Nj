@@ -46,8 +46,7 @@ it("merges every inventory substep from inspect_artifact Evidence", async () => 
 
   const inspection = createArtifactInspection(first);
   const firstSubstep = inspection.substeps[0];
-  if (firstSubstep === undefined)
-    throw new Error("Missing inspection substep");
+  if (firstSubstep === undefined) throw new Error("Missing inspection substep");
   const parent = createEvidence(
     {
       path: target,
