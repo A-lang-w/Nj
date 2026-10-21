@@ -168,12 +168,8 @@ export class EnvironmentStateWriteSimulation {
       io: this.#input.io,
       records: this.#input.records,
       timed: this.#input.timed,
-      viewOf: (ordinal) => {
-        const tool = this.#toolOf.get(ordinal);
-        return tool === undefined
-          ? undefined
-          : this.#input.views.get(tool.name);
-      },
+      viewOf: (ordinal) =>
+        this.#input.views.get(this.#toolOf.get(ordinal)?.name ?? ""),
       idField: (type) => this.#types.get(type)!.id_field,
       observed: (ordinal) =>
         this.#observations.set(
@@ -368,16 +364,16 @@ export class EnvironmentStateWriteSimulation {
       ? this.#confirm(view, record, keys, exercised)
       : undefined;
     if (!pass) {
-      const interfered = [...exercised].filter((name) =>
-        this.#interferedWith(name, keys),
+      const interfered = new Set(
+        [...exercised].filter((name) => this.#interferedWith(name, keys)),
       );
-      if (interfered.length === 0)
+      if (interfered.size === 0)
         this.#mismatch({ record, index, keys, exercised, view });
-      // An unmodelled write after some of these writes may explain the difference: those are checked on their own members only.
-      else if (view.shape === "item") this.#checkMembers(view, record);
       else {
+        // An unmodelled write after some of these writes may explain the difference: those are checked on their own members only.
         this.#contradictOthers(keys, exercised, record);
-        for (const key of keys) this.#taint.fail(key);
+        if (view.shape === "item") this.#checkMembers(view, record, interfered);
+        else for (const key of keys) this.#taint.fail(key);
       }
       if (view.shape === "item") this.#adopt(view, record);
     }
@@ -427,24 +423,27 @@ export class EnvironmentStateWriteSimulation {
     this.#unmodelledAt.push(index);
   }
 
-  /** Whether a write the gate does not model came after a tool's latest modelled call on these targets, so it may explain what a read shows of it. */
+  /** Whether a write the gate does not model came after a tool's latest call on one of these targets, so it may explain what a read shows there. */
   #interferedWith(tool: string, keys: readonly string[]): boolean {
-    const last = Math.max(
-      ...keys.map((key) => this.#touchedSince.get(key)?.at.get(tool) ?? -1),
-    );
-    return this.#unmodelledAt.some((index) => index > last);
+    return keys.some((key) => {
+      const at = this.#touchedSince.get(key)?.at.get(tool);
+      return at !== undefined && this.#unmodelledAt.some((index) => index > at);
+    });
   }
 
   /** Check the writes to an item read's entity on the members they sent, as a resynchronising read does. */
   #checkMembers(
     view: Extract<StateView, { shape: "item" }>,
     record: StateRecordFacts,
+    only: ReadonlySet<string>,
   ): void {
     const { collection, id } = itemTarget(this.#state, view.type, record);
     const entity = this.#state.entity(view.type, collection, id);
     if (entity === undefined) return;
     const target = entityTarget(entity.type, entity.collection, entity.id);
-    this.#checkFields(view, record, entity, this.#touched.get(target));
+    const writes = [...(this.#touched.get(target) ?? [])];
+    const checked = new Map(writes.filter(([name]) => only.has(name)));
+    this.#checkFields(view, record, entity, checked);
   }
 
   /** Check the writes to an entity on the fields each wrote against an item read; the read's object, when it shows one. */

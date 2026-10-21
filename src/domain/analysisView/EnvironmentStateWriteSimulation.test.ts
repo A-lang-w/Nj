@@ -1012,63 +1012,6 @@ describe("what a write's effect keeps", () => {
     });
   });
 
-  it("weighs an unmodelled write against a tool's call on the entity a read checks, not its latest call elsewhere", () => {
-    const tagged = (id: number, name: string, tag: string) => ({
-      id,
-      name,
-      tag,
-    });
-    const rows: TimedCaptureRow[] = [
-      ["GET", "/api/books", [tagged(1, "A", "x"), tagged(2, "B", "x")]],
-      ["GET", "/api/books/1", tagged(1, "A", "x")],
-      ["GET", "/api/books/2", tagged(2, "B", "x")],
-      ["PATCH", "/api/books/1", tagged(1, "A2", "x"), 200, { name: "A2" }],
-      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
-      ["PATCH", "/api/books/2", tagged(2, "B2", "x"), 200, { name: "B2" }],
-      // The export came after book 1's rename, so it may explain the changed tag; the rename itself shows.
-      ["GET", "/api/books/1", tagged(1, "A2", "y")],
-    ];
-    expect(gated(rows, "patch_books_by_id")).toMatchObject({
-      served: true,
-      contradicted_by: null,
-      checked_record_ordinals: [6],
-    });
-  });
-
-  it("contradicts a write made after an unmodelled one, though an earlier pending write came before it", () => {
-    const summary = (name: string) => [
-      { id: 1, name },
-      { id: 2, name: "B" },
-    ];
-    const full = (name: string, description: string) => ({
-      id: 1,
-      name,
-      description,
-    });
-    const rows: TimedCaptureRow[] = [
-      ["GET", "/api/books", summary("A")],
-      ["GET", "/api/books/1", full("A", "x")],
-      ["GET", "/api/books/2", { id: 2, name: "B", description: "y" }],
-      ["PATCH", "/api/books/1", full("A", "new"), 200, { description: "new" }],
-      ["GET", "/api/books", summary("A")],
-      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
-      [
-        "PUT",
-        "/api/books/1",
-        full("Z", "new"),
-        200,
-        { name: "Z", description: "new" },
-      ],
-      ["GET", "/api/books/1", full("Z", "new")],
-      // The export came before the rename, so it cannot explain the list showing the old name.
-      ["GET", "/api/books", summary("A")],
-    ];
-    expect(gated(rows, "put_books_by_id")).toMatchObject({
-      served: false,
-      contradicted_by: 8,
-    });
-  });
-
   const subtitled = (id: number, name: string, subtitle?: string) =>
     subtitle === undefined ? { id, name } : { id, name, subtitle };
   const summaries = (first: string): TimedCaptureRow => [
@@ -1103,6 +1046,124 @@ describe("what a write's effect keeps", () => {
     expect(gated(rows, "patch_books_by_id")).toMatchObject({
       served: true,
       checked_record_ordinals: [4],
+    });
+  });
+});
+
+describe("what an unmodelled write explains", () => {
+  it("weighs an unmodelled write against a tool's call on the entity a read checks, not its latest call elsewhere", () => {
+    const tagged = (id: number, name: string, tag: string) => ({
+      id,
+      name,
+      tag,
+    });
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [tagged(1, "A", "x"), tagged(2, "B", "x")]],
+      ["GET", "/api/books/1", tagged(1, "A", "x")],
+      ["GET", "/api/books/2", tagged(2, "B", "x")],
+      ["PATCH", "/api/books/1", tagged(1, "A2", "x"), 200, { name: "A2" }],
+      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
+      ["PATCH", "/api/books/2", tagged(2, "B2", "x"), 200, { name: "B2" }],
+      // The export came after book 1's rename, so it may explain the changed tag; the rename itself shows.
+      ["GET", "/api/books/1", tagged(1, "A2", "y")],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      contradicted_by: null,
+      checked_record_ordinals: [6],
+    });
+  });
+
+  it("lets an unmodelled write explain a list's change to an entity a tool made before it, whatever the tool did after", () => {
+    const fourth = book(4, "Fourth Book", bookClock(5));
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
+      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
+      ["POST", "/api/books", fourth, 201, { name: "Fourth Book" }],
+      ["GET", "/api/books/4", fourth],
+      // The export came after the third book was made, so it may explain the third book's other name.
+      [
+        "GET",
+        "/api/books",
+        [FIRST_BOOK, SECOND_BOOK, { ...THIRD_BOOK, name: "Retitled" }, fourth],
+      ],
+    ];
+    expect(gated(rows, "post_books")).toMatchObject({
+      served: true,
+      contradicted_by: null,
+    });
+  });
+
+  it("contradicts by a failed item read the writes no unmodelled write came after, checking only the others' members", () => {
+    const enveloped = (data: Record<string, JsonValue>, revision: string) => ({
+      data,
+      revision,
+    });
+    const full = (name: string, description: string) => ({
+      id: 1,
+      name,
+      description,
+    });
+    const summary = [
+      { id: 1, name: "A" },
+      { id: 2, name: "B" },
+    ];
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", summary],
+      ["GET", "/api/books/1", enveloped(full("A", "x"), "r1")],
+      [
+        "GET",
+        "/api/books/2",
+        enveloped({ id: 2, name: "B", description: "y" }, "r1"),
+      ],
+      ["PATCH", "/api/books/1", full("A", "new"), 200, { description: "new" }],
+      ["GET", "/api/books", summary],
+      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
+      // The rename sends the name alone, so the earlier description patch stays pending.
+      ["PUT", "/api/books/1", full("Z", "new"), 200, { name: "Z" }],
+      // The rename shows, but the envelope serving would answer with does not.
+      ["GET", "/api/books/1", enveloped(full("Z", "new"), "r2")],
+    ];
+    expect(gated(rows, "put_books_by_id")).toMatchObject({
+      served: false,
+      contradicted_by: 7,
+    });
+  });
+
+  it("contradicts a write made after an unmodelled one, though an earlier pending write came before it", () => {
+    const summary = (name: string) => [
+      { id: 1, name },
+      { id: 2, name: "B" },
+    ];
+    const full = (name: string, description: string) => ({
+      id: 1,
+      name,
+      description,
+    });
+    const rows: TimedCaptureRow[] = [
+      ["GET", "/api/books", summary("A")],
+      ["GET", "/api/books/1", full("A", "x")],
+      ["GET", "/api/books/2", { id: 2, name: "B", description: "y" }],
+      ["PATCH", "/api/books/1", full("A", "new"), 200, { description: "new" }],
+      ["GET", "/api/books", summary("A")],
+      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
+      [
+        "PUT",
+        "/api/books/1",
+        full("Z", "new"),
+        200,
+        { name: "Z", description: "new" },
+      ],
+      ["GET", "/api/books/1", full("Z", "new")],
+      // The export came before the rename, so it cannot explain the list showing the old name.
+      ["GET", "/api/books", summary("A")],
+    ];
+    expect(gated(rows, "put_books_by_id")).toMatchObject({
+      served: false,
+      contradicted_by: 8,
     });
   });
 });
