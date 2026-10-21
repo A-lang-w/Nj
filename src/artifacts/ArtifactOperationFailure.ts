@@ -4,6 +4,7 @@ import {
   AnalysisCancelledError,
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { SafeOutputSourceFailure } from "./SafeOutputSourceFailure.js";
@@ -19,6 +20,81 @@ export const translateArtifactFailure = (
   operation: ArtifactOperationError["operation"],
   cause: unknown,
 ): AnalysisError => {
+  if (cause instanceof SafeOutputSourceFailure) {
+    // Keep semantic classification with the primary, and cleanup with each
+    // producing owner. Normalized wrapper metadata is only a snapshot.
+    const primary = translateOwnedArtifactFailure(operation, cause.cause);
+    const secondary = cause.sourceFailures.map((failure) =>
+      translateOwnedArtifactFailure(operation, failure),
+    );
+    const pending = secondary.filter((failure) => failure.cleanupIncomplete);
+    let error = primary;
+    if (pending.length > 0) {
+      const cleanup = new ArtifactOperationError(
+        operation,
+        "io",
+        undefined,
+        "Source cleanup remains incomplete",
+        {
+          cause,
+          cleanup: {
+            reason: "Source cleanup remains incomplete",
+            resources: pending.flatMap((failure) => failure.cleanupResources),
+          },
+        },
+      ).bindCleanupDependencies(pending);
+      error = analysisErrorWithCleanupFailure(
+        primary,
+        cleanup,
+        operation,
+      ).bindCleanupDependencies([primary, cleanup]);
+    }
+    for (const failure of secondary) error.retainSecondaryFailure(failure);
+    return error;
+  }
+  if (cause instanceof ArtifactFileCleanupFailure) {
+    // An outer close owns only its exact file, not the source's classification
+    // or cleanup lifecycle. Preserve that primary through this boundary too.
+    const physical = cause.fileCleanupFailure;
+    const observation = ArtifactReaderFailure.cleanupObservation(
+      physical.cleanupCause,
+      physical.path,
+    );
+    const cleanup = new ArtifactOperationError(
+      operation,
+      "io",
+      undefined,
+      observation.reason,
+      {
+        cause: physical.cleanupCause,
+        cleanup: observation,
+        ...(cause.partialObservation === undefined
+          ? {}
+          : { partialObservation: cause.partialObservation }),
+      },
+    );
+    new AnalysisCleanupLeaseGroup(cleanup, [cause.cleanupLease]);
+    const primary =
+      physical.outcome.kind === "failed"
+        ? translateOwnedArtifactFailure(operation, physical.outcome.cause)
+        : physical.completionCancellation === undefined
+          ? undefined
+          : translateArtifactFailure(
+              operation,
+              new ArtifactReaderFailure(
+                "cancelled",
+                "Artifact read cancelled during close",
+                { cause: physical.completionCancellation.reason },
+              ),
+            );
+    return primary === undefined
+      ? cleanup
+      : analysisErrorWithCleanupFailure(
+          primary,
+          cleanup,
+          operation,
+        ).bindCleanupDependencies([primary, cleanup]);
+  }
   if (cause instanceof ArtifactReaderFailure) {
     const error = new ArtifactOperationError(
       operation,
@@ -36,37 +112,7 @@ export const translateArtifactFailure = (
           : { partialObservation: cause.partialObservation }),
       },
     );
-    if (cause instanceof SafeOutputSourceFailure) {
-      // Mixed authority has no aggregate lease. Follow each live owner instead
-      // of freezing its resources into the parent's historical observation.
-      const primary = translateOwnedArtifactFailure(operation, cause.cause);
-      const secondary = cause.sourceFailures.map((failure) =>
-        translateOwnedArtifactFailure(operation, failure),
-      );
-      for (const failure of secondary) error.retainSecondaryFailure(failure);
-      error.bindCleanupDependencies([primary, ...secondary]);
-    } else if (cause instanceof ArtifactFileCleanupFailure) {
-      // A failed outer close owns only its exact file. Inherited source errors
-      // keep their independent cleanup dependencies across this wrapper too.
-      const physical = cause.fileCleanupFailure;
-      const observation = ArtifactReaderFailure.cleanupObservation(
-        physical.cleanupCause,
-        physical.path,
-      );
-      const cleanup = new ArtifactOperationError(
-        operation,
-        "io",
-        undefined,
-        observation.reason,
-        { cause: physical.cleanupCause, cleanup: observation },
-      );
-      new AnalysisCleanupLeaseGroup(cleanup, [cause.cleanupLease]);
-      const inherited =
-        physical.outcome.kind === "failed"
-          ? [translateOwnedArtifactFailure(operation, physical.outcome.cause)]
-          : [];
-      error.bindCleanupDependencies([cleanup, ...inherited]);
-    } else bindArtifactFileCleanup(cause, error);
+    bindArtifactFileCleanup(cause, error);
     return error;
   }
   // Caller-selection and unsupported-target failures are already typed; keep

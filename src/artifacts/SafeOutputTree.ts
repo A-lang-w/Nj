@@ -224,6 +224,10 @@ export class SafeOutputTree {
       const hash = createHash("sha256");
       let bytes = 0;
       await this.#assertLineage(lineage);
+      // Setup can observe an error event without the stream ending or entering
+      // its destroyed/errored state. Do not wait for a second event to exit.
+      if (sourceFailures.size > 0) throw sourceFailures.values().next().value;
+      abortIfNeeded(signal);
       // This owner joins destruction and records its failures on early exit.
       for await (const raw of source.iterator({ destroyOnReturn: false })) {
         abortIfNeeded(signal);
