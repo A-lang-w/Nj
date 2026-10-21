@@ -7,6 +7,12 @@ import {
 } from "./javascriptRoutesView.js";
 import { javaScriptRouteInventorySchema } from "../javascript/javascriptRouteInventory.js";
 import {
+  sourceToBundleViewRequestSchema,
+  sourceToBundleViewItemsSchema,
+  sourceToBundleViewContextSchema,
+  projectSourceToBundleView,
+} from "./sourceToBundleView.js";
+import {
   gpuCodeObjectsViewRequestSchema,
   gpuCodeObjectsSummarySchema,
   gpuCodeObjectsItemsSchema,
@@ -299,6 +305,7 @@ const nativeViewSchema = z.strictObject({
 export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   javaScriptRoutesViewRequestSchema,
   nativeFunctionMatchingViewRequestSchema,
+  sourceToBundleViewRequestSchema,
   summaryViewSchema,
   goBinaryViewRequestSchema,
   rustBinaryViewRequestSchema,
@@ -699,9 +706,26 @@ export const nativeFunctionMatchingSummaryViewResultSchema = z.strictObject({
   summary: nativeFunctionMatchingViewContextSchema,
 });
 
+export const sourceToBundleSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  artifact: z.null(),
+  parent_operation: z.literal("compare_source_to_bundle"),
+  summary: sourceToBundleViewContextSchema,
+});
+export const sourceToBundlePageViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  ...sourceToBundleViewContextSchema.shape,
+  kind: z.literal("source-to-bundle"),
+  artifact: z.null(),
+  parent_operation: z.literal("compare_source_to_bundle"),
+  view: sourceToBundleViewRequestSchema,
+  items: sourceToBundleViewItemsSchema,
+});
+
 /** Projected facts for one selected view of retained analysis Evidence. */
 export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   javaScriptRoutesViewResultSchema,
+  sourceToBundlePageViewResultSchema,
   z.strictObject({
     ...viewResultBase,
     ...nativeFunctionMatchingViewContextSchema.shape,
@@ -767,6 +791,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     gpuCodeObjectsSummaryViewResultSchema,
     nativeInventorySummaryViewResultSchema,
     nativeFunctionMatchingSummaryViewResultSchema,
+    sourceToBundleSummaryViewResultSchema,
   ]),
   z.strictObject({
     ...viewResultBase,
@@ -1057,6 +1082,7 @@ const retainedViewProjectors = new Map<string, typeof projectWasmArtifactView>([
   ["inspect_model_artifact", projectModelArtifactView],
   ["inspect_gpu_code_objects", projectGpuCodeObjectsView],
   ["match_native_functions", projectNativeFunctionMatchingView],
+  ["compare_source_to_bundle", projectSourceToBundleView],
   ["inspect_artifact", projectArtifactInventoryView],
   ["inventory_artifact", projectArtifactInventoryView],
 ]);
