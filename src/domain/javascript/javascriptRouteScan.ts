@@ -115,7 +115,7 @@ export class JavaScriptRouteScan {
     t.ObjectExpression,
     t.ObjectExpression | null
   >();
-  readonly #routeChildren: { parent: t.ObjectExpression; value: t.Node }[] = [];
+  readonly #routeChildren: t.ObjectExpression[] = [];
   #nextRuntime = false;
   #factBytes: number;
   #workBytes = 0;
@@ -338,18 +338,8 @@ export class JavaScriptRouteScan {
     }
     // Only router children establish path ancestry. Ordinary object wrappers
     // can contain routes without contributing URL segments.
-    if (!typed && (hasPath || hasChildren || hasView || hasIndex)) {
-      for (const property of node.properties) {
-        if (
-          !t.isObjectProperty(property) ||
-          semanticStaticPropertyName(property.key, property.computed) !==
-            "children"
-        )
-          continue;
-        if (this.#queue(property.value))
-          this.#routeChildren.push({ parent: node, value: property.value });
-      }
-    }
+    if (!typed && hasChildren && this.#queue(node))
+      this.#routeChildren.push(node);
     if (
       (typed || (hasView && (hasPath || hasChildren || hasIndex))) &&
       this.#queue(node)
@@ -454,8 +444,10 @@ export class JavaScriptRouteScan {
   }
 
   *#indexRouteParents(index: JavaScriptBindingIndex): Generator<void> {
-    for (const { parent, value } of this.#routeChildren) {
-      const pending = [value],
+    for (const parent of this.#routeChildren) {
+      const value = this.#fields(parent).values.get("children")?.value;
+      if (value === undefined) continue;
+      const pending: t.Node[] = [value],
         seen = new Set<t.Node>();
       while (pending.length > 0 && this.#result.capacity === null) {
         yield;

@@ -354,6 +354,21 @@ it("preserves inferred ancestry through stable child arrays and object aliases",
   );
   expect(facts.candidates.map(({ path }) => path)).toEqual(["/a", "/a/b"]);
 });
+it("indexes only effective children when a shared child's former parent was overwritten", () => {
+  for (const overwritten of [
+    "children:[]",
+    "get children(){return []}",
+    "...unknown",
+  ]) {
+    const facts = analyze(
+      `const child={path:'b',element:B};const routes=[{path:'/old',children:[child],${overwritten}},{path:'/new',children:[child]}];unknown(routes);`,
+    );
+    expect(facts.candidates.map(({ path }) => path)).toEqual([
+      "/new",
+      "/new/b",
+    ]);
+  }
+});
 it("keeps ambiguous or cyclic inferred ancestry unknown instead of shortening paths", () => {
   for (const code of [
     `const child={path:'b',element:B};const routes=[{path:'/a',children:[child]},{path:'/c',children:[child]}];unknown(routes);`,
