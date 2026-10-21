@@ -13,8 +13,6 @@ import {
   lastSegmentValue,
   listItems,
   missingRequiredFields,
-  pagesOnly,
-  pageSize,
   renderStateEntity,
   renderStateList,
   replaceAt,
@@ -30,6 +28,7 @@ import {
   type StateToolFacts,
   type StateView,
 } from "./environmentStateRules.js";
+import { pagesOnly, pageSize } from "./environmentStatePaging.js";
 
 /** A query as replay compares a call's: decoded values by name, in any order; undefined when it repeats a name with another value, which no call's arguments can carry. */
 const queryKey = (query: string | undefined): string | undefined => {
