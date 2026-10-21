@@ -48,7 +48,8 @@ export const registerWasmCommands = (
       path: z.string().describe("Local WASM artifact"),
     }),
     options: z.object({
-      commandTimeoutMs: inspectWasmArtifactInputSchema.shape.command_timeout_ms,
+      commandTimeoutMs:
+        inspectWasmArtifactInputSchema.shape.command_timeout_ms.optional(),
       glue_paths: z
         .array(z.string())
         .optional()
