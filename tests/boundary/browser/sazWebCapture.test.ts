@@ -289,6 +289,94 @@ it("checks trailer credentials before hidden metadata blocks analysis and withho
   expect(await readFile(path)).toEqual(bytes);
 });
 
+it("keeps automatic framing applicability unknown when SAZ Content-Type is excluded or conflicting", async () => {
+  const body = protobufFrame(Buffer.from([8, 1]));
+  const response = (headers: string) =>
+    Buffer.concat([
+      Buffer.from(
+        `HTTP/1.1 200 OK\r\n${headers}Content-Length: ${body.length}\r\n\r\n`,
+      ),
+      body,
+    ]);
+  const bytes = await archive([
+    ["raw/1_s.txt", response("Content-Type: application/grpc\r\n")],
+    [
+      "raw/2_s.txt",
+      response(
+        "Content-Type: application/grpc\r\nContent-Type: text/plain\r\n",
+      ),
+    ],
+    ["raw/3_s.txt", response("")],
+    ["raw/4_s.txt", response("Content-Type: application/octet-stream\r\n")],
+  ]);
+  const path = await fixture(bytes);
+  const inspect = async (extra: string[]) =>
+    webNetworkCaptureSchema.parse((await cli(path, extra)).normalized_result);
+  const unknown = expect.stringMatching(
+    /^Selected body's MIME metadata is excluded, conflicting or unavailable/,
+  );
+  const retainedBody = expect.objectContaining({
+    pointer: "/response/body",
+    state: "retained",
+    sha256: createHash("sha256").update(body).digest("hex"),
+  });
+
+  const visible = await inspect(["--record", "0", "--record", "1"]);
+  expect(visible.records[0]?.protobuf).toMatchObject([
+    { status: "complete", fields: [{ number: 1, value: "1" }] },
+  ]);
+  expect(visible.records[0]?.limitations).toEqual([]);
+  expect(visible.records[1]?.protobuf).toBeUndefined();
+  expect(visible.records[1]?.limitations).toEqual([unknown]);
+  expect(visible.protobuf_coverage).toEqual({
+    status: "partial",
+    selected_records: 2,
+    inspected_records: 2,
+  });
+
+  const known = await inspect(["--record", "2", "--record", "3"]);
+  expect(known.protobuf_coverage?.status).toBe("complete");
+  for (const record of known.records) {
+    expect(record.protobuf).toBeUndefined();
+    expect(record.limitations).toEqual([]);
+  }
+
+  for (const sensitive of ["application/grpc", "Content-Type"]) {
+    const excluded = await inspect([
+      "--record",
+      "0",
+      "--sensitive-value",
+      sensitive,
+    ]);
+    expect(excluded.protobuf_coverage, sensitive).toEqual({
+      status: "partial",
+      selected_records: 1,
+      inspected_records: 1,
+    });
+    expect(excluded.records[0]?.protobuf).toBeUndefined();
+    expect(excluded.records[0]?.limitations).toEqual([unknown]);
+    expect(excluded.records[0]?.binary_fields).toContainEqual(retainedBody);
+    expect(excluded.records[0]?.redactions).toContainEqual({
+      pointer: `/response/headers/0/${sensitive === "Content-Type" ? "name" : "value"}`,
+      reason: "explicit-sensitive-value",
+    });
+  }
+
+  const explicit = await inspect([
+    "--record",
+    "0",
+    "--sensitive-value",
+    "application/grpc",
+    "--protobuf-framing",
+    "grpc",
+  ]);
+  expect(explicit.protobuf_coverage?.status).toBe("complete");
+  expect(explicit.records[0]?.protobuf).toMatchObject([
+    { status: "complete", fields: [{ number: 1, value: "1" }] },
+  ]);
+  expect(await readFile(path)).toEqual(bytes);
+});
+
 it("inspects native SAZ through the public CLI and MCP with equal evidence, bytes and archive coordinates", async () => {
   const bytes = await archive();
   const path = await fixture(bytes);
