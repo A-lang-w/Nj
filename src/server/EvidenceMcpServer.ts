@@ -584,7 +584,9 @@ class ErrorEvidenceTransport implements Transport {
       ...withoutPreview,
       diagnostic_truncated: preview.length > 0,
     });
-    return omitted.content.length > 0 || fitted === undefined ? omitted : fitted;
+    return omitted.content.length > 0 || fitted === undefined
+      ? omitted
+      : fitted;
   }
 
   private normalizeSdkValidationError(
