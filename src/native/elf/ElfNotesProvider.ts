@@ -17,6 +17,7 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_ELF_NOTE_ENTRIES,
   MAX_INSPECT_ELF_NOTE_FILE_BYTES,
@@ -82,6 +83,9 @@ export class ElfNotesProvider implements ElfNotesPort {
   }
 }
 
+const NOTE_TEXT_BUDGET =
+  "The ELF note text, hash, and scan budget tied to the admitted image length";
+
 const inputBudgetRemediation = (
   boundary: "file-size" | "capacity",
   input: InspectElfNotesInput,
@@ -112,7 +116,11 @@ const elfNotesFailurePrimary = (
       cause: artifactFileCancellationCause(cause),
     });
   if (cause instanceof ArtifactReaderFailure) {
-    if (cause.reason === "limit")
+    if (cause.reason === "limit") {
+      // Caller-selected read and entry budgets name the bound to raise.
+      // The note text, hash, and scan ceiling equals the admitted image
+      // length, so host memory cannot raise it.
+      const noteTextBudget = cause.boundary === "memory";
       return new AnalysisResourceConstraintError(
         OPERATION,
         cause.boundary ?? "memory",
@@ -123,17 +131,20 @@ const elfNotesFailurePrimary = (
         },
         {
           cause,
-          ...(cause.boundary === undefined || cause.boundary === "memory"
+          ...(cause.boundary === undefined
             ? {}
-            : {
-                retryable: false,
-                remediationAction: inputBudgetRemediation(
-                  cause.boundary,
-                  input,
-                ),
-              }),
+            : noteTextBudget
+              ? fixedAllowanceOptions(NOTE_TEXT_BUDGET, "parser")
+              : {
+                  retryable: false as const,
+                  remediationAction: inputBudgetRemediation(
+                    cause.boundary,
+                    input,
+                  ),
+                }),
         },
       );
+    }
     if (cause.reason === "path" || cause.reason === "format")
       return new AnalysisInputError(OPERATION, { cause }, [
         {
