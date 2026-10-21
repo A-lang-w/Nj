@@ -1020,8 +1020,11 @@ for the next request. `analyze_function` still returns the function's assembly,
 references and basic blocks, with pseudocode, `native_api` and
 `native_value_flow` unavailable for the reason "exceeded the N-second limit",
 and that dossier is not saved to analysis snapshots. `procedure_pseudo_code`
-fails with that message. The limit is read when a Ghidra session starts. Ghidra's
-own interactive default is 30 seconds. Unresolved computed calls
+fails with `provider_timeout` and that message; other Ghidra tools stay
+available. If the caller also cancels while the timeout settles, the session
+still closes and the message says so. The limit is read when a Ghidra session
+starts, and Codex/Kimi registrations derived by `rea setup` add it to the tool
+deadline. Ghidra's own interactive default is 30 seconds. Unresolved computed calls
 remain unknown, reference-kind provenance is preserved, and provider-specific
 pseudocode is never treated as original source or Hopper-equivalent text.
 

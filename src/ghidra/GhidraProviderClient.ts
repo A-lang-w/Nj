@@ -918,8 +918,9 @@ const projectPrimarySessionError = (
       remediationAction:
         "Call analyze_function (CLI: `rea function`) for the same procedure. It returns assembly, callers, callees, references and basic blocks from the Ghidra listing and records this decompiler failure under facet_availability.pseudocode. Repeating the unchanged decompile request is not expected to succeed.",
     });
-  // A request-level deadline, not a provider failure: the session and every
-  // other operation stay available.
+  // A request-level deadline, not a provider failure: other operations stay
+  // available. Only promise session reuse when no caller cancellation closed
+  // the session while the timeout settled.
   if (
     failure.kind === "remote" &&
     failure.remoteCode === "decompile_timed_out" &&
@@ -930,7 +931,11 @@ const projectPrimarySessionError = (
       limits.ghidraDecompileTimeoutSeconds * 1000,
       {
         ...context,
-        userMessage: `${failure.message.trim().replace(/\.$/u, "")}. Only this procedure's decompilation was stopped; the Ghidra session remains usable.`,
+        userMessage: `${failure.message.trim().replace(/\.$/u, "")}. ${
+          failure.concurrentCancellation === undefined
+            ? "Only this procedure's decompilation was stopped; the Ghidra session remains usable."
+            : "The request was also cancelled before the timeout settled, so REA closed the Ghidra session; the next request starts a new session and repeats import and analysis."
+        }`,
         remediationAction: ghidraDecompileTimeoutRemediation(
           limits.ghidraDecompileTimeoutSeconds,
         ),
@@ -1123,7 +1128,7 @@ const projectObservedJvmMemoryFailure = (
 
 /** Name the setting and MCP deadline that bound one native decompile. */
 const ghidraDecompileTimeoutRemediation = (limitSeconds: number): string =>
-  `Call analyze_function (CLI: \`rea function\`) for the same procedure to get its assembly, callers, callees, references and basic blocks without pseudocode. Repeating the unchanged decompile request under the same ${String(limitSeconds)}-second limit is not expected to succeed. To allow a longer decompile, raise REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS in REA's launch environment and restart REA; the limit is read when a Ghidra session starts. Over MCP, the client's tool-call deadline must cover Ghidra startup plus the new limit, or the client cancels the request first and REA closes the Ghidra session.`;
+  `Call analyze_function (CLI: \`rea function\`) for the same procedure to get its assembly, callers, callees, references and basic blocks without pseudocode. Repeating the unchanged decompile request under the same ${String(limitSeconds)}-second limit is not expected to succeed. To allow a longer decompile, raise REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS in REA's launch environment and restart REA; the limit is read when a Ghidra session starts. Over MCP, the client's tool-call deadline must cover Ghidra startup plus the new limit, or the client cancels the request first and REA closes the Ghidra session; \`rea setup\` includes the limit in the Codex and Kimi tool deadlines it derives.`;
 
 /** Name the settings that change Ghidra's import-and-analysis startup deadline. */
 const ghidraStartupTimeoutGuidance = (timeoutMs: number) => ({
