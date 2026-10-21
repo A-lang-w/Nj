@@ -96,7 +96,7 @@ export class ArtifactResourceScope {
   readonly #active = new Set<Promise<unknown>>();
   #draining: Promise<void> | undefined;
   #closeInFlight: Promise<void> | undefined;
-  #closeHook: (() => Promise<void>) | undefined;
+  readonly #closeHooks: Array<() => Promise<void>> = [];
   #closed = false;
 
   get hasPending(): boolean {
@@ -206,18 +206,12 @@ export class ArtifactResourceScope {
   }
 
   /**
-   * Run after retained owners are released. The hook stays registered so a
-   * later close retries it. Concurrent closes share one in-flight attempt.
+   * Run after retained owners are released. Hooks stay registered so a later
+   * close retries them, and a failing hook does not skip the ones after it.
+   * Concurrent closes share one in-flight attempt.
    */
   addCloseHook(hook: () => Promise<void>): void {
-    const previous = this.#closeHook;
-    this.#closeHook =
-      previous === undefined
-        ? hook
-        : async () => {
-            await previous();
-            await hook();
-          };
+    this.#closeHooks.push(hook);
   }
 
   /** Stop admission, wait for active operations, and retry every retained owner. */
@@ -233,6 +227,28 @@ export class ArtifactResourceScope {
     return published;
   }
 
+  /** Every registered hook runs. One failure is returned unchanged; several are aggregated. */
+  async #runCloseHooks(): Promise<unknown> {
+    const failures: unknown[] = [];
+    for (const hook of this.#closeHooks) {
+      try {
+        await hook();
+      } catch (cause: unknown) {
+        failures.push(cause);
+      }
+    }
+    if (failures.length === 0) return undefined;
+    if (failures.length === 1) return failures[0];
+    return new AggregateError(
+      failures,
+      failures
+        .map((cause) =>
+          cause instanceof Error ? cause.message : String(cause),
+        )
+        .join("; "),
+    );
+  }
+
   async #finishClose(): Promise<void> {
     // A parked analyzer is not a pending owner. Stop it even when another
     // retained cleanup is still failing. A later close retries both.
@@ -240,12 +256,7 @@ export class ArtifactResourceScope {
       () => undefined,
       (cause: unknown) => cause,
     );
-    const hookFailure = await Promise.resolve()
-      .then(() => this.#closeHook?.())
-      .then(
-        () => undefined,
-        (cause: unknown) => cause,
-      );
+    const hookFailure = await this.#runCloseHooks();
     if (cleanup !== undefined && hookFailure !== undefined)
       throw this.#composeCloseFailures(cleanup, hookFailure);
     if (hookFailure !== undefined) throw hookFailure;

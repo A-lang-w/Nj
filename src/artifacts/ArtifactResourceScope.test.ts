@@ -107,6 +107,37 @@ it("stops a close hook even when retained cleanup is still failing", async () =>
   expect(hookRuns).toBe(2);
 });
 
+it("runs later close hooks when an earlier hook fails", async () => {
+  const scope = new ArtifactResourceScope();
+  const order: string[] = [];
+  scope.addCloseHook(async () => {
+    order.push("first");
+    throw new Error("first hook failed");
+  });
+  scope.addCloseHook(async () => {
+    order.push("second");
+    throw new Error("second hook failed");
+  });
+
+  const failure = await scope.close().then(
+    () => {
+      throw new Error("close succeeded while hooks failed");
+    },
+    (cause: unknown) => cause,
+  );
+  expect(order).toEqual(["first", "second"]);
+  expect(failure).toBeInstanceOf(AggregateError);
+  expect(
+    (failure as AggregateError).errors.map((error) =>
+      error instanceof Error ? error.message : String(error),
+    ),
+  ).toEqual(["first hook failed", "second hook failed"]);
+
+  order.length = 0;
+  await expect(scope.close()).rejects.toBeInstanceOf(AggregateError);
+  expect(order).toEqual(["first", "second"]);
+});
+
 it("retains the same failed reader owner in a retry failure and retries before admitting work", async () => {
   const scope = new ArtifactResourceScope();
   let closeAttempts = 0;
