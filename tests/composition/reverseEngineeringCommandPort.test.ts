@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { ReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
+import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
@@ -62,6 +63,48 @@ it("uses provider profiles supplied through the application port", async () => {
     expect(call?.[2]?.env?.INJECTED_PROFILE).toBe("yes");
     if (result.ok) expect(result.value.provider.id).toBe("test.objdump");
   } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("binds relative provider launches to the invocation CWD on non-Windows hosts", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "rea-reverse-relative-cwd-"));
+  const path = join(directory, "fixture.bin");
+  await writeFile(path, Buffer.from([0x7f, 0x45, 0x4c, 0x46]));
+  const changedDirectory = join(directory, "changed");
+  let currentDirectory = directory;
+  const cwd = vi
+    .spyOn(process, "cwd")
+    .mockImplementation(() => currentDirectory);
+  const run = vi.fn(
+    async (
+      _command: string,
+      _args: readonly string[],
+      _options?: ExecFileOutputOptions,
+    ) => ({ stdout: "headers", stderr: "" }),
+  );
+  const service = new ReverseEngineeringService({
+    commands: createReverseEngineeringCommandPort(
+      { REA_RIZIN_COMMAND: "./tools/rizin", PATH: "./bin" },
+      "linux",
+    ),
+    run,
+  });
+
+  try {
+    const pending = service.executeRizinCommand({ path, command: "iI" });
+    currentDirectory = changedDirectory;
+    const result = await pending;
+
+    expect(result.ok).toBe(true);
+    expect(run).toHaveBeenCalledWith(
+      "./tools/rizin",
+      ["-N", "-q", "-e", "scr.color=0", "-c", "iI", path],
+      expect.objectContaining({ cwd: directory }),
+      "execute_rizin_command",
+    );
+  } finally {
+    cwd.mockRestore();
     await rm(directory, { recursive: true, force: true });
   }
 });
