@@ -1419,6 +1419,95 @@ describe("what an unmodelled write explains", () => {
   });
 });
 
+describe("timed write observations and generated clocks", () => {
+  it("does not learn an update from a read that began before the write completed", () => {
+    const changed = { ...FIRST_BOOK, name: "Changed", slug: "changed" };
+    const rows: TimedCaptureRow[] = [
+      ...BOOK_INIT_ROWS,
+      [
+        "PATCH",
+        "/api/books/1",
+        { name: "Changed" },
+        200,
+        { name: "Changed" },
+        2_000,
+      ],
+      // This read starts before the PATCH ends and still shows the old value.
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/1", changed],
+      ["GET", "/api/books/1", changed],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      observation: { ordinal: 5 },
+      checked_record_ordinals: [6],
+    });
+  });
+
+  it("refuses a later update that leaves a learned clock unchanged", () => {
+    const afterFirst = {
+      ...FIRST_BOOK,
+      name: "First update",
+      updated_at: bookClock(4),
+    };
+    const afterSecond = { ...afterFirst, name: "Second update" };
+    const rows: TimedCaptureRow[] = [
+      ...BOOK_INIT_ROWS,
+      ["PATCH", "/api/books/1", afterFirst, 200, { name: "First update" }],
+      ["GET", "/api/books/1", afterFirst],
+      [
+        "PATCH",
+        "/api/books/1",
+        { id: 1, name: "Second update" },
+        200,
+        { name: "Second update" },
+      ],
+      ["GET", "/api/books/1", afterSecond],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: false,
+      reason: "unexplained-change",
+    });
+  });
+
+  it("keeps a later update whose regenerated clock advances", () => {
+    const afterFirst = {
+      ...FIRST_BOOK,
+      name: "First update",
+      updated_at: bookClock(4),
+    };
+    const afterSecond = {
+      ...afterFirst,
+      name: "Second update",
+      updated_at: bookClock(6),
+    };
+    const rows: TimedCaptureRow[] = [
+      ...BOOK_INIT_ROWS,
+      [
+        "PATCH",
+        "/api/books/1",
+        { name: "First update" },
+        200,
+        { name: "First update" },
+      ],
+      ["GET", "/api/books/1", afterFirst],
+      [
+        "PATCH",
+        "/api/books/1",
+        { id: 1, name: "Second update" },
+        200,
+        { name: "Second update" },
+      ],
+      ["GET", "/api/books/1", afterSecond],
+      ["GET", "/api/books/1", afterSecond],
+    ];
+    expect(gated(rows, "patch_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [7],
+    });
+  });
+});
+
 describe("what later calls must keep consistent", () => {
   it("refuses an update one call sends an ignored id with and another the path's id", () => {
     const renamed = (at: Book, name: string) => ({ ...at, name });

@@ -30,7 +30,7 @@ import {
   laterObservation,
   type Observed,
 } from "./environmentStateWriteObserve.js";
-import { integerOf, slugOf } from "./environmentStateWriteValues.js";
+import { integerOf, readClock, slugOf } from "./environmentStateWriteValues.js";
 import {
   pathValuesOf,
   type FieldRule,
@@ -195,6 +195,7 @@ export const startOf = (
 export const searchFrom = (context: EffectContext, step: WriteStep) => ({
   records: context.records,
   from: step.index,
+  ...(context.timed ? { after: step.record.end } : {}),
   viewOf: context.viewOf,
   withBody: context.io.withBody,
 });
@@ -209,6 +210,7 @@ const updatedObservation = (
     readonly collection: string;
     readonly id: string;
   },
+  required: readonly string[],
 ): Observed | undefined => {
   const own = context.io.withBody(
     step.record.ordinal,
@@ -227,7 +229,11 @@ const updatedObservation = (
         : undefined;
     },
   );
-  if (own !== undefined) return own;
+  if (
+    own !== undefined &&
+    required.every((field) => Object.hasOwn(own.object, field))
+  )
+    return own;
   const later = laterObservation(searchFrom(context, step), {
     type: entity.type,
     collection: entity.collection,
@@ -240,8 +246,11 @@ const updatedObservation = (
       return found.collection === entity.collection && found.id === entity.id;
     },
   });
-  if (later !== undefined) context.observed(later.ordinal);
-  return later;
+  if (later !== undefined) {
+    context.observed(later.ordinal);
+    return later;
+  }
+  return own;
 };
 
 /** Add what a later call of an update showed to its plan: members, fixed values and rules not seen before. */
@@ -370,7 +379,14 @@ export const applyUpdate = (
   const after =
     entity === undefined
       ? undefined
-      : updatedObservation(context, step, { type, idField, collection, id });
+      : updatedObservation(
+          context,
+          step,
+          { type, idField, collection, id },
+          draft.plan.rules.flatMap((rule) =>
+            rule.rule === "clock" ? [rule.field] : [],
+          ),
+        );
   if (entity === undefined || after === undefined) {
     fail(draft, step, "no-observation");
     return UNKNOWN;
@@ -412,6 +428,12 @@ export const applyUpdate = (
     built(draft) &&
     !unknown &&
     (contradictsEarlierCalls(draft, explained.rules) ||
+      contradictsGeneratedClock(
+        entity.fields,
+        after.object,
+        draft.plan.rules,
+        explained.rules,
+      ) ||
       conflictsWithPlan(draft.plan, explained))
   ) {
     refuse(draft, step, "unexplained-change");
@@ -458,6 +480,29 @@ export const applyUpdate = (
   };
   return { kind: "applied", targets, entity: target, fields: sent, changed };
 };
+
+/** Serving regenerates a learned clock on every update, so recorded calls must advance it. */
+const contradictsGeneratedClock = (
+  before: JsonObject,
+  after: JsonObject,
+  rules: readonly FieldRule[],
+  explained: readonly FieldRule[],
+): boolean =>
+  rules.some((rule) => {
+    if (rule.rule !== "clock" || !Object.hasOwn(after, rule.field))
+      return false;
+    const previous = readClock(before[rule.field]);
+    if (previous === undefined) return false;
+    const next = readClock(after[rule.field]);
+    return (
+      !explained.some(
+        (candidate) =>
+          candidate.field === rule.field && candidate.rule === "clock",
+      ) ||
+      next === undefined ||
+      next.ms <= previous.ms
+    );
+  });
 
 /** Apply a recorded delete: the held entity leaves its collection. */
 export const applyDelete = (

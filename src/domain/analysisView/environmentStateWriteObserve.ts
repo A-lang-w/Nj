@@ -62,6 +62,8 @@ export const newEntityIn = (
 export interface ObservationSearch {
   readonly records: readonly StateRecordFacts[];
   readonly from: number;
+  /** A timed write's completion; reads begun before it cannot observe its effect. */
+  readonly after?: number;
   readonly viewOf: (ordinal: number) => StateView | undefined;
   readonly withBody: <T>(
     ordinal: number,
@@ -91,6 +93,7 @@ export const laterObservation = (
 ): Observed | undefined => {
   for (const record of search.records.slice(search.from + 1)) {
     if (target.isWrite(record)) return undefined;
+    if (search.after !== undefined && record.start < search.after) continue;
     const view = search.viewOf(record.ordinal);
     if (
       !succeeded(record) ||
