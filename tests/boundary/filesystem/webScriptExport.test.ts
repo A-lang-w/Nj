@@ -468,6 +468,75 @@ describe("captured script publication failures and cleanup", () => {
     expect(await readdir(root)).toEqual(["capture.json"]);
   });
 
+  it("keeps the exact caller reason when cancellation interrupts the first output write", async () => {
+    const { input, resources } = await setup(
+      scriptScenarioFixture([
+        {
+          url: "https://fixture.test/first.js",
+          bytes: Buffer.from("export const a = 1;"),
+        },
+        {
+          url: "https://fixture.test/second.js",
+          bytes: Buffer.from("export const b = 2;"),
+        },
+      ]),
+    );
+    const controller = new AbortController();
+    const reason = { request: "stop export" };
+    const create = SafeOutputTree.create.bind(SafeOutputTree);
+    const createSpy = vi
+      .spyOn(SafeOutputTree, "create")
+      .mockImplementationOnce(async (...args) => {
+        const tree = await create(...args);
+        const write = tree.write.bind(tree);
+        vi.spyOn(tree, "write").mockImplementationOnce(async (...writeArgs) => {
+          controller.abort(reason);
+          return write(...writeArgs);
+        });
+        return tree;
+      });
+    try {
+      const result = await exportWebScripts(input, resources, {
+        signal: controller.signal,
+      });
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.cause).toBe(reason);
+      expect(resources.hasPending).toBe(false);
+    } finally {
+      createSpy.mockRestore();
+    }
+  });
+
+  it("returns cancellation with the caller reason when a retried capture close recovers", async () => {
+    const { input, resources } = await setup();
+    const controller = new AbortController();
+    const reason = { request: "stop export" };
+    let closeCalls = 0;
+    openMock.mockImplementation(async (...args) => {
+      const handle = await actualFs.open(...args);
+      if (String(args[0]) !== input.capture_path) return handle;
+      const close = handle.close.bind(handle);
+      vi.spyOn(handle, "close").mockImplementation(async () => {
+        closeCalls += 1;
+        if (closeCalls === 1) {
+          controller.abort(reason);
+          throw new Error("injected capture close failure");
+        }
+        await close();
+      });
+      return handle;
+    });
+    const result = await exportWebScripts(input, resources, {
+      signal: controller.signal,
+    });
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(closeCalls).toBe(2);
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cause).toBe(reason);
+    expect(resources.hasPending).toBe(false);
+  });
+
   it("identifies a missing capture file and rejected host path syntax", async () => {
     const { input, resources } = await setup();
     const missing = await exportWebScripts(

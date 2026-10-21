@@ -446,5 +446,11 @@ export const traceNativeValues = async (
         "Graph output exceeds 32 MiB; lower max_nodes, max_edges or page limit",
       ),
     );
+  if (signal?.aborted)
+    return err(
+      new AnalysisCancelledError("trace_native_values", {
+        cause: signal.reason,
+      }),
+    );
   return ok(result);
 };

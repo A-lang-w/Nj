@@ -38,6 +38,7 @@ import {
   NonRegularFileReadError,
   RegularFileChangedError,
 } from "../filesystem/RegularFile.js";
+import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 
 const OPERATION = "export_web_scripts";
 
@@ -187,7 +188,12 @@ const mapExportFailure = (
       OPERATION,
     );
   if (signal?.aborted === true)
-    return new AnalysisCancelledError(OPERATION, { cause });
+    return new AnalysisCancelledError(OPERATION, {
+      cause:
+        cause instanceof ArtifactReaderFailure && cause.cause === signal.reason
+          ? signal.reason
+          : cause,
+    });
   if (cause instanceof ArtifactReaderFailure)
     return new WebScriptExportError(
       cause.reason,
@@ -245,8 +251,20 @@ const readCapture = async (
         incomplete: retry.cleanup !== undefined,
         cause: cause.cleanupCause,
       };
-      if (retry.outcome.kind === "completed")
+      if (retry.outcome.kind === "completed") {
+        const cancellation = regularFileCancellation(cause);
+        if (cancellation !== undefined) {
+          const primary = new AnalysisCancelledError(OPERATION, {
+            cause: cancellation.reason,
+          });
+          return err(
+            retry.cleanup === undefined
+              ? primary
+              : incompleteCaptureCleanup(primary, path, cleanup),
+          );
+        }
         return ok({ bytes: retry.outcome.value as Buffer, cleanup });
+      }
       const primary = captureReadFailure(
         path,
         retry.outcome.cause,
