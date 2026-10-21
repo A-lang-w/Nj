@@ -188,3 +188,21 @@ by this plistlib oracle. It is not a comparative benchmark or independent NIB
 correctness claim. macOS ibtool, runtime UI, other archive variants, globally
 complete hierarchy/class interpretation, #5720/#5721 and the remaining source
 decoder issues are unverified or unchanged here.
+
+## Integration verification
+
+The measured comparison above was pinned to `f801b2fbf`. The branch was then
+rebased onto `f5410bdc4` (the separate #5806 scalar-record fix). All six final
+source fingerprints remain identical. On the rebased runtime both real SDK
+tasks passed again, with the complete retained parent equal to the original
+baseline for both admission sizes. The complete real CLI Evidence and portable
+CLI page also equal the baseline/MCP results. These integration runs are recorded
+separately in the JSON and excluded from the pinned comparison medians.
+
+The relevant 12-file suite passed 204 tests after the paging refactor. After
+rebasing, another six-file run passed 78 tests covering scalar source facts,
+keyed archive number metadata, Interface Builder views, production MCP summary
+paging and compiled CLI numeric/hierarchy boundaries. Both cohorts verified
+owned cleanup with no observed memory/PID limit events; tests used the bounded
+two-CPU, 4 GiB guard. Native ibtool/macOS runtime behavior is not established by
+these tests.
