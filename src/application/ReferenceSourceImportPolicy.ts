@@ -66,15 +66,18 @@ type IgnoreReason = "project-ignored" | "default-ignored" | "caller-excluded";
 
 /** Scope Git patterns once while retaining their original text for evidence. */
 const scopedPattern = (
-  pattern: string,
+  sourcePattern: string,
   prefix: string | undefined,
 ): string | undefined => {
+  // A U+FEFF remaining in a rule is a literal character, not a file signature.
+  // Protect it from ignore's per-rule BOM and whitespace normalization.
+  const pattern = sourcePattern.replace(/^(!?)\uFEFF/u, "$1[\uFEFF]");
   if (prefix === undefined) return pattern;
   if (pattern.trim() === "" || pattern.startsWith("#")) return undefined;
   const negative = pattern.startsWith("!");
-  // Match ignore's treatment of an initial BOM and escaped trailing whitespace
-  // before deciding whether a slash anchors the rule to its own directory.
-  const body = (negative ? pattern.slice(1) : pattern).replace(/^\uFEFF/u, "");
+  // Account for escaped trailing whitespace before deciding whether a slash
+  // anchors the rule to its own directory.
+  const body = negative ? pattern.slice(1) : pattern;
   const normalized = body.replace(
     /((?:\\\\)*?)(\\?\s+)$/u,
     (_match, pairs: string, trailing: string) =>
@@ -102,12 +105,16 @@ const addMarkedPatterns = (
           .split("/")
           .map(() => "*")
           .join("/");
-  for (const pattern of patterns)
-    for (const line of pattern.split(/\r?\n/u)) {
+  for (const pattern of patterns) {
+    // Only the start of a policy file can contain an encoding signature.
+    const text =
+      reason === "project-ignored" ? pattern.replace(/^\uFEFF/u, "") : pattern;
+    for (const line of text.split(/\r?\n/u)) {
       const scoped = scopedPattern(line, prefix);
       if (scoped !== undefined)
         matcher.add({ pattern: scoped, mark: `${reason}\u0000${line}` });
     }
+  }
   // This directory has already been admitted by the inherited policy.
   // A zero-depth **/ match must not exclude the policy's own directory and,
   // through ignore's parent checks, all of its otherwise included children.
