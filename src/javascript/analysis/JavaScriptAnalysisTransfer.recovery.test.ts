@@ -33,6 +33,7 @@ it("distinguishes the adjustable transfer file ceiling from the fixed record and
   expect(projected.remediation.action).toContain("8388608");
   expect(projected.remediation.action).toContain("2147483648");
   expect(projected.remediation.action).toContain("NODE_OPTIONS");
+  expect(projected.remediation.action).toContain("--max-old-space-size=<MiB>");
   expect(projected.remediation.action).toContain(
     "Selecting fewer source_paths can",
   );

@@ -90,7 +90,7 @@ it("names the parent heap control for the parent result budget", () => {
   );
   expect(JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION).toContain("NODE_OPTIONS");
   expect(JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION).toContain(
-    "--max-old-space-size",
+    "--max-old-space-size=<MiB>",
   );
   expect(JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION).toContain("max_heap_mb");
   expect(JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION).not.toContain(
@@ -106,7 +106,7 @@ it("names the parent heap control for checkpoint decode", () => {
     "NODE_OPTIONS",
   );
   expect(JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION).toContain(
-    "--max-old-space-size",
+    "--max-old-space-size=<MiB>",
   );
   expect(JAVASCRIPT_PARENT_CHECKPOINT_HEAP_REMEDIATION).toContain(
     "admit this checkpoint",

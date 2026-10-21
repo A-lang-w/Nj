@@ -627,7 +627,7 @@ expansion), up to 2 GiB. Individual records remain bounded to 8 MiB. The 8 MiB
 record ceiling and the 2 GiB file maximum have no runtime override, and raising
 `max_heap_mb` does not raise them. The effective file ceiling follows the
 parent's offered result budget. On Node, a larger CLI/MCP process heap
-(`NODE_OPTIONS`, for example `--max-old-space-size`, after restarting that
+(`NODE_OPTIONS`, for example `--max-old-space-size=<MiB>`, after restarting that
 process) can raise it up to 2 GiB. Selecting fewer `source_paths` can also
 raise that effective allowance, because the reserve for remaining sources and
 earlier retained results reduce the offered budget. Neither change raises the
@@ -645,7 +645,7 @@ is not attributed to that V8 old-space limit, because Bun ignores the flag.
 Raising `max_heap_mb` does not raise the parent result budget,
 the transfer record ceiling, the 2 GiB transfer file maximum, the CLI/MCP
 process heap, or fixed parser limits. The parent result budget follows that
-process heap. On Node, set `NODE_OPTIONS` (for example `--max-old-space-size`)
+process heap. On Node, set `NODE_OPTIONS` (for example `--max-old-space-size=<MiB>`)
 in the environment that starts the CLI or MCP server, then restart that
 process, to raise the parent heap and the result budget. A completed static
 checkpoint that does not fit the parent's remaining heap names that parent
