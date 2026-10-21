@@ -10,17 +10,17 @@ import { nativeRuntimeConvention } from "../nativeConvention.js";
 import {
   applicationInventoryProjectionInputSchema,
   bridgeCandidateCoverageSchema,
-  compareProjectionStrings,
   projectCartesianCandidates,
   projectedBridgeCandidateSchema,
   projectedComponentSchema,
-  projectedComponents,
+  projectedInventoryEntries,
+  projectedFileComponents,
   projectionCoverage,
   projectionDigest,
   projectionEvidenceIdSchema,
   unavailableComponentSchema,
-  unavailableComponents,
 } from "../mobileApplicationGraphProjection.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 
 const evidenceIdSchema = projectionEvidenceIdSchema;
 const componentSchema = projectedComponentSchema;
@@ -94,8 +94,11 @@ export const projectAndroidApplication = (
     throw new TypeError(
       `Android application projection requires APK inventory Evidence; the inventory root format is ${inventory.manifest.root_format}. APK is chosen for a ZIP archive whose name ends in .apk.`,
     );
-  const all = projectedComponents(inventory);
-  const unavailable = unavailableComponents(inventory);
+  const entries = projectedInventoryEntries(inventory);
+  const all = projectedFileComponents(entries);
+  const unavailable = entries.flatMap(({ unavailable }) =>
+    unavailable === undefined ? [] : [unavailable],
+  );
   const classified = classify(all);
   const bridgeProjection = bridgeCandidates(
     [...classified.dex, ...classified.jvm_classes],
@@ -133,10 +136,10 @@ export const projectAndroidApplication = (
     root_format: "apk" as const,
     source_evidence_ids: evidence
       .map(({ evidence_id: id }) => id)
-      .sort(compareProjectionStrings),
+      .sort(compareUnicodeCodePoints),
     components,
     unavailable_components: unavailable,
-    runtime_families: runtimeFamilies(all),
+    runtime_families: runtimeFamilies(all, classified),
     bridge_candidates: bridgeProjection.candidates,
     bridge_candidate_coverage: bridgeProjection.coverage,
     coverage: projectionCoverage(
@@ -169,14 +172,15 @@ const classify = (all: readonly Component[]) => ({
   ),
 });
 
-const runtimeFamilies = (all: readonly Component[]) => {
+const runtimeFamilies = (
+  all: readonly Component[],
+  components: AndroidApplicationProjectionResult["components"],
+) => {
   const families = new Set<
     AndroidApplicationProjectionResult["runtime_families"][number]
   >();
-  if (all.some(({ path }) => path.toLowerCase().endsWith(".dex")))
-    families.add("dalvik-art");
-  if (all.some(({ path }) => path.toLowerCase().endsWith(".class")))
-    families.add("java-kotlin");
+  if (components.dex.length > 0) families.add("dalvik-art");
+  if (components.jvm_classes.length > 0) families.add("java-kotlin");
   if (all.some(({ format }) => format === "elf")) families.add("native");
   if (all.some(({ format }) => format === "javascript-bundle"))
     families.add("javascript");
@@ -184,7 +188,7 @@ const runtimeFamilies = (all: readonly Component[]) => {
     const convention = nativeRuntimeConvention(path);
     if (convention !== null) families.add(convention);
   }
-  return [...families].sort(compareProjectionStrings);
+  return [...families].sort(compareUnicodeCodePoints);
 };
 
 const bridgeCandidates = (
