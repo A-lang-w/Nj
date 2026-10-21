@@ -12,9 +12,14 @@ import { wasmArtifactModule } from "../composition/wasm.js";
 import { registerWasmTools } from "./registerWasmTools.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
-import { createPeResourcesService } from "../composition/binaryDiagnostics.js";
+import {
+  createPeResourcesService,
+  createWindowsMinidumpService,
+} from "../composition/binaryDiagnostics.js";
 import type { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
 import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
+import { registerWindowsMinidumpTool } from "./registerWindowsMinidumpTool.js";
+import type { WindowsMinidumpService } from "../application/binaryDiagnostics/WindowsMinidumpService.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import {
   evmInterfaceModule,
@@ -338,6 +343,7 @@ export const createServer = (
   const il2cppMetadata =
     options.il2cppMetadata ?? createIl2cppMetadataService();
   const peResources = createPeResourcesService();
+  const windowsMinidump = createWindowsMinidumpService();
   const electronFuses = options.electronFuses ?? createElectronFuseService();
   const webNetworkCapture =
     options.webNetworkCapture ?? createWebNetworkCaptureService(environment);
@@ -425,6 +431,7 @@ export const createServer = (
       modelArtifact.close(),
       gpuCodeObjects.close(),
       peResources.close(),
+      windowsMinidump.close(),
       electronFuses.close(),
       webNetworkCapture.close(),
       javascriptRecovery.close?.() ?? Promise.resolve(),
@@ -488,6 +495,7 @@ export const createServer = (
     rustBinary,
     il2cppMetadata,
     peResources,
+    windowsMinidump,
     electronFuses,
     webNetworkCapture,
   };
@@ -719,6 +727,7 @@ const registerConfiguredAnalysisTools = (
     rustBinary,
     il2cppMetadata,
     peResources,
+    windowsMinidump,
     webNetworkCapture,
     artifactResources,
   }: ServerToolContext,
@@ -763,6 +772,13 @@ const registerConfiguredAnalysisTools = (
   registerPeResourcesTool(
     server,
     peResources,
+    toolLogger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  registerWindowsMinidumpTool(
+    server,
+    windowsMinidump,
     toolLogger,
     recordEvidence,
     withAdmittedAnalysis,
@@ -900,6 +916,7 @@ interface ServerToolContext extends ReturnType<typeof createSessionRecorders> {
   readonly rustBinary: RustBinaryService;
   readonly il2cppMetadata: Il2cppMetadataService;
   readonly peResources: PeResourcesService;
+  readonly windowsMinidump: WindowsMinidumpService;
   readonly electronFuses: ElectronFuseService;
   readonly webNetworkCapture: WebNetworkCaptureService;
   readonly artifactResources: ArtifactResourceScope;
