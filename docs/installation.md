@@ -517,6 +517,12 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | DeepSeek Harness   | `dsh`            |
 | Puku CLI           | `puku_cli`        |
 
+For Puku CLI, setup writes the MCP registration to `~/.puku-cli/.mcp.json`
+and installs the bundled skill under
+`~/.puku-cli/skills/reverse-engineer-anything/`. Detection requires
+`~/.puku-cli/settings.json` or `~/.puku-cli/puku-cli.json`; an empty
+`.puku-cli` directory alone is not considered an installed client.
+
 `droid`, `dsh`, `kimi`, `qoder`, `trae`, `workbuddy`, and `zcode` require
 `rea-agents@6.5.0` or later. The 6.4.0 registry check above does not cover them.
 
