@@ -144,14 +144,18 @@ const parseEffectiveIgnoreCase = (text: string): boolean | null => {
   let section: string | undefined;
   let subsection: string | undefined;
   const values: string[] = [];
+  let worktreeConfig: boolean | null | undefined;
+  let worktreeConfigUnknown = false;
   for (const rawLine of text.split(/\r?\n/u)) {
     const line = rawLine.trim();
     if (line === "" || line.startsWith("#") || line.startsWith(";")) continue;
+    if (hasUnescapedTrailingBackslash(line)) return null;
     const header =
       /^\[\s*([A-Za-z][A-Za-z0-9-]*)(?:\s+"((?:[^"\\]|\\.)*)")?\s*\](?:\s*[#;].*)?$/u.exec(
         line,
       );
     if (header !== null) {
+      if (/\\(?![\\"])/u.test(header[2] ?? "")) return null;
       section = header[1]?.toLowerCase();
       subsection = header[2]?.replace(/\\([\\"])/gu, "$1");
       if (section === "include" || section === "includeif") return null;
@@ -162,44 +166,93 @@ const parseEffectiveIgnoreCase = (text: string): boolean | null => {
     if (variable === null) return null;
     const name = variable[1]?.toLowerCase();
     const sourceValue = variable[2];
-    if (section !== "core" || subsection !== undefined || name !== "ignorecase")
-      continue;
-    if (sourceValue === undefined) {
-      values.push("true");
-      continue;
-    }
-    const parsedValue = parseGitConfigValue(sourceValue);
+    const parsedValue =
+      sourceValue === undefined ? "true" : parseGitConfigValue(sourceValue);
+    // This parser deliberately supports only ordinary single-line Git config
+    // values. If any value is outside that grammar, no nearby core setting is
+    // trusted: Git may reject the file or apply a different interpretation.
     if (parsedValue === undefined) return null;
-    values.push(parsedValue);
+    if (section === "core" && subsection === undefined && name === "ignorecase")
+      values.push(parsedValue);
+    if (
+      section === "extensions" &&
+      subsection === undefined &&
+      name === "worktreeconfig"
+    ) {
+      worktreeConfig = parseGitBoolean(parsedValue);
+      if (worktreeConfig === null) worktreeConfigUnknown = true;
+    }
   }
-  const value = values.at(-1)?.toLowerCase();
-  if (value === "true" || value === "yes" || value === "on" || value === "1")
-    return true;
-  if (value === "false" || value === "no" || value === "off" || value === "0")
-    return false;
-  return null;
+  if (worktreeConfig === true || worktreeConfigUnknown) return null;
+  return parseGitBoolean(values.at(-1));
+};
+
+const parseGitBoolean = (value: string | undefined): boolean | null => {
+  switch (value?.toLowerCase()) {
+    case "true":
+    case "yes":
+    case "on":
+    case "1":
+      return true;
+    case "false":
+    case "no":
+    case "off":
+    case "0":
+      return false;
+    default:
+      return null;
+  }
+};
+
+const hasUnescapedTrailingBackslash = (line: string): boolean => {
+  let count = 0;
+  for (let index = line.length - 1; index >= 0 && line[index] === "\\"; index--)
+    count++;
+  return count % 2 === 1;
 };
 
 const parseGitConfigValue = (source: string): string | undefined => {
-  let value = "";
-  let quoted = false;
-  let escaped = false;
-  for (const character of source.trim()) {
-    if (escaped) {
-      if (character !== "\\" && character !== '"') return undefined;
-      value += character;
-      escaped = false;
-    } else if (character === "\\" && quoted) {
-      escaped = true;
-    } else if (character === '"') {
-      quoted = !quoted;
-    } else if (!quoted && (character === "#" || character === ";")) {
-      break;
-    } else {
-      value += character;
+  const value = source.trim();
+  if (!value.startsWith('"')) {
+    if (value.includes('"')) return undefined;
+    return value.replace(/\s[#;].*$/u, "").trim();
+  }
+  let parsed = "";
+  for (let index = 1; index < value.length; index++) {
+    const character = value[index];
+    if (character === '"') {
+      const sourceRemainder = value.slice(index + 1);
+      const remainder = sourceRemainder.trim();
+      return remainder === "" ||
+        (sourceRemainder !== remainder &&
+          (remainder.startsWith("#") || remainder.startsWith(";")))
+        ? parsed
+        : undefined;
+    }
+    if (character !== "\\") {
+      parsed += character;
+      continue;
+    }
+    const escaped = value[++index];
+    switch (escaped) {
+      case "\\":
+      case '"':
+        parsed += escaped;
+        break;
+      case "n":
+        parsed += "\n";
+        break;
+      case "t":
+        parsed += "\t";
+        break;
+      case "b":
+        parsed += "\b";
+        break;
+      default:
+        return undefined;
     }
   }
-  return quoted || escaped ? undefined : value.trim();
+  return undefined;
 };
 
 const readOwnedMetadataText = async (

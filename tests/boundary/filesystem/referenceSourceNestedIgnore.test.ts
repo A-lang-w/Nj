@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 
@@ -59,6 +59,122 @@ const testUnknownIncludedGitIgnoreCase = async () => {
       reason: "project-ignored",
       pattern: "generated/",
       policy_path: "pkg/.gitignore",
+    }),
+  );
+};
+
+const testLinkedWorktreeIgnoreCaseOverride = async () => {
+  const root = await createTestTempDirectory(
+    "rea-reference-worktree-ignore-case-",
+  );
+  const common = join(root, "common");
+  const linked = join(root, "linked");
+  const git = (cwd: string, args: string[]) =>
+    spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
+  const succeeds = (cwd: string, args: string[]) => {
+    const result = git(cwd, args);
+    expect(result.status, result.stderr).toBe(0);
+    return result;
+  };
+  await mkdir(common);
+  await writeTree(common, {
+    ".gitignore": "generated/\n",
+    "pkg/Generated/keep.ts": "retained according to linked config\n",
+  });
+  expect(
+    spawnSync("git", ["init", "--quiet", "--initial-branch=main", common], {
+      encoding: "utf8",
+    }).status,
+  ).toBe(0);
+  succeeds(common, ["add", "--", ".gitignore"]);
+  succeeds(common, ["add", "--force", "--", "pkg/Generated/keep.ts"]);
+  succeeds(common, [
+    "-c",
+    "user.name=REA fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "--quiet",
+    "-m",
+    "fixture",
+  ]);
+  succeeds(common, ["config", "core.ignoreCase", "true"]);
+  succeeds(common, ["config", "extensions.worktreeConfig", "true"]);
+  succeeds(common, ["worktree", "add", "--quiet", "--detach", linked, "HEAD"]);
+  succeeds(linked, ["config", "--worktree", "core.ignoreCase", "false"]);
+
+  const effectiveCase = succeeds(linked, [
+    "config",
+    "--get",
+    "core.ignoreCase",
+  ]);
+  expect(effectiveCase.stdout.trim()).toBe("false");
+  expect(
+    git(linked, ["check-ignore", "--no-index", "pkg/Generated/keep.ts"]).status,
+  ).toBe(1);
+  const result = await importReferenceSource({
+    root: linked,
+    caller: "nested-ignore-worktree-config-test",
+    policy: { secretPatterns: [] },
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.limitations).toContain(
+    "Effective Git core.ignoreCase is unknown; project ignore matching used case-insensitive rules.",
+  );
+  expect(result.value.exclusions).toContainEqual(
+    expect.objectContaining({
+      path: "pkg/Generated",
+      reason: "project-ignored",
+      pattern: "generated/",
+      policy_path: ".gitignore",
+    }),
+  );
+};
+
+const testMalformedGitIgnoreConfig = async () => {
+  const root = await createTestTempDirectory(
+    "rea-reference-ignore-malformed-config-",
+  );
+  await writeTree(root, {
+    ".gitignore": "generated/\n",
+    "pkg/Generated/keep.ts": "retained only by a case-sensitive config\n",
+  });
+  expect(
+    spawnSync("git", ["init", "--quiet", "--initial-branch=main", root], {
+      encoding: "utf8",
+    }).status,
+  ).toBe(0);
+  expect(
+    spawnSync("git", ["-C", root, "config", "core.ignoreCase", "false"], {
+      encoding: "utf8",
+    }).status,
+  ).toBe(0);
+  const configPath = join(root, ".git", "config");
+  await writeFile(
+    configPath,
+    `${await readFile(configPath, "utf8")}\n[user]\n\tname = "unterminated\n`,
+  );
+  expect(
+    spawnSync("git", ["-C", root, "config", "--get", "core.ignoreCase"], {
+      encoding: "utf8",
+    }).status,
+  ).not.toBe(0);
+
+  const result = await importReferenceSource({
+    root,
+    caller: "nested-ignore-malformed-config-test",
+    policy: { secretPatterns: [] },
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.limitations).toContain(
+    "Effective Git core.ignoreCase is unknown; project ignore matching used case-insensitive rules.",
+  );
+  expect(result.value.exclusions).toContainEqual(
+    expect.objectContaining({
+      path: "pkg/Generated",
+      reason: "project-ignored",
+      pattern: "generated/",
+      policy_path: ".gitignore",
     }),
   );
 };
@@ -126,6 +242,14 @@ describe.skipIf(process.platform === "win32")(
 
     it("retains unknown ignore case when Git config uses includes", async () => {
       await testUnknownIncludedGitIgnoreCase();
+    });
+
+    it("keeps ignore case unknown when linked worktree config can override common config", async () => {
+      await testLinkedWorktreeIgnoreCaseOverride();
+    });
+
+    it("does not trust a core setting from a malformed Git config", async () => {
+      await testMalformedGitIgnoreConfig();
     });
 
     it("scopes anchored rules and negations to their directory and descendants", async () => {
