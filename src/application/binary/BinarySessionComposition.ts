@@ -6,6 +6,7 @@ import {
   type BinaryTargetLimits,
 } from "./BinaryTargetRegistry.js";
 import { SessionProviderRouter } from "./SessionProviderRouter.js";
+import type { BundleResourceClientFactory } from "./BundleResourceSession.js";
 
 /**
  * Compose one provider-neutral target registry from deep-provider selection and
@@ -15,9 +16,11 @@ export const composeBinarySession = (
   registry: AnalysisProviderRegistry,
   auxiliaryProviders: readonly AnalysisProvider[] = [],
   limits: Partial<BinaryTargetLimits> = {},
+  bundleResourceFactory?: BundleResourceClientFactory,
 ): BinaryTargetRegistry =>
   new BinaryTargetRegistry(
     SessionProviderRouter.selectable(registry, auxiliaryProviders),
     new InvestigationRecords(),
     limits,
+    bundleResourceFactory,
   );

@@ -50,6 +50,8 @@ import type {
 } from "../../domain/residualUnknown.js";
 import type { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
 import type { WorkflowSnapshotRecordInput } from "./BinarySessionRecords.js";
+import type { ResolvedAppBundleResourceRoot } from "../AppBundleExecutable.js";
+import type { BundleResourceClientFactory } from "./BundleResourceSession.js";
 
 /** Bounded target and analysis concurrency supplied by the composition root. */
 export interface BinaryTargetLimits {
@@ -181,6 +183,13 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   readonly #router: SessionProviderRouter;
   readonly #records: InvestigationRecords;
   readonly #limits: BinaryTargetLimits;
+  /**
+   * The reader every slot uses for app resource roots.
+   *
+   * A resource-only app session belongs to a slot like any other target, so
+   * the factory is shared by the slots the registry creates.
+   */
+  readonly #bundleResourceFactory: BundleResourceClientFactory | undefined;
   readonly #slots = new Map<string, TargetSlot>();
   readonly #jobs = new Map<string, AnalysisJob>();
   /** Slot handles whose provider cleanup failed and still owns its resource. */
@@ -200,9 +209,11 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     router: SessionProviderRouter,
     records: InvestigationRecords = new InvestigationRecords(),
     limits: Partial<BinaryTargetLimits> = {},
+    bundleResourceFactory?: BundleResourceClientFactory,
   ) {
     this.#router = router;
     this.#records = records;
+    this.#bundleResourceFactory = bundleResourceFactory;
     this.#limits = {
       maxOpenTargets: Math.max(
         1,
@@ -927,6 +938,19 @@ export class BinaryTargetRegistry implements BinarySessionPort {
     return this.#currentSlot().session.previewTarget(target, options);
   }
 
+  /**
+   * Open a resource-only app root in the current slot.
+   *
+   * A resource-only session has no executable target, so it is addressed by
+   * the slot that owns the current target rather than by a target handle.
+   */
+  openBundleResources(
+    path: string,
+    options: Pick<ExecutionOptions, "signal"> = {},
+  ): Promise<Result<ResolvedAppBundleResourceRoot, AnalysisError>> {
+    return this.#currentSlot().session.openBundleResources(path, options);
+  }
+
   close(
     options: Parameters<BinarySessionPort["close"]>[0] = {},
   ): Promise<Result<null, AnalysisError>> {
@@ -1507,7 +1531,11 @@ export class BinaryTargetRegistry implements BinarySessionPort {
   }
 
   #createSlot(): TargetSlot {
-    const session = new BinarySession(this.#router, this.#records);
+    const session = new BinarySession(
+      this.#router,
+      this.#records,
+      this.#bundleResourceFactory,
+    );
     const slot: TargetSlot = {
       id: randomUUID(),
       session,

@@ -14,6 +14,7 @@ import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import type { AnalysisSnapshotLoader } from "./BinarySessionOpen.js";
 import type { ResolvedSessionOpen } from "./BinarySessionOpen.js";
 import type { WorkflowSnapshotRecordInput } from "./BinarySessionRecords.js";
+import type { ResolvedAppBundleResourceRoot } from "../AppBundleExecutable.js";
 
 import type {
   AnalysisExecution,
@@ -113,6 +114,11 @@ export interface BinarySessionPort
       readonly autoBackgroundAfterMs?: number;
     },
   ): Promise<Result<BinaryTarget, AnalysisError>>;
+  /** Open a resource-only app root without selecting or inventing an executable target. */
+  openBundleResources(
+    path: string,
+    options?: Pick<ExecutionOptions, "signal">,
+  ): Promise<Result<ResolvedAppBundleResourceRoot, AnalysisError>>;
   close(
     options?: Pick<ExecutionOptions, "progress"> & {
       readonly retainProviderDocuments?: boolean;

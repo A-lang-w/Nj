@@ -25,6 +25,7 @@ const observedEpochs = (
   const session = new BinarySession(
     createTestProviderRouter(provider),
     undefined,
+    undefined,
     () => {
       const retirement = createTransitionRetirement();
       epochs.push(retirement);

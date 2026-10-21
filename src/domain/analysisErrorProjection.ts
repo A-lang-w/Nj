@@ -53,6 +53,16 @@ import {
 /** Project expected failures into exhaustive, secret-safe caller fields. */
 export const projectAnalysisError = (
   error: AnalysisError,
+): AnalysisErrorProjection => projectError(error, true);
+
+/** Cleanup history references output retained by its enclosing error owner. */
+export const projectAnalysisErrorWithoutCapturedOutput = (
+  error: AnalysisError,
+): AnalysisErrorProjection => projectError(error, false);
+
+const projectError = (
+  error: AnalysisError,
+  includeCapturedOutput: boolean,
 ): AnalysisErrorProjection => {
   const composed = error;
   error = resolvedAnalysisError(error);
@@ -90,7 +100,7 @@ export const projectAnalysisError = (
             primaryDetails?.execution_failure ?? underlyingCode,
         }
       : {}),
-    ...(capturedOutput === undefined
+    ...(!includeCapturedOutput || capturedOutput === undefined
       ? {}
       : {
           captured_output: {
@@ -182,6 +192,7 @@ const BROWSER_ERROR_CODES: Readonly<
   target_not_allowed: "target_unavailable",
   service_worker_blocked: "target_unavailable",
   target_changed: "target_unavailable",
+  target_session_detached: "target_unavailable",
   protocol_error: "unreadable_output",
   disconnected: "provider_unavailable",
   payload_limit: "truncated",
@@ -608,7 +619,6 @@ const lifecycleErrorDetails = (
 
 const RETRYABLE_CODES: ReadonlySet<AnalysisErrorProjection["code"]> = new Set([
   "artifact_changed",
-  "invalid_request",
   "provider_timeout",
   "cancelled",
   "revision_conflict",
