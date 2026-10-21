@@ -5,6 +5,7 @@ import {
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { parseRecordedTransportUrl } from "../domain/recordedTransportUrl.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 const OPERATION = "inspect_pcap_capture";
@@ -161,6 +162,7 @@ export const parseTsharkJsonOutput = async (
       "memory",
       "tshark JSON exceeds the bounded decoding budget",
       { max_json_bytes: TSHARK_JSON_MAX_BYTES },
+      fixedAllowanceOptions("The tshark JSON decoding allowance", "capture"),
     );
   // The selected-field protocol has five container levels. Reject deeper
   // graphs before materializing them; quoted brackets are string data.
@@ -192,6 +194,7 @@ export const parseTsharkJsonOutput = async (
         "memory",
         "tshark JSON expansion exceeds the decoding budget",
         { max_decoded_bytes: MAX_DECODED_BYTES },
+        fixedAllowanceOptions("The tshark JSON expansion allowance", "capture"),
       );
   }
   let packets: unknown;
@@ -220,6 +223,10 @@ export const parseTsharkJsonOutput = async (
         "memory",
         "Packet inventory exceeds the retained-fact budget",
         { max_retained_bytes: MAX_RETAINED_BYTES },
+        fixedAllowanceOptions(
+          "The packet-inventory retained-fact allowance",
+          "capture",
+        ),
       );
   };
   const add = (set: Set<string>, value: string): void => {
@@ -262,13 +269,14 @@ export const parseTsharkJsonOutput = async (
       return protocolFailure(
         "frame inventory is missing, duplicated or out of order",
       );
-    if (
-      field("frame.protocols").length !== 1 ||
-      field("frame.protocols")[0] === ""
-    )
+    const protocolStack = field("frame.protocols");
+    if (protocolStack.length !== 1)
       return protocolFailure(
         "packet protocol inventory is missing or ambiguous",
       );
+    // TShark reports [""] for a frame with no dissected protocol, including
+    // zero-length packets. Keep the frame without inventing a protocol row.
+    const protocol = protocolStack[0]!;
     // Count one occurrence per packet even for loopback or nested IP layers.
     for (const address of new Set([
       ...field("ip.src"),
@@ -307,10 +315,9 @@ export const parseTsharkJsonOutput = async (
     }
     for (const value of field("tls.handshake.extensions_server_name"))
       if (value !== "") add(sni, value);
-    for (const value of new Set(field("frame.protocols"))) {
-      if (value === "") continue;
-      if (!protocols.has(value)) charge(value);
-      protocols.set(value, (protocols.get(value) ?? 0) + 1);
+    if (protocol !== "") {
+      if (!protocols.has(protocol)) charge(protocol);
+      protocols.set(protocol, (protocols.get(protocol) ?? 0) + 1);
     }
     for (const value of field("http.request.full_uri")) {
       if (value === "" || observedUris.has(value)) continue;

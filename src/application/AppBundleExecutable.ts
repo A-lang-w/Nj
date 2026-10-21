@@ -14,6 +14,7 @@ import {
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 import { hasBinaryPlistSignature } from "../domain/apple/appleArchiveFormat.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
 /** Decoded representation bound for one binary Info.plist. */
 const BINARY_PLIST_DECODE_BYTES = 16 * 1024 * 1024;
@@ -40,6 +41,18 @@ const BUNDLE_LAYOUTS: readonly BundleLayout[] = [
 export interface ResolvedAppBundle {
   readonly executable: string;
   readonly infoPlist?: string;
+}
+
+/** Resource-only identity for an app directory; it is not a BinaryTarget. */
+export interface ResolvedAppBundleResourceRoot {
+  /** Path selected by the caller, retained even when it is a symlink alias. */
+  readonly callerPath: string;
+  /** Canonical directory whose resources are inspected. */
+  readonly canonicalPath: string;
+  readonly infoPlistPath: string;
+  readonly layout: "contents" | "root";
+  /** No executable was opened or hashed by resource-root discovery. */
+  readonly executableSha256: string | null;
 }
 
 /** Filesystem operations used by the resolver, injectable for boundary tests. */
@@ -91,32 +104,57 @@ export const resolveAppBundleExecutable = async (
 };
 
 /**
- * Whether a directory path appears to be a macOS or iOS application bundle.
+ * Resolve only the root and Info.plist layout needed for read-only resource
+ * inspection. This intentionally does not require or guess CFBundleExecutable.
  */
-export const isAppBundlePath = async (path: string): Promise<boolean> => {
+export const resolveAppBundleResourceRoot = async (
+  path: string,
+  options: { readonly cwd?: string } = {},
+): Promise<Result<ResolvedAppBundleResourceRoot, BinaryTargetError>> => {
+  const callerPath = absoluteCallerPath(
+    path,
+    options.cwd === undefined ? {} : { cwd: options.cwd },
+  );
   try {
-    const layout = await presentLayout(path);
-    if (layout !== undefined) return true;
-    const wrapped = await wrappedBundle(path);
-    if (wrapped !== undefined && (await presentLayout(wrapped)) !== undefined)
-      return true;
-    const canonical = await realpath(path);
-    if (canonical !== path) {
-      const canonicalLayout = await presentLayout(canonical);
-      if (canonicalLayout !== undefined) return true;
-      const canonicalWrapped = await wrappedBundle(canonical);
-      if (
-        canonicalWrapped !== undefined &&
-        (await presentLayout(canonicalWrapped)) !== undefined
-      )
-        return true;
-    }
-    return false;
+    const canonicalInput = await realpath(callerPath);
+    const directLayout = await presentLayout(canonicalInput);
+    const wrapped =
+      directLayout === undefined
+        ? await wrappedBundle(canonicalInput)
+        : undefined;
+    const root = wrapped ?? canonicalInput;
+    const layout = directLayout ?? (await presentLayout(root));
+    if (layout === undefined)
+      return err(
+        new BinaryTargetError(
+          callerPath,
+          `app resource root has no supported Info.plist layout: ${callerPath}`,
+        ),
+      );
+    const canonicalPath = await realpath(root);
+    return ok({
+      callerPath,
+      canonicalPath,
+      infoPlistPath: join(canonicalPath, ...layout.plist),
+      layout: layout.plist[0] === "Contents" ? "contents" : "root",
+      executableSha256: null,
+    });
   } catch (cause: unknown) {
-    if (cause instanceof BinaryTargetError) return true;
-    return false;
+    return err(
+      new BinaryTargetError(callerPath, errorReason(cause, callerPath), {
+        cause,
+      }),
+    );
   }
 };
+
+/**
+ * Whether a directory path appears to be a macOS or iOS application bundle.
+ */
+export const isAppBundlePath = async (
+  path: string,
+  options: { readonly cwd?: string } = {},
+): Promise<boolean> => (await resolveAppBundleResourceRoot(path, options)).ok;
 
 const presentLayout = async (
   bundle: string,

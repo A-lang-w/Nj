@@ -7,6 +7,7 @@ import {
   il2cppIndexWidth,
   il2cppMetadataRecordBytes,
   readIl2cppMetadata,
+  readIl2cppMetadataForLinking,
   readIl2cppMetadataSteps,
 } from "../../../src/il2cpp/Il2cppMetadataFile.js";
 import {
@@ -24,9 +25,14 @@ import {
   type Il2cppMetadataFixture,
 } from "../../fixtures/il2cpp/metadata.js";
 
-const failure = (bytes: Buffer) => {
+const failure = (
+  bytes: Buffer,
+  reader:
+    | typeof readIl2cppMetadata
+    | typeof readIl2cppMetadataForLinking = readIl2cppMetadata,
+) => {
   try {
-    readIl2cppMetadata(bytes);
+    reader(bytes);
   } catch (cause: unknown) {
     if (cause instanceof Il2cppMetadataFormatFailure) return cause;
     throw cause;
@@ -161,12 +167,47 @@ describe("rejected IL2CPP global-metadata", () => {
       "unrecognized-magic",
       "unsupported",
     );
-    rejects(Buffer.alloc(4), "unrecognized-magic", "unsupported");
+    for (const length of [4, 5, 6, 7])
+      rejects(Buffer.alloc(length), "unrecognized-magic", "unsupported");
     rejects(
       mutated((_, bytes) => bytes.writeInt32LE(30, 4)),
       "unsupported-version",
       "unsupported",
     );
+  });
+
+  it("retains the decoder's signed interpretation of a complete high-bit version", () => {
+    const bytes = Buffer.alloc(8);
+    bytes.writeUInt32LE(0xfab11baf, 0);
+    bytes.writeUInt32LE(0xffffffff, 4);
+    const rejected = failure(bytes);
+    expect(rejected.reason).toBe("unsupported-version");
+    expect(rejected.kind).toBe("unsupported");
+    expect(rejected.message).toContain("metadata version -1 is not supported");
+  });
+
+  it.each([4, 5, 6, 7])(
+    "retains recognized magic and reports a %i-byte version prefix as truncated",
+    (length) => {
+      const bytes = Buffer.alloc(length);
+      bytes.writeUInt32LE(0xfab11baf, 0);
+      const rejected = failure(bytes);
+      expect(rejected.reason).toBe("truncated-header");
+      expect(rejected.kind).toBe("corrupt");
+      expect(rejected.message).toContain(
+        "fewer than the 8-byte magic/version prefix",
+      );
+      expect(rejected.message).toContain("metadata version is unknown");
+    },
+  );
+
+  it("uses the same truncated-prefix classification before native linking", () => {
+    const bytes = Buffer.alloc(7);
+    bytes.writeUInt32LE(0xfab11baf, 0);
+    const rejected = failure(bytes, readIl2cppMetadataForLinking);
+    expect(rejected.reason).toBe("truncated-header");
+    expect(rejected.kind).toBe("corrupt");
+    expect(rejected.message).toContain("metadata version is unknown");
   });
 
   it("rejects a truncated header and an unexpected header size", () => {
@@ -220,13 +261,6 @@ describe("rejected IL2CPP global-metadata", () => {
       ),
       "record-size-mismatch",
     );
-    // 300 generic containers widen GenericContainerIndex to two bytes.
-    rejects(
-      mutated((fixture, bytes) =>
-        bytes.writeInt32LE(300, fixture.header("genericContainers", "count")),
-      ),
-      "record-size-mismatch",
-    );
     rejects(
       mutated((fixture, bytes) =>
         bytes.writeInt32LE(2, fixture.header("nestedTypes", "count")),
@@ -246,6 +280,62 @@ describe("rejected IL2CPP global-metadata", () => {
       createIl2cppMetadataFixture({ interfaceOffsetRecordBytes: 7 }).bytes,
       "type-index-width",
     );
+  });
+});
+
+describe("IL2CPP generic-container extents", () => {
+  it("checks generic-container count against its fixed 16-byte records before resolving widths", () => {
+    // A positive count with no record bytes.
+    for (const count of [1, 300])
+      rejects(
+        mutated((fixture, bytes) =>
+          bytes.writeInt32LE(
+            count,
+            fixture.header("genericContainers", "count"),
+          ),
+        ),
+        "record-size-mismatch",
+      );
+    const oneRecord = createIl2cppMetadataFixture({
+      wide: { fillerTypes: 0, genericContainers: 1, parameters: 0 },
+    });
+    // A positive count with a partial record.
+    rejects(
+      mutated(
+        (fixture, bytes) =>
+          bytes.writeInt32LE(1, fixture.header("genericContainers", "size")),
+        oneRecord,
+      ),
+      "record-size-mismatch",
+    );
+    // Bytes without a corresponding record.
+    rejects(
+      mutated(
+        (fixture, bytes) =>
+          bytes.writeInt32LE(0, fixture.header("genericContainers", "count")),
+        oneRecord,
+      ),
+      "record-size-mismatch",
+    );
+  });
+
+  it("retains width selection for empty and complete generic-container records", () => {
+    const empty = readIl2cppMetadata(createIl2cppMetadataFixture().bytes);
+    expect(empty.index_widths.generic_container).toBe(1);
+
+    const one = readIl2cppMetadata(
+      createIl2cppMetadataFixture({
+        wide: { fillerTypes: 0, genericContainers: 1, parameters: 0 },
+      }).bytes,
+    );
+    expect(one.index_widths.generic_container).toBe(1);
+
+    const wide = readIl2cppMetadata(
+      createIl2cppMetadataFixture({
+        wide: { fillerTypes: 0, genericContainers: 300, parameters: 0 },
+      }).bytes,
+    );
+    expect(wide.index_widths.generic_container).toBe(2);
   });
 });
 
