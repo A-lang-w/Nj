@@ -45,7 +45,11 @@ for (const version of ["1.1", "1.2"] as const) {
         const removed = await cli.run({
           arguments: ["uninstall", "--json"],
           cwd: home,
-          environment: { USERPROFILE: home, HERMES_HOME: profile },
+          environment: {
+            USERPROFILE: home,
+            HERMES_HOME: profile,
+            HOPPER_LAUNCHER_PATH: process.execPath,
+          },
           timeoutMs: 20_000,
         });
         expect(removed.exitCode).toBe(0);
@@ -72,7 +76,11 @@ for (const version of ["1.1", "1.2"] as const) {
           cli.run({
             arguments: arguments_,
             cwd: home,
-            environment: { USERPROFILE: home, HERMES_HOME: profile },
+            environment: {
+              USERPROFILE: home,
+              HERMES_HOME: profile,
+              HOPPER_LAUNCHER_PATH: process.execPath,
+            },
             timeoutMs: 20_000,
           });
         const setup = [
@@ -93,7 +101,10 @@ for (const version of ["1.1", "1.2"] as const) {
         expect(parsed.mcp_servers.other).toEqual(before.mcp_servers.other);
         expect(parsed.mcp_servers.rea).toMatchObject({ enabled: true });
         if (existing)
-          expect(parsed.mcp_servers.rea.env).toEqual({ FLAG: "on" });
+          expect(parsed.mcp_servers.rea.env).toEqual({
+            FLAG: "on",
+            HOPPER_LAUNCHER_PATH: process.execPath,
+          });
         expect(configured.startsWith(original.defaults)).toBe(true);
         expect(configured).toContain("# Selected table");
         expect(configured.match(/&servers\b/gu)).toHaveLength(1);
@@ -145,7 +156,11 @@ cliTest("Hermes still registers into an explicit table", async ({ cli }) => {
       "--json",
     ],
     cwd: home,
-    environment: { USERPROFILE: home, HERMES_HOME: profile },
+    environment: {
+      USERPROFILE: home,
+      HERMES_HOME: profile,
+      HOPPER_LAUNCHER_PATH: process.execPath,
+    },
     timeoutMs: 20_000,
   });
   expect(applied.exitCode).toBe(0);
@@ -184,7 +199,11 @@ for (const version of ["1.1", "1.2"] as const) {
           "--json",
         ],
         cwd: home,
-        environment: { USERPROFILE: home, HERMES_HOME: profile },
+        environment: {
+          USERPROFILE: home,
+          HERMES_HOME: profile,
+          HOPPER_LAUNCHER_PATH: process.execPath,
+        },
         timeoutMs: 20_000,
       });
       expect(applied.exitCode).toBe(0);
@@ -208,7 +227,11 @@ cliTest(
       cli.run({
         arguments: arguments_,
         cwd: home,
-        environment: { USERPROFILE: home, HERMES_HOME: profile },
+        environment: {
+          USERPROFILE: home,
+          HERMES_HOME: profile,
+          HOPPER_LAUNCHER_PATH: process.execPath,
+        },
         timeoutMs: 20_000,
       });
     const setup = await run([
@@ -270,7 +293,11 @@ for (const original of [
           "--json",
         ],
         cwd: home,
-        environment: { USERPROFILE: home, HERMES_HOME: profile },
+        environment: {
+          USERPROFILE: home,
+          HERMES_HOME: profile,
+          HOPPER_LAUNCHER_PATH: process.execPath,
+        },
         timeoutMs: 20_000,
       });
       expect(rejected.exitCode).not.toBe(0);
