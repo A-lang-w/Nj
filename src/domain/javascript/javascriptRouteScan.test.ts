@@ -7,7 +7,7 @@ import {
 } from "./javascriptSemanticTraversal.js";
 import { JavaScriptRouteScan } from "./javascriptRouteScan.js";
 import {
-  nextAppRoutePath,
+  classifyNextAppRoutePath,
   nextScriptBasePath,
   routePath,
 } from "./javascriptRoutePaths.js";
@@ -253,7 +253,8 @@ it.each([
 ] as const)(
   "interprets Next App Router path %s without claiming reachability",
   (value, expected) => {
-    expect(nextAppRoutePath(value)).toBe(expected);
+    const route = classifyNextAppRoutePath(value);
+    expect(route?.kind === "known" ? route.path : undefined).toBe(expected);
   },
 );
 it("distinguishes route-pattern markers, navigation query strings and Next asset bases", () => {
@@ -647,3 +648,24 @@ it("keeps callable bodies independent of navigation data ownership", () => {
     "/component",
   ]);
 });
+
+it.each([
+  "const modulePath='app/feed/(.)photo/page.tsx';",
+  "globalThis.TURBOPACK=[];const modulePath='/app/feed/(.)photo/page.tsx';",
+] as const)("retains intercepted module paths as unknown: %s", (source) => {
+  const facts = analyze(source);
+  expect(facts.candidates).toEqual([]);
+  expect(facts.unresolved).toEqual([
+    expect.objectContaining({
+      mechanism: "next-app-chunk",
+      reason: expect.stringContaining("intercepted"),
+    }),
+  ]);
+});
+
+it.each(["app/(.)photo/_private/page.tsx", "app/_private/(.)photo/page.tsx"])(
+  "keeps private pages excluded before interpreting %s",
+  (value) => {
+    expect(classifyNextAppRoutePath(value)).toBeUndefined();
+  },
+);

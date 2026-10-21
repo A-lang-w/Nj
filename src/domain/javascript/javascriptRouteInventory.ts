@@ -14,7 +14,7 @@ import {
   type JavaScriptRouteSourceFacts,
 } from "./javascriptRouteFacts.js";
 import {
-  nextAppRoutePath,
+  classifyNextAppRoutePath,
   nextScriptBasePath,
 } from "./javascriptRoutePaths.js";
 
@@ -455,8 +455,13 @@ export function* buildJavaScriptRouteInventorySteps(
     };
     if (!reserve(source)) continue;
     sources.push(source);
-    const metadataPath = nextAppRoutePath(input.url ?? input.path ?? "");
+    const metadata = classifyNextAppRoutePath(input.url ?? input.path ?? "");
+    const metadataPath = metadata?.kind === "known" ? metadata.path : undefined;
     contexts.push({ input, source, metadataPath });
+    if (metadata?.kind === "unknown") {
+      partial = true;
+      gap(source, "interpretation", metadata.reason);
+    }
     if (input.status !== "complete" || input.facts === null) {
       partial = true;
       gap(

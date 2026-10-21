@@ -329,3 +329,29 @@ it("reports generated typed configurations as partial even without retained cand
   expect(result.unknowns).toHaveLength(1);
   expect(result.unknowns[0]!.kind).toBe("interpretation");
 });
+
+it.each([
+  ["app/feed/(.)photo/page.tsx", null],
+  [
+    "page.js",
+    "https://example.test/_next/static/chunks/app/feed/(.)photo/page-123.js",
+  ],
+] as const)(
+  "retains intercepted filename metadata as partial: %s",
+  (path, url) => {
+    const result = build([
+      source(path, "export default function Photo(){return null;}", url),
+    ]);
+    expect(result.routes).toEqual([]);
+    expect(result.coverage.candidate_enumeration).toBe("partial");
+    expect(result.unknowns).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "interpretation",
+          reason: expect.stringContaining("intercepted"),
+          source_range: null,
+        }),
+      ]),
+    );
+  },
+);

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
-import { readFile, writeFile, rm } from "node:fs/promises";
+import { readFile, writeFile, rm, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
@@ -8,12 +8,17 @@ import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { javaScriptRoutesViewResultSchema } from "../../src/domain/analysisView/analysisView.js";
 
+const interceptedSource = "export default function Photo(){return null;}";
+
 const fixture = async () => {
   const path = await createTestTempDirectory("rea-javascript-routes-");
   await writeFile(
     join(path, "routes.js"),
     `globalThis.TURBOPACK=[];globalThis.TURBOPACK.push([1,function module(){const routes=defineRoutes({reports:{_$:'reports',settings:{_$:'settings'},history:{}}});createBrowserRouter([{path:'/account',children:[{path:':id'}]}]);router.push('/reports/' + selectedId);router.push({pathname:'/reports/' + selectedId});router.navigate(['/reports/',selectedId]);const mixed={children:[{path:'/reports/stale-ordinary',element:View},{_$:'/reports/stale-typed'}]};mixed.children[1]._$='/reports/changed';createBrowserRouter(mixed);router.push({pathname:'/reports/static-object',query:{href:'/query-data',path:'/download/file',component:'preview'}});router.addRoute('admin',{path:'settings',component:View});createBrowserRouter([{path:'/reports/stale-computed',[computedKey]:'/unrelated',children:[{path:'settings'}]}]);const helper='app/reports/helper/page-helpers.js';const extra='/reports/help';}]);`,
   );
+  const intercepted = join(path, "app/feed/(.)photo");
+  await mkdir(intercepted, { recursive: true });
+  await writeFile(join(intercepted, "page.tsx"), interceptedSource);
   return path;
 };
 cliTest(
@@ -203,6 +208,36 @@ it.each(["full", "compact"] as const)(
         parseEvidence(dataPaths.structuredContent).normalized_result,
       ).items,
     ).toEqual([]);
+    const unknowns = await call("inspect_analysis_view", {
+      source: {
+        kind: "retained-evidence",
+        evidence_id: selected.parent_evidence_id,
+      },
+      view: {
+        kind: "javascript-routes",
+        collection: "unknowns",
+        where: { kinds: ["interpretation"] },
+      },
+    });
+    expect(unknowns.isError).not.toBe(true);
+    const gaps = javaScriptRoutesViewResultSchema.parse(
+      parseEvidence(unknowns.structuredContent).normalized_result,
+    );
+    expect(gaps.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          reason: expect.stringContaining("intercepted"),
+        }),
+      ]),
+    );
+    expect(gaps.source_coverage.candidate_enumeration).toBe("partial");
+    expect(
+      gaps.sources.some(
+        ({ sha256 }) =>
+          sha256 ===
+          createHash("sha256").update(interceptedSource).digest("hex"),
+      ),
+    ).toBe(true);
   },
 );
 

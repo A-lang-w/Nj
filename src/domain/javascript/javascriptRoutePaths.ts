@@ -12,8 +12,14 @@ export const routePath = (
   return path.startsWith("/") ? path : `/${path}`;
 };
 
-/** A chunk declares a bundled App Router page, not a reachable deployed URL. */
-export const nextAppRoutePath = (raw: string): string | undefined => {
+export type NextAppRoutePath =
+  | { readonly kind: "known"; readonly path: string }
+  | { readonly kind: "unknown"; readonly reason: string };
+
+/** Classify a page filename without treating missing routing context as absence. */
+export const classifyNextAppRoutePath = (
+  raw: string,
+): NextAppRoutePath | undefined => {
   if (raw.includes("\\")) return;
   let value = raw;
   if (raw.includes("://")) {
@@ -34,10 +40,12 @@ export const nextAppRoutePath = (raw: string): string | undefined => {
   if (!match) return;
   if (match[2] !== undefined && !/(?:^|\/)static\/chunks\/app\//u.test(value))
     return;
+  const encodedSegments = (match[1] ?? "").split("/");
+  // A private folder excludes the whole page, including intercepted ancestors.
+  // Test before decoding: %5F names are public URLs.
+  if (encodedSegments.some((segment) => segment.startsWith("_"))) return;
   const segments: string[] = [];
-  for (const encoded of (match[1] ?? "").split("/")) {
-    // Private folders are excluded before decoding: %5F names are public URLs.
-    if (encoded.startsWith("_")) return;
+  for (const encoded of encodedSegments) {
     let segment: string;
     try {
       segment = decodeURIComponent(encoded);
@@ -46,13 +54,13 @@ export const nextAppRoutePath = (raw: string): string | undefined => {
     }
     if (/^\([^)]*\)$/u.test(segment) || segment.startsWith("@")) continue;
     // Intercepted routes need a parent routing context that a filename does not establish.
-    if (
-      segment.startsWith("(") ||
-      segment.includes("/") ||
-      segment === "." ||
-      segment === ".."
-    )
-      return;
+    if (segment.startsWith("("))
+      return {
+        kind: "unknown",
+        reason:
+          "An intercepted Next page route requires parent routing context unavailable from its filename.",
+      };
+    if (segment.includes("/") || segment === "." || segment === "..") return;
     const optional = /^\[\[\.\.\.([^\]]+)\]\]$/u.exec(segment);
     const catchAll = /^\[\.\.\.([^\]]+)\]$/u.exec(segment);
     const parameter = /^\[([^\]]+)\]$/u.exec(segment);
@@ -66,7 +74,8 @@ export const nextAppRoutePath = (raw: string): string | undefined => {
             : segment,
     );
   }
-  return routePath(`/${segments.filter(Boolean).join("/")}`);
+  const path = routePath(`/${segments.filter(Boolean).join("/")}`);
+  return path === undefined ? undefined : { kind: "known", path };
 };
 
 export const nextScriptBasePath = (source: string): string | undefined => {

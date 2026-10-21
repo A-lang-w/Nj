@@ -18,7 +18,7 @@ import {
   semanticStableInitializer,
   type JavaScriptBindingIndex,
 } from "./javascriptSemanticState.js";
-import { nextAppRoutePath, routePath } from "./javascriptRoutePaths.js";
+import { classifyNextAppRoutePath, routePath } from "./javascriptRoutePaths.js";
 import type {
   JavaScriptRouteCandidate,
   JavaScriptRouteSegment,
@@ -218,7 +218,7 @@ export class JavaScriptRouteScan {
       }
       const value = stringValue(node);
       if (value === undefined) return;
-      const next = nextAppRoutePath(value);
+      const next = classifyNextAppRoutePath(value);
       if (
         (t.isBinaryExpression(expressionParent) &&
           expressionParent.operator === "+") ||
@@ -233,9 +233,13 @@ export class JavaScriptRouteScan {
           );
         return;
       }
-      if (next !== undefined)
+      if (next?.kind === "unknown") {
+        this.#unknown("next-app-chunk", node, next.reason);
+        return;
+      }
+      if (next?.kind === "known")
         this.#emit(
-          next,
+          next.path,
           "next-app-chunk",
           [{ value, location: range(node), origin: "next-app-path" }],
           node,
