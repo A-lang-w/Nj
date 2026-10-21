@@ -1,9 +1,9 @@
-import type { JsonValue } from "../jsonValue.js";
 import {
   at,
   isObject,
   lastSegmentValue,
   listItems,
+  projectsFields,
   scalarText,
   type JsonObject,
   type StateItemView,
@@ -21,8 +21,9 @@ import {
 } from "./environmentStateWriteChecks.js";
 
 /**
- * Fields a view's recordings always carried that a later successful read shows the application
- * leaves out of an entity, as APIs that omit empty or false members do: no entity must carry them.
+ * Fields a type's recordings always carried that a later successful whole read shows the
+ * application leaves out of an entity the state holds, as APIs that omit empty or false members
+ * do: no entity of the type must carry them, in any of its views.
  */
 export class OmittedFields {
   readonly #omitted = new Map<string, Set<string>>();
@@ -39,39 +40,47 @@ export class OmittedFields {
       readonly collection: string;
     },
   ): CheckOutcome | undefined {
-    const relaxed = this.#relax(view, record, read);
+    const relaxed = this.#relax(state, view, record, read);
     return relaxed.shape === "item"
       ? checkItemRead(state, relaxed, record, read)
       : checkListRead(state, relaxed, record, read);
   }
 
-  /** Note the required fields the read's entities lack, and the view without every field noted so far. */
+  /** Note the required fields the read's held entities lack, and the view without every field noted so far for its type. */
   #relax<View extends StateItemView | StateListView>(
+    state: SimulatedState,
     view: View,
     record: StateRecordFacts,
-    read: { readonly body: JsonValue | undefined; readonly idField: string },
+    read: Pick<ReadBodies, "body"> & {
+      readonly idField: string;
+      readonly collection: string;
+    },
   ): View {
-    if (succeeded(record) && read.body !== undefined)
-      for (const entity of readEntities(view, record, read))
+    if (
+      succeeded(record) &&
+      read.body !== undefined &&
+      !projectsFields(record.query)
+    )
+      for (const entity of heldEntities(state, view, record, read))
         for (const field of view.required_fields)
-          if (!Object.hasOwn(entity, field)) this.#note(view.tool, field);
-    return relaxed(view, this.#omitted.get(view.tool));
+          if (!Object.hasOwn(entity, field)) this.#note(view.type, field);
+    return relaxed(view, this.#omitted.get(view.type));
   }
 
   /** The views with the fields reads showed omitted no longer required. */
   views(views: readonly StateView[]): StateView[] {
     return views.map((view) =>
       view.shape === "item" || view.shape === "list"
-        ? relaxed(view, this.#omitted.get(view.tool))
+        ? relaxed(view, this.#omitted.get(view.type))
         : view,
     );
   }
 
-  #note(tool: string, field: string): void {
-    let fields = this.#omitted.get(tool);
+  #note(type: string, field: string): void {
+    let fields = this.#omitted.get(type);
     if (fields === undefined) {
       fields = new Set();
-      this.#omitted.set(tool, fields);
+      this.#omitted.set(type, fields);
     }
     if (!fields.has(field)) {
       this.retain(64 + field.length * 2);
@@ -80,22 +89,31 @@ export class OmittedFields {
   }
 }
 
-/** The entities a read shows: an item read's object naming the path's id, a list read's items with an id. */
-const readEntities = (
+/** The entities a read shows that the state holds: an item read's object naming the path's id, a list read's items. */
+const heldEntities = (
+  state: SimulatedState,
   view: StateItemView | StateListView,
   record: StateRecordFacts,
-  read: { readonly body: JsonValue | undefined; readonly idField: string },
+  read: Pick<ReadBodies, "body"> & {
+    readonly idField: string;
+    readonly collection: string;
+  },
 ): JsonObject[] => {
-  if (view.shape === "item") {
-    const object = at(read.body!, view.pointer);
-    return isObject(object) &&
-      scalarText(object[read.idField]) === lastSegmentValue(record.path)
-      ? [object]
-      : [];
-  }
-  return (listItems(read.body!, view.pointer) ?? []).filter(
-    (item) => scalarText(item[read.idField]) !== undefined,
-  );
+  const object = view.shape === "item" ? at(read.body!, view.pointer) : null;
+  const shown =
+    view.shape === "list"
+      ? (listItems(read.body!, view.pointer) ?? [])
+      : isObject(object) &&
+          scalarText(object[read.idField]) === lastSegmentValue(record.path)
+        ? [object]
+        : [];
+  return shown.filter((entity) => {
+    const id = scalarText(entity[read.idField]);
+    return (
+      id !== undefined &&
+      state.entity(view.type, read.collection, id) !== undefined
+    );
+  });
 };
 
 const relaxed = <View extends StateItemView | StateListView>(

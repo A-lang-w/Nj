@@ -4,7 +4,6 @@ import {
   isObject,
   isStateWrite,
   normalizedPath,
-  replaysProjection,
   type JsonObject,
   type StateEntity,
   type StateRecordFacts,
@@ -13,6 +12,7 @@ import {
   type StateView,
 } from "./environmentStateRules.js";
 import { updatedEntity } from "./environmentStateWriteApply.js";
+import { projectedRead } from "./environmentStateWriteObserve.js";
 import { OmittedFields } from "./environmentStateWriteOmitted.js";
 import {
   checkDocumentRead,
@@ -88,7 +88,7 @@ export class EnvironmentStateWriteSimulation {
   readonly #touched: TouchedTargets = new Map();
   readonly #effects = new WriteEffects();
   /** Fields reads show the application leaves out, which serving then does not require. */
-  readonly omitted: OmittedFields;
+  readonly omitted = new OmittedFields((bytes) => this.#input.io.retain(bytes));
   readonly #lastCheck = new Map<string, number>();
   /** When the latest modelled write to each target since its last check ended. */
   readonly #touchedSince: PendingTargets = new Map();
@@ -106,7 +106,6 @@ export class EnvironmentStateWriteSimulation {
 
   constructor(input: WriteSimulationInput) {
     this.#input = input;
-    this.omitted = new OmittedFields(input.io.retain);
     this.#state = new SimulatedState(input.entities, input.documents);
     for (const type of input.types)
       this.#types.set(type.collection_template, type);
@@ -294,8 +293,7 @@ export class EnvironmentStateWriteSimulation {
   }
 
   #check(view: StateView, record: StateRecordFacts): CheckOutcome | undefined {
-    if (view.shape === "recorded" || replaysProjection(view, record.query))
-      return undefined;
+    if (view.shape === "recorded") return undefined;
     const line = this.#line(view, record);
     if (view.shape !== "item" && line === undefined) return undefined;
     if (view.shape === "document")
@@ -340,9 +338,10 @@ export class EnvironmentStateWriteSimulation {
 
   #read(record: StateRecordFacts, index: number, tool: StateToolFacts): void {
     const view = this.#input.views.get(tool.name);
-    const borrowers = this.#observations.get(record.ordinal);
-    if (view === undefined || (!borrowers && this.#resynced(view, record)))
+    if (view === undefined || projectedRead(view, record, this.#input.io))
       return;
+    const borrowers = this.#observations.get(record.ordinal);
+    if (!borrowers && this.#resynced(view, record)) return;
     const outcome = this.#check(view, record);
     if (outcome === undefined) return;
     const keys = [...outcome.targets, ...outcome.unheld];

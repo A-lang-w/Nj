@@ -8,10 +8,11 @@ Executed on macOS with Node v22.23.1 on this branch, whose base is the write-pla
   `npm run format:check`, `npx knip`, `npm run scan:todos`, `npm run docs:check`, `npm run verify:test-discovery` and
   `npm run mcp-catalog:check`: passed.
 - `npm run jscpd`: 3.45% duplicated lines over 3776 files.
-- `npx vitest run --project domain --project services`: 7800 passed, 5 pre-existing skips.
+- `npx vitest run --project domain --project services`: 7808 passed, 5 pre-existing skips. Two unrelated heavy tests
+  (keyed-archive traversal, a 125,000-dependent Evidence graph) passed only with a longer timeout on a loaded machine.
 - `npm run test:prepare`, then `npm run test:focused --` the environment serve and export CLI boundaries, the serve
   and served-writes MCP boundaries, the analysis-view CLI and MCP boundaries, the compact input schema boundary and
-  tool schema validity: 8 files, 79 passed.
+  tool schema validity: 8 files, 79 passed; the analysis-view MCP file needed a longer timeout on the loaded machine.
 
 ## Tests
 
@@ -24,8 +25,22 @@ Executed on macOS with Node v22.23.1 on this branch, whose base is the write-pla
 - Serving: a created entity is served without the omitted field while seeded ones keep it; a call naming `fields`
   replays with the reason `projection` while other calls answer from the state; creates take the next number in the
   held value's digit groups.
-- Unit: a digit-group value reads as a sequence and a date does not; the next value keeps the groups, overflow leading.
+- Unit: `-`-separated digit groups of one width read as a sequence, and a date, version, address or decimal does not;
+  the next value keeps the groups, overflow leading.
 - The gate, serving and manifest tests fail on `ad8f674d`.
+
+Review fixes, each with a test that fails on `a4c4a23b`:
+
+- Gate:
+  - a read naming `fields`, or of a book the state no longer holds, notes no omission, and a create read back only
+    through `?fields=id,name` is not served;
+  - an omission an item read shows stops every view of the type requiring the field;
+  - a read naming `fields` that leaves a required field out neither resynchronises an entity nor serves as a write's
+    observation, so a `204` update read back first through `?fields=id,name` learns its effect from the whole read;
+  - a later create whose sequence value serving would spell otherwise (`00-04` or `4` after `000-003`) withholds the
+    plan.
+- Serving: an empty projection argument replays; a projection of a deleted book answers as missing; a created book
+  without the omitted field lists.
 
 ## Published captures
 

@@ -256,11 +256,12 @@ it("draws tokens from the whole alphabet the recorded token uses", () => {
   );
 });
 
-it("reads a sequence written as digit groups, but not a date", () => {
+it("reads a sequence written as digit groups of one width, but not a date, version or address", () => {
   expect(sequenceNumber("000-005")).toBe(5);
-  expect(sequenceNumber("12.04")).toBe(1204);
+  expect(sequenceNumber("00-01-12")).toBe(112);
   expect(sequenceNumber(7)).toBe(7);
-  expect(sequenceNumber("2026-10-21")).toBeUndefined();
+  for (const other of ["2026-10-21", "2026-08", "12.04", "1.2.3", "10.0.0.9"])
+    expect(sequenceNumber(other)).toBeUndefined();
   expect(sequenceNumber("A-005")).toBeUndefined();
   expect(sequenceNumber("000-")).toBeUndefined();
 });

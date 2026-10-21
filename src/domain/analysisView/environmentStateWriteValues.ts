@@ -115,18 +115,15 @@ export const spelledLike = (exemplar: JsonValue, value: number): JsonValue =>
       ? String(value)
       : value;
 
-const MASKED_DIGITS = /^\d+(?:[-.]\d+)+$/u;
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/u;
+const MASKED_DIGITS = /^\d{2,}(?:-\d{2,})+$/u;
 
-/** The count digit groups spell, such as an asset number `000-005`; a date is not a count. */
+/** The count `-`-separated digit groups of one width spell, such as an asset number `000-005`; dates, versions and addresses are not counts. */
 const maskedCount = (value: JsonValue | undefined): number | undefined => {
-  if (
-    typeof value !== "string" ||
-    !MASKED_DIGITS.test(value) ||
-    ISO_DATE.test(value)
-  )
+  if (typeof value !== "string" || !MASKED_DIGITS.test(value)) return undefined;
+  const groups = value.split("-");
+  if (groups.some((group) => group.length !== groups[0]!.length))
     return undefined;
-  const digits = value.replace(/\D/gu, "");
+  const digits = groups.join("");
   return digits.length <= 15 ? Number(digits) : undefined;
 };
 

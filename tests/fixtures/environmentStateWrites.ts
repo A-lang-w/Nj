@@ -107,6 +107,15 @@ export const OMITTED_FIELD_ROWS: readonly TimedCaptureRow[] = [
   ["GET", "/api/books/3", THIRD_BOOK],
 ];
 
+/** Seeded books listed and read with `detail`; a created book read back by item alone, without it. */
+export const DETAILED_LIST_ROWS: readonly TimedCaptureRow[] = [
+  ["GET", "/api/books", [detailedBook(FIRST_BOOK), detailedBook(SECOND_BOOK)]],
+  ["GET", "/api/books/1", detailedBook(FIRST_BOOK)],
+  ["GET", "/api/books/2", detailedBook(SECOND_BOOK)],
+  ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
+  ["GET", "/api/books/3", THIRD_BOOK],
+];
+
 /** Item reads of both books, one of them asking for its name only, which leaves its id out. */
 export const PROJECTED_ROWS: readonly TimedCaptureRow[] = [
   ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],

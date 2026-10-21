@@ -21,13 +21,17 @@ what the writes did:
 
 - **Manifest.** A write group (`POST`, `PUT`, `PATCH`, `DELETE`) is kept as a tool when every response had no body (a
   `204` or `205`, an empty text, or a recorded size of zero) and one succeeded. A missing text alone does not count.
-- **Omitted fields.** The write gate notes required fields missing from the entities that successful reads it checks
-  return: the item whose id the path names, or the listed items carrying an id. The state's views stop requiring them.
+- **Omitted fields.** The write gate notes required fields missing from the entities the state holds that successful
+  reads it checks return, when the read names no projection parameter: the item whose id the path names, or the listed
+  items. No view of the type requires them any more.
 - **Projected reads.** An item read naming `fields`, `fields[...]`, `select` or `$select` that does not return the item
   is left out of the identity proof and the view's checks. The view lists it in `projected_record_ordinals`, and serving
-  replays a call to that tool naming such a parameter with the reason `projection`.
-- **Sequences.** A sequence value may be digit groups, not an ISO date. The next value keeps the exemplar's groups and
-  zero padding; digits that outgrow them lead.
+  replays a call to that tool naming such a parameter, for an entity the state holds, with the reason `projection`;
+  the replay shows the recording, not served writes. The write gate neither checks nor learns a write's effect from a
+  read that names such a parameter and leaves out a field its view requires.
+- **Sequences.** A sequence value may be `-`-separated digit groups of one width of at least two digits, not a date,
+  version or address. The next value keeps the exemplar's groups and zero padding; digits that outgrow them lead. A
+  later create must record its value spelled that way.
 
 ## Acceptance
 

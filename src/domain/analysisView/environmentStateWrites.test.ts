@@ -11,9 +11,11 @@ import {
   BOOK_NOT_FOUND,
   BOOK_ROWS,
   BOOK_WRITE_CLOCK,
+  DETAILED_LIST_ROWS,
   FIRST_BOOK,
   OMITTED_FIELD_ROWS,
   PROJECTED_ROWS,
+  RENAMED_BOOK,
   SECOND_BOOK,
   THIRD_BOOK,
   book,
@@ -191,6 +193,102 @@ describe("wider write coverage", () => {
       rules: expect.arrayContaining([
         { field: "asset", rule: "sequence", scope: "collection" },
       ]),
+    });
+  });
+});
+
+describe("write coverage limits", () => {
+  const WHOLE_BOOK = ["slug", "created_at", "updated_at"];
+  const itemView = (rows: readonly TimedCaptureRow[]) =>
+    stateOf(rows).views.find((view) => view.tool === "get_books_by_id");
+
+  it("notes no omission from a read that asked for some fields, nor from one of a book the state no longer holds", () => {
+    const projected: TimedCaptureRow[] = [
+      ...BOOK_INIT_ROWS,
+      ["PATCH", "/api/books/1", RENAMED_BOOK, 200, { name: "Renamed Book" }],
+      ["GET", "/api/books/1?fields=id,name", { id: 1, name: "Renamed Book" }],
+    ];
+    const tombstone: TimedCaptureRow[] = [
+      ...BOOK_INIT_ROWS,
+      ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
+      ["GET", "/api/books/3", THIRD_BOOK],
+      ["DELETE", "/api/books/3", "", 204],
+      ["GET", "/api/books/3", { id: 3, deleted: true }],
+    ];
+    for (const rows of [projected, tombstone])
+      expect(itemView(rows)).toMatchObject({
+        required_fields: expect.arrayContaining(WHOLE_BOOK),
+      });
+    const partial = { id: 3, name: "Third Book" };
+    const created: TimedCaptureRow[] = [
+      ...BOOK_INIT_ROWS,
+      ["POST", "/api/books", partial, 201, { name: "Third Book" }],
+      ["GET", "/api/books/3?fields=id,name", partial],
+    ];
+    expect(planOf(stateOf(created), "post_books")).toMatchObject({
+      served: false,
+    });
+  });
+
+  it("stops requiring a field in every view of the type once a read shows it left out", () => {
+    const state = stateOf(DETAILED_LIST_ROWS);
+    expect(planOf(state, "post_books")).toMatchObject({ served: true });
+    const list = state.views.find((view) => view.tool === "get_books");
+    expect(list).toMatchObject({ fields: expect.arrayContaining(["detail"]) });
+    expect(list).not.toMatchObject({
+      required_fields: expect.arrayContaining(["detail"]),
+    });
+  });
+
+  it("leaves a read that asked for some fields only out of the gate, even where it would resynchronise a book", () => {
+    const rows: TimedCaptureRow[] = [
+      ...BOOK_INIT_ROWS,
+      ["GET", "/api/books/2?fields=name", { name: "Second Book" }],
+      [
+        "PATCH",
+        "/api/books/2",
+        renamedBook(SECOND_BOOK, "Renamed", 5),
+        200,
+        { name: "Renamed" },
+      ],
+      // A redirected write leaves book 2 unknown.
+      ["PATCH", "/api/books/2", "", 302, { name: "Renamed" }],
+      ["GET", "/api/books/2?fields=slug", { slug: "renamed" }],
+    ];
+    expect(planOf(stateOf(rows), "patch_books_by_id")).toMatchObject({
+      contradicted_by: null,
+    });
+  });
+
+  it("learns no update's effect from a read-back that asked for some fields only", () => {
+    const rows: TimedCaptureRow[] = [
+      ...BOOK_INIT_ROWS,
+      ["PATCH", "/api/books/1", "", 204, { name: "Renamed Book" }],
+      ["GET", "/api/books/1?fields=id,name", { id: 1, name: "Renamed Book" }],
+      ["GET", "/api/books/1", RENAMED_BOOK],
+      ["GET", "/api/books", [RENAMED_BOOK, SECOND_BOOK]],
+    ];
+    expect(planOf(stateOf(rows), "patch_books_by_id")).toMatchObject({
+      served: true,
+      observation: { ordinal: 5 },
+    });
+  });
+
+  it("withholds creates whose later call spells its sequence otherwise than serving would", () => {
+    const spelled = (asset: JsonValue): TimedCaptureRow[] => {
+      const fourth = { ...book(4, "Fourth Book", bookClock(5)), asset };
+      return [
+        ...ASSET_ROWS.slice(0, 5),
+        ["POST", "/api/books", fourth, 201, { name: "Fourth Book" }],
+        ["GET", "/api/books/4", fourth],
+      ];
+    };
+    for (const asset of ["00-04", 4])
+      expect(planOf(stateOf(spelled(asset)), "post_books")).toMatchObject({
+        served: false,
+      });
+    expect(planOf(stateOf(spelled("000-004")), "post_books")).toMatchObject({
+      served: true,
     });
   });
 });

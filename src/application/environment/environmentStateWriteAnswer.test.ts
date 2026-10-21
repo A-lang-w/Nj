@@ -10,6 +10,7 @@ import {
   BOOK_NOT_FOUND,
   BOOK_ROWS,
   DELETE_NOT_FOUND,
+  DETAILED_LIST_ROWS,
   FIRST_BOOK,
   OMITTED_FIELD_ROWS,
   PROJECTED_ROWS,
@@ -288,6 +289,43 @@ describe("wider write coverage", () => {
     expect(books.answer("get_books_by_id", { id: "1" }).body).toEqual(
       assetBook(FIRST_BOOK, "000-001"),
     );
+  });
+});
+
+describe("write coverage limits", () => {
+  it("replays a call naming a projection parameter, even an empty one", () => {
+    expect(
+      servedFrom(PROJECTED_ROWS).answer("get_books_by_id", {
+        id: "2",
+        fields: "",
+      }),
+    ).toMatchObject({ state: { source: "recording", reason: "projection" } });
+  });
+
+  it("answers a projection of a book the state no longer holds as a missing one", () => {
+    const books = servedFrom([
+      ...PROJECTED_ROWS,
+      ...BOOK_ROWS.slice(BOOK_INIT_ROWS.length),
+    ]);
+    books.answer("delete_books_by_id", { id: "2" });
+    expect(
+      books.answer("get_books_by_id", { id: "2", fields: "name" }),
+    ).toMatchObject({
+      status: 404,
+      body: BOOK_NOT_FOUND,
+      state: { source: "state", view: "missing", id: "2" },
+    });
+  });
+
+  it("lists a created book without the field an item read showed the application leaves out", () => {
+    const books = servedFrom(DETAILED_LIST_ROWS);
+    const created = books.answer("post_books", CREATE_NEW_BOOK).body as Book;
+    expect(created).not.toHaveProperty("detail");
+    expect(books.answer("get_books").body).toEqual([
+      detailedBook(FIRST_BOOK),
+      detailedBook(SECOND_BOOK),
+      created,
+    ]);
   });
 });
 

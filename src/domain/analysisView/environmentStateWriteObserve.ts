@@ -1,10 +1,12 @@
 import type { JsonValue } from "../jsonValue.js";
 import {
+  at,
   collectionPathOf,
   isObject,
   lastSegmentValue,
   listItems,
   pointerTo,
+  projectsFields,
   scalarText,
   type JsonObject,
   type StateRecordFacts,
@@ -69,6 +71,34 @@ export interface ObservationSearch {
   ) => T;
 }
 
+/** Whether a read asked for some fields only and shows no whole entity: an item view replays such reads, or the read leaves out a field its view requires. */
+export const projectedRead = (
+  view: StateView,
+  record: StateRecordFacts,
+  io: Pick<ObservationSearch, "withBody">,
+): boolean => {
+  if (
+    (view.shape !== "item" && view.shape !== "list") ||
+    !projectsFields(record.query)
+  )
+    return false;
+  if (view.shape === "item" && view.projected_record_ordinals !== undefined)
+    return true;
+  return io.withBody(record.ordinal, (body) => {
+    const objects =
+      body === undefined || body === null
+        ? []
+        : view.shape === "item"
+          ? [at(body, view.pointer)]
+          : (listItems(body, view.pointer) ?? []);
+    return objects.some(
+      (object) =>
+        !isObject(object) ||
+        view.required_fields.some((field) => !Object.hasOwn(object, field)),
+    );
+  });
+};
+
 const succeeded = (record: StateRecordFacts): boolean =>
   record.status !== null && record.status >= 200 && record.status < 300;
 
@@ -93,7 +123,8 @@ export const laterObservation = (
     if (
       !succeeded(record) ||
       (view?.shape !== "item" && view?.shape !== "list") ||
-      view.type !== target.type
+      view.type !== target.type ||
+      projectedRead(view, record, search)
     )
       continue;
     const found =

@@ -45,6 +45,7 @@ import {
   isUuid,
   readClock,
   sequenceNumber,
+  spelledLike,
 } from "./environmentStateWriteValues.js";
 
 /** The id a response names alone: a scalar body, or an object's id field or single scalar member. */
@@ -170,7 +171,7 @@ const sequencesOf = (
       : [],
   );
 
-/** Whether a later call's sequences hold what serving generates: one past the largest value their scope holds or started with, and past the plan's last. */
+/** Whether a later call's sequences hold what serving generates: one past the largest value their scope holds or started with and past the plan's last, spelled as the exemplar spells it. */
 const followsSequences = (
   context: EffectContext,
   draft: WriteDraft,
@@ -188,7 +189,10 @@ const followsSequences = (
       nextInteger(fieldsOf(scope), rule.field) ?? 1,
       (draft.sequences.get(key) ?? 0) + 1,
     );
-    return sequenceNumber(created.fields[rule.field]) === next;
+    return (
+      created.fields[rule.field] ===
+      spelledLike(draft.observed?.[rule.field] ?? "", next)
+    );
   });
 
 /** Whether a later call's generated values take the forms serving generates them in: clocks in the learned format, unique values and UUID identities as UUIDs, and sequences in order. */
