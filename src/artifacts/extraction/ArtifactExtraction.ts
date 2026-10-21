@@ -38,10 +38,7 @@ import type {
   ArtifactResourceOwner,
   ArtifactResourceScope,
 } from "../ArtifactResourceScope.js";
-import {
-  isMachOFormat,
-  type BinaryTarget,
-} from "../../domain/binaryTargetTypes.js";
+import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import { scanArtifactInventoryInScope } from "../inventory/ArtifactInventory.js";
 import type { ArtifactIntegrityPolicyName } from "../../domain/artifactIntegrityPolicy.js";
@@ -437,11 +434,13 @@ const requireExtractableFormat = async (
 ): Promise<boolean> => {
   const format = input.inputFormat;
   const directory = (await lstat(path)).isDirectory();
+  // A thin Mach-O has no child entries: inventory lists only its root, so
+  // only the universal container has a slice reader.
   if (
     !directory &&
     format !== "asar" &&
     format !== "godot-pck" &&
-    !isMachOFormat(format) &&
+    format !== "mach-o-universal" &&
     !isZipPackageFormat(format)
   ) {
     const pack = await withArtifactRegularFile(
