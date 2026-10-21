@@ -66,6 +66,26 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         "changed-array-default.cjs",
         `const source = [{}]; source[0] = undefined; const [alias = load] = source; alias.n = ${replacement};`,
       ],
+      [
+        "inherited-nested-default.cjs",
+        `Object.prototype.api = { inner: undefined }; const { api: { inner: alias = load } = { inner: {} } } = {}; alias.n = ${replacement};`,
+      ],
+      [
+        "intrinsic-nested-default.cjs",
+        `const { constructor: { missing: alias = load } = { missing: {} } } = {}; alias.n = ${replacement};`,
+      ],
+      [
+        "inherited-array-default.cjs",
+        `Array.prototype[0] = { inner: undefined }; const [{ inner: alias = load } = { inner: {} }] = []; alias.n = ${replacement};`,
+      ],
+      [
+        "own-nested-default.cjs",
+        `Object.prototype.api = { inner: undefined }; const { api: { inner: alias = load } = { inner: {} } } = { api: { inner: {} } }; alias.n = ${replacement};`,
+      ],
+      [
+        "dead-nested-default.cjs",
+        `const { api: { inner: alias = load } = { inner: {} } } = {}; alias.n = ${replacement};`,
+      ],
     ] as const;
     for (const [name, mutation] of cases)
       await writeFile(
@@ -78,11 +98,11 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       parsed_javascript_files: cases.length,
       parse_failures: 0,
     });
-    expect(result.summary.browser_windows).toBe(6);
+    expect(result.summary.browser_windows).toBe(8);
     const windows = result.graph.nodes.filter(
       ({ kind }) => kind === "browser-window",
     );
-    expect(windows).toHaveLength(6);
+    expect(windows).toHaveLength(8);
     expect(
       windows
         .flatMap(({ observations }) =>
@@ -90,8 +110,10 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         )
         .sort(),
     ).toEqual([
+      "dead-nested-default.cjs",
       "intact.cjs",
       "many-unrelated-writes.cjs",
+      "own-nested-default.cjs",
       "reassigned.cjs",
       "unrelated.cjs",
       "unused-array-default.cjs",

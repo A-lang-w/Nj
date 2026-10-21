@@ -54,6 +54,22 @@ it.each([
   ],
   ["array default", `const [alias = load] = []; alias.n = ${replacement};`],
   [
+    "inherited nested default source",
+    `Object.prototype.api = { inner: undefined }; const { api: { inner: alias = load } = { inner: {} } } = {}; alias.n = ${replacement};`,
+  ],
+  [
+    "intrinsic inherited nested default source",
+    `const { constructor: { missing: alias = load } = { missing: {} } } = {}; alias.n = ${replacement};`,
+  ],
+  [
+    "inherited sparse array default source",
+    `Array.prototype[0] = { inner: undefined }; const [{ inner: alias = load } = { inner: {} }] = []; alias.n = ${replacement};`,
+  ],
+  [
+    "Object prototype inherited by a sparse array",
+    `Object.prototype[0] = { inner: undefined }; const [{ inner: alias = load } = { inner: {} }] = []; alias.n = ${replacement};`,
+  ],
+  [
     "uncertain object default",
     `const { api: alias = load } = runtime; alias.n = ${replacement};`,
   ],
@@ -115,6 +131,18 @@ it.each([
   [
     "unused array default",
     `const [alias = load] = [{}]; alias.n = ${replacement};`,
+  ],
+  [
+    "nested own property despite prototype writes",
+    `Object.prototype.api = { inner: undefined }; const { api: { inner: alias = load } = { inner: {} } } = { api: { inner: {} } }; alias.n = ${replacement};`,
+  ],
+  [
+    "unused nested outer default",
+    `const { api: { inner: alias = load } = { inner: {} } } = {}; alias.n = ${replacement};`,
+  ],
+  [
+    "own constructor overrides the inherited constructor",
+    `const { constructor: { missing: alias = load } = { missing: {} } } = { constructor: { missing: {} } }; alias.n = ${replacement};`,
   ],
 ])("preserves the canonical getter with %s", (_name, mutation) => {
   expect(

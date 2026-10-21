@@ -456,7 +456,11 @@ visible writes through lexical aliases of its loader. Alias reads retain their
 captured value across later reassignments; writing an unrelated loader property
 or a different object does not invalidate the getter. An unused destructuring
 default is excluded when its source is self-contained literal data; defaults
-from mutable container references remain conservative. These checks follow local
+from mutable container references remain conservative. Nested default selection
+requires the selected own-property path to exclude inherited values: a missing
+own slot cannot prove absence when prototype writes or intrinsic prototype
+properties may supply it. Explicit own data still takes precedence over those
+inherited possibilities. These checks follow local
 identifier chains and conditional alternatives, not arbitrary returned objects
 or runtime calls. Within one bootstrap proof, intermediate read results are reused
 across writes; cyclic alternatives are settled together before negative results

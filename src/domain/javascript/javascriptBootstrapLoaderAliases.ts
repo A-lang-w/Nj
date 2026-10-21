@@ -8,9 +8,65 @@ import {
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
 import {
+  semanticArrayIndex,
+  semanticPropertyPathKeyMatches,
+  type JavaScriptSemanticPropertyPath,
+} from "./javascriptSemanticPropertyPaths.js";
+import { semanticContainer } from "./javascriptSemanticSlots.js";
+import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
+import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
+
+// ECMAScript Object.prototype properties, including legacy accessor helpers.
+// These can be inherited even with no visible prototype writes in the source.
+const OBJECT_PROTOTYPE_KEYS = new Set([
+  "constructor",
+  "hasOwnProperty",
+  "isPrototypeOf",
+  "propertyIsEnumerable",
+  "toLocaleString",
+  "toString",
+  "valueOf",
+  "__proto__",
+  "__defineGetter__",
+  "__defineSetter__",
+  "__lookupGetter__",
+  "__lookupSetter__",
+]);
+
+/** Own-slot absence is not a Get proof when a prototype may supply that slot. */
+const literalReferenceSource = (
+  source: {
+    readonly node: t.Node;
+    readonly projection: JavaScriptSemanticPropertyPath;
+  },
+  state: JavaScriptSemanticAnalysisState,
+  unknownPrototypes: ReadonlySet<string>,
+): boolean => {
+  if (!literalDataSource(source.node, state)) return false;
+  let value = evaluateSemanticExpression(source.node, state, source.node);
+  for (const key of source.projection) {
+    if (key === null || typeof key === "object") return false;
+    const container = semanticContainer(value);
+    if (container === null) return false;
+    const name = String(key);
+    const slot = container.slots.find((item) => item.name === name);
+    if (slot === undefined)
+      return (
+        container.coverage.status === "complete" &&
+        !unknownPrototypes.has("Object") &&
+        !OBJECT_PROTOTYPE_KEYS.has(name) &&
+        (value.status !== "array" ||
+          (!unknownPrototypes.has("Array") &&
+            semanticArrayIndex(name) !== null))
+      );
+    if (slot.presence !== "present") return false;
+    value = slot.value;
+  }
+  return true;
+};
 
 /** Loader proof precedes member effects; only inline data has no stale mutable reads. */
 const literalDataSource = (
@@ -51,6 +107,24 @@ export const createBootstrapLoaderAliasLookup = (
   state: JavaScriptSemanticAnalysisState,
 ): ((root: t.Node) => boolean) => {
   const known = new WeakMap<t.Node, boolean>();
+  const prototypeEffects = [
+    ...state.ambientWriteEffects,
+    ...state.ambientEscapeEffects,
+  ];
+  const unknownPrototypes = new Set(
+    ["Object", "Array"].filter((name) =>
+      prototypeEffects.some(({ path }) =>
+        path
+          .slice(0, 3)
+          .every((key, index) =>
+            semanticPropertyPathKeyMatches(
+              key,
+              ["global", name, "prototype"][index] ?? "",
+            ),
+          ),
+      ),
+    ),
+  );
   return (root) => {
     root = unwrapJavaScriptExpression(root).node;
     const cached = known.get(root);
@@ -101,8 +175,9 @@ export const createBootstrapLoaderAliasLookup = (
                 [
                   ...(origin.requiredSources ?? []),
                   ...(origin.fallbackSources ?? []),
-                ].every(({ node }) => literalDataSource(node, state)) &&
-                semanticReferenceSourcesInactive(origin, state)
+                ].every((source) =>
+                  literalReferenceSource(source, state, unknownPrototypes),
+                ) && semanticReferenceSourcesInactive(origin, state)
               ),
           ),
         ])
