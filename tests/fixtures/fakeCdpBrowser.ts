@@ -60,6 +60,8 @@ export const startFakeCdpBrowser = async (
       const commandError = options.commandError?.(command);
       if (commandError !== undefined) {
         sendCommandReply(socket, command, { error: commandError });
+        if (options.closeAfterMethod === command.method)
+          setImmediate(() => socket.close());
         return;
       }
       if (options.closeOnMethod === command.method) {
@@ -250,6 +252,11 @@ const serveSourceMap = (
   response: ServerResponse,
   options: FakeOptions,
 ): boolean => {
+  if (
+    options.hangSourceMap === true &&
+    request.url?.startsWith("/app.js.map") === true
+  )
+    return true;
   if (options.sourceMapBody === undefined) return false;
   if (request.url?.startsWith("/app.js.map") === true) {
     if (options.sourceMapRedirect !== undefined)

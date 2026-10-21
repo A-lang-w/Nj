@@ -2,6 +2,8 @@ import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { FirmwareAnalysisPort } from "./FirmwareAnalysisPort.js";
 import {
   firmwareRequestSchema,
+  firmwareExecutionBudgetSchema,
+  DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS,
   type FirmwareOperation,
 } from "../../domain/firmware/firmwareAnalysis.js";
 import {
@@ -12,7 +14,9 @@ import {
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { jsonObjectSchema } from "../../domain/jsonValue.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { projectInputIssues } from "../../domain/inputIssueProjection.js";
+import { err, type Result } from "../../domain/result.js";
+import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 /** Shared CLI/MCP validation and Evidence composition for arbitrary firmware files. */
 export class FirmwareAnalysisService {
@@ -29,21 +33,44 @@ export class FirmwareAnalysisService {
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted === true)
-      return err(new AnalysisCancelledError(operation));
+      return err(
+        new AnalysisCancelledError(operation, { cause: options.signal.reason }),
+      );
     const parsed = firmwareRequestSchema.safeParse({ operation, input });
     if (!parsed.success)
-      return err(new AnalysisInputError(operation, { cause: parsed.error }));
+      return err(
+        new AnalysisInputError(
+          operation,
+          { cause: parsed.error },
+          projectInputIssues(parsed.error.issues, { operation, input }),
+        ),
+      );
     const executed = await this.provider.execute(parsed.data, options);
     if (!executed.ok) return executed;
     const execution = executed.value;
-    if (execution.subject === null)
+    if (execution.subject == null)
       return err(
         new AnalysisOutputError(
           operation,
           "Firmware execution did not bind its source artifact",
         ),
       );
-    return ok(
+    // Providers own normalized facts. Check only fresh execution metadata here,
+    // without reparsing/copying potentially large extraction inventories.
+    const budget = firmwareExecutionBudgetSchema.safeParse(execution.result);
+    if (
+      !budget.success ||
+      budget.data.analysis_timeout_ms !==
+        (parsed.data.input.analysis_timeout_ms ??
+          DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS)
+    )
+      return err(
+        new AnalysisOutputError(
+          operation,
+          "Firmware execution did not retain its selected analysis budget",
+        ),
+      );
+    return completeProviderEvidence(
       createEvidence(execution.subject, execution.provider, {
         operation,
         parameters: jsonObjectSchema.parse(parsed.data.input),
@@ -53,6 +80,7 @@ export class FirmwareAnalysisService {
         limitations: execution.limitations,
         confidence: "observed",
       }),
+      options?.signal,
     );
   }
 }
