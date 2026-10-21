@@ -7,6 +7,31 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it.skipIf(process.platform !== "darwin")(
+  "reads an explicit plist path through MCP without an open target",
+  async () => {
+    const root = await createTestTempDirectory("rea-plist-standalone-mcp-");
+    const path = join(root, "Info.plist");
+    await writeFile(
+      path,
+      '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>dev.rea.fixture</string></dict></plist>',
+    );
+    const { call } = await connectLocalToolsMcp({
+      HOME: root,
+      USERPROFILE: root,
+    });
+    const result = await call("inspect_plist", { path });
+    expect(result.isError).not.toBe(true);
+    expect(JSON.stringify(result.structuredContent)).toContain(
+      "dev.rea.fixture",
+    );
+    const status = await call("binary_session", {});
+    expect(status.structuredContent).toMatchObject({
+      result: { open: false },
+    });
+  },
+);
+
+it.skipIf(process.platform !== "darwin")(
   "preserves real plutil diagnostics and typed selection failures through MCP",
   async () => {
     const root = await createTestTempDirectory("rea-plist-diagnostic-mcp-");

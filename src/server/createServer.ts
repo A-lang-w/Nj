@@ -75,7 +75,11 @@ import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
 import { registerApplicationTools } from "./registerApplicationTools.js";
 import { registerArtifactTools } from "./registerArtifactTools.js";
-import { registerNativeTools } from "./registerNativeTools.js";
+import {
+  registerNativeTools,
+  type StandalonePlistInspection,
+} from "./registerNativeTools.js";
+import { runNativeProviderExecution } from "../composition/directAnalysis.js";
 import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
 import { registerBrowserTools } from "./registerBrowserTools.js";
 import { registerWebScriptTool } from "./registerWebScriptTool.js";
@@ -178,6 +182,7 @@ export interface CreateServerOptions {
   readonly recordedCrash?: RecordedCrashService;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
   readonly javascriptRecovery?: JavaScriptRecoveryPort;
+  readonly standalonePlistInspection?: StandalonePlistInspection;
   readonly webModuleTrace?: WebModuleTraceService;
   readonly webSourceLocation?: WebSourceLocationService;
   readonly webRuntime?: WebRuntimeService;
@@ -914,6 +919,8 @@ interface ServerToolContext extends ReturnType<typeof createSessionRecorders> {
 const registerBinaryAnalysisTools = ({
   server,
   session,
+  options,
+  environment,
   logger,
   activeTarget,
   recordEvidence,
@@ -957,7 +964,25 @@ const registerBinaryAnalysisTools = ({
     recordEvidence,
     withAdmittedAnalysis,
   };
-  registerNativeTools(server, { ...evidenceOptions, evidenceById });
+  registerNativeTools(server, {
+    ...evidenceOptions,
+    evidenceById,
+    // Without a session, analysis is bound to a fixed target.
+    targetSelected: () =>
+      session === undefined ||
+      session.activeTarget() !== undefined ||
+      session.activeBundleResourceRoot?.() !== undefined,
+    standalonePlistInspection:
+      options.standalonePlistInspection ??
+      ((path, parameters, signal) =>
+        runNativeProviderExecution(
+          environment,
+          path,
+          "inspect_plist",
+          signal,
+          parameters,
+        )),
+  });
   registerArtifactTools(server, { ...evidenceOptions, evidenceById });
   registerManagedTools(server, { ...evidenceOptions, evidenceById });
   if (session !== undefined)

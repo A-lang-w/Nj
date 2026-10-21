@@ -72,6 +72,28 @@ export const createDirectAnalysis = (
 /** Bound operations used by CLI command registration. */
 export type DirectAnalysis = ReturnType<typeof createDirectAnalysis>;
 
+/** Execute one native inspection without configuration or deep provider candidates. */
+export const runNativeProviderExecution = async (
+  selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
+  ...args: Parameters<
+    BoundOperation<DirectAnalysisRuntime["runNativeProviderExecution"]>
+  >
+): ReturnType<
+  BoundOperation<DirectAnalysisRuntime["runNativeProviderExecution"]>
+> => {
+  const { runNativeProviderExecution } =
+    await import("../application/DirectAnalysis.js");
+  return runNativeProviderExecution(
+    {
+      createNativeBinarySession: async () => {
+        const { createNativeBinarySession } = await import("./binary.js");
+        return createNativeBinarySession(selectedEnvironment);
+      },
+    },
+    ...args,
+  );
+};
+
 /** Execute managed metadata without configuration or native provider candidates. */
 export const runManagedProviderExecution: BoundOperation<
   DirectAnalysisRuntime["runManagedProviderExecution"]

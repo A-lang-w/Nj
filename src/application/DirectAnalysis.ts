@@ -176,16 +176,16 @@ export const runProviderAnalysis = async (
   );
 };
 
-/** Execute managed metadata inspection in an isolated managed-only session. */
-export const runManagedProviderExecution = async (
-  dependencies: Pick<DirectAnalysisDependencies, "createManagedBinarySession">,
+/** Open one selected path in a fresh session, execute one tool, then close it. */
+const runIsolatedProviderExecution = async (
+  createSession: () => BinarySession | Promise<BinarySession>,
   path: string,
-  tool: ManagedToolName,
-  signal?: AbortSignal,
-  parameters: Readonly<Record<string, JsonValue>> = {},
+  tool: ManagedToolName | NativeToolName,
+  signal: AbortSignal | undefined,
+  parameters: Readonly<Record<string, JsonValue>>,
 ): Promise<Result<AnalysisExecution, AnalysisError>> =>
   withProcessCancellation(signal, async (operationSignal) => {
-    const session = await dependencies.createManagedBinarySession();
+    const session = await createSession();
     return withSessionCleanup(
       session,
       async () => {
@@ -198,6 +198,38 @@ export const runManagedProviderExecution = async (
       managedAnalysisCleanupFailure,
     );
   });
+
+/** Execute managed metadata inspection in an isolated managed-only session. */
+export const runManagedProviderExecution = async (
+  dependencies: Pick<DirectAnalysisDependencies, "createManagedBinarySession">,
+  path: string,
+  tool: ManagedToolName,
+  signal?: AbortSignal,
+  parameters: Readonly<Record<string, JsonValue>> = {},
+): Promise<Result<AnalysisExecution, AnalysisError>> =>
+  runIsolatedProviderExecution(
+    dependencies.createManagedBinarySession,
+    path,
+    tool,
+    signal,
+    parameters,
+  );
+
+/** Execute native inspection of one selected file in an isolated native-only session. */
+export const runNativeProviderExecution = async (
+  dependencies: Pick<DirectAnalysisDependencies, "createNativeBinarySession">,
+  path: string,
+  tool: NativeToolName,
+  signal?: AbortSignal,
+  parameters: Readonly<Record<string, JsonValue>> = {},
+): Promise<Result<AnalysisExecution, AnalysisError>> =>
+  runIsolatedProviderExecution(
+    dependencies.createNativeBinarySession,
+    path,
+    tool,
+    signal,
+    parameters,
+  );
 
 const runManagedProviderAnalysis = async (
   dependencies: DirectAnalysisDependencies,
